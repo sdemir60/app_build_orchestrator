@@ -4,7 +4,7 @@ namespace BuildOrchestrator.App.Services;
 
 /// <summary>
 /// [tray indicator/K-4] Tepsi göstergesinin ÇİZİM yüzeyi. Gerçek uygulaması penceresiz, arka plansız bir
-/// top-level overlay'dir (<c>Views/TrayBuildOverlayWindow</c>); controller onu yalnız bu beş fiil üzerinden
+/// top-level overlay'dir (<c>Views/TrayBuildOverlayWindow</c>); controller onu yalnız bu dört fiil üzerinden
 /// sürer, HWND/pencere bilgisi taşımaz.
 /// </summary>
 public interface ITrayBuildIndicatorView
@@ -12,11 +12,9 @@ public interface ITrayBuildIndicatorView
     /// <summary>Göstergeyi konumla, göster ve döngüyü başlat.</summary>
     void ShowLoop();
 
-    /// <summary>Reduced-motion yolu: göstergeyi konumla, göster — ama döngü HİÇ başlamasın (statik işaret +
-    /// okunur sayaç).</summary>
+    /// <summary>Reduced-motion yolu: göstergeyi konumla, göster — ama döngü HİÇ başlamasın (statik
+    /// işaret).</summary>
     void ShowStatic();
-
-    void UpdateCounter(int done, int total);
 
     /// <summary>Yeni tur BAŞLATMA; içindeki döngü doğal bitişine (çıkış evresi) koşsun, son karede
     /// <paramref name="onFinished"/>'ı çağır. Döngü YARIM kesilmez — bkz. K-10.</summary>
@@ -64,8 +62,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
     private bool _exitPending;
     private bool _notified;
 
-    private int _done;
-    private int _total;
     private string _terminalText = "";
     private bool _terminalHealthy;
 
@@ -112,16 +108,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
         ApplyMode();
     }
 
-    /// <summary>[K-6] Sayaç değerleri şeridin kullandığı <c>fin/wb</c> çiftidir — ikinci bir hesap YOK.
-    /// Gösterge kapalıyken view'a İTİLMEZ (§14.5: görünmeyen yüzeyde measure/draw kirletilmez); açılışta son
-    /// değer bir kez akar.</summary>
-    public void SetCounter(int done, int total)
-    {
-        _done = done;
-        _total = total;
-        if (_shown) view.UpdateCounter(done, total);
-    }
-
     /// <summary>[K-5] Şeridin O ANKİ satırı + sağlık bayrağı. <c>healthy</c> şeridin glyph'inin
     /// <c>"failed"</c> OLMAMASIDIR — glyph zaten tek kaynaklı statü sinyalidir.</summary>
     public void SetTerminalText(string text, bool healthy)
@@ -157,7 +143,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
     {
         _shown = true;
         ApplyMode();
-        view.UpdateCounter(_done, _total);
     }
 
     private void ApplyMode()

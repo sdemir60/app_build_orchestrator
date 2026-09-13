@@ -14,13 +14,18 @@ namespace BuildOrchestrator.Tests.App;
 /// [tray indicator/T5] VM ↔ gösterge kablajı: hangi sinyal neyi besliyor.
 ///
 /// <para><b>Bu sınıfın asıl derdi TEK KAYNAKTIR.</b> Tepsideki bildirim ile ekrandaki şerit AYNI cümleyi
-/// söylemek zorundadır ve sayaç da şeridin kullandığı sayı çiftinin ta kendisi olmalıdır. İkisi de sessizce
-/// ayrışabilecek türden şeylerdir: metin ikinci kez derlenirse ya da sayaç ikinci kez hesaplanırsa arayüz
-/// iki farklı gerçek anlatır ve kimse fark etmez.</para>
+/// söylemek zorundadır. Sessizce ayrışabilecek türden bir şeydir: metin ikinci kez derlenirse arayüz iki
+/// farklı gerçek anlatır ve kimse fark etmez.</para>
 ///
 /// <para>Kablaj <c>MainWindow.OnSourceInitialized</c>'da DEĞİL ayrı bir bağlayıcıda yaşıyor çünkü o metot
 /// gerçek bir tepsi ikonu kurar ve global kısayol kaydeder — süit onu bilerek hiç çalıştırmaz
 /// (<c>MainWindowRealizeTests</c> sınıf özeti). Buradaki testler ne pencere ne HWND ister.</para>
+///
+/// <para><b>[KALDIRILAN PİNLER] <c>Counter_properties_track_the_ribbon_inputs</c> ve
+/// <c>The_counter_reaches_the_indicator_without_the_window_being_involved</c>:</b> göstergeye giden
+/// <c>done/total</c> çiftinin şeridin satırındaki çiftin TA KENDİSİ olduğunu ve pencereye uğramadan aktığını
+/// pinliyorlardı. Gösterge artık sayaç taşımıyor (kullanıcının görsel testi: overlay ölçüsünde okunmuyordu),
+/// binder'da itilecek bir çift de kalmadı.</para>
 /// </summary>
 public sealed class TrayIndicatorBinderTests
 {
@@ -28,13 +33,11 @@ public sealed class TrayIndicatorBinderTests
 
     private sealed class SpyView : ITrayBuildIndicatorView
     {
-        public readonly List<(int Done, int Total)> Counters = [];
         public Action? PendingExit;
         public int Shows;
 
         public void ShowLoop() => Shows++;
         public void ShowStatic() => Shows++;
-        public void UpdateCounter(int done, int total) => Counters.Add((done, total));
         public void BeginExit(Action onFinished) => PendingExit = onFinished;
         public void HideNow() { }
 
@@ -79,7 +82,7 @@ public sealed class TrayIndicatorBinderTests
         return (vm, view, notifier, controller);
     }
 
-    /// <summary>İki projelik bir topoloji + koşan bir run — sayaç ve bitiş metni için ortak zemin.</summary>
+    /// <summary>İki projelik bir topoloji + koşan bir run — bitiş metni ve görünürlük için ortak zemin.</summary>
     private static void StartRun(RunViewModel vm)
     {
         var nodes = new List<ProjectNode>
@@ -94,39 +97,6 @@ public sealed class TrayIndicatorBinderTests
             new BuildPreviewItem(MainWindowHost.IdOf("A"), "A", true),
             new BuildPreviewItem(MainWindowHost.IdOf("B"), "B", true),
         ]));
-    }
-
-    // ---------------------------------------------------------------- sayaç (K-6)
-
-    /// <summary>
-    /// Sayaç, şeridin "Building {fin}/{wb}" satırındaki ÇİFTİN kendisidir — ikinci bir hesap yok.
-    ///
-    /// <para>İddia bilerek şeridin METNİ üzerinden kurulur: göstergeye giden sayılar ile ekrandaki satırın
-    /// yazdığı sayılar aynı olmalıdır. İki ayrı property okumayı karşılaştırmak, ikisinin de aynı yanlış
-    /// kaynaktan gelmesi hâlinde bir şey kanıtlamazdı.</para></summary>
-    [Fact]
-    public void Counter_properties_track_the_ribbon_inputs()
-    {
-        var (vm, view, _, _) = Bound();
-        StartRun(vm);
-
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("A"), 10));
-
-        var (done, total) = view.Counters[^1];
-        Assert.Contains($"{done}/{total}", vm.RibbonLine.Text, StringComparison.Ordinal);
-        Assert.Equal(vm.FinishedOfWillBuild, done);
-        Assert.Equal(vm.WillBuildCount, total);
-    }
-
-    [Fact]
-    public void The_counter_reaches_the_indicator_without_the_window_being_involved()
-    {
-        var (vm, view, _, _) = Bound();
-        StartRun(vm);
-
-        // Gösterge açık (pencere gizli + faz Running) → sayaç akmalı.
-        Assert.NotEmpty(view.Counters);
-        Assert.Equal((0, 2), view.Counters[^1]);
     }
 
     // ---------------------------------------------------------------- bitiş metni (K-5)

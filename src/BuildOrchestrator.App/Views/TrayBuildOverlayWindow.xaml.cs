@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Interop;
-using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 
@@ -12,7 +11,7 @@ namespace BuildOrchestrator.App.Views;
 ///
 /// <para>Sınıfın kendi kararları üçtür: <b>kabuk</b> (XAML'de, "olmama" listesi), <b>ex-style</b> (Alt-Tab'da
 /// görünmez + kendisi aktive olmaz) ve <b>konum</b> (çalışma alanının sağ alt köşesi). Gerisi göstergeye
-/// devredilir — burada animasyon ya da sayaç mantığı YOKTUR.</para>
+/// devredilir — burada animasyon mantığı YOKTUR.</para>
 ///
 /// <para><b>Bilinçli sınır:</b> tepsi birincil görev çubuğundadır, bu yüzden overlay de birincil ekranda
 /// kalır (<see cref="SystemParameters.WorkArea"/> birincil ekranın çalışma alanıdır). Çok monitörlü bir
@@ -25,9 +24,8 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// Sahne oranı (430×286) korunarak seçilmiş overlay ölçüleri ve ekran kenarına bırakılan pay — DIP.
     ///
     /// <para>Tasarım token'ı DEĞİLDİR: bu bileşenin kendi ölçüleridir (Controls.xaml'in "bileşenin KENDİ
-    /// ölçüleri" istisnasıyla aynı statü). Yeterince küçük ki başka bir şeyi örtmesin, yeterince büyük ki
-    /// üç haneli sayaç okunsun. DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü WPF
-    /// yapar.</para></summary>
+    /// ölçüleri" istisnasıyla aynı statü). DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü
+    /// WPF yapar.</para></summary>
     internal const double OverlayWidth = 144;
     internal const double OverlayHeight = 96;
     internal const double EdgeMargin = 12;
@@ -51,8 +49,6 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// <summary>Logonun çizili piksellerine sol tık — davranış tepsi ikonunun sol tıkıyla AYNIDIR ve aynı
     /// geri getirme yoluna bağlanır (ikinci bir restore yolu yazılmaz).</summary>
     public event Action? RestoreRequested;
-
-    internal TrayBuildIndicator Indicator => IndicatorControl;
 
     /// <summary>
     /// Verilen çalışma alanının sağ alt köşesi, kenar payıyla.
@@ -84,8 +80,6 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
         Reveal();
         IndicatorControl.ShowStaticFrame();
     }
-
-    public void UpdateCounter(int done, int total) => IndicatorControl.SetCounter(done, total);
 
     public void BeginExit(Action onFinished) => IndicatorControl.RequestFinish(onFinished);
 

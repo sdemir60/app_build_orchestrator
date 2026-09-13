@@ -3,21 +3,38 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Controls;
-using BuildOrchestrator.App.Services;
 using IoPath = System.IO.Path;
 using ShapePath = System.Windows.Shapes.Path;
 
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [tray indicator/T3] Tepsideki animasyonlu marka göstergesi — logo-animasyonu deliverable'ının (v1.3,
-/// sayaçlı sürüm) uygulamaya portu.
+/// [tray indicator/T3] Tepsideki animasyonlu marka göstergesi — logo-animasyonu deliverable'ının uygulamaya
+/// portu.
 ///
 /// <para><b>Bu sınıfın koruduğu şey iki katmanlıdır.</b> Biri SANAT ESERİ: 3 saniyelik zaman çizelgesi
 /// tasarımcının verdiği hâliyle taşınır ve şevron ile silme kaplamasının senkronu ("şevron şeritleri seriyor"
 /// etkisinin tamamı) tek taraflı değiştirilemez. Diğeri UYGULAMANIN DİSİPLİNİ: dolgular token'dan gelir,
-/// döngü sonsuz değildir (bitişi iterasyon sınırında karar verilebilsin diye), görünmeyen bir gösterge saat
-/// döndürmez ve sayaç değişmeden yazılmaz.</para>
+/// döngü sonsuz değildir (bitişi iterasyon sınırında karar verilebilsin diye) ve görünmeyen bir gösterge saat
+/// döndürmez.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL] Gösterge artık SAYAÇ TAŞIMIYOR.</b></para>
+///
+/// <para><b>Eski iddia:</b> beyaz şerit canlı bir <c>done/total</c> sayacı taşırdı; değer değişmeden metin
+/// yazılmaz, değişince rakamlar sert takas edilmez (<c>Duration.Fast</c> boyunca opaklık takası) ve yuva
+/// kımıldamazdı. Şerit de bunun için markanın 60 birimlik pill'i değil 66 birimlik <c>WhiteCounter</c>
+/// varyantıydı; çıkışta 82 giderdi. Beş test bunu pinliyordu
+/// (<c>Counter_text_renders_done_over_total</c>, <c>Counter_ignores_a_write_with_the_same_value</c>,
+/// <c>Counter_change_runs_a_soft_swap_when_motion_is_on</c>,
+/// <c>Counter_change_snaps_with_no_clock_under_reduced_motion</c>,
+/// <c>The_counter_slot_never_moves_when_the_digits_change</c>).</para>
+///
+/// <para><b>Değişme gerekçesi:</b> kullanıcının GÖRSEL TESTİ — overlay ölçüsünde küçülen sahnede rakamlar
+/// okunmuyordu, yani sayacın var olma gerekçesi (okunur bir ilerleme) gerçekleşmiyordu. Okunmayan bir sayaç
+/// bilgi değil gürültüdür ve logoyu bir etikete çevirir. Esas alınan asset artık deliverable'ın SADE sürümüdür
+/// (<c>BuildOrchestratorIcon.xaml</c>): şerit markanın kendi 60 birimlik pill'i, çıkış mesafesi README'nin
+/// zamanlama tablosundaki 88. Yerlerine iki pin geçti — şeridin markanın KENDİ şekli olduğu ve kontrolde
+/// hiç yazı kalmadığı, bir de çıkış mesafesi.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public sealed class TrayBuildIndicatorTests
@@ -257,113 +274,58 @@ public sealed class TrayBuildIndicatorTests
             Assert.Same(host.FindResource(tokenKey), figure.Fill);
         }
 
-        Assert.Same(host.FindResource("Brush.Brand.CounterText"), indicator.Counter.Foreground);
         GC.KeepAlive(window);
     }
 
-    /// <summary>[K-7] Gösterge geometriyi ÇİZMEZ, paylaşılan sözlükten TÜKETİR — <c>AppMark</c> ile aynı
-    /// kaynaktan. Beyaz şerit tek istisnadır: sayaç için genişletilmiş varyantı ister, ama o varyant da AYNI
-    /// dosyada tanımlıdır.</summary>
+    /// <summary>[K-7] Gösterge geometriyi ÇİZMEZ, paylaşılan sözlükten TÜKETİR — <c>AppMark</c> ile TAM AYNI
+    /// altı anahtarı ister. Beklenen liste ikinci kez YAZILMAZ: işaretin listesi neyse göstergeninki odur
+    /// (<see cref="AppMarkTests.BrandGeometryKeys"/>) — iki kopya, iki tüketicinin sessizce ayrışmasına
+    /// izin verirdi.</summary>
     [Fact]
     public void The_indicator_consumes_the_shared_brand_geometry_by_key()
     {
         string markup = File.ReadAllText(
             IoPath.Combine(RepoPaths.AppSrcRoot, "Controls", "TrayBuildIndicator.xaml"));
 
-        foreach (string key in new[]
-                 {
-                     "Brand.Pill.TopDark", "Brand.Pill.Amber", "Brand.Pill.MidDark",
-                     "Brand.Pill.WhiteCounter", "Brand.Pill.Silver", "Brand.Chevron",
-                 })
+        foreach (string key in AppMarkTests.BrandGeometryKeys)
             Assert.Contains($"{{DynamicResource {key}}}", markup, StringComparison.Ordinal);
-
-        // …ve markanın kendi orantısındaki beyaz pill'i İSTEMEZ (o AppMark'ındır).
-        Assert.DoesNotContain("{DynamicResource Brand.Pill.White}", markup, StringComparison.Ordinal);
     }
 
-    // ---------------------------------------------------------------- sayaç (K-6 / K-14)
-
+    /// <summary>
+    /// Beyaz şerit, markanın KENDİ pill'idir: diğer dördü gibi düz bir figür, üzerinde HİÇBİR yazı yok.
+    ///
+    /// <para>İki iddia bilerek tek testte durur, çünkü tek bir karardır: şeridin genişletilmiş varyantı yalnız
+    /// sayaç yüzünden vardı. Yazı gidince varyantın gerekçesi de kalmaz ve şerit markanın orantısına döner.
+    /// İddia anahtar ADIYLA değil REFERANS EŞİTLİĞİYLE kurulur: gösterge ile <c>AppMark</c> aynı instance'ı
+    /// çizmeli, yoksa marka iki yüzeyde sessizce iki şekle ayrışır.</para></summary>
     [StaFact]
-    public void Counter_text_renders_done_over_total()
+    public void The_white_strip_is_the_marks_own_pill_and_carries_no_text()
     {
-        var (indicator, window, _) = Realize();
+        var (indicator, window, host) = Realize();
 
-        indicator.SetCounter(139, 248);
+        var strip = Assert.IsType<ShapePath>(indicator.FindName("StripWhiteRect"));
+        Assert.Same(host.FindResource("Brand.Pill.White"), strip.Data);
 
-        Assert.Equal("139/248", indicator.Counter.Text);
+        Assert.Empty(DsResources.Descendants(indicator).OfType<System.Windows.Controls.TextBlock>());
+
         GC.KeepAlive(window);
     }
 
-    /// <summary>[§14.5] Aynı string'i yeniden atamak bile measure/draw'ı boşa kirletir — ve bir sayaç,
-    /// koşu boyunca saniyede birçok kez AYNI değerle beslenebilir.</summary>
+    /// <summary>
+    /// Beyaz şerit ÇIKIŞTA sade asset'in mesafesini alır: son karesi 88'dir.
+    ///
+    /// <para>Mesafe şeridin GENİŞLİĞİNE bağlıdır — tüm parçaların sağ ucu aynı noktada (x=250.5) yok olmalıdır
+    /// (deliverable README'sinin zamanlama tablosu). 60 birimlik şerit 88 gider; 82, sayaç için 66'ya
+    /// genişletilmiş varyantın değeriydi. Şerit sadeye döndüğü hâlde mesafe 82'de kalsaydı beyaz şerit
+    /// diğerlerinden 6 birim geride solardı.</para></summary>
     [StaFact]
-    public void Counter_ignores_a_write_with_the_same_value()
+    public void The_white_strip_leaves_on_the_plain_assets_distance()
     {
         var (indicator, window, _) = Realize();
 
-        indicator.SetCounter(139, 248);
-        Assert.Equal(1, indicator.CounterWrites);
+        var white = KeyFramesOf(indicator.Loop, "WhiteShift");
 
-        indicator.SetCounter(139, 248);
-        indicator.SetCounter(139, 248);
-
-        Assert.Equal(1, indicator.CounterWrites);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[K-14] Rakam değişimi SERT bir metin takası değildir: metin kısılır, yeni değer yazılır, geri
-    /// açılır. Süre kod tarafına yazılmaz — <c>Duration.Fast</c> token'ı animasyon BAŞLANGICINDA taze okunur.</summary>
-    [StaFact]
-    public void Counter_change_runs_a_soft_swap_when_motion_is_on()
-    {
-        using var motion = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
-        var (indicator, window, _) = Realize();
-
-        indicator.SetCounter(139, 248);                     // ilk yazım: geçilecek bir değer yok, doğrudan
-        Assert.False(indicator.Counter.HasAnimatedProperties);
-
-        indicator.SetCounter(140, 248);
-
-        Assert.True(indicator.Counter.HasAnimatedProperties);        // geçiş saati kuruldu
-        DispatcherPump.PumpUntil(() => indicator.Counter.Text == "140/248", PumpTimeout);
-        Assert.Equal("140/248", indicator.Counter.Text);             // ve yeni değere indi
-        DispatcherPump.PumpUntil(() => indicator.Counter.Opacity >= 1.0, PumpTimeout);
-        Assert.Equal(1.0, indicator.Counter.Opacity);                // sonra geri açıldı
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void Counter_change_snaps_with_no_clock_under_reduced_motion()
-    {
-        // Seam KASTEN enjekte EDİLMEZ: headless'ta App.Motion null'dur (= reduced) ve üretim VARSAYILANI sınanır.
-        Assert.Null(BuildOrchestrator.App.App.Motion);
-        var (indicator, window, _) = Realize();
-
-        indicator.SetCounter(139, 248);
-        indicator.SetCounter(140, 248);
-
-        Assert.False(indicator.Counter.HasAnimatedProperties);
-        Assert.Equal("140/248", indicator.Counter.Text);
-        Assert.Equal(1.0, indicator.Counter.Opacity);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[K-14] Geçiş YALNIZ opaklıktır: <c>139/248</c> → <c>140/248</c> şeridi genişletmez, sayaç
-    /// yuvasını oynatmaz. Şerit sabit genişliktedir ve yuva onu paylaşılan geometriden okur.</summary>
-    [StaFact]
-    public void The_counter_slot_never_moves_when_the_digits_change()
-    {
-        var (indicator, window, _) = Realize();
-        indicator.SetCounter(139, 248);
-        indicator.UpdateLayout();
-        double width = indicator.CounterSlot.ActualWidth;
-        double left = System.Windows.Controls.Canvas.GetLeft(indicator.CounterSlot);
-
-        indicator.SetCounter(7, 9);          // en dar çift
-        indicator.UpdateLayout();
-
-        Assert.Equal(width, indicator.CounterSlot.ActualWidth, precision: 3);
-        Assert.Equal(left, System.Windows.Controls.Canvas.GetLeft(indicator.CounterSlot), precision: 3);
+        Assert.Equal(88.0, white[^1].Value);
         GC.KeepAlive(window);
     }
 

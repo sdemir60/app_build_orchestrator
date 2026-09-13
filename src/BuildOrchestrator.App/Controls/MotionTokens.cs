@@ -312,8 +312,6 @@ internal static class MotionTokens
     /// motion sinyali. Üç <c>TransitionX</c> metodu da (renk / double / thickness) BİREBİR aynı üç satırı
     /// yazıyordu — tek yer (kopya YASAK, CLAUDE.md). Süre ve sinyal ÇAĞRI ANINDA taze okunur (motion
     /// sözleşmesi); süre 0'a düşmüşse (reduced-motion) <c>Animate</c> false'tur ve çağıran hedefe anında yazar.</summary>
-    /// <remarks>[tray indicator/K-14] Sayacın yumuşak rakam takası da bu kapıdan geçer — kendi
-    /// <c>Duration.Fast</c> çözümünü yazsaydı token'ın ikinci bir okuyucusu doğardı (kopya YASAK).</remarks>
     internal static FastTransition ResolveFast(FrameworkElement host)
     {
         var duration = ResolveDuration(host, "Duration.Fast", 120.0);          // prototip: --duration-fast

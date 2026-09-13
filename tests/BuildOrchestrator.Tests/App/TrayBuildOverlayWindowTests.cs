@@ -17,6 +17,10 @@ namespace BuildOrchestrator.Tests.App;
 /// çıkarmak testin yan etkisi olamaz (ve CI'da ekran yoktur). Kabuk kararları özellik olarak, yerleşim saf bir
 /// yardımcı üzerinden, tıklama ise içerik köküne olay göndererek doğrulanır — <c>MainWindowRealizeTests</c>
 /// ile aynı gerekçe.</para>
+///
+/// <para><b>[KALDIRILAN PİN] <c>The_overlay_forwards_the_counter_to_the_indicator</c>:</b> pencerenin
+/// <c>UpdateCounter</c> fiilini göstergeye geçirdiğini pinliyordu. Gösterge artık sayaç taşımıyor
+/// (kullanıcının görsel testi: overlay ölçüsünde okunmuyordu) ve view sözleşmesinde böyle bir fiil yok.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public sealed class TrayBuildOverlayWindowTests
@@ -151,15 +155,5 @@ public sealed class TrayBuildOverlayWindowTests
 
         Assert.True(finished);
         Assert.False(overlay.IsVisible);
-    }
-
-    [StaFact]
-    public void The_overlay_forwards_the_counter_to_the_indicator()
-    {
-        var overlay = New();
-
-        overlay.UpdateCounter(139, 248);
-
-        Assert.Equal("139/248", overlay.Indicator.Counter.Text);
     }
 }

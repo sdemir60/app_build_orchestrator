@@ -15,6 +15,11 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>Neden view/notifier dikişli:</b> gerçek yüzeyler bir top-level <c>Window</c> ve bir OS tray
 /// balloon'udur — ikisi de headless süitte kurulamaz. Controller onlara yalnız iki dar arayüzden konuşur,
 /// böylece karar mantığı pencere/HWND olmadan sınanır.</para>
+///
+/// <para><b>[KALDIRILAN PİN] <c>Counter_updates_flow_only_while_the_overlay_is_shown</c>:</b> gösterge kapalıyken
+/// sayacın view'a itilmediğini, açılışta son değerin bir kez aktığını pinliyordu. Gösterge artık sayaç
+/// TAŞIMIYOR (kullanıcının görsel testi: overlay ölçüsünde okunmuyordu), <c>ITrayBuildIndicatorView</c>'da
+/// <c>UpdateCounter</c> diye bir fiil de yok — pinin konusu ortadan kalktı.</para>
 /// </summary>
 public sealed class TrayBuildIndicatorControllerTests
 {
@@ -32,7 +37,6 @@ public sealed class TrayBuildIndicatorControllerTests
         public Action? PendingExit;
         public void ShowLoop() => r.Log.Add("ShowLoop");
         public void ShowStatic() => r.Log.Add("ShowStatic");
-        public void UpdateCounter(int done, int total) => r.Log.Add($"Counter {done}/{total}");
         public void BeginExit(Action onFinished) { r.Log.Add("BeginExit"); PendingExit = onFinished; }
         public void HideNow() => r.Log.Add("HideNow");
 
@@ -327,29 +331,6 @@ public sealed class TrayBuildIndicatorControllerTests
         f.Controller.SetAnimationsEnabled(true);
 
         Assert.Empty(f.Log);
-    }
-
-    // ---------------------------------------------------------------- sayaç
-
-    [Fact]
-    public void Counter_updates_flow_only_while_the_overlay_is_shown()
-    {
-        var f = new Fixture();
-
-        // Gösterge kapalıyken sayaç view'a İTİLMEZ — görünmeyen bir yüzeyde measure/draw kirletmek yok (§14.5).
-        f.Controller.SetCounter(3, 248);
-        f.Controller.SetCounter(7, 248);
-        Assert.Empty(f.Log);
-
-        f.Controller.SetMainWindowVisible(false);
-        f.Controller.SetPhase(AppPhase.Running);
-
-        // Açılışta SON değer tam bir kez itilir (ara değerler geçmişte kaldı).
-        Assert.Equal(["ShowLoop", "Counter 7/248"], f.Log);
-
-        f.Log.Clear();
-        f.Controller.SetCounter(8, 248);
-        Assert.Equal(["Counter 8/248"], f.Log);
     }
 
     // ---------------------------------------------------------------- saflık

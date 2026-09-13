@@ -302,10 +302,9 @@ public class ReducedMotionCoverageTests
     //   · Döngünün HİÇ başlatılmaması bir GÖRÜNÜM kararı değil, bir CONTROLLER kararıdır (gösterge kendisi
     //     "başla" dendiğinde başlar): TrayBuildIndicatorControllerTests
     //     .Reduced_motion_shows_the_static_frame_and_skips_the_exit_animation
-    //   · Kontrolün kendi iki yüzeyi: TrayBuildIndicatorTests
+    //   · Kontrolün kendi yüzeyi: TrayBuildIndicatorTests
     //     .The_static_frame_starts_no_clock_and_rests_every_part_in_place (duruş karesi, saat yok)
-    //     .Counter_change_snaps_with_no_clock_under_reduced_motion       (sayaç anlık, geçiş yok)
-    // Buraya üçüncü bir kopya yazmak, o üç iddiadan sessizce ayrışabilecek bir doğruluk kaynağı olurdu.
+    // Buraya üçüncü bir kopya yazmak, o iki iddiadan sessizce ayrışabilecek bir doğruluk kaynağı olurdu.
 
     // ---------------------------------------------------------------- helpers
 

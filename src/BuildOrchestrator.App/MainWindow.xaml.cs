@@ -1066,8 +1066,8 @@ public partial class MainWindow : Window
     /// <summary>
     /// Controller'ın gördüğü view — overlay penceresini GEREKTİĞİNDE yaratır.
     ///
-    /// <para>Gizleme/sayaç/çıkış fiilleri pencere yoksa sessizce düşer: gösterilmemiş bir göstergeyi gizlemek
-    /// ya da sayacını güncellemek anlamsızdır ve bunun için HWND yaratmak saçma olurdu. Tek istisna
+    /// <para>Gizleme/çıkış fiilleri pencere yoksa sessizce düşer: gösterilmemiş bir göstergeyi gizlemek
+    /// anlamsızdır ve bunun için HWND yaratmak saçma olurdu. Tek istisna
     /// <see cref="BeginExit"/>'tir — controller orada bir CEVAP bekler; pencere yoksa oynatılacak çıkış evresi
     /// de yoktur, o yüzden hemen bitmiş sayılır (aksi halde bildirim sonsuza dek beklerdi).</para></summary>
     private sealed class LazyOverlayView(MainWindow owner) : ITrayBuildIndicatorView
@@ -1075,8 +1075,6 @@ public partial class MainWindow : Window
         public void ShowLoop() => owner.EnsureTrayOverlay().ShowLoop();
 
         public void ShowStatic() => owner.EnsureTrayOverlay().ShowStatic();
-
-        public void UpdateCounter(int done, int total) => owner._trayOverlay?.UpdateCounter(done, total);
 
         public void BeginExit(Action onFinished)
         {
