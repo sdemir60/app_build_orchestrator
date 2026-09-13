@@ -43,9 +43,9 @@ public sealed class TrayOverlayMeasurementTests(ITestOutputHelper output)
 
         // [StaFact] DEĞİL: yukarıdaki Skip.IfNot'un attığı SkipException'ı StaFact'in runner'ı tanımaz
         // (Skipped yerine sessizce Failed üretir) — DragReorderTests/AppShutdownTests'teki aynı kısıt. Gövde
-        // bu yüzden manuel bir STA thread'de koşar; test metodu (Skip.IfNot dahil) [SkippableFact] altında
-        // kalır.
-        await RunOnStaThreadAsync(() =>
+        // bu yüzden ortak StaThread.RunAsync ile manuel bir STA thread'de koşar; test metodu (Skip.IfNot
+        // dahil) [SkippableFact] altında kalır.
+        await StaThread.RunAsync(() =>
         {
             var overlay = new TrayBuildOverlayWindow(DsResources.NewScope());
             try
@@ -63,25 +63,7 @@ public sealed class TrayOverlayMeasurementTests(ITestOutputHelper output)
             {
                 overlay.Close();
             }
-        });
-    }
-
-    /// <summary>[Fix] Gövdeyi YENİ, ayrı bir STA thread'de senkron koşturur ve sonucu/istisnayı (tip
-    /// değişmeden) <see cref="TaskCompletionSource"/> ile çağıran thread'e taşır — DragReorderTests
-    /// .RunOnStaThreadAsync ile AYNI kalıp (StaFact'in runner'ı SkipException'ı tanımadığı için bu test de
-    /// [SkippableFact] altında kalıp gövdeyi manuel STA thread'de koşturmak zorunda).</summary>
-    private static Task RunOnStaThreadAsync(Action body)
-    {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
-        {
-            try { body(); tcs.SetResult(); }
-            catch (Exception ex) { tcs.SetException(ex); }
-        })
-        { IsBackground = true, Name = "tray-overlay-measurement-sta" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        return tcs.Task;
+        }, name: "tray-overlay-measurement-sta");
     }
 
     private static string Line(string label, (double FramesPerSecond, double CpuPercent) s) =>

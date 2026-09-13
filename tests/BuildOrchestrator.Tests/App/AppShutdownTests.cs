@@ -17,29 +17,25 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>Testler neden pompalamayan ayrı bir thread kullanıyor:</b> mevcut <see cref="DispatcherPump"/>
 /// yardımcısı Dispatcher'ı POMPALAR — bu, deadlock'u tam olarak GİZLER (post edilen continuation koşar).
 /// Buradaki hata modu "context kurulu ama pump çalışmıyor" halidir, bu yüzden testler kendi STA thread'lerini
-/// kurar: <see cref="DispatcherSynchronizationContext"/> yüklü, <c>PushFrame/Run</c> YOK. Thread
-/// <c>IsBackground</c>'dur — regresyonda asılı kalsa bile test host'unu kilitlemez; çağıran taraftaki dış
-/// guard (<c>WaitAsync</c>) hızlı FAIL üretir (süresiz asılma yok, sleep tabanlı flake yok).</para>
+/// kurar: <see cref="DispatcherSynchronizationContext"/> yüklü, <c>PushFrame/Run</c> YOK. STA thread'in
+/// kendisi ve TCS ile sonuç taşıma <see cref="StaThread"/>'ten (ortak yardımcı — kopya YASAK) gelir; bu
+/// sınıfın KENDİ eklediği tek şey, gövdeyi <see cref="StaThread.RunAsync{T}"/>'e vermeden ÖNCE kurulan
+/// <see cref="DispatcherSynchronizationContext"/>'tir. Thread <c>IsBackground</c>'dur — regresyonda asılı
+/// kalsa bile test host'unu kilitlemez; çağıran taraftaki dış guard (<c>WaitAsync</c>) hızlı FAIL üretir
+/// (süresiz asılma yok, sleep tabanlı flake yok).</para>
 /// </summary>
 public class AppShutdownTests
 {
     /// <summary>Verilen işi, <see cref="DispatcherSynchronizationContext"/> KURULU ama mesaj pompası
-    /// ÇALIŞMAYAN bir STA thread'inde koşturur — <c>App.OnExit</c>'in gerçek koşulları.</summary>
-    private static Task<T> OnBlockedDispatcherThread<T>(Func<T> body)
-    {
-        var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
+    /// ÇALIŞMAYAN bir STA thread'inde koşturur — <c>App.OnExit</c>'in gerçek koşulları. STA thread + TCS
+    /// mekaniği <see cref="StaThread"/>'ten gelir; burada eklenen TEK şey context kurulumudur.</summary>
+    private static Task<T> OnBlockedDispatcherThread<T>(Func<T> body) =>
+        StaThread.RunAsync(() =>
         {
             SynchronizationContext.SetSynchronizationContext(
                 new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
-            try { tcs.SetResult(body()); }
-            catch (Exception ex) { tcs.SetException(ex); }
-        })
-        { IsBackground = true, Name = "blocked-dispatcher" }; // deadlock regresyonunda test host'u kilitlenmesin
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        return tcs.Task;
-    }
+            return body();
+        }, name: "blocked-dispatcher");
 
     /// <summary>EngineHost'un disposal yolu ile AYNI ŞEKİL: <c>ConfigureAwait(false)</c> YOK, iş thread-pool'da
     /// biter. <c>Task.Yield()</c> askıya almayı GARANTİLER (awaiter'ın <c>IsCompleted</c>'i her zaman false) →
