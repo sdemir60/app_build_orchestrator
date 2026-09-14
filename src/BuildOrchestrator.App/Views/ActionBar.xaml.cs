@@ -232,6 +232,13 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- sayaç chip'leri
     private void BuildCounterChips()
     {
+        // [design v1.17.0 §9] Σ ikonu KASITLI OLARAK Foreground'a BAĞLANMAZ: chip'in Foreground'u
+        // (Ds.Bar.Chip → Ds.Chip) rest'te Brush.TextSecondary'dir, ama Σ ikonunun tasarımdaki dinlenme rengi
+        // bir tık daha soluk olan Brush.TextDim'dir (_ds_bundle.js Chip'in ikon span'i — "active ? amber-text :
+        // text-dim", metin/değer ise "text-secondary"/"text-primary"). Doğrudan bağ bu rest farkını KAYBEDER;
+        // Σ hiç aktif olmadığı için (ActionBar.BuildCounterChips altındaki Click handler'ı bkz.) amber-text'e
+        // hiç geçmeyecek bir bağdan kazanılacak tek şey nötr hover'da text-primary'ye dönmesidir — brief bu
+        // dinlenme rengini AÇIKÇA korunacak diye pinler, bu yüzden sabit fırça BİLİNÇLİ olarak kalır.
         _sigmaChip = AddCounterChip(IconVisual.Make(this, "Icon.Sigma", "Brush.TextDim", ChipIconSize), out _sigmaValue,
             AccessibilityNames.FilterAll, first: true);
         _sigmaChip.Click += (_, _) => { _vm?.ToggleFilter(null); _sigmaChip.IsChecked = false; }; // Σ HER ZAMAN temizler (ActiveFilter zaten null'sa ToggleFilter no-op'tur → PropertyChanged gelmez → burada zorla)
