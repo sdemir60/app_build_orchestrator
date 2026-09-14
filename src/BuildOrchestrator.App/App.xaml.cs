@@ -101,8 +101,9 @@ public partial class App : Application
         var sc = new ServiceCollection();
         // [D1] Supervisor yolu TEK kaynaktan (SupervisorLayout ← csproj $(SupervisorFolderName)).
         sc.AddSingleton(_ => new EngineHost(SupervisorLayout.ResolveExePath(AppContext.BaseDirectory)));
-        // Üretimde ~50ms tick — Task 11'in kanıtladığı batching davranışı; test'te enjekte edilen tick kullanılır.
-        sc.AddSingleton(_ => new ConsoleBatcher(ct => Task.Delay(50, ct)));
+        // Üretimde ~50ms biriktirme penceresi — Task 11'in kanıtladığı batching davranışı; pencere yalnız satır
+        // gelince açılır (boşta pompa uyanmaz, bkz. ConsoleBatcher.Batching). Test'te enjekte edilen tick kullanılır.
+        sc.AddSingleton(_ => ConsoleBatcher.Batching(ct => Task.Delay(50, ct)));
         // [E1/T67] Satır hover ikonlarının OS eylemleri: gerçek Process.Start başlatıcısı + gerçek ProcessRunner
         // (vswhere→devenv). Testler osActions=null default'u kullanır (VM eylemleri güvenle no-op).
         sc.AddSingleton(sp => new RunViewModel(

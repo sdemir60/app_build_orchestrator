@@ -103,6 +103,12 @@ public partial class EventStreamView : UserControl
         // [design v1.12.1 §2.6] İmlecin renk turu PALETİ okur; DataContext ağaca girmeden yazılabildiği için
         // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir. Yükleme, turun garanti kurulduğu andır.
         Loaded += (_, _) => { if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink(); };
+        // Tepsiye inen pencere görünümü boşaltmaz, yalnız gizler — sonsuz saatler görünürlüğe bağlıdır (§14.5).
+        IsVisibleChanged += (_, _) =>
+        {
+            if (IsVisible && PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink();
+            else StopCursorBlink();
+        };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -403,6 +409,9 @@ public partial class EventStreamView : UserControl
     // 30fps, sonsuz). Reduced-motion'da hiç oynamaz (imleç steady 1.0).
     private void StartCursorBlink()
     {
+        // Görünmezken saat KURULMAZ: bu metot her olayda çağrılır (UpdateActiveLine), tepsideyken de — kapı
+        // çağıranlarda olsaydı bir sonraki olay saati geri kurardı (bkz. HiddenCursorClockTests).
+        if (!IsVisible) { StopCursorBlink(); return; }
         if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
         PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
         // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı renk turunu döner.

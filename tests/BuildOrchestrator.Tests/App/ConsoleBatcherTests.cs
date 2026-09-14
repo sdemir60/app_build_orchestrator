@@ -207,6 +207,88 @@ public class ConsoleBatcherTests
         Assert.Equal("fresh1\n", appended.ToString()); // stale1/stale2 atıldı; doküman-set çağrısı YOK
     }
 
+    // ---------------------------------------------------------------- üretim kurulumu: boşta uyanmaz
+
+    /// <summary>
+    /// Üretim batcher'ı konsola satır gelmedikçe biriktirme penceresini AÇMAZ.
+    ///
+    /// <para><b>Eski davranış (ÖLÇÜLDÜ):</b> üretim tick'i koşulsuz <c>Task.Delay(50)</c> idi — pompa uygulama
+    /// ömrü boyunca saniyede 20 kez uyanıyordu, konsola hiç satır gelmezken ve pencere tepsideyken de. Tepside
+    /// boşta alınan CPU profilinde (dotnet-trace) .NET zamanlayıcı thread'i + thread pool bu uyanmalar yüzünden
+    /// UI thread kadar CPU harcıyordu. Tick sözleşmesi (tick → boşalt → varsa tek flush) DEĞİŞMEDİ; yalnız
+    /// üretimin verdiği tick önce bir satırı bekler, sonra pencereyi açar.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_idle_production_batcher_does_not_open_its_window_until_a_line_arrives()
+    {
+        int windows = 0;
+        var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var batcher = ConsoleBatcher.Batching(ct =>
+        {
+            Interlocked.Increment(ref windows);
+            opened.TrySetResult();
+            return Task.Delay(Timeout.Infinite, ct);
+        });
+        using var cts = new CancellationTokenSource();
+
+        var pump = batcher.PumpAsync((_, _) => { }, cts.Token);
+
+        Assert.Equal(0, Volatile.Read(ref windows)); // boş kanal: pencere açılmadı, zamanlayıcı kurulmadı
+
+        batcher.Post("x");
+        await opened.Task.WaitAsync(TimeSpan.FromSeconds(5)); // üst sınır — gerçek bir bekleyiş değil (D8)
+        Assert.Equal(1, Volatile.Read(ref windows));
+
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pump.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    /// <summary>Boş kanalda dönen bir pompayı ASKIDA bırakmak yerine düşüren pencere sayacı: tamamlanmış bir
+    /// pencere döndüren eski (tick-önce) pompa hiç beklemeden sonsuz döngüye girerdi — test kırmızı vermeli,
+    /// süiti kilitlememeli.</summary>
+    private static Func<CancellationToken, Task> SpinGuard(Func<Task> window, int max = 50)
+    {
+        int calls = 0;
+        return _ => ++calls > max
+            ? throw new InvalidOperationException($"pompa boş kanalda {max} kezden fazla pencere açtı (dönüyor)")
+            : window();
+    }
+
+    /// <summary>Pencere açıkken gelen satırlar AYNI flush'ta birleşir — biriktirme davranışı korunur.</summary>
+    [Fact]
+    public async Task Lines_arriving_while_the_window_is_open_share_one_flush()
+    {
+        var window = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var windowOpened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var batcher = ConsoleBatcher.Batching(SpinGuard(() => { windowOpened.TrySetResult(); return window.Task; }));
+        var flushed = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var pump = batcher.PumpAsync((text, _) => flushed.TrySetResult(text), CancellationToken.None);
+        batcher.Post("a");
+        await windowOpened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        batcher.Post("b");
+        window.SetResult();
+
+        Assert.Equal("a\nb\n", await flushed.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        batcher.Complete();
+        await pump.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>Kapanış: hiç satır gelmemiş bir pompa <c>Complete</c> ile askıda kalmadan biter.</summary>
+    [Fact]
+    public async Task Completing_an_idle_production_batcher_ends_the_pump()
+    {
+        var batcher = ConsoleBatcher.Batching(SpinGuard(() => Task.CompletedTask));
+        var flushes = new List<string>();
+
+        var pump = batcher.PumpAsync((text, _) => flushes.Add(text), CancellationToken.None);
+        batcher.Complete();
+
+        await pump.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(pump.IsCompletedSuccessfully);
+        Assert.Empty(flushes);
+    }
+
     // ---------------------------------------------------------------- [D4 review §1] reseed-generation guard
 
     [Fact]
