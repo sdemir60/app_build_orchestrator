@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,10 +9,11 @@ using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Console;
 
-/// <summary>[T56/3a+3b] Konsol panel başlığının iki modu (design-v1 §2.5). Kod-tarafı sürülür (DP/binding şişkinliği
-/// yerine küçük, test edilebilir yüzey): <see cref="ShowNarrative"/> / <see cref="ShowProjectLog"/> modu değiştirir,
-/// <see cref="SetLineCount"/> sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan
-/// (<see cref="ConsoleStatus.BrushKey"/>) SetResourceReference ile canlı çözülür (hardcode YASAK).
+/// <summary>[T56/3a+3b → v1.18.0 §9] Konsol panel başlığının iki modu (README §9 v1.18.0 "Konsol başlığı ve
+/// `Back` satırı"). Kod-tarafı sürülür (DP/binding şişkinliği yerine küçük, test edilebilir yüzey):
+/// <see cref="ShowNarrative"/> / <see cref="ShowProjectLog"/> modu değiştirir, <see cref="SetLineCount"/>
+/// sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan (<see cref="ConsoleStatus.BrushKey"/>)
+/// SetResourceReference ile canlı çözülür (hardcode YASAK).
 ///
 /// <para>[3b] Copy-log butonu (Ek A #3): yalnız proje-log modunda (log varken) görünür; <see cref="LogTextProvider"/>'ın
 /// döndürdüğü TAM log metnini <see cref="ClipboardWriter"/> (retry sarmalayıcı) ile panoya yazar; başarıda ikon
@@ -27,6 +28,11 @@ public partial class ConsoleHeader : UserControl
     private const string CopyIconKey = "Icon.Copy";
     private const string CheckIconKey = "Icon.Check";
 
+    // [v1.18.0] Back butonunun ikonu (lucide arrow-left) — 12px, hover'da butonla BİRLİKTE renk değiştirir.
+    private const string BackIconKey = "Icon.Back";
+    private const double BackIconSize = 12;
+    private const double ButtonGap = 6; // _ds_bundle.js:104 DS button gap — ActionBar.ButtonGap ile AYNI sayı.
+
     private readonly CopyLogFeedback _copyFeedback = new();
     private DispatcherTimer? _copyRevertTimer;
     private Stopwatch? _copyClock;
@@ -34,6 +40,7 @@ public partial class ConsoleHeader : UserControl
     public ConsoleHeader()
     {
         InitializeComponent();
+        BuildBackButtonContent();
         ShowNarrative(0);
     }
 
@@ -56,35 +63,43 @@ public partial class ConsoleHeader : UserControl
     {
         Mode = HeaderMode.Narrative;
         ConsoleLabel.Visibility = Visibility.Visible;
-        BackButton.Visibility = Visibility.Collapsed;
-        ProjectNameText.Visibility = Visibility.Collapsed;
-        StatusGlyphText.Visibility = Visibility.Collapsed;
-        StatusNameText.Visibility = Visibility.Collapsed;
-        DepIssueBadge.Visibility = Visibility.Collapsed;
+        ProjectLogGroup.Visibility = Visibility.Collapsed;
         ResetCopyVisual();
         CopyLogButton.Visibility = Visibility.Collapsed;
         SetLineCount(lineCount);
     }
 
-    /// <summary>Proje-log modu: ← Back + proje adı (mono) + statü glyph/adı + (varsa) ▲ dependency issue + copy + N lines.</summary>
-    public void ShowProjectLog(string projectName, ProjectRowState state, bool hasDepIssue, int lineCount)
+    /// <summary>Proje-log modu: Back + proje adı (mono) + statü glyph/adı + (varsa) dependency-issue/cycle
+    /// rozetleri + copy + N lines.</summary>
+    /// <param name="projectName">Tam proje adı (kısaltılmaz — panel daralınca TEK kısalan öğe budur).</param>
+    /// <param name="state">Motorun bu koşudaki statüsü — statü glyph'i/adı/rengi buradan türer.</param>
+    /// <param name="inCycle">[v1.18.0] Bu proje bir bağımlılık döngüsünün üyesi mi — döngü rozetinin kapısı.</param>
+    /// <param name="depIssues">[v1.18.0] Bu proje için tespit edilen dependency-uyarısı kök adları (tam liste —
+    /// satırın "+N" kısaltmasının AKSİNE, tooltip'te HEPSİ yazılır). Boş/null ise rozet gizlenir.</param>
+    /// <param name="namePrefix">Kısa-ad öneği (<see cref="Graph.GraphNode.CommonDotPrefix"/>) — dep-issue
+    /// tooltip'i adları bununla kısaltır (tek otorite, kopya YASAK).</param>
+    /// <param name="lineCount">Sağdaki "N lines" sayacı.</param>
+    public void ShowProjectLog(string projectName, ProjectRowState state, bool inCycle,
+        IReadOnlyList<string>? depIssues, string namePrefix, int lineCount)
     {
         Mode = HeaderMode.ProjectLog;
         ConsoleLabel.Visibility = Visibility.Collapsed;
-        BackButton.Visibility = Visibility.Visible;
+        ProjectLogGroup.Visibility = Visibility.Visible;
 
         ProjectNameText.Text = projectName;
-        ProjectNameText.Visibility = Visibility.Visible;
 
-        StatusGlyphText.Text = ConsoleStatus.Glyph(state);
-        StatusGlyphText.SetResourceReference(ForegroundProperty, ConsoleStatus.BrushKey(state));
-        StatusGlyphText.Visibility = Visibility.Visible;
+        StatusGlyphIcon.Status = ConsoleStatus.VisualStatus(state);
 
         StatusNameText.Text = ConsoleStatus.Name(state);
         StatusNameText.SetResourceReference(ForegroundProperty, ConsoleStatus.BrushKey(state));
-        StatusNameText.Visibility = Visibility.Visible;
 
+        bool hasDepIssue = depIssues is { Count: > 0 };
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
+        DepIssueBadge.ToolTip = hasDepIssue ? RowWarning.DepIssueDetail(depIssues!, namePrefix) : null;
+
+        CycleBadge.Visibility = inCycle ? Visibility.Visible : Visibility.Collapsed;
+        CycleBadge.ToolTip = inCycle ? RowWarning.InCycle : null;
+
         // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
         // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
         ResetCopyVisual();
@@ -110,6 +125,25 @@ public partial class ConsoleHeader : UserControl
     }
 
     private void OnBackClick(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
+
+    // ---------------------------------------------------------------- kuruluş (ctor)
+
+    /// <summary>[v1.18.0] Back butonunun içeriği (Icon.Back + "Back") kod-tarafı kurulur: ikon butonun
+    /// <b>animasyonlu</b> Foreground'unu İZLER (<see cref="IconVisual.BoundToForeground"/>, ActionBar'ın Sync/
+    /// bakım ikonlarıyla AYNI desen) — ghost buton hover'da text-secondary→text-primary'ye geçerken ikon da
+    /// birlikte geçer (prototip: <c>stroke="currentColor"</c>).</summary>
+    private void BuildBackButtonContent()
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(IconVisual.BoundToForeground(BackButton, BackIconKey, BackIconSize));
+        content.Children.Add(new TextBlock
+        {
+            Text = "Back",
+            Margin = new Thickness(ButtonGap, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        BackButton.Content = content;
+    }
 
     // ---------------------------------------------------------------- copy log (Ek A #3)
 
@@ -157,7 +191,13 @@ public partial class ConsoleHeader : UserControl
 
     /// <summary>Copy-log butonunun görselini (ikon geometrisi + boya + tooltip + renk) tek yerden sürer.
     /// [T60] Geometri VE boya semantiği (kontur/dolgu + kalınlık) <see cref="IconPaint"/> üzerinden sözlükten
-    /// gelir: sözlük merge edilmemişse sessizce çözümsüz kalır (<c>SetResourceReference</c> deseni).</summary>
+    /// gelir: sözlük merge edilmemişse sessizce çözümsüz kalır (<c>SetResourceReference</c> deseni).
+    ///
+    /// <para>[v1.18.0] Buton artık <c>Ds.IconButton</c> stilini taşır (hover'da zemin/Foreground'u
+    /// <c>DsTransition.AnimatedForeground</c> ile sürer) ama bu metot Foreground'a doğrudan yazmaya devam eder
+    /// — <see cref="Views.AboutDialog"/>'un Copy diagnostics butonuyla AYNI kanıtlanmış desen (kopya YASAK):
+    /// kalıcı geri bildirim (yeşil ✓) hover'ın 120ms geçişinden daha güçlü bir sinyaldir; hover bu pencerede
+    /// üstüne binerse (nadir), DsTransition'ın kendi tetikleyicisi geri devralır.</para></summary>
     private void SetCopyIcon(string iconKey, string tooltip, string foregroundKey)
     {
         IconPaint.Apply(CopyLogGlyph, this, iconKey, foregroundKey);

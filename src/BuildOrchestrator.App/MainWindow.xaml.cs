@@ -545,7 +545,8 @@ public partial class MainWindow : Window
             if (row is null) return;
 
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
-            Shell.ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
+            Shell.ConsoleHeaderControl.ShowProjectLog(
+                row.Name, row.State, row.InCycle, row.DepIssues, row.NamePrefix, _vm.GetActiveLineCount());
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.

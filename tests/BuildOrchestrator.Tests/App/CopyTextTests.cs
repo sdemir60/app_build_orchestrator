@@ -23,6 +23,11 @@ public class CopyTextTests
 {
     // ---------------------------------------------------------------- [A13/T3a · a8] panel caps başlıkları + ← Back
 
+    /// <summary>[v1.18.0 §9 — DEĞİŞEN KURAL] Back eskiden düz bir Unicode metin butonuydu
+    /// (<c>Content="&#x2190; Back"</c>, tek bir <c>string</c>) — tasarım DS Ghost.Sm + çizilmiş
+    /// <c>Icon.ArrowLeft</c> (Icons.xaml'de zaten <c>Icon.Back</c> adıyla duruyordu) ister. İçerik artık bir
+    /// ikon + metin <c>StackPanel</c>'dır (ConsoleHeader.xaml.cs ctor); "Back" sözcüğü hâlâ BİREBİR ama artık
+    /// o panelin İÇİNDEKİ <c>TextBlock</c>'ta.</summary>
     [StaFact]
     public void Panel_caption_labels_and_the_back_button_glyph_text_are_verbatim()
     {
@@ -43,8 +48,10 @@ public class CopyTextTests
         Assert.Contains("PROJECTS", headers);
         Assert.Contains("EVENT STREAM", headers);
 
-        // "← Back" — ConsoleHeader.xaml:40 (Content="&#x2190; Back").
-        Assert.Equal("← Back", shell.ConsoleHeaderControl.BackButton.Content);
+        // "Back" — artık DS Ghost.Sm içeriğindeki (ikon + metin StackPanel) TextBlock'ta.
+        var backContent = (System.Windows.Controls.StackPanel)shell.ConsoleHeaderControl.BackButton.Content;
+        var backLabel = backContent.Children.OfType<System.Windows.Controls.TextBlock>().Single();
+        Assert.Equal("Back", backLabel.Text);
 
         GC.KeepAlive(window);
     }

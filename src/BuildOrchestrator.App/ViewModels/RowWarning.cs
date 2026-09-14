@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq;
 using BuildOrchestrator.App.Graph;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -46,5 +47,17 @@ public static class RowWarning
         return depIssues.Count == 1
             ? "Dependency issue: " + first
             : string.Format(CultureInfo.InvariantCulture, "Dependency issue: {0} +{1}", first, depIssues.Count - 1);
+    }
+
+    /// <summary>[v1.18.0 §9] Konsol başlığının dep-issue rozeti — satırın "+N" kısaltmasının AKSİNE tam
+    /// listeyi virgülle yazar (prototip <c>BuildApp.jsx:2616</c>: <c>depIssue.map(shortName).join(', ')</c>).
+    /// Kısaltma (<see cref="For"/>) daraltılmış slot içindir; başlığın tooltip'inde yer bol olduğu için
+    /// hiçbir proje adı gizlenmez. Kısa-ad türetimi AYNI otoriteden gelir (<see cref="GraphNode.ShortLabel"/>,
+    /// kopya YASAK).</summary>
+    public static string DepIssueDetail(IReadOnlyList<string> depIssues, string namePrefix)
+    {
+        ArgumentNullException.ThrowIfNull(depIssues);
+        string names = string.Join(", ", depIssues.Select(n => GraphNode.ShortLabel(n, namePrefix)));
+        return "Dependency issue: " + names + " — last successful output referenced";
     }
 }

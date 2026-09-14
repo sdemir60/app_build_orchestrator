@@ -115,19 +115,29 @@ public static class ConsoleEmptyState
 }
 
 /// <summary>
-/// [T56/3a] Proje-log modu panel başlığındaki statü glyph'i + statü adı + statü rengi eşlemesi — design-v1
+/// [T56/3a → v1.18.0 §9] Proje-log modu panel başlığındaki statü adı + statü rengi eşlemesi — design-v1
 /// EN_STATUS ile birebir (Started→Building, Pending→Queued). Renkler token ANAHTARLARIdır (hardcode YASAK) —
 /// başlık kontrolü DynamicResource ile çözer.
+///
+/// <para><b>[DEĞİŞEN KURAL — v1.18.0]</b> Glyph eskiden burada Unicode bir karakterdi (<c>✓</c>/<c>✗</c>/…) ve
+/// başlık onu düz bir <c>TextBlock</c>'a yazıyordu — tasarım ise 13px çizilmiş <c>StatusGlyph</c> ister,
+/// <c>building</c>'de dönen amber bir yayla. Glyph artık ÇİZİLİR (<see cref="Controls.StatusGlyph"/>); bu sınıf
+/// ona hangi <see cref="Controls.GraphStatus"/>'u vereceğini söyler — metin/renk eşlemesi (Name/BrushKey)
+/// DEĞİŞMEDİ, motorun kendi kelime dağarcığını (Succeeded/Failed/Skipped/Started/Pending) korur.</para>
 /// </summary>
 public static class ConsoleStatus
 {
-    public static string Glyph(ProjectRowState state) => state switch
+    /// <summary>[v1.18.0] Çizilmiş <see cref="Controls.StatusGlyph"/>'in okuduğu görsel statü. Motorun
+    /// <see cref="ProjectRowState"/>'i (Started/Pending/…) ile grafın <see cref="Controls.GraphStatus"/>'u
+    /// (Building/Queued/…) aynı isimler olsa da AYRI enum'lardır — eşleme burada, TEK yerde.</summary>
+    public static Controls.GraphStatus VisualStatus(ProjectRowState state) => state switch
     {
-        ProjectRowState.Succeeded => "✓",
-        ProjectRowState.Failed => "✗",
-        ProjectRowState.Skipped => "—",
-        ProjectRowState.Started => "▸",
-        _ => "•",
+        ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
+        ProjectRowState.Failed => Controls.GraphStatus.Failed,
+        ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
+        ProjectRowState.Started => Controls.GraphStatus.Building,
+        ProjectRowState.Pending => Controls.GraphStatus.Queued,
+        _ => Controls.GraphStatus.Discovered,
     };
 
     public static string Name(ProjectRowState state) => state switch

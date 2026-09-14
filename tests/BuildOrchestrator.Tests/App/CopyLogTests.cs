@@ -130,10 +130,10 @@ public class CopyLogTests
         header.ShowNarrative(12);
         Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
 
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, hasDepIssue: false, lineCount: 0);
+        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, inCycle: false, depIssues: null, namePrefix: "", lineCount: 0);
         Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility); // log yok → copy yok
 
-        header.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Started, hasDepIssue: false, lineCount: 42);
+        header.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Started, inCycle: false, depIssues: null, namePrefix: "", lineCount: 42);
         Assert.Equal(Visibility.Visible, header.CopyLogButton.Visibility);
     }
 
@@ -143,7 +143,7 @@ public class CopyLogTests
         // [M-3] Seçim anında log boş → buton gizli; ~200ms sayaç tazelemesi (SetLineCount) satır gelince
         // görünürlüğü YENİDEN değerlendirir → buton belirir (yalnız ShowProjectLog anında bir kez değil).
         var header = NewHeaderWithIcons();
-        header.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Started, hasDepIssue: false, lineCount: 0);
+        header.ShowProjectLog("OSYS.Server.Api", ProjectRowState.Started, inCycle: false, depIssues: null, namePrefix: "", lineCount: 0);
         Assert.Equal(Visibility.Collapsed, header.CopyLogButton.Visibility);
 
         header.SetLineCount(7); // build başladı, satırlar akmaya başladı
@@ -159,7 +159,7 @@ public class CopyLogTests
     public void CopyLog_joins_lines_and_toggles_to_check_and_Copied_on_success()
     {
         var header = NewHeaderWithIcons();
-        header.ShowProjectLog("A", ProjectRowState.Started, false, 5);
+        header.ShowProjectLog("A", ProjectRowState.Started, inCycle: false, depIssues: null, namePrefix: "", lineCount: 5);
         Assert.False(header.IsShowingCopied);
 
         string? captured = null;
@@ -180,7 +180,7 @@ public class CopyLogTests
     public void CopyLog_failed_clipboard_does_not_enter_copied_state()
     {
         var header = NewHeaderWithIcons();
-        header.ShowProjectLog("A", ProjectRowState.Started, false, 5);
+        header.ShowProjectLog("A", ProjectRowState.Started, inCycle: false, depIssues: null, namePrefix: "", lineCount: 5);
         header.LogTextProvider = () => "x";
         header.ClipboardWriter = _ => false; // kalıcı kilit
 
