@@ -151,7 +151,7 @@ public sealed partial class RunViewModel
     internal bool CleanRequested => _cleanRequested;
     internal bool CleanInFlight => _cleanInFlight;
 
-    /// <summary>[clean] Tıklama anının saati — adımın EN AZ <see cref="RunViewModel.CleanMinStepMs"/> görünmesi
+    /// <summary>[clean] Tıklama anının saati — adımın EN AZ <see cref="RunViewModel.MaintenanceMinStepMs"/> görünmesi
     /// bu andan ölçülür. Kaynak enjekte edilen monoton saattir (D8: testte deterministik).</summary>
     private long _cleanStartedAtMs;
 
@@ -171,6 +171,10 @@ public sealed partial class RunViewModel
     /// <summary>[optimize guard testi] YALNIZ testler için — istek ve uçuş pencerelerinin gözlemlenebilir hâli.</summary>
     internal bool OptimizeRequested => _optimizeRequested;
     internal bool OptimizeInFlight => _optimizeInFlight;
+
+    /// <summary>[optimize] Tıklama anının saati — <see cref="_cleanStartedAtMs"/>'in ikizi: adımın EN AZ
+    /// <see cref="RunViewModel.MaintenanceMinStepMs"/> görünmesi bu andan ölçülür.</summary>
+    private long _optimizeStartedAtMs;
 
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
@@ -304,21 +308,29 @@ public sealed partial class RunViewModel
     /// <para><b>Hata yolunda zincir YOKTUR</b> (<see cref="TryConsumeCleanFailure"/>): başarısız bir işin
     /// arkasına Sync takmak ikinci bir hata satırı üretirdi. Satırlar hollow kalır, Sync kullanıcıya kalır.</para>
     /// </summary>
-    private async Task OnCleanCompletedAsync()
+    private Task OnCleanCompletedAsync() => HandOverToSyncAsync(_cleanStartedAtMs, ReleaseCleanSurface);
+
+    /// <summary>
+    /// [clean/optimize] Bakım işinden Sync'e DEVİR — iki bakım işi aynı diziyi oynar (kopya YASAK): adımın
+    /// kalanı, iki işlem arasındaki boşluk, Sync kapıyı devralır, EN SON bakım yüzeyi bırakılır.
+    /// </summary>
+    /// <param name="startedAtMs">Bakım işinin tıklandığı an — adımın görünür süresi buradan ölçülür.</param>
+    /// <param name="releaseSurface">İşin kendi yüzeyini bırakan metot (Clean ya da Optimize).</param>
+    private async Task HandOverToSyncAsync(long startedAtMs, Action releaseSurface)
     {
         // [kullanıcı kararı 2026-09-12] Adım kalanını oynat: spinner DÖNMEYE DEVAM eder, çünkü kapı henüz
-        // bırakılmadı. Küçük bir workspace'te silme milisaniyeler sürüyor ve adım hiç görünmüyordu.
-        await HoldAsync(CleanMinStepMs - (_nowMs() - _cleanStartedAtMs));
+        // bırakılmadı. Küçük bir workspace'te iş milisaniyeler sürüyor ve adım hiç görünmüyordu.
+        await HoldAsync(MaintenanceMinStepMs - (_nowMs() - startedAtMs));
         // Ardından iki işlem arasındaki hafif boşluk — ama kapı KAPALI kalır. Ardı ardına iki animasyon dizisi
         // tek bulanıklığa dönüşmesin diye beklenir, yoksa düğmeleri canlandırmak için değil.
-        await HoldAsync(CleanStepGapMs);
+        await HoldAsync(MaintenanceStepGapMs);
         // [ölçülen kusur] Yüzey burada, Sync kapıyı DEVRALDIKTAN SONRA bırakılır. Önce bırakılıyordu ve o
         // pencerede Sync/Clean tıklanabilir haldeydi, düğmeler de sönük → canlı → sönük kırpışıyordu; iki
         // işlem tek bir meşgul pencere olarak okunmalıdır. Devralma SENKRONDUR: SyncCoreAsync ilk await'ine
         // varmadan `_syncRequested`'ı kurar, yani Task'ı beklemeden başlatmak kapıyı kesintisiz tutar.
         // Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve aşağıdaki bırakma doğru sonucu verir.
         var sync = SyncCoreAsync(clearBuffers: false);
-        ReleaseCleanSurface();
+        releaseSurface();
         await sync;
     }
 
@@ -367,13 +379,18 @@ public sealed partial class RunViewModel
         NotifySyncGatedCommands();
     }
 
-    /// <summary>[optimize] Onarım bitti. Clean'in aksine ardından SYNC ZİNCİRLENMEZ: Optimize hiçbir projeyi
-    /// dirty yapmaz (imza kaynak-tabanlıdır), ekrandaki kararlar geçerli kalır — yenilenecek bir şey yoktur.
-    /// Sayılar stream özetine <c>AppendStreamFor</c> yolundan gider, bu yüzden event'in kendisi gerekmez.</summary>
-    private void OnOptimizeCompleted() => ReleaseOptimizeSurface();
+    /// <summary>
+    /// [optimize] Onarım bitti: Clean ile AYNI devir — adım tutulur, sonra <b>konsol KORUNARAK bir Sync
+    /// koşar</b> (<see cref="HandOverToSyncAsync"/>). Liste tıklamada boşaltıldığı için onu geri getiren bu
+    /// Sync'tir. Hata yolunda zincir YOKTUR (<see cref="TryConsumeOptimizeFailure"/>).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-14]</b> Eskiden burada yalnız yüzey bırakılırdı ve
+    /// gerekçe "Optimize hiçbir projeyi dirty yapmaz, yenilenecek karar yok" idi. Kullanıcı iki bakım işinin
+    /// aynı akışı izlemesini istedi: temizle → Sync'i çalıştır → düğmelerde yükleme.</para>
+    /// </summary>
+    private Task OnOptimizeCompletedAsync() => HandOverToSyncAsync(_optimizeStartedAtMs, ReleaseOptimizeSurface);
 
     /// <summary>[optimize guard] Uçuştaki Optimize'ı serbest bırakır: İKİ bayrak da temizlenir (motor işe HİÇ
-    /// başlayamadan ölmüş olabilir) ve kapılar tek yerden açılır. Çağıranlar: <see cref="OnOptimizeCompleted"/>,
+    /// başlayamadan ölmüş olabilir) ve kapılar tek yerden açılır. Çağıranlar: <see cref="OnOptimizeCompletedAsync"/>,
     /// <see cref="TryConsumeOptimizeFailure"/> ve <see cref="RunViewModel.ReleaseAfterEngineLoss"/>.</summary>
     private void ReleaseOptimizeSurface()
     {

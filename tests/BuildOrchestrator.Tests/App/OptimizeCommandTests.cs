@@ -185,10 +185,18 @@ public class OptimizeCommandTests
         vm.OnEvent(Done());
 
         Assert.True(vm.SyncCommand.CanExecute(null));
+        Assert.True(vm.OptimizeCommand.CanExecute(null));
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-14] Eski iddia: tamamlanma Build/Rebuild/Cycles'ı da aynı
+        // anda geri açar. Optimize artık tıklamada listeyi boşaltıyor (Clean gibi); run komutlarının kapısı
+        // topolojidir ve onu geri getiren şey bitişte zincirlenen Sync'tir. Harness'te o Sync motora ulaşmaz,
+        // bu yüzden topoloji burada elle verilir — bakım kilidinin gerçekten kalktığı böyle görülür.
+        Assert.False(vm.BuildCommand.CanExecute(null));
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0, inCycle: true), Node(@"C:\p\b.csproj", "B", 1, inCycle: true)],
+            [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
         Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(vm.BuildCyclesCommand.CanExecute(null));
-        Assert.True(vm.OptimizeCommand.CanExecute(null));
     }
 
     // ---------------------------------------------------------------- yüzeyin bırakıldığı yollar
@@ -296,8 +304,11 @@ public class OptimizeCommandTests
 
         // İSTEK penceresi: motor henüz optimizeStarted ile cevap vermedi ama Clean çoktan kapalı.
         bool observed = false;
-        vm.DebugOnCommandSent = _ =>
+        vm.DebugOnCommandSent = c =>
         {
+            // Yalnız Optimize'ın kendi gönderimi gözlenir: bitişte zincirlenen Sync de bu kancadan geçer ve
+            // o anda istek penceresi zaten kapanmıştır.
+            if (c is not OptimizeWorkspaceCommand) return;
             observed = true;
             Assert.True(vm.OptimizeRequested);
             Assert.False(vm.CleanCommand.CanExecute(null));
@@ -338,5 +349,151 @@ public class OptimizeCommandTests
 
         vm.OnEvent(Done());
         Assert.True(vm.PullRepositoryCommand.CanExecute(null));
+    }
+
+    // ---------------------------------------------------------------- Clean gibi: tıklamada boşalt, bitişte Sync
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-14] Optimize de tıklama anında liste ve grafı boşaltır.
+    /// <para><b>Eski iddia:</b> "Liste ve graf BOŞALTILMAZ — Optimize hiçbir projeyi dirty yapmaz, ekrandaki
+    /// kararlar geçerli kalır." <b>Değişme gerekçesi:</b> kullanıcı Optimize'ın Clean gibi davranmasını istedi
+    /// (temizle → Sync'i çalıştır → düğmelerde yükleme). Optimize bitişte Sync zincirlediği için ve Sync de
+    /// yüzeyi tıklama anında boşalttığı için, boşaltmanın Optimize'ın tıklamasında olmaması tek işlemi iki
+    /// sarsıntıya bölerdi (önce konsol, sonra liste) — Clean ve Sync'te zaten reddedilmiş kusur.</para>
+    /// </summary>
+    [Fact]
+    public async Task Optimize_empties_the_project_list_and_the_graph_at_click()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        Assert.Single(vm.Projects);   // ön-koşul: ekranda bir proje ve kararı var
+        Assert.True(vm.HasTopology);
+
+        await vm.OptimizeCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Projects);
+        Assert.False(vm.HasTopology);
+        Assert.Equal(0, vm.WillBuildCount);
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-14] Optimize bitince KONSOL KORUNARAK bir Sync koşar —
+    /// Clean'in birebir deseni.
+    /// <para><b>Eski iddia:</b> "Bitişte otomatik Sync ZİNCİRLENMEZ — yenilenecek bir karar yoktur."
+    /// <b>Değişme gerekçesi:</b> kullanıcı iki bakım işinin aynı akışı izlemesini istedi; boşaltılan listeyi
+    /// geri getiren şey de bu Sync'tir.</para>
+    /// </summary>
+    [Fact]
+    public async Task Optimize_completion_runs_an_automatic_sync_and_keeps_the_console()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        vm.OnEvent(new OptimizeProgressEvent("checking NuGet packages — 10 projects, all packages present", "info"));
+
+        vm.OnEvent(Done());
+
+        Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
+        Assert.Contains("checking NuGet packages", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Optimize'ın adımı da HER ZAMAN aynı süre oynar: hızlı biten bir onarımda spinner yine görünür,
+    /// ardından kısa boşluk, EN SON Sync. Dizi ve süreler Clean ile AYNI kaynaktandır
+    /// (<see cref="RunViewModel.MaintenanceMinStepMs"/>, <see cref="RunViewModel.MaintenanceStepGapMs"/>).</summary>
+    [Fact]
+    public async Task A_fast_optimize_still_shows_its_step_before_the_sync_takes_over()
+    {
+        long now = 0;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        var log = new List<string>();
+        vm.OperationHold = ms => { log.Add($"hold {ms} busy={vm.OptimizeBusy}"); return Task.CompletedTask; };
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is OptimizeWorkspaceCommand) log.Add("optimize sent");
+            if (c is SyncWorkspaceCommand) log.Add("sync sent");
+        };
+
+        await vm.OptimizeCommand.ExecuteAsync(null);
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        now = 50;
+        vm.OnEvent(Done());
+
+        Assert.Equal(
+        [
+            "optimize sent",
+            "hold 390 busy=True", // adım sürüyor: spinner DÖNÜYOR
+            "hold 200 busy=True", // boşluk — kapı hâlâ kapalı
+            "sync sent",
+        ], log);
+    }
+
+    /// <summary>Kapı Optimize'ın tıklanmasından Sync'in devralmasına kadar BİR AN bile açılmaz — Clean'de ölçülüp
+    /// düzeltilmiş kırpışmanın Optimize'da yeniden doğmaması için.</summary>
+    [Fact]
+    public async Task Nothing_is_clickable_between_the_optimize_and_the_sync_that_follows_it()
+    {
+        long now = 0;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
+        var gates = new List<string>();
+        vm.OperationHold = ms =>
+        {
+            gates.Add($"hold {ms}: build={vm.BuildCommand.CanExecute(null)} sync={vm.SyncCommand.CanExecute(null)} " +
+                      $"clean={vm.CleanCommand.CanExecute(null)} optimize={vm.OptimizeCommand.CanExecute(null)}");
+            return Task.CompletedTask;
+        };
+
+        await vm.OptimizeCommand.ExecuteAsync(null);
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        now = 50;
+        vm.OnEvent(Done());
+
+        Assert.Equal(
+        [
+            "hold 390: build=False sync=False clean=False optimize=False",
+            "hold 200: build=False sync=False clean=False optimize=False",
+        ], gates);
+    }
+
+    /// <summary>Yavaş bir Optimize zaten görünmüştür: üstüne bekleme EKLENMEZ, yalnız boşluk kalır.</summary>
+    [Fact]
+    public async Task A_slow_optimize_is_not_held_any_longer_than_the_gap()
+    {
+        long now = 0;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        var holds = new List<double>();
+        vm.OperationHold = ms => { holds.Add(ms); return Task.CompletedTask; };
+
+        await vm.OptimizeCommand.ExecuteAsync(null);
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        now = 90_000; // restore'lar dakikalar sürebilir
+        vm.OnEvent(Done());
+
+        Assert.Equal([RunViewModel.MaintenanceStepGapMs], holds);
+    }
+
+    /// <summary>Başarısız bir Optimize'ın arkasına Sync TAKILMAZ (Clean ile aynı): hata zaten konsolda.</summary>
+    [Theory]
+    [InlineData("optimizeFailed")]
+    [InlineData("optimizeRejected")]
+    public async Task A_failed_optimize_does_not_chain_a_sync(string code)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new ErrorEvent(code, "boom"));
+
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+        Assert.True(vm.OptimizeCommand.CanExecute(null));
     }
 }
