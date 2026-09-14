@@ -1511,7 +1511,7 @@ comparison — no DI, no engine, deliberately outside the single-instance gate),
 the tray), normal. An unrecognized argument is swallowed.
 
 The composition root registers the `EngineHost` (resolving the Supervisor path from the assembly metadata of
-§3.3), the console batcher (~50 ms flush tick), the OS actions service and the view models. Two application-wide
+§3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service and the view models. Two application-wide
 singletons are exposed statically because their owners have no constructor seam: the reduced-motion settings and
 the hero-motion coordinator.
 
@@ -2359,7 +2359,8 @@ lines.
   `succeeded` was tried and dropped: it caught the word inside a project name just as readily, and a colour
   that is sometimes wrong is worth less than no colour at all. Warnings are amber and errors red; orange left
   the console with the rest of the interface (§14.3).
-- Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`.
+- Appends are batched: IPC → channel → ~50 ms flush → exactly one `BeginUpdate → Insert → EndUpdate`. The
+  window opens when a line arrives, not on a clock, so a console with nothing to print never wakes the pump.
 - The live document is capped at a render slice of 200 lines. That cap is a **window, not a limit**: scrolling
   to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
   and grows as the window slides — lines trimmed off the top while the panel is following are moved into it, so
@@ -3244,10 +3245,17 @@ render loop awake while *any* clock is active, so one forgotten `Forever` costs 
 application was measured burning 133 % of a core, with a single thread at 92 %. Being collapsed is not being
 unloaded — a hidden control stays in the tree and its own property never changes again — so every infinite
 animation is gated on `IsVisible` as well as on its own state, and re-evaluated from `IsVisibleChanged`. The
-same discipline applies to periodic work: a one-shot `DispatcherTimer` stops itself in its own tick (the
-dispatcher roots it, so an unstopped one ticks forever and can never be collected), and anything called from
-the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
-measure and draw five times a second.
+same is true of the whole window: closing it to the tray hides it and unloads nothing. The gate lives inside the
+method that starts the clock, not at its callers, because the callers keep running while the window is hidden —
+the console prompt is refreshed on every visual-line change and the event stream's active line on every event —
+and a clock stopped only from `IsVisibleChanged` came straight back on the next one. The same discipline applies
+to periodic work: a one-shot `DispatcherTimer` stops itself in its own tick (the dispatcher roots it, so an
+unstopped one ticks forever and can never be collected), anything called from the 200 ms tick writes only when
+the value actually changed, since assigning the same string still invalidates measure and draw five times a
+second, and the console's append pump opens its batching window only once a line is waiting instead of waking on
+a timer for the life of the application. Measured with CPU cycle counters on an idle application in the tray,
+the cursor gate and the sleeping pump together took the process from roughly 81 to 5 million cycles a second;
+either one alone removed barely a sixth of it.
 
 **One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
