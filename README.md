@@ -85,6 +85,8 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
 The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
 build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
+Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
+their environment variable is set (ARCHITECTURE.md §17.5).
 
 ## Publish
 
@@ -438,6 +440,10 @@ Switching **while a run is in flight** writes a console note and sends the new p
 while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
 (`cpu cap off` for Full).
+
+If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
+every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the
+physical memory and make Windows page other applications (ARCHITECTURE.md §11.1).
 
 Three qualifications worth knowing:
 

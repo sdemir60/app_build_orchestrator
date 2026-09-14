@@ -1451,6 +1451,16 @@ single owner in Core, called by both the App and the Supervisor.
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
 
+**Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
+multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
+between workers), and a large project's compiler holds on the order of a gigabyte while it runs. On a developer machine that already has an IDE, browsers and other tools
+open, Full can exhaust physical memory: the operating system then pages other applications out and back in,
+and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers, the
+interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
+a fraction of a gigabyte and committed memory passed the machine's limit; Balanced kept a working margin.
+That is why Balanced is the default, and why a build that freezes the machine is answered by a lower profile.
+The measurement is kept as an opt-in test (§17.5).
+
 ### 11.2 What the cap does and does not cover
 
 The cap is written with `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP` and applies to the **sum** of the inner
@@ -1545,13 +1555,19 @@ it would make the whole window click-through and kill the click-to-restore.
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
 events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
-icon at its large size. Its text is not composed a second time: it is the ribbon's own terminal line, split once
+icon. That icon is loaded at the one size the notification API accepts — any other size is rejected only when the
+balloon is shown, and because the notification is sent from an unawaited continuation the rejection would
+vanish without a trace, so a test pins the size headlessly. Its text is not composed a second time: it is the ribbon's own terminal line, split once
 at the separator the ribbon itself writes — the head becomes the title (`Completed`, `▸ Stopped`, `Run failed`)
 and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
 ribbon. A line that carries no separator — today only the one an unexpected engine stop writes; the engine
 failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
+
+The overlay sits closer to the right edge of the work area than to the taskbar: at rest the mark occupies the
+left of its band and the right is reserved for the chevron's exit path, so the edge margins are separate and
+the right one is narrow, but never zero — the band already contains the outermost exit frame and its shadow.
 
 The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
@@ -3312,7 +3328,8 @@ Shared test infrastructure lives in one place per concern rather than being copi
 `AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
 proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press is raised, both
 halves of the gesture), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
+`MotionScope`), a manual STA thread for tests that must skip dynamically (`StaThread` — the STA runner does not
+recognise a skip), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
 `FakeMotionSignal`, `FakeMotionSettings`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
@@ -3380,6 +3397,16 @@ minutes). They are excluded from the normal verification run and executed separa
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category=Acceptance"
 ```
+
+A second group carries the `Measurement` category: probes and measurements that read numbers rather than
+assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, UI latency and
+memory under each perf profile, and the content-decision timings. The filter above does **not** exclude them
+(`!=` admits every other category value). The tray and perf probes open real windows, show balloons or
+saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`, `BO_MEASURE_OVERLAY`,
+`BO_MEASURE_PERF` — and reports itself as skipped unless it is set. The content-decision measurements are gated
+differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
+`BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
+root exists they run with the normal suite.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 

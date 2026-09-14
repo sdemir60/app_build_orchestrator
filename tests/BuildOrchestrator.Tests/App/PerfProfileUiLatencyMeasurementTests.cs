@@ -15,7 +15,8 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Model:</b> gerçek bir rebuild kullanıcının reposunun çıktılarını yeniden yazar, bu yüzden
 /// kullanılmaz. Onun yerine derleyicinin iş yükü modellenir: <c>UseSharedCompilation=false</c> ile her MSBuild
-/// kendi derleyicisini süreç içinde koşturur, yani proje başına bir çekirdeği yakan bir süreçtir. Sonda
+/// projesi için taze bir derleyici süreci başlatır. İlk ölçüm bunu tek thread'li bir CPU yakıcıyla kaba biçimde
+/// modeller (gerçek derleyiciyle ölçüm ikinci testtedir). Sonda
 /// profilin paralelliği kadar CPU yakan süreç başlatır, onları ürünün KENDİ iç job'ına (aynı
 /// <see cref="JobObject.SetPriorityClass"/> / <see cref="JobObject.SetCpuRate"/> yolu, aynı
 /// <see cref="PerfProfile.For"/> tablosu) koyar ve bu sırada Normal öncelikli bir dispatcher thread'inin
