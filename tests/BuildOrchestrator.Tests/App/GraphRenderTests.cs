@@ -250,7 +250,9 @@ public class GraphRenderTests
         Assert.NotNull(clock);
         var spin = Assert.IsType<DoubleAnimation>(clock.Timeline);
         Assert.Equal(0.0, spin.From);
-        Assert.Equal(-view.BeadsGeometry.Perimeter, spin.To!.Value, 6);
+        // AYIRT EDİCİ — v1.18.0: kalınlık artık 1 değil (1.6), dash birimi kalınlık ÇARPANI olduğu için
+        // saatin hedefi de buna BÖLÜNÜR. Eski iddia `-Perimeter` idi (kalınlık 1'de bölme etkisizdi).
+        Assert.Equal(-view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness, spin.To!.Value, 6);
         Assert.Equal(TimeSpan.FromMilliseconds(GraphBeads.CycleMs), spin.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, spin.RepeatBehavior);
         // [tray indicator] Sabit beş tipte ayrı ayrı tanımlıydı; tek kaynağa (MotionTokens) taşındı.
@@ -276,11 +278,13 @@ public class GraphRenderTests
 
         var controller = view.BeadsClock!.Controller!;
         controller.SeekAlignedToLastTick(TimeSpan.FromMilliseconds(GraphBeads.CycleMs / 2), TimeSeekOrigin.BeginTime);
-        Assert.Equal(-view.BeadsGeometry.Perimeter / 2, orbit.StrokeDashOffset, 3);
+        // v1.18.0: offset de kalınlığa (1.6) bölünür — bkz. yukarıdaki saat testi.
+        Assert.Equal(-view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness / 2, orbit.StrokeDashOffset, 3);
 
         controller.SeekAlignedToLastTick(
             TimeSpan.FromMilliseconds(GraphBeads.CycleMs * 2.5), TimeSeekOrigin.BeginTime);
-        Assert.Equal(-view.BeadsGeometry.Perimeter / 2, orbit.StrokeDashOffset, 3); // 2.5 tur → yine yarım
+        // 2.5 tur → yine yarım.
+        Assert.Equal(-view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness / 2, orbit.StrokeDashOffset, 3);
     }
 
     /// <summary>§2.3: "Animasyon sınıfı bitişten sonra 700ms daha kalır → noktalar DÖNERKEN söner, donup
@@ -327,10 +331,16 @@ public class GraphRenderTests
 
         Assert.NotEqual(before, view.BeadsGeometry.Perimeter);
         var orbit = view.NodeVisuals["OSYS.Data.Core"].Beads!;
-        Assert.Equal(view.BeadsGeometry.Side, orbit.Width, 6);
+        // AYIRT EDİCİ — v1.18.0: WPF Rectangle kalemi geometriyi StrokeThickness/2 İÇERİ alır (bkz.
+        // SelectionRingInset dokümanı), dolayısıyla YOLUN (kalem merkezinin) Side olması için dikdörtgen
+        // kalınlık kadar BÜYÜK kurulur. Eski iddia `orbit.Width == Side` idi (kalınlık 1'de fark 1px'ti ve
+        // testler onu yakalamıyordu).
+        Assert.Equal(view.BeadsGeometry.Side + GraphBeads.StrokeThickness, orbit.Width, 6);
         Assert.Equal(GraphBeads.DashArrayFor(view.BeadsGeometry), orbit.StrokeDashArray);
         Assert.NotNull(view.BeadsClock); // hâlâ derleniyor → saat yeni çevreyle geri kuruldu
-        Assert.Equal(-view.BeadsGeometry.Perimeter, ((DoubleAnimation)view.BeadsClock!.Timeline).To!.Value, 6);
+        Assert.Equal(
+            -view.BeadsGeometry.Perimeter / GraphBeads.StrokeThickness,
+            ((DoubleAnimation)view.BeadsClock!.Timeline).To!.Value, 6);
     }
 
     /// <summary>[M-d] Yeni topoloji eski görselleri atar — paylaşımlı saat onlarla birlikte bırakılır, aksi

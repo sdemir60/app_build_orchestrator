@@ -79,7 +79,7 @@ public partial class GraphView : UserControl
     /// alınır — tıklama alanı ise gövdede kalır, dolayısıyla büyümez.</para></summary>
     public static readonly double CellOverhang = Math.Max(
         SelectionRingInset,
-        GraphBeads.OrbitGapPx + GraphBeads.StrokeThickness / 2);
+        GraphBeads.MaxOrbitGapPx + GraphBeads.StrokeThickness / 2);
     /// <summary>Glyph, düğüm kenarının bu kadarıdır (§2.3: "node'un %52'si").</summary>
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
@@ -142,7 +142,8 @@ public partial class GraphView : UserControl
     /// ayrı sonsuz animasyon kurmak timing engine'i gereksiz yere meşgul ederdi.</summary>
     private AnimationClock? _beadsClock;
     private BeadsGeometry _beadsGeometry;
-    private DoubleCollection _beadsDash = GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize));
+    private DoubleCollection _beadsDash =
+        GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize, QuietGraphLayout.MinPitch));
     /// <summary>Son building düğüm bittikten sonra saati bırakan TEK ATIMLIK tetik (§2.3: noktalar dönerken
     /// söner). Talep üzerine kurulur; yeni bir building doğarsa iptal edilir.</summary>
     private DispatcherTimer? _beadsSpindown;
@@ -780,7 +781,7 @@ public partial class GraphView : UserControl
 
         // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
         // aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.
-        var beads = GraphBeads.For(size);
+        var beads = GraphBeads.For(size, _layout.Pitch);
         if (beads != _beadsGeometry)
         {
             _beadsGeometry = beads;
@@ -964,9 +965,10 @@ public partial class GraphView : UserControl
     // ---------------------------------------------------------------- beads (§2.3 building animasyonu)
 
     /// <summary>
-    /// [quiet] §2.3 "Building animasyonu — beads": derlenen düğümün 2.8px dışında dolanan sık amber
-    /// noktalar. Yörünge DOM'da sürekli durur, yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms
-    /// ease-out; noktalar DÖNERKEN söner, donup kaybolmaz.
+    /// [quiet] v1.18.0 "Beads bir tık kalın + hücreye kelepçeli yörünge": derlenen düğümün, hücre pitch'inden
+    /// geriye çözülen (0.8–2.8px) mesafede dışında dolanan sık amber noktalar. Yörünge DOM'da sürekli durur,
+    /// yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms ease-out; noktalar DÖNERKEN söner, donup
+    /// kaybolmaz.
     ///
     /// <para>Zaten doğru durumdaki bir yörünge YENİDEN kurulmaz (<see cref="GraphNodeVisual.BeadsVisible"/>):
     /// koşarken statü itişi saniyede birkaç kez gelir ve her çağrıda animasyonu baştan başlatmak yörüngeyi
@@ -1020,16 +1022,20 @@ public partial class GraphView : UserControl
         };
         orbit.SetResourceReference(Shape.StrokeProperty, "Brush.AmberText");
         ApplyBeadsGeometry(orbit);
-        // Kareyi ÖRTMEZ (2.8px dışında) ama gövdenin DIŞINDA durur: gövde tıklama alanıdır ve yörünge
-        // taşmasının hit-test'e karışmaması gerekir.
+        // Kareyi ÖRTMEZ (hücre pitch'inden geriye çözülen bgap kadar dışında) ama gövdenin DIŞINDA durur:
+        // gövde tıklama alanıdır ve yörünge taşmasının hit-test'e karışmaması gerekir.
         visual.Cell.Children.Add(orbit);
         visual.Beads = orbit;
         if (_beadsClock is { } clock) orbit.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, clock);
     }
 
+    /// <summary>[v1.18.0] WPF <see cref="Rectangle"/> kalemi geometriyi <c>StrokeThickness/2</c> İÇERİ alır
+    /// (aynı gerekçe: bkz. <see cref="SelectionRingInset"/> dokümanı) — dolayısıyla YOLUN (kalem merkez
+    /// çizgisinin) <c>_beadsGeometry.Side</c> olması için dikdörtgenin kendisi kalınlık kadar BÜYÜK kurulur;
+    /// aksi halde yol <c>Side − StrokeThickness</c>'a küçülür ve desen/çevre hesabıyla uyuşmaz.</summary>
     private void ApplyBeadsGeometry(Rectangle orbit)
     {
-        orbit.Width = orbit.Height = _beadsGeometry.Side;
+        orbit.Width = orbit.Height = _beadsGeometry.Side + GraphBeads.StrokeThickness;
         orbit.RadiusX = orbit.RadiusY = _beadsGeometry.CornerRadius;
         orbit.StrokeDashArray = _beadsDash;
     }
@@ -1042,7 +1048,9 @@ public partial class GraphView : UserControl
         var spin = new DoubleAnimation
         {
             From = 0,
-            To = -_beadsGeometry.Perimeter,
+            // v1.18.0: kalınlık artık 1 değil (1.6) — dash birimi kalınlık ÇARPANI olduğu için hedef de
+            // buna BÖLÜNÜR (bkz. GraphBeads tip dokümanı).
+            To = -_beadsGeometry.Perimeter / GraphBeads.StrokeThickness,
             Duration = TimeSpan.FromMilliseconds(GraphBeads.CycleMs),
             RepeatBehavior = RepeatBehavior.Forever,
         };
