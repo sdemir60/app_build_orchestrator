@@ -390,6 +390,53 @@ public class ChoreographyTests
         Assert.Equal(delayMs + MarkingChoreography.SettleGlideMs, last.KeyTime.TimeSpan.TotalMilliseconds, 6);
     }
 
+    /// <summary>
+    /// [design v1.18.0 §2.5] <b>"Zıplama yok" iddiasının gerçek kanıtı.</b> Ölçülen kısımlar teker teker
+    /// doğrudur (Settle hedefi == RunDim, GlideMs vb.) ama asıl garanti şudur: bir düğümün Settle'da başlattığı
+    /// gecikmeli animasyon nesnesi, hedef değeri DEĞİŞMEDİĞİ sürece KESİNTİYE UĞRAMADAN sürer —
+    /// <see cref="GraphView"/>'ın "değişmediyse dokunma" kapısı (<c>target.Equals(visual.OpacityTarget)</c>)
+    /// bunu sağlar. Üç senaryo pinlenir: (a) AYNI adım/kapsam tekrar itilirse (ör. dalganın son üyesi
+    /// işaretlendiğinde <c>PushGraph</c> yeniden çağrılır), (b) Settle sürerken başka bir düğümün statü itişi
+    /// (<c>UpdateStatuses</c>) gelirse, (c) koreografi biter (<c>SetMarking(None, …)</c>) ve graf koşu fazına
+    /// geçer — henüz sırası gelmemiş bir node'un hedefi (<c>Queued</c>, 0.13) Settle'daki hedefiyle AYNIYSA.
+    /// Kapı olmasa üçü de animasyonu SIFIRLAR ve node'un gecikmesi (dolayısıyla "sıralı" oluşu) her seferinde
+    /// baştan başlardı — (c)'de ayrıca marking→running geçişinde gerçek bir kare atlaması OLURDU.
+    /// </summary>
+    [StaFact]
+    public void The_settle_animation_survives_redundant_pushes_and_the_run_phase_handover()
+    {
+        var view = Graph(
+            new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked),
+            new GraphNode("b", "b", 1, GraphStatus.Discovered, VisualStatus.Marked));
+
+        var marked = new HashSet<string>(["a", "b"], StringComparer.Ordinal);
+        var order = new Dictionary<string, int> { ["a"] = 0, ["b"] = 1 };
+
+        view.SetMarking(MarkStep.Settle, marked, order);
+        var settleAnimation = view.OpacityAnimationOf("b"); // n=2 → stagger=40ms, b'nin gecikmesi > 0
+        Assert.NotNull(settleAnimation);
+
+        // (a) AYNI adım/kapsam/sıra TEKRAR itilir (ör. dalganın son PushGraph'ı) — animasyon YENİDEN
+        // KURULMAMALI, aksi halde b'nin gecikmesi sıfırlanır ve "kendi sırasında söner" kuralı bozulur.
+        view.SetMarking(MarkStep.Settle, marked, order);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b"));
+
+        // (b) Settle sürerken BAŞKA bir düğümün statü itişi gelir — b'nin animasyonunu KESMEMELİ.
+        view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b"));
+
+        // (c) Üretim sırası (MainWindow.ApplyMarkingToGraph → RunViewModel handler): koşu fazı ve statüler
+        // ÖNCE itilir (marking hâlâ Settle'da olduğu için opaklığı ETKİLEMEZ — marking > running önceliği),
+        // SONRA koreografi None'a düşürülür. b hâlâ Queued'sa (sırası gelmemiş) hedefi tam Settle'daki
+        // 0.13'le AYNIDIR — animasyon nesnesi burada da DEĞİŞMEMELİ.
+        view.RunPhase = GraphRunPhase.Running;
+        view.UpdateStatuses([new GraphNode("b", "b", 1, GraphStatus.Queued, VisualStatus.Queued)]);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b")); // marking hâlâ Settle — henüz etkilenmedi
+
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal), NoOrder);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b")); // marking→running geçişinde zıplama YOK
+    }
+
     /// <summary>Bir görsel durumun düğüm çerçevesi için çözülmüş token fırçası — test kendi anahtarını
     /// YAZMAZ, eşleme <see cref="VisualStatuses"/>'tedir.</summary>
     private static SolidColorBrush TokenBrush(GraphView view, VisualStatus state) =>

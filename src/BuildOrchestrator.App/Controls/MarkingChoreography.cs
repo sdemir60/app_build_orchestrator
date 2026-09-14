@@ -28,9 +28,11 @@ public enum MarkStep
 /// başına opaklık/geçiş süreleri.
 ///
 /// <para>Her işlem — Build · Rebuild · Clean · satır aksiyonu · Resolve — AYNI sırayı oynar:
-/// <b>nötr an → dalga → sarı-gri an → örtüşen veda → sıralı teslim → koşu.</b> "Örtüşen veda"nın gerekçesi
-/// ölçülmüş: gri büyük bir opaklık düşüşü yaptığı için yolun ortasında "gitti" okunur, bu yüzden sarının
-/// süresi daha kısa tutulur ve ikisi aynı anda biter.</para>
+/// <b>nötr an → dalga → sarı-gri an → örtüşen veda → sıralı teslim → koşu.</b> Griler kapsamdan ÖNCE
+/// sönmeye başlar (560ms fark) ve süresi kapsamınkinden (<see cref="SettleGlideMs"/>) uzundur — kapsam
+/// griden KISA sürede iner ki ilk yanan node griler hâlâ sönerken zaten koşu seviyesinde olsun; bu artık
+/// "ikisi aynı anda biter" hedefiyle seçilmiş bir sayı DEĞİLDİR, spec'in kendi süresidir (bkz.
+/// <see cref="SettleGlideMs"/>'in DEĞİŞEN KURAL notu).</para>
 ///
 /// <para><b>Sınıf SAFtır</b> (WPF'siz test edilir): sayılar burada, uygulama <c>ProjectRow</c>/<c>GraphView</c>
 /// ve sürücüde. Kaynak: design-v1.11.0 <c>prototype/app/build-data.js</c> <c>_mark</c> (:340-369) ve

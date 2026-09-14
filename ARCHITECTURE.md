@@ -3176,10 +3176,10 @@ the scope and awaits a gate; the shell owns the timing and closes it.
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
 releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
 run's own opacity system gives a queued node, and 0.18 on the rest — stay on the graph while the engine plans.
-Landing there instead of an intermediate amber (0.45, the earlier design) is what closes the last gap: with an
-intermediate value the graph still had to take one visible step, from that value to the run's own dim level,
-the moment `runStarted` finally cancelled the choreography — even though the frame had been held still the
-whole time. `runStarted` is what drops the hold — the shell pushes the run phase and the fresh statuses first
+Landing exactly on the run's own dim level is what makes the hold invisible: nothing about the frame has to
+change when the run actually starts, because marking and running already agree on what a not-yet-building
+node looks like — there is no second value for the graph to step through on the way in.
+`runStarted` is what drops the hold — the shell pushes the run phase and the fresh statuses first
 and only then cancels the choreography, so the graph moves from the farewell straight into the run's own
 opacities with no step left to take. The prototype starts the run in the same instant the sequence ends; under
 a real engine, holding the frame is the equivalent. Letting the sequence fall back to full brightness and
