@@ -144,6 +144,15 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 ### Nerede çalışılır
 
 Çalışma **her zaman ana projede** (`D:\Projects\Other\Apps\app_build_orchestrator`) yapılır. Tek istisna:
-kullanıcı açıkça **"worktree'de yap"** derse — o zaman kalıcı worktree
-`D:\Projects\Other\Apps\app_build_orchestrator-ai` (branch `ai`) kullanılır, yenisi açılmaz. İş orada da
-kendi çalışma branch'inde yürür ve bitince `main`'e merge + push edilir; worktree yerinde kalır, silinmez.
+kullanıcı açıkça **"worktree'de yap"** derse — o zaman kalıcı worktree kullanılır, yenisi açılmaz.
+
+**Adlandırma kuralı: `-ai` eki.** Kalıcı worktree'nin klasörü proje adı + `-ai`
+(`D:\Projects\Other\Apps\app_build_orchestrator-ai`), boştaki branch'i ana branch adı + `-ai`: **`main-ai`**.
+
+- `main-ai`, `main`'in aynasıdır — kendi commit'i olmaz. Git aynı branch'in iki worktree'de birden açık
+  olmasına izin vermediği için worktree boştayken `main` yerine onu taşır.
+- İşe başlarken worktree önce `main-ai`'yi `main`'e ff-only günceller (`git merge --ff-only main`), sonra
+  oradan işin kendi çalışma branch'ini açar.
+- İş bitince çalışma branch'i `main`'e merge + push edilir, merge doğrulanınca branch local ve remote'tan
+  silinir. Worktree `main-ai`'ye döner ve yeniden `main`'e ff-only güncellenir; oturum orada biter. Worktree
+  yerinde kalır, silinmez; `main-ai` remote'a push edilmez.
