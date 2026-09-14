@@ -162,9 +162,16 @@ public sealed class TrayBuildIndicatorTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Maskenin düştüğü an, kaplamanın yerine OTURDUĞU keyframe'in ta kendisidir — ikisi ayrı ayrı
-    /// yazılmış iki zaman olsaydı biri kaydığında maske ya silme bitmeden düşer (şeritler şevronun önünde
-    /// belirir) ya da duruşa taşardı. Pin, zamanın kaplamanın giriş keyframe'inden okunduğunu doğrular.</summary>
+    /// <summary>
+    /// Maske turun BAŞINDA açıkça geri konur, kaplamanın yerine OTURDUĞU keyframe'de düşer.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <b>Eski iddia:</b> maskeyi bırakan animasyonun TEK keyframe'i vardı (düşme
+    /// anı); turun başındaki değer "taban değer (maske)" sayılıyordu. <b>Değişme gerekçesi:</b> kullanıcının
+    /// ekran görüntüsü — ikinci turdan itibaren şeritler şevrondan ÖNCE görünüyor, şevron üstlerinden
+    /// kayıyordu. Storyboard yeniden başlarken (<c>SnapshotAndReplace</c>) keyframe'siz başlangıcın kökenini
+    /// taban değerden değil, önceki turun SON değerinden alır — o da null'dı. Kural artık iki keyframe'dir:
+    /// 0'da maske, düşme anında null. Düşme zamanı kaplamanın giriş keyframe'inden okunur; iki ayrı zaman
+    /// olsaydı biri kaydığında maske ya silme bitmeden düşer ya da duruşa taşardı.</para></summary>
     [StaFact]
     public void The_mask_drops_on_the_sweeps_own_rest_keyframe()
     {
@@ -173,12 +180,84 @@ public sealed class TrayBuildIndicatorTests
         var release = indicator.Loop.Children.OfType<ObjectAnimationUsingKeyFrames>()
             .Single(a => Storyboard.GetTargetName(a) == "StripsMask"
                       && Storyboard.GetTargetProperty(a).Path == "Clip");
-        var frame = Assert.Single(release.KeyFrames.Cast<ObjectKeyFrame>());
+        var frames = release.KeyFrames.Cast<ObjectKeyFrame>().ToList();
+        Assert.Equal(2, frames.Count);
+
+        Assert.Equal(TimeSpan.Zero, frames[0].KeyTime.TimeSpan);
+        Assert.IsAssignableFrom<Geometry>(frames[0].Value);
 
         var sweep = KeyFramesOf(indicator.Loop, "SweepShift");
         var rest = sweep.First(k => k.Value == 0 && k.KeyTime.TimeSpan > TimeSpan.Zero);
-        Assert.Equal(rest.KeyTime, frame.KeyTime);
-        Assert.Null(frame.Value);
+        Assert.Equal(rest.KeyTime, frames[1].KeyTime);
+        Assert.Null(frames[1].Value);
+
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Tur YENİDEN başlarken (bir önceki tur maskeyi bırakmışken) şeritler yine maskenin arkasından
+    /// başlar — kullanıcının gördüğü "şeritler önce, şevron sonra" kusurunun davranış pini.</summary>
+    [StaFact]
+    public void A_new_turn_starts_with_the_mask_in_place()
+    {
+        var (indicator, window, _) = Realize();
+        var mask = (UIElement)VisualTreeHelper.GetChild(indicator.InnerCanvas, 0);
+
+        indicator.BeginLoop();
+        indicator.Loop.Pause(indicator);
+        indicator.Loop.Seek(indicator, TimeSpan.FromSeconds(2.3), TimeSeekOrigin.BeginTime);
+        DispatcherPump.PumpUntil(() => mask.Clip is null, PumpTimeout);
+        Assert.Null(mask.Clip);                 // önceki tur maskeyi bıraktı
+
+        indicator.BeginLoop();                  // yeni tur — üretimde Completed'dan gelen AYNI yol
+        indicator.Loop.Pause(indicator);
+        indicator.Loop.Seek(indicator, TimeSpan.FromSeconds(0.5), TimeSeekOrigin.BeginTime);
+        DispatcherPump.PumpUntil(() => mask.Clip is not null, PumpTimeout);
+        Assert.NotNull(mask.Clip);              // yeni tur şeritleri yine maskenin arkasından açar
+
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Kaplama maskeyi GEOMETRİ dönüşümüyle değil, maske tuvalinin RENDER dönüşümüyle kaydırır; şeritler ters
+    /// yönde telafi edilerek yerinde kalır.
+    ///
+    /// <para><b>Neden:</b> canlı katmanlı pencerede <c>Clip</c> geometrisinin <c>Transform</c>'u animasyonla
+    /// değişince yeniden boyama olmuyordu — iki ayrı belirtisi görüldü: çıkışta amber şeridin gizli ucu
+    /// açılmıyordu, ilk açılışta şeritler hiç açılmayıp yalnız şevron kayıyordu. Aynı kareler ekran dışında
+    /// doğru çıktığı için sayıyla yakalanamaz; bu yüzden pin YAPIYI kilitler: maske geometrisi sabittir,
+    /// hareket öğenin render dönüşümündedir (bileşim hattının her karede taşıdığı tek şey).</para>
+    ///
+    /// <para>Telafi, kaplamanın değerlerinin TERSİDİR ve aynı zaman/eğriyi taşır — ikisi her an toplamda
+    /// sıfırdır; yoksa şeritler kaplamayla birlikte kayardı.</para></summary>
+    [StaFact]
+    public void The_sweep_moves_the_mask_as_a_render_transform_and_the_strips_stay_put()
+    {
+        var (indicator, window, _) = Realize();
+        var mask = (FrameworkElement)VisualTreeHelper.GetChild(indicator.InnerCanvas, 0);
+        var counterHost = (FrameworkElement)VisualTreeHelper.GetChild(mask, 0);
+
+        Assert.Same(indicator.SweepShiftTransform, mask.RenderTransform);
+        Assert.True(mask.Clip!.Transform is null || mask.Clip.Transform.Value.IsIdentity);
+
+        var counter = Assert.IsType<TranslateTransform>(counterHost.RenderTransform);
+        var sweep = KeyFramesOf(indicator.Loop, "SweepShift");
+        var undo = KeyFramesOf(indicator.Loop, "SweepCounterShift");
+        Assert.Equal(sweep.Count, undo.Count);
+        for (int i = 0; i < sweep.Count; i++)
+        {
+            Assert.Equal(sweep[i].KeyTime, undo[i].KeyTime);
+            Assert.Equal(SplineOf(sweep[i]), SplineOf(undo[i]));
+            Assert.Equal(-sweep[i].Value, undo[i].Value);
+        }
+
+        indicator.BeginLoop();
+        indicator.Loop.Pause(indicator);
+        foreach (double at in new[] { 0.4, 0.8, 2.5 })
+        {
+            indicator.Loop.Seek(indicator, TimeSpan.FromSeconds(at), TimeSeekOrigin.BeginTime);
+            DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(40));
+            Assert.Equal(0.0, indicator.SweepShiftTransform.X + counter.X, precision: 6);
+        }
 
         GC.KeepAlive(window);
     }

@@ -70,8 +70,8 @@ public sealed class TrayIndicatorFrameProbeTests(ITestOutputHelper output)
             string? outDir = Environment.GetEnvironmentVariable("BO_PROBE_OUT");
             if (outDir is { Length: > 0 }) Directory.CreateDirectory(outDir);
 
-            // Duruş karesi + çıkış evresinin tamamı (2.100 → 3.000).
-            foreach (double at in new[] { 1.700, 2.200, 2.350, 2.500, 2.650, 2.800, 2.950 })
+            // Giriş (silme sürerken), duruş karesi ve çıkış evresinin tamamı (2.100 → 3.000).
+            foreach (double at in new[] { 0.350, 0.550, 0.800, 1.700, 2.200, 2.350, 2.500, 2.650, 2.800, 2.950 })
             {
                 indicator.Loop.SeekAlignedToLastTick(
                     indicator, TimeSpan.FromSeconds(at), TimeSeekOrigin.BeginTime);

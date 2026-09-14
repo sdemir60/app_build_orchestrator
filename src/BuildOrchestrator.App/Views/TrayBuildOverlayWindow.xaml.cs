@@ -34,7 +34,7 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// <para>Tasarım token'ı DEĞİLDİR: bu bileşenin kendi ölçüleridir (Controls.xaml'in "bileşenin KENDİ
     /// ölçüleri" istisnasıyla aynı statü). DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü
     /// WPF yapar.</para></summary>
-    internal const double Scale = 0.55;
+    internal const double Scale = 0.5;
     internal const double OverlayWidth = TrayBuildIndicator.StageWidth * Scale;
     internal const double OverlayHeight = TrayBuildIndicator.StageHeight * Scale;
     /// <summary>

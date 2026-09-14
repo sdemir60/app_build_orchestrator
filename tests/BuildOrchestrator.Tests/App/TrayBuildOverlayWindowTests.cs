@@ -180,9 +180,9 @@ public sealed class TrayBuildOverlayWindowTests
     ///
     /// <para>Pencereyi büyütüp küçültmek istenirse dokunulacak TEK sayı <c>Scale</c>'dir.</para>
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> <b>Eski iddia:</b> <c>Scale == 2/3</c>. <b>Değişme gerekçesi:</b>
-    /// kullanıcının görsel testi — 2/3'te gösterge "bir tık fazla büyük, çirkin" bulundu; bir kademe
-    /// küçültülerek 0.55'e indi (şeritler hâlâ ilk ölçünün yaklaşık 1.6 katı, okunur kalır).</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> <b>Eski iddialar:</b> <c>Scale == 2/3</c>, sonra <c>0.55</c>. <b>Değişme
+    /// gerekçesi:</b> kullanıcının görsel testleri — 2/3 "bir tık fazla büyük" bulundu, 0.55 "güzel ama bir tık
+    /// daha küçülsün" dendi; 0.5'e indi (şeritler hâlâ ilk ölçünün yaklaşık 1.5 katı, okunur kalır).</para>
     ///
     /// <para>İddia GERÇEKLENMİŞ pencerenin (<c>overlay.Width/Height</c>) üzerinedir, <c>OverlayWidth</c>/
     /// <c>OverlayHeight</c> sabitlerinin kendi tanımına karşı değil — ikisi derleyicinin katladığı AYNI ifade
@@ -196,7 +196,7 @@ public sealed class TrayBuildOverlayWindowTests
 
         Assert.Equal(TrayBuildIndicator.StageWidth * TrayBuildOverlayWindow.Scale, overlay.Width, precision: 10);
         Assert.Equal(TrayBuildIndicator.StageHeight * TrayBuildOverlayWindow.Scale, overlay.Height, precision: 10);
-        Assert.Equal(0.55, TrayBuildOverlayWindow.Scale);
+        Assert.Equal(0.5, TrayBuildOverlayWindow.Scale);
     }
 
     // ---------------------------------------------------------------- view sözleşmesi

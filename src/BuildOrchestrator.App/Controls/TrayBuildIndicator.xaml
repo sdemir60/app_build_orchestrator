@@ -37,6 +37,14 @@
   -->
 
   <UserControl.Resources>
+    <!-- Silme maskesi: soldan gelen geniş bir figür; sağ kenarı şevronun siluetini izler. SABİT bir geometridir
+         — hareketi taşıyan şey maske tuvalinin RENDER dönüşümüdür (SweepShift), geometrinin kendi Transform'u
+         DEĞİL: canlı katmanlı pencere Clip geometrisinin animasyonlu Transform'unu yeniden boyamıyordu.
+         Şevronun PAYLAŞILAN geometrisi burada kullanılamaz — bu figür şevronun kendisi değil, onun izini taşıyan
+         bir maskedir. Hem Clip'in taban değeri hem turun başındaki keyframe AYNI kaynağı okur. -->
+    <PathGeometry x:Key="StripsMaskGeometry"
+                  Figures="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z"/>
+
     <Storyboard x:Key="TrayLoop" Duration="0:0:3">
 
       <!-- ===== ŞEVRON: kayma ===== -->
@@ -70,12 +78,25 @@
         <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="260" KeySpline="0.34,0 0.68,0.6"/>
       </DoubleAnimationUsingKeyFrames>
 
-      <!-- ===== MASKE BIRAKILIR: kaplama yerine oturduğu an (yukarıdaki 1.150 keyframe'i) =====
-           0–1.150 arası Clip taban değeridir (silme sürüyor); 1.150'de null olur ve tur bitene kadar kalır.
-           Tur yeniden başladığında animasyon başa döner ve taban değer (maske) geri gelir. Zaman kaplamanın
-           kendi giriş keyframe'iyle aynı olmak ZORUNDA (pin: TrayBuildIndicatorTests
-           .The_mask_drops_on_the_sweeps_own_rest_keyframe). -->
+      <!-- ===== TELAFİ: şeritler kaplamayla birlikte KAYMASIN =====
+           Kaplama maske tuvalini render dönüşümüyle kaydırır; şeritler o tuvalin içinde durduğu için aynı
+           miktar TERS yönde geri alınır. Değerler kaplamanınkinin TERSİ, zaman ve eğri birebir aynı — ikisinin
+           toplamı her an sıfırdır (pin: TrayBuildIndicatorTests
+           .The_sweep_moves_the_mask_as_a_render_transform_and_the_strips_stay_put). -->
+      <DoubleAnimationUsingKeyFrames Storyboard.TargetName="SweepCounterShift" Storyboard.TargetProperty="X" Duration="0:0:3">
+        <LinearDoubleKeyFrame KeyTime="0:0:0" Value="170"/>
+        <LinearDoubleKeyFrame KeyTime="0:0:0.100" Value="170"/>
+        <SplineDoubleKeyFrame KeyTime="0:0:1.150" Value="0" KeySpline="0.14,0.62 0.2,1"/>
+        <LinearDoubleKeyFrame KeyTime="0:0:2.100" Value="0"/>
+        <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="-260" KeySpline="0.34,0 0.68,0.6"/>
+      </DoubleAnimationUsingKeyFrames>
+
+      <!-- ===== MASKE: turun başında konur, kaplama yerine oturduğu an (1.150) bırakılır =====
+           0'daki keyframe ZORUNLU: storyboard yeniden başlarken keyframe'siz bir başlangıç kökenini önceki turun
+           SON değerinden (null) alır ve şeritler maskesiz başlardı. Düşme zamanı kaplamanın giriş keyframe'iyle
+           aynı olmak ZORUNDA (pin: TrayBuildIndicatorTests.The_mask_drops_on_the_sweeps_own_rest_keyframe). -->
       <ObjectAnimationUsingKeyFrames Storyboard.TargetName="StripsMask" Storyboard.TargetProperty="Clip" Duration="0:0:3">
+        <DiscreteObjectKeyFrame KeyTime="0:0:0" Value="{StaticResource StripsMaskGeometry}"/>
         <DiscreteObjectKeyFrame KeyTime="0:0:1.150" Value="{x:Null}"/>
       </ObjectAnimationUsingKeyFrames>
 
@@ -178,51 +199,48 @@
              pencerede maske çıkışta amber şeridin duruşta gizli kalan ucunu açmıyor, şerit dik bir çizgide
              kesilmiş görünüyordu. Duruş karesi maskesiz de aynıdır — maske yalnız şevronun zaten örttüğü
              bölgeyi kırpıyordu (AppMark hiç maske kullanmaz ve aynı kareyi çizer). -->
-        <Canvas x:Name="StripsMask" Width="286" Height="286" ClipToBounds="False">
-          <Canvas.Clip>
-            <!-- Kaplama: soldan gelen geniş bir maske; sağ kenarı şevronun siluetini izler. Şevronun
-                 PAYLAŞILAN geometrisi burada KULLANILAMAZ — bu figür şevronun kendisi değil, onun izini
-                 taşıyan bir maskedir (ve yalnız bu animasyona aittir). -->
-            <PathGeometry Figures="M -600 -30 L 158.5 -30 L 158.5 83 L 147 95 L 152 104 L 186 140 L 186 148 L 151 184 L 148 196 L 158.5 203 L 158.5 320 L -600 320 Z">
-              <PathGeometry.Transform>
-                <TranslateTransform x:Name="SweepShift"/>
-              </PathGeometry.Transform>
-            </PathGeometry>
-          </Canvas.Clip>
+        <Canvas x:Name="StripsMask" Width="286" Height="286" ClipToBounds="False"
+                Clip="{StaticResource StripsMaskGeometry}">
+          <Canvas.RenderTransform><TranslateTransform x:Name="SweepShift"/></Canvas.RenderTransform>
 
-          <!-- Gölge KIRPMADAN ÖNCE hesaplansın diye ayrı katman: Clip ile Effect aynı öğeye konursa
-               süpürme kenarında bir gölge çizgisi oluşur. -->
+          <!-- Telafi katmanı: kaplamanın render dönüşümünü TERS yönde geri alır, şeritler yerinde kalır. -->
           <Canvas Width="286" Height="286" ClipToBounds="False">
-            <Canvas.Effect>
-              <!-- Opaklık 0.30: zemin YOK (masaüstü ne olursa olsun şeritler seçilebilmeli). Kaynak SVG'de
-                   siyah bir tile üzerine 0.92 idi. -->
-              <DropShadowEffect ShadowDepth="2" Direction="270" BlurRadius="4.8" Color="Black" Opacity="0.30"/>
-            </Canvas.Effect>
+            <Canvas.RenderTransform><TranslateTransform x:Name="SweepCounterShift"/></Canvas.RenderTransform>
 
-            <Path x:Name="StripTopDarkRect" Data="{DynamicResource Brand.Pill.TopDark}"
-                  Fill="{DynamicResource Brush.Brand.StripDim}">
-              <Path.RenderTransform><TranslateTransform x:Name="TopDarkShift"/></Path.RenderTransform>
-            </Path>
+            <!-- Gölge KIRPMADAN ÖNCE hesaplansın diye ayrı katman: Clip ile Effect aynı öğeye konursa
+                 süpürme kenarında bir gölge çizgisi oluşur. -->
+            <Canvas Width="286" Height="286" ClipToBounds="False">
+              <Canvas.Effect>
+                <!-- Opaklık 0.30: zemin YOK (masaüstü ne olursa olsun şeritler seçilebilmeli). Kaynak SVG'de
+                     siyah bir tile üzerine 0.92 idi. -->
+                <DropShadowEffect ShadowDepth="2" Direction="270" BlurRadius="4.8" Color="Black" Opacity="0.30"/>
+              </Canvas.Effect>
 
-            <Path x:Name="StripAmberRect" Data="{DynamicResource Brand.Pill.Amber}"
-                  Fill="{DynamicResource Brush.Amber}">
-              <Path.RenderTransform><TranslateTransform x:Name="AmberShift"/></Path.RenderTransform>
-            </Path>
+              <Path x:Name="StripTopDarkRect" Data="{DynamicResource Brand.Pill.TopDark}"
+                    Fill="{DynamicResource Brush.Brand.StripDim}">
+                <Path.RenderTransform><TranslateTransform x:Name="TopDarkShift"/></Path.RenderTransform>
+              </Path>
 
-            <Path x:Name="StripMidDarkRect" Data="{DynamicResource Brand.Pill.MidDark}"
-                  Fill="{DynamicResource Brush.Neutral700}">
-              <Path.RenderTransform><TranslateTransform x:Name="MidDarkShift"/></Path.RenderTransform>
-            </Path>
+              <Path x:Name="StripAmberRect" Data="{DynamicResource Brand.Pill.Amber}"
+                    Fill="{DynamicResource Brush.Amber}">
+                <Path.RenderTransform><TranslateTransform x:Name="AmberShift"/></Path.RenderTransform>
+              </Path>
 
-            <Path x:Name="StripWhiteRect" Data="{DynamicResource Brand.Pill.White}"
-                  Fill="{DynamicResource Brush.TextPrimary}">
-              <Path.RenderTransform><TranslateTransform x:Name="WhiteShift"/></Path.RenderTransform>
-            </Path>
+              <Path x:Name="StripMidDarkRect" Data="{DynamicResource Brand.Pill.MidDark}"
+                    Fill="{DynamicResource Brush.Neutral700}">
+                <Path.RenderTransform><TranslateTransform x:Name="MidDarkShift"/></Path.RenderTransform>
+              </Path>
 
-            <Path x:Name="StripSilverRect" Data="{DynamicResource Brand.Pill.Silver}"
-                  Fill="{DynamicResource Brush.TextSecondary}">
-              <Path.RenderTransform><TranslateTransform x:Name="SilverShift"/></Path.RenderTransform>
-            </Path>
+              <Path x:Name="StripWhiteRect" Data="{DynamicResource Brand.Pill.White}"
+                    Fill="{DynamicResource Brush.TextPrimary}">
+                <Path.RenderTransform><TranslateTransform x:Name="WhiteShift"/></Path.RenderTransform>
+              </Path>
+
+              <Path x:Name="StripSilverRect" Data="{DynamicResource Brand.Pill.Silver}"
+                    Fill="{DynamicResource Brush.TextSecondary}">
+                <Path.RenderTransform><TranslateTransform x:Name="SilverShift"/></Path.RenderTransform>
+              </Path>
+            </Canvas>
           </Canvas>
         </Canvas>
 
