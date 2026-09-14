@@ -104,7 +104,7 @@ public static class ReleaseNotes
             new(NoteKind.Changed, "The console cursor changes colour on every blink, stepping through the console’s own line palette — command, info, success, warning, error, dim."),
             new(NoteKind.Changed, "The initial state after Sync draws a plain strip and a four-arc ring instead of dashed lines, at full opacity — same sizes, no jagged edges; graph nodes keep their dashed border."),
             new(NoteKind.Changed, "Sync empties the screen the moment you press it — console, event stream, project list and graph together — and fills it back in when the analysis lands, the same way Clean does."),
-            new(NoteKind.Changed, "The opening choreography holds its last frame until the run actually starts — no flash back to full brightness in between."),
+            new(NoteKind.Changed, "The opening choreography ends with a sequential handover: marked projects dim to running brightness in the order they lit up, and the run starts while the last ones are still dimming — no flash back to full brightness in between."),
             new(NoteKind.Changed, "When a run ends the graph lets go of the selected project's focus and plays the finale in full view; the selection itself stays."),
             new(NoteKind.Changed, "Dialogs are sized by how they grow: Settings 760px with a scrolling body, About 660px, What's new 620px with a fixed 400px body."),
             new(NoteKind.Changed, "Long paths in About's Environment tab scroll sideways under the mouse wheel instead of being cut short."),

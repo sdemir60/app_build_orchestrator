@@ -685,9 +685,10 @@ public partial class MainWindow : Window
     /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
     /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
     /// </summary>
-    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedProjectIds)
+    internal void ApplyMarkingToGraph(
+        MarkStep step, IReadOnlySet<string> markedProjectIds, IReadOnlyDictionary<string, int> markOrder)
     {
-        Shell.GraphHost.SetMarking(step, markedProjectIds);
+        Shell.GraphHost.SetMarking(step, markedProjectIds, markOrder);
         PushGraphStatuses();
     }
 
@@ -760,11 +761,11 @@ public partial class MainWindow : Window
                 // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
                 // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
                 //
-                // [SIRA ÖNEMLİ — design v1.13.2 §3.2] Koşu fazı ve statüler grafa koreografi düşürülmeden ÖNCE
-                // itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
+                // [SIRA ÖNEMLİ — design v1.13.2 §3.2 · v1.18.0] Koşu fazı ve statüler grafa koreografi düşürülmeden
+                // ÖNCE itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
                 // Cancel adımı düşürdüğü anda grafın normal opaklık yolu artık koşu fazını görür — vedanın son
-                // hâlinden (0.45/0.18) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel önce
-                // herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
+                // hâlinden (0.13 kapsam / 0.18 çevre) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel
+                // önce herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
                 PushGraphRunPhase();
                 PushGraphStatuses();
                 if (_vm.IsRunning || !_vm.IsStarting)

@@ -316,7 +316,8 @@ public class MainWindowRealizeTests
         // [DEĞİŞEN KURAL] İşaretleme kümesi eskiden proje ADI taşıyordu. Graf düğümleri proje Id'siyle
         // anahtarlanır (ad benzersiz değildir, bkz. GraphNode), dolayısıyla küme de Id taşır.
         window.ApplyMarkingToGraph(MarkStep.Wave,
-            new HashSet<string>([MainWindowHost.IdOf("A")], StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>([MainWindowHost.IdOf("A")], StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, int>());
 
         Assert.Equal(VisualStatus.Marked,
             window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("A")].Model.Visual);

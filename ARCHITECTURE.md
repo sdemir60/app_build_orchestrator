@@ -3143,13 +3143,17 @@ would destroy the very rows the wave is marking.
 Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
-farewell** — every graph node outside the scope starts fading over 1120 ms, and 560 ms later the amber ones
-join it over 440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and
-reads as *gone* halfway through, so ending the two at the same instant would look wrong; they finish 120 ms
-apart and are perceived as simultaneous. The farewell lives only in the graph — the list's own opacity holds
+farewell** — every graph node outside the scope starts fading to 0.18 over 1120 ms, and 560 ms later the scope
+begins its own **sequential handover**: each node dims straight to the run's own dim level (0.13 — the same
+value a queued node gets once the run actually begins), not all at once but in the order it lit, the first to
+light the first to dim, up to 40 ms apart per node (capped at a 700 ms tail) and 400 ms per glide. Landing on
+the run's own opacity rather than an intermediate amber is the point: a project that is already dimming when
+its own build starts does not visibly change again, so the handover from marking into running reads as one
+continuous motion instead of two. The farewell lives only in the graph — the list's own opacity holds
 at 1 through the whole choreography, because a run has visibly already begun by the time the farewell plays,
 and a second fade there did not read as new information, only as noise (measured). The wave itself is random
-rather than in build order by explicit decision.
+rather than in build order by explicit decision, and the handover reuses that same order — a project settles
+in the sequence it lit, not a freshly drawn one.
 
 Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
 instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
@@ -3170,12 +3174,16 @@ the button becomes *Stop*, the console records the request — and only the comm
 the scope and awaits a gate; the shell owns the timing and closes it.
 
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
-releases the gate but keeps its final step: the settled opacities (0.45 on the scope, 0.18 on the rest) stay
-on the graph while the engine plans. `runStarted` is what drops them — the shell pushes the run phase and the
-fresh statuses first and only then cancels the choreography, so the graph moves from the farewell straight
-into the run's own opacities in a single transition. The prototype starts the run in the same instant the
-sequence ends; under a real engine, holding the frame is the equivalent. Letting the sequence fall back to
-full brightness and dimming again seconds later, when the run began, read as a double fade.
+releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
+run's own opacity system gives a queued node, and 0.18 on the rest — stay on the graph while the engine plans.
+Landing there instead of an intermediate amber (0.45, the earlier design) is what closes the last gap: with an
+intermediate value the graph still had to take one visible step, from that value to the run's own dim level,
+the moment `runStarted` finally cancelled the choreography — even though the frame had been held still the
+whole time. `runStarted` is what drops the hold — the shell pushes the run phase and the fresh statuses first
+and only then cancels the choreography, so the graph moves from the farewell straight into the run's own
+opacities with no step left to take. The prototype starts the run in the same instant the sequence ends; under
+a real engine, holding the frame is the equivalent. Letting the sequence fall back to full brightness and
+dimming again seconds later, when the run began, read as a double fade.
 
 Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
 no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
