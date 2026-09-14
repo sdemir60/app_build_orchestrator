@@ -1,4 +1,4 @@
-# Aşama — tepsi göstergesi 2. tur tamam, merge bekliyor
+# Aşama — tepsi göstergesi 2. tur merge edildi
 
 ## İlgili özet/çıktı dosyaları
 
@@ -14,9 +14,11 @@
 
 ## Nerede kaldık
 
-`fix/tray-indicator-round-2` push edildi, tam süit yeşil, **main'e merge edilmedi** (kullanıcı kararı bekliyor).
-Kullanıcı göstergeyi gözle onayladı: bildirim 32×32 ikonla çıkıyor, şeritler çıkışta kesilmiyor, giriş maskesi
-render dönüşümüyle kayıyor ve her tur maskeyle başlıyor, ölçek 0.5, sağ pay 4. Donma ölçüldü: kaynak FullPower
-profilinde bellek baskısı (boş RAM 0.6 GB) — Balanced önerildi, belleğe göre paralellik koruması kullanıcı kararı.
+Tepsi göstergesinin 2. turu `main`'e `--no-ff` merge + push edildi (`9d6cbd2`); çalışma branch'i local ve
+remote'tan, içeriği main'e taşınmış eski `feat/tray-build-animation` local'den silindi. Tam süit yeşil.
+Kullanıcı göstergeyi gözle onayladı: bildirim 32×32 ikonla çıkıyor ve tıklayınca pencereyi açıyor, şeritler
+çıkışta kesilmiyor, giriş maskesi render dönüşümüyle kayıyor ve her tur maskeyle başlıyor, ölçek 0.5, sağ pay 4.
+Donma ölçüldü: kaynak FullPower'da bellek baskısı; Balanced önerildi, belleğe göre paralellik koruması
+kullanıcı kararı olarak açık. Dokümanlar (ARCHITECTURE 11.1/12.3/14.5/17, README, CLAUDE.md) işlendi.
 
 Buradan devam edilecek.
