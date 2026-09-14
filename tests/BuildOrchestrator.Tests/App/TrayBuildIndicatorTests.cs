@@ -128,6 +128,62 @@ public sealed class TrayBuildIndicatorTests
     }
 
     /// <summary>
+    /// Şeritleri silerek açan maske YALNIZ GİRİŞE aittir: kaplama yerine oturduğu an (şevronla aynı keyframe)
+    /// kırpma katmanı düşer ve döngünün geri kalanında şeritlerin üstünde hiçbir kırpma yoktur.
+    ///
+    /// <para><b>Neden:</b> kullanıcının ekran görüntüsünde çıkış evresinde amber şerit dik bir çizgide
+    /// KESİLİYORDU — şevron uzaklaşmışken. Beş şeritten yalnız amberin ucu duruş karesinde maskenin altında
+    /// kalır (diğer dördü tamamen içindedir) ve yalnız o kesiliyordu: canlı pencerede maske çıkışta o gizli ucu
+    /// açmıyordu. Aynı an ekran dışında (<c>RenderTargetBitmap</c>) çizildiğinde şerit tam çıkıyordu, yani
+    /// kusur çizim hattının kendisindeydi ve sayıyla sabitlenemezdi (<see cref="TrayIndicatorFrameProbeTests"/>).
+    /// Kalıcı çözüm, kesmeyi yapabilen katmanı çıkışta HİÇ bırakmamaktır.</para>
+    ///
+    /// <para><b>Görünüm değişmez:</b> maske duruşta yalnız şevronun zaten örttüğü bölgeyi kırpıyordu (sınırı
+    /// her satırda şevronun sol kenarının 1.5–2.5 birim sağında). Başlık çubuğundaki <c>AppMark</c> hiç maske
+    /// kullanmaz ve aynı kareyi çizer — maske düşünce duruş karesi o kareyle birebir aynıdır. Çıkışta ise
+    /// maske şeritlerin hep önündeydi; kalkması şeritlere yalnız engelsiz bir yol bırakır.</para></summary>
+    [StaFact]
+    public void The_strip_mask_lets_go_once_the_wipe_is_done()
+    {
+        var (indicator, window, _) = Realize();
+        var mask = (UIElement)VisualTreeHelper.GetChild(indicator.InnerCanvas, 0);
+
+        indicator.BeginLoop();
+        indicator.Loop.Pause(indicator);
+
+        indicator.Loop.Seek(indicator, TimeSpan.FromSeconds(0.5), TimeSeekOrigin.BeginTime);
+        DispatcherPump.PumpUntil(() => mask.Clip is not null, PumpTimeout);
+        Assert.NotNull(mask.Clip);   // giriş: silme sürüyor, maske yerinde
+
+        indicator.Loop.Seek(indicator, TimeSpan.FromSeconds(2.3), TimeSeekOrigin.BeginTime);
+        DispatcherPump.PumpUntil(() => mask.Clip is null, PumpTimeout);
+        Assert.Null(mask.Clip);      // çıkış: şeritlerin üstünde kırpma yok
+
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Maskenin düştüğü an, kaplamanın yerine OTURDUĞU keyframe'in ta kendisidir — ikisi ayrı ayrı
+    /// yazılmış iki zaman olsaydı biri kaydığında maske ya silme bitmeden düşer (şeritler şevronun önünde
+    /// belirir) ya da duruşa taşardı. Pin, zamanın kaplamanın giriş keyframe'inden okunduğunu doğrular.</summary>
+    [StaFact]
+    public void The_mask_drops_on_the_sweeps_own_rest_keyframe()
+    {
+        var (indicator, window, _) = Realize();
+
+        var release = indicator.Loop.Children.OfType<ObjectAnimationUsingKeyFrames>()
+            .Single(a => Storyboard.GetTargetName(a) == "StripsMask"
+                      && Storyboard.GetTargetProperty(a).Path == "Clip");
+        var frame = Assert.Single(release.KeyFrames.Cast<ObjectKeyFrame>());
+
+        var sweep = KeyFramesOf(indicator.Loop, "SweepShift");
+        var rest = sweep.First(k => k.Value == 0 && k.KeyTime.TimeSpan > TimeSpan.Zero);
+        Assert.Equal(rest.KeyTime, frame.KeyTime);
+        Assert.Null(frame.Value);
+
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [K-10] Döngü <c>RepeatBehavior=Forever</c> DEĞİLDİR — ne storyboard'da ne bir çocuğunda.
     ///
     /// <para><b>Neden yapısal bir pin:</b> "koşu bitince gösterge mevcut turunu tamamlasın" gereksinimi ancak

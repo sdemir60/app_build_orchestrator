@@ -3188,6 +3188,14 @@ animations attached to their elements (and itself raises `Completed`, which woul
 down means `Remove()` behind a re-entry guard; and a pending finish is honoured even when the indicator is
 dismissed early, or a run would end with no notification at all.
 
+The strips are revealed by a chevron-shaped mask that slides with the chevron, and that mask belongs to the
+entrance alone: on the keyframe where it comes to rest the strip layer's clip is released, and the hold and the
+exit run with no clip over the strips at all. Keeping it was not neutral. In the live layered window the moving
+mask failed to uncover the one strip whose tip it hides at rest, so that strip was cut off along a straight edge
+as it slid away — while the same frame rendered offscreen came out whole, which is why only removing the layer,
+not tuning a number, fixes it. Nothing visible changes at rest: the mask only ever clipped what the chevron
+already covers, and the title-bar mark draws the same frame with no mask.
+
 Decorative infinite animations run at `DesiredFrameRate=30` — one shared constant, not a number repeated per
 owner; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms

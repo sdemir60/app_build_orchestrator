@@ -70,6 +70,15 @@
         <SplineDoubleKeyFrame KeyTime="0:0:2.800" Value="260" KeySpline="0.34,0 0.68,0.6"/>
       </DoubleAnimationUsingKeyFrames>
 
+      <!-- ===== MASKE BIRAKILIR: kaplama yerine oturduğu an (yukarıdaki 1.150 keyframe'i) =====
+           0–1.150 arası Clip taban değeridir (silme sürüyor); 1.150'de null olur ve tur bitene kadar kalır.
+           Tur yeniden başladığında animasyon başa döner ve taban değer (maske) geri gelir. Zaman kaplamanın
+           kendi giriş keyframe'iyle aynı olmak ZORUNDA (pin: TrayBuildIndicatorTests
+           .The_mask_drops_on_the_sweeps_own_rest_keyframe). -->
+      <ObjectAnimationUsingKeyFrames Storyboard.TargetName="StripsMask" Storyboard.TargetProperty="Clip" Duration="0:0:3">
+        <DiscreteObjectKeyFrame KeyTime="0:0:1.150" Value="{x:Null}"/>
+      </ObjectAnimationUsingKeyFrames>
+
       <!-- ===== AMBER ŞERİT ===== -->
       <DoubleAnimationUsingKeyFrames Storyboard.TargetName="AmberShift" Storyboard.TargetProperty="X" Duration="0:0:3">
         <LinearDoubleKeyFrame KeyTime="0:0:0" Value="-89"/>
@@ -163,8 +172,13 @@
             ClipToBounds="False" Background="Transparent">
       <Canvas x:Name="Inner" Canvas.Left="30" Canvas.Top="-76" Width="286" Height="286" ClipToBounds="False">
 
-        <!-- Şeritler: şevron siluetiyle SİLİNEREK açılır (kaplama şevronla birlikte kayar). -->
-        <Canvas Width="286" Height="286" ClipToBounds="False">
+        <!-- Şeritler: şevron siluetiyle SİLİNEREK açılır (kaplama şevronla birlikte kayar). Maske YALNIZ
+             GİRİŞE aittir: kaplama yerine oturduğu keyframe'de Clip düşer (storyboard'daki StripsMask
+             animasyonu) ve döngünün geri kalanında şeritlerin üstünde kırpma yoktur. Gerekçe: canlı
+             pencerede maske çıkışta amber şeridin duruşta gizli kalan ucunu açmıyor, şerit dik bir çizgide
+             kesilmiş görünüyordu. Duruş karesi maskesiz de aynıdır — maske yalnız şevronun zaten örttüğü
+             bölgeyi kırpıyordu (AppMark hiç maske kullanmaz ve aynı kareyi çizer). -->
+        <Canvas x:Name="StripsMask" Width="286" Height="286" ClipToBounds="False">
           <Canvas.Clip>
             <!-- Kaplama: soldan gelen geniş bir maske; sağ kenarı şevronun siluetini izler. Şevronun
                  PAYLAŞILAN geometrisi burada KULLANILAMAZ — bu figür şevronun kendisi değil, onun izini

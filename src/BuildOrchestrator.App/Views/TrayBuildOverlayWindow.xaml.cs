@@ -34,10 +34,17 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// <para>Tasarım token'ı DEĞİLDİR: bu bileşenin kendi ölçüleridir (Controls.xaml'in "bileşenin KENDİ
     /// ölçüleri" istisnasıyla aynı statü). DPI hesabı YAPILMAZ: bunlar DIP'tir, PerMonitorV2 altında dönüşümü
     /// WPF yapar.</para></summary>
-    internal const double Scale = 2.0 / 3.0;
+    internal const double Scale = 0.55;
     internal const double OverlayWidth = TrayBuildIndicator.StageWidth * Scale;
     internal const double OverlayHeight = TrayBuildIndicator.StageHeight * Scale;
-    internal const double EdgeMargin = 12;
+    /// <summary>
+    /// Ekran kenarına bırakılan paylar — sağ ve alt AYRIDIR. Duruş karesinde logo bandın solunda durur, sağında
+    /// şevronun çıkış yolu için boşluk kalır; bu yüzden gösterge sağa alta göre daha yakın oturur. Sağ pay
+    /// sıfıra İNMEZ: bant şevronun en uç çıkış karesini (gölgesiyle) içinde taşır, küçük bir pay onun ekran
+    /// kenarına yapışıp kesilmiş görünmesini önler. Alt pay görev çubuğuna mesafedir.
+    /// </summary>
+    internal const double RightMargin = 4;
+    internal const double BottomMargin = 12;
 
     public TrayBuildOverlayWindow(ResourceDictionary? resourceScope = null)
     {
@@ -65,8 +72,9 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// <para>Saf ve parametreli: görev çubuğu solda ya da üstte olabilir, o zaman çalışma alanı (0,0)'dan
     /// başlamaz — köşe ekranın kendisinden değil ÇALIŞMA ALANINDAN türemeli, yoksa overlay görev çubuğunun
     /// altına kayar. Alan dışarıdan verildiği için test edilebilir.</para></summary>
-    internal static (double Left, double Top) Place(Rect workArea, double width, double height, double margin)
-        => (workArea.Right - width - margin, workArea.Bottom - height - margin);
+    internal static (double Left, double Top) Place(
+        Rect workArea, double width, double height, double rightMargin, double bottomMargin)
+        => (workArea.Right - width - rightMargin, workArea.Bottom - height - bottomMargin);
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -104,7 +112,7 @@ public partial class TrayBuildOverlayWindow : Window, ITrayBuildIndicatorView
     /// taşınmış, çözünürlük değişmiş, bir ekran eklenmiş).</summary>
     private void Reveal()
     {
-        var (left, top) = Place(SystemParameters.WorkArea, OverlayWidth, OverlayHeight, EdgeMargin);
+        var (left, top) = Place(SystemParameters.WorkArea, OverlayWidth, OverlayHeight, RightMargin, BottomMargin);
         Left = left;
         Top = top;
         Show();

@@ -103,12 +103,13 @@ public sealed class TrayBuildOverlayWindowTests
 
     // ---------------------------------------------------------------- yerleşim (K-3)
 
-    /// <summary>Çalışma alanının SAĞ ALT köşesi, kenar payıyla. Alan bilerek parametredir: görev çubuğu solda
-    /// ya da üstte olabilir ve o zaman çalışma alanı (0,0)'dan başlamaz — köşe hesabı ekranın kendisinden
-    /// değil, çalışma alanından türemeli.</summary>
+    /// <summary>Çalışma alanının SAĞ ALT köşesi, iki ayrı kenar payıyla. Alan bilerek parametredir: görev
+    /// çubuğu solda ya da üstte olabilir ve o zaman çalışma alanı (0,0)'dan başlamaz — köşe hesabı ekranın
+    /// kendisinden değil, çalışma alanından türemeli.</summary>
     [Theory]
     // Beklenen köşe testin GÖVDESİNDE, aynı girdiden (workArea) hesaplanır — Place'in kendi formülü
-    // (Right/Bottom eksi OverlayWidth/OverlayHeight eksi EdgeMargin). Elle kopyalanmış ondalık YOKTUR.
+    // (Right eksi OverlayWidth eksi RightMargin; Bottom eksi OverlayHeight eksi BottomMargin). Elle kopyalanmış
+    // ondalık YOKTUR.
     // taskbar altta: 1920×1080 ekran, 40px şerit
     [InlineData(0, 0, 1920, 1040)]
     // taskbar solda (80px): alan x=80'den başlar — sağ kenar yine ekranın sağı
@@ -120,12 +121,30 @@ public sealed class TrayBuildOverlayWindowTests
         var workArea = new Rect(x, y, w, h);
         var (left, top) = TrayBuildOverlayWindow.Place(
             workArea, TrayBuildOverlayWindow.OverlayWidth, TrayBuildOverlayWindow.OverlayHeight,
-            TrayBuildOverlayWindow.EdgeMargin);
+            TrayBuildOverlayWindow.RightMargin, TrayBuildOverlayWindow.BottomMargin);
 
-        Assert.Equal(workArea.Right - TrayBuildOverlayWindow.OverlayWidth - TrayBuildOverlayWindow.EdgeMargin,
+        Assert.Equal(workArea.Right - TrayBuildOverlayWindow.OverlayWidth - TrayBuildOverlayWindow.RightMargin,
             left, precision: 10);
-        Assert.Equal(workArea.Bottom - TrayBuildOverlayWindow.OverlayHeight - TrayBuildOverlayWindow.EdgeMargin,
+        Assert.Equal(workArea.Bottom - TrayBuildOverlayWindow.OverlayHeight - TrayBuildOverlayWindow.BottomMargin,
             top, precision: 10);
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL]</b> Sağ pay alttan AYRI ve daha dardır.
+    ///
+    /// <para><b>Eski iddia:</b> tek bir <c>EdgeMargin</c> (12) hem sağa hem alta uygulanırdı.</para>
+    ///
+    /// <para><b>Değişme gerekçesi:</b> kullanıcının görsel testi — duruş karesinde logo bandın SOLUNDA durur,
+    /// sağında şevronun çıkış yolu için bırakılmış boşluk kalır; köşeden 12 birim içeride bu boşluk göze
+    /// fazla geliyordu. Gösterge hafifçe sağa kaydırıldı, alt pay (görev çubuğuna mesafe) değişmedi. Sağa
+    /// kaydırmanın sınırı ekran kenarıdır: bant şevronun en uç çıkış karesini (ve gölgesini) zaten içinde
+    /// taşır, pay sıfıra inmediği sürece hiçbir parça ekranın dışına taşmaz.</para></summary>
+    [Fact]
+    public void The_right_margin_is_narrower_than_the_bottom_one_and_never_zero()
+    {
+        Assert.Equal(4.0, TrayBuildOverlayWindow.RightMargin);
+        Assert.Equal(12.0, TrayBuildOverlayWindow.BottomMargin);
+        Assert.True(TrayBuildOverlayWindow.RightMargin > 0);
     }
 
     /// <summary>
@@ -159,9 +178,11 @@ public sealed class TrayBuildOverlayWindowTests
     /// Overlay ölçüsünün TEK kaynağı: göstergenin bant ölçüsü (<see cref="TrayBuildIndicator.StageWidth"/>/
     /// <see cref="TrayBuildIndicator.StageHeight"/>) çarpı TEK bir ölçek (<see cref="TrayBuildOverlayWindow.Scale"/>).
     ///
-    /// <para>144/96 literalleri gitti; pencereyi büyütüp küçültmek istenirse dokunulacak TEK sayı
-    /// <c>Scale</c>'dir — eski ölçeğin (144/430 ≈ 0.335) kabaca iki katı (2/3), kullanıcının "çok küçük"
-    /// bulduğu geri bildirimin doğrudan karşılığı.</para>
+    /// <para>Pencereyi büyütüp küçültmek istenirse dokunulacak TEK sayı <c>Scale</c>'dir.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> <b>Eski iddia:</b> <c>Scale == 2/3</c>. <b>Değişme gerekçesi:</b>
+    /// kullanıcının görsel testi — 2/3'te gösterge "bir tık fazla büyük, çirkin" bulundu; bir kademe
+    /// küçültülerek 0.55'e indi (şeritler hâlâ ilk ölçünün yaklaşık 1.6 katı, okunur kalır).</para>
     ///
     /// <para>İddia GERÇEKLENMİŞ pencerenin (<c>overlay.Width/Height</c>) üzerinedir, <c>OverlayWidth</c>/
     /// <c>OverlayHeight</c> sabitlerinin kendi tanımına karşı değil — ikisi derleyicinin katladığı AYNI ifade
@@ -175,7 +196,7 @@ public sealed class TrayBuildOverlayWindowTests
 
         Assert.Equal(TrayBuildIndicator.StageWidth * TrayBuildOverlayWindow.Scale, overlay.Width, precision: 10);
         Assert.Equal(TrayBuildIndicator.StageHeight * TrayBuildOverlayWindow.Scale, overlay.Height, precision: 10);
-        Assert.Equal(2.0 / 3.0, TrayBuildOverlayWindow.Scale);
+        Assert.Equal(0.55, TrayBuildOverlayWindow.Scale);
     }
 
     // ---------------------------------------------------------------- view sözleşmesi

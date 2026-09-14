@@ -84,6 +84,16 @@ public sealed class TrayIndicatorFrameProbeTests(ITestOutputHelper output)
                     at, indicator.SweepShiftTransform.X, 158.5 + indicator.SweepShiftTransform.X,
                     indicator.ChevronShiftTransform.X));
 
+                // WPF'in kırpılan katman için HESAPLADIĞI sınırlar: kirli bölge (yeniden boyanacak alan) bunlardan
+                // türer. Şeritler bu sınırın dışına kayıyorsa canlı pencerede o bölge boyanmaz → dik kesik.
+                var clipped = (UIElement)VisualTreeHelper.GetChild(indicator.InnerCanvas, 0);
+                var layer = (UIElement)VisualTreeHelper.GetChild(clipped, 0);
+                log.Add(string.Format(CultureInfo.InvariantCulture,
+                    "  clip.Bounds={0} · clipped.DescendantBounds={1} · layer.DescendantBounds={2}",
+                    clipped.Clip is { } clip ? Fmt(clip.Bounds) : "(maske yok)",
+                    Fmt(VisualTreeHelper.GetDescendantBounds(clipped)),
+                    Fmt(VisualTreeHelper.GetDescendantBounds(layer))));
+
                 // Kare GÖZLE bakmak için diske yazılır — kullanıcının gördüğü kompozisyon (şevron dahil).
                 if (outDir is { Length: > 0 })
                     Save(Render(indicator), Path.Combine(outDir, FormattableString.Invariant($"frame-{at:0.000}.png")));
@@ -172,6 +182,10 @@ public sealed class TrayIndicatorFrameProbeTests(ITestOutputHelper output)
         using var stream = File.Create(path);
         encoder.Save(stream);
     }
+
+    private static string Fmt(Rect r) => r.IsEmpty
+        ? "(boş)"
+        : string.Format(CultureInfo.InvariantCulture, "x[{0:0.0}..{1:0.0}]", r.Left, r.Right);
 
     /// <summary>İç koordinattaki bir noktanın alfası (0-255); band dışı ise 0.</summary>
     private static byte Alpha((byte[] Pixels, int Stride, int Width) frame, int row, double innerX)
