@@ -51,7 +51,8 @@ public class AppMarkTests
     }
 
     /// <summary>İşaret geometriyi ÇİZMEZ, paylaşılan sözlükten TÜKETİR — altı anahtarın hepsini anahtar adıyla
-    /// ister. (İkinci tüketici <c>TrayBuildIndicator</c> kendi test sınıfında pinlenir.)</summary>
+    /// ister. (İkinci tüketici <c>TrayBuildIndicator</c> kendi test sınıfında, AYNI liste üzerinden
+    /// pinlenir.)</summary>
     [Fact]
     public void The_mark_consumes_the_shared_brand_geometry_by_key()
     {
@@ -61,8 +62,8 @@ public class AppMarkTests
             Assert.Contains($"{{DynamicResource {key}}}", markup, StringComparison.Ordinal);
     }
 
-    /// <summary>İşaretin kullandığı anahtarlar — beş pill + chevron. Sayaçlı (genişletilmiş) beyaz pill
-    /// varyantı BURADA DEĞİL: o yalnız tepsi göstergesinindir.</summary>
+    /// <summary>Markanın anahtarları — beş pill + chevron. Liste TEK yerde durur: her iki tüketici de
+    /// (durağan işaret ve tepsi göstergesi) tam bu altısını ister.</summary>
     public static readonly string[] BrandGeometryKeys =
     [
         "Brand.Pill.TopDark", "Brand.Pill.Amber", "Brand.Pill.MidDark",

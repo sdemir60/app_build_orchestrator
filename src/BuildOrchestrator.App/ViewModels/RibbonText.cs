@@ -11,17 +11,33 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public readonly record struct RibbonLine(string Text, string BrushKey, string? Glyph)
 {
-    /// <summary>
-    /// [tray indicator/K-5] Satır bir BAŞARISIZLIK bildirmiyor mu.
-    ///
-    /// <para>Ölçüt glyph'tir, metin değil: glyph zaten şeridin TEK statü sinyalidir ve failed sayısı,
-    /// run hatası, sync hatası, motor ölümü — hepsi ona düşer. Tepsideki bitiş bildirimi ikonunu (bilgi mi
-    /// hata mı) buradan seçer; ayrı bir "kötü mü" kuralı yazmak, aynı kararın ikinci bir tanımı olurdu.</para></summary>
-    public bool Healthy => Glyph != FailedGlyph;
+    /// <summary>Şeridin KENDİ ayırıcısı (<c>"Completed — …"</c>, <c>"Stopped — …"</c>, <c>"Run failed — …"</c>,
+    /// <c>"Sync failed — …"</c>). TEK yerde tanımlıdır: <see cref="Head"/>/<see cref="Detail"/> bölmeyi buradan
+    /// okur, <see cref="RibbonText.Compose"/>'un biçim dizgileri kaynak sanattır ve yeniden yazılmaz.</summary>
+    public const string HeadSeparator = " — ";
 
-    /// <summary>Başarısızlık glyph'inin adı — <see cref="Healthy"/> ile şeridin glyph eşlemesi aynı dizgiyi
-    /// okur.</summary>
-    public const string FailedGlyph = "failed";
+    /// <summary>
+    /// [tray indicator/K-5] Satırın BAŞI — ilk <see cref="HeadSeparator"/>'ın öncesi (<c>"Completed"</c>,
+    /// <c>"▸ Stopped"</c>, <c>"Run failed"</c>, <c>"Sync failed"</c>); ayırıcı yoksa <c>null</c>.
+    ///
+    /// <para><b>Başsızlık motor ölümüyle EŞ ANLAMLI DEĞİLDİR:</b> bugün ayırıcı taşımayan tek satır
+    /// <c>"Engine stopped unexpectedly (…)"</c>'dır. Motorun diğer iki ölüm satırı
+    /// (<c>RunViewModel.EngineMissingMessage</c>, <c>RunViewModel.EngineCannotStartMessage</c>) ayırıcıyı
+    /// TAŞIR ve baş üretir ("Engine missing", "Engine could not start").</para>
+    ///
+    /// <para>Tek tüketicisi tepsideki bitiş bildirimidir: başlığı buradan, gövdeyi <see cref="Detail"/>'den
+    /// alır. Bildirim İKİNCİ bir özet DERLEMEZ — aynı satırı okur ve kendi ayırıcısında bir kez böler, yani
+    /// şerit ile balloon ayrışamaz. Bölme burada durur çünkü ayırıcıyı yazan da bu dosyadır.</para></summary>
+    public string? Head => SeparatorIndex is { } i ? Text[..i] : null;
+
+    /// <summary>Satırın GÖVDESİ — ilk <see cref="HeadSeparator"/>'ın sonrası (sayılar, süre, gerekçe); ayırıcı
+    /// yoksa <c>null</c>. Bkz. <see cref="Head"/>.</summary>
+    public string? Detail => SeparatorIndex is { } i ? Text[(i + HeadSeparator.Length)..] : null;
+
+    /// <summary>İLK ayırıcının yeri — satır bir kez bölünür: gövdenin içinde ikinci bir tire geçse de gövdede
+    /// kalır. <c>Text</c> hiç verilmemiş (varsayılan) bir satırda da sessizce <c>null</c> döner.</summary>
+    private int? SeparatorIndex =>
+        Text?.IndexOf(HeadSeparator, StringComparison.Ordinal) is { } i and >= 0 ? i : null;
 }
 
 /// <summary>

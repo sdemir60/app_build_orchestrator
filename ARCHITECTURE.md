@@ -1451,6 +1451,16 @@ single owner in Core, called by both the App and the Supervisor.
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
 
+**Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
+multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
+between workers), and a large project's compiler holds on the order of a gigabyte while it runs. On a developer machine that already has an IDE, browsers and other tools
+open, Full can exhaust physical memory: the operating system then pages other applications out and back in,
+and the whole desktop stalls — not just this tool. Measured on such a machine with real compilers, the
+interface thread itself stayed responsive under every profile, while free physical memory under Full fell to
+a fraction of a gigabyte and committed memory passed the machine's limit; Balanced kept a working margin.
+That is why Balanced is the default, and why a build that freezes the machine is answered by a lower profile.
+The measurement is kept as an opt-in test (§17.5).
+
 ### 11.2 What the cap does and does not cover
 
 The cap is written with `JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | HARD_CAP` and applies to the **sum** of the inner
@@ -1531,10 +1541,9 @@ it, once — in-app toasts are prohibited by the design.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
-animates in the bottom-right corner of the primary work area, carrying the same `finished/will-build` counter the
-ribbon shows. It appears if the user drops to the tray mid-run and disappears the instant the window comes back.
-The surface is its own top-level window: it must stay visible while the main window is hidden, so it cannot be a
-popup inside it.
+animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
+and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
+while the main window is hidden, so it cannot be a popup inside it.
 
 Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -1545,10 +1554,20 @@ it would make the whole window click-through and kill the click-to-restore.
 
 When the run ends the overlay does **not** cut off. It finishes the exit phase of the loop it is in — the pieces
 slide away and the last strip dissolves — and the window closes on that frame. After a short breath, so the two
-events do not land on top of each other, an **OS balloon** reports the result. Its text is not composed a second
-time: it is the ribbon's own terminal line, so opening the window afterwards shows the same sentence. The icon
-follows the line's status glyph (info, or error when something failed). A run that ends while the window is
-*visible* produces no balloon at all — the ribbon is already on screen.
+events do not land on top of each other, an **OS balloon** reports the result, carrying the application's own
+icon. That icon is loaded at the one size the notification API accepts — any other size is rejected only when the
+balloon is shown, and because the notification is sent from an unawaited continuation the rejection would
+vanish without a trace, so a test pins the size headlessly. Its text is not composed a second time: it is the ribbon's own terminal line, split once
+at the separator the ribbon itself writes — the head becomes the title (`Completed`, `▸ Stopped`, `Run failed`)
+and everything after it becomes the body. Opening the window afterwards shows that same sentence whole, in the
+ribbon. A line that carries no separator — today only the one an unexpected engine stop writes; the engine
+failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
+notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
+the window is *visible* produces no balloon at all — the ribbon is already on screen.
+
+The overlay sits closer to the right edge of the work area than to the taskbar: at rest the mark occupies the
+left of its band and the right is reserved for the chevron's exit path, so the edge margins are separate and
+the right one is narrow, but never zero — the band already contains the outermost exit frame and its shadow.
 
 The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
@@ -3021,10 +3040,6 @@ unchanged, only the file moved. The shared dictionary holds the source SVG's own
 folded-in ones the mark used to carry; each consumer shifts its own canvas instead, which is why a test measures
 the drawn box and not just the figure count.
 
-The white pill is the one shape with two variants, both in that same file: the mark's own proportion and a wider
-one for the indicator, whose strip had to grow to fit a three-digit counter. The counter's slot is measured from
-that geometry rather than repeated as numbers next to it.
-
 The chevron is the one gradient in the application, and it too is a single shared brush. Flat surfaces are the
 rule and a guard enforces it, with a single file-scoped exemption for the mark's dictionary: flattening a logo
 would mean redrawing it, and source artwork is transferred verbatim. The chevron is amber — the same accent the
@@ -3033,11 +3048,9 @@ carries accent weight in the title bar, so no other amber element belongs in tha
 
 The mark's palette comes from the neutral ramp and the amber family, except a few intermediate tones that exist
 only in the artwork; those are declared in `Tokens.xaml` beside the rest, with their reasoning, exactly like
-the other values the design source does not name. Two of them are also exposed as raw `Color` resources
-because a gradient stop takes a colour rather than a brush — the brushes are derived from those colours, so no
-hex is written twice. The tray counter's ink is one of these: it has to read against the light strip it sits on
-while staying quiet enough that the logo does not turn into a label, and no tone on the text ramp — tuned for
-dark surfaces — does both. Its opacity is folded into the alpha channel so the control carries no second one.
+the other values the design source does not name. The chevron's three gradient stops are also exposed as raw
+`Color` resources — `Color.Amber`, `Color.AmberBright` and `Color.Brand.ChevronDeep` — because a gradient stop
+takes a colour rather than a brush; the brushes are derived from those colours, so no hex is written twice.
 
 **Raster icons** (`.exe`, taskbar, tray) are generated from the same artwork by `Assets/generate-app-icons.ps1`
 into a multi-size ICO. They ship **without a background**: the mark sits on a transparent canvas and is fitted
@@ -3191,6 +3204,17 @@ animations attached to their elements (and itself raises `Completed`, which woul
 down means `Remove()` behind a re-entry guard; and a pending finish is honoured even when the indicator is
 dismissed early, or a run would end with no notification at all.
 
+The strips are revealed by a chevron-shaped mask that slides with the chevron, and two rules keep that mask
+honest in the live layered window, where frames rendered offscreen do not show either failure. The mask
+geometry never moves: the sweep is a render transform on the masked canvas, undone by an equal and opposite
+transform on the strips inside it, because an animated transform on the clip geometry itself was not repainted
+— strips stayed hidden on the first entrance and one was cut off along a straight edge on the way out. And the
+mask belongs to the entrance alone: every pass sets it explicitly at its first frame and releases it on the
+keyframe where the sweep comes to rest, so the hold and the exit run with no clip over the strips. The explicit
+first frame matters, since a restarted storyboard takes a missing start value from where the previous pass
+ended — with the clip already released. Nothing visible changes at rest: the mask only ever clipped what the
+chevron already covers, and the title-bar mark draws the same frame with no mask.
+
 Decorative infinite animations run at `DesiredFrameRate=30` — one shared constant, not a number repeated per
 owner; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
@@ -3207,14 +3231,11 @@ dispatcher roots it, so an unstopped one ticks forever and can never be collecte
 the 200 ms tick writes only when the value actually changed, since assigning the same string still invalidates
 measure and draw five times a second.
 
-**Two seams in the tray indicator are deliberately not instant, and neither carries a number in code.** The
+**One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
 a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
 its own — a user who asked for no animation is not made to wait. The breath is an injectable seam, so the suite
-proves the ordering without spending real time. The counter behaves the same way: it is never written with an
-unchanged value, and when the digits do change the text dims and returns over `Duration.Fast` instead of
-swapping hard. Only opacity moves — the strip is a fixed width and the digits are monospaced, so nothing
-reflows.
+proves the ordering without spending real time.
 
 ### 14.6 Copy and tone
 
@@ -3307,7 +3328,8 @@ Shared test infrastructure lives in one place per concern rather than being copi
 `AboutDialogHost`, `SplitterHost`, `GraphTestView`), shared assertions (`FocusTrap`, the modal focus-trap
 proof both dialogs use), input synthesis (`MouseInput`, the one place a real mouse press is raised, both
 halves of the gesture), dispatcher pumping and animation hosting (`DispatcherPump`, `AnimationHost`,
-`MotionScope`), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
+`MotionScope`), a manual STA thread for tests that must skip dynamically (`StaThread` — the STA runner does not
+recognise a skip), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `JobTestChildren`, `VmTopology`,
 `FakeMotionSignal`, `FakeMotionSettings`) and measurement
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
@@ -3375,6 +3397,16 @@ minutes). They are excluded from the normal verification run and executed separa
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category=Acceptance"
 ```
+
+A second group carries the `Measurement` category: probes and measurements that read numbers rather than
+assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, UI latency and
+memory under each perf profile, and the content-decision timings. The filter above does **not** exclude them
+(`!=` admits every other category value). The tray and perf probes open real windows, show balloons or
+saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`, `BO_MEASURE_OVERLAY`,
+`BO_MEASURE_PERF` — and reports itself as skipped unless it is set. The content-decision measurements are gated
+differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
+`BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
+root exists they run with the normal suite.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -3614,8 +3646,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
-| …its wiring to the view model (line, counter, phase) | `App/Services/TrayIndicatorBinder.cs` |
-| …the animated mark itself (loop, counter, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
+| …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
+| …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |

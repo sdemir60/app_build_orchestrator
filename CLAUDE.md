@@ -67,6 +67,16 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 Süit **filtrelidir**: `Category=Acceptance` üç test gerçek OSYS reposunu derler (~2 dk), ayrı koşulur
 (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor kendi binary'lerini kilitler.
 
+- **Ölçüm/sonda testi = ortam değişkeni kapısı.** `Category=Measurement` etiketi TEK BAŞINA yetmez:
+  `Category!=Acceptance` filtresi diğer her kategoriyi kabul eder. Pencere açan, balloon gösteren ya da CPU
+  yakan her YENİ test `[SkippableFact]` + ilk satırda `Skip.IfNot(<BO_... değişkeni> == "1")` taşır (içerik
+  kararı ölçümleri eski kalıptadır: kök yoksa atlar, varsayılan kök varsa normal süitte koşar);
+  STA gövdesi gerekiyorsa ortak `StaThread.RunAsync` kullanılır (`[StaFact]` Skip'i tanımaz). Liste
+  ARCHITECTURE.md §17.5'te.
+- **Canlı pencere ≠ ekran dışı çizim.** `RenderTargetBitmap` kompozisyon hattını atlar; katmanlı pencerede
+  görülen bir kusur ekran dışı karede görünmeyebilir. Görsel kusurda sayı yetmiyorsa kullanıcının ekran
+  görüntüsü kanıttır — yapısal pin yaz, "ekran dışı temiz" diye kusuru reddetme.
+
 ## Çalışma kuralları
 
 Kullanıcı kusuru görüp tarif eder, **testi agent yazar**.

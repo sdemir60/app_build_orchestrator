@@ -2,6 +2,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -63,6 +64,29 @@ public class MainWindowRealizeTests
         Assert.IsType<SolidColorBrush>(window.Background);
         Assert.IsType<SolidColorBrush>(window.Foreground);
         Assert.True(window.MinWidth > 0 && window.MinHeight > 0);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Pencere ikonu TEK kaynaktan (<see cref="AppIdentity.AppIconUri"/>) GERÇEKTEN çözülür.
+    ///
+    /// <para>Adres artık XAML'de literal DEĞİL — tepsi bildiriminin büyük ikonu da aynı sabiti okur (kopya
+    /// YASAK). Kurulum XAML'de değil <c>MainWindow</c> ctor'undadır ve bu <b>ÖLÇÜLMÜŞ</b> bir karardır:
+    /// <c>Icon="{x:Static services:AppIdentity.AppIconUri}"</c> denendi ve pencere ctor'da
+    /// <c>XamlParseException — 'pack://…/app-icon.ico', 'Icon' özelliği için geçerli bir değer değil</c> ile
+    /// düştü (bu test dahil 17 MainWindow testi kırmızı verdi). Yani bir markup extension'ın döndürdüğü
+    /// DİZGİYE <c>ImageSourceConverter</c> uygulanmıyor; kod tarafı kesin çalışır.</para>
+    ///
+    /// <para>Pin bu yüzden pencereyi gerçekten kurar (sınıf özetindeki gerekçe): headless süitin göremediği
+    /// sınıftan bir risktir — ikon kablosu koparsa uygulama ya ikonsuz açılır ya hiç açılmaz.</para></summary>
+    [StaFact]
+    public void The_window_icon_resolves_from_the_single_app_icon_uri()
+    {
+        using var temp = new TempDir();
+        var window = NewMainWindow(temp);
+
+        var icon = Assert.IsAssignableFrom<BitmapSource>(window.Icon);
+        Assert.True(icon.PixelWidth > 0 && icon.PixelHeight > 0);
         GC.KeepAlive(window);
     }
 

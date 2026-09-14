@@ -371,4 +371,90 @@ public class RibbonTextTests
             willBuild: 8, finishedOfWillBuild: 2, totalProjects: 14);
         Assert.Equal(25.0, p, 3);
     }
+
+    // ---------------------------------------------------------------- satırın baş/gövde ayrımı (K-5)
+
+    /// <summary>
+    /// [tray indicator/K-5] Satır KENDİ ayırıcısında bir kez bölünür: önü <c>Head</c> (başlık), arkası
+    /// <c>Detail</c> (gövde).
+    ///
+    /// <para>Tek tüketicisi tepsideki bitiş bildirimidir ve KURALIN TAMAMI budur: bildirim ikinci bir özet
+    /// DERLEMEZ, aynı satırı ikiye ayırır. Bölme burada — saf veride — durur çünkü ayırıcıyı yazan da bu
+    /// dosyadır; <c>AppTrayIcon</c>'a taşınsaydı biçim iki yerde bilinirdi.</para></summary>
+    [Fact]
+    public void A_terminal_line_splits_into_a_head_and_a_detail_at_its_own_separator()
+    {
+        var line = new RibbonLine("Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s",
+            "Brush.StatusFailText", "failed");
+
+        Assert.Equal("Completed", line.Head);
+        Assert.Equal("3 failed · 24 succeeded · 9 skipped · 1m 12s", line.Detail);
+    }
+
+    /// <summary>Ayırıcısı OLMAYAN satır baş da gövde de taşımaz — uydurulmuş bir başlık, satırın söylemediği
+    /// bir şeyi söylerdi. <c>null</c>, çağıranın geri düşmesi için yeterli işarettir.
+    /// <para>Bugün bu sınıfın TEK örneği beklenmeyen motor ölümüdür; "motor ölümü" ile eş anlamlı DEĞİLDİR —
+    /// bkz. <see cref="Engine_failures_that_name_a_reason_do_carry_a_head"/>.</para></summary>
+    [Fact]
+    public void A_line_without_the_separator_has_neither_a_head_nor_a_detail()
+    {
+        var line = new RibbonLine("Engine stopped unexpectedly (exit 1)", "Brush.StatusFailText",
+            "failed");
+
+        Assert.Null(line.Head);
+        Assert.Null(line.Detail);
+    }
+
+    /// <summary>
+    /// "Başsız satır = motor ölümü" DEĞİLDİR: gerekçesini söyleyen iki motor hatası ayırıcıyı taşır ve baş
+    /// üretir. Bu pin, komşusundaki (<see cref="A_line_without_the_separator_has_neither_a_head_nor_a_detail"/>)
+    /// örneğin bir KURALA genellenmesini engeller — bildirim o iki satırda ürün adına DEĞİL, satırın kendi
+    /// başlığına düşer.</summary>
+    [Fact]
+    public void Engine_failures_that_name_a_reason_do_carry_a_head()
+    {
+        var missing = new RibbonLine(RunViewModel.EngineMissingMessage, "Brush.StatusFailText", "failed");
+        var cannotStart = new RibbonLine(RunViewModel.EngineCannotStartMessage, "Brush.StatusFailText", "failed");
+
+        Assert.Equal("Engine missing", missing.Head);
+        Assert.Equal("Engine could not start", cannotStart.Head);
+        Assert.NotNull(missing.Detail);
+        Assert.NotNull(cannotStart.Detail);
+    }
+
+    /// <summary>
+    /// <b>Sürüklenme kilidi.</b> Bölme satırın YAZIMINA dayanır: yarın bir bitiş satırı ayırıcısını kaybederse
+    /// bildirim sessizce ürün adına geri düşer ve kimse fark etmez. Bu yüzden bitiş satırlarının her biri
+    /// GERÇEK <see cref="RibbonText.Compose"/>'dan geçirilir ve baş taşıdıkları pinlenir — satırlar elle
+    /// yazılsaydı kilit yalnız kendi kopyasını korurdu.</summary>
+    [Fact]
+    public void Every_terminal_line_composed_by_the_ribbon_carries_a_head()
+    {
+        (string Expected, RibbonLine Line)[] terminals =
+        [
+            ("Completed", RibbonText.Compose(AppPhase.Done, true, allClean: false, Counters(succeeded: 4, failed: 5, skipped: 2),
+                willBuild: 11, finishedOfWillBuild: 11, totalProjects: 14, elapsedMs: 65_000, etaMs: null, checkDurMs: null, warnings: 3)),
+            ("Completed", RibbonText.Compose(AppPhase.Done, true, allClean: false, Counters(succeeded: 12, skipped: 2),
+                willBuild: 12, finishedOfWillBuild: 12, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0)),
+            ("Everything up to date", RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(),
+                willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0)),
+            // Şeridin "faz etkin" işareti ▸ satırın BAŞINDA durur, yani başın da parçasıdır — bölme satırı
+            // olduğu gibi ikiye ayırır, kırpmaz.
+            ("▸ Stopped", RibbonText.Compose(AppPhase.Stopped, true, false, Counters(queued: 7),
+                willBuild: 10, finishedOfWillBuild: 3, totalProjects: 14, elapsedMs: 30_000, etaMs: null, checkDurMs: null, warnings: 0)),
+            ("Run failed", RibbonText.Compose(AppPhase.Running, true, false, Counters(building: 2),
+                willBuild: 10, finishedOfWillBuild: 3, totalProjects: 14, elapsedMs: 12_000, etaMs: null, checkDurMs: null,
+                warnings: 0, engineDiedMessage: null, syncError: null, runError: "MSBuild not found")),
+            ("Sync failed", RibbonText.Compose(AppPhase.Idle, true, false, Counters(),
+                willBuild: 3, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 0, etaMs: null, checkDurMs: null,
+                warnings: 0, engineDiedMessage: null, syncError: "could not read from remote repository")),
+        ];
+
+        foreach (var (expected, line) in terminals)
+        {
+            Assert.NotNull(line.Head);
+            Assert.Equal(expected, line.Head);
+            Assert.Equal(expected + RibbonLine.HeadSeparator + line.Detail, line.Text);
+        }
+    }
 }

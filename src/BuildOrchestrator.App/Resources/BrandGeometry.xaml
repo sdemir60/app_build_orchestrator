@@ -32,13 +32,6 @@
   <RectangleGeometry x:Key="Brand.Pill.White"   Rect="102.5,131,60,22" RadiusX="11"   RadiusY="11" />
   <RectangleGeometry x:Key="Brand.Pill.Silver"  Rect="65.5,178,57,21"  RadiusX="10.5" RadiusY="10.5" />
 
-  <!-- Beyaz pill'in SAYAÇLI varyantı — yalnız tepsi göstergesi kullanır. Üç haneli bir çift ("139/248")
-       60 birime sığmıyordu; logo-animasyonu deliverable'ı (v1.3) şeridi 66'ya genişletti ve çıkış mesafesini
-       buna göre yeniden hesapladı (88 → 82), böylece sağ ucu diğer parçalarla aynı hizada yok olur.
-       İki varyant da BURADA durur: marka orantısı (60) durağan işaretin, genişletilmiş olan (66)
-       göstergenindir — ikisi de tek dosyada olduğu için ayrışamazlar. -->
-  <RectangleGeometry x:Key="Brand.Pill.WhiteCounter" Rect="102.5,131,66,22" RadiusX="11" RadiusY="11" />
-
   <!-- ================================ Chevron ================================ -->
 
   <PathGeometry x:Key="Brand.Chevron"

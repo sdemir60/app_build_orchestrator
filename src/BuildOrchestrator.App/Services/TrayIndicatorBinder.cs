@@ -7,8 +7,8 @@ namespace BuildOrchestrator.App.Services;
 /// [tray indicator/K-12] VM sinyallerini tepsi göstergesinin controller'ına bağlayan tek yer.
 ///
 /// <para><b>Neden ayrı bir tip:</b> bu kablaj küçük ama SESSİZCE yanlış olabilir — hangi property'nin hangi
-/// girdiyi beslediği, sayacın şeritle aynı çiftten geldiği ve bitiş metninin şeridin o anki satırı olduğu
-/// buradaki üç satırda yaşar. Kablaj <c>MainWindow.OnSourceInitialized</c>'ın içinde kalsaydı hiçbir test
+/// girdiyi beslediği ve bitiş metninin şeridin o anki satırı olduğu buradaki birkaç satırda yaşar. Kablaj
+/// <c>MainWindow.OnSourceInitialized</c>'ın içinde kalsaydı hiçbir test
 /// göremezdi: o metot gerçek bir tepsi ikonu kurup global kısayol kaydeder ve süit onu bilerek hiç
 /// çalıştırmaz. Buraya alınınca pencere de HWND de gerekmez.</para>
 ///
@@ -45,15 +45,11 @@ internal static class TrayIndicatorBinder
         vm.PropertyChanged += OnChanged;
 
         PushLine(vm, controller);
-        PushCounter(vm, controller);
         controller.SetPhase(vm.Phase);
     }
 
     private static void Route(RunViewModel vm, TrayBuildIndicatorController controller, string? property)
     {
-        if (property is nameof(RunViewModel.WillBuildCount) or nameof(RunViewModel.FinishedOfWillBuild))
-            PushCounter(vm, controller);
-
         // Satır her sinyalde tazelenir — ve fazdan ÖNCE: faz aktif kümeden çıkarsa controller bitişi tam o
         // anda kurar ve elinde bir metin bulmalıdır.
         PushLine(vm, controller);
@@ -62,14 +58,8 @@ internal static class TrayIndicatorBinder
             controller.SetPhase(vm.Phase);
     }
 
-    /// <summary>[K-6] Sayaç, şeridin kullandığı <c>fin/wb</c> ÇİFTİNİN kendisidir — ikinci bir hesap yok.</summary>
-    private static void PushCounter(RunViewModel vm, TrayBuildIndicatorController controller) =>
-        controller.SetCounter(vm.FinishedOfWillBuild, vm.WillBuildCount);
-
-    /// <summary>[K-5] Bildirim metni = şeridin o anki satırı; sağlık = satırın kendi glyph'i.</summary>
-    private static void PushLine(RunViewModel vm, TrayBuildIndicatorController controller)
-    {
-        var line = vm.RibbonLine;
-        controller.SetTerminalText(line.Text, line.Healthy);
-    }
+    /// <summary>[K-5] Bildirime giden şey şeridin o anki SATIRIDIR — parçalanıp yeniden kurulmaz. Metin,
+    /// statü glyph'i ve bildirimin başlık/gövde ayrımı hepsi o satırın içindedir.</summary>
+    private static void PushLine(RunViewModel vm, TrayBuildIndicatorController controller) =>
+        controller.SetTerminalLine(vm.RibbonLine);
 }

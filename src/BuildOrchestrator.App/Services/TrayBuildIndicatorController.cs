@@ -4,7 +4,7 @@ namespace BuildOrchestrator.App.Services;
 
 /// <summary>
 /// [tray indicator/K-4] Tepsi göstergesinin ÇİZİM yüzeyi. Gerçek uygulaması penceresiz, arka plansız bir
-/// top-level overlay'dir (<c>Views/TrayBuildOverlayWindow</c>); controller onu yalnız bu beş fiil üzerinden
+/// top-level overlay'dir (<c>Views/TrayBuildOverlayWindow</c>); controller onu yalnız bu dört fiil üzerinden
 /// sürer, HWND/pencere bilgisi taşımaz.
 /// </summary>
 public interface ITrayBuildIndicatorView
@@ -12,11 +12,9 @@ public interface ITrayBuildIndicatorView
     /// <summary>Göstergeyi konumla, göster ve döngüyü başlat.</summary>
     void ShowLoop();
 
-    /// <summary>Reduced-motion yolu: göstergeyi konumla, göster — ama döngü HİÇ başlamasın (statik işaret +
-    /// okunur sayaç).</summary>
+    /// <summary>Reduced-motion yolu: göstergeyi konumla, göster — ama döngü HİÇ başlamasın (statik
+    /// işaret).</summary>
     void ShowStatic();
-
-    void UpdateCounter(int done, int total);
 
     /// <summary>Yeni tur BAŞLATMA; içindeki döngü doğal bitişine (çıkış evresi) koşsun, son karede
     /// <paramref name="onFinished"/>'ı çağır. Döngü YARIM kesilmez — bkz. K-10.</summary>
@@ -30,7 +28,10 @@ public interface ITrayBuildIndicatorView
 /// toast design §8'de YASAK).</summary>
 public interface ITrayRunNotifier
 {
-    void ShowRunFinished(string message, bool healthy);
+    /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
+    /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
+    /// doğar; statü de satırın kendi glyph'indedir.</summary>
+    void ShowRunFinished(RibbonLine line);
 }
 
 /// <summary>
@@ -50,9 +51,9 @@ public interface ITrayRunNotifier
 /// motion token'ıdır ve token okumak WPF ister. Controller saf kalsın diye bekleme
 /// <see cref="ExitBreath"/>'e enjekte edilir; testte sahte dikiş senkron tamamlanır (D8: gerçek bekleme YOK).</para>
 ///
-/// <para><b>Balloon metni burada ÜRETİLMEZ</b> (K-5): şeridin o anki terminal satırı
-/// <see cref="SetTerminalText"/> ile verilir ve aynen taşınır. Alan bir ÖNBELLEK değildir, bir teslim
-/// kutusudur: bildirim çıkış evresinin sonuna ertelendiği için metin o ana kadar tutulmak zorundadır.</para>
+/// <para><b>Balloon metni burada ÜRETİLMEZ</b> (K-5): şeridin o anki terminal SATIRI
+/// <see cref="SetTerminalLine"/> ile verilir ve aynen taşınır. Alan bir ÖNBELLEK değildir, bir teslim
+/// kutusudur: bildirim çıkış evresinin sonuna ertelendiği için satır o ana kadar tutulmak zorundadır.</para>
 /// </summary>
 public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, ITrayRunNotifier notifier)
 {
@@ -64,10 +65,7 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
     private bool _exitPending;
     private bool _notified;
 
-    private int _done;
-    private int _total;
-    private string _terminalText = "";
-    private bool _terminalHealthy;
+    private RibbonLine _terminal;
 
     /// <summary>
     /// [K-14 · D8] Gizlenme ile balloon arasındaki NEFES. Üretimde <c>Duration.Slow</c> token'ından beslenir
@@ -112,23 +110,10 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
         ApplyMode();
     }
 
-    /// <summary>[K-6] Sayaç değerleri şeridin kullandığı <c>fin/wb</c> çiftidir — ikinci bir hesap YOK.
-    /// Gösterge kapalıyken view'a İTİLMEZ (§14.5: görünmeyen yüzeyde measure/draw kirletilmez); açılışta son
-    /// değer bir kez akar.</summary>
-    public void SetCounter(int done, int total)
-    {
-        _done = done;
-        _total = total;
-        if (_shown) view.UpdateCounter(done, total);
-    }
-
-    /// <summary>[K-5] Şeridin O ANKİ satırı + sağlık bayrağı. <c>healthy</c> şeridin glyph'inin
-    /// <c>"failed"</c> OLMAMASIDIR — glyph zaten tek kaynaklı statü sinyalidir.</summary>
-    public void SetTerminalText(string text, bool healthy)
-    {
-        _terminalText = text;
-        _terminalHealthy = healthy;
-    }
+    /// <summary>[K-5] Şeridin O ANKİ satırı — metin, brush anahtarı ve glyph tek parça hâlinde. Yanında ikinci
+    /// bir parametre GEÇMEZ: bildirimin başlığı da gövdesi de statüsü de satırın kendisinden okunur, yani
+    /// controller taşıdığı şeyi HİÇ yorumlamaz.</summary>
+    public void SetTerminalLine(RibbonLine line) => _terminal = line;
 
     private void Apply()
     {
@@ -157,7 +142,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
     {
         _shown = true;
         ApplyMode();
-        view.UpdateCounter(_done, _total);
     }
 
     private void ApplyMode()
@@ -190,6 +174,6 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
 
         if (_notified) return;
         _notified = true;
-        notifier.ShowRunFinished(_terminalText, _terminalHealthy);
+        notifier.ShowRunFinished(_terminal);
     }
 }

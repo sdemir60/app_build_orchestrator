@@ -21,8 +21,9 @@ namespace BuildOrchestrator.Tests.App;
 /// ZAMAN false döner. Bu DAR koşulda test AÇIKÇA atlanır (skipped, sessiz pass DEĞİL); capture'ın BAŞKA bir
 /// sebeple (gerçek regresyon) başarısız olması hâlâ KIRMIZI düşer. <c>[StaFact]</c> DEĞİL — Xunit.StaFact'in
 /// runner'ı <c>Xunit.SkipException</c>'ı tanımaz (Skipped yerine sessizce Failed üretirdi); bu yüzden test
-/// [SkippableFact] kalır ve WPF gövdesi <see cref="RunOnStaThreadAsync"/> ile manuel bir STA thread'de koşar
-/// (bkz. AppShutdownTests.OnBlockedDispatcherThread — aynı kalıp).
+/// [SkippableFact] kalır ve WPF gövdesi ortak <see cref="StaThread.RunAsync(Action, string?)"/> ile manuel
+/// bir STA thread'de koşar (bkz. <c>StaThread</c>'in kendi doc'u — AppShutdownTests/TrayOverlayMeasurementTests
+/// ile AYNI kalıp, TEK yerde).
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class DragReorderTests
@@ -87,10 +88,11 @@ public class DragReorderTests
     [SkippableFact]
     public async Task Reorder_uses_mouse_capture_and_never_calls_the_ole_drag_drop_api()
     {
-        // WPF gövdesi manuel STA thread'de (bkz. RunOnStaThreadAsync) — [StaFact] DEĞİL, çünkü Xunit.StaFact'in
-        // runner'ı aşağıdaki Skip.If'in fırlattığı Xunit.SkipException'ı TANIMAZ (Skipped yerine sessizce Failed
-        // üretirdi — doğrulandı: xunit.execution 2.9.3 derlemesinde "SkipException" hiç geçmiyor).
-        await RunOnStaThreadAsync(() =>
+        // WPF gövdesi manuel STA thread'de (bkz. StaThread.RunAsync'in doc'u) — [StaFact] DEĞİL, çünkü
+        // Xunit.StaFact'in runner'ı aşağıdaki Skip.If'in fırlattığı Xunit.SkipException'ı TANIMAZ (Skipped
+        // yerine sessizce Failed üretirdi — doğrulandı: xunit.execution 2.9.3 derlemesinde "SkipException" hiç
+        // geçmiyor).
+        await StaThread.RunAsync(() =>
         {
             // [Kanıtlı kök neden] Mouse.PrimaryDevice.ActiveSource NULL iken CaptureMouse() HER ZAMAN false
             // döner (oturuma hiç gerçek mouse trafiği akmamış — uzak/kilitli/etkileşimsiz masaüstü; ekranda
@@ -163,23 +165,4 @@ public class DragReorderTests
     private static Border? Grip(DependencyObject root, LayerRowViewModel row) =>
         DsResources.Descendants(root).OfType<Border>()
             .FirstOrDefault(b => DragReorderBehavior.GetIsDragHandle(b) && ReferenceEquals(b.DataContext, row));
-
-    /// <summary>[Fix] Verilen işi YENİ, ayrı bir STA thread'de senkron koşturur ve sonucu/istisnayı (SkipException
-    /// DAHİL, tip değişmeden) <see cref="TaskCompletionSource"/> ile çağıran thread'e taşır — AppShutdownTests
-    /// .OnBlockedDispatcherThread ile AYNI kalıp. [StaFact] yerine bunun kullanılma nedeni: [SkippableFact]'in
-    /// Skip.If/SkipException tanıma mantığı yalnız KENDİ runner'ında çalışır; WPF gövdesi bu yüzden [StaFact]
-    /// yerine manuel STA thread'de, ama test metodu (Skip.If dahil) [SkippableFact] altında kalır.</summary>
-    private static Task RunOnStaThreadAsync(Action body)
-    {
-        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var thread = new Thread(() =>
-        {
-            try { body(); tcs.SetResult(); }
-            catch (Exception ex) { tcs.SetException(ex); }
-        })
-        { IsBackground = true, Name = "drag-reorder-sta" };
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        return tcs.Task;
-    }
 }

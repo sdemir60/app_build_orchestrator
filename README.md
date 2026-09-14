@@ -85,6 +85,8 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
 The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
 build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
+Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
+their environment variable is set (ARCHITECTURE.md §17.5).
 
 ## Publish
 
@@ -349,11 +351,11 @@ Drag the empty background to pan (the cursor turns into a hand) and the mouse wh
 clicking empty background with nothing selected returns the view to its default.
 
 You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
-a build is running the product mark animates in the bottom-right corner of the screen with the same
-`built/to-build` counter the ribbon shows — click it to bring the window back, or click straight through the
-empty space around it to whatever is underneath. When the run finishes the mark plays out its last turn, fades,
-and Windows shows a notification with the result; the same sentence is waiting in the ribbon when you open the
-window again. A run that finishes while the window is open shows no notification — the ribbon already says it.
+a build is running the product mark animates in the bottom-right corner of the screen — click it to bring the
+window back, or click straight through the empty space around it to whatever is underneath. When the run
+finishes the mark plays out its last turn, fades, and Windows shows a notification with the result — click it
+to bring the window back too — and the same sentence is waiting in the ribbon when you open the window again.
+A run that finishes while the window is open shows no notification — the ribbon already says it.
 
 If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
 says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
@@ -438,6 +440,10 @@ Switching **while a run is in flight** writes a console note and sends the new p
 while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
 (`cpu cap off` for Full).
+
+If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
+every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the
+physical memory and make Windows page other applications (ARCHITECTURE.md §11.1).
 
 Three qualifications worth knowing:
 
