@@ -146,6 +146,9 @@ public partial class ConsoleView : UserControl
         // daktilo/kaskat BURADA commit EDİLMEZ: commit doküman yazan bir DAVRANIŞTIR ve unload'da yeni bir
         // satır üretmek bugünkü sözleşmeyi değiştirirdi (mod değişimi yollarının kendi commit/iptal kararları var).
         Unloaded += (_, _) => StopBlink();
+        // Pencere tepsiye inince görünüm BOŞALTILMAZ (Unloaded ateşlenmez) — yalnız görünmez olur. Sonsuz saatler
+        // görünürlüğe bağlıdır (ARCHITECTURE §14.5); geri gelişte prompt yeniden kurulur (bkz. StartBlink kapısı).
+        IsVisibleChanged += (_, _) => RefreshPrompt();
     }
 
     /// <summary>[A13/T1 fix-1 · I-D] Motion sinyali koşu SIRASINDA değişince görünüm uyar
@@ -513,6 +516,10 @@ public partial class ConsoleView : UserControl
     /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi.</summary>
     private void StartBlink()
     {
+        // Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: RefreshPrompt her görsel-satır değişiminde
+        // koşar ve tepsideyken de koşar — yalnız IsVisibleChanged'de durdurmak saati bir sonraki olayda geri
+        // kurardı (ölçüldü, bkz. HiddenCursorClockTests).
+        if (!IsVisible) { StopBlink(); return; }
         if (_blinking) return;
         _blinking = true;
         ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
