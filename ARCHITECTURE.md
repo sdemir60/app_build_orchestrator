@@ -392,16 +392,21 @@ unexpected exception becomes `error(cleanFailed)`.
 
 `optimizeProgress` is the third channel of that same shape — a repair transcript is neither a Sync nor a Clean,
 and folding all three onto one discriminator would blur both the console history and the diagnosis.
-`optimizeStarted` moves the App's Optimize gate from *requested* to *in flight* — the acceptance, not the click
-— but unlike a Clean, whose click empties the plan surface, an Optimize empties nothing: a repair cannot make a
-project dirty, so the rows keep their decisions. `optimizeCompleted` closes the window with one counter per
+`optimizeStarted` moves the App's Optimize gate from *requested* to *in flight*; as with a Clean, the rows were
+already cleared at the click, and the App answers `optimizeCompleted` with a Sync of its own that brings them
+back (§13.2). `optimizeCompleted` closes the window with one counter per
 step: projects scanned, projects restored, restores that failed, references restore could not resolve, projects
 whose `obj` was cleaned, the three ledger prunes kept apart, temp files swept, files that were in use and bytes
 reclaimed. Nothing the App can derive is put on the wire, and the three prune counts stay apart because the
-source-hash ledger is keyed by source file rather than by project and fills up far faster. The App's one-line
-stream summary reads the restored, unresolved and pruned totals; the console carries the rest, where the
-per-reference detail lines stop at a cap and end with an "and N more" tail while the counter still reports the
-true total. As with Clean, a locked file and a failed restore are results rather than errors: only a missing
+source-hash ledger is keyed by source file rather than by project and fills up far faster. The console's closing
+line and the App's one-line stream summary are worded from **one list of terms** that names only what happened —
+restores that succeeded and that failed, unresolved references, cleaned `obj` folders, pruned entries, swept
+temp files, bytes reclaimed — so a count is never worded two ways and a zero is never spelled out; with nothing
+to name, both say there was nothing to fix. The console carries the detail, where the per-reference lines stop
+at a cap and end with an "and N more" tail while the counter still reports the true total. Every line carries its
+meaning in its own prefix — a warning starts with `warning:`, an error message with `[error]` — because the
+console colours a line from its text, never from the `Level` field (§13.5). As with Clean, a locked file and a
+failed restore are results rather than errors: only a missing
 root or an unexpected exception becomes `error(optimizeFailed)`.
 
 `pullRepository` has no channel of its own. Its reasons flow as `syncProgress` lines — a fast-forward is a git
@@ -1194,7 +1199,14 @@ Optimize restores only what a restore can actually fix: a project that carries a
 `HintPath` is the only trustworthy witness of where the packages are expected. A `HintPath` still carrying an
 unexpanded MSBuild property is counted in nothing at all, because this service does no MSBuild evaluation and
 staying silent beats a wrong diagnosis. A non-zero exit is **not an error**: the project is named on the
-console and the sweep moves to the next one, which is how an offline machine behaves. If `MSBuild.exe` cannot
+console and the sweep moves to the next one, which is how an offline machine behaves. The restore child's own
+output is **collected, not streamed**. Even a restore with nothing to fetch prints a banner, certificate-chain
+notes and a timing footer, and a failed one repeats every error in a closing summary; across a workspace of
+needy projects that would bury the console, and the build path keeps the same output in the per-project logs
+rather than in the narrative. What reaches the console is what the user acts on: the command line, and for a
+failed restore MSBuild's error messages — each once, without the target path in front or the project path
+behind, up to a cap.
+If `MSBuild.exe` cannot
 be resolved at all, only this step is skipped and the rest of Optimize still runs — the toolset is resolved
 lazily, so a workspace with nothing to restore never pays for a `vswhere` search.
 
@@ -1641,7 +1653,7 @@ row menu starts on one project, and `DEEP CLEAN` the maintenance box's workspace
 are two different operations. It lights amber while a run or a Sync is in flight and goes neutral when they
 finish; the two maintenance jobs write their word at the click and leave the pill neutral, because neither
 opens a phase of its own — their live state is told by their own button in the maintenance box and by the
-console transcript. The `SYNC` a Clean chains overwrites `DEEP CLEAN`, and nothing follows an Optimize. It
+console transcript. The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`. It
 *stays* until the next operation begins: the phase
 line is momentary, the pill is the identity of what was last asked for. The progress indicator lives inside
 it, six pixels right of the text — a spinner while live, the result glyph when done; the phase line does not
@@ -1913,9 +1925,10 @@ skip it as up to date and report green over deleted outputs.
 **The click empties the plan surface, and the Sync that follows fills it in again.** Rows, graph nodes, the
 cycle map and the *to build* count all go at the moment the button is pressed, in the same frame as the console
 and the event stream: the outputs are about to be deleted, so nothing on screen answers to anything on disk any
-more, and dropping the plan at some later instant would read as a second jolt in one operation. **Sync behaves
-identically**, and for the reason that generalises the rule: an operation that is about to replace the plan
-takes the old one down with the click, not with the reply. The phase moves
+more, and dropping the plan at some later instant would read as a second jolt in one operation. **Sync and
+Optimize behave identically**, and for the reason that generalises the rule: an operation that is about to
+replace the plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync.
+The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
 `Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
 Sync* empty state. A branch change does exactly this for the same reason. Because the emptying happens at the
@@ -1923,15 +1936,17 @@ click, a command that fails to send, or one the Supervisor rejects, leaves the l
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
 This costs no extra waiting in practice. *Build*, *Rebuild* and *Resolve cycles* are already shut for the
-whole of a Sync or a Clean (`!SyncBusy && !CleanBusy`), and the plan arrives in the same batch that clears the
+whole of a Sync, a Clean or an Optimize (`!SyncBusy && !CleanBusy && !OptimizeBusy`), and the plan arrives in
+the same batch that clears the
 in-flight flag, so both halves of their gate open together. What the emptying does change is the failure case:
 a Sync that never delivers a plan — the engine is gone, planning failed — leaves the surface empty and those
 three shut until a Sync succeeds, where before they stayed enabled against a list that no longer described
 anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build against a
 surface the user cannot see would compile a set nobody chose.
 
-**The step always plays for the same length.** On a small workspace the deletion finishes in milliseconds, so
-the spinner would flash and the Sync's animations would land on top of it. The Clean therefore holds its step
+**The step always plays for the same length.** On a small workspace a maintenance job finishes in milliseconds,
+so the spinner would flash and the Sync's animations would land on top of it. Clean and Optimize therefore hold
+their step
 for the design's neutral beat measured from the click — the spinner keeps turning, the gate stays shut — then
 ends the step, waits the short beat, and only then starts the Sync. The rule it follows is the one the opening
 choreography already established: a choreography either always plays or never, because a step that appears only
@@ -1944,16 +1959,19 @@ shape as the `N behind` chip's pull — because the engine's own analysis is the
 decisions back on the rows the click cleared, and the alternative is asking the user to press *Sync* for
 information the application can fetch itself. A row reading `up to date` cannot go on saying so once its `bin`
 is gone, and a green status answers to nothing on disk; that is why the plan surface goes at the click rather
-than waiting to be corrected. A failed Clean chains nothing: the reason is already in the console, and a second
-error line on top of it would only be noise.
+than waiting to be corrected. An Optimize chains the same Sync for a plainer reason: its click cleared the rows
+too, and the two maintenance buttons sit side by side in one box, so they answer a click with one flow. A failed
+job chains nothing: the reason is already in the console, and a second error line on top of it would only be
+noise.
 
 **The gate is handed over, never dropped.** It stays shut from the click until the chained Sync has claimed it,
-which covers `cleanCompleted`, the held step and the beat after it: the two operations read as one busy stretch,
+which covers `cleanCompleted` or `optimizeCompleted`, the held step and the beat after it — one handover shared
+by both jobs: the two operations read as one busy stretch,
 nothing brightens in between, and the spinner keeps turning until the handover. Releasing it before that beat
 left a window where *Sync* and *Clean* were clickable and the buttons blinked from dim to live and back. The
 handover is synchronous — the Sync claims the gate before its first await — so there is no instant in which
 neither holds it. If the command cannot even be sent, the Sync releases its own gate and the release that
-follows is then the correct answer. The gate opens on every exit, an engine death mid-Clean included, and the
+follows is then the correct answer. The gate opens on every exit, an engine death mid-job included, and the
 silence watchdog (§4.6) covers the wait. Each button carries the state its tooltip
 cannot: while its own work runs it takes the amber `active` ground, its icon becomes the spinner (§14.4), and
 the ordinary disabled dim is suppressed so a running job never reads as a switched-off one. All three obey the
@@ -1969,15 +1987,15 @@ it. It walks the same resolved project set a Sync or a Clean walks, registered e
 nothing it removes is anything a build needs — stale residue, dead ledger entries, and the temp files an
 interrupted write abandoned.
 
-**Clean and Optimize are opposites, not degrees of one thing.** Clean deletes `bin` and `obj` outright so the
-next *Build* compiles everything as never built; Optimize deletes only the NuGet residue *inside* `obj` and
-leaves the rest where it is. The surface follows that difference exactly: **Optimize empties nothing and
-chains nothing.** A row's decision is read from source content (§7.1), and neither a restore nor a residue
-sweep makes a project stale — so the rows, the graph, the cycle map and the counters stay true across the
-repair, and there is nothing for a Sync to put back. It opens no step to hold either: the Clean's step is held
-so its spinner is not flashed under the animations of the Sync that follows it, and nothing follows an
-Optimize. What the user sees is the console transcript line by line, one closing summary in the event stream —
-restored projects, unresolved references, ledger entries pruned — and a pill that goes on reading `OPTIMIZE`.
+**Clean and Optimize are opposites in what they remove, and one flow on the surface.** Clean deletes `bin` and
+`obj` outright so the next *Build* compiles everything as never built; Optimize deletes only the NuGet residue
+*inside* `obj` and leaves the rest where it is. A row's decision is read from source content (§7.1), and neither
+a restore nor a residue sweep makes a project stale, so the Sync that follows an Optimize puts back the decisions
+its click took away. The surface still follows the Clean's rules above — plan cleared at the click, step held,
+gate handed to the chained Sync — because two jobs in one box that answered the same click in two different ways
+would read as two different kinds of thing. What the user sees is the console reporting each step's result, even
+a step that found nothing — packages, references, `obj` leftovers, caches — then one closing summary in the
+event stream, and a pill reading `OPTIMIZE` until the Sync takes it over.
 
 **The two workspace jobs share one gate.** A workspace must be selected — a topology is not required, both
 services scan for themselves — the engine must be alive, and no run, Sync, Clean or Optimize may be in flight.
@@ -3745,7 +3763,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
 | Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
-| Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat | `Core/Workspace/OptimizeWorkspaceService.cs` |
+| Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
 | Dead-entry pruning (only keys whose file is gone), in all three ledgers | `Core/State/BuildStateStore.cs`, `Core/Discovery/EvaluationCache.cs`, `Core/Incremental/SourceHashCache.cs` (`PruneMissingUnderRoot`) |
 | Root normalization and the `C:\repo` / `C:\repo2` prefix trap — one gate for both the reset and the prune | `Core/Paths/RootScope.cs` |
@@ -3812,7 +3830,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
-| Maintenance-box Optimize command, the shared workspace-job gate (mutually exclusive with Clean), its request/in-flight guard and its error codes — no Sync chained, no plan surface emptied | `App/ViewModels/RunViewModel.cs` (`OptimizeCommand`), `RunViewModel.Workspace.cs` |
+| Maintenance-box Optimize command, the shared workspace-job gate (mutually exclusive with Clean), its request/in-flight guard and its error codes — the plan surface cleared at the click and the Sync chained on completion, through the handover it shares with Clean | `App/ViewModels/RunViewModel.cs` (`OptimizeCommand`), `RunViewModel.Workspace.cs` |
 | Hollow reset of rows and the will-build surface (branch change, root change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
 | Emptying rows, graph and the will-build surface at a Clean click | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |

@@ -275,9 +275,10 @@ reported rather than failing the Clean.
 *Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages,
 names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
 cache entries, over the same projects a build sees, external roots included. It changes no build decision —
-nothing it does makes a project stale — so unlike *Clean* it leaves the project list and the graph standing and
-runs no *Sync* afterwards. Its own button turns amber with a spinner while it works, and the console carries
-the repair line by line.
+nothing it does makes a project stale. Its flow is the same as *Clean*'s: the project list and the graph empty at
+the click, its button turns amber with a spinner, and when it finishes a *Sync* runs on its own to put the plan
+back. The console reports each step's result; a failed restore shows MSBuild's error messages, not its whole
+output.
 
 Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members compile
 one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
