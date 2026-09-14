@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
@@ -267,7 +268,9 @@ public class OptimizeWorkspaceServiceTests : IDisposable
 
         var done = Completed(events);
         Assert.Equal(42, done.UnresolvedReferences);
-        Assert.Equal(30, WarnLines(events).Count(l => l.StartsWith("unresolved reference:", StringComparison.Ordinal)));
+        // [DEĞİŞEN KURAL] Eski iddia: detay satırı "unresolved reference:" ile başlar. Satır artık "warning:"
+        // önekini taşır — konsol rengi yalnız önekten çıkarılır ve öneksiz uyarı düz metin gibi akıyordu.
+        Assert.Equal(30, WarnLines(events).Count(l => l.StartsWith("warning: unresolved reference:", StringComparison.Ordinal)));
         Assert.Contains(Lines(events), l => l.Contains("and 12 more unresolved references", StringComparison.Ordinal));
     }
 
@@ -575,5 +578,135 @@ public class OptimizeWorkspaceServiceTests : IDisposable
         string line = Assert.Single(warns, l => l.Contains("osys.platform", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("unresolved reference: Consumer: osys.platform", line, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("build the producing solution first", line);
+    }
+
+    // ---------------------------------------------------------------- konsol sağlığı
+
+    /// <summary>
+    /// Optimize'ın her UYARI satırı konsolda uyarı renginde görünür. App satırın <c>Level</c> alanını OKUMAZ:
+    /// rengi yalnız metnin kaynağı belli öneklerinden çıkarır (<c>ConsoleLineClassifier</c> — <c>warning:</c>,
+    /// <c>[error]</c>, MSBuild tanı biçimi). Önek taşımayan bir uyarı düz metin gibi akar ve kullanıcı düşen bir
+    /// restore'u gözden kaçırır.
+    /// <para>Ölçülen kusur: "restore failed", "unresolved reference", "and N more" ve "could not be removed"
+    /// satırları öneksizdi ve dördü de <c>Info</c> sınıflanıyordu.</para>
+    /// </summary>
+    [Fact]
+    public async Task Every_warning_the_optimize_writes_is_colored_as_a_warning_in_the_console()
+    {
+        WriteLegacyProject("Fails", hintPaths: ["..\\packages\\P.1.0.0\\lib\\F.dll"], packagesConfig: true);
+        WriteLegacyProject("Many",
+            hintPaths: Enumerable.Range(0, 31).Select(i => $"..\\packages\\Pkg{i}\\lib\\Pkg{i}.dll").ToArray());
+        string locked = WriteLegacyProject("Locked");
+        WriteStaleObj(locked, "Locked");
+        string lockedProps = Path.Combine(Path.GetDirectoryName(locked)!, "obj", "Locked.csproj.nuget.g.props");
+
+        List<IpcEvent> events;
+        using (new FileStream(lockedProps, FileMode.Open, FileAccess.Read, FileShare.None))
+            events = await RunAsync(ServiceWith(restore: (_, _, _) => Task.FromResult(Exit(1))));
+
+        var warns = WarnLines(events);
+        // Test boşa geçmesin: beş uyarı türünün hepsi gerçekten üretildi.
+        foreach (string kind in new[] { "restore failed", "unresolved reference:", "more unresolved references",
+                                        "could not be removed", "close the running application" })
+            Assert.Contains(warns, l => l.Contains(kind, StringComparison.Ordinal));
+
+        Assert.All(warns, l => Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(l)));
+    }
+
+    /// <summary>
+    /// Başarılı bir restore'un MSBuild çıktısı konsola AKMAZ. Ölçüm (gerçek MSBuild, eski stil proje): paketi
+    /// olmayan bir restore bile 16 satır basıyor (başlık, sertifika zinciri notları, süre), başarısızı 57; eksik
+    /// paketli 30 projelik bir workspace'te konsol yüzlerce satırlık yerelleştirilmiş gürültüye boğulurdu. Build
+    /// yolu aynı çıktıyı anlatı konsoluna değil proje loguna yazar — Optimize da kullanıcıyı ilgilendireni yazar.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_restore_does_not_pour_msbuild_output_into_the_console()
+    {
+        WriteLegacyProject("Needy", hintPaths: ["..\\packages\\P.1.0.0\\lib\\N.dll"], packagesConfig: true);
+
+        var events = await RunAsync(ServiceWith(restore: (_, onLine, _) =>
+        {
+            onLine("Build started 14.09.2026 14:48:35.");
+            onLine("  Determining projects to restore...");
+            onLine("Build succeeded.");
+            return Task.FromResult(Exit(0));
+        }));
+
+        Assert.DoesNotContain(Lines(events), l => l.Contains("Determining projects", StringComparison.Ordinal));
+        Assert.DoesNotContain(Lines(events), l => l.Contains("Build started", StringComparison.Ordinal));
+        Assert.Contains(Lines(events), l => l.StartsWith("msbuild ", StringComparison.Ordinal)); // komut yine görünür
+    }
+
+    /// <summary>
+    /// Başarısız bir restore'da kullanıcıyı ilgilendiren şey NEDENDİR: MSBuild'in hata iletileri bir kez, kısa
+    /// biçimde ve hata renginde yazılır. MSBuild aynı hataları sonda bir özet olarak TEKRAR basar; hedef dosya
+    /// yolu ve <c>[proje yolu]</c> eki okumaya bir şey katmaz. Geri kalan çıktı (başlık, akış listeleri, süre)
+    /// yazılmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_restore_shows_each_msbuild_error_once_and_nothing_else()
+    {
+        WriteLegacyProject("Fails", hintPaths: ["..\\packages\\P.1.0.0\\lib\\F.dll"], packagesConfig: true);
+        const string target = @"C:\VS\NuGet.targets(198,5): error : ";
+        const string suffix = @" [C:\repo\Fails\Fails.csproj]";
+
+        var events = await RunAsync(ServiceWith(restore: (_, onLine, _) =>
+        {
+            onLine("Build started 14.09.2026 14:48:36.");
+            onLine(target + "Unable to find version '9.9.9' of package 'P'." + suffix);
+            onLine(target + "  https://api.nuget.org/v3/index.json: Package 'P.9.9.9' is not found." + suffix);
+            onLine(target + " " + suffix);                      // MSBuild'in boş hata satırı
+            onLine("    Feeds used:");
+            onLine(target + "Unable to find version '9.9.9' of package 'P'." + suffix); // özet tekrarı
+            onLine("Build FAILED.");
+            return Task.FromResult(Exit(1));
+        }));
+
+        var lines = Lines(events);
+        string first = Assert.Single(lines, l => l.Contains("Unable to find version", StringComparison.Ordinal));
+        Assert.Single(lines, l => l.Contains("is not found", StringComparison.Ordinal));
+        Assert.Equal(ConsoleLineType.Error, ConsoleLineClassifier.Classify(first));
+        Assert.DoesNotContain("NuGet.targets", first, StringComparison.Ordinal);
+        Assert.DoesNotContain("Fails.csproj]", first, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, l => l.Contains("Feeds used", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains("Build FAILED", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Bitiş özeti düşen restore'ları SÖYLER ve olmayan şeyi saymaz. Ölçülen kusur: iki restore düşünce özet
+    /// "0 restored" diyor, başarısızlığı hiç anmıyordu; sıfır terimler ("0 obj cleaned · 0 B reclaimed")
+    /// satırı okunmaz kılıyordu.
+    /// </summary>
+    [Fact]
+    public async Task The_summary_names_failed_restores_and_leaves_out_what_did_not_happen()
+    {
+        WriteLegacyProject("Fails", hintPaths: ["..\\packages\\P.1.0.0\\lib\\F.dll"], packagesConfig: true);
+
+        var events = await RunAsync(ServiceWith(restore: (_, _, _) => Task.FromResult(Exit(1))));
+
+        string summary = Assert.Single(Lines(events), l => l.StartsWith("Optimize complete", StringComparison.Ordinal));
+        Assert.Contains("1 failed to restore", summary, StringComparison.Ordinal);
+        Assert.Contains("1 unresolved reference", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("0 restored", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("obj cleaned", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("reclaimed", summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Her adım, bir şey bulmasa da SONUCUNU yazar: kullanıcı konsoldan adım adım ne kontrol edildiğini okur.
+    /// Ölçülen kusur: referans ve obj adımları bir şey bulamayınca hiç satır yazmıyordu, yani konsol o iki
+    /// adımın koşup koşmadığını söylemiyordu.
+    /// </summary>
+    [Fact]
+    public async Task Every_step_reports_its_result_even_when_it_finds_nothing()
+    {
+        WriteLegacyProject("Healthy");
+
+        var lines = Lines(await RunAsync(ServiceWith()));
+
+        Assert.Contains(lines, l => l.StartsWith("checking NuGet packages — ", StringComparison.Ordinal));
+        Assert.Contains("checking references — all resolved", lines);
+        Assert.Contains("checking obj leftovers — none found", lines);
+        Assert.Contains("checking caches — clean", lines);
     }
 }

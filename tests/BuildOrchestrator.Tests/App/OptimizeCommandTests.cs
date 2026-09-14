@@ -83,11 +83,37 @@ public class OptimizeCommandTests
 
         var line = Assert.Single(vm.StreamEvents, s => s.Text.Contains("Optimize", StringComparison.Ordinal));
         Assert.Contains("2 restored", line.Text, StringComparison.Ordinal);
-        Assert.Contains("5 unresolved refs", line.Text, StringComparison.Ordinal);
-        // [DEĞİŞEN KURAL] Eski iddia "7 entries pruned" idi: toplam İKİ defterden geliyordu. Optimize artık
-        // üçüncü deftere de (source-hash-cache) dokunuyor, toplam 3 + 4 + 5'tir. Toplama hâlâ TEK yerde
-        // (AppendStreamFor) yapılır — değişen, kaç terim toplandığıdır.
-        Assert.Contains("12 entries pruned", line.Text, StringComparison.Ordinal);
+        // [DEĞİŞEN KURAL] Eski iddialar "5 unresolved refs" ve "7 entries pruned" idi. (1) Toplam artık ÜÇ
+        // defterden gelir (3 + 4 + 5). (2) Satır konsol özetiyle AYNI sözcükleri kullanır ("references",
+        // "cache entries") — iki yüzeyde iki ayrı adlandırma okuru neyin aynı sayı olduğu konusunda şaşırtıyordu.
+        Assert.Contains("5 unresolved references", line.Text, StringComparison.Ordinal);
+        Assert.Contains("12 cache entries pruned", line.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Stream satırı da düşen restore'ları ve kilitli dosyaları SÖYLER; hiçbir sorun yoksa sıfırları sıralamak
+    /// yerine "nothing to fix" der. Ölçülen kusur: iki restore düşünce satır "0 restored, 0 unresolved refs,
+    /// 0 entries pruned" diyordu — kullanıcı stream'den başarısızlığı hiç göremiyordu.
+    /// </summary>
+    [Fact]
+    public async Task The_stream_line_names_failures_and_says_nothing_to_fix_when_there_was_nothing()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        vm.OnEvent(new OptimizeCompletedEvent(ProjectCount: 10));
+        Assert.Equal("Optimize — nothing to fix", Assert.Single(vm.StreamEvents, s => s.Text.StartsWith("Optimize", StringComparison.Ordinal)).Text);
+
+        vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
+        vm.OnEvent(new OptimizeCompletedEvent(ProjectCount: 10, RestoredProjects: 1, FailedRestores: 2,
+            LockedFileCount: 1));
+        string text = vm.StreamEvents.Last(s => s.Text.StartsWith("Optimize", StringComparison.Ordinal)).Text;
+        Assert.Contains("1 restored", text, StringComparison.Ordinal);
+        Assert.Contains("2 failed to restore", text, StringComparison.Ordinal);
+        Assert.Contains("1 in use", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("unresolved", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("pruned", text, StringComparison.Ordinal);
     }
 
     // ---------------------------------------------------------------- kapı matrisi

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
@@ -131,11 +132,12 @@ public sealed class OptimizeWorkspaceService(
         ct.ThrowIfCancellationRequested();
         SweepOrphanTempFiles(tally, emit);
 
-        EmitSummary(tally, emit);
-        emit(new OptimizeCompletedEvent(
+        var done = new OptimizeCompletedEvent(
             tally.ProjectCount, tally.RestoredProjects, tally.FailedRestores, tally.UnresolvedReferences,
             tally.StaleObjCleaned, tally.PrunedStateEntries, tally.PrunedCacheEntries, tally.PrunedSourceHashEntries,
-            tally.RemovedTempFiles, tally.LockedFileCount, tally.BytesReclaimed));
+            tally.RemovedTempFiles, tally.LockedFileCount, tally.BytesReclaimed);
+        EmitSummary(done, emit);
+        emit(done);
     }
 
     // ---------------------------------------------------------------- adım 1: eksik NuGet paketleri
@@ -152,8 +154,8 @@ public sealed class OptimizeWorkspaceService(
     {
         var needy = projects.Where(IsNeedy).ToList();
         emit(Info(needy.Count == 0
-            ? $"checking NuGet packages — {projects.Count} projects, all packages present"
-            : $"checking NuGet packages — {projects.Count} projects, {needy.Count} need restore"));
+            ? $"checking NuGet packages — {Count(projects.Count, "project")}, all packages present"
+            : $"checking NuGet packages — {Count(projects.Count, "project")}, {needy.Count} need restore"));
         if (needy.Count == 0) return;
 
         IMsBuildInvoker invoker;
@@ -178,7 +180,8 @@ public sealed class OptimizeWorkspaceService(
             // Komut satırı argüman listesinin TEK kaynağından yazılır; "msbuild " öneki konsolun komut rengini verir.
             emit(Cmd("msbuild " + string.Join(' ', args)));
 
-            var result = await RunRestoreWithHeartbeatAsync(invoker, project, solutionDir, name, emit, ct);
+            var output = new List<string>();
+            var result = await RunRestoreWithHeartbeatAsync(invoker, project, solutionDir, name, output, emit, ct);
             if (result.ExitCode == 0 && !result.TimedOut && !result.Killed)
             {
                 tally.RestoredProjects++;
@@ -186,9 +189,11 @@ public sealed class OptimizeWorkspaceService(
             else
             {
                 // [K-10] exit≠0 HATA DEĞİLDİR: offline/erişilemez kaynak senaryosu buradan akar, sıradaki
-                // projeye geçilir. Kullanıcı hangi projenin düştüğünü isimle görür.
+                // projeye geçilir. Kullanıcı hangi projenin düştüğünü isimle ve NEDENİYLE görür.
                 tally.FailedRestores++;
-                emit(Warn($"restore failed for {name} (exit {result.ExitCode})"));
+                string why = result.TimedOut ? "timed out" : result.Killed ? "stopped" : $"exit {result.ExitCode}";
+                emit(Warn($"warning: restore failed for {name} ({why})"));
+                lock (output) EmitRestoreErrors(output, emit);
             }
         }
     }
@@ -203,13 +208,20 @@ public sealed class OptimizeWorkspaceService(
     /// <summary>
     /// [K-13] Restore child'ını beklerken periyodik bir <c>dim</c> satırı basar. Beklemenin KENDİSİ enjekte
     /// edilebilir bir dikiştir — testte senkron bir sinyale çevrilir, gerçek zaman beklenmez [D8].
+    /// <para><b>Ham MSBuild çıktısı konsola AKMAZ</b>, <paramref name="output"/>'a toplanır. Ölçüm (gerçek
+    /// MSBuild, eski stil proje): paketi olmayan bir restore bile 16 satır basar (başlık, sertifika zinciri
+    /// notları, süre), başarısızı 57 — eksik paketli bir workspace'te konsol yüzlerce satırlık gürültüye
+    /// boğulurdu. Build yolu da aynı çıktıyı anlatı konsoluna değil proje loguna yazar. Toplanan çıktı yalnız
+    /// restore düşerse okunur (<see cref="EmitRestoreErrors"/>). Satırlar MSBuild'in pump thread'lerinden gelir,
+    /// bu yüzden liste kilitle korunur.</para>
     /// </summary>
     private async Task<MsBuildInvokeResult> RunRestoreWithHeartbeatAsync(
         IMsBuildInvoker invoker, EvaluatedProject project, string solutionDir, string name,
-        Action<IpcEvent> emit, CancellationToken ct)
+        List<string> output, Action<IpcEvent> emit, CancellationToken ct)
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
-        var restore = invoker.RestoreAsync(new MsBuildRestoreRequest(project.Path, solutionDir), line => emit(Dim(line)), ct);
+        var restore = invoker.RestoreAsync(new MsBuildRestoreRequest(project.Path, solutionDir),
+            line => { lock (output) output.Add(line); }, ct);
         var beat = HeartbeatDelay ?? (token => Task.Delay(HeartbeatInterval, token));
 
         while (true)
@@ -219,6 +231,36 @@ public sealed class OptimizeWorkspaceService(
             emit(Dim($"still restoring {name} ({DurationFormat.Elapsed(started.ElapsedMilliseconds)})"));
         }
         return await restore;
+    }
+
+    /// <summary>Başarısız bir restore'dan kaç hata iletisi yazılır; kalanı tek bir toplam satırına düşer.</summary>
+    private const int RestoreErrorCap = 5;
+
+    /// <summary>MSBuild'in tanı satırı: <c>&lt;köken&gt;: error [KOD]: &lt;ileti&gt; [&lt;proje&gt;]</c>. Köken
+    /// (hedef dosyanın yolu ve satırı) ve sondaki proje eki okumaya bir şey katmaz; kalan İLETİDİR. Anahtar
+    /// sözcük (<c>error</c>) MSBuild'in yerelleştirilmiş çıktısında da değişmez.</summary>
+    private static readonly Regex MsBuildErrorLine = new(
+        @":\s*error(?:\s+[A-Za-z]+\d+)?\s*:\s*(?<message>.*?)(?:\s*\[[^\]]*\])?\s*$",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Düşen bir restore'un NEDENİ: MSBuild'in hata iletileri, her biri BİR kez. MSBuild aynı hataları çıktının
+    /// sonunda bir özet olarak tekrar basar; boş hata satırları da atlanır. Satırlar uygulamanın kendi
+    /// <c>[error]</c> önekiyle yazılır — konsol onları hata renginde boyar (bkz. <c>ConsoleLineClassifier</c>).
+    /// </summary>
+    private static void EmitRestoreErrors(IReadOnlyList<string> output, Action<IpcEvent> emit)
+    {
+        var messages = new List<string>();
+        foreach (string line in output)
+        {
+            var match = MsBuildErrorLine.Match(line);
+            if (!match.Success) continue;
+            string message = match.Groups["message"].Value.Trim();
+            if (message.Length > 0 && !messages.Contains(message, StringComparer.Ordinal)) messages.Add(message);
+        }
+
+        foreach (string message in messages.Take(RestoreErrorCap)) emit(Error($"  [error] {message}"));
+        if (messages.Count > RestoreErrorCap) emit(Error($"  [error] ... and {messages.Count - RestoreErrorCap} more"));
     }
 
     // ---------------------------------------------------------------- adım 2: kırık referans teşhisi
@@ -232,7 +274,7 @@ public sealed class OptimizeWorkspaceService(
     private static void ReportUnresolvedReferences(IReadOnlyList<EvaluatedProject> projects, Tally tally, Action<IpcEvent> emit)
     {
         var producers = ProducerMapBuilder.Build(projects);
-        int shown = 0;
+        var details = new List<string>();
 
         foreach (var project in projects)
         {
@@ -247,17 +289,21 @@ public sealed class OptimizeWorkspaceService(
                 if ((!isPackages && !isPlatform) || !IsResolvable(hint) || TargetExists(dir, hint)) continue;
 
                 tally.UnresolvedReferences++;
-                if (shown >= UnresolvedDetailCap) continue; // sayaç tam toplamı taşır, konsol boğulmaz
-                shown++;
+                if (details.Count >= UnresolvedDetailCap) continue; // sayaç tam toplamı taşır, konsol boğulmaz
                 string expected = ResolveTarget(dir, hint);
-                emit(Warn(isPackages
-                    ? $"unresolved reference: {project.AssemblyName}: {hint.BaseName} — {expected}"
-                    : $"unresolved reference: {project.AssemblyName}: {hint.BaseName} — {expected} — build the producing solution first"));
+                details.Add(isPackages
+                    ? $"warning: unresolved reference: {project.AssemblyName}: {hint.BaseName} — {expected}"
+                    : $"warning: unresolved reference: {project.AssemblyName}: {hint.BaseName} — {expected} — build the producing solution first");
             }
         }
 
-        int hidden = tally.UnresolvedReferences - shown;
-        if (hidden > 0) emit(Warn($"... and {hidden} more unresolved references"));
+        // Adım, bir şey bulmasa da sonucunu yazar: konsol neyin kontrol edildiğini adım adım anlatır.
+        emit(Info(tally.UnresolvedReferences == 0
+            ? "checking references — all resolved"
+            : $"checking references — {Count(tally.UnresolvedReferences, "unresolved reference")}"));
+        foreach (string detail in details) emit(Warn(detail));
+        int hidden = tally.UnresolvedReferences - details.Count;
+        if (hidden > 0) emit(Warn($"warning: ... and {hidden} more unresolved references"));
     }
 
     // ---------------------------------------------------------------- adım 3: stale obj artıkları
@@ -271,12 +317,17 @@ public sealed class OptimizeWorkspaceService(
     /// </summary>
     private static void RemoveStaleObjLeftovers(IReadOnlyList<EvaluatedProject> projects, Tally tally, Action<IpcEvent> emit)
     {
-        foreach (var project in projects)
-        {
-            if (project.IsSdkStyle) continue;
-            if (project.TargetFrameworkMoniker is not { } tfm || string.IsNullOrWhiteSpace(tfm)) continue; // TFM okunamadı → sessizce atla
-            if (!StaleObjDetector.Inspect(project.Path, tfm).IsStale) continue;
+        var stale = projects
+            .Where(p => !p.IsSdkStyle
+                        && p.TargetFrameworkMoniker is { } tfm && !string.IsNullOrWhiteSpace(tfm) // TFM okunamadı → atla
+                        && StaleObjDetector.Inspect(p.Path, tfm).IsStale)
+            .ToList();
+        emit(Info(stale.Count == 0
+            ? "checking obj leftovers — none found"
+            : $"checking obj leftovers — {Count(stale.Count, "old-style project")} with stale NuGet files"));
 
+        foreach (var project in stale)
+        {
             string objDir = Path.Combine(Path.GetDirectoryName(project.Path)!, "obj");
             bool removedAny = false;
             foreach (string pattern in StaleObjArtifactPatterns)
@@ -285,7 +336,7 @@ public sealed class OptimizeWorkspaceService(
                 {
                     long size = SafeLength(file);
                     if (TryDelete(file)) { tally.BytesReclaimed += size; removedAny = true; }
-                    else { tally.LockedFileCount++; emit(Warn($"{project.AssemblyName}: {Path.GetFileName(file)} could not be removed (in use)")); }
+                    else { tally.LockedFileCount++; emit(Warn($"warning: {project.AssemblyName}: {Path.GetFileName(file)} could not be removed (in use)")); }
                 }
             }
             if (removedAny)
@@ -306,10 +357,13 @@ public sealed class OptimizeWorkspaceService(
         tally.PrunedStateEntries = roots.Sum(stateStore.PruneMissingUnderRoot);
         tally.PrunedCacheEntries = roots.Sum(cache.PruneMissingUnderRoot);
         tally.PrunedSourceHashEntries = roots.Sum(sourceHashes.PruneMissingUnderRoot);
-        emit(tally.PrunedTotal == 0
-            ? Dim("caches are clean")
-            : Info($"pruned {tally.PrunedStateEntries} build-state, {tally.PrunedCacheEntries} evaluation-cache "
-                   + $"and {tally.PrunedSourceHashEntries} source-hash entries"));
+        var pruned = new List<string>();
+        if (tally.PrunedStateEntries > 0) pruned.Add($"{tally.PrunedStateEntries} build-state");
+        if (tally.PrunedCacheEntries > 0) pruned.Add($"{tally.PrunedCacheEntries} evaluation-cache");
+        if (tally.PrunedSourceHashEntries > 0) pruned.Add($"{tally.PrunedSourceHashEntries} source-hash");
+        emit(Info(pruned.Count == 0
+            ? "checking caches — clean"
+            : $"checking caches — pruned {string.Join(", ", pruned)} {(tally.PrunedTotal == 1 ? "entry" : "entries")}"));
     }
 
     private void SweepOrphanTempFiles(Tally tally, Action<IpcEvent> emit)
@@ -322,19 +376,39 @@ public sealed class OptimizeWorkspaceService(
 
     // ---------------------------------------------------------------- özet
 
-    private static void EmitSummary(Tally tally, Action<IpcEvent> emit)
+    private static void EmitSummary(OptimizeCompletedEvent done, Action<IpcEvent> emit)
     {
-        bool foundNothing = tally.RestoredProjects == 0 && tally.FailedRestores == 0 && tally.UnresolvedReferences == 0
-            && tally.StaleObjCleaned == 0 && tally.PrunedTotal == 0 && tally.RemovedTempFiles == 0;
+        var terms = SummaryTerms(done);
+        emit(Info(terms.Count == 0
+            ? $"Optimize complete — nothing to fix, {Count(done.ProjectCount, "project")} healthy"
+            : $"Optimize complete — {string.Join(" · ", terms)}"));
 
-        emit(Info(foundNothing
-            ? $"Optimize complete — nothing to fix, {tally.ProjectCount} projects healthy"
-            : $"Optimize complete — {tally.RestoredProjects} restored · {tally.UnresolvedReferences} unresolved refs · "
-              + $"{tally.StaleObjCleaned} obj cleaned · {tally.PrunedTotal} cache entries pruned · {ByteFormat.Size(tally.BytesReclaimed)} reclaimed"));
-
-        if (tally.LockedFileCount > 0)
-            emit(Warn($"warning: {tally.LockedFileCount} files could not be removed (in use) — close the running application and run Optimize again"));
+        if (done.LockedFileCount > 0)
+            emit(Warn($"warning: {done.LockedFileCount} files could not be removed (in use) — close the running application and run Optimize again"));
     }
+
+    /// <summary>
+    /// Bitişin OLAN terimleri, sıfır olmayanlar: konsol özeti ve App'in stream satırı AYNI sözcükleri buradan
+    /// alır (kopya YASAK). Sıfır terim yazılmaz — "0 obj cleaned · 0 B reclaimed" satırı okunmaz kılıyordu ve
+    /// düşen restore'lar özette hiç anılmıyordu. Boş liste = düzeltilecek bir şey yoktu.
+    /// </summary>
+    public static IReadOnlyList<string> SummaryTerms(OptimizeCompletedEvent done)
+    {
+        ArgumentNullException.ThrowIfNull(done);
+        var terms = new List<string>();
+        if (done.RestoredProjects > 0) terms.Add($"{done.RestoredProjects} restored");
+        if (done.FailedRestores > 0) terms.Add($"{done.FailedRestores} failed to restore");
+        if (done.UnresolvedReferences > 0) terms.Add(Count(done.UnresolvedReferences, "unresolved reference"));
+        if (done.StaleObjCleaned > 0) terms.Add($"{done.StaleObjCleaned} obj cleaned");
+        int pruned = done.PrunedStateEntries + done.PrunedCacheEntries + done.PrunedSourceHashEntries;
+        if (pruned > 0) terms.Add($"{pruned} cache {(pruned == 1 ? "entry" : "entries")} pruned");
+        if (done.RemovedTempFiles > 0) terms.Add(Count(done.RemovedTempFiles, "temp file") + " swept");
+        if (done.BytesReclaimed > 0) terms.Add($"{ByteFormat.Size(done.BytesReclaimed)} reclaimed");
+        return terms;
+    }
+
+    /// <summary><c>1 unresolved reference</c> / <c>3 unresolved references</c>.</summary>
+    private static string Count(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n} {noun}s";
 
     // ---------------------------------------------------------------- HintPath çözümü (K-3)
 
@@ -412,4 +486,5 @@ public sealed class OptimizeWorkspaceService(
     private static OptimizeProgressEvent Info(string line) => new(line, "info");
     private static OptimizeProgressEvent Dim(string line) => new(line, "dim");
     private static OptimizeProgressEvent Warn(string line) => new(line, "warn");
+    private static OptimizeProgressEvent Error(string line) => new(line, "error");
 }

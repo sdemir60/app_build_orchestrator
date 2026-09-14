@@ -244,8 +244,7 @@ public sealed partial class RunViewModel
             // [optimize] Optimize da stream'e TEK satır düşer ve tonu Clean'inkiyle AYNIDIR: iki bakım işi
             // aynı kefededir, birini Info'ya almak aynı anlamı iki renkte anlatmak olurdu.
             case OptimizeCompletedEvent e:
-                PushStream(StreamKind.Sync, null, StreamText.Optimize(e.RestoredProjects, e.UnresolvedReferences,
-                    e.PrunedStateEntries + e.PrunedCacheEntries + e.PrunedSourceHashEntries));
+                PushStream(StreamKind.Sync, null, StreamText.Optimize(e));
                 break;
 
             case RunCompletedEvent e:

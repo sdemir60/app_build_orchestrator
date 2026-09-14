@@ -354,7 +354,8 @@ public sealed record OptimizeStartedEvent(string RootPath) : IpcEvent;
 /// <see cref="CleanProgressEvent"/>'in İKİZİDİR ama onların yüzeyine AİT DEĞİLDİR: App bu satırları kendi
 /// optimize penceresinin dili sayar — üç akışın tek diskriminatöre binmesi konsol geçmişini de teşhisi de
 /// bulandırırdı.</summary>
-/// <param name="Level">cmd/info/dim/warn — App tarafında satır rengini belirler.</param>
+/// <param name="Level">cmd/info/dim/warn/error — satırın ANLAMI. Konsol rengi bundan değil satırın kendi
+/// önekinden (<c>warning:</c>, <c>[error]</c>) çıkarılır; iki bilgi aynı satırda tutarlı yazılır.</param>
 public sealed record OptimizeProgressEvent(string Line, string Level) : IpcEvent;
 
 /// <summary>[optimize] Onarım bitti; sayaçlar konsol özetini ve stream satırını besler. TÜM alanlar default
