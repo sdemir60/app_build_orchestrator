@@ -28,7 +28,14 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>Windows'un "large icon" balloon'unda gösterdiği kare. <c>app-icon.ico</c> bu kareyi gerçekten
     /// taşır (<c>IconGeometryTests</c> 16/24/32/48/256'yı pinler), yani ölçekleme yapılmaz.</summary>
-    private const int LargeIconPx = 48;
+    /// <summary>
+    /// Bildirimin özel ikonunun kenarı. Bir tercih DEĞİL, API'nin ŞARTI: <c>H.NotifyIcon</c> özel balloon
+    /// ikonunu çalışma anında ölçer ve 32×32 dışındaki her şeyi <see cref="InvalidOperationException"/> ile
+    /// reddeder. Yanlış ölçü derlemede görünmez; bildirim gösterilirken patlar ve üretimde o çağrı
+    /// beklenmeyen bir <c>Task</c>'in içinde olduğu için istisna YUTULUR — koşu bildirimsiz kapanır.
+    /// Pin: <c>TrayBalloonIconTests</c>.
+    /// </summary>
+    private const int BalloonIconPx = 32;
 
     private readonly TaskbarIcon _icon;
 
@@ -38,7 +45,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     public AppTrayIcon()
     {
-        _largeIcon = LoadLargeIcon();
+        _largeIcon = LoadBalloonIcon();
 
         var stop = new MenuItem { Header = "Stop" };
         stop.Click += (_, _) => StopRequested?.Invoke();
@@ -66,13 +73,13 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// <summary>Gömülü uygulama ikonundan (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere
     /// ikonu da onu okur) istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da kendi içine kopyalar,
     /// bu yüzden akış hemen bırakılabilir.</summary>
-    private static System.Drawing.Icon LoadLargeIcon()
+    internal static System.Drawing.Icon LoadBalloonIcon()
     {
         var resource = Application.GetResourceStream(new Uri(AppIdentity.AppIconUri))
             ?? throw new InvalidOperationException(
                 $"The application icon resource was not found: {AppIdentity.AppIconUri}");
         using var stream = resource.Stream;
-        return new System.Drawing.Icon(stream, new System.Drawing.Size(LargeIconPx, LargeIconPx));
+        return new System.Drawing.Icon(stream, new System.Drawing.Size(BalloonIconPx, BalloonIconPx));
     }
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
