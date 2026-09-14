@@ -2354,30 +2354,52 @@ lines.
 
 - **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid`
   has a `*` column and an `Auto` column: the right block (Copy log + `N lines`) sits in the `Auto` column and
-  never shrinks; the left content lives in the `*` column's own inner `Grid`, where the project name is the
-  only `*` sub-column — Back, the status glyph, the status name and the two warning badges are `Auto` and hold
-  their width regardless of how narrow the panel gets. In the narrative half only the caps `CONSOLE` label
-  shows; in the project-log half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the
-  drawn `Icon.Back` arrow plus the word "Back" — is built once in the constructor and bound to the button's own
+  never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
+  deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
+  needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's
+  rendered edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the
+  status glyph instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no
+  flex-grow — it shrinks, never grows, and its neighbours are always immediately to its right). The real
+  shrink-on-demand behaviour is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered
+  width of Back, the status glyph, the status name and whichever badges are visible (each plus its own margin),
+  subtracts their sum from the available space, and caps the name's `MaxWidth` at what's left — recomputed
+  after every `ShowProjectLog`/`RefreshStatus` call, on a real Copy-log visibility flip, and on the header's own
+  `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the method
+  forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
+  already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the
+  project-log half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn
+  `Icon.Back` arrow plus the word "Back" — is built once in the constructor and bound to the button's own
   *animated* `Foreground` (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label
-  text does; its `-6px` left margin is not a clipping bug, it cancels the ghost style's own horizontal padding
-  so the arrow's edge lines up with the panel's 10 px inset. The status glyph is a real `StatusGlyph` control
-  (13 px) rather than a character — `building` draws its own spinning arc through the control's embedded
-  `BuildingSpinner`, every other state draws the dashed/solid ring — and the status word next to it keeps the
-  engine's own vocabulary (`ConsoleStatus.Name`/`BrushKey`, unchanged from the narrower `ProjectRowState`
-  domain the header has always spoken, not the graph's wider `GraphStatus`). A dependency-issue badge and a
-  cycle badge can appear **together** (unlike the single triangle a project row shows, which picks one by
-  priority): both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML
-  as `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource scope even
-  while the badge itself stays collapsed — no constructor-time paint call is needed or wanted, since a header
-  built before the window's resources are merged would otherwise resolve nothing. The dependency-issue tooltip
-  spells out every project by its short name (`RowWarning.DepIssueDetail`, comma-joined — the header has room a
-  row's slot does not, so it never falls back to the row's "+N" abbreviation); the cycle tooltip is the same
-  sentence the row's own triangle uses (`RowWarning.InCycle`), read from the one shared constant rather than
-  retyped. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no
-  bespoke chrome; its copied-state green tint is written straight to `Foreground` the same way
-  `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window can hand control
-  back to the style's own animated brush — an accepted, previously shipped trade-off, not new here.
+  text does; its `-6px` left margin is not a clipping bug and not a full cancellation either — Ghost.Sm's own
+  left padding is 10 px, so `-6` only takes back six of those ten, leaving the icon 4 px further in than the
+  panel's own 10 px inset, not flush with it. The status glyph is a real `StatusGlyph` control (13 px) rather
+  than a character — `building` draws its own spinning arc through the control's embedded `BuildingSpinner`,
+  every other state draws the dashed/solid ring — and the status word next to it keeps the engine's own
+  vocabulary (`ConsoleStatus.Name`/`BrushKey`, unchanged from the narrower `ProjectRowState` domain the header
+  has always spoken, not the graph's wider `GraphStatus`). A dependency-issue badge and a cycle badge can
+  appear **together** (unlike the single triangle a project row shows, which picks one by priority): both are
+  an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}`
+  bindings so they resolve as soon as the header is rooted in a live resource scope even while the badge itself
+  stays collapsed. The dependency-issue tooltip spells out every project by its short name
+  (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
+  back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
+  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Copy log is a plain
+  `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no bespoke chrome; its copied-state
+  green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy diagnostics button does,
+  which means a hover during the 1.4 s window can hand control back to the style's own animated brush — an
+  accepted, previously shipped trade-off, not new here.
+- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs
+  once, on selection; a project already open can still change underneath the reader — a `Started` row reaching
+  `Succeeded`, a dependency-issue list arriving, a cycle membership settling — and none of those are selection
+  events. `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s
+  `PropertyChanged` (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
+  `State`/`DepIssues`/`InCycle` alone — every other row notification (`Fresh`, `Marked`, `Fade`, …) is not the
+  header's concern and is ignored, the same filtered `switch` idiom `ProjectRow.OnVmPropertyChanged` already
+  uses for its own row. `RefreshStatus` touches only the glyph, the status word and the two badges; it does not
+  re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status change mid-read cannot reset the
+  reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run tick still owns only
+  `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are pushed the
+  instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: MSBuild's own diagnostic
   shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints

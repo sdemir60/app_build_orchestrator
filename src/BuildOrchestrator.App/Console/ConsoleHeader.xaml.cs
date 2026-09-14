@@ -31,7 +31,6 @@ public partial class ConsoleHeader : UserControl
     // [v1.18.0] Back butonunun ikonu (lucide arrow-left) — 12px, hover'da butonla BİRLİKTE renk değiştirir.
     private const string BackIconKey = "Icon.Back";
     private const double BackIconSize = 12;
-    private const double ButtonGap = 6; // _ds_bundle.js:104 DS button gap — ActionBar.ButtonGap ile AYNI sayı.
 
     private readonly CopyLogFeedback _copyFeedback = new();
     private DispatcherTimer? _copyRevertTimer;
@@ -42,6 +41,10 @@ public partial class ConsoleHeader : UserControl
         InitializeComponent();
         BuildBackButtonContent();
         ShowNarrative(0);
+        // [v1.18.0 review R1 finding 1] Panel canlı yeniden boyutlanırken (splitter sürüklenirken) de proje adı
+        // payını tazeler — yalnız proje-log modundayken anlamlıdır, ShowNarrative'de ProjectLogGroup zaten
+        // Collapsed'tır ve ApplyProjectNameShrink kendi kapısında (Mode kontrolü) no-op döner.
+        SizeChanged += (_, _) => ApplyProjectNameShrink();
     }
 
     /// <summary>Test/okuma için mevcut mod.</summary>
@@ -87,7 +90,29 @@ public partial class ConsoleHeader : UserControl
         ProjectLogGroup.Visibility = Visibility.Visible;
 
         ProjectNameText.Text = projectName;
+        ApplyStatus(state, inCycle, depIssues, namePrefix);
 
+        // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
+        // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
+        ResetCopyVisual();
+        SetLineCount(lineCount);
+        ApplyProjectNameShrink();
+    }
+
+    /// <summary>[v1.18.0 review R1 finding 2] Statü glyph'i/adı + rozetleri TEK BAŞINA tazeler — proje adını,
+    /// modu ya da copy-log görselini SIFIRLAMAZ. <see cref="ShowProjectLog"/> yalnız SEÇİM değiştiğinde
+    /// çağrılır; seçili proje AYNI kalırken kendi statüsü değiştiğinde (ör. Started→Succeeded, ya da
+    /// dependency-issue/cycle üyeliği geldiğinde) MainWindow bunu çağırır — aksi halde başlık bir kez
+    /// kurulduktan sonra donuyordu (spinner sonsuza dek dönerdi, rozetler bayatlardı).</summary>
+    public void RefreshStatus(ProjectRowState state, bool inCycle, IReadOnlyList<string>? depIssues, string namePrefix)
+    {
+        if (Mode != HeaderMode.ProjectLog) return; // anlatıdayken görünmez bir başlığı boşuna tazeleme
+        ApplyStatus(state, inCycle, depIssues, namePrefix);
+        ApplyProjectNameShrink(); // rozetlerin görünürlüğü değişmiş olabilir — sol bloğun payı da değişir
+    }
+
+    private void ApplyStatus(ProjectRowState state, bool inCycle, IReadOnlyList<string>? depIssues, string namePrefix)
+    {
         StatusGlyphIcon.Status = ConsoleStatus.VisualStatus(state);
 
         StatusNameText.Text = ConsoleStatus.Name(state);
@@ -99,11 +124,6 @@ public partial class ConsoleHeader : UserControl
 
         CycleBadge.Visibility = inCycle ? Visibility.Visible : Visibility.Collapsed;
         CycleBadge.ToolTip = inCycle ? RowWarning.InCycle : null;
-
-        // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
-        // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
-        ResetCopyVisual();
-        SetLineCount(lineCount);
     }
 
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]
@@ -120,8 +140,15 @@ public partial class ConsoleHeader : UserControl
         // uygulama hiç iş yokken bile boş kareye inemezdi.
         string text = string.Format(CultureInfo.InvariantCulture, "{0} lines", lineCount);
         if (!string.Equals(LinesText.Text, text, StringComparison.Ordinal)) LinesText.Text = text;
-        if (Mode == HeaderMode.ProjectLog)
-            CopyLogButton.Visibility = lineCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (Mode != HeaderMode.ProjectLog) return;
+
+        bool shouldShowCopy = lineCount > 0;
+        if ((CopyLogButton.Visibility == Visibility.Visible) == shouldShowCopy) return; // DEĞİŞMEDİYSE YAZILMAZ
+        CopyLogButton.Visibility = shouldShowCopy ? Visibility.Visible : Visibility.Collapsed;
+        // Sağ bloğun genişliği değişti (Copy log göründü/kayboldu) → sol blok için kalan pay da değişir. Bu dal
+        // yalnız GERÇEK bir görünürlük geçişinde çalışır (200ms'lik tick'in HER turunda DEĞİL) — SetLineCount
+        // zaten koşulsuz çağrılır, ApplyProjectNameShrink'in kendi UpdateLayout()'u boşta ödenmemeli.
+        ApplyProjectNameShrink();
     }
 
     private void OnBackClick(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
@@ -138,12 +165,62 @@ public partial class ConsoleHeader : UserControl
         content.Children.Add(IconVisual.BoundToForeground(BackButton, BackIconKey, BackIconSize));
         content.Children.Add(new TextBlock
         {
-            Text = "Back",
-            Margin = new Thickness(ButtonGap, 0, 0, 0),
+            // [review R1 finding 3 — kopya YASAK] Görünür etiket UIA adıyla AYNI sabitten gelir
+            // (AboutDialog.CopyLabel/CopyDiagnostics ile aynı desen) — "Back" iki yerde ayrı ayrı yazılmaz.
+            Text = AccessibilityNames.BackButton,
+            Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         });
         BackButton.Content = content;
     }
+
+    /// <summary>[v1.18.0 review R1 finding 1] Proje adı panel daralınca kısalan TEK öğedir, ama büyümemelidir:
+    /// prototipte (<c>BuildApp.jsx:2612</c>) ad `white-space:nowrap` bir <c>span</c>'dır — kısalır, asla
+    /// büyümez; Back/glyph/statü/rozetler her zaman adın HEMEN sağındadır, aralarında boşluk yoktur. WPF
+    /// Grid'in <c>"*"</c> sütunu bunu VEREMEZ: kalan alanın TAMAMINI (mevcut siblings ihtiyacından bağımsız)
+    /// o sütuna verir, sonraki Auto sütunlar da bu sütunun TAM payının bitiminden başlar — geniş bir panelde
+    /// kısa bir adla bile glyph/statü/rozetler adın metninden çok sonra, büyük bir boşlukla başlıyordu
+    /// (review R1 bulgu 1). Bu yüzden ad sütunu Auto'dur (ConsoleHeader.xaml) ve gerçek "kısalma" burada,
+    /// <see cref="TextBlock.MaxWidth"/>'i ELDE hesaplayarak sağlanır: mevcut kardeşlerin (Back/glyph/statü/
+    /// görünür rozetler) GERÇEK genişliği + kendi marjları, sol bloğun TOPLAM payından düşülür, kalan ad'a
+    /// verilir.
+    ///
+    /// <para><b>[review R1 fix-1 · ölçülen WPF gerçeği] Sol bloğun payı <see cref="ProjectLogGroup"/>'un
+    /// KENDİ <c>ActualWidth</c>'inden OKUNAMAZ.</b> <c>ProjectLogGroup</c>'un ALTI sütunu da Auto'dur; ad
+    /// kısıtlanmadan ÖNCE (ilk çağrı, ya da <see cref="ClearValue"/>'dan hemen sonra) bu Grid'in DOĞAL
+    /// (muhtemelen taşan) <c>DesiredSize</c>'ı devasadır — ve WPF'in Arrange'i <c>Stretch</c> bir öğeyi ASLA
+    /// DesiredSize'ının ALTINA küçültmez (yalnız büyütür): <c>ActualWidth</c> bu yüzden verilen hücrenin GERÇEK
+    /// payını değil, taşan doğal ihtiyacı yansıtır (ölçüldü: 260px genişliğinde bir başlıkta
+    /// <c>ProjectLogGroup.ActualWidth</c> ≈ 692px çıktı — verilen pay yalnızca ≈226px'ti). Güvenilir tek ölçü,
+    /// içinde taşan içerik OLMAYAN <see cref="RootGrid"/>'in kendisidir: sol bloğun payı
+    /// <c>RootGrid.ActualWidth − RightBlock.ActualWidth</c>'tir (10px'lik yatay Margin RootGrid'in KENDİSİNDEN
+    /// okunur — literal bir "10" ikinci kaynak AÇILMAZ).</para>
+    ///
+    /// <para><b>Neden <see cref="UIElement.UpdateLayout"/> gerekir:</b> bu çağrılan an (Visibility/Text
+    /// değişiminin hemen ardından) kardeşlerin <see cref="FrameworkElement.ActualWidth"/>'i henüz BAYATTIR —
+    /// WPF bir Measure/Arrange geçişi olmadan onu güncellemez. <c>ConsoleView</c>'ın kaydırma-pin mantığı da
+    /// AYNI gerekçeyle <c>UpdateLayout()</c> çağırır (kopya değil, aynı zorunlu idiom).</para></summary>
+    private void ApplyProjectNameShrink()
+    {
+        if (Mode != HeaderMode.ProjectLog) return;
+
+        ProjectNameText.ClearValue(MaxWidthProperty); // önceki kısıtlama doğal genişliği maskelemesin
+        UpdateLayout();
+
+        double leftBlockWidth = RootGrid.ActualWidth - RightBlock.ActualWidth;
+        if (leftBlockWidth <= 0) return; // henüz hiç yerleşmedi (ör. gerçek pencere olmadan çağrılan testler)
+
+        double used = OuterWidth(BackButton) + OuterWidth(StatusGlyphIcon) + OuterWidth(StatusNameText)
+            + OuterWidth(DepIssueBadge) + OuterWidth(CycleBadge)
+            + ProjectNameText.Margin.Left + ProjectNameText.Margin.Right;
+        ProjectNameText.MaxWidth = Math.Max(0, leftBlockWidth - used);
+    }
+
+    /// <summary>Bir kardeşin Grid Auto sütununda GERÇEKTEN kapladığı yer (kendi marjı dahil) — görünür
+    /// değilse (Collapsed) 0, çünkü Auto sütun o zaman hiç yer ayırmaz.</summary>
+    private static double OuterWidth(FrameworkElement element) => element.Visibility == Visibility.Visible
+        ? element.ActualWidth + element.Margin.Left + element.Margin.Right
+        : 0;
 
     // ---------------------------------------------------------------- copy log (Ek A #3)
 

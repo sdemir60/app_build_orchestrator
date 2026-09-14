@@ -32,6 +32,12 @@ public partial class MainWindow : Window
     private readonly CancellationTokenSource _consoleCts = new();
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
+    /// <summary>[v1.18.0 review R1 finding 2] Proje-log başlığının statüsünü/rozetlerini kendi SATIRININ
+    /// değişimine bağlayan abonelik hedefi — <see cref="TrackHeaderRow"/> tek yerden kurar/söker. Başlık
+    /// eskiden yalnız SEÇİM değiştiğinde tazeleniyordu; seçili bir proje derlerken bitirirse (Started→Succeeded)
+    /// glyph sonsuza dek dönerdi ve dep-issue/cycle rozetleri bayatlardı.</summary>
+    private ProjectRowViewModel? _headerTrackedRow;
+
     // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
     // [A13/T1 fix-1 · C1] Store ARTIK ctor'dan gelir (varsayılan üretim yolu birebir aynı: JsonUiStateStore
     // + DefaultPath). Gerekçe <see cref="MainWindow(EngineHost, RunViewModel, ConsoleBatcher, ResourceDictionary, IUiStateStore)"/>'da.
@@ -328,7 +334,7 @@ public partial class MainWindow : Window
             if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             await StartEngineAsync();
         };
-        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
+        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); TrackHeaderRow(null); };
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
@@ -547,6 +553,7 @@ public partial class MainWindow : Window
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
             Shell.ConsoleHeaderControl.ShowProjectLog(
                 row.Name, row.State, row.InCycle, row.DepIssues, row.NamePrefix, _vm.GetActiveLineCount());
+            TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
@@ -565,8 +572,42 @@ public partial class MainWindow : Window
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
+        TrackHeaderRow(null); // [R1 finding 2] anlatıya dönüldü — eski satırın aboneliği bırakılır
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
+    }
+
+    /// <summary>[v1.18.0 review R1 finding 2] Başlığın statü/rozetlerini SEÇİLİ satırın kendi
+    /// <see cref="INotifyPropertyChanged"/> bildirimine bağlar (bir önceki satırın aboneliği önce bırakılır —
+    /// tek abonelik). <paramref name="row"/> null ise (anlatıya dönüş) yalnız bırakılır.
+    ///
+    /// <para>[test yüzeyi] <c>internal</c>: gerçek bir motor round-trip'i olmadan (fake <c>EngineHost</c>
+    /// <c>SendAsync</c>'i SENKRON fırlatır — bkz. <see cref="OnSelectedProjectChangedAsync"/>'in kendi
+    /// yorumu) proje-log moduna GERÇEKTEN girilemez; testler bu iki satırı (<c>ShowProjectLog</c> +
+    /// <c>TrackHeaderRow</c>) <c>OnSelectedProjectChangedAsync</c>'in yaptığı SIRAYLA doğrudan çağırır — bu,
+    /// <c>ConsoleHeaderLiveRefreshTests</c>'in GERÇEK abonelik/bırakma mantığını (bu metodun kendisini) test
+    /// etmesini sağlar, taklit bir kopyasını değil.</para></summary>
+    internal void TrackHeaderRow(ProjectRowViewModel? row)
+    {
+        if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged -= OnHeaderTrackedRowChanged;
+        _headerTrackedRow = row;
+        if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged += OnHeaderTrackedRowChanged;
+    }
+
+    /// <summary>Başlığı etkileyen ÜÇ alan: statü, dependency-issue listesi, döngü üyeliği. Diğer her
+    /// <see cref="ProjectRowViewModel"/> bildirimi (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve
+    /// görmezden gelinir — ProjectRow.OnVmPropertyChanged'in switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
+    private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(ProjectRowViewModel.State):
+            case nameof(ProjectRowViewModel.DepIssues):
+            case nameof(ProjectRowViewModel.InCycle):
+                var row = (ProjectRowViewModel)sender!;
+                Shell.ConsoleHeaderControl.RefreshStatus(row.State, row.InCycle, row.DepIssues, row.NamePrefix);
+                break;
+        }
     }
 
     /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: kart seçimini kaldırır → konsol run anlatısına

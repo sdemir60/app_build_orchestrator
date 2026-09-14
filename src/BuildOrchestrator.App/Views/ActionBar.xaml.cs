@@ -33,7 +33,6 @@ public partial class ActionBar : UserControl
     private const double ChevronSize = 12;
     private const double DotSizePx = 8;         // BuildApp.jsx:1553 boş building noktası 8px
     private const double ChipContentGap = 6;    // _ds_bundle.js:166 chip gap 6
-    private const double ButtonGap = 6;         // _ds_bundle.js:104 button gap 6
     private const double ChipStripGap = 8;      // BuildApp.jsx:1544 bar gap 8
 
     private RunViewModel? _vm;
@@ -535,7 +534,7 @@ public partial class ActionBar : UserControl
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal };
         panel.Children.Add(IconVisual.Make(this, iconKey, iconBrushKey, LabelIconSize, viewBox));
-        var tb = new TextBlock { Text = text, Margin = new Thickness(ButtonGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        var tb = new TextBlock { Text = text, Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         panel.Children.Add(tb); // metin buton Foreground'undan miras
         return panel;
     }

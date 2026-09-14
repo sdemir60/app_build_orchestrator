@@ -13,6 +13,12 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class IconVisual
 {
+    /// <summary>[review R1 finding 3 — kopya YASAK] DS buton içeriğinin ikon↔etiket boşluğu
+    /// (_ds_bundle.js:104 <c>gap: 6</c>) — <c>ActionBar.ButtonContent</c> ve <c>ConsoleHeader</c>'ın Back
+    /// içeriği AYNI sayıyı ayrı ayrı taşıyordu; ikon-sarma deyiminin kendisi burada olduğu için sayı da
+    /// burada durur.</summary>
+    public const double LabelGap = 6;
+
     public static Viewbox Make(FrameworkElement resourceHost, string iconKey, string brushKey, double size, double viewBox = 24)
     {
         var path = new Path { StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round };

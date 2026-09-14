@@ -9,11 +9,17 @@
        proje adı + statü glyph/adı + [dep-issue] + [cycle] solda, Copy log + N lines sağda).
 
        Sol/sağ ayrımı DIŞ Grid'in iki sütunuyladır (* / Auto): sağ blok (Copy log + N lines) HER ZAMAN tam
-       genişliğindedir — asla kırpılmaz. Sol taraf kendi İÇ Grid'inde tek bir "*" sütuna sahiptir (proje adı);
-       Back, statü glyph'i/adı ve rozetler Auto'dur, yani panel daraldığında kısalan TEK öğe proje adıdır. -->
+       genişliğindedir — asla kırpılmaz. Sol taraftaki İÇ Grid'in ALTI sütunu da Auto'dur (proje adı DAHİL) —
+       "*" BİLEREK kullanılmaz: bir Grid'in "*" sütunu kardeşlerinin ihtiyacından BAĞIMSIZ olarak kalan alanın
+       TAMAMINI alır, bu da geniş bir panelde kısa bir adla bile glyph/statü/rozetlerin adın metninden çok
+       sonra, büyük bir boşlukla başlamasına yol açardı (review R1 bulgu 1 — prototipte ad `nowrap` bir
+       `span`dır, asla büyümez, kardeşleri HEMEN takip eder). Gerçek kısalma (panel daraldığında) code-behind
+       elde hesaplanan bir `MaxWidth`'ledir — bkz. ConsoleHeader.xaml.cs `ApplyProjectNameShrink`. -->
   <Border Height="28" Background="{DynamicResource Brush.Surface}"
           BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1">
-    <Grid Margin="10,0">
+    <!-- x:Name="RootGrid": ApplyProjectNameShrink kendi 10px yatay Margin'ini BURADAN okur (tek kaynak —
+         C# tarafında ikinci bir "10" sabiti AÇILMAZ). -->
+    <Grid x:Name="RootGrid" Margin="10,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
         <ColumnDefinition Width="Auto" />
@@ -27,7 +33,7 @@
         <Grid x:Name="ProjectLogGroup" Visibility="Collapsed">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />  <!-- Back -->
-            <ColumnDefinition Width="*" />     <!-- proje adı: panel daralınca kısalan TEK öğe -->
+            <ColumnDefinition Width="Auto" />  <!-- proje adı: panel daralınca kısalan TEK öğe (MaxWidth kod-tarafı) -->
             <ColumnDefinition Width="Auto" />  <!-- statü glyph'i -->
             <ColumnDefinition Width="Auto" />  <!-- statü adı -->
             <ColumnDefinition Width="Auto" />  <!-- dependency issue rozeti -->
@@ -42,7 +48,8 @@
                   Margin="-6,0,0,0" VerticalAlignment="Center" Click="OnBackClick"
                   AutomationProperties.Name="{x:Static app:AccessibilityNames.BackButton}" />
 
-          <!-- Tam proje adı — Mono 12px, panel daralınca TEK kısalan öğe (TextTrimming). -->
+          <!-- Tam proje adı — Mono 12px. Panel daralınca TEK kısalan öğe: MaxWidth code-behind elde hesaplanır
+               (ApplyProjectNameShrink) ve TextTrimming onu ellipsis'e çevirir; XAML'de bir kısıt YOKTUR. -->
           <TextBlock x:Name="ProjectNameText" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
                      FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="12"
                      Foreground="{DynamicResource Brush.TextPrimary}" TextTrimming="CharacterEllipsis" />
@@ -93,8 +100,9 @@
       </Grid>
 
       <!-- SAĞ: Copy log (yalnız proje-log modunda, log varken) + N lines (TAM tampon uzunluğu — Ek A #23;
-           render dilimi DEĞİL). Auto sütunda durur — asla kırpılmaz. -->
-      <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+           render dilimi DEĞİL). Auto sütunda durur — asla kırpılmaz. x:Name="RightBlock": ApplyProjectNameShrink
+           sol bloğun payını RootGrid.ActualWidth'ten BUNUN GERÇEK genişliğini düşerek hesaplar. -->
+      <StackPanel x:Name="RightBlock" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
         <!-- [3b/Ek A #3 → v1.18.0] DS IconButton (22×22, sm ölçüsü zaten budur). İkon fontu YOK: Icon.Copy →
              başarılı kopyada Icon.Check + "Copied" tooltip (1400ms), ikisi de Icons.xaml'den çizilmiş
              geometri (bkz. ConsoleHeader.xaml.cs). Foreground override AboutDialog.CopyButton ile AYNI

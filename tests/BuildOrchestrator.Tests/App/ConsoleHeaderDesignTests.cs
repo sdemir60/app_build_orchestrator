@@ -24,10 +24,13 @@ namespace BuildOrchestrator.Tests.App;
 public class ConsoleHeaderDesignTests
 {
     /// <summary>[önce parent, sonra içerik] Üretimde <c>ShowProjectLog</c> her zaman zaten pencereye eklenmiş
-    /// bir başlıkta çağrılır (Application kaynakları erişilebilir). Sırayı TERSİNE çevirip <paramref name="arrange"/>'i
-    /// (ShowProjectLog) host'a bağlanmadan ÖNCE çağırmak, amber rozet ikonlarının boyanmasını (ctor'da DEĞİL,
-    /// her çağrıda taze çözülür — bkz. ConsoleHeader.xaml.cs) headless host'ta erkenden çözümsüz bırakırdı;
-    /// bu yardımcı üretimin gerçek sırasını izler.</summary>
+    /// bir başlıkta çağrılır. Sırayı TERSİNE çevirip <paramref name="arrange"/>'i (ShowProjectLog) host'a
+    /// bağlanmadan ÖNCE çağırmak <see cref="ConsoleHeader.ApplyProjectNameShrink"/>'in okuduğu kardeş
+    /// <c>ActualWidth</c>'leri (Back/glyph/statü/rozetler) sıfır bırakırdı — bunlar ancak GERÇEK bir
+    /// Measure/Arrange geçişinden (yani host'a bağlandıktan) SONRA anlamlı olur. Amber rozet ikonlarının
+    /// geometrisi/rengi kendisi bu sıraya duyarlı DEĞİLDİR (ConsoleHeader.xaml'de düz <c>{DynamicResource}</c>
+    /// — Collapsed dalda bile, ağaca girer girmez çözülür); bu yardımcı yine de üretimin gerçek sırasını
+    /// izler, çünkü ölçü iddiaları (bu dosyanın "dar genişlik" testi) doğru kardeş genişlikleri ister.</summary>
     private static (ConsoleHeader header, Window window, Border host) Realize(
         Action<ConsoleHeader> arrange, double width = 400, double height = 60)
     {
@@ -188,28 +191,73 @@ public class ConsoleHeaderDesignTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- geniş panel: kardeşler ada BİTİŞİK durur
+
+    /// <summary>[review R1 finding 1] Prototipte (<c>BuildApp.jsx:2612</c>) proje adı <c>white-space: nowrap</c>
+    /// bir <c>span</c>'dır — KISALIR ama asla BÜYÜMEZ, ve statü glyph'i onun HEMEN sağındadır. Eski sapma: ad
+    /// sütunu Grid'in <c>"*"</c>'ıydı — geniş bir panelde KISA bir adla bile "*" sütunu kalan alanın TAMAMINI
+    /// aldığı için glyph, adın metninden çok sonra, büyük bir boşlukla başlıyordu. Bu test dar DEĞİL geniş
+    /// panelde koşar (bulgunun kendisi geniş panelde ortaya çıkıyordu).
+    ///
+    /// <para><b>[review sonrası ölçüldü] <see cref="TextBlock.ActualWidth"/> BURADA YANILTICIDIR:</b> bir
+    /// <c>"*"</c> sütununda bile <c>TextBlock</c>'un LAYOUT KUTUSU sütunun tam genişliğine gerer (Stretch), ve
+    /// bir SONRAKİ Auto sütun tam o kutunun bittiği yerden başlar — yani kutunun sağ kenarı komşu sütunla
+    /// HER ZAMAN çakışır, hata kutunun İÇİNDEDİR (metin sola yaslı çizilir, kutunun geri kalanı boş kalır).
+    /// Kanıt bu yüzden metnin KENDİ görünür genişliğini (bir <c>probe</c> ile) okur, kutunun
+    /// <c>ActualWidth</c>'ini DEĞİL.</para></summary>
+    [StaFact]
+    public void A_wide_panel_with_a_short_name_keeps_the_status_glyph_snug_against_it()
+    {
+        const string name = "A";
+        var (header, window, _) = Realize(h => ShowProjectLog(h, name: name, lineCount: 3), width: 600);
+
+        var probe = new TextBlock
+        {
+            Text = name, FontFamily = header.ProjectNameText.FontFamily, FontSize = header.ProjectNameText.FontSize,
+        };
+        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        double nameLeft = header.ProjectNameText.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
+        double visibleTextRight = nameLeft + probe.DesiredSize.Width;
+        double glyphLeft = header.StatusGlyphIcon.TranslatePoint(new Point(0, 0), header.ProjectLogGroup).X;
+
+        Assert.Equal(8.0, glyphLeft - visibleTextRight, 1); // README §9: öğe aralığı 8px — "büyük boşluk" DEĞİL
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- dar genişlik: yalnız proje adı kırpılır
 
     /// <summary>[README §9] "panel daralınca kısalan TEK öğe proje adıdır (Back ve sağdaki sayaç asla
     /// kırpılmaz)". Eski sapma: sol grup <c>StackPanel</c> olduğu için proje adı HİÇ kırpılmıyordu (panel
-    /// taşardı) — artık proje adı TEK "*" sütunudur, Back/glyph/statü/rozetler ve sağ blok Auto'dur.</summary>
+    /// taşardı). İddia şimdi GERÇEK kırpmadır — metnin kendi DOĞAL (kısıtlanmamış) genişliği, ekrana yerleşen
+    /// genişlikten büyük olmalı (yalnız "sütun/komşu genişliği farklı" demek yetmez, WorkspaceLabelTests'in
+    /// <c>probe</c> deseniyle AYNI kanıt biçimi — kopya değil, aynı idiom).</summary>
     [StaFact]
-    public void A_narrow_header_ellipsises_only_the_project_name_back_and_lines_stay_intact()
+    public void A_narrow_header_really_trims_the_project_name_back_and_lines_stay_intact()
     {
-        // İki AYRI gerçekleştirme (dar/geniş) karşılaştırılır — DesiredSize (Margin DAHİL) ile ActualWidth
-        // (Margin HARİÇ) aynı ağaçta karşılaştırmak Back'in -6px marjıyla yanlış pozitif/negatif üretirdi;
-        // ActualWidth'i ActualWidth'e karşı ölçmek bu tuzağı atlar.
         string longName = "OSYS." + new string('P', 60) + ".WorkOrder";
-        var (narrow, narrowWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 260);
-        var (wide, wideWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 600);
+        var (narrow, narrowWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 320);
 
         Assert.Equal(TextTrimming.CharacterEllipsis, narrow.ProjectNameText.TextTrimming);
-        Assert.True(narrow.ProjectNameText.ActualWidth < wide.ProjectNameText.ActualWidth,
-            $"proje adı hiç kırpılmadı: dar panelde {narrow.ProjectNameText.ActualWidth}px, "
-            + $"geniş panelde {wide.ProjectNameText.ActualWidth}px");
 
-        Assert.Equal(wide.BackButton.ActualWidth, narrow.BackButton.ActualWidth, 1); // Back KIRPILMAZ/küçülmez
-        Assert.Equal(wide.LinesText.ActualWidth, narrow.LinesText.ActualWidth, 1);   // N lines de KIRPILMAZ
+        var probe = new TextBlock
+        {
+            Text = longName,
+            FontFamily = narrow.ProjectNameText.FontFamily,
+            FontSize = narrow.ProjectNameText.FontSize,
+        };
+        probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        Assert.True(probe.DesiredSize.Width > narrow.ProjectNameText.ActualWidth,
+            $"kırpma HİÇ olmadı: ham genişlik {probe.DesiredSize.Width}px, yerleşen {narrow.ProjectNameText.ActualWidth}px");
+        Assert.True(narrow.ProjectNameText.ActualWidth > 0,
+            "ad TAMAMEN kayboldu — bu genişlikte hâlâ bir miktar metin görünür olmalıydı (çok agresif kırpma)");
+
+        // Back ve N lines TAM kalır — İKİNCİ (geniş) bir gerçekleştirmeyle ActualWidth'e karşı ActualWidth
+        // kıyaslanır (DesiredSize Margin'i DAHİL eder, ActualWidth HARİÇ tutar — Back'in -6px marjıyla ikisini
+        // karıştırmak yanlış pozitif/negatif üretirdi).
+        var (wide, wideWindow, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 128), width: 600);
+        Assert.Equal(wide.BackButton.ActualWidth, narrow.BackButton.ActualWidth, 1);
+        Assert.Equal(wide.LinesText.ActualWidth, narrow.LinesText.ActualWidth, 1);
         GC.KeepAlive(narrowWindow);
         GC.KeepAlive(wideWindow);
     }
