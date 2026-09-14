@@ -815,15 +815,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     public Func<double, Task>? OperationHold { get; set; }
 
-    /// <summary>[clean] Clean adımının EN AZ görünür süresi. Tasarımın nötr vuruşu (<c>MarkingChoreography</c>) —
+    /// <summary>[clean/optimize] Bakım adımının (Clean ya da Optimize) EN AZ görünür süresi. Tasarımın nötr vuruşu (<c>MarkingChoreography</c>) —
     /// yeni bir sayı uydurulmaz. Gerekçe: küçük bir workspace'te silme milisaniyeler sürer ve spinner görünmeye
     /// fırsat bulamaz; adım her zaman aynı sürede oynamalıdır (bkz. <see cref="BeginRunAsync"/>'in koreografi
     /// kapısındaki "ya her zaman oynar ya hiç" kararı).</summary>
-    internal static double CleanMinStepMs => Controls.MarkingChoreography.NeutralMs;
+    internal static double MaintenanceMinStepMs => Controls.MarkingChoreography.NeutralMs;
 
-    /// <summary>[clean] Clean bitip Sync başlamadan önceki hafif boşluk — tasarımın kısa vuruşu. İki işlem iki
+    /// <summary>[clean/optimize] Bakım işi bitip Sync başlamadan önceki hafif boşluk — tasarımın kısa vuruşu. İki işlem iki
     /// adım gibi okunsun diye vardır: ardı ardına başlayan iki animasyon dizisi tek bir bulanıklığa dönüşüyordu.</summary>
-    internal static double CleanStepGapMs => Controls.MarkingChoreography.LightMs;
+    internal static double MaintenanceStepGapMs => Controls.MarkingChoreography.LightMs;
 
     /// <summary>[clean] Kabuk bir bekleme kapısı verdiyse <paramref name="ms"/> kadar bekler; vermediyse ya da
     /// süre pozitif değilse ANINDA döner. Tek çağıranı Clean'in bitiş dizisidir.</summary>
@@ -1075,7 +1075,7 @@ public sealed partial class RunViewModel : ObservableObject
         // görünür. Geri getiren şey bitişteki Sync'tir (OnCleanCompletedAsync). AYNI kural Sync'te de geçerli
         // (SyncCoreAsync) — iki işlem tek yüzey davranışını paylaşır.
         ClearPlanSurface();
-        _cleanStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. CleanMinStepMs)
+        _cleanStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. MaintenanceMinStepMs)
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync ile aynı davranış)
         // [design v1.11.0 §2.2] Kalıcı işlem pill'i. Sözcük DEEP CLEAN: menüdeki Clean (yalnız /t:Clean, CLEAN)
         // ile karıştırılmasın — bkz. OperationLabel.DeepClean.
@@ -1107,16 +1107,21 @@ public sealed partial class RunViewModel : ObservableObject
     /// referansları isim isim raporlar, build-kırıcı stale <c>obj</c> artıklarını siler, ölü defter girdilerini
     /// budar. Onay dialogu YOKTUR — <see cref="CleanAsync"/> ile aynı karar: iş geri alınamaz bir şey silmez.
     ///
-    /// <para><b>Clean'den iki farkı vardır.</b> (a) Liste ve graf BOŞALTILMAZ: Clean çıktıları siler, ekrandaki
-    /// kararlar o an geçersizleşir; Optimize hiçbir projeyi dirty yapmaz (imza kaynak-tabanlıdır), ekrandaki
-    /// kararlar geçerli kalır. (b) Bitişte otomatik Sync ZİNCİRLENMEZ, aynı sebeple — yenilenecek bir karar
-    /// yoktur.</para>
+    /// <para><b>Akış Clean ile AYNIDIR:</b> tıklamada liste ve graf boşalır, adım en az
+    /// <see cref="MaintenanceMinStepMs"/> görünür, bitişte konsol korunarak Sync zincirlenir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-14]</b> Eskiden Clean'den iki farkı vardı: liste
+    /// boşaltılmazdı ve Sync zincirlenmezdi (gerekçe: Optimize hiçbir projeyi dirty yapmaz). Kullanıcı iki bakım
+    /// işinin aynı akışı izlemesini istedi.</para>
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanOptimize))]
     private async Task OptimizeAsync()
     {
         ClearConsoleForNewOperation();
         ClearStreamForNewOperation();
+        // [kullanıcı kararı 2026-09-14] Liste ve graf da AYNI karede boşalır — Clean ve Sync ile tek yüzey
+        // davranışı. Geri getiren şey bitişte zincirlenen Sync'tir (OnOptimizeCompletedAsync).
+        ClearPlanSurface();
+        _optimizeStartedAtMs = _nowMs(); // adımın görünür süresi BURADAN sayılır (bkz. MaintenanceMinStepMs)
         SelectedProjectId = null; // seçim temizlenir, filtre KORUNUR (Sync/Clean ile aynı davranış)
         CurrentOperation = OperationLabel.Optimize; // [design v1.11.0 §2.2] kalıcı işlem pill'i
         // Not, temizlikten SONRA yazılır — aksi halde ilk iş olarak silinirdi.
@@ -1515,7 +1520,7 @@ public sealed partial class RunViewModel : ObservableObject
             case CleanCompletedEvent: _ = OnCleanCompletedAsync(); break;
             case OptimizeStartedEvent: OnOptimizeStarted(); break;
             case OptimizeProgressEvent e: AppendRunLine(e.Line); break;
-            case OptimizeCompletedEvent: OnOptimizeCompleted(); break;
+            case OptimizeCompletedEvent: _ = OnOptimizeCompletedAsync(); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
             case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;

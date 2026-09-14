@@ -403,8 +403,8 @@ public class CleanCommandTests
     /// motorun penceresiyle örtüştürüldüğünde aynı tıklama bazen animasyonlu bazen anında olur (bkz.
     /// <c>RunViewModel.BeginRunAsync</c>'in koreografi kapısı — "ya her zaman oynar ya hiç").
     ///
-    /// <para>Dizi: adım en az <see cref="RunViewModel.CleanMinStepMs"/> görünür, ardından
-    /// <see cref="RunViewModel.CleanStepGapMs"/> kadar hafif bir boşluk, EN SON Sync. Zamanı VM saymaz: bekleme
+    /// <para>Dizi: adım en az <see cref="RunViewModel.MaintenanceMinStepMs"/> görünür, ardından
+    /// <see cref="RunViewModel.MaintenanceStepGapMs"/> kadar hafif bir boşluk, EN SON Sync. Zamanı VM saymaz: bekleme
     /// enjekte edilen bir delegeye sorulur (kabuk onu DispatcherTimer ile karşılar — VM timer türü TAŞIMAZ, D8).</para>
     /// <para><b>[DEĞİŞEN KURAL]</b> Bu test boşluk sırasında <c>busy=False</c> bekliyordu, yani yüzey boşluktan
     /// ÖNCE bırakılıyordu. Ölçüldü ki o pencerede Sync/Clean tıklanabilir haldeydi ve düğmeler kırpışıyordu;
@@ -490,7 +490,7 @@ public class CleanCommandTests
         now = 9_000; // 9 saniye sürdü
         vm.OnEvent(Completed());
 
-        Assert.Equal([RunViewModel.CleanStepGapMs], holds);
+        Assert.Equal([RunViewModel.MaintenanceStepGapMs], holds);
     }
 
     /// <summary>Başarısız bir işin arkasına Sync TAKILMAZ: hata zaten konsolda, ikinci bir hata satırı yalnız
