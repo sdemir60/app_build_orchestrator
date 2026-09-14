@@ -271,7 +271,7 @@ public partial class ActionBar : UserControl
 
         var chip = new ToggleButton { Content = content, ToolTip = label, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(chip, label);
-        if (TryFindResource("Ds.Chip") is Style s) chip.Style = s;
+        if (TryFindResource("Ds.Bar.Chip") is Style s) chip.Style = s;
         if (!first) chip.Margin = new Thickness(ChipStripGap, 0, 0, 0); // bar gap 8 (ilk chip HARİÇ)
         PART_CounterChips.Children.Add(chip);
         return chip;
@@ -498,7 +498,13 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- Sync / Stop / Build split-button
     private void BuildButtons()
     {
-        _syncIcon = ButtonContent("Icon.Sync", "Sync", "Brush.TextPrimary", 24);
+        // [design v1.17.0 §9 "Alt barda tek hover dili"] Sync ikonu artık SABİT bir fırça değil, düğmenin
+        // ANİMASYONLU Foreground'unu izler (IconVisual.BoundToForeground) — nötr hover'da metin VE ikon
+        // BİRLİKTE text-primary'ye geçer. Rest değeri (Ds.Bar.Button.Secondary.Sm'in REST Foreground'u da
+        // TextPrimary'dir) DEĞİŞMEZ — yalnız mekanizma sabitten bağlıya döner.
+        _syncIcon = new StackPanel { Orientation = Orientation.Horizontal };
+        _syncIcon.Children.Add(IconVisual.BoundToForeground(PART_Sync, "Icon.Sync", LabelIconSize, 24));
+        _syncIcon.Children.Add(new TextBlock { Text = "Sync", Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         PART_Sync.Content = _syncIcon;
         // [Stopping] Stop'un İÇERİĞİ artık duruma bağlı (Stop / Stopping…) — tek yazıcısı RefreshBuildArea'dır.
         // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
@@ -565,14 +571,17 @@ public partial class ActionBar : UserControl
         {
             _syncIcon.Children.RemoveAt(0);
             _syncIcon.Children.Insert(0, new BuildingSpinner { Size = LabelIconSize, VerticalAlignment = VerticalAlignment.Center });
-            PART_Sync.SetResourceReference(DsTransition.AnimatedBackgroundProperty, "Brush.AmberSoft");
+            // [design v1.17.0 §9] Amber-soft yüzey artık Ds.Bar.Button.Secondary.Sm'in IsActive tetikleyicisinden
+            // gelir (DsChrome.IsActive) — bar'ın tek hover diliyle AYNI mekanizma (MaintenanceBox.SetBusy'nin
+            // deseni), manuel AnimatedBackground ataması YAPILMAZ.
+            DsChrome.SetIsActive(PART_Sync, true);
             PART_Sync.Opacity = 1;
         }
         else
         {
             _syncIcon.Children.RemoveAt(0);
-            _syncIcon.Children.Insert(0, IconVisual.Make(this, "Icon.Sync", "Brush.TextPrimary", LabelIconSize, 24));
-            PART_Sync.ClearValue(DsTransition.AnimatedBackgroundProperty);
+            _syncIcon.Children.Insert(0, IconVisual.BoundToForeground(PART_Sync, "Icon.Sync", LabelIconSize, 24));
+            DsChrome.SetIsActive(PART_Sync, false);
             PART_Sync.ClearValue(OpacityProperty);
         }
     }

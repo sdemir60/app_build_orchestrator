@@ -68,6 +68,21 @@ public static class DsChrome
     public static void SetFocusRingOffset(DependencyObject d, double value) => d.SetValue(FocusRingOffsetProperty, value);
     public static double GetFocusRingOffset(DependencyObject d) => (double)d.GetValue(FocusRingOffsetProperty);
 
+    /// <summary>
+    /// [design v1.17.0 §9 "Alt barda tek hover dili"] Bir <c>Button</c>'ın DS <c>active</c> (aria-pressed)
+    /// durumuna eşdeğer görsel durumu. <c>ToggleButton.IsChecked</c>'ın <see cref="System.Windows.Controls.Button"/>
+    /// karşılığı YOKTUR — tek tüketicisi koşan bir işi gösteren bar düğmeleridir (Sync/Clean/Optimize/Resolve:
+    /// <c>MaintenanceBox.SetBusy</c> / <c>ActionBar.RefreshSyncBusy</c>). Komut kapısı uçuşta disabled olsa da
+    /// (ikinci bir tıklama anlamsızdır) düğme AKTİF görünmeye devam eder ve bar'ın tek hover dilinde
+    /// "açık/aktif kontrol" muamelesi görür (<c>Ds.Bar.Button.Secondary.Sm</c>/<c>Ds.Bar.IconButton</c>'ın
+    /// <c>IsActive</c> tetikleyicileri) — bu yüzden bu bayrağın hover eşleniği <c>IsEnabled</c> ŞARTI ARAMAZ.
+    /// </summary>
+    public static readonly DependencyProperty IsActiveProperty = DependencyProperty.RegisterAttached(
+        "IsActive", typeof(bool), typeof(DsChrome), new PropertyMetadata(false));
+
+    public static void SetIsActive(DependencyObject d, bool value) => d.SetValue(IsActiveProperty, value);
+    public static bool GetIsActive(DependencyObject d) => (bool)d.GetValue(IsActiveProperty);
+
     private static void OnFocusRingOffsetChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not Rectangle ring) return;

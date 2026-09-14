@@ -175,6 +175,43 @@
     <Setter Property="Height" Value="32" />
   </Style>
 
+  <!--
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü Secondary.Sm — tek tüketicisi Sync düğmesidir.
+    Nötr hover Ds.Bar.Chip ile AYNI iki-adım dil (zemin neutral-700, kenar neutral-500, metin text-primary —
+    zaten Secondary'nin REST foreground'u TextPrimary'dir, bu yüzden görsel olarak metin DEĞİŞMEZ, yalnız zemin
+    ve kenar açılır).
+
+    [kullanıcı kararı 2026-09-12 · tasarımdan BİLİNÇLİ sapma — ActionBar.RefreshSyncBusy] Koşan Sync
+    MaintenanceBox'ın "koşan iş" diliyle AYNI amber-soft yüzeyi taşır; bu düğme o an KOMUT KAPISINDAN
+    disabled'dır (ikinci bir Sync anlamsız) ama görsel olarak AKTİF kalmalıdır — bu yüzden IsActive'in hover
+    eşleniği IsEnabled ŞARTI ARAMAZ (nötr hover'ın aksine). Etiket ("Sync") amber'a DÖNMEZ (kimliğini korur) —
+    bu yüzden IsActive tetikleyicileri Foreground'u hiç YAZMAZ, yalnız zemin/kenar.
+  -->
+  <Style x:Key="Ds.Bar.Button.Secondary.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Sm}">
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+      </MultiTrigger>
+      <Trigger Property="controls:DsChrome.IsActive" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+      </Trigger>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="controls:DsChrome.IsActive" Value="True" />
+          <Condition Property="IsMouseOver" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoftHover}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Amber}" />
+      </MultiTrigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- _ds_bundle.js:46-58 ghost: saydam zemin + text-secondary; hover surface-raised + text-primary (:52-53),
        press surface-overlay (:56). -->
   <Style x:Key="Ds.Button.Ghost.Md" TargetType="Button" BasedOn="{StaticResource Ds.Button.Base}">
@@ -347,6 +384,46 @@
     </Style.Triggers>
   </Style>
 
+  <!--
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü hover dili — README §9 v1.17.0 madde 1: bardaki
+    kontroller üç farklı hover davranışı gösteriyordu (Sync zemin açar, bakım ikonları saydamdan surface-raised'a
+    geçer, çipler zemin açar ama kenar/metni sabit tutar, segment hiç yanıt vermez). Tek kural, BasedOn zinciriyle
+    Ds.Chip'in üstüne EKLENİR (paylaşılan Ds.Chip DEĞİŞMEZ — ShellRoot filtre chip'i/satır ikonları/dialog'lar
+    ondan etkilenmez):
+      • NÖTR hover (disabled DIŞINDA): zemin neutral-700, kenar neutral-500, metin VE ikon text-primary — üçü
+        BİRLİKTE (chip'in Foreground'una bağlı her ikon/etiket/değer bunu otomatik izler, bkz. IconVisual.
+        BoundToForeground / ChipLabel / ChipMonoValue).
+      • AKTİF (IsChecked) + hover: zemin amber-soft-hover, kenar amber — metin amber-text SABİT kalır (bu
+        MultiTrigger Foreground'u YAZMAZ; Ds.Chip'in kendi IsChecked tetikleyicisi zaten amber-text yazmıştır ve
+        SONRA gelen bu trigger yalnız zemin/kenarı ezer). Aktif+hover trigger'ı nötr hover'ın ALTINDA durur ki
+        her iki koşul da sağlandığında (checked chip hover alırken) SONRA gelen kazansın.
+      • Disabled kontrol hover ALMAZ: her iki tetikleyici de IsEnabled=True ister (Base zaten 0.45 opaklığa
+        söndürür — MultiTrigger bunu bir daha teyit eder, brief'in "MultiTrigger IsMouseOver+IsEnabled" notu).
+    Tüketiciler: Σ/building/succeeded/failed/skipped/warn sayaç çipleri, branch/worktree/perf chip'leri.
+  -->
+  <Style x:Key="Ds.Bar.Chip" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Chip}">
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+      </MultiTrigger>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+          <Condition Property="IsChecked" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoftHover}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Amber}" />
+      </MultiTrigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- [design v1.16.0 §2.7-6a] EYLEM chip'i: Ds.Chip ile aynı ölçü ve nötr ağırlık, ama bir DURUM
        taşımaz — tıklanır ve iş yapar (aktif/checked hâli YOKTUR). Amber yok: bu bir statü değil, bir
        davettir. -->
@@ -363,6 +440,26 @@
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
         <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
       </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!--
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü NÖTR hover'ı taşıyan Ds.Chip.Action varyantı —
+    tek tüketicisi "N behind" chip'idir (BuildApp.jsx data-bo-hov="off"). Bkz. Ds.Bar.Chip'in başındaki not:
+    aynı iki-adım dil (zemin/kenar/metin-ikon), yalnız burada AKTİF hâl YOKTUR (Chip.Action'ın kendisi de
+    taşımıyor — bu bir statü değil bir davettir).
+  -->
+  <Style x:Key="Ds.Bar.Chip.Action" TargetType="Button" BasedOn="{StaticResource Ds.Chip.Action}">
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+      </MultiTrigger>
     </Style.Triggers>
   </Style>
 
@@ -459,6 +556,43 @@
       <Trigger Property="IsChecked" Value="True">
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
       </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!--
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Bar'a özgü IconButton — tek tüketicisi MaintenanceBox'ın üç
+    ikon düğmesidir (Clean · Optimize · Resolve cycles). Notlar bölümü (README §9): "bakım kutusundaki üç ikon
+    butonun kendi border'ı yok (kutu ortak çerçeveyi taşır) — onlarda hover zemin + ikon olarak okunur, ölçü ve
+    ayraçlar sabit kalır" → bu yüzden nötr hover'da AnimatedBorderBrush YOKTUR (Ds.Bar.Chip'in aksine); düğmenin
+    zaten BorderThickness=0'ı var (MaintenanceBox.Compose), bir kenar fırçası boyansa da görünmez.
+
+    [kullanıcı kararı 2026-09-12 ile AYNI aile] Koşan iş (MaintenanceBox.SetBusy → DsChrome.IsActive) bu bar'ın
+    "açık/aktif kontrol" hâlidir; IsEnabled şartı ARANMAZ (komut kapısı uçuşta disabled'dır, ama düğme CANLI
+    görünmelidir). Foreground=AmberText hem resting hem hover'da SABİT kalır (Ds.IconButton.Toggle'ın IsChecked
+    deseniyle AYNI) — içerik zaten spinner'a döndüğü için görünür etkisi yoktur, ama Foreground'a bağlı her
+    tüketici (ör. ileride eklenecek bir ikon) tutarlı kalır.
+  -->
+  <Style x:Key="Ds.Bar.IconButton" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </MultiTrigger>
+      <Trigger Property="controls:DsChrome.IsActive" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoft}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.AmberText}" />
+      </Trigger>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="controls:DsChrome.IsActive" Value="True" />
+          <Condition Property="IsMouseOver" Value="True" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoftHover}" />
+      </MultiTrigger>
     </Style.Triggers>
   </Style>
 
@@ -566,6 +700,26 @@
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
         <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
       </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!--
+    [design v1.17.0 §9 "Alt barda tek hover dili"] Segment (Debug|Release) hiç hover yanıtı vermiyordu — README
+    §9 v1.17.0 madde 1: "yalnız seçili OLMAYAN seçenek hover alır (surface-raised zemin + text-secondary);
+    seçili seçenek surface-overlay'da durduğu için ikisi karışmaz." IsChecked=False şartı bu yüzden
+    ZORUNLUDUR: seçili seçenek kendi (base) IsChecked=True tetikleyicisinde kalır, hover'ı hiç GÖRMEZ.
+  -->
+  <Style x:Key="Ds.Bar.Segment.Item" TargetType="RadioButton" BasedOn="{StaticResource Ds.Segment.Item}">
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsEnabled" Value="True" />
+          <Condition Property="IsChecked" Value="False" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextSecondary}" />
+      </MultiTrigger>
     </Style.Triggers>
   </Style>
 

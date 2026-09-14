@@ -34,7 +34,7 @@
 
         <!-- branch chip + popover (yukarı açılır) -->
         <Grid VerticalAlignment="Center">
-          <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Chip}" />
+          <ToggleButton x:Name="PART_BranchChip" Style="{DynamicResource Ds.Bar.Chip}" />
           <Popup x:Name="PART_BranchPopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_BranchChip}"
                  StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
                  IsOpen="{Binding IsChecked, ElementName=PART_BranchChip, Mode=TwoWay}">
@@ -47,12 +47,12 @@
 
         <!-- [design v1.16.0 §2.7-6a] "N behind" chip'i: YALNIZ geride kalınca ve YALNIZ aktif branch
              seçiliyken görünür. Tıklama = ff-only pull (§3.9). Nötr ağırlık — statü rengi taşımaz. -->
-        <Button x:Name="PART_BehindChip" Style="{DynamicResource Ds.Chip.Action}" Margin="8,0,0,0"
+        <Button x:Name="PART_BehindChip" Style="{DynamicResource Ds.Bar.Chip.Action}" Margin="8,0,0,0"
                 VerticalAlignment="Center" Visibility="Collapsed" />
 
         <!-- worktree chip + popover -->
         <Grid Margin="8,0,0,0" VerticalAlignment="Center">
-          <ToggleButton x:Name="PART_WorktreeChip" Style="{DynamicResource Ds.Chip}" />
+          <ToggleButton x:Name="PART_WorktreeChip" Style="{DynamicResource Ds.Bar.Chip}" />
           <Popup x:Name="PART_WorktreePopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_WorktreeChip}"
                  StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
                  IsOpen="{Binding IsChecked, ElementName=PART_WorktreeChip, Mode=TwoWay}">
@@ -65,12 +65,12 @@
 
         <!-- Debug | Release segment -->
         <ItemsControl x:Name="PART_Segment" Style="{DynamicResource Ds.Segment}" Margin="8,0,0,0" VerticalAlignment="Center">
-          <RadioButton x:Name="PART_CfgDebug" Style="{DynamicResource Ds.Segment.Item}" Content="Debug" GroupName="cfg" />
-          <RadioButton x:Name="PART_CfgRelease" Style="{DynamicResource Ds.Segment.Item}" Content="Release" GroupName="cfg" />
+          <RadioButton x:Name="PART_CfgDebug" Style="{DynamicResource Ds.Bar.Segment.Item}" Content="Debug" GroupName="cfg" />
+          <RadioButton x:Name="PART_CfgRelease" Style="{DynamicResource Ds.Bar.Segment.Item}" Content="Release" GroupName="cfg" />
         </ItemsControl>
 
         <!-- perf chip (koşarken CANLI kalır) -->
-        <ToggleButton x:Name="PART_PerfChip" Style="{DynamicResource Ds.Chip}" Margin="8,0,0,0" VerticalAlignment="Center" />
+        <ToggleButton x:Name="PART_PerfChip" Style="{DynamicResource Ds.Bar.Chip}" Margin="8,0,0,0" VerticalAlignment="Center" />
 
         <!-- ayraç -->
         <Border Width="1" Margin="2,10,2,10" Background="{DynamicResource Brush.BorderSubtle}" />
@@ -89,7 +89,7 @@
 
       <!-- ============================ SOL GRUP (sola yaslı, esnek) ============================ -->
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
-        <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Button.Secondary.Sm}"
+        <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Bar.Button.Secondary.Sm}"
                 Command="{Binding SyncCommand}" VerticalAlignment="Center" />
         <!-- [design v1.7.0 §2.7-2] Bakım kutusu (Clean · Optimize · Resolve cycles) Sync'in KOMŞUSUDUR:
              üçü de derleme ÖNCESİ hazırlık işleridir ve birlikte okunurlar. Build'in yanına konmadı — orası

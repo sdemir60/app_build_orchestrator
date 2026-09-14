@@ -1864,6 +1864,23 @@ outside the visible set fade to the same 0.1 the unfocused set uses. The matchin
 (`ProjectFilter.Matches`): the graph is handed the list's visible names and never writes a second matcher, so
 the chip, the list and the graph can never disagree.
 
+**The whole bar speaks one hover language.** Every neutral control — Sync, the three maintenance icons, the
+counter chips, `N behind`, the branch/worktree/perf chips — steps to the same `neutral-700` ground with a
+`neutral-500` hairline on hover, and its label and icon whiten to `text-primary` together; a control that
+carries its own status colour (a status glyph, the building spinner or dot, the warning triangle) keeps that
+colour through the hover, because there colour is a status, not a hover state. A control that is already open
+or checked — a lit filter chip, an open branch/worktree popover — steps instead to `amber-soft-hover` with an
+`amber` hairline, and its text stays the fixed `amber-text` it already had: hover never overwrites what the
+state itself already said. The one control that opts out is the `Debug | Release` segment, where only the
+*unselected* option answers hover (`surface-raised`, `text-secondary`) — the selected one already sits on
+`surface-overlay`, and the two would blur into each other. Build and Stop keep their own primary/danger hover;
+they are the bar's one loud control and were never part of the confusion this replaced — before it, Sync
+stepped its own ground, the maintenance icons went from transparent to `surface-raised`, the chips moved ground
+but froze their hairline and text, and the segment answered nothing at all, four different answers to the same
+gesture. A disabled control never hovers, on top of the 0.45 dimming every control already carries. The one
+exception is a *running* Sync or maintenance job: its command is closed while the work is in flight, but the
+button is drawn live on purpose (below), so it keeps answering hover the way an open chip does.
+
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
 itself); the branch chip (searchable popover); the `N behind` chip (§10.7) — drawn only when the distance is
 known, greater than zero and the active branch is selected; the worktree chip; the `Debug | Release` segment;
@@ -1881,7 +1898,9 @@ branch, worktree and configuration controls lock; the perf chip stays live.
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
 1px×14 divider between the buttons. The buttons carry no label: three labelled buttons overflow the bar at its
 1240px minimum and crush the Build split-button, so the meaning lives in the tooltip, which stays readable
-while the button is dim (§13.8) — a button dimmed mid-run is exactly where the reason has to be legible. All
+while the button is dim (§13.8) — a button dimmed mid-run is exactly where the reason has to be legible. None of
+the three draws a hairline of its own on hover — the box's own border is the only edge the strip shows, so
+hovering a button answers with ground and icon only, size and dividers untouched. All
 three drive real commands, and **none of them writes its own enabled state**: that is the command's
 `CanExecute` alone, so the strip can never disagree with the engine behind it. *Clean* is the workspace reset
 and *Optimize* the workspace repair, both described below. *Resolve cycles* is the cycle run, disabled while
@@ -2011,7 +2030,10 @@ surface itself, request window included, so the Sync a Clean chains looks exactl
 the indicator belongs to the work, not to whoever started it. This is a **deliberate departure from the
 prototype**, which leaves the Sync button merely disabled and lets the ribbon's operation pill carry the whole
 story: two neighbouring jobs on one bar, one spinning and one inert, described the same state two ways. The
-pill's own narrative is unchanged; this is an addition to it.
+pill's own narrative is unchanged; this is an addition to it. Hovering a running button deepens the same
+surface once more — `amber-soft-hover` ground, and for Sync an `amber` hairline — the bar's single hover
+language extended to its one control whose command is closed but whose surface must still read as live; the
+*Sync* label stays out of amber either way, since the button is named, not restyled, by the work running under it.
 
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -2870,6 +2892,16 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
+
+The action bar's chip, secondary-button, icon-button and segment-item styles each carry a `Ds.Bar.*` sibling
+(`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
+`BasedOn` the shared style, adding only the bar's hover triggers (§13.2 "The whole bar speaks one hover
+language") so the base styles the rest of the app uses (the ShellRoot filter chip, row icons, dialogs) are
+untouched. A running Sync or maintenance button is not a `ToggleButton`, so it has no `IsChecked` to key a
+hover trigger off; `DsChrome.IsActive` is the attached stand-in, set the moment the job starts and cleared the
+moment it ends, read by the same two triggers (resting and hovered) that an open chip's `IsChecked` reads —
+and, being a plain flag rather than a command gate, its hover trigger does not require `IsEnabled`, since the
+button is deliberately drawn live while its own command is closed.
 
 Three pieces of shared machinery keep the copies from multiplying:
 

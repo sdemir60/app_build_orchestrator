@@ -108,12 +108,16 @@ public partial class MaintenanceBox : UserControl
     /// çağıran onu SAKLAR (<see cref="SetBusy"/>).</summary>
     private Viewbox Compose(Button button, string iconKey, string uiaName)
     {
-        if (TryFindResource("Ds.IconButton") is Style s) button.Style = s;
+        if (TryFindResource("Ds.Bar.IconButton") is Style s) button.Style = s;
         button.Width = ButtonWidth;
         button.Height = ButtonHeight;
         // Kutu tek parça okunur: düğmenin kendi kenarı yoktur, çerçeveyi kök Border taşır.
         button.BorderThickness = new Thickness(0);
-        var icon = IconVisual.Make(this, iconKey, "Brush.TextSecondary", IconSize);
+        // [design v1.17.0 §9 "Alt barda tek hover dili"] İkon artık SABİT bir fırça değil, düğmenin
+        // ANİMASYONLU Foreground'unu izler — nötr hover'da metin/ikon BİRLİKTE text-primary'ye geçer, koşarken
+        // (DsChrome.IsActive) amber-text'e. Rest değeri (Ds.Bar.IconButton'ın REST Foreground'u da
+        // TextSecondary'dir) DEĞİŞMEZ — yalnız mekanizma sabitten bağlıya döner.
+        var icon = IconVisual.BoundToForeground(button, iconKey, IconSize);
         button.Content = icon;
         AutomationProperties.SetName(button, uiaName);
         return icon;
@@ -155,13 +159,16 @@ public partial class MaintenanceBox : UserControl
         if (busy)
         {
             button.Content = new BuildingSpinner { Size = IconSize };
-            button.SetResourceReference(DsTransition.AnimatedBackgroundProperty, "Brush.AmberSoft");
+            // [design v1.17.0 §9] Amber-soft yüzey Ds.Bar.IconButton'ın IsActive tetikleyicisinden gelir
+            // (DsChrome.IsActive) — bar'ın tek hover diliyle AYNI mekanizma, manuel AnimatedBackground
+            // ataması YAPILMAZ.
+            DsChrome.SetIsActive(button, true);
             button.Opacity = 1;
         }
         else
         {
             button.Content = icon;
-            button.ClearValue(DsTransition.AnimatedBackgroundProperty);
+            DsChrome.SetIsActive(button, false);
             button.ClearValue(OpacityProperty);
         }
     }
