@@ -7,7 +7,8 @@ namespace BuildOrchestrator.App.Console;
 /// <summary>
 /// [T56/A13.2 + 3b] Canlı konsol için kilitsiz, satır-başına-Dispatcher-YASAK batching. IPC arka plan thread'i
 /// <see cref="Post"/> ile satır yazar (asla bloklamaz, UI'a dokunmaz); <see cref="PumpAsync"/> enjekte
-/// edilmiş <c>tick</c>'i (üretimde ~50ms <c>Task.Delay</c>, testte deterministik — D8) bekleyip kanalı
+/// edilmiş <c>tick</c>'i (üretimde <see cref="Batching"/>: satır gelene dek bekler, sonra ~50ms biriktirir; testte
+/// deterministik — D8) bekleyip kanalı
 /// boşaltır ve o döngüde satır varsa TEK bir <c>flush(joinedText)</c> çağırır; kanal boşsa flush ÇAĞRILMAZ.
 ///
 /// Join şekli: her <c>Post</c>'lanan satır, sonuna '\n' EKLENEREK (ayraç değil sonek) birleştirilir —
@@ -61,6 +62,29 @@ public sealed class ConsoleBatcher
     public long CurrentReseedGen => Volatile.Read(ref _reseedGen);
 
     public ConsoleBatcher(Func<CancellationToken, Task> tick) => _tick = tick;
+
+    private ConsoleBatcher(Func<CancellationToken, Task> window, bool waitForLine) =>
+        _tick = waitForLine ? ct => WaitForLineThenAsync(window, ct) : window;
+
+    /// <summary>
+    /// Üretim kurulumu: tick önce kanala bir satır (ya da reseed sentinel'i / tamamlanma) gelmesini BEKLER, sonra
+    /// <paramref name="window"/> kadar biriktirir. Tick sözleşmesi aynıdır (tick → boşalt → varsa tek flush);
+    /// değişen yalnız boşta ne olduğudur.
+    ///
+    /// <para><b>Neden:</b> koşulsuz bir <c>Task.Delay(50)</c> tick'i pompayı uygulama ömrü boyunca saniyede 20 kez
+    /// uyandırıyordu — konsola hiç satır gelmezken ve pencere tepsideyken de. Tepside boşta alınan CPU profilinde
+    /// zamanlayıcı thread'i + thread pool bu yüzden UI thread kadar CPU harcıyordu. Akış sürerken davranış
+    /// aynıdır; bir sessizlikten sonraki ilk satır pencerenin sonunda (en geç <paramref name="window"/>) basılır —
+    /// eskiden de en geç o kadardı.</para>
+    /// </summary>
+    public static ConsoleBatcher Batching(Func<CancellationToken, Task> window) => new(window, waitForLine: true);
+
+    private async Task WaitForLineThenAsync(Func<CancellationToken, Task> window, CancellationToken ct)
+    {
+        // false = kanal tamamlandı: pencereyi yine de aç ki pompa kalanları boşaltıp döngüyü bitirsin.
+        await _channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false);
+        await window(ct).ConfigureAwait(false);
+    }
 
     /// <summary>IPC arka plan thread'inden çağrılır. Kilitsiz (Channel writer), asla bloklamaz, UI'a dokunmaz.</summary>
     public void Post(string line) => _channel.Writer.TryWrite(Op.ForLine(line));
