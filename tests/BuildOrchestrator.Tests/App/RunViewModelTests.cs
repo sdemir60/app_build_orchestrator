@@ -219,6 +219,92 @@ public class RunViewModelTests
         Assert.Equal(stale.Status, GraphBinder.StatusOf(stale, synced: true));
     }
 
+    // [Task 2/cycles — kök neden B] Resolve cycles'ta kuyruk YALNIZ döngü üyelerine yazılır (InRunQueueFor artık
+    // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
+    // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
+    // (SkipReasons.OutOfCycleScope) hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered kalır,
+    // SkipReason yüzeye çıkmaz, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ. Kapsam içi GERÇEK
+    // bir "up to date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    [Fact]
+    public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        const string memberId = @"C:\p\member.csproj";
+        const string staleDepId = @"C:\p\staledep.csproj";
+        const string upToDateDepId = @"C:\p\uptodate.csproj";
+        const string outOfScopeId = @"C:\p\outofscope.csproj";
+
+        static ProjectNode Node(string id, string name, int order, bool inCycle) => new(
+            id, name, id, SolutionNames: [], Dependencies: [], BuildOrder: order,
+            LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: null);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+        [
+            Node(memberId, "Member", 0, inCycle: true),
+            Node(staleDepId, "StaleDep", 1, inCycle: false),
+            Node(upToDateDepId, "UpToDateDep", 2, inCycle: false),
+            Node(outOfScopeId, "OutOfScope", 3, inCycle: false),
+        ], [], [], []));
+
+        var member = vm.Projects.Single(p => p.Id == memberId);
+        var staleDep = vm.Projects.Single(p => p.Id == staleDepId);
+        var upToDateDep = vm.Projects.Single(p => p.Id == upToDateDepId);
+        var outOfScope = vm.Projects.Single(p => p.Id == outOfScopeId);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 1, "Debug", 0));
+        // Cycles'ta motorun plan'ı TÜM workspace'i kapsar (tek-proje Build'in aksine) — kapsam dışı da
+        // WillBuild=false ile önizlemede GÖRÜNÜR (RunCoordinator.cs'in seed mekanizması); yalnız InRunQueue
+        // kararı üyelikle daralır.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            new BuildPreviewItem(staleDepId, "StaleDep", true),
+            new BuildPreviewItem(upToDateDepId, "UpToDateDep", false),
+            new BuildPreviewItem(outOfScopeId, "OutOfScope", false),
+        ]));
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, member.Status);      // üye: kuyrukta (amber)
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, staleDep.Status); // kapsam içi bayat bağımlılık: gri bekler
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, upToDateDep.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status);
+
+        // Kapsam içi bayat bağımlılık normal yoldan derlenir.
+        vm.OnEvent(new ProjectStartedEvent("r1", staleDepId, "StaleDep"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, staleDep.Status);
+        vm.OnEvent(new ProjectSucceededEvent("r1", staleDepId, 100));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, staleDep.Status);
+
+        // Kapsam içi gerçek "up to date" skip normal Skipped'a geçer ve SAYILIR.
+        vm.OnEvent(new ProjectSkippedEvent("r1", upToDateDepId, SkipReasons.UpToDate));
+        Assert.Equal(ProjectRowState.Skipped, upToDateDep.State);
+        Assert.Equal(SkipReasons.UpToDate, upToDateDep.SkipReason);
+
+        // Kapsam dışı pre-skip motorun kendi gerekçesiyle gelir ama satırı HİÇ etkilemez.
+        vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
+        Assert.Equal(ProjectRowState.Pending, outOfScope.State);
+        Assert.Null(outOfScope.SkipReason);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status);
+
+        // Üye derlenir.
+        vm.OnEvent(new ProjectStartedEvent("r1", memberId, "Member"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, member.Status);
+        vm.OnEvent(new ProjectSucceededEvent("r1", memberId, 50));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, member.Status);
+
+        // Atlandı sayacı yalnız kapsam içi skip'i sayar (kapsam dışı hiç sayılmaz).
+        Assert.Equal(1, vm.Counters.Skipped);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 1, 0, 200));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status); // run sonunda da Discovered
+
+        // Atlandı filtresi kapsam dışını listelemez; kapsam içi gerçek skip'i listeler.
+        var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
+        Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
+        Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+    }
+
     // [Task 1 review fix — M-4] InRunQueue'nun BİTİŞ noktası PropagateRunActive'dir (IsRunActive düşerken) —
     // Stop de, motor ölümü de IsRunning'i (dolayısıyla IsRunActive'i) false yapar, ikisi de kuyruğu düşürmeli.
     // Aksi halde durdurulan/motoru ölen bir run'ın kuyruğa aldığı satır ekranda KALICI amber asılı kalırdı.

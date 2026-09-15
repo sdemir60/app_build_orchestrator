@@ -145,7 +145,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// bkz. <c>.claude/outputs/2026-09-15-16-06-run-scope-and-queued-colour-investigation.md</c> §2.1).
     /// <c>InRunQueue</c> ayrı bir kanaldır: <see cref="WillBuild"/> kapsam hesabı (<see cref="RunViewModel.ScopeFor"/>)
     /// ve karar etiketi için YAŞAMAYA devam eder, kuyruk rengi artık yalnız BU koşunun kendi cevabını
-    /// okur.</para></summary>
+    /// okur.</para>
+    /// <para><b>[DEĞİŞEN KURAL — Task 2]</b> Cycles modunda kapsam İÇİNDE olmak (WillBuild=true, motor gerçekten
+    /// derleyecek) kuyruğa girmek için YETMEZ: yalnız döngü üyeleri (<see cref="InCycle"/>) kuyruktadır, bayat
+    /// bir kapsam-içi upstream bağımlılık gri bekler. Bkz. <see cref="RunViewModel.InRunQueueFor"/>.</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
@@ -1659,17 +1662,24 @@ public sealed partial class RunViewModel : ObservableObject
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
-            row.InRunQueue = InRunQueueFor(item); // [Task 1] kuyruk YALNIZ bu event'ten
+            row.InRunQueue = InRunQueueFor(item, _streamRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
     }
 
-    /// <summary>[Task 1] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
-    /// Bugün <see cref="BuildPreviewItem.WillBuild"/>'e eşittir (<c>_willBuildIds</c> ile AYNI koşul); bir sonraki
-    /// koşu modu/kapsam kısıtlaması (ör. Resolve cycles'ta yalnız döngü üyeleri) buraya eklenir — çağıranlar
-    /// KOPYALANMAZ, tek yerden değişir.</summary>
-    private static bool InRunQueueFor(BuildPreviewItem item) => item.WillBuild == true;
+    /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
+    /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir (<c>_willBuildIds</c>
+    /// ile AYNI koşul). <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
+    /// (<paramref name="inCycle"/>): motorun bu run'daki kapsamı üyeler + transitif upstream'dir
+    /// (<c>CycleRunScope</c>), ama kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da bu
+    /// run'ın "kuyruğu" DEĞİLDİR — gri bekler, <c>projectStarted</c> geldiğinde normal yoldan Building'e geçer.
+    /// <c>mode</c> <see cref="_streamRunMode"/>'dan okunur (Stream.cs partial'ının AYNI alanı — ikinci bir mod
+    /// alanı TUTULMAZ, kopya YASAK): <c>OnEvent</c> her event için ÖNCE tip-özel handler'ı sonra
+    /// <c>AppendStreamFor</c>'u çalıştırır, bu yüzden bir <c>RunStartedEvent</c>'in modu, hemen ardından gelen
+    /// <c>BuildPreviewEvent</c> işlenmeden önce zaten yazılmıştır.</summary>
+    private static bool InRunQueueFor(BuildPreviewItem item, RunMode? mode, bool inCycle) =>
+        mode == RunMode.Cycles ? inCycle : item.WillBuild == true;
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
     /// EnsureRow yalnız YENİ satırlar için initialState uygular, var olan satırın State'ini DEĞİŞTİRMEZ, bu
@@ -1693,6 +1703,17 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
+        // [Task 2/cycles — kök neden B] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor kapsam dışı
+        // her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama kullanıcı bu
+        // projeyi hiç istemedi — satır motorun "atladım" cevabını TAŞIMAZ, nötr (Pending/Discovered) kalır.
+        // Satır zaten OnBuildPreview'da oluşturulmuştur (Cycles'ın önizlemesi TÜM workspace'i taşır, bkz.
+        // InRunQueueFor'un yorumu) — burada EnsureRow'a gerek YOK, erken dönmek yeterli. Atlandı sayacı
+        // (RunCounters), atlandı filtresi (ProjectFilter.Skipped) ve satırın SkipReason'ı bu yüzden bu projeyi
+        // hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda birikiyordu (RunViewModel.Stream.cs,
+        // DEĞİŞMEDİ). Kapsam İÇİ gerçek bir "up to date" skip (SkipReasons.UpToDate) bu dalın DIŞINDA kalır ve
+        // aşağıdaki normal yoldan Skipped'a geçmeye devam eder.
+        if (_streamRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope) return;
+
         var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
         row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar

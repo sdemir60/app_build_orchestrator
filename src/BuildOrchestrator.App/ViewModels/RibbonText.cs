@@ -162,7 +162,8 @@ public static class RibbonText
                         "Brush.TextSecondary", "building");
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Building {0}/{1} · {2}{3}",
-                        finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs), EtaSuffix(etaMs, c) ?? ""),
+                        finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs),
+                        EtaSuffix(etaMs, willBuild, finishedOfWillBuild, c) ?? ""),
                     "Brush.TextSecondary", null);
 
             // [Stopping] Stop istendi, uçuştakiler drain oluyor. Running satırı BURADA kullanılamaz: Stop'a
@@ -181,9 +182,13 @@ public static class RibbonText
             // Kalanlar için "queued" DENMEZ: Continue yüzeyi yok, o projeler bir sonraki Build'de baştan
             // işlenecek. Satır yalnız olguyu söyler — sürdürülebilirlik sözü vermez.
             case AppPhase.Stopped:
+                // [Task 2] c.Queued DEĞİL willBuild-finishedOfWillBuild: RunCounters.Queued HER Pending satırı
+                // sayar (bkz. o alanın XML yorumu) — kapsam dışı olanlar dahil. willBuild/finishedOfWillBuild
+                // bu run'ın KENDİ SABİT kümesidir (hem tek-proje Build'de hem Resolve cycles'ta zaten doğru
+                // kapsamlıdır), "not built" onun tümleyenidir.
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Stopped — {0}/{1} · {2} not built",
-                        finishedOfWillBuild, willBuild, c.Queued),
+                        finishedOfWillBuild, willBuild, willBuild - finishedOfWillBuild),
                     "Brush.TextDim", null);
 
             case AppPhase.Done:
@@ -239,10 +244,15 @@ public static class RibbonText
     /// <c>eta != null &amp;&amp; building + queued &gt; 0</c> kapısı geçilirse <c>eta &lt; 4000</c> →
     /// <c>" · almost done"</c>, aksi <c>" · ~{max(5, round(eta/5000)*5)}s left"</c>; kapı geçilmezse <c>null</c>.
     /// Eşik/yuvarlama sabitleri <see cref="EtaCalculator"/>'dan okunur (TEK kaynak; matematik YENİDEN yazılmaz).
+    /// <para><b>[DEĞİŞEN KURAL — Task 2]</b> Kapının "queued" yarısı artık <see cref="RunCounters.Queued"/>
+    /// DEĞİL <paramref name="willBuild"/>-<paramref name="finishedOfWillBuild"/>'dir: o sayaç HER Pending
+    /// satırı sayar (kapsam dışı olanlar dahil — Resolve cycles'ta bunlar artık koşu boyunca Pending kalıyor,
+    /// bkz. <see cref="RunViewModel.OnProjectSkipped"/>), <c>willBuild</c> ise bu run'ın KENDİ SABİT kümesidir
+    /// ve zaten doğru kapsamlıdır.</para>
     /// </summary>
-    public static string? EtaSuffix(long? etaMs, RunCounters c)
+    public static string? EtaSuffix(long? etaMs, int willBuild, int finishedOfWillBuild, RunCounters c)
     {
-        if (etaMs is not { } eta || c.Building + c.Queued <= 0)
+        if (etaMs is not { } eta || c.Building + (willBuild - finishedOfWillBuild) <= 0)
             return null; // kapı: canlı bir ETA yok ya da derlenen/kuyrukta hiçbir şey kalmadı
 
         if (eta < EtaCalculator.AlmostDoneThresholdMs)

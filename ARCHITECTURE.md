@@ -808,6 +808,18 @@ workspace with hundreds of unrelated projects would turn a `Cycles` run into sco
 into a single line, `N outside cycle scope — skipped`. `decision.log` still records each one under its own
 name; only the live stream collapses them.
 
+The App carries the same restraint into the row list, the counters and the ribbon: an out-of-scope project
+never shows a "skipped" row, is never counted as skipped, and never appears under the *Skipped* filter chip —
+the engine's own pre-skip for it is not this run's business, so the row simply keeps whatever it was showing
+before the click and forgets the event arrived at all (§13.2). Only a project genuinely inside the scope —
+a cycle member or the upstream this run pulled in — that comes back `skipped — up to date` reads as a result.
+
+The same containment reaches the queue colour and the two run-scoped counters (§13.2, §14.3): a workspace with
+hundreds of unrelated projects leaves hundreds of grey-forever rows that must not silently inflate *how many
+are still not built* or the *finishing soon* gate. Both read a small, exact number for a full `Build`, where
+every un-started row genuinely belongs to the run — the distinction only bites once a run's own scope is
+smaller than the workspace.
+
 **Why the scope reaches upstream.** A member compiled against a *dirty* dependency's previous-generation DLL
 comes back green while its output is stale — and the run then persists that member's signature. Because the
 signature already contains the upstream's source term, the next `Build` reads the member as up to date and
@@ -1963,6 +1975,17 @@ and *Optimize* the workspace repair, both described below. *Resolve cycles* is t
 the topology has no cycle. Its icon is neutral: orange left the
 interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
 carried by the button's enabled state and its tooltip.
+
+*Resolve cycles* drives the row list and the graph too, and its own scope (§8.1: members plus their transitive
+upstream) splits the plan-coloured rows in two. The queue colour — the amber a row wears while it waits its
+turn — lights only the cycle members: a stale upstream dependency this run also pulls in and compiles reads
+plain grey until its own `projectStarted` arrives, exactly the "queued reads only the running operation's own
+plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row genuinely outside
+the scope never turns colour at all, and it never turns `Skipped` either: the engine's own pre-skip for it
+(`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
+reach the row, the *Skipped* filter chip, or the skipped counter — it stays exactly as a Sync left it, for the
+run's whole life. Only a row the run actually touched — a member, or the upstream it pulled in — can end the
+run coloured or counted.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
@@ -3777,6 +3800,14 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
+- **An out-of-scope row's project page can undersell what happened to it.** A `Cycles` run's own preview
+  forces `WillBuild` to `false` for every project it pre-skips — in scope and out of it alike — so the amber
+  queue dot never promises work the run will not do (§8.1). For a project that is genuinely up to date that
+  reads correctly (`Up to date — nothing to compile`); for a dirty project outside the run's scope the same
+  text appears on its page, stated as a fact about the project rather than about this run. The row carries no
+  memory of *why* the preview forced it false, and the one signal that would say so — the skip event
+  underneath — is deliberately never delivered for an out-of-scope row (§8.1, §13.2), so the page cannot tell
+  the two apart.
 
 ---
 
