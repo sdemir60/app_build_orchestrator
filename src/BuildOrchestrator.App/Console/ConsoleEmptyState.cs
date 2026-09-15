@@ -1,3 +1,4 @@
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -83,8 +84,12 @@ public static class ConsoleEmptyState
             return "Not analysed yet — run Sync to see what this project will do.";
         if (!willBuild) return "Up to date — nothing to compile.";
 
-        // Bir koşu uçuştaysa bu satır KUYRUKTADIR; değilse yalnız bir plandır.
-        string head = row.IsRunActive ? "Queued" : "Will build";
+        // Bir koşu uçuştaysa VE bu satır BU koşunun kendi kuyruğundaysa KUYRUKTADIR; değilse yalnız bir plandır.
+        // [Task 1 review fix — I-2] Eskiden yalnız row.IsRunActive okurdu — genel plan bayrağının (WillBuild)
+        // ait olduğu koşuyu bilmediği aynı kusur (kök neden A): tek proje koşusunda bayat bir komşu satır
+        // grafta/listede Discovered iken burada "Queued" yazardı. Tek doğruluk kaynağı Status'tur (kopya YASAK) —
+        // o zaten Pending dalında IsRunActive && InRunQueue'yu okur.
+        string head = row.Status == GraphStatus.Queued ? "Queued" : "Will build";
         return row.WillBuildReason switch
         {
             WillBuildReason.NeverBuilt => $"{head} — this tool has never built it.",

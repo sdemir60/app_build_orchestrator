@@ -3167,11 +3167,13 @@ begins.
 
 **Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
 (`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
-which run is in flight — it is amber only while the *current* run's own preview names it, and that flag drops
-the instant the run's preview stops naming it or the run ends. The distinction matters exactly when the two
-disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview carries only that
-project, and every other row — however dirty a stale Sync left it — stays plain grey for the run's whole life
-instead of lighting amber and cooling back down when the run ends.
+which run is in flight. The queue flag is cleared in exactly two places — at the start of every run, before that
+run's own preview has had a chance to say anything, and when the run ends — and in between it is written only by
+that run's own preview, never re-derived from the standing `WillBuild`. The distinction matters exactly when the
+two disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview names only
+that project, and every other row — however dirty a stale Sync left it — is never handed the flag and stays
+plain grey for the run's whole life. Between the run starting and that preview arriving, the marking wave (above)
+carries the target's amber on its own — the two channels hand off without the colour going out.
 
 **The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
 inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's

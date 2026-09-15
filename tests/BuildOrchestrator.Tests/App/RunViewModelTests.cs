@@ -219,6 +219,41 @@ public class RunViewModelTests
         Assert.Equal(stale.Status, GraphBinder.StatusOf(stale, synced: true));
     }
 
+    // [Task 1 review fix — M-4] InRunQueue'nun BİTİŞ noktası PropagateRunActive'dir (IsRunActive düşerken) —
+    // Stop de, motor ölümü de IsRunning'i (dolayısıyla IsRunActive'i) false yapar, ikisi de kuyruğu düşürmeli.
+    // Aksi halde durdurulan/motoru ölen bir run'ın kuyruğa aldığı satır ekranda KALICI amber asılı kalırdı.
+    [Fact]
+    public async Task Stopping_a_run_drops_InRunQueue_so_the_queued_row_returns_to_discovered()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // kuyruk da düştü
+    }
+
+    [Fact]
+    public async Task Engine_death_drops_InRunQueue_so_the_queued_row_returns_to_discovered()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // kuyruk da düştü
+    }
+
     // [Fix wave 1, Minor 6] TickElapsed building satırların CANLI süresini ilerletir; building OLMAYAN satırlara
     // dokunmaz. Deterministik saat enjekte edilir (D8: sleep/poll yok).
     [Fact]

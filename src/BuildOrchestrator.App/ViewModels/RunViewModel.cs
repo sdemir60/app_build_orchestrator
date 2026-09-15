@@ -133,9 +133,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <summary>[Task 1 — kök neden A] Bu satır ŞU AN KOŞAN run'ın KENDİ kuyruğunda mı — <see cref="Status"/>'un
     /// <c>Queued</c> dalı bunu okur, <see cref="WillBuild"/>'i DEĞİL. YALNIZ bu koşunun
     /// <see cref="BuildPreviewEvent"/>'inden yazılır (<see cref="RunViewModel.OnBuildPreview"/>,
-    /// <see cref="RunViewModel.InRunQueueFor"/> — kuyruk üyeliğinin TEK karar yeri); koşu başında
-    /// (<see cref="RunViewModel.NeutralizeRows"/>, <see cref="RunViewModel.OnRunStarted"/>) ve koşu biterken
-    /// (<see cref="IsRunActive"/> düşerken, <see cref="RunViewModel.PropagateRunActive"/>) false'a döner.
+    /// <see cref="RunViewModel.InRunQueueFor"/> — kuyruk üyeliğinin TEK karar yeri). Sıfırlanmanın TEK başlangıç
+    /// noktası <see cref="RunViewModel.OnRunStarted"/>'ın kendi (moddan bağımsız) döngüsüdür, TEK bitiş noktası
+    /// <see cref="RunViewModel.PropagateRunActive"/> (<see cref="IsRunActive"/> düşerken) — <see cref="RunViewModel.NeutralizeRows"/>
+    /// buna BİLEREK DOKUNMAZ (review fix M-2: iki nokta zaten kopya olurdu; bkz. o metodun yorumu).
     /// <para><b>[DEĞİŞEN KURAL — Task 1]</b> Eskiden <see cref="Status"/>'un Queued dalı doğrudan
     /// <see cref="WillBuild"/>'i okurdu — genel plan bayrağı, ait olduğu koşuyu BİLMEZ. Tek proje koşusunda
     /// motorun önizlemesi yalnız hedefi taşır (§8.1, <c>ProjectRunScope</c>); diğer satırların WillBuild'i
@@ -212,13 +213,14 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
-    /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
+    /// <see cref="InCycle"/> + <see cref="InRunQueue"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
     /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
     /// alanları TAŞIMAZ — ikisi de eldeki topoloji/run sinyallerinden TÜRETİLİR:
     /// <list type="bullet">
     /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan, bu koşu hakkında HENÜZ BİR ŞEY SÖYLENMEMİŞ satır.
     /// Bkz. aşağıdaki "döngü glyph'i koşu-öncesidir" notu.</item>
-    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) planlanmış (<see cref="WillBuild"/>==true)
+    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) BU koşunun kendi buildPreview'inin
+    /// planladığı (<see cref="InRunQueue"/>==true — <see cref="WillBuild"/> DEĞİL, bkz. o alanın XML yorumu)
     /// ama henüz başlamamış (Pending) satır. Run bitince <see cref="IsRunActive"/> düşer → yine Discovered.</item>
     /// </list>
     ///
@@ -881,7 +883,18 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>false</c> → <b>düz nötr gri</b>: bir İŞLEM başladı; renk bundan sonra yalnız onun hikâyesini anlatır
     /// ve kapsam amber'a ancak işaretleme dalgasıyla yanar.
     /// </param>
-    private void NeutralizeRows(bool fresh)
+    /// <param name="clearMarks">
+    /// [Task 1 review fix — I-1] <c>true</c> (varsayılan) → işaret (<see cref="ProjectRowViewModel.Marked"/>)
+    /// de düşer — <c>BeginRunAsync</c>'in tıklama anı (bir ÖNCEKİ işlemin izini siler, YENİ dalga henüz
+    /// yanmadı) ve Sync'in fresh nötrlemesi (bir işlem bile değil) için doğru olan budur.
+    /// <c>false</c> → işaret KORUNUR: <see cref="OnRunStarted"/>'ın Rebuild'e özel çağrısı için — o an, İSTEK
+    /// tıklama anında zaten dalga yanmış ve satır <c>Marked=true</c> olmuş OLABİLİR (koreografi
+    /// <c>BeginRunAsync</c>'te, bu çağrıdan ÖNCE oynar); burası tekrar <c>false</c> yazarsa dalganın amberi
+    /// runStarted'ın KENDİ anında söner ve I-1'in kapattığı boşluk (runStarted → buildPreview arası bir kare
+    /// gri) Rebuild'de YENİDEN açılır. İşaretin gerçek düşüş noktası <c>BuildPreviewApplied</c>'dır
+    /// (<c>MainWindow</c>), moddan bağımsız.
+    /// </param>
+    private void NeutralizeRows(bool fresh, bool clearMarks = true)
     {
         foreach (var row in Projects)
         {
@@ -895,10 +908,14 @@ public sealed partial class RunViewModel : ObservableObject
             row.CycleWaiting = false;
             row.SkipReason = null;
             row.Fresh = fresh;
-            row.Marked = false;
-            // [Task 1] Kuyruk WillBuild'in AKSİNE korunmaz: bu koşunun kendi buildPreview'i gelene kadar
-            // hiçbir satır kuyruk değildir (bkz. ProjectRowViewModel.InRunQueue'nun XML yorumu).
-            row.InRunQueue = false;
+            if (clearMarks) row.Marked = false;
+            // [Task 1 review fix — M-2] InRunQueue BİLEREK burada sıfırlanmaz: tek başlangıç noktası
+            // OnRunStarted'ın kendi (moddan bağımsız, koşulsuz) döngüsüdür — üç çağıranın ikisinde
+            // (BeginRunAsync'in tıklama anı, Sync'in fresh nötrlemesi) bu run henüz runStarted'a ULAŞMAMIŞTIR
+            // ve IsRunActive zaten false'tur (Status'un Queued dalı onu okumaz), üçüncüsünde (Rebuild'in
+            // runStarted'ı) OnRunStarted zaten AYNI satırları bir satır yukarıda sıfırlamıştır — burada
+            // TEKRARLAMAK kopya (CLAUDE.md) olurdu. Tek bitiş noktası PropagateRunActive'dir (IsRunActive
+            // düşerken).
         }
     }
 
@@ -1574,11 +1591,12 @@ public sealed partial class RunViewModel : ObservableObject
         CurrentOperation = OperationLabel.ForRunMode(e.Mode);
         // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
         // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
-        // [Task 1 — kök neden A] Kuyruk da BURADA, KOŞULSUZ (moddan bağımsız) sıfırlanır: NeutralizeRows
-        // yalnız Rebuild'de (aşağıda) ve BeginRunAsync'in tıklama anında çağrılır — Build/Cycles'ta runStarted
-        // BAŞKA bir yoldan da gelebilir (bkz. bu event'in XML yorumu) ve önizleme HENÜZ gelmedi: "runStarted
-        // anında hiçbir satır kuyruk değildir" değişmezi moddan bağımsız burada garanti edilir. Hemen ardından
-        // gelen BuildPreviewEvent gerçek kuyruğu doldurur.
+        // [Task 1 — kök neden A · review fix M-2] Kuyruğun TEK başlangıç noktası BURASIDIR — KOŞULSUZ (moddan
+        // bağımsız) sıfırlanır. NeutralizeRows'un aşağıdaki (Rebuild) çağrısı InRunQueue'ya DOKUNMAZ (kopya
+        // olurdu, bkz. NeutralizeRows'un yorumu): Build/Cycles'ta runStarted NeutralizeRows'suz da gelebilir
+        // (bkz. bu event'in XML yorumu) ve önizleme HENÜZ gelmedi — "runStarted anında hiçbir satır kuyruk
+        // değildir" değişmezi moddan bağımsız burada garanti edilir. Hemen ardından gelen BuildPreviewEvent
+        // gerçek kuyruğu doldurur.
         foreach (var row in Projects) { row.Fresh = false; row.InRunQueue = false; }
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
@@ -1601,7 +1619,11 @@ public sealed partial class RunViewModel : ObservableObject
         // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
         // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
         // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
-        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false);
+        // [Task 1 review fix — I-1] clearMarks: false — bu an itibariyle (IsRunning=true'nun property-changed
+        // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
+        // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
+        // runStarted→buildPreview boşluğu Rebuild'de yeniden açılır.
+        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false, clearMarks: false);
         _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;

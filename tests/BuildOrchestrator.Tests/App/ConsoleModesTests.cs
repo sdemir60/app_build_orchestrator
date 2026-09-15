@@ -194,11 +194,21 @@ public class ConsoleModesTests
                 skipReason: SkipReasons.UpToDate, currentSha: sha, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu uçuşta, sıra bu satırda değil — plan gerekçesi will-build'den gelir.
+        // [Task 1 review fix — I-2] "Queued" artık yalnız runActive'e değil, BU koşunun kendi kuyruğuna
+        // (InRunQueue) da bağlı — bkz. Row helper'ının ve ConsoleEmptyState.Pending'in yorumu.
         Assert.Equal(
             ["Queued — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
-                runActive: true, lastBuiltAt: twoHoursAgo), now));
+                runActive: true, inRunQueue: true, lastBuiltAt: twoHoursAgo), now));
+
+        // Koşu uçuşta AMA bu satır BU koşunun kendi kuyruğunda DEĞİL (tek proje koşusunda bayat bir komşu) —
+        // "Queued" DEĞİL, düz plan metni.
+        Assert.Equal(
+            ["Will build — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
+                runActive: true, inRunQueue: false, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
         // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
@@ -233,7 +243,7 @@ public class ConsoleModesTests
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
-        bool runActive = false, DateTimeOffset? lastBuiltAt = null) =>
+        bool runActive = false, DateTimeOffset? lastBuiltAt = null, bool? inRunQueue = null) =>
         new(@"C:\p\a.csproj", "A", state)
         {
             SkipReason = skipReason,
@@ -243,6 +253,9 @@ public class ConsoleModesTests
             CurrentSha = currentSha,
             LastBuiltAt = lastBuiltAt,
             IsRunActive = runActive,
+            // [Task 1 review fix — I-2] Belirtilmezse runActive'i izler (eski tek-bayraklı davranışla aynı
+            // çağıran deneyimi) — yalnız iki senaryonun ayrıştığı yeni testler açıkça geçer.
+            InRunQueue = inRunQueue ?? runActive,
         };
 
     /// <summary>

@@ -1,4 +1,5 @@
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -65,5 +66,90 @@ public class GraphWillBuildFeedTests
             () => VisualOf(window, "Dirty").Square.StrokeDashArray.Count == 0,
             TimeSpan.FromSeconds(3));
         Assert.Empty(VisualOf(window, "Dirty").Square.StrokeDashArray);
+    }
+
+    /// <summary>[Task 1 review fix — I-1] <b>Dalganın yaktığı kapsam, runStarted ile bu run'ın kendi
+    /// buildPreview'i arasında SÖNMEMELİDİR.</b> Kuyruk artık <see cref="ProjectRowViewModel.InRunQueue"/>'dan
+    /// türediği ve o YALNIZ bu run'ın kendi önizlemesinden yazıldığı için, <c>runStarted</c> ile
+    /// <c>buildPreview</c> arasında gerçek bir IPC boşluğu vardır (Supervisor bu ikisi arasında
+    /// <c>stateStore.Load</c> + proje başına <c>OwnFilesChanged</c> hesaplar, <c>RunCoordinator.cs</c> ~885-905)
+    /// — <c>MainWindow</c>, <c>IsRunning</c> true olur olmaz kapsamın işaretini (<see cref="ProjectRowViewModel.Marked"/>)
+    /// SİLERSE, o boşlukta ne <c>Marked</c> ne <c>InRunQueue</c> true'dur ve kapsam bir kare için gri görünüp
+    /// hemen ardından geri yanar (ARCHITECTURE §14.3: "the amber the marking wave lit must not go out when the
+    /// run begins" ihlali). Kapsam DIŞI bayat bir komşu satır ise (Sync'ten kalma <c>WillBuild=true</c>, bu
+    /// run'ın önizlemesine hiç girmeyen) hiçbir an amber OLMAMALIDIR — Task 1'in asıl konusu budur.</summary>
+    /// <para><b>Neden pikselden DEĞİL, satırdan okunuyor:</b> gerçek koreografi her <c>Marked</c> yazımından
+    /// SONRA grafa kendi <c>PushGraph()</c>'ını çağırır (<c>OperationChoreographer.Play</c>); burada dalganın
+    /// ZAMANLAMASI değil, MainWindow'un <c>runStarted</c>/<c>BuildPreviewApplied</c> anlarında
+    /// <c>Marked</c>/<c>InRunQueue</c>'ya DOKUNMA kararı test ediliyor — bunun için satırın kendi
+    /// <see cref="ProjectRowViewModel.Marked"/>/<see cref="ProjectRowViewModel.VisualStatus"/>'u yeterli ve
+    /// grafın kendi push zamanlamasından bağımsızdır (grafın AYNI değeri okuduğu zaten <c>GraphBinder.StatusOf</c>
+    /// ile ayrı pinlidir, Task 1).</para>
+    [StaFact]
+    public void The_marked_scope_stays_amber_across_runStarted_and_a_stale_sibling_never_lights()
+    {
+        using var dir = new TempDir();
+        var (_, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string idA = MainWindowHost.IdOf("A");
+        string idB = MainWindowHost.IdOf("B");
+
+        // Sync'ten kalma: ikisi de dirty. B, gelecek tek-proje koşusunun önizlemesine hiç girmeyecek "bayat" komşu.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(idA, "A", true),
+            new BuildPreviewItem(idB, "B", true),
+        ]));
+
+        var a = vm.Projects.Single(p => p.Id == idA);
+        var b = vm.Projects.Single(p => p.Id == idB);
+
+        // Dalganın çıktısı burada SİMÜLE edilir: A işaretlendi (koreografinin zamanlamasını test etmiyoruz,
+        // yalnız MainWindow'un runStarted/BuildPreviewApplied wiring'ini).
+        a.Marked = true;
+        Assert.Equal(VisualStatus.Marked, a.VisualStatus); // ön-koşul: dalga yaktı
+
+        // Satırdan Build: yalnız A hedef. runStarted, bu koşunun kendi önizlemesinden ÖNCE gelir — MainWindow'un
+        // IsRunning aboneliği (gerçek kablo) burada senkron tetiklenir.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+
+        // [I-1] Kapsam (A) amber KALMALI — runStarted, önizleme gelene dek işareti SİLMEMELİ.
+        Assert.True(a.Marked);
+        Assert.True(a.VisualStatus is VisualStatus.Marked or VisualStatus.Queued); // amber — hangi kanaldan olursa olsun
+        // Bayat komşu (B) hiçbir an amber OLMAMALI (kök neden A).
+        Assert.Equal(VisualStatus.Discovered, b.VisualStatus);
+
+        // Motorun planı tek düğüme kesilir: önizleme YALNIZ hedefi taşır — devir burada olur.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(idA, "A", true)]));
+
+        Assert.False(a.Marked); // işaret artık gereksiz — InRunQueue statü kanalını devraldı
+        Assert.Equal(GraphStatus.Queued, a.Status);
+        Assert.Equal(VisualStatus.Queued, a.VisualStatus); // hâlâ amber — kesintisiz devir
+        Assert.Equal(VisualStatus.Discovered, b.VisualStatus);
+    }
+
+    /// <summary>[Task 1 review fix — I-1, Rebuild dalı] AYNI süreklilik Rebuild'de de geçerlidir —
+    /// <see cref="RunViewModel.OnRunStarted"/> yalnız Rebuild modunda EK olarak <c>NeutralizeRows</c> çağırır
+    /// (Rebuild'in komut dışı bir yoldan başlama ihtimaline karşı savunma, bkz. o çağrının yorumu). O çağrı
+    /// <c>IsRunning=true</c>'nun property-changed KASKADI TAMAMEN bittikten SONRA (yani MainWindow'un Marked'ı
+    /// KORUDUĞU karardan SONRA) çalışır — eğer hâlâ <c>Marked=false</c> yazsaydı, tam da I-1'in düzelttiği
+    /// boşluğu Rebuild'de YENİDEN açardı. <c>NeutralizeRows</c>'un <c>clearMarks: false</c> çağrısı bunu
+    /// önler.</summary>
+    [StaFact]
+    public void The_marked_scope_also_stays_amber_across_a_rebuilds_own_runStarted()
+    {
+        using var dir = new TempDir();
+        var (_, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string idA = MainWindowHost.IdOf("A");
+
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(idA, "A", true)]));
+        var a = vm.Projects.Single(p => p.Id == idA);
+
+        a.Marked = true; // dalganın çıktısı simüle edilir
+        Assert.Equal(VisualStatus.Marked, a.VisualStatus); // ön-koşul
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+
+        Assert.True(a.Marked); // OnRunStarted'ın Rebuild'e özel NeutralizeRows'u işareti EZMEMELİ
+        Assert.True(a.VisualStatus is VisualStatus.Marked or VisualStatus.Queued);
     }
 }
