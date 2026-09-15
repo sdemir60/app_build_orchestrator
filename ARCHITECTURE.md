@@ -1879,9 +1879,9 @@ carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` lin
 swaps in the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps
 to the quieter `surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold
 without implying a click that would do nothing. The selected row's own `surface-raised` outranks both and does
-not move under the pointer. This replaced an earlier, narrower rule that gave hover to clickable rows only, on
-the theory that a background step on a non-clickable row would fight the done line's once-only flourish. The two
-*can* meet — the done line is exactly the row the flourish plays on, and it is never clickable — but the flourish
+not move under the pointer. A background step on a non-clickable row could in principle fight the done line's
+once-only flourish. The two *can* meet — the done line is exactly the row the flourish plays on, and it is
+never clickable — but the flourish
 does not budge for hover: it is a CSS `@keyframes` animation in the design that owns the row's background outright
 for its full 1.1 s regardless of what the pointer is doing, the same way the row's own colour or the daktilo
 cadence cannot be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag
@@ -1924,15 +1924,13 @@ readings are mutually exclusive by construction (an unchecked and a checked cont
 trigger, so there is no race for the checked one to lose). The one control that opts out is the
 `Debug | Release` segment, where only the *unselected* option answers hover (`surface-raised`, `text-secondary`)
 — the selected one already sits on `surface-overlay`, and the two would blur into each other. Build and Stop
-keep their own primary/danger hover; they are the bar's one loud control and were never part of the confusion
-this replaced — before it, Sync stepped its own ground, the maintenance icons went from transparent to
-`surface-raised`, the chips moved ground but froze their hairline and text, and the segment answered nothing at
-all, four different answers to the same gesture. A disabled control never hovers, on top of the 0.45 dimming
-every control already carries. The one exception is a *running* Sync or maintenance job: its command is closed
-while the work is in flight, but the button is drawn live on purpose (below) — and WPF excludes a disabled
-control from hit-testing altogether (the same reason a disabled button needs `ToolTipService.ShowOnDisabled` to
-show a tooltip at all), so the button's own hover would never fire. Each of the four keeps its own always-live
-wrapper — an otherwise invisible `Border` occupying exactly its bounds — whose `MouseEnter`/`MouseLeave` is what
+keep their own primary/danger hover; they are the bar's one loud control. A disabled control never hovers, on
+top of the 0.45 dimming every control already carries. The one exception is a *running* Sync or maintenance
+job: its command is closed while the work is in flight, but the button is drawn live on purpose (below) — and
+WPF excludes a disabled control from hit-testing altogether (the same reason a disabled button needs
+`ToolTipService.ShowOnDisabled` to show a tooltip at all), so the button's own hover would never fire. Each of
+the four keeps its own always-live wrapper — an otherwise invisible `Border` occupying exactly its bounds —
+whose `MouseEnter`/`MouseLeave` is what
 actually answers hover in that window; the button's real `IsMouseOver` answers it everywhere else.
 
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root

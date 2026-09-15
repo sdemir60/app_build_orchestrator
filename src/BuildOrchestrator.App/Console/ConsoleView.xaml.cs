@@ -1029,8 +1029,11 @@ public partial class ConsoleView : UserControl
         // tazelemede satır KİMLİĞİ aynı kalsa bile EKRAN geometrisi yeniden hesaplanmalıdır) — bayrak burada
         // TÜKETİLİR, önbelleğin KENDİSİNE (_hoveredLine) hiç dokunulmaz: o alan yalnız "bant şu an görünür mü"
         // sorusunun tek doğruluk kaynağıdır (HideHoverBandVisual'ın idempotency guard'ı da ona bakar).
-        // Bayrak, aşağıdaki VisualLinesValid erken dönüşünden ÖNCE tüketilir: aksi halde o dönüş bayrağı hiç
-        // sıfırlamadan geri dönerdi ve bir sonraki (tazeleme kaynaklı OLMAYAN, sıradan) MouseMove'a SIZARDI.
+        // [savunmacı] Bayrak, aşağıdaki VisualLinesValid erken dönüşünden ÖNCE tüketilir — böylece HER çağrıda
+        // tüketilmiş olur, dönüşün hangi yoldan olduğuna bakılmaksızın. Eski konumda da GÖZLEMLENEBİLİR bir
+        // etkisi yoktu: o erken dönüş zaten HideHoverBandVisual çağırıp _hoveredLine'ı temizliyordu (zaten null
+        // değilse), yani bayrağın koruduğu "aynı satır" kısayolu (satır 1042) o andan sonra zaten çalışamazdı.
+        // Taşıma yalnız niyeti (bayrak = "her çağrıda tüketilir") koda daha doğru yansıtıyor.
         bool skipSameLineShortcut = _forceHoverRefresh;
         _forceHoverRefresh = false;
 
