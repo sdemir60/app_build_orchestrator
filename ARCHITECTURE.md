@@ -1354,7 +1354,13 @@ git fetch origin <branch> --no-tags   (ref-only)
 ```
 
 Full analysis happens **only** in Sync; the implicit Sync that precedes a Build is cheap because of the
-evaluation cache.
+evaluation cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
+Build, pressed right now, would decide, and the preview says so directly: a project this run would only
+evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
+(`ConditionalRebuild.AppliesTo`, simulating `Build`) rather than left `false` until a run's own preview
+overwrites it. Leaving it `false` was tried and measured wrong: the row's wave and queue colour are read at the
+moment *Build* is clicked, before the new run's own preview has arrived, so they read Sync's last preview — a
+conditional project would light amber for one frame and drop grey the instant the real preview landed.
 
 If the remote is unreachable, the fetch failure is swallowed: a warning line is printed, the target SHA falls
 back to the local HEAD, and the flow continues. The degraded path does **not** skip topology or the will-build
@@ -1750,7 +1756,7 @@ Explorer*, *Open in Visual Studio*), and without hover the **decision label**. T
 warning slot, and a 46 px duration column.
 
 The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
-and MSBuild, not invented terms — plus one two-word combination for a project waiting on a dependency:
+and MSBuild, not invented terms — plus one three-part combination for a project waiting on a dependency:
 
 | Label | What the engine found |
 |---|---|
@@ -1764,9 +1770,9 @@ and MSBuild, not invented terms — plus one two-word combination for a project 
 The waiting row is `affected` in every sense the word already carries — its own files are unchanged, a
 dependency is the reason — with a second tail bolted on to say *this run will not touch it either*: `up to date`
 (plus the usual age). Both tails after the word are faint, so the row reads `affected` first. This is the one
-place the slot widened past what design v1.16.0 measured (134 px, for `up to date · just now`): the three-part
-label measures wider, and the slot was re-measured to 204 px to fit it without clipping — a deliberate departure
-from the design package, a user decision.
+label that exceeds what design v1.16.0 specifies (134 px, for `up to date · just now`): the three-part label is
+wider, so the slot is 204 px, wide enough to fit it without clipping — a deliberate departure from the design
+package, a user decision.
 
 That label is only shown when the current run is **actually** gating the project on its dependency
 (`WaitingForDependency` and the engine's own `Conditional` flag, both true). The reason alone is not enough: a

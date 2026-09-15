@@ -121,6 +121,32 @@ public class ConditionalRebuildTests
         Assert.False(ConditionalRebuild.AppliesTo(Waiting(willBuild: false), RunMode.Cycles, false, false));
     }
 
+    // ---------------------------------------------------------------- AppliesAfterSuccess [Task 4 review — I1]
+
+    [Fact]
+    public void a_plain_project_succeeding_with_a_dep_issue_applies_after_success()
+        => Assert.True(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: false, ["Up"]));
+
+    [Fact]
+    public void a_success_without_a_dep_issue_never_applies()
+        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: false, depIssues: null));
+
+    /// <summary>[I1 (i)] Bir SCC üyesi TEK BAŞINA hiçbir zaman koşullu değildir (<see cref="AppliesTo"/>'nun
+    /// <c>!cycleGroupMember</c> kuralıyla AYNI) — dep-issue'lu bitse bile: bir Cycles koşusunda grubuyla
+    /// derlenir (turlar), bir Build koşusunda zaten hiç dispatch edilmez. "Rebuilds when it builds
+    /// successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.</summary>
+    [Fact]
+    public void a_cycle_member_never_applies_after_success_even_with_a_dep_issue()
+        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: true, cycleUnsettled: false, ["Up"]));
+
+    /// <summary>[I1 (ii)] Yakınsamayan bir grubun üyesi (<c>trustedResult=false</c>, RunCoordinator onu PERSIST
+    /// ETMEZ) her zaman bir döngü üyesidir — <paramref name="inCycle"/> zaten kapsar; <c>cycleUnsettled</c>
+    /// tek başına da (varsayımsal olarak inCycle=false ile birleşse bile) hiçbir zaman "koşullu" sonucunu
+    /// tetiklemez, çünkü koşulluluk tekil projelere ait bir kavramdır.</summary>
+    [Fact]
+    public void cycle_unsettled_alone_never_applies_after_success()
+        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: true, ["Up"]));
+
     // ---------------------------------------------------------------- RootNames
 
     [Fact]

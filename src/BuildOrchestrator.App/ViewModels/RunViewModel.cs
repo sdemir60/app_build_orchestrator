@@ -9,6 +9,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -1716,7 +1717,10 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
     /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
-    /// (aşağıda); <c>_willBuildIds</c> koşullu projeyi hâlâ içerir. <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
+    /// (aşağıda). <b>[Task 4 — DEĞİŞEN KURAL]</b> <c>_willBuildIds</c> de ARTIK aynı bayrağı okur ve koşullu
+    /// projeyi İÇERMEZ — eski hâlde ikisi ayrışıyordu (kuyruk dışlar, ilerleme paydası sayardı), Task 4
+    /// <c>OnBuildPreview</c>'daki tek ekleme noktasını (<c>!item.Conditional</c>) AYNI kaynağa bağladı.
+    /// <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
     /// (<paramref name="inCycle"/>): motorun bu run'daki kapsamı üyeler + transitif upstream'dir
     /// (<c>CycleRunScope</c>), ama kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da bu
     /// run'ın "kuyruğu" DEĞİLDİR — gri bekler, <c>projectStarted</c> geldiğinde normal yoldan Building'e geçer.
@@ -1832,7 +1836,11 @@ public sealed partial class RunViewModel : ObservableObject
         // WaitingForDependency, WillBuild HÂLÂ true) ÇELİŞİYORDU. Bu run içinde dep-issue'lu biten bir başarı
         // artık "dirty" (Conditional=true) kalır: kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds)
         // GİRMEZ ama bir sonraki Build'de kökü düzelirse yine derlenmesi gerekir.
-        bool waitingForDependency = depIssues is { Count: > 0 };
+        // [Task 4 review — I1] Karar App'te TÜRETİLMEZ (eskiden burada `depIssues is { Count: > 0 }` yazıyordu,
+        // motorun ConditionalRebuild.AppliesTo'sundan (özellikle "!cycleGroupMember") sessizce ayrışıyordu — bir
+        // SCC üyesi ya da yakınsamayan bir grubun üyesi dep-issue'lu bitse bile ASLA tek başına koşullu
+        // DEĞİLDİR, bkz. AppliesAfterSuccess'in XML yorumu) — TEK Core fonksiyonuna sorulur.
+        bool waitingForDependency = ConditionalRebuild.AppliesAfterSuccess(row.InCycle, cycleUnsettled, depIssues);
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
             row.WillBuild = waitingForDependency;

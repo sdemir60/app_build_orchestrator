@@ -363,12 +363,21 @@ public class SyncWorkspaceServiceTests
     /// <summary>
     /// Senaryo 6 (Sync yüzü): önceki Build'de A patladı, B ona rağmen başarıyla derlendi ve A'yı kök olarak not
     /// etti; kaynak değişmedi. Sync önizlemesi B'yi <c>WaitingForDependency</c> gerekçesi ve kök ADLARIYLA
-    /// taşır (etiketin tooltip'i bunları yazar). <c>Conditional</c> bir KOŞU olgusudur — Sync bir koşu
-    /// değildir, orada <c>false</c> kalır.
+    /// taşır (etiketin tooltip'i bunları yazar).
     ///
     /// <para><b>[Task 4 — carried item 1]</b> "N to build" sayacı B'yi SAYMAZ: B <c>WillBuild=true</c> olsa da
     /// koşullu (bir sonraki düz Build kökü hâlâ hatalıysa onu atlayabilir) — sayaç yalnız KESİN derlenecek A'yı
     /// sayar. Eski kural (tümünü sayardı) B'yi de katardı.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 4 review, C1]</b> Eski iddia <c>Assert.False(b.Conditional)</c> idi,
+    /// gerekçesi "Conditional bir KOŞU olgusudur, Sync bir koşu değildir". Doğruydu ama App'in gözünden yanlış
+    /// sonuç veriyordu: App'in TEK bildiği hâl bir Build tıklanana kadar Sync'in önizlemesidir, ve o her zaman
+    /// <c>false</c> derse dalga/kuyruk/etiket B'yi (Build tıklamasının ANINDA, motorun kendi önizlemesi henüz
+    /// gelmeden okunan <c>ScopeFor</c>) kesin derlenecek sanır — bir kare sonra motorun GERÇEK önizlemesi
+    /// gelince B griye/soluğa döner. Sync'in <c>WillBuild</c>'i zaten "bir sonraki düz Build ne yapar"ın cevabı
+    /// olduğundan (§10.2), <c>Conditional</c> artık AYNI soruyu sorar — B burada <c>true</c> olmalı, tıpkı bir
+    /// sonraki düz Build'in kendi önizlemesinde olacağı gibi (bkz. <c>ConditionalRebuildRunTests.
+    /// The_preview_marks_a_waiting_project_as_conditional_and_carries_its_root_names</c>).</para>
     /// </summary>
     [Fact]
     public async Task The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency()
@@ -396,10 +405,11 @@ public class SyncWorkspaceServiceTests
         var b = Assert.Single(preview.Items, i => i.Name == "B");
         Assert.Equal(WillBuildReason.WaitingForDependency, b.Reason);
         Assert.Equal(["A"], b.DependencyRoots);
-        Assert.False(b.Conditional);
+        Assert.True(b.Conditional); // DEĞİŞEN KURAL — bkz. üstteki XML yorum
         var a = Assert.Single(preview.Items, i => i.Name == "A");
         Assert.Equal(WillBuildReason.LastFailed, a.Reason);
         Assert.Null(a.DependencyRoots);
+        Assert.False(a.Conditional); // A kesin derlenecek — kontrol grubu
 
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil

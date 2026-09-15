@@ -1648,6 +1648,93 @@ public class RunViewModelTests
         Assert.NotNull(row.LastBuiltAt);  // az önce derlendi
     }
 
+    /// <summary>
+    /// [Task 4 review — C1] Bu koşuda dep-issue'lu biten bir satırın etiketi bir SONRAKİ Sync'te AYNI kalmalı:
+    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu. Sync'in kendi önizlemesi ARTIK
+    /// <c>Conditional</c>'ı da taşıdığı için (bkz. <c>SyncWorkspaceServiceTests.
+    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c> — DEĞİŞEN KURAL)
+    /// satır Sync'ten sonra da soluk "affected · up to date · just now" der; eski kural (Sync'in önizlemesi hep
+    /// <c>Conditional=false</c> gönderirdi) etiketi belirgin "affected"e düşürürdü — kullanıcı hiçbir şey
+    /// yapmadığı hâlde ekranın "değişti" görünmesi.
+    /// </summary>
+    [Fact]
+    public async Task A_dep_issue_wait_label_survives_a_sync_without_flipping()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.DepIssue, OwnFilesChanged: false)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
+            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+        var beforeSync = Label();
+        Assert.Equal("affected", beforeSync.Word);
+        Assert.False(beforeSync.Stale);
+
+        // Run biter, sonra bir Sync koşar — NeutralizeRows(fresh:true) State'i Pending'e döndürür (IsRunning
+        // false olmalı), Sync'in kendi önizlemesi disk hâlini (değişmemiş) aynen yansıtır.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.WaitingForDependency,
+            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: true, DependencyRoots: ["Up"])]));
+
+        var afterSync = Label();
+        Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
+    }
+
+    /// <summary>
+    /// [Task 4 review — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA koşullu
+    /// SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı gerekçe — üye
+    /// grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez; "rebuilds when it
+    /// builds successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz. Satır bugünkü (Task 4
+    /// öncesi) davranışa döner: <c>UpToDate</c>, <c>Conditional=false</c>.
+    /// </summary>
+    [Fact]
+    public async Task A_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.InCycle); // ön-koşul
+        Assert.False(row.Conditional);
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Null(row.DependencyRoots);
+    }
+
+    /// <summary>
+    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi de (<c>CycleUnsettled=true</c> — arkasında
+    /// durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) aynı kuralın altındadır: canlı geçiş
+    /// onu koşullu SANMAZ. <c>CycleUnsettled</c> zaten yalnız döngü üyeleri için doğru olabildiğinden bu, (i)'in
+    /// aynı korumasının farklı bir teline dokunduğunu doğrular.
+    /// </summary>
+    [Fact]
+    public async Task An_unsettled_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.Conditional);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Null(row.DependencyRoots);
+    }
+
     /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>
     [Fact]
     public async Task A_success_without_a_dep_issue_still_transitions_to_up_to_date()

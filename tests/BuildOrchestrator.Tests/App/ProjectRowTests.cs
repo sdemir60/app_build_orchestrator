@@ -758,6 +758,11 @@ public class ProjectRowTests
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
+    ///
+    /// <para><b>[Task 4 review — I2]</b> Sınır artık XAML'dan GERÇEKTEN OKUNUR (<c>row.RightBlock.MinWidth</c>,
+    /// <see cref="ProjectRow.RightBlock"/>) — ikinci bir sabit (kopya YASAK) test dosyasında TUTULMAZ. Eskiden
+    /// burada bir <c>const double RightBlockMinWidth = 204</c> vardı: XAML'daki <c>MinWidth</c> küçültülse bile
+    /// test kendi sabit kopyasına karşı yeşil kalırdı, kırılan gerçek yuvayı YAKALAMAZDI.</para>
     /// </summary>
     [StaFact]
     public void The_longest_decision_label_fits_inside_the_right_block()
@@ -776,17 +781,14 @@ public class ProjectRowTests
 
         Assert.Equal("affected · up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
+        double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
-        Assert.True(width <= RightBlockMinWidth, $"en uzun karar etiketi {RightBlockMinWidth}px yuvaya sığmadı: {width}px");
+        Assert.True(width <= slotMinWidth, $"en uzun karar etiketi {slotMinWidth}px yuvaya sığmadı: {width}px");
 
         // Kontrol grubu: eski 134px'lik yuva bu YENİ etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
         Assert.True(width > 134, $"etiket eski 134px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
         GC.KeepAlive(window);
     }
-
-    /// <summary>[Task 4] Sağ blok yuvasının XAML'daki <c>MinWidth</c>'i — ölçüm testlerinin tek sabiti (kopya
-    /// YASAK: değer burada bir kez okunur, XAML'daki gerçek değeri PİNLER).</summary>
-    private const double RightBlockMinWidth = 204;
 
     /// <summary>Etiket satırın olgularıyla birlikte TAZELENİR: motorun ikinci bir önizlemesi (ör. Sync'ten
     /// sonra gelen koşu önizlemesi) satırı yerinde değiştirir.</summary>

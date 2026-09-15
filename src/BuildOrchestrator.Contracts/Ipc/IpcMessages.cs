@@ -450,12 +450,17 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// satırları alansız çözülür.</param>
 /// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı — <c>up to date · 2h</c> etiketindeki
 /// göreli yaşın kaynağı. Hiç başarıyla derlenmemiş projede <c>null</c> ("never built" olgusu budur).</param>
-/// <param name="Conditional">Bu KOŞU projeyi koşullu değerlendirir (<c>ConditionalRebuild.AppliesTo</c>): sırası
-/// geldiğinde yalnız kayıtlı kök bağımlılıklarından biri düzeldiyse derlenir, aksi hâlde
-/// <c>dependency still failing</c> ile atlanır. Kuyruğun (kesin derlenecekler) üyesi DEĞİLDİR — <see
-/// cref="WillBuild"/> yine <c>true</c> olabilir, çünkü koşu onu pre-skip etmez. Bir koşu olgusudur: Sync
-/// önizlemesinde, Rebuild'de, satırdan tetiklenen hedefte ve SCC grubu üyesinde <c>false</c>. Alan default'lu:
-/// eski NDJSON satırları alansız çözülür.</param>
+/// <param name="Conditional">Bu proje bir sonraki DÜZ Build tarafından koşullu değerlendirilir mi
+/// (<c>ConditionalRebuild.AppliesTo</c>): sırası geldiğinde yalnız kayıtlı kök bağımlılıklarından biri
+/// düzeldiyse derlenir, aksi hâlde <c>dependency still failing</c> ile atlanır. Kuyruğun (kesin derlenecekler)
+/// üyesi DEĞİLDİR — <see cref="WillBuild"/> yine <c>true</c> olabilir, çünkü koşu onu pre-skip etmez.
+/// Rebuild'de, satırdan tetiklenen hedefte ve SCC grubu üyesinde <c>false</c>'tur — bunlar koşulsuz derler.
+/// <b>[DEĞİŞEN KURAL — Task 4 review]</b> Sync önizlemesi de bunu taşır (<c>AppliesTo(node, Build, scopedRun:
+/// false, cycleGroupMember: false)</c> ile simüle edilir — Sync bir koşu DEĞİLDİR ama <see cref="WillBuild"/>
+/// zaten "bir sonraki düz Build ne yapar"ın cevabıdır, <c>Conditional</c> aynı soruyu sorar): App'in Sync'ten
+/// hemen sonra tıklanan bir Build'de dalgayı/kuyruğu bu alandan kurduğu an (motorun kendi önizlemesi henüz
+/// gelmeden) hâlâ Sync'in son değeridir — eskiden hep <c>false</c> gelirdi ve koşullu proje bir kare yanlış
+/// amber/etiket taşıyıp griye/soluğa dönerdi. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
 /// <param name="DependencyRoots">Gerekçe <see cref="WillBuildReason.WaitingForDependency"/> iken defterdeki kök
 /// bağımlılıkların GÖRÜNEN adları (ad sıralı) — satır etiketinin tooltip'i bunları yazar; App metni kendisi
 /// üretmez. Diğer gerekçelerde <c>null</c> (JSON'a yazılmaz).</param>

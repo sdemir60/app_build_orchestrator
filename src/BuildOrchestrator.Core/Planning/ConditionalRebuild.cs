@@ -46,6 +46,25 @@ public static class ConditionalRebuild
         && node.WillBuildReason == WillBuildReason.WaitingForDependency;
 
     /// <summary>
+    /// [Task 4 review — I1] App'in CANLI geçişi sorar: bu proje BU KOŞUDA az önce dep-issue taşıyan bir
+    /// başarıyla bitti — satır, motorun bir sonraki önizlemesini (bir Sync'e kadar gelmeyebilir) beklemeden
+    /// şimdiden <c>WaitingForDependency</c>/<c>Conditional=true</c> mi göstermeli? TEK doğruluk kaynağı: App
+    /// kendi kopyasını (<c>depIssues is {{ Count: &gt; 0 }}</c>) TÜRETMEZ, burayı sorar.
+    ///
+    /// <para><b>Hayır, döngü üyesi için hiçbir zaman</b> — <see cref="AppliesTo"/>'nun <c>!cycleGroupMember</c>
+    /// kuralıyla AYNI gerekçe, yalnız bu koşunun henüz bitmemiş anına sorulur: bir Cycles koşusunda üye
+    /// dep-issue'lu bitse bile "tek başına, kökü düzelince yeniden derlenir" YALANDIR — üye GRUBUYLA derlenir
+    /// (turlar), bireysel koşullu mekanizmaya hiç girmez; bir Build koşusunda ise üye zaten hiç dispatch
+    /// edilmez. <paramref name="inCycle"/> tek başına bunu kapsar: yakınsamayan bir grubun üyesi de (sonucun
+    /// ARKASINDA DURULAMADIĞI, <c>RunCoordinator.ReportProjectResult</c>'ın <c>trustedResult=false</c> ile
+    /// PERSIST ETMEDİĞİ hâl) her zaman bir döngü üyesidir — ikinci bir bayrağa gerek yoktur, ama
+    /// <paramref name="cycleUnsettled"/> (turlar tavana dayandığında zaten telden gelen tek sinyal) niyeti
+    /// AÇIKÇA belgeler ve gelecekte döngü-dışı bir "güvenilmez sonuç" kanalı açılırsa buraya eklenecek yerdir.</para>
+    /// </summary>
+    public static bool AppliesAfterSuccess(bool inCycle, bool cycleUnsettled, IReadOnlyList<string>? depIssues) =>
+        !inCycle && !cycleUnsettled && depIssues is { Count: > 0 };
+
+    /// <summary>
     /// Koşullu projenin sırası geldiğinde kararı: köklerden EN AZ BİRİ başarılıysa (bu koşuda başarıyla
     /// derlendi, ya da bu koşuda derlenmedi ama defterdeki son sonucu başarı) derlenir; hepsi hâlâ hatalıysa
     /// (bu koşuda patladı, ya da derlenmedi ve defterdeki son sonucu hata) atlanır.

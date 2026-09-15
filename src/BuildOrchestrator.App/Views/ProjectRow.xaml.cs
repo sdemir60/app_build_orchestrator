@@ -148,6 +148,9 @@ public partial class ProjectRow : UserControl
     internal StatusDot Dot => PART_Dot;
     internal TextBlock DurationText => PART_Duration;
     internal TextBlock DecisionText => PART_Decision;
+    /// <summary>[Task 4 review — I2] Karar etiketinin oturduğu sağ blok — ölçüm testleri XAML'ın
+    /// <c>MinWidth</c>'ini buradan GERÇEKTEN okur (ikinci bir sabit kopyalamaz); yuva küçülürse test yakalar.</summary>
+    internal FrameworkElement RightBlock => PART_RightBlock;
     /// <summary>[L1] Hover eylem bloğu — İLK HOVER'a kadar <c>null</c> (hiç kurulmaz).</summary>
     internal FrameworkElement? HoverIcons => _actions?.HoverIcons;
     internal ProjectRowActions? Actions => _actions;

@@ -110,12 +110,18 @@ public static class DecisionLabel
             {
                 string? waitAge = AgeFormat.Age(lastBuiltAt, now);
                 string tail = waitAge is null ? "up to date" : $"up to date · {waitAge}";
-                string roots = dependencyRoots is { Count: > 0 }
-                    ? string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)))
-                    : "";
-                return new("affected", tail,
-                    $"Built against a failed dependency ({roots}) — rebuilds when it builds successfully",
-                    Stale: false);
+                // [Task 4 review — M3] "failed" İDDİA EDİLMEZ: kayıtlı kökler her zaman BAŞARISIZ olmayabilir
+                // — tek proje koşusunun bıraktığı bayat (derlenmemiş, ama dirty/döngü üyesi) bir bağımlılık da
+                // kök olarak kaydedilir (ConditionalRebuild.AppliesTo'nun beslediği DepIssueRoots, bkz.
+                // ProjectRunScope). Metin RowWarning'in AYNI kelimesini kullanır (kopya YASAK: tek kaynak
+                // RowWarning.DepIssuePrefix), boş kök listesi (uydurma varsayımla asla olmamalı, ama savunmacı)
+                // parantezsiz bir cümleye düşer.
+                string title = dependencyRoots is { Count: > 0 }
+                    ? $"{RowWarning.DepIssuePrefix}"
+                        + string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)))
+                        + " — rebuilds when it builds successfully"
+                    : "Rebuilds when its dependency builds successfully";
+                return new("affected", tail, title, Stale: false);
             }
 
             default:
