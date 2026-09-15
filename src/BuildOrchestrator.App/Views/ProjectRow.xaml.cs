@@ -563,8 +563,9 @@ public partial class ProjectRow : UserControl
             : _hover ? ResolveColor("Brush.SurfaceHover", Colors.Transparent)
             : Colors.Transparent;
         // [L1/It-5 perf] Zemin zaten hedef renkteyse geçiş kurma (ilk uygulamada HER satırda Transparent→Transparent
-        // idi → satır başına iki kaynak-zinciri yürüyüşü + bir renk saati). Guard artık BURADA DEĞİL,
-        // MotionTokens.TransitionColor'ın kendisinde (I-2 review round 1 — kopya YASAK, CLAUDE.md).
+        // idi → satır başına iki kaynak-zinciri yürüyüşü + bir renk saati). Guard BURADA DEĞİL,
+        // MotionTokens.TransitionColor'ın kendisinde (kopya YASAK, CLAUDE.md) — ve yalnız hiç animate edilmemiş
+        // fırçayı kısa devre yapar; bu metot yalnız hover/seçim/bağlam değişiminde çağrıldığı için yeterlidir.
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }
 

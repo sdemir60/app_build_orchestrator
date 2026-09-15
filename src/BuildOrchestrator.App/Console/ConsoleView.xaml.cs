@@ -957,8 +957,8 @@ public partial class ConsoleView : UserControl
     // null = imleç editörün üzerinde değil (MouseLeave'den beri hiç MouseMove gelmedi).
     private double? _lastMouseYInTextView;
     // [I-2 review round 1] Son bantlanan satırın (Top,Height) çifti — fare AYNI satır aralığında kaldığı sürece
-    // (en sık durum: sürekli MouseMove akışı) VisualLines taranmaz, dönüşüm alınmaz, renk geçişi YENİDEN
-    // KURULMAZ. null = şu an bant GÖRSEL OLARAK GİZLİ (HideHoverBandVisual'ın idempotency guard'ı bunu okur —
+    // (en sık durum: sürekli MouseMove akışı) VisualLines taranmaz, dönüşüm alınmaz. Renk geçişi yalnız bu
+    // alanın null ↔ dolu değişiminde kurulur (final review I-1). null = şu an bant GÖRSEL OLARAK GİZLİ (HideHoverBandVisual'ın idempotency guard'ı bunu okur —
     // review round 2: bu alanı "gizli mi" DIŞINDA bir anlamda KULLANMA, aşağıdaki _forceHoverRefresh'in
     // varlığı tam olarak bu yüzden — bkz. doc'u).
     private (double Top, double Height)? _hoveredLine;
@@ -970,8 +970,9 @@ public partial class ConsoleView : UserControl
     // bayrak yalnız "önbelleği bu bir seferliğine atla" der, görünürlük durumuna hiç dokunmaz.
     private bool _forceHoverRefresh;
 
-    /// <summary>[Test/I-2] Bandın renk hedefini GERÇEKTEN kaç kez değiştirdiğimiz — komşu satır içi
-    /// <c>MouseMove</c>'ların animasyonu YENİDEN KURMADIĞINI kanıtlamak için.</summary>
+    /// <summary>[Test/I-2] <see cref="MotionTokens.TransitionColor"/>'ı kaç kez çağırdığımız (görünürlük
+    /// değişimleri) — satır içi ve satırlar arası <c>MouseMove</c>'ların geçiş İSTEMEDİĞİNİ kanıtlamak için. Gerçek
+    /// animasyon başlangıcını ölçmez; o ölçüm testte fırçaya uygulanan saatin kimliğiyle yapılır.</summary>
     internal int HoverColorTransitionCount { get; private set; }
 
     /// <summary>
@@ -992,9 +993,12 @@ public partial class ConsoleView : UserControl
     /// <para><b>[I-2 review round 1] Aynı satır içindeki tekrar çağrılar ucuzdur:</b> <see cref="_hoveredLine"/>
     /// önbelleği belge-Y hâlâ son bantlanan satırın aralığındaysa <c>VisualLines</c> taranmadan, dönüşüm
     /// alınmadan, kaynak sözlüğü sorgulanmadan hemen döner — sürekli gelen <c>MouseMove</c> akışının satır İÇİNDE
-    /// hiçbir iş YAPMAMASını sağlar. Farklı bir satıra geçildiğinde <see cref="MotionTokens.TransitionColor"/>
-    /// çağrılır; O metot da ARTIK (aynı review) zaten hedef renkteyse yeniden animasyon KURMAZ — guard TEK yerde,
-    /// kopya YASAK. <b>[M-2 review round 2]</b> Bu kısayol yalnız gerçek <c>MouseMove</c>'dan (aynı çağrı içinde
+    /// hiçbir iş YAPMAMASını sağlar. <b>[Final review I-1]</b> Renk geçişi (<see cref="MotionTokens.TransitionColor"/>)
+    /// yalnız GÖRÜNÜRLÜK değişiminde kurulur: gizli → görünür burada, görünür → gizli
+    /// <see cref="HideHoverBandVisual"/>'da. Bant zaten görünürken farklı bir satıra geçiş ya da yapısal tazeleme
+    /// yalnız Margin/Height'ı günceller (bant satırlar arasında ANINDA taşınır). <c>TransitionColor</c>'ın kendi
+    /// "zaten hedefte" guard'ına güvenilmez: o yalnız HİÇ animate edilmemiş fırçada kısa devre yapar — WPF bir
+    /// animasyon bittikten sonra da <c>HasAnimatedProperties</c>'i true bırakır. <b>[M-2 review round 2]</b> Bu kısayol yalnız gerçek <c>MouseMove</c>'dan (aynı çağrı içinde
     /// hem Y HEM scroll offset sabit) gelen tekrar çağrılar için güvenlidir — <see cref="RefreshHoverBand"/>
     /// SCROLL sonrası çağırdığında <see cref="_forceHoverRefresh"/> bayrağını ÖNCE işaretler (önbelleğin
     /// KENDİSİNE, <see cref="_hoveredLine"/>'a hiç dokunmadan), aksi halde satır KİMLİĞİ değişmese bile
@@ -1032,7 +1036,7 @@ public partial class ConsoleView : UserControl
         // [savunmacı] Bayrak, aşağıdaki VisualLinesValid erken dönüşünden ÖNCE tüketilir — böylece HER çağrıda
         // tüketilmiş olur, dönüşün hangi yoldan olduğuna bakılmaksızın. Eski konumda da GÖZLEMLENEBİLİR bir
         // etkisi yoktu: o erken dönüş zaten HideHoverBandVisual çağırıp _hoveredLine'ı temizliyordu (zaten null
-        // değilse), yani bayrağın koruduğu "aynı satır" kısayolu (satır 1042) o andan sonra zaten çalışamazdı.
+        // değilse), yani bayrağın koruduğu "aynı satır" kısayolu (aşağıda) o andan sonra zaten çalışamazdı.
         // Taşıma yalnız niyeti (bayrak = "her çağrıda tüketilir") koda daha doğru yansıtıyor.
         bool skipSameLineShortcut = _forceHoverRefresh;
         _forceHoverRefresh = false;
@@ -1050,7 +1054,6 @@ public partial class ConsoleView : UserControl
         foreach (var visual in view.VisualLines) lines.Add((visual.VisualTop, visual.Height));
 
         if (ConsoleHoverBand.LineAt(lines, documentY) is not { } line) { HideHoverBandVisual(); return; }
-        _hoveredLine = line;
 
         // [PositionPrompt deseni] Referans TİLT KABIDIR (PART_TiltHost), ConsoleView değil — editör ve bant
         // aynı kabın içindedir, aralarındaki mesafe geçiş animasyonundan ETKİLENMEZ.
@@ -1065,8 +1068,15 @@ public partial class ConsoleView : UserControl
         double clippedBottom = Math.Min(top + line.Height, viewBottom);
         if (clippedBottom <= clippedTop) { HideHoverBandVisual(); return; } // panelin tamamen dışında
 
+        // [Final review I-1] Görünürlük durumu (_hoveredLine null mı) geometri doğrulandıktan SONRA yazılır;
+        // renk geçişi yalnız gizli → görünür anında kurulur. Bant zaten görünürken (başka satıra geçiş ya da
+        // yapısal tazeleme) yalnız geometri güncellenir — bant satırlar arasında ANINDA taşınır.
+        bool wasShown = _hoveredLine is not null;
+        _hoveredLine = line;
         HoverBand.Height = clippedBottom - clippedTop;
         HoverBand.Margin = new Thickness(0, clippedTop, 0, 0);
+        if (wasShown) return;
+
         HoverColorTransitionCount++;
         MotionTokens.TransitionColor(this, _hoverBandBrush, ResolveHoverBandColor());
     }

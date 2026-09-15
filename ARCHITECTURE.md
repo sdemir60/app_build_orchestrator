@@ -2615,9 +2615,12 @@ lines.
   The row band is a `Rectangle` sitting behind the editor in the same cell — `TextEditor.Background` stays
   transparent, so a rectangle drawn first shows through everywhere a glyph is not — filled with a local,
   unfrozen brush that `MotionTokens.TransitionColor` steps between `Brush.Surface` and transparent, the same
-  primitive every other hover surface in the app uses (that primitive itself skips the step-and-animate work
-  entirely when the brush is already at the target colour, one guard shared by every caller rather than each
-  keeping its own copy). Because the rectangle is stretched to the width of the tilt host rather than the
+  primitive every other hover surface in the app uses. The colour only transitions when the band appears or
+  disappears; while it is already showing, the band moves instantly from line to line and only its geometry
+  changes. That state is tracked by the view itself rather than left to the primitive's own "already at the
+  target" guard, because that guard only short-circuits a brush that has never been animated: WPF keeps
+  `HasAnimatedProperties` set after an animation completes, so every call on a once-animated brush would build
+  and start a fresh animation. Because the rectangle is stretched to the width of the tilt host rather than the
   editor's own content area, it reaches past the editor's padding to the panel's true edges, the full-bleed row
   the design asks for — which is also why the mouse wiring lives on the editor control itself rather than on
   the text view nested inside it: the text view sits *inside* that padding, and listening there alone would
@@ -2629,8 +2632,9 @@ lines.
   append, or a mode switch all replay the pointer's last known screen position through the same lookup, so the
   band keeps following the line actually underneath it without needing its own clock; leaving the editor
   (padding included) clears it. Nothing here opens a clock in the idle sense — the band only recomputes in
-  response to a real mouse or scroll event, per §14.5's idle rule, and re-hovering the same row costs nothing
-  further once the band is already sitting there.
+  response to a real mouse or scroll event, per §14.5's idle rule. A pointer moving inside the banded line
+  returns before any lookup, and a refresh while the band is showing updates its position without starting a
+  colour animation.
 
 ### 13.6 Graph renderer
 

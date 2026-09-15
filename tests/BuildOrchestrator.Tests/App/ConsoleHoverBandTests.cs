@@ -212,9 +212,16 @@ public class ConsoleHoverBandTests
     /// <see cref="MotionTokens.TransitionColor"/> her çağrıda yeni bir <c>ColorAnimationUsingKeyFrames</c> inşa
     /// edip <c>BeginAnimation</c> çağırırdı; sayaç bunun olmadığını KANITLAR (üretim kodunun kendisi sayar,
     /// paralel bir ölçüm yolu değil).
+    ///
+    /// <para><b>[Final review I-1 — DEĞİŞEN KURAL]</b> Eski iddia: FARKLI bir satıra geçiş geçişi yeniden kurar
+    /// (sayaç 2) ve <c>TransitionColor</c>'ın "zaten hedefte" guard'ı gereksiz animasyonu önler. Ölçüm (fırçaya
+    /// uygulanan saat kimliği, <see cref="Structural_refresh_while_the_band_stays_shown_does_not_start_a_new_colour_animation"/>)
+    /// guard'ın bir kez animate edilmiş fırçada kısa devre YAPMADIĞINI gösterdi — her satır değişimi ve yapısal
+    /// tazeleme yeni bir animasyon başlatıyordu. Yeni kural: renk geçişi yalnız gizli ↔ görünür değişiminde
+    /// kurulur; bant satırlar arasında ANINDA taşınır (sayaç 1 kalır, geometri yeni satıra geçer).</para>
     /// </summary>
     [StaFact]
-    public void UpdateHoverBand_does_not_retransition_while_the_pointer_stays_on_the_same_line()
+    public void UpdateHoverBand_transitions_colour_only_when_the_band_appears_not_when_it_moves_between_lines()
     {
         var view = Realized();
         view.AppendBatch("line0\nline1\nline2\n");
@@ -232,8 +239,60 @@ public class ConsoleHoverBandTests
         Assert.Equal(1, view.HoverColorTransitionCount); // yeniden kurulmadı
 
         var next = textView.VisualLines[2];
+        double marginBefore = view.HoverBand.Margin.Top;
         view.UpdateHoverBand(next.VisualTop - textView.ScrollOffset.Y + 1); // FARKLI satır
+        Assert.Equal(1, view.HoverColorTransitionCount); // görünür → görünür: renk geçişi yok
+        Assert.Equal(marginBefore + (next.VisualTop - target.VisualTop), view.HoverBand.Margin.Top, precision: 2); // anında taşındı
+
+        view.UpdateHoverBand(100_000); // görünür → gizli: geçiş
         Assert.Equal(2, view.HoverColorTransitionCount);
+    }
+
+    /// <summary>
+    /// [Final review I-1] Bant GÖRÜNÜRKEN ve fırçası bir kez animate edilmişken, imleç kımıldamadan gelen yapısal
+    /// tazelemeler (canlı log, yazma, yumuşak scroll kareleri → <c>RefreshHoverBand</c>) YENİ bir renk animasyonu
+    /// BAŞLATMAMALIDIR. <see cref="MotionTokens.TransitionColor"/>'ın "zaten hedefte" guard'ı yalnız HİÇ animate
+    /// edilmemiş fırçada kısa devre yapar — WPF, animasyon bittikten sonra da (HoldEnd) <c>HasAnimatedProperties</c>'i
+    /// true bırakır. Ölçüm metot çağrısı DEĞİL, fırçaya GERÇEKTEN uygulanan animasyon saatinin kimliğidir
+    /// (<see cref="AppliedColorClock"/>): yeni bir <c>BeginAnimation</c> saati değiştirir.
+    /// </summary>
+    [StaFact]
+    public void Structural_refresh_while_the_band_stays_shown_does_not_start_a_new_colour_animation()
+    {
+        using var _ = MotionScope.Enable(new FakeMotionSettings { AnimationsEnabled = true });
+        var view = Realized(width: 200, height: 200);
+        view.AppendBatch("line0\nline1\nline2\n");
+        view.UpdateLayout();
+
+        var brush = (SolidColorBrush)view.HoverBand.Fill;
+        view.UpdateHoverBand(1); // gösterim: GERÇEK bir renk animasyonu başlar
+        var shownClock = AppliedColorClock(brush);
+        Assert.NotNull(shownClock); // test kurgusu: animate yolu gerçekten çalıştı (snap değil)
+
+        view.OnScrollOffsetChanged(); // üretimin yapısal tazeleme kablosu (RefreshHoverBand)
+        view.OnScrollOffsetChanged();
+
+        Assert.Same(shownClock, AppliedColorClock(brush)); // yeni animasyon başlamadı
+    }
+
+    /// <summary>Fırçanın <c>Color</c> özelliğine şu an uygulanmış animasyon saati (yoksa null) — WPF bunu public
+    /// API'de sunmaz; iç <c>AnimationStorage</c>'dan okunur (yalnız test ölçümü).</summary>
+    private static object? AppliedColorClock(SolidColorBrush brush)
+    {
+        var storageType = typeof(System.Windows.Media.Animation.AnimationClock).Assembly
+            .GetType("System.Windows.Media.Animation.AnimationStorage", throwOnError: true)!;
+        var getStorage = storageType.GetMethod("GetStorage",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic,
+            [typeof(DependencyObject), typeof(DependencyProperty)])!;
+        var storage = getStorage.Invoke(null, [brush, SolidColorBrush.ColorProperty]);
+        if (storage is null) return null;
+        var clocksField = storageType.GetField("_animationClocks",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        // _animationClocks bir FrugalObjectList<AnimationClock>'tur (IList değil) — ToArray ile okunur.
+        var list = clocksField.GetValue(storage);
+        if (list is null) return null;
+        var clocks = (System.Windows.Media.Animation.AnimationClock[])list.GetType().GetMethod("ToArray")!.Invoke(list, null)!;
+        return clocks.Length > 0 ? clocks[0] : null;
     }
 
     /// <summary>
