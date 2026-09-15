@@ -1781,34 +1781,32 @@ carries a `border-subtle` line along its bottom, and that line crosses the strip
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
 
-**A layer header is a navigation control, not just a label.** Hovering it opens one surface step — background
-to `surface-raised`, the bottom rule to `border`, the caps name and mono row count to `text-secondary` — over
-the existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip that, like the row's
-icon buttons, opens after the OS hover delay (`AppTooltipDefaults.NativeDelayMs`, set on the header style)
-rather than instantly. Clicking it (in-flow
-or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one handler) scrolls the
-group's first visible row to sit just beneath the stacked headers above it; the target is pure arithmetic
-(`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
-elsewhere, instant under reduced motion. A click only counts if the press that started it landed on that same
-header (the header captures the mouse on press and checks it still holds capture on release) — pressing a row
-and dragging onto a header before releasing must not jump. Capture routes the release back to the header
-wherever the pointer is, so the release must also land inside the header's own bounds (press, drag away,
-release cancels, as a native click does), and the header must still be bound to the slot it was pressed on —
-a recycled in-flow container can carry the capture over to another layer's data. It never touches selection, the filter, the console
-or the graph — only the scroll position moves, and there is no collapse. The header is deliberately **mouse-only**:
-the design prototype asks for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard
-model (§13.9) already owns the arrow keys — rows are the only focusable stops, and `DirectionalNavigation=
-"Contained"` walks exactly the focusable elements inside the list, headers included, the moment any of them
-becomes one. Keeping the header's root a `Border` rather than a `Control` keeps it `Focusable=false` for free,
-so it never enters the Tab order or the arrow-key traversal; making it a focus stop to answer Enter/Space would
-put headers in the path of "arrow keys move between rows," which the list's keyboard model does not allow. The
-stuck overlay copy is hit-test-visible for the same reason a header is clickable at all — most clicks land
-there, since it is the one users actually see. Because it sits beside the `ScrollViewer` rather than above it
-in the visual tree, a wheel notch over a stacked header would otherwise never reach the list *and* would skip
-the bookkeeping every other user-scroll already gets (cancelling an in-flight smooth scroll, pausing follow-mode,
-resetting the idle-resume window) — one handler folds both into a single `OnUserWheel`, called from the header
-band's forwarded wheel exactly as from the `ScrollViewer`'s own, so scrolling over the stack behaves identically
-to scrolling anywhere else in the list.
+**A layer header is a navigation control, not just a label.** Hovering it opens one surface step — background to
+`surface-raised`, the bottom rule to `border`, the caps name and mono row count to `text-secondary` — over the
+existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip that, like the row's icon
+buttons, opens after the OS hover delay (`AppTooltipDefaults.NativeDelayMs`, set on the header style) rather than
+instantly. Clicking it (in-flow or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one
+handler) scrolls the group's first visible row to sit just beneath the stacked headers above it; the target is pure
+arithmetic (`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
+elsewhere, instant under reduced motion. A click only counts if the press that started it landed on that same header
+(the header captures the mouse on press and checks it still holds capture on release) — pressing a row and dragging
+onto a header before releasing must not jump. Capture routes the release back to the header wherever the pointer is,
+so the release must also land inside the header's own bounds (press, drag away, release cancels, as a native click
+does), and the header must still be bound to the slot it was pressed on — a recycled in-flow container can carry the
+capture over to another layer's data. It never touches selection, the filter, the console or the graph — only the
+scroll position moves, and there is no collapse. The header is deliberately **mouse-only**: the design prototype asks
+for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard model (§13.9) already owns the
+arrow keys — rows are the only focusable stops, and `DirectionalNavigation="Contained"` walks exactly the focusable
+elements inside the list, headers included, the moment any of them becomes one. Keeping the header's root a `Border`
+rather than a `Control` keeps it `Focusable=false` for free, so it never enters the Tab order or the arrow-key
+traversal; making it a focus stop to answer Enter/Space would put headers in the path of "arrow keys move between
+rows," which the list's keyboard model does not allow. The stuck overlay copy is hit-test-visible for the same reason
+a header is clickable at all — most clicks land there, since it is the one users actually see. Because it sits beside
+the `ScrollViewer` rather than above it in the visual tree, a wheel notch over a stacked header would otherwise never
+reach the list *and* would skip the bookkeeping every other user-scroll already gets (cancelling an in-flight smooth
+scroll, pausing follow-mode, resetting the idle-resume window) — one handler folds both into a single `OnUserWheel`,
+called from the header band's forwarded wheel exactly as from the `ScrollViewer`'s own, so scrolling over the stack
+behaves identically to scrolling anywhere else in the list.
 
 The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
 the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
@@ -1880,24 +1878,24 @@ participate in the shared selection. A run that finishes with zero failures glow
 through the list or the graph.
 
 **Every row answers hover, one step apart — but the once-only flourish always wins first.** A clickable row (one
-carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and
-swaps in the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps
-to the quieter `surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold
-without implying a click that would do nothing. The selected row's own `surface-raised` outranks both and does
-not move under the pointer. A background step on a non-clickable row could in principle fight the done line's
-once-only flourish. The two *can* meet — the done line is exactly the row the flourish plays on, and it is
-never clickable — but the flourish does not budge for hover: it is a CSS `@keyframes` animation in the design
-that owns the row's background outright for its full 1.1 s regardless of what the pointer is doing, the same
-way the row's own colour or the typewriter cadence cannot be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag
-(`_glowRunning`): while the flourish's clock is live, `ApplyBackground` does not write to the ground at all — a
-mouse arriving mid-glow is *remembered*, not applied, and a mouse leaving mid-glow is forgotten the same way.
-Only when the flourish's own clock completes does `ApplyBackground` run once more, this time settling on whatever
-the row's *current* hover/selection state actually is — hover ground if the pointer is still there, transparent
-if it already left. The flourish still plays exactly once regardless — this dance is entirely about who owns the
-ground while it runs, and has no bearing on the one-shot guard in `StreamEventViewModel.GlowPlayed`. The active
-prompt line at the foot of the panel (§2.6, the live `{name} building…` indicator) deliberately sits outside all
-of this: it carries a fixed hand cursor and never steps its background on hover, in the design as much as here —
-it is a status line, not a stream row, and has nothing of its own to select.
+carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in
+the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps to the quieter
+`surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold without implying a
+click that would do nothing. The selected row's own `surface-raised` outranks both and does not move under the
+pointer. A background step on a non-clickable row could in principle fight the done line's once-only flourish. The two
+*can* meet — the done line is exactly the row the flourish plays on, and it is never clickable — but the flourish does
+not budge for hover: it is a CSS `@keyframes` animation in the design that owns the row's background outright for its
+full 1.1 s regardless of what the pointer is doing, the same way the row's own colour or the typewriter cadence cannot
+be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag (`_glowRunning`): while the
+flourish's clock is live, `ApplyBackground` does not write to the ground at all — a mouse arriving mid-glow is
+*remembered*, not applied, and a mouse leaving mid-glow is forgotten the same way. Only when the flourish's own clock
+completes does `ApplyBackground` run once more, this time settling on whatever the row's *current* hover/selection
+state actually is — hover ground if the pointer is still there, transparent if it already left. The flourish still
+plays exactly once regardless — this dance is entirely about who owns the ground while it runs, and has no bearing on
+the one-shot guard in `StreamEventViewModel.GlowPlayed`. The active prompt line at the foot of the panel (§2.6, the
+live `{name} building…` indicator) deliberately sits outside all of this: it carries a fixed hand cursor and never
+steps its background on hover, in the design as much as here — it is a status line, not a stream row, and has nothing
+of its own to select.
 
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
 there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
@@ -2438,61 +2436,60 @@ individually coloured, and MSBuild-verbose volume must not stall the UI. `TextBl
 `FlowDocument`/`RichTextBox` collapses under the volume; an `ItemsControl` of lines loses selection across
 lines.
 
-- **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid`
-  has a `*` column and an `Auto` column: the right block (Copy log + `N lines`) sits in the `Auto` column and
-  never shrinks. The left content's own inner `Grid` makes **every** column `Auto`, project name included —
-  deliberately not `*`. A `*` column always claims the whole remainder regardless of what its content actually
-  needs, and every `Auto` column after it starts at that column's *full* width rather than at the text's
-  rendered edge; with the name in a `*` column, a wide panel and a short name left a visible gap before the
-  status glyph instead of the two sitting flush (the prototype's name `span` is `white-space: nowrap` with no
-  flex-grow — it shrinks, never grows, and its neighbours are always immediately to its right). The real
-  shrink-on-demand behaviour is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered
-  width of Back, the status glyph, the status name and whichever badges are visible (each plus its own margin),
-  subtracts their sum from the available space, and caps the name's `MaxWidth` at what's left — recomputed
-  after every `ShowProjectLog`/`RefreshStatus` call, on the right block's own `SizeChanged` (Copy log appearing
-  or disappearing, or the `N lines` text widening from 999 to 1000), and on the header's own `SizeChanged` (a
-  live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the method
-  forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
-  already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the
-  project-log half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn
-  `Icon.Back` arrow plus the word "Back" — is built once in the constructor and bound to the button's own
-  *animated* `Foreground` (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label
-  text does; its `-6px` left margin is not a clipping bug and not a full cancellation either — Ghost.Sm's own
-  left padding is 10 px, so `-6` only takes back six of those ten, leaving the icon 4 px further in than the
-  panel's own 10 px inset, not flush with it. The status glyph is a real `StatusGlyph` control (13 px) rather
-  than a character — `building` draws its own spinning arc through the control's embedded `BuildingSpinner`,
-  every other state draws the dashed/solid ring. The glyph reads the selected row's own
-  `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never keeps a
-  second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
-  `Queued` in the row and in the header alike. The status word next to it keeps the engine's own vocabulary
-  (`ConsoleStatus.Name`/`BrushKey`, over the narrower `ProjectRowState` domain, not the graph's wider
-  `GraphStatus`). A dependency-issue badge and a cycle badge can
-  appear **together** (unlike the single triangle a project row shows, which picks one by priority): both are
-  an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}`
-  bindings so they resolve as soon as the header is rooted in a live resource scope even while the badge itself
-  stays collapsed. The dependency-issue tooltip spells out every project by its short name
-  (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
+- **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid` has a
+  `*` column and an `Auto` column: the right block (Copy log + `N lines`) sits in the `Auto` column and never shrinks.
+  The left content's own inner `Grid` makes **every** column `Auto`, project name included — deliberately not `*`. A
+  `*` column always claims the whole remainder regardless of what its content actually needs, and every `Auto` column
+  after it starts at that column's *full* width rather than at the text's rendered edge; with the name in a `*`
+  column, a wide panel and a short name left a visible gap before the status glyph instead of the two sitting flush
+  (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it shrinks, never grows, and its
+  neighbours are always immediately to its right). The real shrink-on-demand behaviour is computed by hand instead:
+  `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph, the status name and whichever
+  badges are visible (each plus its own margin), subtracts their sum from the available space, and caps the name's
+  `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call, on the right block's own
+  `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999 to 1000), and on the
+  header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the
+  method forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
+  already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the project-log half
+  `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the word
+  "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
+  (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
+  is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
+  back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
+  status glyph is a real `StatusGlyph` control (13 px) rather than a character — `building` draws its own spinning arc
+  through the control's embedded `BuildingSpinner`, every other state draws the dashed/solid ring. The glyph reads the
+  selected row's own `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never
+  keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
+  `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
+  (`StatusGlyph.LabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed vocabulary, so
+  word, colour and glyph are one call and cannot disagree — a narrower `ConsoleStatus.Name`/`BrushKey` pair once
+  carried the word from the engine's own domain, which is exactly what let the word answer `Started` while the glyph
+  beside it already said `Queued`; folding the word into the glyph's own table by user decision retired that class. A
+  dependency-issue badge and a cycle badge can appear **together** (unlike the single triangle a project row shows,
+  which picks one by priority): both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared
+  directly in XAML as `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource
+  scope even while the badge itself stays collapsed. The dependency-issue tooltip spells out every project by its
+  short name (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
   back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
-  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit
-  `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind
-  only writes their content. Copy log is a plain
-  `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no bespoke chrome; its copied-state
-  green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy diagnostics button does,
-  which means a hover during the 1.4 s window can hand control back to the style's own animated brush — an
-  accepted trade-off shared by both buttons.
-- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs
-  once, on selection; a project already open can still change underneath the reader — a `Started` row reaching
-  `Succeeded`, a dependency-issue list arriving, a cycle membership settling — and none of those are selection
-  events. `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s
-  `PropertyChanged` (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
-  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while
-  `State` does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification (`Fresh`, `Marked`, `Fade`, …) is not the
-  header's concern and is ignored, the same filtered `switch` idiom `ProjectRow.OnVmPropertyChanged` already
-  uses for its own row. `RefreshStatus` touches only the glyph, the status word and the two badges; it does not
-  re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status change mid-read cannot reset the
-  reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run tick still owns only
-  `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are pushed the
-  instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
+  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit `ToolTip`
+  objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind only writes
+  their content. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no
+  bespoke chrome; its copied-state green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy
+  diagnostics button does, which means a hover during the 1.4 s window can hand control back to the style's own
+  animated brush — an accepted trade-off shared by both buttons.
+- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
+  selection; a project already open can still change underneath the reader — a `Started` row reaching `Succeeded`, a
+  dependency-issue list arriving, a cycle membership settling — and none of those are selection events.
+  `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
+  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
+  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
+  does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification
+  (`Fresh`, `Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
+  `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
+  word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
+  change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run
+  tick still owns only `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are
+  pushed the instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: MSBuild's own diagnostic
   shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
@@ -2589,16 +2586,15 @@ lines.
   during those 340 ms. Left alone they parked the panel one line short of the end: a small gap underneath and,
   because that is more than the 48 px threshold, an occasional `⌄ latest`.
 
-  **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the
-  other half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck
-  to the bottom again" while the editor still holds the *previous* document — at its top — measured a huge
-  distance and showed the pill for exactly as long as the pin took to run. It appeared and vanished on every
-  `Back`. Ordered after the pin, the geometry is already right and the distance is zero. The run narrative
-  pins to the **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
-  log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
-  error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
-  hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
-  which pins both directions to the bottom.
+  **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the other
+  half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck to the bottom
+  again" while the editor still holds the *previous* document — at its top — measured a huge distance and showed the
+  pill for exactly as long as the pin took to run. It appeared and vanished on every `Back`. Ordered after the pin,
+  the geometry is already right and the distance is zero. The run narrative pins to the **bottom**: the interesting
+  thing is the latest line and the panel goes on following the stream. A project log pins to the **top** and opens
+  **not following**: what you are looking for in a build log is the first error, and following would have thrown you
+  to the bottom on the next live line. Scrolling down yourself hands following back, by the same rule as any other
+  user scroll. This is a deliberate departure from §5.1, which pins both directions to the bottom.
 - **A new operation empties the narrative in place.** The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
