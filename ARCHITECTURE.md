@@ -2588,16 +2588,30 @@ lines.
   AvalonEdit's `SelectionMouseHandler` forces the I-beam (and, mid drag, an arrow over the current selection)
   from inside the `QueryCursor` routed event, not from the static `Cursor` property — neither `TextArea` nor
   `TextView` ever sets one. `ConsoleView` re-catches the same event one level up, on `TextEditor` itself, with
-  `handledEventsToo: true`: the bubble reaches AvalonEdit's handler first and reaches this one after, so
-  whatever AvalonEdit decided is overwritten with the arrow regardless. The row band is a `Rectangle` sitting
-  behind the editor in the same cell — `TextEditor.Background` stays transparent, so a rectangle drawn first shows
-  through everywhere a glyph is not — filled with a local, unfrozen brush that `MotionTokens.TransitionColor`
-  steps between `Brush.Surface` and transparent, the same primitive every other hover surface in the app uses.
-  Because that rectangle is stretched to the width of the tilt host rather than the editor's own content area,
-  it reaches past the editor's 12 px padding to the panel's true edges, the same full-bleed row the design asks
-  for. Which line is under the pointer is answered by a pure helper (`ConsoleHoverBand.LineAt`, tested without
-  any live editor) fed from the real `TextView.VisualLines` on every `MouseMove`; leaving the text view clears
-  it. Nothing here opens a clock — the band only moves in response to a real mouse event, per §14.5's idle rule.
+  `handledEventsToo: true`: the bubble reaches AvalonEdit's handler first and reaches this one after. Only an
+  I-beam (or a position AvalonEdit never claimed at all) is overwritten with the arrow — AvalonEdit's own
+  `EnableHyperlinks` is on by default and resolves a real `Hand` over a link under Ctrl, and that decision is
+  left exactly as AvalonEdit made it, so a link in a build log still reads as clickable.
+
+  The row band is a `Rectangle` sitting behind the editor in the same cell — `TextEditor.Background` stays
+  transparent, so a rectangle drawn first shows through everywhere a glyph is not — filled with a local,
+  unfrozen brush that `MotionTokens.TransitionColor` steps between `Brush.Surface` and transparent, the same
+  primitive every other hover surface in the app uses (that primitive itself skips the step-and-animate work
+  entirely when the brush is already at the target colour, one guard shared by every caller rather than each
+  keeping its own copy). Because the rectangle is stretched to the width of the tilt host rather than the
+  editor's own content area, it reaches past the editor's padding to the panel's true edges, the full-bleed row
+  the design asks for — which is also why the mouse wiring lives on the editor control itself rather than on
+  the text view nested inside it: the text view sits *inside* that padding, and listening there alone would
+  have made the band vanish in exactly the strip it is supposed to cover. Which line is under the pointer is
+  answered by a pure helper (`ConsoleHoverBand.LineAt`, tested without any live editor) fed from the real
+  `TextView.VisualLines` on every `MouseMove`; a line only partially inside the viewport still gets a full
+  band, but that band is clipped to the text view's own rendered bounds so it cannot spill into the padding
+  above it or the horizontal scrollbar below. A resting pointer does not go stale, either — a scroll, a live
+  append, or a mode switch all replay the pointer's last known screen position through the same lookup, so the
+  band keeps following the line actually underneath it without needing its own clock; leaving the editor
+  (padding included) clears it. Nothing here opens a clock in the idle sense — the band only recomputes in
+  response to a real mouse or scroll event, per §14.5's idle rule, and re-hovering the same row costs nothing
+  further once the band is already sitting there.
 
 ### 13.6 Graph renderer
 

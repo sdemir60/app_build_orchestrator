@@ -215,6 +215,14 @@ internal static class MotionTokens
     /// </summary>
     public static void TransitionColor(FrameworkElement host, SolidColorBrush brush, Color to)
     {
+        // [I-2 review round 1] Fırça zaten hedef renkteyse VE uçuşta bir animasyon yoksa geçiş YENİDEN
+        // KURULMAZ — aksi halde her çağrı (fırçanın rengi değişmese bile) yeni bir
+        // ColorAnimationUsingKeyFrames inşa edip BeginAnimation çağırırdı. Bu ÖNEMLİDİR: bazı çağıranlar AYNI
+        // hedefle ÇOK SIK çağrılır (konsolun MouseMove'a bağlı satır hover bandı gibi) — TEK yerde (ProjectRow
+        // bu guard'ı kendi ApplyBackground'ında AYRI AYRI taşıyordu; kopya YASAK, CLAUDE.md — şimdi buradan
+        // TÜM çağıranlara paylaşılıyor).
+        if (!brush.HasAnimatedProperties && brush.Color == to) return;
+
         var fast = ResolveFast(host);
         if (!fast.Animate)
         {
