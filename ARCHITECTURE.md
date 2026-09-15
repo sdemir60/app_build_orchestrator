@@ -2462,21 +2462,18 @@ lines.
   keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
   `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
   (`StatusGlyph.LabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed vocabulary, so
-  word, colour and glyph are one call and cannot disagree — a narrower `ConsoleStatus.Name`/`BrushKey` pair once
-  carried the word from the engine's own domain, which is exactly what let the word answer `Started` while the glyph
-  beside it already said `Queued`; folding the word into the glyph's own table by user decision retired that class. A
-  dependency-issue badge and a cycle badge can appear **together** (unlike the single triangle a project row shows,
-  which picks one by priority): both are an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared
-  directly in XAML as `{DynamicResource}` bindings so they resolve as soon as the header is rooted in a live resource
-  scope even while the badge itself stays collapsed. The dependency-issue tooltip spells out every project by its
-  short name (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
-  back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
-  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit `ToolTip`
-  objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind only writes
-  their content. Copy log is a plain `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no
-  bespoke chrome; its copied-state green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy
-  diagnostics button does, which means a hover during the 1.4 s window can hand control back to the style's own
-  animated brush — an accepted trade-off shared by both buttons.
+  word, colour and glyph are one call and cannot disagree. A dependency-issue badge and a cycle badge can appear
+  **together** (unlike the single triangle a project row shows, which picks one by priority): both are an 8 px
+  `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}` bindings so
+  they resolve as soon as the header is rooted in a live resource scope even while the badge itself stays collapsed.
+  The dependency-issue tooltip spells out every project by its short name (`RowWarning.DepIssueDetail`, comma-joined —
+  the header has room a row's slot does not, so it never falls back to the row's "+N" abbreviation); the cycle tooltip
+  is the same sentence the row's own triangle uses (`RowWarning.InCycle`), read from the one shared constant rather
+  than retyped. Both tooltips are explicit `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they
+  open below the badge; code-behind only writes their content. Copy log is a plain `Ds.IconButton` (22×22, already the
+  design's "sm" size in this app) with no bespoke chrome; its copied-state green tint is written straight to
+  `Foreground` the same way `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window
+  can hand control back to the style's own animated brush — an accepted trade-off shared by both buttons.
 - **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
   selection; a project already open can still change underneath the reader — a `Started` row reaching `Succeeded`, a
   dependency-issue list arriving, a cycle membership settling — and none of those are selection events.
