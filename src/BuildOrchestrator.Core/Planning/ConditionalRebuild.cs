@@ -64,21 +64,71 @@ public static class ConditionalRebuild
         if (rootIds is not { Count: > 0 }) return ConditionalRebuildVerdict.Build;
 
         foreach (string root in rootIds)
-        {
-            if (!inWorkspace(root)) return ConditionalRebuildVerdict.Build;
-
-            // Bu koşuda DERLENDİ: sonucu koşudan. Skipped "derlenmedi" demektir — sonucu defterden okunur.
-            if (completedThisRun.TryGetValue(root, out var result) && result != BuildResult.Skipped)
-            {
-                if (result == BuildResult.Succeeded) return ConditionalRebuildVerdict.Build;
-                continue;
-            }
-
-            if (ledgerAtRunStart is null || !ledgerAtRunStart.TryGetValue(root, out var recorded)
-                || recorded.LastResult == BuildResult.Succeeded)
+            if (ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart) == RootEvidence.Cleared)
                 return ConditionalRebuildVerdict.Build;
-        }
         return ConditionalRebuildVerdict.DependencyStillFailing;
+    }
+
+    /// <summary>Bir kökün tekil kanıtı — <see cref="Decide"/> ve <see cref="DescribeStillFailingRoots"/>'un
+    /// PAYLAŞTIĞI TEK sınıflandırma (kopya YASAK): kararı verdiren mantık ile o kararı METNE döken mantık aynı
+    /// kaynaktan okur, aksi halde ikisi sessizce ayrışabilirdi.</summary>
+    private enum RootEvidence
+    {
+        /// <summary>Kök artık temiz (başarılı ya da projeden düştü) — proje derlenmeli.</summary>
+        Cleared,
+        /// <summary>Kök BU KOŞUDA patladı — kanıt taze.</summary>
+        FailedThisRun,
+        /// <summary>Kök bu koşuda hiç denenmedi (skip/yok); "hâlâ hatalı" iddiası yalnız koşu BAŞINDAKİ
+        /// defterin son bilinen sonucundan geliyor.</summary>
+        FailedInLedgerOnly,
+    }
+
+    private static RootEvidence ClassifyRoot(string root, IReadOnlyDictionary<string, BuildResult> completedThisRun,
+        Func<string, bool> inWorkspace, IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart)
+    {
+        if (!inWorkspace(root)) return RootEvidence.Cleared;
+
+        // Bu koşuda DERLENDİ: sonucu koşudan. Skipped "derlenmedi" demektir — sonucu defterden okunur.
+        if (completedThisRun.TryGetValue(root, out var result) && result != BuildResult.Skipped)
+            return result == BuildResult.Succeeded ? RootEvidence.Cleared : RootEvidence.FailedThisRun;
+
+        if (ledgerAtRunStart is null || !ledgerAtRunStart.TryGetValue(root, out var recorded)
+            || recorded.LastResult == BuildResult.Succeeded)
+            return RootEvidence.Cleared;
+        return RootEvidence.FailedInLedgerOnly;
+    }
+
+    /// <summary>
+    /// [Task 4 — carried item 3] <see cref="Decide"/> <c>DependencyStillFailing</c> derdiğinde, ATLAMA satırının
+    /// ("dependency still failing (…)") kök listesini DOĞRU söyler: bir kök BU KOŞUDA gerçekten patladıysa çıplak
+    /// adı yazılır (bugünkü davranış — "R failed in this run" iddiasıyla TUTARLI); kök bu koşuda hiç denenmediyse
+    /// (ör. bir SCC üyesi Build modunda "in dependency cycle" ile pre-skip edilir) ve "hâlâ hatalı" iddiası
+    /// yalnız koşu başındaki DEFTERDEN geliyorsa <c>" (last known failure)"</c> eki eklenir — aksi hâlde satır,
+    /// hiç gözlemlenmemiş bir "şimdi de patladı" iddiası taşırdı. Ad sıralı, tekil (<see cref="RootNames"/> ile
+    /// AYNI biçim); girdi <see cref="Decide"/>'ın Build dönmediği (yalnız <c>Cleared</c> OLMAYAN kökler) hâli
+    /// varsayılır — bir <c>Cleared</c> kök burada görülürse (çağıran hatası) sessizce atlanır.
+    /// </summary>
+    public static IReadOnlyList<string> DescribeStillFailingRoots(
+        IReadOnlyList<string>? rootIds, IReadOnlyDictionary<string, BuildResult> completedThisRun,
+        Func<string, bool> inWorkspace, IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart,
+        Func<string, string> nameOf)
+    {
+        ArgumentNullException.ThrowIfNull(completedThisRun);
+        ArgumentNullException.ThrowIfNull(inWorkspace);
+        ArgumentNullException.ThrowIfNull(nameOf);
+        if (rootIds is not { Count: > 0 }) return [];
+
+        var entries = new List<(string Name, bool LedgerOnly)>();
+        foreach (string root in rootIds)
+        {
+            var evidence = ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart);
+            if (evidence == RootEvidence.Cleared) continue; // savunmacı: Decide zaten Build dönerdi
+            entries.Add((nameOf(root), evidence == RootEvidence.FailedInLedgerOnly));
+        }
+        return [.. entries
+            .DistinctBy(e => e.Name, StringComparer.Ordinal)
+            .OrderBy(e => e.Name, StringComparer.Ordinal)
+            .Select(e => e.LedgerOnly ? $"{e.Name} (last known failure)" : e.Name)];
     }
 
     /// <summary>

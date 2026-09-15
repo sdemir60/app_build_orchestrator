@@ -146,4 +146,42 @@ public class ConditionalRebuildTests
         Assert.Null(ConditionalRebuild.RootNames(WillBuildReason.SignatureChanged,
             new BuildState("P", "sig", LastResult: BuildResult.Succeeded, DepIssue: true, DepIssueRoots: ["U"]), _ => "U"));
     }
+
+    // ---------------------------------------------------------------- DescribeStillFailingRoots [Task 4 — carried item 3]
+
+    /// <summary>
+    /// [carried item 3] Kök bu koşuda GERÇEKTEN patladıysa ("dependency still failing" verdiğini üreten aynı
+    /// veri) metin çıplak addır — bugünkü <c>ReportSkipped</c> satırıyla (<c>"…(Up)"</c>) AYNI, mevcut
+    /// <c>ConditionalRebuildRunTests.A_waiting_project_whose_root_fails_again_is_skipped…</c> testi kırılmaz.
+    /// </summary>
+    [Fact]
+    public void a_root_that_actually_failed_in_this_run_has_a_bare_name()
+        => Assert.Equal(["A"], ConditionalRebuild.DescribeStillFailingRoots(
+            ["A"], Completed(("A", BuildResult.Failed)), Everywhere, Ledger(("A", BuildResult.Failed)), _ => "A"));
+
+    /// <summary>
+    /// [carried item 3] Kök bu koşuda HİÇ denenmedi (ör. bir SCC üyesi — Build modunda "in dependency cycle"
+    /// ile pre-skip edilir) ve "hâlâ hatalı" iddiası yalnız DEFTERDEN geliyorsa metin bunu AYIRT EDER — "R
+    /// failed in this run" YALANI söylenmez, son bilinen sonuç olduğu belirtilir.
+    /// </summary>
+    [Fact]
+    public void a_root_only_known_failing_from_the_ledger_is_labelled_as_such()
+        => Assert.Equal(["A (last known failure)"], ConditionalRebuild.DescribeStillFailingRoots(
+            ["A"], Completed(("A", BuildResult.Skipped)), Everywhere, Ledger(("A", BuildResult.Failed)), _ => "A"));
+
+    /// <summary>Karışık: bir kök bu koşuda patladı, diğeri yalnız defterden — isim sıralı, her biri kendi etiketiyle.</summary>
+    [Fact]
+    public void mixed_roots_are_each_labelled_by_their_own_evidence()
+        => Assert.Equal(["A", "B (last known failure)"], ConditionalRebuild.DescribeStillFailingRoots(
+            ["A", "B"], Completed(("A", BuildResult.Failed), ("B", BuildResult.Skipped)), Everywhere,
+            Ledger(("A", BuildResult.Failed), ("B", BuildResult.Failed)), id => id));
+
+    [Fact]
+    public void an_empty_or_null_root_list_describes_nothing()
+    {
+        Assert.Empty(ConditionalRebuild.DescribeStillFailingRoots(
+            null, Completed(), Everywhere, Ledger(), _ => "X"));
+        Assert.Empty(ConditionalRebuild.DescribeStillFailingRoots(
+            [], Completed(), Everywhere, Ledger(), _ => "X"));
+    }
 }

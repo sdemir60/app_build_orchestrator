@@ -213,6 +213,39 @@ public class ConditionalRebuildRunTests : IDisposable
         Assert.False(Assert.Single(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items).Conditional);
     }
 
+    // ---------------------------------------------------------------- 1b) kök defterden hâlâ hatalı (bu koşuda hiç denenmedi)
+
+    /// <summary>
+    /// [Task 4 — carried item 3] Up bu koşuda hiç DENENMEDİ — kendi başına önemsiz bir döngünün (Loop ile)
+    /// üyesi ve Build modunda "in dependency cycle" ile pre-skip edilir (SCC'ler yalnız Cycles'ta derlenir).
+    /// "Hâlâ hatalı" iddiası yalnız koşu BAŞINDAKİ defterden geliyor (SeededStore: Up'ın son sonucu Failed) —
+    /// decision.log satırı bunu AYIRT ETMELİDİR: "Up failed in this run" YALANI basılmaz, son bilinen sonuç
+    /// olduğu söylenir. Senaryo 1'deki ("…(Up)") test — kök GERÇEKTEN bu koşuda patladığında — DEĞİŞMEZ.
+    /// </summary>
+    [Fact]
+    public async Task A_still_failing_root_that_never_ran_this_run_is_labelled_from_its_last_known_result()
+    {
+        var store = SeededStore(); // Up: defterdeki son sonucu Failed
+        var invoker = AllSucceed(); // Up/Loop zaten dispatch edilmez (SCC, Build modu); Down/Leaf normal derlenir
+        var plan = new RunPlan(new BuildPlan(
+            [Node("Up", deps: ["Loop"], inCycle: true, willBuild: true) with
+                { BuildOrder = 0, WillBuildReason = WillBuildReason.LastFailed },
+             Node("Loop", deps: ["Up"], inCycle: true, willBuild: true) with
+                { BuildOrder = 1, WillBuildReason = WillBuildReason.NeverBuilt },
+             Node("Down", deps: ["Up"], willBuild: true) with { BuildOrder = 2, WillBuildReason = WillBuildReason.WaitingForDependency },
+             Node("Leaf", deps: ["Down"], willBuild: true) with { BuildOrder = 3, WillBuildReason = WillBuildReason.SignatureChanged }],
+            Cycles: [[Id("Up"), Id("Loop")]], Configuration: "Debug"),
+            EmptyRefs(), Incremental: RunCoordinatorTests.Incremental("Up", "Loop", "Down", "Leaf"));
+        using var h = new Harness(plan, invoker, stateStore: store);
+
+        await RunAsync(h, Start(RunMode.Build));
+
+        Assert.DoesNotContain(Id("Up"), invoker.Requests.Select(r => r.ProjectId)); // hiç dispatch edilmedi
+        var skip = Assert.Single(h.Events.OfType<ProjectSkippedEvent>(), e => e.ProjectId == Id("Down"));
+        Assert.Equal(SkipReasons.DependencyStillFailing, skip.Reason);
+        Assert.Contains("Down: skipped — dependency still failing (Up (last known failure))", h.DecisionLog);
+    }
+
     // ---------------------------------------------------------------- Cycles modu
 
     /// <summary>Cycles modunda kapsam içi (bir döngünün upstream'i olan) koşullu proje aynı kurala tabidir.</summary>

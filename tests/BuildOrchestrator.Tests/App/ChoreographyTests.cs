@@ -618,6 +618,27 @@ public class ChoreographyTests
         Assert.Equal(["Cyc"], vm.ScopeFor(RunMode.Cycles).Select(r => r.Name));
     }
 
+    /// <summary>
+    /// [Task 4 — kök neden C] Dalga yalnız KESİN derlenecekleri yakar: koşullu bir proje (<see
+    /// cref="WillBuildReason.WaitingForDependency"/>, motorun <c>Conditional</c> dediği) <c>WillBuild==true</c>
+    /// olsa da dalgada amber'a yanmaz — kökü hâlâ hatalıysa atlanabilir. Bu, motorun kesin kuyruğuyla AYNI
+    /// kümedir (Task 1'in <c>InRunQueueFor</c>'unun Build dalıyla, tek doğruluk kaynağı).
+    /// </summary>
+    [Fact]
+    public void The_build_wave_excludes_a_conditional_project()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node("A", 0), Node("D", 1)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 1));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\A.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\D.csproj", "D", true, Reason: WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        Assert.Equal(["A"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+    }
+
     /// <summary>Reduced-motion: koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam yalnız işaretlenir ve
     /// satırlar tam opak kalır.</summary>
     [Fact]

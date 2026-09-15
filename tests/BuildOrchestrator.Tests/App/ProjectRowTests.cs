@@ -747,14 +747,14 @@ public class ProjectRowTests
     }
 
     /// <summary>
-    /// [design v1.16.0 §2.4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
+    /// [design v1.16.0 §2.4 · Task 4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
     ///
-    /// <para><b>DEĞİŞEN KURAL.</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu: eksik yarı
-    /// varken yarım ok basılmaması (iki yön), iki yarının da 7 haneye inmesi, geç gelen hedefin satırı
-    /// tazelemesi ve çiftin 118px'lik yuvaya sığması. Yuvada artık commit yok — kararın kendisi var (sözcük
-    /// seçimi <see cref="DecisionLabelTests"/>'te). Ölçüm iddiası KALIR, yalnız sınırı büyür: en uzun etiket
-    /// ("up to date · just now") 134px'lik yuvaya sığmalıdır; eski 118px onu kırpıp ad kolonundan yer
-    /// çalıyordu. "Geç gelen olgu satırı tazeler" iddiası da kalır — yalnız gelen şey artık sha değil olgudur.</para>
+    /// <para><b>DEĞİŞEN KURAL (iki kez).</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu; sonra
+    /// yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu). Task 4 kullanıcı onaylı
+    /// koşullu yeniden derleme etiketini ekledi: <c>affected · up to date · just now</c> üç parçalıdır ve
+    /// ondan daha UZUNDUR — o artık en uzun etiket, yuva bunu sığdıracak kadar YENİDEN ölçülüp büyütüldü (bkz.
+    /// <c>.claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md</c>, "Hedef davranış" — 134px'ten
+    /// BİLİNÇLİ sapma, kullanıcı kararı). Ölçüm iddiası KALIR, yalnız metin ve sınır büyür.</para>
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
@@ -764,23 +764,29 @@ public class ProjectRowTests
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = false,
-            WillBuildReason = WillBuildReason.UpToDate,
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.WaitingForDependency,
+            Conditional = true,
+            DependencyRoots = ["Up"],
             LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
         };
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
         row.UpdateLayout();
 
-        Assert.Equal("up to date · just now", row.DecisionText.Text);
+        Assert.Equal("affected · up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
-        Assert.True(width <= 134, $"en uzun karar etiketi 134px yuvaya sığmadı: {width}px");
+        Assert.True(width <= RightBlockMinWidth, $"en uzun karar etiketi {RightBlockMinWidth}px yuvaya sığmadı: {width}px");
 
-        // Kontrol grubu: eski 118px'lik yuva bu etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
-        Assert.True(width > 118, $"etiket eski 118px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
+        // Kontrol grubu: eski 134px'lik yuva bu YENİ etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
+        Assert.True(width > 134, $"etiket eski 134px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
         GC.KeepAlive(window);
     }
+
+    /// <summary>[Task 4] Sağ blok yuvasının XAML'daki <c>MinWidth</c>'i — ölçüm testlerinin tek sabiti (kopya
+    /// YASAK: değer burada bir kez okunur, XAML'daki gerçek değeri PİNLER).</summary>
+    private const double RightBlockMinWidth = 204;
 
     /// <summary>Etiket satırın olgularıyla birlikte TAZELENİR: motorun ikinci bir önizlemesi (ör. Sync'ten
     /// sonra gelen koşu önizlemesi) satırı yerinde değiştirir.</summary>

@@ -1200,8 +1200,14 @@ public sealed class RunCoordinator(
         try
         {
             run.DepIssuesById[projectId] = recorded!.DepIssueRoots!;
-            string roots = string.Join(", ", ConditionalRebuild.RootNames(
-                WillBuildReason.WaitingForDependency, recorded, id => run.NodeById.GetValueOrDefault(id)?.Name) ?? []);
+            // [Task 4 — carried item 3] Kök adları BURADA ("dependency still failing (…)" satırı) yalnız
+            // RootNames'in düz listesi DEĞİL, DescribeStillFailingRoots'un KANITLI listesidir: bir kök bu
+            // koşuda hiç denenmediyse (ör. Build modunda pre-skip edilen bir SCC üyesi) ve "hâlâ hatalı" iddiası
+            // yalnız koşu başındaki defterden geliyorsa satır bunu söyler — "R failed in this run" YALANI
+            // basılmaz. Kök GERÇEKTEN bu koşuda patladıysa (bugünkü senaryoların hepsi) metin DEĞİŞMEZ.
+            string roots = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
+                recorded!.DepIssueRoots, run.Scheduler.Completed, run.NodeById.ContainsKey, run.LedgerAtStart,
+                id => run.NodeById.GetValueOrDefault(id)?.Name ?? Path.GetFileNameWithoutExtension(id)));
             ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId),
                 SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: roots);
         }

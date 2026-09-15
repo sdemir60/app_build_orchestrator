@@ -365,6 +365,10 @@ public class SyncWorkspaceServiceTests
     /// etti; kaynak değişmedi. Sync önizlemesi B'yi <c>WaitingForDependency</c> gerekçesi ve kök ADLARIYLA
     /// taşır (etiketin tooltip'i bunları yazar). <c>Conditional</c> bir KOŞU olgusudur — Sync bir koşu
     /// değildir, orada <c>false</c> kalır.
+    ///
+    /// <para><b>[Task 4 — carried item 1]</b> "N to build" sayacı B'yi SAYMAZ: B <c>WillBuild=true</c> olsa da
+    /// koşullu (bir sonraki düz Build kökü hâlâ hatalıysa onu atlayabilir) — sayaç yalnız KESİN derlenecek A'yı
+    /// sayar. Eski kural (tümünü sayardı) B'yi de katardı.</para>
     /// </summary>
     [Fact]
     public async Task The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency()
@@ -396,6 +400,9 @@ public class SyncWorkspaceServiceTests
         var a = Assert.Single(preview.Items, i => i.Name == "A");
         Assert.Equal(WillBuildReason.LastFailed, a.Reason);
         Assert.Null(a.DependencyRoots);
+
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil
     }
 
     // ---------------------------------------------------------------- 2) offline degrade

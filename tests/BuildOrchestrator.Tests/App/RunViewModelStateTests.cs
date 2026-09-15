@@ -713,6 +713,28 @@ public class RunViewModelStateTests
         Assert.True(vm.AllClean);
     }
 
+    /// <summary>
+    /// [Task 4 — carried item 1] Şeridin sabit paydası (<c>WillBuildCount</c>, dolayısıyla ilerleme yüzdesi)
+    /// yalnız KESİN derlenecekleri sayar — koşullu (<c>Conditional</c>, <see
+    /// cref="WillBuildReason.WaitingForDependency"/>) bir proje kökü hâlâ hatalıysa atlanabilir, dolayısıyla
+    /// paydaya GİRMEZ. Dalga/kuyrukla (<see cref="RunViewModel.ScopeFor"/>/<c>InRunQueueFor</c>) AYNI kaynak.
+    /// </summary>
+    [Fact]
+    public void WillBuildCount_excludes_a_conditional_project_from_its_fixed_denominator()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\d.csproj", "D", 1)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\d.csproj", "D", true, Reason: WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        Assert.Equal(1, vm.WillBuildCount); // yalnız A — D koşullu, kesin değil
+        Assert.False(vm.AllClean);
+    }
+
     [Fact] // [A5-review fold] Engine Sync ORTASINDA ölürse faz Syncing'de asılı kalamaz + _syncInFlight serbest.
     public async Task Engine_death_mid_sync_leaves_the_syncing_phase_and_releases_the_sync_flag()
     {

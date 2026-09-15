@@ -1621,6 +1621,53 @@ public class RunViewModelTests
         Assert.NotNull(row.LastBuiltAt);
     }
 
+    /// <summary>
+    /// [Task 4 — kök neden C] Bu koşuda dep-issue'lu biten bir başarı "succeeded→clean" (UpToDate) geçişine
+    /// GİRMEZ: bağımlılığı hâlâ hatalıydı, çıktı bayat bir bağımlılığa link'li. Satır <c>WaitingForDependency</c>
+    /// gerekçesine geçer (kökler event'ten — Sync'i beklemez), <c>Conditional=true</c> olur (kesin derlenecekler
+    /// kümesine girmez) ve <c>LastBuiltAt</c> yine ŞİMDİ'ye güncellenir (kart az önce derlendi).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden HER başarı (dep-issue'lu dahil) <c>UpToDate</c>'e düşerdi.
+    /// </summary>
+    [Fact]
+    public async Task A_success_with_a_live_dep_issue_transitions_to_waiting_for_dependency_not_up_to_date()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.DepIssue, OwnFilesChanged: false)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.WillBuild);       // hâlâ "dirty" — kök düzelene kadar bayat kalır (WillBuildEvaluator'la AYNI)
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason);
+        Assert.True(row.Conditional);     // kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds) GİRMEZ
+        Assert.Equal(["Up"], row.DependencyRoots);
+        Assert.NotNull(row.LastBuiltAt);  // az önce derlendi
+    }
+
+    /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>
+    [Fact]
+    public async Task A_success_without_a_dep_issue_still_transitions_to_up_to_date()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120)); // DepIssues null
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.False(row.Conditional);
+        Assert.Null(row.DependencyRoots);
+    }
+
     /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()

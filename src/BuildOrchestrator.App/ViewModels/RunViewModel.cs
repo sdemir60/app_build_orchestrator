@@ -130,6 +130,22 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
     [ObservableProperty] private WillBuildReason? _willBuildReason;
 
+    /// <summary>[Task 4 · koşullu yeniden derleme] Bu KOŞU bu satırı GERÇEKTEN koşullu mu değerlendiriyor —
+    /// <see cref="BuildPreviewItem.Conditional"/>'dan AYNEN (<see cref="RunViewModel.OnBuildPreview"/>). <c>true</c>
+    /// yalnız Build/Cycles'ta, kapsam zorlanmamışken (satırdan Build DEĞİL) ve bir SCC üyesi değilken —
+    /// <see cref="BuildOrchestrator.Core.Planning.ConditionalRebuild.AppliesTo"/> (Core) kararı.
+    /// <see cref="RunViewModel.ScopeFor"/>'un dalgası
+    /// ve <see cref="RunViewModel.InRunQueueFor"/>'un kuyruğu AYNI bayrağı okur (tek doğruluk kaynağı, kopya
+    /// YASAK): koşullu proje ne dalgada ne kuyruktadır — WillBuild=true olsa da KESİN değildir.
+    /// <see cref="ViewModels.DecisionLabel"/> da bunu okur: <see cref="WillBuildReason.WaitingForDependency"/>
+    /// TEK BAŞINA "bekliyor" demez, bu koşu GERÇEKTEN bekletiyorsa der.</summary>
+    [ObservableProperty] private bool _conditional;
+
+    /// <summary>[Task 4 · koşullu yeniden derleme] <see cref="WillBuildReason.WaitingForDependency"/> iken
+    /// defterdeki kök bağımlılıkların GÖRÜNEN adları — <see cref="ViewModels.DecisionLabel"/>'in tooltip'i
+    /// bunları yazar (<see cref="BuildPreviewItem.DependencyRoots"/>'tan AYNEN). Diğer gerekçelerde null.</summary>
+    [ObservableProperty] private IReadOnlyList<string>? _dependencyRoots;
+
     /// <summary>[Task 1 — kök neden A] Bu satır ŞU AN KOŞAN run'ın KENDİ kuyruğunda mı — <see cref="Status"/>'un
     /// <c>Queued</c> dalı bunu okur, <see cref="WillBuild"/>'i DEĞİL. YALNIZ bu koşunun
     /// <see cref="BuildPreviewEvent"/>'inden yazılır (<see cref="RunViewModel.OnBuildPreview"/>,
@@ -938,11 +954,16 @@ public sealed partial class RunViewModel : ObservableObject
         }
     }
 
+    /// <summary>[Task 4 — kök neden C] Build dalgası yalnız KESİN derlenecekleri yakar — koşullu (<see
+    /// cref="ProjectRowViewModel.Conditional"/>) bir proje kökü hâlâ hatalıysa atlanabilir, dolayısıyla dalgada
+    /// amber'a yanmaz. Bu, motorun kesin kuyruğuyla (<see cref="InRunQueueFor"/>'un Build dalı) AYNI bayraktan
+    /// türer — tek doğruluk kaynağı (kopya YASAK). Yalnız tam (kapsamsız) Build'te anlamlıdır: satırdan
+    /// tetiklenen hedef bu metoda hiç uğramaz (<see cref="BeginRunAsync"/> tek elemanlı bir liste kurar).</summary>
     public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
     {
         RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
         RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
-        _ => [.. Projects.Where(r => r.WillBuild == true)],
+        _ => [.. Projects.Where(r => r.WillBuild == true && !r.Conditional)],
     };
 
     /// <summary>[design v1.11.0 §9-5] Bu koşuda GERÇEKTEN derlenen projeler (succeeded ∪ failed) — bitiş
@@ -1671,7 +1692,10 @@ public sealed partial class RunViewModel : ObservableObject
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
-            if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
+            // [Task 4 — carried item 1] Koşullu proje (WaitingForDependency, bu koşu gerçekten bekletiyor)
+            // KESİN derlenecekler kümesine GİRMEZ: köküyle birlikte atlanabilir. Paydaş TEK yerden okur —
+            // InRunQueueFor'un Build/Rebuild dalıyla AYNI bayrak (kopya YASAK).
+            if (item.WillBuild == true && !item.Conditional) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
             // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
             // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).
             // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
@@ -1682,6 +1706,8 @@ public sealed partial class RunViewModel : ObservableObject
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
+            row.Conditional = item.Conditional;         // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
+            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — WillBuild/Reason'la AYNI guard
             row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
@@ -1801,16 +1827,36 @@ public sealed partial class RunViewModel : ObservableObject
         // [tek proje · Clean] Bir Clean koşusunda bu geçiş YAPILMAZ ve bu bir istisna değil aynı kuralın kendisi:
         // orada başarı "derlendi" demek değil "çıktıları silindi" demektir, yani proje güncel DEĞİL, tam tersine
         // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
-        if (state == ProjectRowState.Succeeded && !RunIsClean) row.WillBuild = false;
+        // [Task 4 — kök neden C · DEĞİŞEN KURAL] Eskiden HER başarı (dep-issue'lu dahil) buradan koşulsuz
+        // WillBuild=false olurdu — motorun kendi kuralıyla (WillBuildEvaluator: DepIssueRoots biliniyorsa
+        // WaitingForDependency, WillBuild HÂLÂ true) ÇELİŞİYORDU. Bu run içinde dep-issue'lu biten bir başarı
+        // artık "dirty" (Conditional=true) kalır: kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds)
+        // GİRMEZ ama bir sonraki Build'de kökü düzelirse yine derlenmesi gerekir.
+        bool waitingForDependency = depIssues is { Count: > 0 };
+        if (state == ProjectRowState.Succeeded && !RunIsClean)
+        {
+            row.WillBuild = waitingForDependency;
+            row.Conditional = waitingForDependency;
+            row.DependencyRoots = waitingForDependency ? depIssues : null;
+        }
+        else
+        {
+            // Failed/Clean: önceki bir preview'dan kalmış olabilecek koşullu bayrak/kökler bu satır için artık
+            // ANLAMSIZ — LastFailed/NeverBuilt gerekçesi kendi tooltip'ini yazar, "bekliyor" olgusu taşımaz.
+            row.Conditional = false;
+            row.DependencyRoots = null;
+        }
         // [design v1.16.0 §2.4] Satırın KARAR ETİKETİ de canlı geçişi izler: koşu biter bitmez derlenen satır
-        // "up to date · just now" yazar, patlayan satır "failed · retry". Olgular motorun bir sonraki
-        // önizlemesini BEKLEMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık
-        // doğru olmayan bir gerekçeyi ("modified") taşırdı.
+        // "up to date · just now" yazar, patlayan satır "failed · retry", dep-issue'lu biten satır "affected ·
+        // up to date · just now" (soluk, bekliyor). Olgular motorun bir sonraki önizlemesini BEKLEMEZ — o
+        // önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir gerekçeyi
+        // ("modified") taşırdı.
         row.WillBuildReason = state switch
         {
             // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
             // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
             ProjectRowState.Succeeded when RunIsClean => WillBuildReason.NeverBuilt,
+            ProjectRowState.Succeeded when waitingForDependency => WillBuildReason.WaitingForDependency,
             ProjectRowState.Succeeded => WillBuildReason.UpToDate,
             ProjectRowState.Failed => WillBuildReason.LastFailed,
             _ => row.WillBuildReason,

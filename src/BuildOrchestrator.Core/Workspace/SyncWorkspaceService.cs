@@ -246,11 +246,20 @@ public sealed class SyncWorkspaceService(
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            // [Task 4 — carried item 1] "N to build" yalnız KESİN derlenecekleri sayar — koşullu (<see
+            // cref="WillBuildReason.WaitingForDependency"/>) bir proje kökü hâlâ hatalıysa bir sonraki Build
+            // onu atlayabilir. Tek kaynak: bir sonraki düz Build'in AYNI düğüme vereceği karar
+            // (ConditionalRebuild.AppliesTo — RunCoordinator'ın kuyruğunu/dalgasını besleyen aynı fonksiyon).
+            // Sync bir koşu DEĞİLDİR (Conditional alanı bu yüzden BuildPreviewItem'a yazılmaz, bkz. aşağıdaki
+            // emit), ama sayaç kopya AÇMADAN aynı kararı SORAR — "bu düğüm bir sonraki Build'de koşullu mu"
+            // sorusunun cevabı mod/kapsamdan bağımsız TEK yerde durur.
+            int conditionalCount = safePlan.Nodes.Count(n =>
+                ConditionalRebuild.AppliesTo(n, RunMode.Build, scopedRun: false, cycleGroupMember: false));
             return new WillBuildOutcome(
                 Plan: safePlan,
                 OwnChanged: ownChanged,
                 Changed: ownChanged.Count,
-                ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true),
+                ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalCount,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true);
         }

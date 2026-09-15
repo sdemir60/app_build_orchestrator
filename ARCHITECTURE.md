@@ -757,7 +757,7 @@ defaults.
 
 | Mode | Set of projects |
 |---|---|
-| `Build` | the will-build set (incremental) |
+| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use |
 | `Rebuild` | all projects; cached state ignored |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 | `Clean` | the run's scope, with `-t:Clean` instead of a compile — Visual Studio's *Clean*. Sent only from a row today (§13.2) |
@@ -945,6 +945,13 @@ named on its `decision.log` line; its record — note, roots, built signature �
 next run asks the same question. Its roots still enter the inherited accumulation: a dependent that does compile
 links to this project's stale output and must carry the note on, or it would read as up to date for good once the
 root recovers. Such a skip is not counted among the run's dependency-affected projects — nothing was compiled.
+
+A root named on that line is not always freshly observed. A root that is itself a dormant cycle member, for
+instance, is pre-skipped in a `Build` run without ever being attempted — the table above still reads its *last
+recorded* result, because that is all there is. The line says so: a root this run actually watched fail reads
+by its bare name (`Up`); a root whose "still failing" verdict came only from the ledger, not this run, reads
+`Up (last known failure)`. The same classification `Decide` uses to reach its verdict produces the label — one
+function, not a second guess re-derived from the same data (`ConditionalRebuild.DescribeStillFailingRoots`).
 
 The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
 a row's target compiles unconditionally (§8.1); a member of a cycle group compiles with its group, since skipping
@@ -1738,12 +1745,12 @@ standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
-a right-aligned block (min 134 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
+a right-aligned block (min 204 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
 Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
 warning slot, and a 46 px duration column.
 
 The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
-and MSBuild, not invented terms:
+and MSBuild, not invented terms — plus one two-word combination for a project waiting on a dependency:
 
 | Label | What the engine found |
 |---|---|
@@ -1752,6 +1759,21 @@ and MSBuild, not invented terms:
 | `never built` | no build output on disk (a `Clean` produces this too) |
 | `failed · retry` | the last attempt failed, so it is queued again |
 | `up to date · 2h` | it is current; the tail is the age of the last successful build |
+| `affected · up to date · just now` | it built successfully against a dependency that was failing, its own signature has not changed since, and this run is actually waiting on that dependency — the tail's native tooltip names the failed root(s) |
+
+The waiting row is `affected` in every sense the word already carries — its own files are unchanged, a
+dependency is the reason — with a second tail bolted on to say *this run will not touch it either*: `up to date`
+(plus the usual age). Both tails after the word are faint, so the row reads `affected` first. This is the one
+place the slot widened past what design v1.16.0 measured (134 px, for `up to date · just now`): the three-part
+label measures wider, and the slot was re-measured to 204 px to fit it without clipping — a deliberate departure
+from the design package, a user decision.
+
+That label is only shown when the current run is **actually** gating the project on its dependency
+(`WaitingForDependency` and the engine's own `Conditional` flag, both true). The reason alone is not enough: a
+row triggered straight from itself, a Rebuild, or an SCC member all force the build regardless of the recorded
+root, so the tail's promise ("this run leaves it alone") would be a lie there. Forced scope falls back to the
+plain `affected`/`modified` read of the same underlying fact — the label still never claims more than the run
+will actually do (see the scope paragraph below).
 
 **The word is a fact; the tail can be a promise, and a promise is only made when it will be kept.** `retry`
 means "the next Build will try this again" — and a plain Build never compiles a dependency cycle, so a cycle
@@ -1781,7 +1803,10 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
 failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
-next Sync.
+next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
+`up to date` — its dependency was still broken when it built, so the row reads `affected · up to date · just
+now` instead, taken straight from that success's own event, and it drops out of the run's definite queue (next
+paragraph) rather than being counted done.
 
 **The slot is not a result column.** What a run did is carried by the stripe, the dot, the glyph and the
 duration; the slot always answers the same question — *what does this project's output need?* After a Sync that
@@ -3245,6 +3270,12 @@ that project, and every other row — however dirty a stale Sync left it — is 
 plain grey for the run's whole life. Between the run starting and that preview arriving, the marking wave (above)
 carries the target's amber on its own — the two channels hand off without the colour going out.
 
+A project this run only evaluates conditionally (§8.3) is dirty (`WillBuild=true`) but is not handed the queue
+flag either — it may still be skipped once its turn comes, if its recorded root has not recovered, so amber at
+the start of the run would be a promise the run might not keep. The engine's own preview says so directly
+(`Conditional`); the row, the marking wave and the run's fixed progress denominator all read that one flag,
+never re-derive it.
+
 **The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
 inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's
 amber warning triangle. Nowhere else do the frame and the cube part company. The cube lights at the operation's
@@ -3257,7 +3288,8 @@ it. This is not the orange channel returning — the tone is the warning's own a
 known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
 place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
 stale is still readable without colour, from the **decision label** in the row's right slot — `modified`,
-`affected`, `never built`, `failed · retry`, `up to date · 2h`. The mode drops the moment
+`affected`, `never built`, `failed · retry`, `up to date · 2h`, `affected · up to date · just now` for a
+project waiting on a failed dependency (§13.2). The mode drops the moment
 an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
 shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
 stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
