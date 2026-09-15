@@ -446,10 +446,11 @@ public partial class EventStreamView : UserControl
 }
 
 /// <summary>
-/// [D3/T?] Event stream tek satırı görünümü (BuildApp.jsx:627-659) — kod-tarafı (parıltı/seçim/daktilo motion
+/// [D3/T?] Event stream tek satırı görünümü (BuildApp.jsx:1091-1127) — kod-tarafı (parıltı/seçim/daktilo motion
 /// sözleşmesince kod-tarafı, MotionTokens.cs). DataContext bir <see cref="StreamEventViewModel"/>'dir; satır onun
 /// INotifyPropertyChanged'ini dinler. Şerit 2px amber (yalnız seçili), zemin per-instance brush (seçili →
-/// <c>SurfaceRaised</c>, hover → <c>SurfaceHover</c>, parıltı → <c>StatusSuccessSoft</c>→şeffaf 1.1s bir kez).
+/// <c>SurfaceRaised</c>; hover'da HER satır — tıklanabilir → <c>SurfaceHover</c>, tıklanamaz → bir adım daha
+/// sessiz <c>Surface</c>, design v1.17.0 §9 "3"; parıltı → <c>StatusSuccessSoft</c>→şeffaf 1.1s bir kez).
 /// </summary>
 public sealed class EventStreamRow : Border
 {
@@ -612,19 +613,32 @@ public sealed class EventStreamRow : Border
         ApplyBackground();
     }
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL · design v1.17.0 §9 "3"] Eski davranış: tıklanamaz satır (done/sync/info) hiç hover
+    /// almazdı — gerekçe "parıltıyı ezmesin". Artık HER satırda hover var (prototip <c>StreamRow</c>,
+    /// BuildApp.jsx:1115): tıklanamaz satır bir adım daha sessiz <c>Brush.Surface</c>'e, tıklanabilir
+    /// <c>Brush.SurfaceHover</c>'a açılır — bkz. <see cref="ApplyBackground"/>. Parıltıyla çakışma artık
+    /// güvenlidir: <see cref="MotionTokens.TransitionColor"/> uçuştaki bir animasyonu ANİ ATLAMA yapmadan
+    /// devralır (<c>HandoffBehavior.SnapshotAndReplace</c>), yalnız parıltının doğal seyrini KESER.
+    /// </summary>
     private void SetHover(bool hover)
     {
-        if (_vm is null || !_vm.IsClickable) return; // done/sync/info: hover zemini yok (parıltıyı ezmesin)
+        if (_vm is null) return;
         if (_hover == hover) return;
         _hover = hover;
         ApplyBackground();
     }
 
+    /// <summary>Zemin hedefi: seçili → <c>SurfaceRaised</c> (hover'dan bağımsız, değişmez); hover'da tıklanabilir
+    /// satır → <c>SurfaceHover</c>, tıklanamaz satır → bir adım daha sessiz <c>Surface</c>; hiçbiri değilse
+    /// şeffaf. <see cref="ApplyGlow"/>'un sürmekte olan zaman çizelgesi burada ÖZEL ELE ALINMAZ — paylaşılan
+    /// <see cref="MotionTokens.TransitionColor"/> uçuştaki animasyonu zaten O ANKİ renginden devralır.</summary>
     private void ApplyBackground()
     {
         bool selected = _vm?.IsSelected ?? false;
+        bool clickable = _vm?.IsClickable ?? false;
         Color target = selected ? ResolveColor("Brush.SurfaceRaised")
-            : _hover && (_vm?.IsClickable ?? false) ? ResolveColor("Brush.SurfaceHover")
+            : _hover ? ResolveColor(clickable ? "Brush.SurfaceHover" : "Brush.Surface")
             : Colors.Transparent;
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }

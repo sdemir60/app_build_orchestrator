@@ -1874,6 +1874,21 @@ participate in the shared selection. A run that finishes with zero failures glow
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
+**Every row answers hover, one step apart.** A clickable row (one carrying a project id — `ok`/`fail`/`skip`
+lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in the hand cursor; a row with nothing
+to click — `sync`/plain `info`/the closing `done` summary — steps to the quieter `surface` instead and keeps the
+plain arrow, so long-log tracking gets the same visual foothold without implying a click that would do nothing.
+The selected row's own `surface-raised` outranks both and does not move under the pointer. This replaced an
+earlier, narrower rule that gave hover to clickable rows only, on the theory that a background step on a
+non-clickable row would fight the done line's once-only flourish; in practice the two never actually collide,
+because `MotionTokens.TransitionColor` — the same step-and-animate primitive every hover surface in the app
+shares — takes over an in-flight animation from its *current* colour (`HandoffBehavior.SnapshotAndReplace`)
+rather than snapping to a stale base value. So a mouse arriving mid-glow does not flash or jump: it cuts the
+flourish's own fade short and eases from wherever it was to the hover ground, and leaving settles it back to
+whatever the row's resting state is (transparent, most of the time, since the glowing line has no project to
+click). The flourish itself still plays exactly once — hover taking over its ground has no bearing on the
+one-shot guard in `StreamEventViewModel.GlowPlayed`.
+
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
 there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
 combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional situation, and
