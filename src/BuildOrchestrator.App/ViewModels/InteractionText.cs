@@ -67,6 +67,11 @@ public static class InteractionText
 
     // Event stream'in boş-durum etiketi YOKTUR (kullanıcı kararı): panel boşken de alttaki bekleme satırı
     // (saat + amber imleç) konuşur — bkz. EventStreamView.xaml.
+
+    // ---- [v1.17.0 §2.4] Proje listesi: katman başlığı artık bir gezinme kontrolü ----
+    /// <summary>Yapışık katman başlığının native tooltip'i (<c>title</c>) — tıklamanın ne yapacağını söyler.
+    /// TEK KAYNAK: hem in-flow hem yapışık overlay başlığı AYNI şablonu (dolayısıyla aynı binding'i) paylaşır.</summary>
+    public static string JumpToLayer(string layerName) => $"Jump to {layerName}";
 }
 
 /// <summary>[E2/T10] Proje listesi boş-durum overlay'inin hangi davetin gösterileceği kararı — SAF, test edilebilir.

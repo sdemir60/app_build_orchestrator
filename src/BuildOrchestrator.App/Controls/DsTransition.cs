@@ -110,6 +110,10 @@ public static class DsTransition
     {
         Control => Control.ForegroundProperty,
         TextBlock => TextBlock.ForegroundProperty,
+        // [v1.17.0 §2.4] TrackedTextBlock KENDİ Foreground DP'sini okur (OnRender) — WPF'in
+        // TextElement.Foreground MİRASINA katılmaz (Inherits bayrağı olmayan sıradan bir DP). Fallback dala
+        // (TextElement.ForegroundProperty) düşseydi bu değer hiç ÇİZİLMEZDİ (sessiz no-op).
+        TrackedTextBlock => TrackedTextBlock.ForegroundProperty,
         Shape => Shape.StrokeProperty,  // konturlu ikonda "ön plan" = kontur
         // Border/Panel: metin rengi kalıtımla iner (ContentPresenter'ın Foreground'u yoktur).
         _ => TextElement.ForegroundProperty,

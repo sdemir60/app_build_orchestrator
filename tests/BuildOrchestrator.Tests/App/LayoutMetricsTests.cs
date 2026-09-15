@@ -166,6 +166,44 @@ public class LayoutMetricsTests
         Assert.Empty(m.StickyHeadersAt(5000));
     }
 
+    // ---------------------------------------------------------------- [v1.17.0 §2.4] tıklanabilir başlık: jump hedefi
+
+    [Fact]
+    public void JumpTargetForHeader_clamps_the_first_group_to_zero()
+    {
+        var m = Mixed();
+
+        // Header 0: ContentTop=0, firstRowOffset=24, hedef = 24 - 1*24 = 0.
+        Assert.Equal(0, m.JumpTargetForHeader(0));
+    }
+
+    [Fact]
+    public void JumpTargetForHeader_positions_a_middle_group_just_below_the_stacked_headers()
+    {
+        var m = Mixed();
+
+        // Header 1: ContentTop=132, firstRowOffset=156, hedef = 156 - 2*24 = 108 — tam OffsetOfRow(3) - 2 başlık.
+        Assert.Equal(108, m.JumpTargetForHeader(1));
+        Assert.Equal(m.OffsetOfRow(m.Headers[1].FirstRowIndex) - 2 * m.HeaderHeight, m.JumpTargetForHeader(1));
+
+        // Header 2 (son grup): ContentTop=336, firstRowOffset=360, hedef = 360 - 3*24 = 288.
+        Assert.Equal(288, m.JumpTargetForHeader(2));
+    }
+
+    [Fact]
+    public void JumpTargetForHeader_targets_where_the_first_row_would_start_even_when_the_layer_is_filtered_to_zero_rows()
+    {
+        // Filtreli liste: B katmanı filtre sonrası 0 satıra düştü ama başlığı hâlâ yer alır (bkz.
+        // Empty_layer_zero_rows_still_emits_its_header_and_stacks). Tıklamak yine de "ilk satır olsaydı
+        // nerede başlardı" Y'sini hedeflemeli — dizi sınırı dışına taşan bir OffsetOfRow çağrısına gerek yok.
+        var m = new LayoutMetrics([new LayerSpec("A", 0), new LayerSpec("B", 2)]);
+
+        // Header A (slot 0): ContentTop=0, firstRowOffset=24, hedef = 24 - 24 = 0.
+        Assert.Equal(0, m.JumpTargetForHeader(0));
+        // Header B (slot 1): ContentTop=24, firstRowOffset=48, hedef = 48 - 48 = 0.
+        Assert.Equal(0, m.JumpTargetForHeader(1));
+    }
+
     [Fact]
     public void Empty_layer_zero_rows_still_emits_its_header_and_stacks()
     {

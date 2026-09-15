@@ -23,9 +23,11 @@ public partial class StickyLayerList : UserControl
     public sealed record LayerGroup(string Name, IReadOnlyList<object> Rows);
 
     /// <summary>In-flow başlık entry'si — <see cref="LayoutMetrics.HeaderInfo"/>'nun WPF-binding karşılığı;
-    /// overlay'in StuckHeader'ı ile AYNI <c>Name</c>/<c>RowCount</c> alanlarını taşır ki tek şablon ikisine de
-    /// bağlansın.</summary>
-    public sealed record HeaderEntry(string Name, int RowCount);
+    /// overlay'in <see cref="StuckHeader"/>'ı ile AYNI <c>Name</c>/<c>RowCount</c>/<c>SlotIndex</c> alanlarını
+    /// taşır ki tek şablon (<c>HeaderTemplate</c>) ve TEK tıklama kablosu (<see cref="HeaderRoot_MouseLeftButtonUp"/>)
+    /// ikisine de bağlansın [v1.17.0 §2.4]. <paramref name="SlotIndex"/> varsayılanı (-1) yalnız derlemeyi
+    /// geriye uyumlu tutar — <see cref="SetGroups(IReadOnlyList{LayerGroup}, bool)"/> HER ZAMAN gerçek slotu verir.</summary>
+    public sealed record HeaderEntry(string Name, int RowCount, int SlotIndex = -1);
 
     private static readonly IReadOnlyList<StuckHeader> NoHeaders = [];
 
@@ -70,6 +72,12 @@ public partial class StickyLayerList : UserControl
             _lastUserScrollAtMs = NowMs();
             Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
         };
+        // [v1.17.0 §2.4] Overlay artık hit-test'e AÇIK (başlıklar tıklanabilir) — bu, imlecin yığılmış başlık
+        // bandındayken tekerlek olayının Scroll'a hiç ULAŞMAMASI riskini doğurur (Overlay, ScrollViewer'ın
+        // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). Tek kablo: overlay'e
+        // düşen her tekerlek olayını Scroll'un KENDİ MouseWheel'ine yeniden yükselt (standart WPF telafisi —
+        // ScrollViewer'ın sınıf handler'ı bunu normal biçimde işler).
+        Overlay.PreviewMouseWheel += ForwardWheelToScroll;
         // [E4/T48 · E3 fold] Flow container üretimi (ItemContainerGenerator) TAMAMLANINCA + bir SetGroups reveal'i
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
         Flow.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
@@ -153,10 +161,12 @@ public partial class StickyLayerList : UserControl
             _follow.Rebind(Metrics);
 
         var entries = new List<object>();
+        int slotIndex = 0; // [v1.17.0 §2.4] LayoutMetrics'in HeaderInfo.SlotIndex'iyle AYNI sırada artar (yalnız
+                            // başlıklı katmanlar sayılır) — JumpTargetForHeader'a doğru slotu vermek için.
         foreach (var g in groups)
         {
             if (!string.IsNullOrEmpty(g.Name))
-                entries.Add(new HeaderEntry(g.Name, g.Rows.Count));
+                entries.Add(new HeaderEntry(g.Name, g.Rows.Count, slotIndex++));
             entries.AddRange(g.Rows);
         }
         // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.). Container
@@ -317,6 +327,59 @@ public partial class StickyLayerList : UserControl
         var stuck = Metrics?.StickyHeadersAt(verticalOffset) ?? NoHeaders;
         if (ReferenceEquals(Overlay.ItemsSource, stuck)) return;
         Overlay.ItemsSource = stuck;
+    }
+
+    // ---------------------------------------------------------------- [v1.17.0 §2.4] katman başlığı = gezinme kontrolü
+
+    /// <summary>Overlay'e düşen bir tekerlek olayını Scroll'un KENDİ (bubbling) <c>MouseWheel</c>'ine yeniden
+    /// yükseltir. Overlay, ScrollViewer'ın görsel ATASI DEĞİL KARDEŞİDİR — routed event doğal olarak Overlay'in
+    /// kendi ebeveynine (Grid) bubble eder, Scroll'a hiç uğramaz. <c>RaiseEvent</c> Scroll'un sınıf handler'ını
+    /// (ScrollViewer'ın kendi <c>OnMouseWheel</c>'i) normal yoldan tetikler — üçüncü parti bir kütüphane olmadan
+    /// nested-scroll telafisi için standart WPF deseni.</summary>
+    private void ForwardWheelToScroll(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (e.Handled) return;
+        Scroll.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+        {
+            RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
+        });
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// [v1.17.0 §2.4] Katman başlığına (in-flow VEYA yapışık overlay — AYNI <c>HeaderTemplate</c>, AYNI kablo)
+    /// tıklama: o grubun ilk (görünür/filtrelenmiş) satırını yığılmış başlıkların hemen altına getirir. Aritmetik
+    /// SAF <see cref="LayoutMetrics.JumpTargetForHeader"/>'da; burada yalnız hangi slotun tıklandığını okuyup
+    /// mevcut smooth-scroll altyapısını (<see cref="AnimateScrollTo"/> — reduced-motion'da anında) çağırır.
+    /// Seçim/filtre/konsol/graf'a HİÇ dokunmaz — yalnız scroll.
+    /// </summary>
+    private void HeaderRoot_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: { } dc } || Metrics is null) return;
+        int slotIndex = dc switch
+        {
+            HeaderEntry h => h.SlotIndex,
+            StuckHeader s => s.SlotIndex,
+            _ => -1,
+        };
+        if (slotIndex < 0) return;
+        AnimateScrollTo(Metrics.JumpTargetForHeader(slotIndex));
+    }
+
+    /// <summary>Header ToolTip'i — <c>Name</c>'den <see cref="ViewModels.InteractionText.JumpToLayer"/> ile
+    /// üretilir. Bir <see cref="Loaded"/>-bazlı TEK SEFERLİK atama DEĞİL, XAML <c>Binding</c>'dir: in-flow
+    /// container'lar <see cref="FixedHeightVirtualizingPanel"/>'de GERİ DÖNÜŞTÜRÜLÜR (Recycling) — DataContext
+    /// değişince <c>Loaded</c> yeniden ATEŞLENMEYEBİLİR ve tooltip eski katmanın adında asılı kalırdı; Binding
+    /// her DataContext değişiminde taze kalır.</summary>
+    public static readonly System.Windows.Data.IValueConverter JumpTooltipConverter = new JumpTooltipConverterImpl();
+
+    private sealed class JumpTooltipConverterImpl : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+            ViewModels.InteractionText.JumpToLayer((string)value);
+
+        public object ConvertBack(object value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+            throw new NotSupportedException();
     }
 
     // ---------------------------------------------------------------- [E4/T48 · E3 fold] liste reveal hero (bo-reveal)

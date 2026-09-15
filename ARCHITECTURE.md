@@ -1781,6 +1781,22 @@ carries a `border-subtle` line along its bottom, and that line crosses the strip
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
 
+**A layer header is a navigation control, not just a label.** Hovering it opens one surface step — background
+to `surface-raised`, the bottom rule to `border`, the caps name and mono row count to `text-secondary` — over
+the existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip. Clicking it (in-flow
+or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one handler) scrolls the
+group's first visible row to sit just beneath the stacked headers above it; the target is pure arithmetic
+(`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
+elsewhere, instant under reduced motion. It never touches selection, the filter, the console or the graph —
+only the scroll position moves, and there is no collapse. The header stays mouse-only by design: its root is a
+`Border`, not a `Control`, so it is `Focusable=false` and never enters the Tab order or the arrow-key row
+navigation that already owns this list (§13.9) — turning it into a focusable stop would put headers in the
+path of "arrow keys move between rows," which the design explicitly may not break. The stuck overlay copy is
+hit-test-visible for the same reason a header is clickable at all — most clicks land there, since it is the one
+users actually see — and because it sits beside the `ScrollViewer` rather than above it in the visual tree, a
+wheel notch over a stacked header would otherwise never reach the list; one forwarding handler re-raises it
+onto the `ScrollViewer` so scrolling never stalls under the stack.
+
 The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
 the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
 headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
@@ -2377,7 +2393,12 @@ two solve different problems, one a message WPF never delivers, the other a mess
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header
 set at a given offset, and a row's scroll target. Sticky headers are an **overlay** (an `ItemsControl` above the
-`ScrollViewer` reading that table), not in-flow elements.
+`ScrollViewer` reading that table), not in-flow elements. A header click reads the same table through
+`JumpTargetForHeader`: the group's first row, less one header-height per stacked header above it (including
+itself), clamped to zero — the row lands exactly beneath the stack rather than under it. The formula never
+calls `OffsetOfRow` on a row that might not exist: it derives where the first row *would* start
+(`ContentTop + HeaderHeight`) so a layer emptied by the active filter still has a correct target for its
+header.
 
 ### 13.5 Console host
 
