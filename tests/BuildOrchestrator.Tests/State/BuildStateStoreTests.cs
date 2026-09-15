@@ -51,6 +51,33 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath)); // dosyaya hiç dokunulmadı
     }
 
+    /// <summary>
+    /// Dep-issue notunun kök kimlikleri (<see cref="BuildState.DepIssueRoots"/>) diske yazılır ve aynen geri
+    /// okunur; alanın olmadığı ESKİ bir <c>build-state.json</c> satırı da okunmaya devam eder (kökler null ⇒
+    /// "kök bilinmiyor" ⇒ eski davranış). Eski satır bu alan eklenmeden önceki dosya biçiminin birebir
+    /// kopyasıdır — serializer'ın bugünkü çıktısından türetilmez, yoksa uyumu değil kendini sınardı.
+    /// </summary>
+    [Fact]
+    public void Dep_issue_roots_round_trip_and_a_record_written_before_the_field_still_loads()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":true}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.True(old.DepIssue);
+        Assert.Null(old.DepIssueRoots);
+
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up.csproj", @"C:\r\Up2.csproj"]);
+        store.Upsert(fresh);
+
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal([@"C:\r\Up.csproj", @"C:\r\Up2.csproj"], back.DepIssueRoots);
+        Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {

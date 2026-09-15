@@ -1662,7 +1662,7 @@ public sealed class RunCoordinator(
             // haritası yalnız hedefi taşır, o bağımlılıklar Completed'ta hiç yoktur — buradan gelmeseler
             // hedef bayat DLL'e karşı temiz bir başarı olarak persist edilirdi (gerekçe ProjectRunScope'ta).
             run.StaleDependenciesById?.GetValueOrDefault(projectId));
-        run.DepIssuesById[projectId] = depIssues.All;
+        run.DepIssuesById[projectId] = depIssues.RootIds; // birikim KİMLİK taşır (bkz. DepIssueTracker)
         return depIssues;
     }
 

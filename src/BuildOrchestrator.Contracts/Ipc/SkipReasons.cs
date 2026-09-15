@@ -23,4 +23,8 @@ public static class SkipReasons
 
     /// <summary>[cycle rounds/Task 8] SCC daha önce aynı bileşik imzada yakınsamadı, bir daha tur harcamadan pre-skip edildi.</summary>
     public const string CycleNonConvergent = "cycle did not converge at this signature";
+
+    /// <summary>Koşullu proje (dep-issue notlu, imzası değişmemiş): kayıtlı kök bağımlılıklarının hepsi hâlâ hatalı —
+    /// yeniden derlemek aynı bayat çıktıya link'lemekten başka bir şey yapmazdı (bkz. <c>ConditionalRebuild</c>).</summary>
+    public const string DependencyStillFailing = "dependency still failing";
 }

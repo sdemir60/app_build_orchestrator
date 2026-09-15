@@ -108,10 +108,17 @@ public enum WillBuildReason
     NeverBuilt,
     /// <summary>Son koşusu başarısız/yarıda kaldı — çıktısı "bilinen iyi" değil.</summary>
     LastFailed,
-    /// <summary>Son başarısı BAŞARISIZ bir bağımlılığın çıktısına link'liydi (bkz. <c>BuildState.DepIssue</c>).</summary>
+    /// <summary>Son başarısı BAŞARISIZ bir bağımlılığın çıktısına link'liydi (bkz. <c>BuildState.DepIssue</c>) ve kök
+    /// bağımlılıkları defterde yok (kökler kaydedilmeden önce yazılmış kayıt) — kesin derlenir. Kökler biliniyorsa
+    /// gerekçe <see cref="WaitingForDependency"/>'dir.</summary>
     DepIssue,
     /// <summary>Kaynak imzası değişti (kendi dosyaları ya da bir upstream'in imzası).</summary>
     SignatureChanged,
+    /// <summary>KOŞULLU: son başarısı başarısız bir bağımlılığın çıktısına link'liydi, kendi imzası değişmedi ve
+    /// kök bağımlılıkları defterde kayıtlı (<c>BuildState.DepIssueRoots</c>). Build/Cycles koşusu onu sırası
+    /// geldiğinde değerlendirir: köklerden en az biri artık başarılıysa derlenir, hepsi hâlâ hatalıysa atlanır
+    /// (<c>ConditionalRebuild</c>). Alan SONA eklendi: sayısal değeri eskilerini kaydırmaz.</summary>
+    WaitingForDependency,
 }
 
 public sealed record BuildState(
@@ -142,7 +149,50 @@ public sealed record BuildState(
     // tutar: WillBuildEvaluator bunu görünce bağımlılık düzelene kadar "derlenecek" der. LastResult
     // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
     // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
-    bool DepIssue = false);
+    bool DepIssue = false,
+    // DepIssue notunun KÖK bağımlılıkları — proje KİMLİKLERİ (tam csproj yolu; ad değil): bu koşuda patlayan
+    // doğrudan kökler + zincirden miras alınanlar + tek proje koşusunda derlenmeden bırakılan bayat
+    // bağımlılıklar. WillBuildEvaluator bunu görünce projeyi "kesin derlenecek" değil KOŞULLU sayar
+    // (WaitingForDependency) ve koşu, köklerden biri düzelince derler (ConditionalRebuild). Alan SONA ve
+    // default'lu: bu alandan önce yazılmış kayıtlar null çözülür ve kök bilinmediği için eski davranış
+    // (her Build'de derlenir) sürer — güvenli yön.
+    IReadOnlyList<string>? DepIssueRoots = null)
+{
+    // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
+    // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
+    public bool Equals(BuildState? other) =>
+        other is not null
+        && ProjectId == other.ProjectId
+        && BuiltSignature == other.BuiltSignature
+        && BuiltCommit == other.BuiltCommit
+        && LastResult == other.LastResult
+        && LastRunAt == other.LastRunAt
+        && LastBranch == other.LastBranch
+        && LastDurationMs == other.LastDurationMs
+        && NonConvergentSignature == other.NonConvergentSignature
+        && BuiltContent == other.BuiltContent
+        && DepIssue == other.DepIssue
+        && (DepIssueRoots is null
+            ? other.DepIssueRoots is null
+            : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots));
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(ProjectId);
+        hash.Add(BuiltSignature);
+        hash.Add(BuiltCommit);
+        hash.Add(LastResult);
+        hash.Add(LastRunAt);
+        hash.Add(LastBranch);
+        hash.Add(LastDurationMs);
+        hash.Add(NonConvergentSignature);
+        hash.Add(BuiltContent);
+        hash.Add(DepIssue);
+        foreach (string root in DepIssueRoots ?? []) hash.Add(root);
+        return hash.ToHashCode();
+    }
+}
 
 /// <summary>
 /// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi klonundan güncellenip derlenen bir proje (ör. müşteriye

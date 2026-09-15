@@ -189,6 +189,32 @@ public class DepIssueTrackerTests
         Assert.True(result.Stale.Single(s => s.Name == "S").InCycle);
     }
 
+    // ---------------------------------------------------------------- kök KİMLİKLERİ (defter notu için)
+
+    /// <summary>
+    /// Defter notu kökleri AD değil KİMLİK olarak taşır: koşullu yeniden derleme kökün sonucunu bu koşudan ve
+    /// defterden kimlikle arar, ad ise tekil değildir. Üç kaynağın üçü de kimliğini verir — doğrudan patlayan,
+    /// zincirden miras alınan (birikim kimlik taşır) ve tek proje koşusunun bayat bağımlılığı.
+    /// </summary>
+    [Fact]
+    public void root_ids_carry_project_identities_from_all_three_sources_while_All_carries_names()
+    {
+        var completed = Completed(("f-id", BuildResult.Failed), ("mid-id", BuildResult.Succeeded));
+        var depIssuesById = Issues(("mid-id", ["inherited-id"])); // birikim KİMLİK taşır
+        string Name(string id) => id switch
+        {
+            "f-id" => "F", "inherited-id" => "Inherited", "mid-id" => "Mid", "stale-id" => "Stale", _ => id,
+        };
+
+        var result = DepIssueTracker.Compute(["f-id", "mid-id", "stale-id"], completed, depIssuesById, Name,
+            stale: [new StaleDependency("stale-id", "Stale", InCycle: false)]);
+
+        Assert.Equal(["f-id", "inherited-id", "stale-id"], result.RootIds);
+        Assert.Equal(["F", "Inherited", "Stale"], result.All);
+        Assert.Equal(["F"], result.Direct);
+        Assert.Equal(["Inherited"], result.Indirect);
+    }
+
     [Fact]
     public void no_stale_list_means_the_result_shape_is_unchanged()
     {
