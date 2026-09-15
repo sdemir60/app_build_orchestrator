@@ -1886,10 +1886,9 @@ to the quieter `surface` instead and keeps the plain arrow, so long-log tracking
 without implying a click that would do nothing. The selected row's own `surface-raised` outranks both and does
 not move under the pointer. A background step on a non-clickable row could in principle fight the done line's
 once-only flourish. The two *can* meet — the done line is exactly the row the flourish plays on, and it is
-never clickable — but the flourish
-does not budge for hover: it is a CSS `@keyframes` animation in the design that owns the row's background outright
-for its full 1.1 s regardless of what the pointer is doing, the same way the row's own colour or the daktilo
-cadence cannot be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag
+never clickable — but the flourish does not budge for hover: it is a CSS `@keyframes` animation in the design
+that owns the row's background outright for its full 1.1 s regardless of what the pointer is doing, the same
+way the row's own colour or the typewriter cadence cannot be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag
 (`_glowRunning`): while the flourish's clock is live, `ApplyBackground` does not write to the ground at all — a
 mouse arriving mid-glow is *remembered*, not applied, and a mouse leaving mid-glow is forgotten the same way.
 Only when the flourish's own clock completes does `ApplyBackground` run once more, this time settling on whatever
@@ -2507,7 +2506,7 @@ lines.
   to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
   and grows as the window slides — lines trimmed off the top while the panel is following are moved into it, so
   nothing that scrolled past is unreachable. Only the *source* differs: a project page is seeded from the log on
-  disk (§5.5), the narrative from the view-model's full run buffer, which is what `← Back` hands over anyway.
+  disk (§5.5), the narrative from the view-model's full run buffer, which is what `Back` hands over anyway.
   Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
   streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
   unreachable even though the text was still buffered.
@@ -2538,7 +2537,7 @@ lines.
   way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
   does not move. Both are the mirror of the chunk loader's prepend compensation.
 - **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
-  `← Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
+  `Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
   not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
   prototype's `perspective(900px) rotateX(7deg)` is a genuine perspective projection: the receding top edge
   narrows, the advancing bottom edge widens. WPF's 2-D transforms are affine and cannot produce that
@@ -2594,9 +2593,8 @@ lines.
   other half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck
   to the bottom again" while the editor still holds the *previous* document — at its top — measured a huge
   distance and showed the pill for exactly as long as the pin took to run. It appeared and vanished on every
-  `← Back`. Ordered after the pin, the geometry is already right and the distance is zero. The run narrative
-  pins to the
-  **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
+  `Back`. Ordered after the pin, the geometry is already right and the distance is zero. The run narrative
+  pins to the **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
   log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
   error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
   hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
@@ -2604,7 +2602,7 @@ lines.
 - **A new operation empties the narrative in place.** The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
-  `← Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
+  `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
   by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
@@ -2963,8 +2961,9 @@ resources — no hex, no milliseconds inline.
 
 One canonical gesture: clicking a project row, a graph node or a stream line selects that project **everywhere**
 — the graph pans to the node, the list scrolls to the row, the console switches to that project's log, the
-panel header enters `← Back` mode. Clicking the same element again, or `Back`, or Esc, clears it and follow-mode
-resumes. Text selection inside the console never clears the project selection.
+panel header switches to its project-log half with the `Back` button. Clicking the same element again, or
+`Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
+selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.

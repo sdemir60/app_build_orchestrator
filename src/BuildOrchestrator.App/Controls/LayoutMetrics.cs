@@ -136,12 +136,16 @@ public sealed class LayoutMetrics
         int count = 0;
         foreach (var h in _headers)
         {
-            double threshold = h.ContentTop - h.SlotIndex * HeaderHeight;
-            if (verticalOffset < threshold) break; // ön-ek: ilk yapışmayan başlıktan sonrası da yapışmaz
+            if (verticalOffset < StickThreshold(h)) break; // ön-ek: ilk yapışmayan başlıktan sonrası da yapışmaz
             count++;
         }
         return _stuckPrefixes[count];
     }
+
+    /// <summary>[Final review O-3] Başlığın yapışma eşiği <c>τ = ContentTop − SlotIndex×HeaderHeight</c> — TEK
+    /// yer: <see cref="StickyHeadersAt"/> onunla yapışık kümeyi, <see cref="JumpTargetForHeader"/> tıklama hedefini
+    /// hesaplar (ilk satırı yığının hemen altına getiren offset tam olarak bu eşiktir).</summary>
+    private double StickThreshold(HeaderInfo header) => header.ContentTop - header.SlotIndex * HeaderHeight;
 
     /// <summary>
     /// [T59 ile ORTAK] Bir satırı görünür kılacak scroll hedefi (VerticalOffset) — satırın offsetTop'undan
@@ -162,13 +166,8 @@ public sealed class LayoutMetrics
     /// <para><b>Katman filtreyle boşalmışsa (RowCount 0) bile çalışır:</b> "ilk satırın offsetTop'u" yerine
     /// <c>ContentTop + HeaderHeight</c> kullanılır — bu, satır GERÇEKTEN var olsun ya da olmasın, o satırın
     /// BAŞLAYACAĞI Y'nin ta kendisidir (constructor'daki kümülatif inşa: başlık eklenince <c>y += headerHeight</c>,
-    /// hemen ardından o katmanın ilk satırı oraya eklenir) — <see cref="OffsetOfRow"/>'u FirstRowIndex'in dizi
-    /// sınırları dışına taşabileceği (katman boşsa) bir çağrıyla riske atmadan AYNI değeri verir.</para>
+    /// hemen ardından o katmanın ilk satırı oraya eklenir). <c>(ContentTop + H) − (slot + 1)×H</c> sadeleşince
+    /// başlığın yapışma eşiğidir (<see cref="StickThreshold"/>) — ifade orada TEK kez yazılır.</para>
     /// </summary>
-    public double JumpTargetForHeader(int slotIndex)
-    {
-        var header = _headers[slotIndex];
-        double firstRowOffset = header.ContentTop + HeaderHeight;
-        return Math.Max(0, firstRowOffset - (slotIndex + 1) * HeaderHeight);
-    }
+    public double JumpTargetForHeader(int slotIndex) => Math.Max(0, StickThreshold(_headers[slotIndex]));
 }
