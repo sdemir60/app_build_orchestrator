@@ -1783,13 +1783,18 @@ there as the ones below it pile up underneath.
 
 **A layer header is a navigation control, not just a label.** Hovering it opens one surface step — background
 to `surface-raised`, the bottom rule to `border`, the caps name and mono row count to `text-secondary` — over
-the existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip. Clicking it (in-flow
+the existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip that, like the row's
+icon buttons, opens after the OS hover delay (`AppTooltipDefaults.NativeDelayMs`, set on the header style)
+rather than instantly. Clicking it (in-flow
 or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one handler) scrolls the
 group's first visible row to sit just beneath the stacked headers above it; the target is pure arithmetic
 (`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
 elsewhere, instant under reduced motion. A click only counts if the press that started it landed on that same
 header (the header captures the mouse on press and checks it still holds capture on release) — pressing a row
-and dragging onto a header before releasing must not jump. It never touches selection, the filter, the console
+and dragging onto a header before releasing must not jump. Capture routes the release back to the header
+wherever the pointer is, so the release must also land inside the header's own bounds (press, drag away,
+release cancels, as a native click does), and the header must still be bound to the slot it was pressed on —
+a recycled in-flow container can carry the capture over to another layer's data. It never touches selection, the filter, the console
 or the graph — only the scroll position moves, and there is no collapse. The header is deliberately **mouse-only**:
 the design prototype asks for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard
 model (§13.9) already owns the arrow keys — rows are the only focusable stops, and `DirectionalNavigation=

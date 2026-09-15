@@ -392,8 +392,22 @@ public partial class StickyLayerList : UserControl
     /// değil.</summary>
     private void HeaderRoot_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (sender is UIElement header) header.CaptureMouse();
+        if (sender is not FrameworkElement header) return;
+        _pressedHeaderSlot = HeaderSlot(header.DataContext); // [final review M-2] bırakmada AYNI slot aranır
+        header.CaptureMouse();
     }
+
+    // [Final review M-2] Basılan başlığın slotu — bırakmada AYNI slot beklenir. Yakalama Border'a bağlıdır,
+    // veriye değil: basış ile bırakma arasında container geri dönüştürülürse (Recycling) yakalama başka bir
+    // katmanın başlığına bağlanmış Border'da kalır. null = basılı başlık yok.
+    private int? _pressedHeaderSlot;
+
+    private static int HeaderSlot(object? dataContext) => dataContext switch
+    {
+        HeaderEntry h => h.SlotIndex,
+        StuckHeader s => s.SlotIndex,
+        _ => -1,
+    };
 
     /// <summary>
     /// [v1.17.0 §2.4] Katman başlığına (in-flow VEYA yapışık overlay — AYNI <c>HeaderTemplate</c>, AYNI kablo)
@@ -404,21 +418,33 @@ public partial class StickyLayerList : UserControl
     ///
     /// <para><b>[review round 1 · M-5]</b> Basış BU başlıkta başlamadıysa (bkz. <see cref="HeaderRoot_MouseLeftButtonDown"/>)
     /// jump tetiklenmez — bir satıra basıp başlığın üstüne sürükleyip bırakmak artık zararsızdır.</para>
+    ///
+    /// <para><b>[final review M-2]</b> Yakalama bırakmayı imleç nerede olursa olsun başlığa yönlendirir; bu yüzden
+    /// bırakma konumu da başlığın sınırları İÇİNDE olmalıdır (basıp dışarı sürükleyip bırakmak native tıklamada
+    /// olduğu gibi iptaldir) ve başlığın slotu basış anındakiyle AYNI olmalıdır (geri dönüştürülmüş container).</para>
     /// </summary>
     private void HeaderRoot_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: { } dc } header || Metrics is null) return;
+        if (sender is FrameworkElement header) ReleaseHeader(header, e.GetPosition(header));
+    }
+
+    /// <summary>[final review M-2] Bırakma kararı — <paramref name="positionInHeader"/> üretimde
+    /// <c>e.GetPosition(header)</c>'dır. <c>internal</c>: gerçek imleç konumu headless'ta simüle edilemez, testler
+    /// üretimin çağırdığı bu metodu doğrudan sürer (ConsoleView.UpdateHoverBand ile AYNI desen).</summary>
+    internal void ReleaseHeader(FrameworkElement header, Point positionInHeader)
+    {
         bool pressStartedHere = header.IsMouseCaptured;
         if (pressStartedHere) header.ReleaseMouseCapture();
-        if (!pressStartedHere) return; // [M-5] basış BAŞKA bir elementte (ör. bir satırda) başladı — jump YOK.
+        int? pressedSlot = _pressedHeaderSlot;
+        _pressedHeaderSlot = null;
+        if (!pressStartedHere || Metrics is null) return; // [M-5] basış BAŞKA bir elementte başladı — jump YOK.
 
-        int slotIndex = dc switch
-        {
-            HeaderEntry h => h.SlotIndex,
-            StuckHeader s => s.SlotIndex,
-            _ => -1,
-        };
-        if (slotIndex < 0) return;
+        bool inside = positionInHeader.X >= 0 && positionInHeader.Y >= 0
+            && positionInHeader.X < header.ActualWidth && positionInHeader.Y < header.ActualHeight;
+        if (!inside) return; // basıp dışarı sürükleyip bıraktı — iptal
+
+        int slotIndex = HeaderSlot(header.DataContext);
+        if (slotIndex < 0 || slotIndex != pressedSlot) return; // basıştan beri container başka bir slota bağlandı
         AnimateScrollTo(Metrics.JumpTargetForHeader(slotIndex));
     }
 

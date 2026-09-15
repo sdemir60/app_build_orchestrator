@@ -77,7 +77,7 @@ public class StickyLayerHeaderClickTests
     private static void Click(StickyLayerList list, Border header)
     {
         Press(header);
-        Release(header);
+        Release(list, header);
         list.UpdateLayout();
     }
 
@@ -85,9 +85,12 @@ public class StickyLayerHeaderClickTests
         header.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
         { RoutedEvent = UIElement.MouseLeftButtonDownEvent });
 
-    private static void Release(Border header) =>
-        header.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
-        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+    /// <summary>[Final review M-2] Bırakma, üretimin <c>MouseLeftButtonUp</c> kablosunun çağırdığı
+    /// <see cref="StickyLayerList.ReleaseHeader"/>'ın ta kendisiyle sürülür — gerçek <c>e.GetPosition</c> işletim
+    /// sistemi imlecinin GERÇEK konumunu sorar ve headless'ta (ekran dışı pencere) hep başlığın DIŞINDA kalırdı
+    /// (ConsoleView.UpdateHoverBand ile AYNI desen). Varsayılan konum başlığın ortasıdır.</summary>
+    private static void Release(StickyLayerList list, Border header, Point? positionInHeader = null) =>
+        list.ReleaseHeader(header, positionInHeader ?? new Point(header.ActualWidth / 2, header.ActualHeight / 2));
 
     private static void ScrollTo(StickyLayerList list, double offset)
     {
@@ -171,6 +174,25 @@ public class StickyLayerHeaderClickTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[Final review M-3] Tasarım başlığa native <c>title</c> ister; uygulamanın kuralı native-title
+    /// tooltip'lerine işletim sisteminin bekleme süresini verir (<see cref="AppTooltipDefaults.NativeDelayMs"/>) —
+    /// gecikmesiz uygulama varsayılanı DEĞİL. Hem in-flow hem yapışık overlay kopyası (AYNI şablon) taşır.</summary>
+    [StaFact]
+    public void The_header_tooltip_opens_with_the_native_delay_not_the_app_wide_zero_delay()
+    {
+        AppTooltipDefaults.Apply(); // uygulama geneli gecikmesiz varsayılan — aksi halde WPF varsayılanı ölçülürdü
+        var list = RealizeThenFeed(out var window, height: 200);
+        Assert.NotEqual(0, AppTooltipDefaults.NativeDelayMs); // test kurgusu: iki değer ayırt edilebilir
+
+        Assert.Equal(AppTooltipDefaults.NativeDelayMs, ToolTipService.GetInitialShowDelay(InFlowHeaderBorder(list, "L0")));
+
+        ScrollTo(list, 288);
+        DispatcherPump.PumpUntil(() => ((IReadOnlyList<StuckHeader>)list.Overlay.ItemsSource).Count == 3, TimeSpan.FromSeconds(3));
+        list.UpdateLayout();
+        Assert.Equal(AppTooltipDefaults.NativeDelayMs, ToolTipService.GetInitialShowDelay(OverlayHeaderBorder(list, "L0")));
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- tıklama: doğru scroll hedefi
 
     [StaFact]
@@ -239,7 +261,46 @@ public class StickyLayerHeaderClickTests
         var list = RealizeThenFeed(out var window);
         double before = list.Scroll.VerticalOffset;
 
-        Release(InFlowHeaderBorder(list, "L1")); // basış YOK — sürükleyip bırakma senaryosunun header-tarafı eşi
+        Release(list, InFlowHeaderBorder(list, "L1")); // basış YOK — sürükleyip bırakma senaryosunun header-tarafı eşi
+        list.UpdateLayout();
+
+        Assert.Equal(before, list.Scroll.VerticalOffset, precision: 3);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Final review M-2] Başlığa basıp imleci DIŞARI sürükleyip bırakmak jump YAPMAZ — yakalama
+    /// bırakmayı yine başlığa yönlendirir (<c>IsMouseCaptured</c> true), bu yüzden bırakma konumunun başlığın
+    /// sınırları içinde olması ayrıca şarttır (native bir tıklamanın iptal jesti).</summary>
+    [StaFact]
+    public void Press_on_a_header_then_release_outside_its_bounds_does_not_jump()
+    {
+        var list = RealizeThenFeed(out var window);
+        var header = InFlowHeaderBorder(list, "L1");
+        double before = list.Scroll.VerticalOffset;
+
+        Press(header);
+        Assert.True(header.IsMouseCaptured, "test kurgusu: basış yakalamayı almadı");
+        Release(list, header, new Point(header.ActualWidth / 2, header.ActualHeight + 40)); // başlığın altında
+        list.UpdateLayout();
+
+        Assert.False(header.IsMouseCaptured); // yakalama yine bırakıldı
+        Assert.Equal(before, list.Scroll.VerticalOffset, precision: 3);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Final review M-2] Basış ile bırakma arasında container geri dönüştürülüp (Recycling) başka bir
+    /// katmanın başlığına bağlanırsa, yakalama AYNI Border'da kalır ama DataContext değişmiştir — bırakma, basılan
+    /// başlığın slotuyla AYNI slotta değilse jump yapmaz.</summary>
+    [StaFact]
+    public void A_release_whose_container_was_recycled_to_another_slot_since_the_press_does_not_jump()
+    {
+        var list = RealizeThenFeed(out var window);
+        var header = InFlowHeaderBorder(list, "L1");
+        double before = list.Scroll.VerticalOffset;
+
+        Press(header);
+        header.DataContext = new StickyLayerList.HeaderEntry("L2", 6, SlotIndex: 2); // geri dönüşüm taklidi
+        Release(list, header);
         list.UpdateLayout();
 
         Assert.Equal(before, list.Scroll.VerticalOffset, precision: 3);

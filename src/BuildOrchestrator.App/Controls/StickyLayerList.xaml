@@ -21,6 +21,8 @@
          ikisine de yeter). -->
     <Style x:Key="Ds.LayerHeader" TargetType="Border">
       <Setter Property="Cursor" Value="Hand" />
+      <!-- [final review M-3] Tasarım native title ister: native gecikme (AppTooltipDefaults.NativeDelayMs, tek kaynak). -->
+      <Setter Property="ToolTipService.InitialShowDelay" Value="{x:Static controls:AppTooltipDefaults.NativeDelayMs}" />
       <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Surface}" />
       <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.BorderSubtle}" />
       <Style.Triggers>
