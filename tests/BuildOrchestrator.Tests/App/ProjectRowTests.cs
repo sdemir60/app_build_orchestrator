@@ -599,18 +599,20 @@ public class ProjectRowTests
     // sırayla değişti: (a) v1.7.0'da döngü üyeliği şeridi ARTIK EZMEZ; (b) discovered ile skipped AYNI gridir;
     // (c) v1.11.0'da QUEUED da AMBER'dır — kuyruk bir sonuç değil, işlemin kapsamıdır ve işaretleme dalgasıyla
     // yanan renk koşu başlayınca sönmez (eski değer `Brush.StatusQueued` idi).
+    // [DEĞİŞEN KURAL — Task 1] Queued artık WillBuild'ten DEĞİL, ProjectRowViewModel.InRunQueue'dan türer —
+    // WillBuild genel bir plan bayrağıdır ve BU koşuyu bilmez (bkz. InRunQueue'nun XML yorumu).
     [StaTheory]
     [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
     [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
     [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
     [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkippedBorder")]
     [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusSkippedBorder")] // üyelik şeridi ezmez
-    [InlineData(ProjectRowState.Pending, false, true, "Brush.Amber")]  // willBuild + run uçuşta → queued
+    [InlineData(ProjectRowState.Pending, false, true, "Brush.Amber")]  // inRunQueue + run uçuşta → queued
     public void Status_stripe_uses_the_right_token_brush_per_status(
         ProjectRowState state, bool inCycle, bool queued, string expectedKey)
     {
         var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = inCycle };
-        if (queued) { vm.WillBuild = true; vm.IsRunActive = true; }
+        if (queued) { vm.InRunQueue = true; vm.IsRunActive = true; }
         var (row, window, host) = Realize(vm);
 
         Assert.Equal(DsResources.TokenColor(host, expectedKey), DsResources.ColorOf(row.Stripe.Fill));

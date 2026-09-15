@@ -1750,10 +1750,12 @@ for it. Starting from a row is not selecting the row:
 the selection and the filter drop, exactly as they do for a full run, so a graph that was focused on some node
 glides back to the fitted view and the console returns to the run log; the opening choreography marks just
 that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
-console (`build requested — X (single project)`) and in the stream's opening line. While the run is in flight
-the target row's play button turns into a red **Stop** that stays visible without hover and drives the same
-stop command as the action bar; every other row's play button is disabled and its tooltip says why
-(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
+console (`build requested — X (single project)`) and in the stream's opening line. Colour follows the same cut:
+the engine's own preview for this run names only the target, so only the target's row turns queued-amber —
+every other row, however dirty a stale Sync left it, reads plain grey for the run's whole life (§14.3). While
+the run is in flight the target row's play button turns into a red **Stop** that stays visible without hover and
+drives the same stop command as the action bar; every other row's play button is disabled and its tooltip says
+why (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
 is Visual Studio's project clean — `-t:Clean` on that project — and it locks with the other two while a run is
 in flight. It is not the maintenance box's *Clean* — the workspace reset described under the maintenance box
 below — and neither is the *Clean* in the Build split menu.
@@ -3162,6 +3164,14 @@ therefore tells exactly one story: *what the last operation did*. The states are
 and the two cycle states below. `queued` is amber, not grey: being in the queue is not a result, it is the
 scope of the operation that is running, and the amber the marking wave lit must not go out when the run
 begins.
+
+**Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
+(`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
+which run is in flight — it is amber only while the *current* run's own preview names it, and that flag drops
+the instant the run's preview stops naming it or the run ends. The distinction matters exactly when the two
+disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview carries only that
+project, and every other row — however dirty a stale Sync left it — stays plain grey for the run's whole life
+instead of lighting amber and cooling back down when the run ends.
 
 **The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
 inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's

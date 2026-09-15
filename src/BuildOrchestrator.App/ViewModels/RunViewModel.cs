@@ -130,6 +130,26 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
     [ObservableProperty] private WillBuildReason? _willBuildReason;
 
+    /// <summary>[Task 1 — kök neden A] Bu satır ŞU AN KOŞAN run'ın KENDİ kuyruğunda mı — <see cref="Status"/>'un
+    /// <c>Queued</c> dalı bunu okur, <see cref="WillBuild"/>'i DEĞİL. YALNIZ bu koşunun
+    /// <see cref="BuildPreviewEvent"/>'inden yazılır (<see cref="RunViewModel.OnBuildPreview"/>,
+    /// <see cref="RunViewModel.InRunQueueFor"/> — kuyruk üyeliğinin TEK karar yeri); koşu başında
+    /// (<see cref="RunViewModel.NeutralizeRows"/>, <see cref="RunViewModel.OnRunStarted"/>) ve koşu biterken
+    /// (<see cref="IsRunActive"/> düşerken, <see cref="RunViewModel.PropagateRunActive"/>) false'a döner.
+    /// <para><b>[DEĞİŞEN KURAL — Task 1]</b> Eskiden <see cref="Status"/>'un Queued dalı doğrudan
+    /// <see cref="WillBuild"/>'i okurdu — genel plan bayrağı, ait olduğu koşuyu BİLMEZ. Tek proje koşusunda
+    /// motorun önizlemesi yalnız hedefi taşır (§8.1, <c>ProjectRunScope</c>); diğer satırların WillBuild'i
+    /// Sync'ten kalan bayat değerdi ve nötrleme onu KASITLI korurdu (plan, kapsam hesabı için ayrı yaşamalı) —
+    /// sonuç, koşu boyunca ilgisiz satırların da amber yanması ve koşu bitince griye dönmesiydi (ölçülen kusur,
+    /// bkz. <c>.claude/outputs/2026-09-15-16-06-run-scope-and-queued-colour-investigation.md</c> §2.1).
+    /// <c>InRunQueue</c> ayrı bir kanaldır: <see cref="WillBuild"/> kapsam hesabı (<see cref="RunViewModel.ScopeFor"/>)
+    /// ve karar etiketi için YAŞAMAYA devam eder, kuyruk rengi artık yalnız BU koşunun kendi cevabını
+    /// okur.</para></summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _inRunQueue;
+
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
     /// doğrudan taşınır.</summary>
@@ -221,7 +241,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
         // Buradan aşağısı YALNIZ Pending'dir: koşu bu satırı planladıysa kuyruk, planlamadıysa (ya da koşu
         // yoksa) döngü üyeliği — o da yoksa ölü envanter.
-        _ when IsRunActive && WillBuild == true => Controls.GraphStatus.Queued,
+        // [Task 1 — DEĞİŞEN KURAL] WillBuild==true DEĞİL: o genel plan bayrağıdır ve BU koşuyu bilmez (bkz.
+        // InRunQueue'nun XML yorumu). Kuyruk artık yalnız bu koşunun kendi buildPreview'inden gelir.
+        _ when IsRunActive && InRunQueue => Controls.GraphStatus.Queued,
         // [design v1.7.0 §5] Döngü ÜYELİĞİ bir statü DEĞİLDİR: kalıcı bir yapısal özelliktir ve kendi
         // kanalında (nokta + uyarı üçgeni + graf çekirdeği) yaşar. Statü kanalı yalnız "bu koşuda ne oldu"yu
         // söyler; üyelik onu asla ezmez — eskiden Pending bir üye Cycle statüsüne düşüyor ve satır
@@ -874,6 +896,9 @@ public sealed partial class RunViewModel : ObservableObject
             row.SkipReason = null;
             row.Fresh = fresh;
             row.Marked = false;
+            // [Task 1] Kuyruk WillBuild'in AKSİNE korunmaz: bu koşunun kendi buildPreview'i gelene kadar
+            // hiçbir satır kuyruk değildir (bkz. ProjectRowViewModel.InRunQueue'nun XML yorumu).
+            row.InRunQueue = false;
         }
     }
 
@@ -1282,7 +1307,14 @@ public sealed partial class RunViewModel : ObservableObject
     private void PropagateRunActive()
     {
         bool active = RunActive;
-        foreach (var row in Projects) row.IsRunActive = active;
+        foreach (var row in Projects)
+        {
+            row.IsRunActive = active;
+            // [Task 1] Koşu biterken (IsRunActive düşerken) kuyruk da düşer — bir sonraki koşuya stale bayrak
+            // taşınmaz (bkz. ProjectRowViewModel.InRunQueue'nun XML yorumu). Koşu sürerken dokunulmaz: bu run'ın
+            // KENDİ buildPreview'i tek üreticidir.
+            if (!active) row.InRunQueue = false;
+        }
     }
 
     /// <summary>[tek proje] Kilit (<see cref="IsMidRunLocked"/>) her satıra itilir ve kilit düşerken hedef
@@ -1542,7 +1574,12 @@ public sealed partial class RunViewModel : ObservableObject
         CurrentOperation = OperationLabel.ForRunMode(e.Mode);
         // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
         // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
-        foreach (var row in Projects) row.Fresh = false;
+        // [Task 1 — kök neden A] Kuyruk da BURADA, KOŞULSUZ (moddan bağımsız) sıfırlanır: NeutralizeRows
+        // yalnız Rebuild'de (aşağıda) ve BeginRunAsync'in tıklama anında çağrılır — Build/Cycles'ta runStarted
+        // BAŞKA bir yoldan da gelebilir (bkz. bu event'in XML yorumu) ve önizleme HENÜZ gelmedi: "runStarted
+        // anında hiçbir satır kuyruk değildir" değişmezi moddan bağımsız burada garanti edilir. Hemen ardından
+        // gelen BuildPreviewEvent gerçek kuyruğu doldurur.
+        foreach (var row in Projects) { row.Fresh = false; row.InRunQueue = false; }
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -1600,10 +1637,17 @@ public sealed partial class RunViewModel : ObservableObject
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
+            row.InRunQueue = InRunQueueFor(item); // [Task 1] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
     }
+
+    /// <summary>[Task 1] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
+    /// Bugün <see cref="BuildPreviewItem.WillBuild"/>'e eşittir (<c>_willBuildIds</c> ile AYNI koşul); bir sonraki
+    /// koşu modu/kapsam kısıtlaması (ör. Resolve cycles'ta yalnız döngü üyeleri) buraya eklenir — çağıranlar
+    /// KOPYALANMAZ, tek yerden değişir.</summary>
+    private static bool InRunQueueFor(BuildPreviewItem item) => item.WillBuild == true;
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
     /// EnsureRow yalnız YENİ satırlar için initialState uygular, var olan satırın State'ini DEĞİŞTİRMEZ, bu

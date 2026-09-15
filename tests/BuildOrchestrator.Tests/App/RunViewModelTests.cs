@@ -172,6 +172,53 @@ public class RunViewModelTests
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // run bitti → dinlenme
     }
 
+    // [Task 1 — kök neden A] Kuyruk artık BU koşunun kendi buildPreview'inden türer, genel WillBuild
+    // bayrağından DEĞİL. Tek proje koşusunda motorun planı tek düğüme kesilir (ProjectRunScope) — önizleme
+    // yalnız hedefi taşır. Sync'ten kalan bayat WillBuild=true'yu taşıyan diğer bir satır bu yüzden koşu
+    // boyunca Discovered kalmalı, runStarted ile buildPreview arasında da (bir an) amber'a düşmemeli.
+    [Fact]
+    public async Task A_single_project_run_leaves_a_stale_sibling_row_discovered_never_queued()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string targetId = @"C:\p\a.csproj";
+        const string staleId = @"C:\p\b.csproj";
+
+        // Sync'in tam önizlemesi: ikisi de dirty (WillBuild=true).
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(targetId, "A", true),
+            new BuildPreviewItem(staleId, "B", true),
+        ]));
+        var target = vm.Projects.Single(p => p.Id == targetId);
+        var stale = vm.Projects.Single(p => p.Id == staleId);
+        Assert.True(target.WillBuild);
+        Assert.True(stale.WillBuild); // ön-koşul: B hâlâ "dirty" — bayat bilgi koşu boyunca KORUNUR
+
+        // Satırdan Build: yalnız A hedef. runStarted, kendi önizlemesinden ÖNCE gelir.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, target.Status); // önizleme YOK → kuyruk yok
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status);
+
+        // Motorun planı tek düğüme kesilir: önizleme YALNIZ hedefi taşır.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(targetId, "A", true)]));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, target.Status);     // planlandı
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status);   // bayat B kuyrukta DEĞİL
+        Assert.True(stale.WillBuild); // [ayrışma yok] WillBuild kapsam/karar için hâlâ true — yalnız kuyruk rengi ayrıştı
+
+        vm.OnEvent(new ProjectStartedEvent("r1", targetId, "A"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, target.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status); // koşu boyunca değişmez
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", targetId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status); // koşu sonunda da Discovered
+
+        // Tek eşleme yeri: graf de AYNI statüyü okur.
+        Assert.Equal(target.Status, GraphBinder.StatusOf(target, synced: true));
+        Assert.Equal(stale.Status, GraphBinder.StatusOf(stale, synced: true));
+    }
+
     // [Fix wave 1, Minor 6] TickElapsed building satırların CANLI süresini ilerletir; building OLMAYAN satırlara
     // dokunmaz. Deterministik saat enjekte edilir (D8: sleep/poll yok).
     [Fact]
