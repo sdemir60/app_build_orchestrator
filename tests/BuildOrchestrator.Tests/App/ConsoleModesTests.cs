@@ -240,6 +240,20 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
     }
 
+    /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
+    /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır
+    /// (RunCoordinator.cs, tüm pre-skip'ler için — kapsam dışı da GERÇEKTEN güncel de aynı yoldan geçer). Satır
+    /// yine de SkipReason'ı taşır, tam bu yüzden: sayfa motorun GERÇEKTEN söylediği (kapsam dışı) gerekçeyi
+    /// gösterir, WillBuild=false'tan türeyen "Up to date" YALANINI DEĞİL — bir proje GERÇEKTEN kirli olsa bile.</summary>
+    [Fact]
+    public void Out_of_cycle_scope_pending_row_states_the_real_reason_not_up_to_date()
+    {
+        Assert.Equal(
+            ["Not needed by a dependency cycle — outside this run's scope.", "Never built by this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                skipReason: SkipReasons.OutOfCycleScope)));
+    }
+
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,

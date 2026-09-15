@@ -252,6 +252,12 @@ public static class RibbonText
     /// </summary>
     public static string? EtaSuffix(long? etaMs, int willBuild, int finishedOfWillBuild, RunCounters c)
     {
+        // [Task 2 review fix M-3] c.Building teknik olarak GEREKSİZDİR: derlenmekte olan bir satır henüz
+        // terminal değildir, yani zaten willBuild-finishedOfWillBuild'in İÇİNDEDİR (iki terim ÇAKIŞIR, toplam
+        // building rows'u iki kez sayar) — ama kapı yalnız "> 0" sorar, çakışma sonucu DEĞİŞTİRMEZ (building>0
+        // iken zaten >0'dır, building==0 iken remaining tek başına karar verir). Terim orijinal prototip
+        // formülüyle (`building + queued`) aynı yapıyı BİLEREK korur ve building bir satırın (ör. bir invariant
+        // ihlaliyle) willBuild kümesinin DIŞINDA kalması durumunda bile kapıyı açık tutar — savunmacı, zararsız.
         if (etaMs is not { } eta || c.Building + (willBuild - finishedOfWillBuild) <= 0)
             return null; // kapı: canlı bir ETA yok ya da derlenen/kuyrukta hiçbir şey kalmadı
 

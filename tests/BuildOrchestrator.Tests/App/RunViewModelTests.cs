@@ -222,9 +222,10 @@ public class RunViewModelTests
     // [Task 2/cycles — kök neden B] Resolve cycles'ta kuyruk YALNIZ döngü üyelerine yazılır (InRunQueueFor artık
     // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
     // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
-    // (SkipReasons.OutOfCycleScope) hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered kalır,
-    // SkipReason yüzeye çıkmaz, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ. Kapsam içi GERÇEK
-    // bir "up to date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    // (SkipReasons.OutOfCycleScope) State'e hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered
+    // kalır, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ — [review fix I-1] SkipReason'ı YİNE DE
+    // taşır (ConsoleEmptyStateTests bunun neden gerekli olduğunu ayrıca pinler). Kapsam içi GERÇEK bir "up to
+    // date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
     [Fact]
     public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
     {
@@ -281,10 +282,12 @@ public class RunViewModelTests
         Assert.Equal(ProjectRowState.Skipped, upToDateDep.State);
         Assert.Equal(SkipReasons.UpToDate, upToDateDep.SkipReason);
 
-        // Kapsam dışı pre-skip motorun kendi gerekçesiyle gelir ama satırı HİÇ etkilemez.
+        // Kapsam dışı pre-skip motorun kendi gerekçesiyle gelir; State'i HİÇ etkilemez (Pending kalır) ama
+        // [review fix I-1] SkipReason'ı YİNE DE taşır — satırın TEK kanıtı budur (WillBuild motor tarafından
+        // false ZORLANMIŞ, bkz. ConsoleEmptyState.Pending'in yorumu), ConsoleEmptyStateTests bunu ayrıca pinler.
         vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
         Assert.Equal(ProjectRowState.Pending, outOfScope.State);
-        Assert.Null(outOfScope.SkipReason);
+        Assert.Equal(SkipReasons.OutOfCycleScope, outOfScope.SkipReason);
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status);
 
         // Üye derlenir.
@@ -303,6 +306,118 @@ public class RunViewModelTests
         var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
         Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
         Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+    }
+
+    // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası
+    // motorun GERÇEKTEN söylediği gerekçeyi gösterir, ConsoleEmptyState'in WillBuild=false'tan (motor bunu
+    // TÜM pre-skip'ler için zorlar, kapsam dışı da güncel de) "Up to date" TÜRETMESİNİ engeller. Bu, satır
+    // seviyesinde ConsoleModesTests'in ayrı bir testinde de pinlenir (ConsoleEmptyState.Pending).
+    [Fact]
+    public async Task Out_of_cycle_scope_row_keeps_its_SkipReason_so_its_project_page_states_the_real_cause()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string outOfScopeId = @"C:\p\outofscope.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(outOfScopeId, "OutOfScope", false)]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
+
+        var row = vm.Projects.Single(p => p.Id == outOfScopeId);
+        Assert.Equal(ProjectRowState.Pending, row.State); // görsel/sayaç yüzeyi ETKİLENMEZ
+        Assert.Equal(SkipReasons.OutOfCycleScope, row.SkipReason); // ama kanıt taşınır
+    }
+
+    // [Task 2 review fix I-2] Motorun kendi RunCompletedEvent.Skipped'i kapsam dışı pre-skip'leri de sayar
+    // (RunCoordinator.cs'in seed'i) — App'in RunCounters.Skipped'i (satır State'inden türer) artık bunları hiç
+    // saymadığı için (bkz. OnProjectSkipped) aynı run için stream'in kapanış satırı ile ribbon/sayaç FARKLI
+    // sayı gösterirdi ("6 skipped" vs "1 skipped"). Kapanış satırı motorun sayısından
+    // _outOfScopeSkipCount'u düşerek ikisini hizalar.
+    [Fact]
+    public async Task Completion_stream_line_and_the_apps_own_skipped_counter_agree_when_a_cycles_run_has_out_of_scope_pre_skips()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string memberId = @"C:\p\member.csproj";
+        var outOfScopeIds = new[] { @"C:\p\out0.csproj", @"C:\p\out1.csproj", @"C:\p\out2.csproj" };
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1 + outOfScopeIds.Length, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            .. outOfScopeIds.Select(id => new BuildPreviewItem(id, id, false)),
+        ]));
+        foreach (string id in outOfScopeIds) vm.OnEvent(new ProjectSkippedEvent("r1", id, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectStartedEvent("r1", memberId, "Member"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", memberId, 50));
+
+        // Motorun kendi toplamı: 3 kapsam dışı + 0 kapsam içi skip = 3. App'in kendi sayacı 0 kapsam içi
+        // skip gördü (üye derlendi, kapsam dışı hiç sayılmaz) — ikisi FARKLI sayılardır, kapanış satırı bunu
+        // motorun sayısından düzeltmelidir.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 3, Queued: 0, DurationMs: 200));
+
+        Assert.Equal(0, vm.Counters.Skipped); // App'in kendi kapsam-farkında sayacı
+        var doneLine = Assert.Single(vm.StreamEvents, e => e.Kind == StreamKind.Done);
+        Assert.Equal(StreamText.Completed(failed: 0, succeeded: 1, skipped: 0, depAffected: 0, durationMs: 200), doneLine.Text);
+    }
+
+    // [Task 2 review fix M-1] Cycles'ta kapsam dışı satırlar artık hiçbir zaman terminal olmuyor (bkz.
+    // OnProjectSkipped) — UpdateEta'nın "completed" sayısı bunları saymazsa SONSUZA DEK eksik kalırdı (o
+    // satırlar hiç "bitmeyecek"), X/N fallback'i (ve smoothing sonrası ETA) kalıcı olarak abartırdı.
+    // _outOfScopeSkipCount bu boşluğu kapatır — motor bu projeleri zaten "bitirmiştir" (pre-skip), App'in kendi
+    // "completed" sayacı da bunu yansıtmalı.
+    [Fact]
+    public async Task Eta_text_counts_out_of_scope_pre_skips_as_completed_in_a_cycles_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string memberId = @"C:\p\member.csproj";
+        const string out1 = @"C:\p\out1.csproj";
+        const string out2 = @"C:\p\out2.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 3, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            new BuildPreviewItem(out1, "Out1", false),
+            new BuildPreviewItem(out2, "Out2", false),
+        ]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", out1, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectSkippedEvent("r1", out2, SkipReasons.OutOfCycleScope));
+
+        // 3 toplam; kapsam dışı 2'si App'in satır State'inde ASLA terminal olmayacak (bkz. OnProjectSkipped)
+        // ama motor onları zaten bitirdi — completed 2 olmalı (yalnız üye M hâlâ Pending), 0 DEĞİL.
+        Assert.Equal("2/3 · 0s", vm.EtaText);
+    }
+
+    // [Task 2 review fix M-4] Task 2'nin RibbonTextTests'teki birim testleri RibbonText.Compose'u izole
+    // çağırıyordu; bu test AYNI iddiayı uçtan uca (gerçek VM event sırasıyla) pinler — tek-proje bir Build
+    // durdurulduğunda "not built" sayısı workspace'teki HER Pending satırı değil, bu run'ın KENDİ (tek elemanlı)
+    // kapsamını sayar.
+    [Fact]
+    public async Task Stopping_a_single_project_run_reports_not_built_scoped_to_the_runs_own_set_not_the_whole_workspace()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\repo" }; // RibbonLine HasWorkspace ister
+
+        // Sync'in tam önizlemesi: workspace'te 3 proje, ikisi dirty.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true),  // kapsam dışı kalacak bayat kardeş
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", false), // zaten güncel
+        ]));
+
+        // Satırdan Build: yalnız A hedef — motorun önizlemesi (Task 1) yalnız hedefi taşır.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        // Eski (c.Queued tabanlı) formül B'yi ve C'yi de sayardı (ikisi de hâlâ Pending) → "3 not built".
+        // Doğrusu yalnız A'dır: bu run'ın kendi kuyruğu (WillBuildCount=1, FinishedOfWillBuild=0).
+        Assert.Equal("▸ Stopped — 0/1 · 1 not built", vm.RibbonLine.Text);
     }
 
     // [Task 1 review fix — M-4] InRunQueue'nun BİTİŞ noktası PropagateRunActive'dir (IsRunActive düşerken) —

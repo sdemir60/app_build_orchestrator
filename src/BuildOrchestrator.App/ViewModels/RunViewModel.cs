@@ -376,6 +376,22 @@ public sealed partial class RunViewModel : ObservableObject
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
+    // [Task 2 review fix M-2] Bu run'ın modu — TEK yazıcı OnRunStarted'dır (koşulsuz, moddan bağımsız döngüyle
+    // AYNI noktada). Eskiden Stream.cs partial'ının kendi `_streamRunMode`'u OKUNUYORDU: o alan
+    // AppendStreamFor'da (OnEvent'in OnRunStarted'dan SONRA çağırdığı ikinci dal) yazılıyordu — bugün
+    // doğruydu (tek çağıranlı test sırası RunStartedEvent→BuildPreviewEvent bunu garantiliyordu) ama satır
+    // kararının (InRunQueueFor, OnProjectSkipped) doğruluğu STREAM'in işleme sırasına bağlı kalıyordu; yeni bir
+    // event tipi ya da sıra değişikliği sessizce kırabilirdi. Artık TEK alan burada yazılır, Stream.cs kendi
+    // `_streamRunMode`'unu SİLİP bunu okur (kopya YASAK).
+    private RunMode? _currentRunMode;
+    // [Task 2 review fix M-1/I-2] Bu run boyunca (Cycles modunda) SkipReasons.OutOfCycleScope ile bastırılan
+    // satır sayısı — _willBuildIds ile AYNI noktada (OnRunStarted) sıfırlanır, run'ın SONUNA kadar birikir
+    // (Stream.cs'in KENDİ `_outOfScopeSkips`'i gibi ara ara FLUSH edilmez — o alan yalnız stream'in toplu
+    // satırının görüntü tamponudur, kümülatif bir toplam DEĞİLDİR, bu yüzden burada YENİDEN KULLANILAMAZ).
+    // İki tüketicisi var: <see cref="UpdateEta"/> (kapsam dışı satırlar hiç terminal olmadığı için "completed"
+    // sayısını bunlarla düzeltir) ve run'ın kapanış satırı (motorun kendi <c>Skipped</c> sayısından bunu düşer
+    // — bkz. RunViewModel.Stream.cs'in RunCompletedEvent dalı).
+    private int _outOfScopeSkipCount;
     private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
@@ -1587,6 +1603,9 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
+        // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
+        _currentRunMode = e.Mode;
         // [design v1.11.0 §2.2] İşlem pill'i motorun CEVABINDAN da yazılır, yalnız tıklamadan değil: koşuyu
         // hangi yol başlatmış olursa olsun (komut, ileride bir kısayol ya da dışarıdan gelen bir run) pill
         // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
@@ -1628,6 +1647,7 @@ public sealed partial class RunViewModel : ObservableObject
         // runStarted→buildPreview boşluğu Rebuild'de yeniden açılır.
         if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false, clearMarks: false);
         _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
+        _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
@@ -1662,7 +1682,7 @@ public sealed partial class RunViewModel : ObservableObject
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
-            row.InRunQueue = InRunQueueFor(item, _streamRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
+            row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
@@ -1674,10 +1694,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<paramref name="inCycle"/>): motorun bu run'daki kapsamı üyeler + transitif upstream'dir
     /// (<c>CycleRunScope</c>), ama kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da bu
     /// run'ın "kuyruğu" DEĞİLDİR — gri bekler, <c>projectStarted</c> geldiğinde normal yoldan Building'e geçer.
-    /// <c>mode</c> <see cref="_streamRunMode"/>'dan okunur (Stream.cs partial'ının AYNI alanı — ikinci bir mod
-    /// alanı TUTULMAZ, kopya YASAK): <c>OnEvent</c> her event için ÖNCE tip-özel handler'ı sonra
-    /// <c>AppendStreamFor</c>'u çalıştırır, bu yüzden bir <c>RunStartedEvent</c>'in modu, hemen ardından gelen
-    /// <c>BuildPreviewEvent</c> işlenmeden önce zaten yazılmıştır.</summary>
+    /// <c>mode</c> <see cref="_currentRunMode"/>'dan okunur — <see cref="OnRunStarted"/>'ın TEK yazdığı alan
+    /// (review fix M-2: eskiden Stream.cs partial'ının kendi alanı okunuyordu, bu satır kararını stream'in
+    /// işleme SIRASINA bağımlı kılıyordu; bkz. alanın kendi XML yorumu).</summary>
     private static bool InRunQueueFor(BuildPreviewItem item, RunMode? mode, bool inCycle) =>
         mode == RunMode.Cycles ? inCycle : item.WillBuild == true;
 
@@ -1703,16 +1722,28 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
-        // [Task 2/cycles — kök neden B] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor kapsam dışı
-        // her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama kullanıcı bu
-        // projeyi hiç istemedi — satır motorun "atladım" cevabını TAŞIMAZ, nötr (Pending/Discovered) kalır.
-        // Satır zaten OnBuildPreview'da oluşturulmuştur (Cycles'ın önizlemesi TÜM workspace'i taşır, bkz.
-        // InRunQueueFor'un yorumu) — burada EnsureRow'a gerek YOK, erken dönmek yeterli. Atlandı sayacı
-        // (RunCounters), atlandı filtresi (ProjectFilter.Skipped) ve satırın SkipReason'ı bu yüzden bu projeyi
-        // hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda birikiyordu (RunViewModel.Stream.cs,
-        // DEĞİŞMEDİ). Kapsam İÇİ gerçek bir "up to date" skip (SkipReasons.UpToDate) bu dalın DIŞINDA kalır ve
-        // aşağıdaki normal yoldan Skipped'a geçmeye devam eder.
-        if (_streamRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope) return;
+        // [Task 2/cycles — kök neden B · review fix I-1] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor
+        // kapsam dışı her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama
+        // kullanıcı bu projeyi hiç istemedi — satır motorun "atladım" STATÜSÜNÜ TAŞIMAZ, nötr (Pending/
+        // Discovered) kalır: State dokunulmaz, atlandı sayacı (RunCounters) ve atlandı filtresi
+        // (ProjectFilter.Skipped) bu projeyi hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda
+        // birikiyordu (RunViewModel.Stream.cs, DEĞİŞMEDİ). [DEĞİŞEN KURAL — review fix I-1] SkipReason'a YİNE
+        // DE yazılır: motor bu run için WillBuild'i her pre-skip'te (kapsam dışı da GERÇEKTEN kirli de) false
+        // ZORLAR (RunCoordinator.cs — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan
+        // söylemesin"), yani State Pending'de kalınca satırın TEK kanıtı bu alandır — yazılmazsa
+        // ConsoleEmptyState.Pending() elde kalan tek bilgiden ("WillBuild=false") "Up to date" der, kapsam dışı
+        // ama GERÇEKTEN kirli bir proje için YALAN olurdu. SkipReason'ın App'teki TEK tüketicisi
+        // ConsoleEmptyState'tir (bkz. ConsoleEmptyState.Pending/Reason) — sayaç/filtre State okur, bundan
+        // ETKİLENMEZ. Bir sonraki run'ın NeutralizeRows'u bunu zaten temizliyor (kopya sıfırlama YOK). Kapsam
+        // İÇİ gerçek bir "up to date" skip (SkipReasons.UpToDate) bu dalın DIŞINDA kalır ve aşağıdaki normal
+        // yoldan Skipped'a geçmeye devam eder.
+        if (_currentRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
+        {
+            EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
+            _outOfScopeSkipCount++; // [Task 2 review fix M-1/I-2] bkz. alanın kendi XML yorumu
+            UpdateEta(); // [Task 17 deseni — Task 2 review fix M-1] bu da motor açısından bir "tamamlanma"dır
+            return;
+        }
 
         var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
@@ -1832,10 +1863,22 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     private void UpdateEta()
     {
+        // [Task 2 review fix M-1] total motorun bu run'a özel plan boyutudur (_totalProjects — tek-proje run'da
+        // zaten 1'e kesilir, DEĞİŞMEDİ); _willBuildIds/WillBuildCount'a geçmek burada ÇALIŞMAZ, çünkü bazı
+        // testler (ör. RunViewModelTests.EtaText_shows_XofN_fallback_before_any_completion_no_bogus_number)
+        // hiç BuildPreviewEvent göndermeden runStarted'ın kendi X/N fallback'ini pinler — o an _willBuildIds hep
+        // boştur ve "total<=0" erken dönüşü ETA'yı tamamen susturur.
         int total = _totalProjects ?? Projects.Count;
         if (total <= 0) { EtaText = ""; return; }
 
-        int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped);
+        // [Task 2 review fix M-1] Cycles'ta kapsam dışı satırlar artık HİÇBİR ZAMAN terminal olmuyor (bkz.
+        // OnProjectSkipped) — düzeltilmezse "completed" workspace'teki HER kapsam dışı proje kadar geride
+        // kalır ve "remaining"/queuedCount'u (aşağıda) kalıcı olarak şişirip ETA'yı abartırdı.
+        // _outOfScopeSkipCount TEK bu amaç için (bkz. alanın kendi yorumu) — Stream.cs'in kendi
+        // `_outOfScopeSkips`'i BURADA KULLANILAMAZ: o alan görüntü tamponudur, her PushStream'de FLUSH edilip
+        // sıfırlanır (kümülatif bir toplam değildir).
+        int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
+            + _outOfScopeSkipCount;
         // [cycle rounds/I2] "building" kovası PARALEL çalışan işler içindir (toplamı paralelliğe bölünür) —
         // bir SCC üyesi oraya AİT DEĞİLDİR, koşuyor olsa bile: grubun üyeleri sıralı invoke edilir ve grup en
         // az BaselineRounds tur çalışır. Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur

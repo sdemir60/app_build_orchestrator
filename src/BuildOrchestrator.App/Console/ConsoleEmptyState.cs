@@ -63,7 +63,7 @@ public static class ConsoleEmptyState
         {
             SkipReasons.UpToDate => "Up to date — nothing to compile in this run.",
             SkipReasons.InDependencyCycle => InCycleText,
-            SkipReasons.OutOfCycleScope => "Not needed by a dependency cycle — outside this run's scope.",
+            SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
             SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
             _ => "Skipped in this run.",
         },
@@ -77,6 +77,14 @@ public static class ConsoleEmptyState
     /// <summary>Henüz bu koşuda konuşulmamış satır: elde plan vardır (will-build üç durumlu).</summary>
     private static string Pending(ProjectRowViewModel row)
     {
+        // [Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e TAŞIMAZ
+        // (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ama SkipReason'ı yine de taşır, tam da bu yüzden.
+        // Bu kontrol İLK sırada: aksi halde satırın önizleme anında ZORLANMIŞ WillBuild=false'u (RunCoordinator.cs
+        // — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan söylemesin", tüm pre-skip
+        // edilenler için, kapsam dışı da güncel de aynı yoldan geçer) aşağıdaki "Up to date" dalına düşer ve
+        // GERÇEKTEN kirli ama kapsam dışı bir proje için yanlış konuşurdu. Metin Skipped dalındakiyle AYNI
+        // sabiti okur (kopya YASAK) — motor konuşsa da konuşmasa da kullanıcı aynı cümleyi görür.
+        if (row.SkipReason == SkipReasons.OutOfCycleScope) return OutOfCycleScopeText;
         // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman WillBuild=false verir (Build bir
         // döngüyü asla derlemez, ARCHITECTURE §7.4) — o "false"u "güncel" diye okumak yanlış olurdu.
         if (row.InCycle) return InCycleText;
@@ -117,4 +125,8 @@ public static class ConsoleEmptyState
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
     private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";
+
+    /// <summary>[Task 2 review fix I-1] Kapsam dışı bir satır İKİ yoldan da (motor konuştu / konuşmadı, bkz.
+    /// <see cref="Reason"/>'ın Skipped ve Pending dalları) aynı cümleyi verir — kopya YASAK.</summary>
+    private const string OutOfCycleScopeText = "Not needed by a dependency cycle — outside this run's scope.";
 }

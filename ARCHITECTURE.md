@@ -810,15 +810,19 @@ name; only the live stream collapses them.
 
 The App carries the same restraint into the row list, the counters and the ribbon: an out-of-scope project
 never shows a "skipped" row, is never counted as skipped, and never appears under the *Skipped* filter chip —
-the engine's own pre-skip for it is not this run's business, so the row simply keeps whatever it was showing
-before the click and forgets the event arrived at all (§13.2). Only a project genuinely inside the scope —
-a cycle member or the upstream this run pulled in — that comes back `skipped — up to date` reads as a result.
+the engine's own pre-skip for it is not this run's business, so its status and colour do not change (§13.2).
+Only a project genuinely inside the scope — a cycle member or the upstream this run pulled in — that comes
+back `skipped — up to date` reads as a result. The project's own page is the one place the pre-skip does
+reach: opening it states the same reason the engine gave, because every pre-skipped project's will-build dot
+reads `false` for the run's whole life regardless of why (§13.2) — a page that stayed silent about the reason
+would read a possibly-dirty, merely-out-of-scope project as `Up to date`, which is not the same claim.
 
-The same containment reaches the queue colour and the two run-scoped counters (§13.2, §14.3): a workspace with
-hundreds of unrelated projects leaves hundreds of grey-forever rows that must not silently inflate *how many
-are still not built* or the *finishing soon* gate. Both read a small, exact number for a full `Build`, where
-every un-started row genuinely belongs to the run — the distinction only bites once a run's own scope is
-smaller than the workspace.
+The same containment reaches the queue colour, the run's own closing line and the two run-scoped counters
+(§13.2, §14.3): a workspace with hundreds of unrelated projects leaves hundreds of grey-forever rows that must
+not silently inflate *how many are still not built*, the *finishing soon* gate, or the tally the run's closing
+narrative reads out loud — all three read a small, exact number for a full `Build`, where every un-started row
+genuinely belongs to the run, and the distinction only bites once a run's own scope is smaller than the
+workspace.
 
 **Why the scope reaches upstream.** A member compiled against a *dirty* dependency's previous-generation DLL
 comes back green while its output is stale — and the run then persists that member's signature. Because the
@@ -1983,9 +1987,12 @@ plain grey until its own `projectStarted` arrives, exactly the "queued reads onl
 plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row genuinely outside
 the scope never turns colour at all, and it never turns `Skipped` either: the engine's own pre-skip for it
 (`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
-reach the row, the *Skipped* filter chip, or the skipped counter — it stays exactly as a Sync left it, for the
-run's whole life. Only a row the run actually touched — a member, or the upstream it pulled in — can end the
-run coloured or counted.
+reach the row's status or colour, the *Skipped* filter chip, or the skipped counter — those read the row
+exactly as a Sync left it, for the run's whole life. The one place the pre-skip does reach is the row's own
+project page: it states the same reason, because the run's own preview already forced the row's will-build dot
+`false` (every pre-skipped project's is, regardless of why, §8.1) and a page that said nothing would read a
+possibly-dirty, merely-out-of-scope project as `Up to date`. Only a row the run actually touched — a member,
+or the upstream it pulled in — can end the run coloured or counted.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
@@ -3800,14 +3807,6 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
-- **An out-of-scope row's project page can undersell what happened to it.** A `Cycles` run's own preview
-  forces `WillBuild` to `false` for every project it pre-skips — in scope and out of it alike — so the amber
-  queue dot never promises work the run will not do (§8.1). For a project that is genuinely up to date that
-  reads correctly (`Up to date — nothing to compile`); for a dirty project outside the run's scope the same
-  text appears on its page, stated as a fact about the project rather than about this run. The row carries no
-  memory of *why* the preview forced it false, and the one signal that would say so — the skip event
-  underneath — is deliberately never delivered for an out-of-scope row (§8.1, §13.2), so the page cannot tell
-  the two apart.
 
 ---
 
