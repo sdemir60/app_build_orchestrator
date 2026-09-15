@@ -5,6 +5,9 @@ using System.Windows.Media;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -260,29 +263,76 @@ public class StickyLayerHeaderClickTests
     }
 
     /// <summary>
-    /// [review round 1 · M-6] Yukarıdaki test yalnız <see cref="StickyLayerList"/>'in KENDİ yüzeyini (follow/
-    /// Metrics) doğruluyordu — gerçek "seçim" (<see cref="RunViewModel.SelectedProjectId"/>) ve "aktif filtre"
-    /// (<see cref="RunViewModel.ActiveFilters"/>) VM'de yaşar, listenin bilmediği bir katman. Bu test üretim
-    /// kablajının TAMAMINI (<see cref="MainWindowHost.NewWithProjects"/>) kurar, GERÇEK bir filtre + GERÇEK bir
-    /// seçim uygular, bir başlığa tıklar, ikisinin de BİREBİR aynı kaldığını doğrular. `ToggleFilter` seçimi
-    /// KENDİSİ temizlediğinden (üretim kuralı: filtreye basmak seçimi düşürür) sıra önemlidir: önce filtre, SONRA
-    /// seçim, SONRA tıklama.
+    /// [review round 1 · M-6, fixed round 2 · finding 1] Yukarıdaki test yalnız <see cref="StickyLayerList"/>'in
+    /// KENDİ yüzeyini (follow/Metrics) doğruluyordu — gerçek "seçim" (<see cref="RunViewModel.SelectedProjectId"/>)
+    /// ve "aktif filtre" (<see cref="RunViewModel.ActiveFilters"/>) VM'de yaşar, listenin bilmediği bir katman.
+    ///
+    /// <para><b>[round 2 · finding 1 — ÖLÇÜLMÜŞ boşluk]</b> İlk round-1 sürümü <see cref="MainWindowHost.NewWithProjects"/>
+    /// kullanıyordu — ama o yalnız <c>Measure</c>/<c>Arrange</c> yapar (bkz. <see cref="MainWindowHost.Realize"/>'ın
+    /// KENDİ XML doc'u), GERÇEK bir <see cref="System.Windows.PresentationSource"/> (HWND) KURMAZ. M-5'in
+    /// <c>CaptureMouse()</c>'u bir HWND olmadan SESSİZCE BAŞARISIZ olur → <c>IsMouseCaptured</c> hep <c>false</c>
+    /// kalır → <c>HeaderRoot_MouseLeftButtonUp</c> jump'a hiç ULAŞMADAN erken döner. Test bu yüzden VACUOUS'tu:
+    /// tıklama koduna dokunmasa da (jump path'i tamamen SİLİNSE de) yeşil kalırdı. <see cref="MainWindow"/>'u
+    /// GERÇEKTEN <c>Show()</c> etmek ÇÖZÜM DEĞİL — <see cref="MainWindowHost"/>'un KENDİ değişmezi ("motor ASLA
+    /// doğmaz... pencere hiç Show() edilmez") tam da bunu yasaklıyor (gerçek engine/tray/persist yan etkileri).
+    /// Fix: <see cref="MainWindow"/> HİÇ kurulmaz; bunun yerine GERÇEK bir <see cref="RunViewModel"/> (üretimdeki
+    /// <see cref="RunViewModel.BuildLayerGroups"/> ile) + bağımsız, GERÇEKTEN realize edilmiş (<see cref="DsResources.Realize"/>
+    /// → <c>AnimationHost.ShowOffscreen</c> → gerçek HWND) bir <see cref="StickyLayerList"/> kurulur — bu dosyanın
+    /// diğer testleriyle AYNI realize deseni, yalnız veri kaynağı artık gerçek VM'in <c>BuildLayerGroups()</c>'ı.</para>
+    ///
+    /// <para><b>Non-vacuous kanıt (round 2'nin istediği):</b> tek bir katman/satır görünürken "ilk başlık zaten
+    /// 0'a kelepçeli" olduğundan offset'in 0'da KALMASI hem "jump çalıştı" hem "jump hiç çalışmadı" ile aynı
+    /// görünürdü — bu yüzden HER İKİ katman da (Core + Ui) filtre sonrası görünür bırakılır, ikinci (Ui, slot 1)
+    /// başlığa tıklanır ve scroll'un sıfırdan UZAK bir başlangıçtan TAM OLARAK <c>JumpTargetForHeader(1)</c>'e
+    /// (36 — ne başlangıç ne "hiçbir şey olmadı" değeriyle çakışan bir sayı) gittiği doğrudan doğrulanır — bu,
+    /// tıklamanın GERÇEKTEN jump path'ine ulaştığının (dolayısıyla capture'ın bu kurulumda GERÇEKTEN çalıştığının)
+    /// kanıtıdır. Elle doğrulandı: <c>DsResources.Realize</c> çağrısı (gerçek HWND) geçici olarak kaldırılınca bu
+    /// test KIRMIZI verir (round-1'in vacuous halini yeniden üretir) — bkz. task-5-report.md round 2.</para>
+    ///
+    /// <para><c>ToggleFilter</c> seçimi KENDİSİ temizlediğinden (üretim kuralı: filtreye basmak seçimi düşürür)
+    /// sıra önemlidir: önce filtre, SONRA seçim, SONRA tıklama.</para>
     /// </summary>
     [StaFact]
     public void Clicking_a_header_does_not_touch_the_view_models_selection_or_active_filter()
     {
-        using var temp = new TempDir();
-        var (window, vm, list) = MainWindowHost.NewWithProjects(temp,
-            ("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui"));
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
+        { RootPath = @"C:\src\OSYS" };
+        ProjectNode[] nodes = [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")];
+        vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0)); // → Idle
 
-        vm.OnEvent(new BuildOrchestrator.Contracts.Ipc.ProjectFailedEvent("r1", MainWindowHost.IdOf("Beta"), 10, "boom"));
-        vm.ToggleFilter(ProjectFilter.Failed); // → yalnız Beta (katman "Core") görünür; seçim bu adımda temizlenir.
+        // İKİ katman da filtre sonrası görünür kalsın (bkz. non-vacuous kanıt notu yukarıda).
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("Beta"), 10, "boom"));
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("Gamma"), 10, "boom"));
+        vm.ToggleFilter(ProjectFilter.Failed); // → Beta (Core) + Gamma (Ui) görünür; seçim bu adımda temizlenir.
         vm.SelectProject(MainWindowHost.IdOf("Beta"));
         Assert.Equal(MainWindowHost.IdOf("Beta"), vm.SelectedProjectId); // ön-koşul
         Assert.Equal(new[] { ProjectFilter.Failed }, vm.ActiveFilters.ToArray()); // ön-koşul
 
+        // MainWindow.ApplyProjectGroups'un yaptığı AYNI tek satırlık çeviri — MainWindow'un KENDİSİ KURULMAZ.
+        // İçerik (2 başlık×24 + 2 satır×36 = 120px) viewport'tan (50px) BÜYÜK — GERÇEKTEN kaydırılabilir
+        // (ScrollableHeight 70) olsun diye küçük bir yükseklik (bkz. non-vacuous kanıt notu yukarıda: viewport
+        // içeriğe eşit/büyük olsaydı ScrollableHeight 0 olur, HER scroll — jump dahil — sessizce 0'a KENETLENİR
+        // ve "jump çalıştı" ile "jump hiç çalışmadı" AYNI sonucu (0) verirdi).
+        var list = new StickyLayerList { AnimationsEnabledProvider = () => false };
+        var window = DsResources.Realize(DsResources.NewHost(), list, height: 50); // GERÇEK HWND — CaptureMouse burada ÇALIŞIR.
+        var groups = vm.BuildLayerGroups()
+            .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
+            .ToList();
+        list.SetGroups(groups);
         list.UpdateLayout();
-        Click(list, InFlowHeaderBorder(list, "Core"));
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+
+        ScrollTo(list, 9999); // en dibe kelepçelenir (ScrollableHeight'a) — "Ui" başlığı bu pencerede realize olur.
+        double before = list.Scroll.VerticalOffset;
+        Assert.True(before > 40, $"ön-koşul: liste GERÇEKTEN kaydırılabilir değil (ScrollableHeight={list.Scroll.ScrollableHeight})");
+        Click(list, InFlowHeaderBorder(list, "Ui"));
+
+        // Non-vacuous kanıt: offset TAM OLARAK beklenen (dipten FARKLI) jump hedefine gitti — "hiçbir şey
+        // olmadı" (offset `before`'da kalırdı) ile "jump çalıştı" burada AYIRT EDİLEBİLİR.
+        Assert.Equal(list.Metrics!.JumpTargetForHeader(1), list.Scroll.VerticalOffset, precision: 3);
+        Assert.Equal(36, list.Scroll.VerticalOffset, precision: 3);
+        Assert.NotEqual(before, list.Scroll.VerticalOffset, 3);
 
         Assert.Equal(MainWindowHost.IdOf("Beta"), vm.SelectedProjectId);
         Assert.Equal(new[] { ProjectFilter.Failed }, vm.ActiveFilters.ToArray());

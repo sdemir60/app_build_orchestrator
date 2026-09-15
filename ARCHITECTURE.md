@@ -1796,7 +1796,7 @@ model (§13.9) already owns the arrow keys — rows are the only focusable stops
 "Contained"` walks exactly the focusable elements inside the list, headers included, the moment any of them
 becomes one. Keeping the header's root a `Border` rather than a `Control` keeps it `Focusable=false` for free,
 so it never enters the Tab order or the arrow-key traversal; making it a focus stop to answer Enter/Space would
-put headers in the path of "arrow keys move between rows," which is not something this task may change. The
+put headers in the path of "arrow keys move between rows," which the list's keyboard model does not allow. The
 stuck overlay copy is hit-test-visible for the same reason a header is clickable at all — most clicks land
 there, since it is the one users actually see. Because it sits beside the `ScrollViewer` rather than above it
 in the visual tree, a wheel notch over a stacked header would otherwise never reach the list *and* would skip
