@@ -332,6 +332,125 @@ public class ConsoleHoverBandTests
         Assert.Equal(lineAfter.Value.Height, view.HoverBand.Height, precision: 2); // bant O satırı yansıtıyor
     }
 
+    /// <summary>
+    /// [Review round 2 M-2, senaryo a] Bir satırdan KÜÇÜK bir scroll (animasyonlu kaydırmanın ara kareleri gibi)
+    /// belge-Y'yi hâlâ AYNI satırın aralığında bırakabilir — <see cref="ConsoleView.RefreshHoverBand"/> önbelleği
+    /// temizlemeden <see cref="ConsoleView.UpdateHoverBand"/>'a devretseydi, o metodun kendi "aynı satır"
+    /// kısayolu (I-2 perf) devreye girer ve EKRAN konumu YENİDEN HESAPLANMAZDI — bant içerikten kopup eski
+    /// pikselde asılı kalırdı. İmleç fiziksel olarak kımıldamasa da (yeniden çağrılan Y AYNI), scroll GERÇEKTEN
+    /// olduğu için bandın ekran konumu genel olarak izlenebilir biçimde güncellenmelidir.
+    /// </summary>
+    [StaFact]
+    public void Real_scroll_smaller_than_one_line_still_recomputes_the_bands_screen_geometry()
+    {
+        var view = Realized(width: 200, height: 200);
+        view.AppendBatch(string.Concat(Enumerable.Range(0, 60).Select(i => $"line{i}\n")));
+        view.UpdateLayout();
+        view.StickToBottom = false;
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();
+
+        var textView = view.Editor.TextArea.TextView;
+        double lineHeight = textView.DefaultLineHeight;
+        const double fixedScreenY = 100; // bir satır sınırından uzak, ortada bir yer
+
+        view.UpdateHoverBand(fixedScreenY);
+        double topBefore = view.HoverBand.Margin.Top;
+        double documentYBefore = fixedScreenY + textView.ScrollOffset.Y;
+
+        // Yarım satırdan da küçük bir scroll — belge-Y büyük ihtimalle HÂLÂ aynı satırın aralığındadır.
+        double tinyScroll = lineHeight * 0.3;
+        view.Editor.ScrollToVerticalOffset(view.Editor.VerticalOffset + tinyScroll);
+        view.UpdateLayout();
+        double documentYAfter = fixedScreenY + textView.ScrollOffset.Y;
+        var sameLineBothTimes = ConsoleHoverBand.LineAt(
+            textView.VisualLines.Select(v => (v.VisualTop, v.Height)).ToList(), documentYBefore) ==
+            ConsoleHoverBand.LineAt(textView.VisualLines.Select(v => (v.VisualTop, v.Height)).ToList(), documentYAfter);
+        Assert.True(sameLineBothTimes, "test kurgusu: küçük scroll satır kimliğini değiştirmemeliydi (asıl sınanan senaryo bu)");
+
+        view.OnScrollOffsetChanged(); // üretimin GERÇEK ScrollOffsetChanged kablosunun çağırdığı metodun ta kendisi
+
+        // Satır kimliği AYNI kalsa da, içerik lineHeight*0.3 kadar kaydığı için bandın EKRAN konumu da o kadar
+        // kaymalıdır — eski pikselde (topBefore) KALAMAZ.
+        Assert.NotEqual(topBefore, view.HoverBand.Margin.Top);
+        Assert.Equal(topBefore - tinyScroll, view.HoverBand.Margin.Top, precision: 1);
+    }
+
+    /// <summary>
+    /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/`ClearRunDocument` sözleşmesi) çok
+    /// daha KISA bir belgeye geçilirse, eski bantlı satır artık YOK — önbellek temizlenmeden bırakılsaydı belge-Y
+    /// hâlâ eski (yanlış) aralıkta sayılabilir ve bant, hiçbir satırın olmadığı bir yerde asılı kalırdı.
+    /// </summary>
+    [StaFact]
+    public void Real_document_swap_at_the_same_offset_does_not_keep_a_stale_band_where_no_line_exists()
+    {
+        var view = Realized(width: 200, height: 200);
+        view.AppendBatch(string.Concat(Enumerable.Range(0, 60).Select(i => $"line{i}\n")));
+        view.UpdateLayout();
+        view.StickToBottom = false;
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();
+
+        var textView = view.Editor.TextArea.TextView;
+        var fifthLine = textView.VisualLines[5];
+        double y = fifthLine.VisualTop - textView.ScrollOffset.Y + 1;
+        view.UpdateHoverBand(y);
+        Assert.True(((SolidColorBrush)view.HoverBand.Fill).Color.A > 0, "test kurgusu: 5. satır bantlanmalıydı");
+
+        // Aynı offsette (0), çok daha KISA bir belgeye geç (mod değişimi sözleşmesi) — eski 5. satır artık YOK.
+        view.ClearRunDocument();
+        view.UpdateLayout(); // VisualLinesChanged GERÇEK kablosu burada ateşlenir (RefreshHoverBand'ı tetikler)
+
+        // Y hâlâ eski 5. satırın olduğu ekran konumunda ama belge artık tek boş satırdan ibaret — o konum
+        // ARTIK hiçbir satırın aralığında değil, bant KALKMALIDIR (var olmayan eski satırda asılı kalamaz).
+        Assert.Equal(0, ((SolidColorBrush)view.HoverBand.Fill).Color.A);
+    }
+
+    /// <summary>
+    /// [Review round 2 M-2, senaryo c] ÜRETİM SIRASI: AvalonEdit <c>ScrollOffsetChanged</c>'i YENİDEN
+    /// ÖLÇÜMDEN ÖNCE yayınlar (decompile ile doğrulandı — <c>IScrollInfo.SetVerticalOffset</c> önce olayı
+    /// ateşler, <c>InvalidateMeasure</c> sonra gelir) — eski viewport'un ÇOK ötesine tek seferde atlayan bir
+    /// scroll'da (büyük bir takip batch'i, dibe anlık zıplama) bu an <c>VisualLines</c> hâlâ ESKİ bölgeyi
+    /// yansıtır. Doğru davranış: o anda GEÇİCİ olarak gizlenmek (eşleşme yok, GERÇEKTEN) ama imleç konumunu
+    /// SAKLAMAK — biraz sonra gelecek gerçek <c>VisualLinesChanged</c> (yeniden ölçüm bitince) bandı doğru
+    /// satırda GERİ GETİRMELİDİR.
+    /// </summary>
+    [StaFact]
+    public void Real_scroll_event_before_relayout_hides_then_the_later_VisualLinesChanged_recovers_the_band()
+    {
+        var view = Realized(width: 200, height: 80);
+        view.AppendBatch(string.Concat(Enumerable.Range(0, 300).Select(i => $"line{i}\n")));
+        view.UpdateLayout();
+        view.StickToBottom = false;
+        view.Editor.ScrollToVerticalOffset(0);
+        view.UpdateLayout();
+
+        const double fixedScreenY = 5;
+        view.UpdateHoverBand(fixedScreenY);
+        Assert.True(((SolidColorBrush)view.HoverBand.Fill).Color.A > 0, "test kurgusu: ilk hover görünür olmalıydı");
+
+        var textView = view.Editor.TextArea.TextView;
+        double farOffset = textView.DefaultLineHeight * 250; // eski viewport'un ÇOK ötesinde bir atlama
+
+        // ÜRETİM SIRASI: scroll offset'i değiştir ve GERÇEK ScrollOffsetChanged kablosunun çağırdığı metodu
+        // hemen çağır — UpdateLayout BİLEREK burada henüz çağrılmaz (VisualLines hâlâ ESKİ viewport'u yansıtır).
+        view.Editor.ScrollToVerticalOffset(farOffset);
+        view.OnScrollOffsetChanged();
+
+        Assert.Equal(0, ((SolidColorBrush)view.HoverBand.Fill).Color.A); // eski VisualLines'ta karşılık yok → gizlenir
+
+        // Şimdi gerçek yeniden ölçüm olur — VisualLinesChanged GERÇEK kablosu ateşlenir ve bandı tazeler.
+        view.UpdateLayout();
+
+        var fresh = view.Editor.TextArea.TextView;
+        var expected = ConsoleHoverBand.LineAt(
+            fresh.VisualLines.Select(v => (v.VisualTop, v.Height)).ToList(),
+            fixedScreenY + fresh.ScrollOffset.Y);
+        Assert.NotNull(expected); // test kurgusu: yeni konumda gerçekten bir satır olmalı
+        Assert.True(((SolidColorBrush)view.HoverBand.Fill).Color.A > 0, "bant VisualLinesChanged sonrasında geri gelmeliydi");
+        Assert.Equal(expected!.Value.Height, view.HoverBand.Height, precision: 2);
+    }
+
     /// <summary>Aktif prompt satırı overlay'i bant tarafından etkilenmez: overlay ayrı bir öğedir, bandın
     /// Margin/Height'ı ona hiç dokunmaz.</summary>
     [StaFact]

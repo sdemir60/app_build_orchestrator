@@ -958,8 +958,17 @@ public partial class ConsoleView : UserControl
     private double? _lastMouseYInTextView;
     // [I-2 review round 1] Son bantlanan satırın (Top,Height) çifti — fare AYNI satır aralığında kaldığı sürece
     // (en sık durum: sürekli MouseMove akışı) VisualLines taranmaz, dönüşüm alınmaz, renk geçişi YENİDEN
-    // KURULMAZ. null = şu an hiçbir satır bantlı değil.
+    // KURULMAZ. null = şu an bant GÖRSEL OLARAK GİZLİ (HideHoverBandVisual'ın idempotency guard'ı bunu okur —
+    // review round 2: bu alanı "gizli mi" DIŞINDA bir anlamda KULLANMA, aşağıdaki _forceHoverRefresh'in
+    // varlığı tam olarak bu yüzden — bkz. doc'u).
     private (double Top, double Height)? _hoveredLine;
+    // [M-2 review round 2] RefreshHoverBand'ın "aynı satır" kısayolunu (I-2 perf) BİLEREK atlatması için AYRI bir
+    // bayrak — _hoveredLine'ı bu amaçla temizlemek YANLIŞTI: HideHoverBandVisual'ın idempotency guard'ı da AYNI
+    // alana bakıyor ("null = zaten gizli") ve önbelleği force-temizleyip sonra hiçbir satır bulunamayan bir
+    // yapısal tazelemede (ör. çok daha kısa bir belgeye geçiş) guard bunu "zaten gizliymiş" sanıp GERÇEK gizleme
+    // çağrısını SESSİZCE YUTUYORDU — bant eski (artık geçersiz) konumunda GÖRSEL OLARAK asılı kalıyordu. Bu
+    // bayrak yalnız "önbelleği bu bir seferliğine atla" der, görünürlük durumuna hiç dokunmaz.
+    private bool _forceHoverRefresh;
 
     /// <summary>[Test/I-2] Bandın renk hedefini GERÇEKTEN kaç kez değiştirdiğimiz — komşu satır içi
     /// <c>MouseMove</c>'ların animasyonu YENİDEN KURMADIĞINI kanıtlamak için.</summary>
@@ -985,13 +994,27 @@ public partial class ConsoleView : UserControl
     /// alınmadan, kaynak sözlüğü sorgulanmadan hemen döner — sürekli gelen <c>MouseMove</c> akışının satır İÇİNDE
     /// hiçbir iş YAPMAMASını sağlar. Farklı bir satıra geçildiğinde <see cref="MotionTokens.TransitionColor"/>
     /// çağrılır; O metot da ARTIK (aynı review) zaten hedef renkteyse yeniden animasyon KURMAZ — guard TEK yerde,
-    /// kopya YASAK.</para>
+    /// kopya YASAK. <b>[M-2 review round 2]</b> Bu kısayol yalnız gerçek <c>MouseMove</c>'dan (aynı çağrı içinde
+    /// hem Y HEM scroll offset sabit) gelen tekrar çağrılar için güvenlidir — <see cref="RefreshHoverBand"/>
+    /// SCROLL sonrası çağırdığında önbelleği ÖNCE temizler (aşağıda), aksi halde satır KİMLİĞİ değişmese bile
+    /// (belge-Y hâlâ aynı aralıkta — ör. bir satırdan küçük bir scroll) EKRANDAKİ konumu güncellenmez ve bant
+    /// içerikten kopup asılı kalırdı.</para>
     ///
     /// <para><b>[M-1 review round 1] Bant <c>TextView</c>'in kendi dikey sınırlarına KIRPILIR:</b> panel kenardan
     /// kenara tam genişlik olsa da (<c>HorizontalAlignment="Stretch"</c>), üstte/altta KISMEN görünen bir satırın
     /// gerçek yüksekliği <c>TextView.ActualHeight</c>'ı aşabilir (viewport'un tam ortasında değilse) — kırpma
     /// olmadan bant üst 8px dolguya ya da alt kaydırma çubuğu track'ine TAŞARDI. Sağlık kontrolü olarak, kırpılan
     /// aralık boşsa (panel tamamen dışına düşen bir konum) bant gizlenir.</para>
+    ///
+    /// <para><b>[M-2 review round 2]</b> Bir eşleşme bulunamayan içsel yollar (<c>VisualLinesValid==false</c>,
+    /// <see cref="ConsoleHoverBand.LineAt"/> null, kırpılan aralık boş) yalnız GÖRSEL olarak gizler
+    /// (<see cref="HideHoverBandVisual"/>) — <see cref="_lastMouseYInTextView"/>'i SİLMEZ. Gerekçe: AvalonEdit
+    /// <c>ScrollOffsetChanged</c>'i YENİDEN ÖLÇÜMDEN ÖNCE yayınlar (decompile ile doğrulandı —
+    /// <c>IScrollInfo.SetVerticalOffset</c> önce olayı ateşler, <c>InvalidateMeasure</c> SONRA gelir); eski
+    /// viewport'un çok ötesine tek seferde atlayan bir scroll'da (büyük bir takip batch'i, dibe anlık zıplama) bu
+    /// yol o anda GERÇEKTEN "eşleşme yok" der — ama imleç hâlâ editörün üzerindedir. Konumu silmek, biraz sonra
+    /// gelen GERÇEK <c>VisualLinesChanged</c>'in (yeniden ölçüm bitince) bandı doğru satırda GERİ GETİRMESİNİ
+    /// engellerdi. Yalnız gerçek <c>MouseLeave</c> (<see cref="HideHoverBand"/>) konumu siler.</para>
     ///
     /// <para>Ek saat AÇMAZ (ARCHITECTURE §14.5, boşta-saat kuralı): yalnız çağrıldığında çalışır, boşta hiçbir
     /// şey koşmaz.</para>
@@ -1000,18 +1023,25 @@ public partial class ConsoleView : UserControl
     {
         _lastMouseYInTextView = mouseYInTextView;
         var view = EditorControl.TextArea.TextView;
-        if (!view.VisualLinesValid || view.VisualLines.Count == 0) { HideHoverBand(); return; }
+        if (!view.VisualLinesValid || view.VisualLines.Count == 0) { HideHoverBandVisual(); return; }
 
         double documentY = mouseYInTextView + view.ScrollOffset.Y;
 
         // [I-2] Aynı satır aralığında kalınıyorsa (satır içi piksel hareketleri) hiçbir şey yeniden hesaplanmaz.
-        if (_hoveredLine is { } cached && documentY >= cached.Top && documentY < cached.Top + cached.Height)
+        // [M-2 review round 2] RefreshHoverBand bu kısayolu _forceHoverRefresh ile BİLEREK atlatır (yapısal bir
+        // tazelemede satır KİMLİĞİ aynı kalsa bile EKRAN geometrisi yeniden hesaplanmalıdır) — bayrak burada
+        // TÜKETİLİR, önbelleğin KENDİSİNE (_hoveredLine) hiç dokunulmaz: o alan yalnız "bant şu an görünür mü"
+        // sorusunun tek doğruluk kaynağıdır (HideHoverBandVisual'ın idempotency guard'ı da ona bakar).
+        bool skipSameLineShortcut = _forceHoverRefresh;
+        _forceHoverRefresh = false;
+        if (!skipSameLineShortcut && _hoveredLine is { } cached &&
+            documentY >= cached.Top && documentY < cached.Top + cached.Height)
             return;
 
         var lines = new List<(double Top, double Height)>(view.VisualLines.Count);
         foreach (var visual in view.VisualLines) lines.Add((visual.VisualTop, visual.Height));
 
-        if (ConsoleHoverBand.LineAt(lines, documentY) is not { } line) { HideHoverBand(); return; }
+        if (ConsoleHoverBand.LineAt(lines, documentY) is not { } line) { HideHoverBandVisual(); return; }
         _hoveredLine = line;
 
         // [PositionPrompt deseni] Referans TİLT KABIDIR (PART_TiltHost), ConsoleView değil — editör ve bant
@@ -1021,11 +1051,11 @@ public partial class ConsoleView : UserControl
         // [M-1] TextView'in kendi dikey sınırları — bant bunun DIŞINA taşamaz.
         double viewTop = toHost.Transform(new Point(0, 0)).Y;
         double viewBottom = toHost.Transform(new Point(0, view.ActualHeight)).Y;
-        if (!double.IsFinite(top) || !double.IsFinite(viewTop) || !double.IsFinite(viewBottom)) { HideHoverBand(); return; }
+        if (!double.IsFinite(top) || !double.IsFinite(viewTop) || !double.IsFinite(viewBottom)) { HideHoverBandVisual(); return; }
 
         double clippedTop = Math.Max(top, viewTop);
         double clippedBottom = Math.Min(top + line.Height, viewBottom);
-        if (clippedBottom <= clippedTop) { HideHoverBand(); return; } // panelin tamamen dışında
+        if (clippedBottom <= clippedTop) { HideHoverBandVisual(); return; } // panelin tamamen dışında
 
         HoverBand.Height = clippedBottom - clippedTop;
         HoverBand.Margin = new Thickness(0, clippedTop, 0, 0);
@@ -1033,24 +1063,53 @@ public partial class ConsoleView : UserControl
         MotionTokens.TransitionColor(this, _hoverBandBrush, ResolveHoverBandColor());
     }
 
-    /// <summary>[M-2 review round 1] İmleç kımıldamadan bandı etkileyen bir şey olursa (scroll, ekleme,
-    /// chunk-dikiş, mod değişimi) en son bilinen GERÇEK <c>MouseMove</c> konumuyla <see cref="UpdateHoverBand"/>
-    /// yeniden çağrılır — imleç <c>TextView</c>-yerel EKRAN konumu scroll'dan ETKİLENMEZ (yalnız hangi satırın o
-    /// pikselde durduğu değişir), bu yüzden canlı <c>Mouse.GetPosition</c> sorgusuna gerek YOKTUR ve bu yol
-    /// headless'ta da test edilebilir kalır. İmleç editörün üzerinde değilse (<see cref="_lastMouseYInTextView"/>
-    /// null — <see cref="HideHoverBand"/> onu temizler) hiçbir şey yapmaz: uzaktaki bir scroll bandı GERİ
-    /// GETİRMEMELİDİR.</summary>
+    /// <summary>[M-2 review round 1 · round 2] İmleç kımıldamadan bandı etkileyen bir şey olursa (scroll,
+    /// ekleme, chunk-dikiş, mod değişimi) en son bilinen GERÇEK <c>MouseMove</c> konumuyla
+    /// <see cref="UpdateHoverBand"/> yeniden çağrılır — imleç <c>TextView</c>-yerel EKRAN konumu scroll'dan
+    /// ETKİLENMEZ (yalnız hangi satırın o pikselde durduğu değişir), bu yüzden canlı <c>Mouse.GetPosition</c>
+    /// sorgusuna gerek YOKTUR ve bu yol headless'ta da test edilebilir kalır. İmleç editörün üzerinde değilse
+    /// (<see cref="_lastMouseYInTextView"/> null — yalnız GERÇEK <see cref="HideHoverBand"/> onu temizler)
+    /// hiçbir şey yapmaz: uzaktaki bir scroll bandı GERİ GETİRMEMELİDİR.
+    ///
+    /// <para><b>[review round 2 — DEĞİŞEN KURAL]</b> Önbellek (<see cref="_hoveredLine"/>) burada ÖNCE
+    /// temizlenir. Eski hâli <see cref="UpdateHoverBand"/>'a doğrudan devrediyordu ve belge-Y hâlâ eski satırın
+    /// aralığındaysa (bir satırdan KÜÇÜK bir scroll — animasyonlu kaydırmanın ara kareleri gibi) o metodun kendi
+    /// "aynı satır" kısayoluna TAKILIYORDU: satır KİMLİĞİ değişmemiş sayılıyor, ekran konumu YENİDEN
+    /// HESAPLANMIYORDU — bant içerikle birlikte kaymak yerine eski pikselde asılı kalıyordu. Aynı sorun bir
+    /// belge değişiminde de (mod değişimi, aynı offsette çok daha kısa bir belge) oluşurdu: eski (Top,Height)
+    /// artık YANLIŞ bir satırı (ya da hiç var olmayan bir satırı) tarif ederken kısayol onu sorgusuzca
+    /// KORUYORDU. Yapısal bir tazeleme YAPISAL OLARAK farklı bir andır — satır kimliği aynı kalsa bile ekran
+    /// geometrisi (dolayısıyla Margin/Height) YENİDEN hesaplanmalıdır; bu yüzden önbellek her seferinde
+    /// atlanır, MouseMove'un satır-içi kısayolu ise (I-2 perf) dokunulmadan kalır.</para></summary>
     private void RefreshHoverBand()
     {
-        if (_lastMouseYInTextView is { } y) UpdateHoverBand(y);
+        if (_lastMouseYInTextView is not { } y) return;
+        // [review round 2 düzeltmesi] Önbelleği (_hoveredLine) DEĞİL, ayrı bir bayrağı işaretler — o alan aynı
+        // zamanda "bant görünür mü" sorusunun tek doğruluk kaynağıdır; onu burada temizlemek
+        // HideHoverBandVisual'ın idempotency guard'ını "zaten gizliymiş" sanıp GERÇEK bir gizleme çağrısını
+        // sessizce yutmasına yol açıyordu (ölçüldü: belge kısalınca bant eski konumunda görsel olarak asılı
+        // kalıyordu, sayaç hiç artmıyordu).
+        _forceHoverRefresh = true;
+        UpdateHoverBand(y);
     }
 
     /// <summary>Fare panelden (dolgu dahil, M-1) çıkınca bant kalkar (design v1.17.0 §9) —
-    /// <c>EditorControl.MouseLeave</c>'e kablanır.</summary>
+    /// <c>EditorControl.MouseLeave</c>'e kablanır. <see cref="_lastMouseYInTextView"/>'i SİLEN TEK yer burasıdır
+    /// (review round 2 M-2) — <see cref="UpdateHoverBand"/>'ın içsel "eşleşme yok" yolları yalnız
+    /// <see cref="HideHoverBandVisual"/> çağırır, konumu SAKLAR.</summary>
     private void HideHoverBand()
     {
         _lastMouseYInTextView = null;
-        if (_hoveredLine is null) return; // zaten gizli — art arda gelen Leave/dışarı-Move'da tekrar tetiklenmez
+        HideHoverBandVisual();
+    }
+
+    /// <summary>Bandın GÖRSEL gizlenmesi — hafızadaki son imleç konumuna DOKUNMAZ (review round 2 M-2:
+    /// AvalonEdit'in <c>ScrollOffsetChanged</c>'i yeniden ölçümden ÖNCE yayınladığı köşe durumda, o anki
+    /// eşleşme-yok yalnız GEÇİCİDİR — biraz sonra gelecek gerçek <c>VisualLinesChanged</c> bandı doğru satırda
+    /// geri getirebilsin diye konum saklı kalır).</summary>
+    private void HideHoverBandVisual()
+    {
+        if (_hoveredLine is null) return; // zaten gizli — art arda gelen çağrılarda tekrar tetiklenmez
         _hoveredLine = null;
         HoverColorTransitionCount++;
         MotionTokens.TransitionColor(this, _hoverBandBrush, Colors.Transparent);
