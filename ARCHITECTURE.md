@@ -2829,9 +2829,13 @@ far side of that formula is a 2 px gap between one node's dots and its neighbour
 so long as the clamp does not hit its floor, two orbits that would otherwise touch stay apart without the
 pitch search itself ever knowing beads exist. The dots are a stroke dash pattern whose step divides the
 perimeter a whole number of times, so the pattern does not overlap itself where it closes; the orbit turns once
-every 2400 ms. The pen is 1.6 px, and because WPF measures a dash pattern and a dash offset in multiples of
-stroke thickness rather than in pixels, both are divided by it to land on the absolute geometry the design
-specifies. The same pen also draws *inside* the rectangle it is given — the same rule the selection ring
+every 4000 ms. Spacing and pace are a deliberate departure from the design's numbers, chosen by the user after
+watching the orbit run: the dots aim for a 4.4 px step, so the visible gap between two of them is well wider than
+a dot, and the pace is bounded by the frame rate the orbit is drawn at (the 30 fps decorative rate) — on the
+largest node a dot travels at most a fifth of a step per frame, since near half a step the eye can no longer
+tell which way the dots move and they seem to run into each other. The pen is 1.6 px, and because WPF measures
+a dash pattern and a dash offset in multiples of stroke thickness rather than in pixels, both are divided by it
+to land on the intended absolute geometry. The same pen also draws *inside* the rectangle it is given — the same rule the selection ring
 follows (above) — so the rectangle handed to WPF is a full pen wider than the track it is meant to trace, or
 the drawn path would fall a whole stroke short of the perimeter the dash pattern was computed for. Every orbit
 in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the perimeter is too,
