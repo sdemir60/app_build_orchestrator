@@ -360,6 +360,44 @@ public class SyncWorkspaceServiceTests
         Assert.NotEqual(builtCommit, done.TargetSha);
     }
 
+    /// <summary>
+    /// Senaryo 6 (Sync yüzü): önceki Build'de A patladı, B ona rağmen başarıyla derlendi ve A'yı kök olarak not
+    /// etti; kaynak değişmedi. Sync önizlemesi B'yi <c>WaitingForDependency</c> gerekçesi ve kök ADLARIYLA
+    /// taşır (etiketin tooltip'i bunları yazar). <c>Conditional</c> bir KOŞU olgusudur — Sync bir koşu
+    /// değildir, orada <c>false</c> kalır.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string idA = Path.Combine(cloneRoot, "src", "A", "A.csproj");
+        string idB = Path.Combine(cloneRoot, "src", "B", "B.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        store.Upsert(primed[idA] with { LastResult = BuildResult.Failed });
+        store.Upsert(primed[idB] with { DepIssue = true, DepIssueRoots = [idA] });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.Equal(WillBuildReason.WaitingForDependency, b.Reason);
+        Assert.Equal(["A"], b.DependencyRoots);
+        Assert.False(b.Conditional);
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        Assert.Equal(WillBuildReason.LastFailed, a.Reason);
+        Assert.Null(a.DependencyRoots);
+    }
+
     // ---------------------------------------------------------------- 2) offline degrade
 
     [Fact]

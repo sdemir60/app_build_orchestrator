@@ -86,10 +86,10 @@ public static class ConditionalRebuild
     /// <see cref="WillBuildReason.WaitingForDependency"/> iken dolu. Ad sıralı, tekil; planda olmayan kök için
     /// dosya adı kullanılır.
     /// </summary>
-    public static IReadOnlyList<string>? RootNames(BuildState? state, Func<string, string?> nameOf)
+    public static IReadOnlyList<string>? RootNames(WillBuildReason? reason, BuildState? state, Func<string, string?> nameOf)
     {
         ArgumentNullException.ThrowIfNull(nameOf);
-        if (state?.DepIssueRoots is not { Count: > 0 } roots) return null;
+        if (reason != WillBuildReason.WaitingForDependency || state?.DepIssueRoots is not { Count: > 0 } roots) return null;
         return [.. roots
             .Select(id => nameOf(id) ?? Path.GetFileNameWithoutExtension(id))
             .Distinct(StringComparer.Ordinal)

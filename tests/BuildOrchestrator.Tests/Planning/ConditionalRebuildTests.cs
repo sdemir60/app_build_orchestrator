@@ -129,7 +129,7 @@ public class ConditionalRebuildTests
         var state = new BuildState("P", "sig", LastResult: BuildResult.Succeeded, DepIssue: true,
             DepIssueRoots: [@"C:\r\Zeta\Zeta.csproj", @"C:\r\gone\Gone.csproj", @"C:\r\A\A.csproj"]);
 
-        var names = ConditionalRebuild.RootNames(state,
+        var names = ConditionalRebuild.RootNames(WillBuildReason.WaitingForDependency, state,
             id => id.EndsWith("Zeta.csproj", StringComparison.Ordinal) ? "OSYS.Zeta"
                 : id.EndsWith("A.csproj", StringComparison.Ordinal) ? "OSYS.A" : null);
 
@@ -139,8 +139,11 @@ public class ConditionalRebuildTests
     [Fact]
     public void there_are_no_root_names_without_recorded_roots()
     {
-        Assert.Null(ConditionalRebuild.RootNames(null, _ => null));
-        Assert.Null(ConditionalRebuild.RootNames(
+        Assert.Null(ConditionalRebuild.RootNames(WillBuildReason.WaitingForDependency, null, _ => null));
+        Assert.Null(ConditionalRebuild.RootNames(WillBuildReason.WaitingForDependency,
             new BuildState("P", "sig", LastResult: BuildResult.Succeeded, DepIssue: true), _ => null));
+        // Kökler kayıtlı ama proje beklemede değil (ör. imzası değişti) — etiket kök yazmaz.
+        Assert.Null(ConditionalRebuild.RootNames(WillBuildReason.SignatureChanged,
+            new BuildState("P", "sig", LastResult: BuildResult.Succeeded, DepIssue: true, DepIssueRoots: ["U"]), _ => "U"));
     }
 }

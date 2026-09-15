@@ -150,12 +150,17 @@ public sealed class SyncWorkspaceService(
             Cycles: outcome.Plan.Cycles,
             Solutions: ToSolutionRefs(scan),
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
+        // Kök adları (WaitingForDependency etiketinin tooltip'i) planın düğümlerinden çözülür. Conditional burada
+        // YAZILMAZ: o bir koşu olgusudur ("bu koşu projeyi koşullu değerlendirir") ve Sync bir koşu değildir.
+        var nameById = outcome.Plan.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.OrdinalIgnoreCase);
         emit(new BuildPreviewEvent(
             outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason,
                     OwnFilesChanged: outcome.Known ? outcome.OwnChanged.Contains(n.Id) : null,
-                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id)))
+                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id),
+                    DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
+                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.

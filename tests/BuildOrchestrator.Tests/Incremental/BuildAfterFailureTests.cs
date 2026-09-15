@@ -26,6 +26,11 @@ namespace BuildOrchestrator.Tests.Incremental;
 /// Derlenecek küme değişmedi — bu testin iddiaları aynen geçerli; değişen tek şey <c>state</c> kurulumunun
 /// gerçeği yansıtması: bayat imza yerine güncel imza + <c>DepIssue: true</c>.</para>
 ///
+/// <para><b>Kök listesi.</b> Buradaki kayıtlar kök kimliklerini (<c>DepIssueRoots</c>) taşımaz — o alandan önce
+/// yazılmış kayıtlardır ve <c>WillBuildEvaluator</c> onları kesin derler. Kökleri kayıtlı bir notta WillBuild
+/// yine <c>true</c>'dur (küme aynı), ama gerekçe <c>WaitingForDependency</c> olur ve koşu D1/D2'yi yalnız F1
+/// başarılı olursa derler (<c>ConditionalRebuildRunTests</c>).</para>
+///
 /// <para>Kurulum deseni <see cref="IncrementalPlannerTests"/> ile aynıdır: gerçek repo/disk yok, her projeye
 /// opak bir içerik fingerprint'i ve state kaydı enjekte edilir [D8].</para>
 /// </summary>

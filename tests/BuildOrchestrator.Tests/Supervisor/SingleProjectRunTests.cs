@@ -136,6 +136,7 @@ public class SingleProjectRunTests
 
             var state = Assert.Contains(Id("Target"), store.Load());
             Assert.True(state.DepIssue, "bayat bağımlılığa karşı derlenen başarı NOTLA yazılmalı");
+            Assert.Equal([Id("Dirty")], state.DepIssueRoots); // bayat bırakılan bağımlılık da kök olarak kaydedilir
             Assert.Equal("sig", state.BuiltSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }

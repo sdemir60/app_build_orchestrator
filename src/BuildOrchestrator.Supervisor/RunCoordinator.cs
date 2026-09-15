@@ -689,6 +689,7 @@ public sealed class RunCoordinator(
         // [tek proje] Hedefin bu koşuda DERLENMEYEN bayat bağımlılıkları (yalnız kapsamlı koşuda dolu) —
         // dispatch'te dep-issue hesabına girer (bkz. ComputeDepIssues).
         IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? staleDependenciesById = null;
+        Dictionary<string, string> nameById;
 
         {
             // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
@@ -708,6 +709,9 @@ public sealed class RunCoordinator(
             // derlenmez, kapsam dışı projeler koşuya hiç girmez. Planlama yine TAM yapıldı (kapsam kararı
             // yukarıdaki planın WillBuild'lerinden okunur; hedefin imzası da o plandan gelir). Planda olmayan
             // bir hedef (bayat topoloji) koşuyu HİÇ başlatmaz — mevcut planlama-hatası kanalıyla.
+            // [koşullu yeniden derleme] Önizlemenin kök ADLARI TAM plandan çözülür: kapsamlı koşuda düğüm haritası
+            // yalnız hedefi taşır ve kök adları dosya adına düşerdi.
+            nameById = runPlan.Plan.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.OrdinalIgnoreCase);
             if (cmd.ScopeProjectId is { } scopeId)
             {
                 var scope = ProjectRunScope.Of(runPlan.Plan, scopeId);
@@ -902,23 +906,30 @@ public sealed class RunCoordinator(
         // yer, gerekçesi imzadan DEĞİL koşu-zamanlama kuralından gelen skip'lerdir: yakınsamama hafızası ve
         // Cycles modunun kapsam dışı bıraktığı projeler.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // [koşullu yeniden derleme] Bu koşunun sırası geldiğinde koşullu değerlendireceği projeler — karar Core'da
+        // (ConditionalRebuild.AppliesTo); pre-skip edilen hiçbir proje dispatch edilmediği için koşullu da değildir.
+        // Önizleme ve dispatch AYNI kümeyi okur: "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
+        var conditionalIds = plan.Nodes
+            .Where(n => !preSkipped.Contains(n.Id)
+                && ConditionalRebuild.AppliesTo(n, cmd.Mode, scopedRun: cmd.ScopeProjectId is not null,
+                    cycleGroupMember: groups?.MembersOf(n.Id).Count > 0))
+            .Select(n => n.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new BuildPreviewEvent(
             // [DEĞİŞEN KURAL — v1.16.0] Pre-skip edilen satırın gerekçesi artık DÜŞMEZ. Eskiden null'lanırdı
             // ("bu false imzadan değil koşu-zamanlama kuralından geliyor, imza gerekçesini göstermek yalan
             // olur") — o dönemde gerekçe bir PLAN kanalını besliyordu. Artık satırın KARAR ETİKETİNİ besliyor
             // ve etiket bir disk olgusudur: yakınsamayan ya da kapsam dışı bir projenin dosyalarının değişip
             // değişmediği doğru bir bilgidir. WillBuild yine false kalır — bu koşu onu derlemez.
-            [.. plan.Nodes.Select(n => preSkipped.Contains(n.Id)
-                ? new BuildPreviewItem(n.Id, n.Name, false, BuildStateStore.BuiltCommitOf(builtCommits, n.Id),
-                    n.WillBuildReason,
-                    OwnFilesChanged: BuildStateStore.OwnFilesChanged(
-                        builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
-                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id))
-                : new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
-                    BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
-                    OwnFilesChanged: BuildStateStore.OwnFilesChanged(
-                        builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
-                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id)))]));
+            [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name,
+                preSkipped.Contains(n.Id) ? false : n.WillBuild,
+                BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
+                OwnFilesChanged: BuildStateStore.OwnFilesChanged(
+                    builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
+                LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id),
+                Conditional: conditionalIds.Contains(n.Id),
+                DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
+                    builtCommits?.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
@@ -951,11 +962,8 @@ public sealed class RunCoordinator(
             // [cycle rounds/Task 8] cycleUnconverged TİPLİ bir parametredir, Reason'dan ÇIKARILMAZ — çağıranın
             // hangi listeden geldiğini (yakınsamama hafızası mı, sıradan güncel skip mi) zaten bildiği için
             // burada yalnız ProjectSkippedEvent'e AYNEN taşınır.
-            void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false)
-            {
-                events.TryWrite(new ProjectSkippedEvent(cmd.RunId, projectId, reason, cycleUnconverged));
-                Decide(logs, $"{nodeById[projectId].Name}: skipped — {reason}");
-            }
+            void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false) =>
+                ReportSkipped(events, logs, cmd.RunId, projectId, nodeById[projectId].Name, reason, cycleUnconverged);
 
             // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
             // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
@@ -987,6 +995,8 @@ public sealed class RunCoordinator(
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
+                conditionalIds, // [koşullu yeniden derleme] önizlemenin okuduğu AYNI küme
+                builtCommits, // [koşullu yeniden derleme] koşu başındaki defter — derlenmeyen kökün son sonucu
                 staleDependenciesById, // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
                 // [tek proje · design §3.8] MSBuild hedefi: Clean modu doğrudan -t:Clean koşar (hiçbir şey
                 // derlenmez). Rebuild YALNIZ satırdan tetiklendiğinde MSBuild'in kendi Rebuild'i olur — alt
@@ -1030,7 +1040,10 @@ public sealed class RunCoordinator(
             int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
             // [T54] Run genelinde (Continue segmentleri DAHİL, kümülatif) dependency-affected proje sayısı —
             // depIssues'u boş OLMAYAN projeler. Kendisi failed bir kök, kendi depIssue'unu taşımaz (sayılmaz).
-            int depIssueCount = depIssuesById.Values.Count(v => v.Count > 0);
+            // [koşullu yeniden derleme] "dependency still failing" ile atlanan proje de birikime köklerini yazar
+            // (dependent'ları miras alsın diye) ama bu koşuda DERLENMEDİ — sayılmaz.
+            int depIssueCount = depIssuesById.Count(
+                kv => kv.Value.Count > 0 && completed.GetValueOrDefault(kv.Key) != BuildResult.Skipped);
 
             // Olaylar ÖNCE (TryWrite fırlatmaz), disk logu sonra: log I/O'su patlasa bile App kapanışı görür.
             if (stopKind is not null)
@@ -1110,6 +1123,9 @@ public sealed class RunCoordinator(
         // atlarsa proje sonsuza dek in-flight kalır (IsDone asla true olmaz) ve run ASILIR. Sonuç bu yüzden TEK
         // bir yerden — finally'deki ReportProjectResult'tan — raporlanır; üç yol (normal / iptal / beklenmeyen
         // hata) yalnız aşağıdaki yerel değişkenleri doldurur.
+        // [koşullu yeniden derleme] Sıra geldi: tüm bağımlılıklar (ve üstlerindeki kökler) bu koşuda terminal.
+        if (run.ConditionalIds.Contains(projectId) && TrySkipWhileDependencyStillFails(run, projectId)) return;
+
         var result = BuildResult.Failed;
         long durationMs = 0;
         string? failReason = null;
@@ -1152,6 +1168,65 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
+    /// [koşullu yeniden derleme] Koşullu projenin kararını UYGULAR (karar <see cref="ConditionalRebuild.Decide"/>'da).
+    /// Kayıtlı köklerin hepsi hâlâ hatalıysa proje derlenmeden <see cref="SkipReasons.DependencyStillFailing"/> ile
+    /// atlanır ve <c>true</c> döner; aksi hâlde <c>false</c> (çağıran normal derler).
+    ///
+    /// <para><b>Defter kaydına DOKUNULMAZ:</b> not, kökler ve <see cref="BuildState.BuiltSignature"/> olduğu gibi
+    /// kalır — proje hâlâ bayat köke link'lidir ve kök düzeldiğinde derlenmesi gerekir. <b>Birikime ise kökler
+    /// yazılır:</b> bu projenin çıktısı hâlâ o köklere link'lidir; ona bağlı olup bu koşuda derlenen proje notu
+    /// miras almazsa kök düzeldiğinde kendi imzası değişmediği için sonsuza dek bayat kalırdı.</para>
+    ///
+    /// <para>Karar hesaplanırken beklenmedik bir hata olursa proje DERLENİR (güvenli yön). Atlama yolunda
+    /// <see cref="ReadySetScheduler.Complete"/> <c>finally</c>'dedir: dispatch edilmiş proje hiçbir yoldan askıda
+    /// kalmaz.</para>
+    /// </summary>
+    private bool TrySkipWhileDependencyStillFails(RunContext run, string projectId)
+    {
+        BuildState? recorded;
+        try
+        {
+            recorded = run.LedgerAtStart?.GetValueOrDefault(projectId);
+            if (ConditionalRebuild.Decide(recorded?.DepIssueRoots, run.Scheduler.Completed, run.NodeById.ContainsKey,
+                    run.LedgerAtStart) != ConditionalRebuildVerdict.DependencyStillFailing)
+                return false;
+        }
+        catch (Exception ex)
+        {
+            console("warning: conditional rebuild check failed (" + NameOf(run, projectId) + ") — building: " + ex.Message);
+            return false;
+        }
+
+        try
+        {
+            run.DepIssuesById[projectId] = recorded!.DepIssueRoots!;
+            string roots = string.Join(", ", ConditionalRebuild.RootNames(
+                WillBuildReason.WaitingForDependency, recorded, id => run.NodeById.GetValueOrDefault(id)?.Name) ?? []);
+            ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId),
+                SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: roots);
+        }
+        finally
+        {
+            run.Scheduler.Complete(projectId, BuildResult.Skipped);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Bir skip'i raporlayan TEK gövde: <see cref="ProjectSkippedEvent"/> + <c>decision.log</c> satırı
+    /// (<c>"&lt;ad&gt;: skipped — &lt;gerekçe&gt;"</c>, varsa <paramref name="detail"/> parantez içinde). Koşu başındaki
+    /// pre-skip'ler ile sırası gelince atlanan koşullu proje aynı cümleyi kurar (kopya YASAK).
+    /// </summary>
+    private void ReportSkipped(ChannelWriter<IpcEvent> events, RunLogWriter logs, string runId, string projectId,
+        string name, string reason, bool cycleUnconverged, string? detail = null)
+    {
+        events.TryWrite(new ProjectSkippedEvent(runId, projectId, reason, cycleUnconverged));
+        Decide(logs, string.IsNullOrEmpty(detail)
+            ? $"{name}: skipped — {reason}"
+            : $"{name}: skipped — {reason} ({detail})");
+    }
+
+    /// <summary>
     /// Bir projenin SONUCUNU raporlayan TEK gövde: sonuç olayı + <c>decision.log</c> satırı + BuildState kararı
     /// + <see cref="ReadySetScheduler.Complete"/>. Hem tekil proje yolu (<see cref="BuildProjectAsync"/>) hem SCC
     /// tur döngüsü (<see cref="ReportCycleMember"/>) buradan geçer; iki yol kendi kopyasını taşısaydı
@@ -1186,8 +1261,9 @@ public sealed class RunCoordinator(
                 // yine derlenmelidir. Eskiden bu, "deftere HİÇ yazma" ile sağlanıyordu; ölçüldü ki o kural
                 // defterin ilerlemesini tamamen durduruyor (bir koşuda 24 hata depIssue'yu 96 projeye yaydı ve
                 // 74 başarının SIFIRI yazıldı → incremental fiilen devre dışı, her Sync "hepsi derlenecek").
-                // Kayıt artık NOTLA yazılır; "yine derlenecek" kararını WillBuildEvaluator o nottan verir.
-                // Kazanç: sha çifti ve kart artık gerçeği gösterir. Yeniden derlenecek küme AYNI kalır.
+                // Kayıt artık NOTLA ve KÖKLERİYLE yazılır; yeniden derleme kararını WillBuildEvaluator o nottan
+                // verir (WaitingForDependency) ve koşu kök düzeldiğinde uygular (ConditionalRebuild).
+                // Kazanç: sha çifti ve kart artık gerçeği gösterir.
                 // [A2 fix-4] Ayrımı ikinci kez TÜRETME: depIssuesForEvent zaten "depIssue var mı" sorusunun
                 // materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
                 // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
@@ -1196,7 +1272,8 @@ public sealed class RunCoordinator(
                 // defter de onu bilmemeli — gerekçe BuildStateStore.Remove'da.
                 if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
                 else if (trustedResult)
-                    PersistBuildStateOnSuccess(run, projectId, durationMs, depIssue: depIssuesForEvent is not null);
+                    PersistBuildStateOnSuccess(run, projectId, durationMs,
+                        depIssueRoots: depIssuesForEvent is null ? null : depIssues.RootIds);
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: succeeded ({1}ms)", name, durationMs));
@@ -1725,10 +1802,12 @@ public sealed class RunCoordinator(
     /// AYRICA "depIssue taşımayan success" koşulunu uygular (bkz. BuildProjectAsync'teki gerekçe). §4: yalnız
     /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// </summary>
-    /// <param name="depIssue">Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'li miydi. Kayda not olarak
-    /// yazılır; <see cref="Core.Planning.WillBuildEvaluator"/> onu görünce projeyi derleme listesinde tutar
-    /// (gerekçe: çağıran taraftaki [DEĞİŞEN KURAL] notu).</param>
-    private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs, bool depIssue)
+    /// <param name="depIssueRoots">Bu başarı BAŞARISIZ (ya da bayat bırakılmış) bağımlılıkların çıktısına link'liyse
+    /// o KÖKLERİN proje kimlikleri; değilse <c>null</c>. Kayda not + kökler olarak yazılır;
+    /// <see cref="Core.Planning.WillBuildEvaluator"/> onu görünce projeyi koşullu sayar
+    /// (<see cref="WillBuildReason.WaitingForDependency"/>).</param>
+    private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs,
+        IReadOnlyList<string>? depIssueRoots)
     {
         if (run.StateStore is null || run.Incremental is not { } inc
             || !inc.SignatureById.TryGetValue(projectId, out var signature))
@@ -1744,8 +1823,8 @@ public sealed class RunCoordinator(
             ? inc.CommitByProjectId?.GetValueOrDefault(projectId)
             : inc.HeadCommit;
         var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
-            DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssue,
-            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId));
+            DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssueRoots is not null,
+            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots);
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
@@ -1868,6 +1947,12 @@ public sealed class RunCoordinator(
         // [cycle rounds] SCC üyelik haritası — <see cref="ReadySetScheduler"/>'a verilenin AYNI örneği (null ⇒
         // plan'da SCC yok ya da kill switch kapalı; o zaman worker yalnız tekil proje yolunu kullanır).
         CycleGroups? Groups,
+        // [koşullu yeniden derleme] Sırası geldiğinde ConditionalRebuild.Decide'dan geçecek projeler.
+        IReadOnlySet<string> ConditionalIds,
+        // [koşullu yeniden derleme] Koşu BAŞINDA okunan defter (null ⇒ store yok): koşullu projenin kökleri ve bu
+        // koşuda derlenmeyen kökün son sonucu buradan okunur. Koşu içi persist'ler bu örneğe yansımaz — kasıtlı,
+        // bu koşuda derlenen kökün sonucu zaten scheduler'dan okunur.
+        IReadOnlyDictionary<string, BuildState>? LedgerAtStart,
         // [tek proje] projectId → bu koşuda derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda, yalnız
         // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
         IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null,

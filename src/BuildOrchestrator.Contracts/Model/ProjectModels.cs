@@ -146,7 +146,7 @@ public sealed record BuildState(
     string? BuiltContent = null,
     // Bu başarı BAŞARISIZ bir bağımlılığın çıktısına link'liydi. Kayıt yine de yazılır (aksi hâlde defter
     // hiç ilerlemez — bir koşuda 74 başarının 0'ı yazıldığı ölçüldü) ama not projeyi derleme listesinde
-    // tutar: WillBuildEvaluator bunu görünce bağımlılık düzelene kadar "derlenecek" der. LastResult
+    // tutar: kökleri biliniyorsa (DepIssueRoots) koşullu — kök düzelince derlenir —, bilinmiyorsa kesin. LastResult
     // Succeeded KALIR — derleme gerçekten başarılıydı; bu ortogonal bir uyarıdır, sonucun kendisi değil.
     // Alan SONA ve default'lu eklendi: eski build-state.json kayıtları alansızdır ve false olarak çözülür.
     bool DepIssue = false,
