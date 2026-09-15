@@ -1787,15 +1787,23 @@ the existing 120 ms transition, with a hand cursor and a native `Jump to <layer>
 or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one handler) scrolls the
 group's first visible row to sit just beneath the stacked headers above it; the target is pure arithmetic
 (`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
-elsewhere, instant under reduced motion. It never touches selection, the filter, the console or the graph —
-only the scroll position moves, and there is no collapse. The header stays mouse-only by design: its root is a
-`Border`, not a `Control`, so it is `Focusable=false` and never enters the Tab order or the arrow-key row
-navigation that already owns this list (§13.9) — turning it into a focusable stop would put headers in the
-path of "arrow keys move between rows," which the design explicitly may not break. The stuck overlay copy is
-hit-test-visible for the same reason a header is clickable at all — most clicks land there, since it is the one
-users actually see — and because it sits beside the `ScrollViewer` rather than above it in the visual tree, a
-wheel notch over a stacked header would otherwise never reach the list; one forwarding handler re-raises it
-onto the `ScrollViewer` so scrolling never stalls under the stack.
+elsewhere, instant under reduced motion. A click only counts if the press that started it landed on that same
+header (the header captures the mouse on press and checks it still holds capture on release) — pressing a row
+and dragging onto a header before releasing must not jump. It never touches selection, the filter, the console
+or the graph — only the scroll position moves, and there is no collapse. The header is deliberately **mouse-only**:
+the design prototype asks for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard
+model (§13.9) already owns the arrow keys — rows are the only focusable stops, and `DirectionalNavigation=
+"Contained"` walks exactly the focusable elements inside the list, headers included, the moment any of them
+becomes one. Keeping the header's root a `Border` rather than a `Control` keeps it `Focusable=false` for free,
+so it never enters the Tab order or the arrow-key traversal; making it a focus stop to answer Enter/Space would
+put headers in the path of "arrow keys move between rows," which is not something this task may change. The
+stuck overlay copy is hit-test-visible for the same reason a header is clickable at all — most clicks land
+there, since it is the one users actually see. Because it sits beside the `ScrollViewer` rather than above it
+in the visual tree, a wheel notch over a stacked header would otherwise never reach the list *and* would skip
+the bookkeeping every other user-scroll already gets (cancelling an in-flight smooth scroll, pausing follow-mode,
+resetting the idle-resume window) — one handler folds both into a single `OnUserWheel`, called from the header
+band's forwarded wheel exactly as from the `ScrollViewer`'s own, so scrolling over the stack behaves identically
+to scrolling anywhere else in the list.
 
 The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
 the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px

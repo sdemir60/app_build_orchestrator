@@ -52,6 +52,7 @@
       <Border Height="{x:Static controls:LayoutMetrics.DefaultHeaderHeight}" Style="{StaticResource Ds.LayerHeader}"
               BorderThickness="0,0,0,1"
               ToolTip="{Binding Name, Converter={x:Static controls:StickyLayerList.JumpTooltipConverter}}"
+              MouseLeftButtonDown="HeaderRoot_MouseLeftButtonDown"
               MouseLeftButtonUp="HeaderRoot_MouseLeftButtonUp">
         <StackPanel Orientation="Horizontal" Margin="10,0" VerticalAlignment="Center">
           <controls:TrackedTextBlock Text="{Binding Name}" VerticalAlignment="Center"

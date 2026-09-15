@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -60,23 +61,21 @@ public partial class StickyLayerList : UserControl
         // [E4 fix] AYNI ScrollChanged'de frontier follow "near-bottom'a dönüş → takip sürsün" resume tetiği çalışır
         // (Console/Stream'in BottomAnchor.IsStuck→Arbiter.Resume simetriği — tek asimetrik panel frontier'di).
         Scroll.ScrollChanged += (_, _) => { UpdateOverlay(Scroll.VerticalOffset); ResumeFrontierIfNearBottom(); };
-        // [T59] Kullanıcı tekerleği çevirdiği anda uçuştaki follow/seçim-scroll animasyonu iptal olur + suppress
-        // bayrağı kalkar (feasibility §3.3 — WPF'te wheel'in animasyonu otomatik iptal etmesi YOK, tarayıcının aksine).
-        ScrollAnimator.EnableUserCancellation(Scroll);
-        // [E4/T48] Kullanıcı frontier'i kaydırınca merkezi arbiter'a haber ver (bölgesel suppress — yalnız bu panel
-        // duraklar, konsol/stream akmaya devam). Arbiter null ise (izole test) no-op.
-        // [frontier resume] Tekerlek ANI ayrıca damgalanır: boşta-geri-açılma penceresi (FrontierIdleResumeMs)
-        // buradan ölçülür ve her yeni notch onu SIFIRLAR — kullanıcı aktif kaydırırken takip devreye giremez.
-        Scroll.PreviewMouseWheel += (_, _) =>
-        {
-            _lastUserScrollAtMs = NowMs();
-            Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
-        };
+        // [T59 · review round 1 I-1] Kullanıcı tekerleği çevirdiği anda uçuştaki follow/seçim-scroll animasyonu
+        // iptal olur (feasibility §3.3 — WPF'te wheel'in animasyonu otomatik iptal etmesi YOK, tarayıcının
+        // aksine) + suppress bayrağı damgalanır + merkezi arbiter'a haber verilir (bölgesel suppress — yalnız bu
+        // panel duraklar, konsol/stream akmaya devam. Arbiter null ise izole test, no-op) + boşta-geri-açılma
+        // penceresi (FrontierIdleResumeMs) sıfırlanır. ÜÇ olay kaynağı bu TEK metodu (OnUserWheel) çağırır:
+        // Scroll'un kendi tekerleği, VE overlay'e (yığılmış başlık bandı) düşen tekerlek (ForwardWheelToScroll) —
+        // ikisi de "kullanıcı listeyi kaydırdı" AYNI olayıdır, iki ayrı yarım-kablo YASAK (kopya + I-1 review).
+        Scroll.PreviewMouseWheel += (_, _) => OnUserWheel();
         // [v1.17.0 §2.4] Overlay artık hit-test'e AÇIK (başlıklar tıklanabilir) — bu, imlecin yığılmış başlık
         // bandındayken tekerlek olayının Scroll'a hiç ULAŞMAMASI riskini doğurur (Overlay, ScrollViewer'ın
-        // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). Tek kablo: overlay'e
-        // düşen her tekerlek olayını Scroll'un KENDİ MouseWheel'ine yeniden yükselt (standart WPF telafisi —
-        // ScrollViewer'ın sınıf handler'ı bunu normal biçimde işler).
+        // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). ForwardWheelToScroll
+        // hem OnUserWheel'i (yukarıdaki paragraf) çağırır hem de olayı Scroll'un KENDİ (bubbling) MouseWheel'ine
+        // yeniden yükseltir (standart WPF telafisi — ScrollViewer'ın sınıf handler'ı bunu normal biçimde işler).
+        // [I-1] Scroll'un PreviewMouseWheel'i (tunnel) BURADAN yeniden YÜKSELTİLMEZ — yalnız bubbling MouseWheel
+        // yükseltilir, bu yüzden Scroll'un kendi PreviewMouseWheel aboneliği iki kez ateşlenmez.
         Overlay.PreviewMouseWheel += ForwardWheelToScroll;
         // [E4/T48 · E3 fold] Flow container üretimi (ItemContainerGenerator) TAMAMLANINCA + bir SetGroups reveal'i
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
@@ -160,14 +159,26 @@ public partial class StickyLayerList : UserControl
         else
             _follow.Rebind(Metrics);
 
+        // [review round 1 · M-2] Başlık var/yok kararı VE slot sırası TEK kaynaktan (Metrics.Headers) okunur —
+        // "adı boş mu" kuralını (LayoutMetrics zaten LayerSpec.HasHeader'da uyguladı) ve slot sayacını burada
+        // İKİNCİ KEZ yazmak (eski hâl: `!string.IsNullOrEmpty(g.Name)` + paralel `slotIndex++`) iki karar
+        // yerinin AYNI KURALI iki farklı yerde tekrarlamasıydı — sürüklenebilirdi. Metrics.Headers, groups'la
+        // AYNI sırada (yalnız başlıklı katmanlar, layer sırasında) kurulduğundan headerCursor'ı groups'la
+        // LOCKSTEP yürütmek yeterli: her katmanda (headerCursor bir sonraki başlığa işaret ediyorsa VE o
+        // başlığın LayerIndex'i şu anki katmanla eşleşiyorsa) o HeaderInfo'nun kendi Name/RowCount/SlotIndex'i
+        // kullanılır — hiçbir alan groups'tan YENİDEN türetilmez.
         var entries = new List<object>();
-        int slotIndex = 0; // [v1.17.0 §2.4] LayoutMetrics'in HeaderInfo.SlotIndex'iyle AYNI sırada artar (yalnız
-                            // başlıklı katmanlar sayılır) — JumpTargetForHeader'a doğru slotu vermek için.
+        int headerCursor = 0;
+        int layerIndex = 0;
         foreach (var g in groups)
         {
-            if (!string.IsNullOrEmpty(g.Name))
-                entries.Add(new HeaderEntry(g.Name, g.Rows.Count, slotIndex++));
+            if (headerCursor < Metrics.Headers.Count && Metrics.Headers[headerCursor].LayerIndex == layerIndex)
+            {
+                var h = Metrics.Headers[headerCursor++];
+                entries.Add(new HeaderEntry(h.Name, h.RowCount, h.SlotIndex));
+            }
             entries.AddRange(g.Rows);
+            layerIndex++;
         }
         // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.). Container
         // üretimi tamamlanınca satırlar kademeli belirir (OnGeneratorStatusChanged).
@@ -331,19 +342,57 @@ public partial class StickyLayerList : UserControl
 
     // ---------------------------------------------------------------- [v1.17.0 §2.4] katman başlığı = gezinme kontrolü
 
-    /// <summary>Overlay'e düşen bir tekerlek olayını Scroll'un KENDİ (bubbling) <c>MouseWheel</c>'ine yeniden
-    /// yükseltir. Overlay, ScrollViewer'ın görsel ATASI DEĞİL KARDEŞİDİR — routed event doğal olarak Overlay'in
-    /// kendi ebeveynine (Grid) bubble eder, Scroll'a hiç uğramaz. <c>RaiseEvent</c> Scroll'un sınıf handler'ını
-    /// (ScrollViewer'ın kendi <c>OnMouseWheel</c>'i) normal yoldan tetikler — üçüncü parti bir kütüphane olmadan
-    /// nested-scroll telafisi için standart WPF deseni.</summary>
-    private void ForwardWheelToScroll(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    /// <summary>
+    /// [review round 1 · I-1] "Kullanıcı listeyi kaydırdı" olayının TEK kaynağı — <see cref="Scroll"/>'un kendi
+    /// tekerleği VE <see cref="ForwardWheelToScroll"/> (overlay'in yığılmış başlık bandına düşen tekerlek) İKİSİ
+    /// DE burayı çağırır. Üç şeyi birlikte yapar: uçuştaki follow/seçim-scroll animasyonunu iptal eder + per-target
+    /// suppress bayrağını kaldırır (<see cref="ScrollAnimator.CancelForUser"/> — eskiden yalnız
+    /// <see cref="ScrollAnimator.EnableUserCancellation"/> ile Scroll'un KENDİ tekerleğine kablıydı, overlay
+    /// tekerleği bunu hiç görmüyordu), boşta-geri-açılma damgasını (<see cref="_lastUserScrollAtMs"/>) tazeler,
+    /// ve merkezi arbiter'a bölgesel suppress bildirir (<see cref="Arbiter"/>, null ise izole test no-op).
+    ///
+    /// <para><b>Ölçülen kusur (review round 1 · I-1):</b> overlay hit-test'e açılmadan ÖNCE (bu task'ın kendisi)
+    /// yığılmış başlık bandı üstünde tekerlek çevirmek Overlay'in <c>IsHitTestVisible=False</c> olması sayesinde
+    /// hep Scroll'a ULAŞIYORDU (hit-test o bandı atlıyordu) — bu üç bookkeeping de dolaylı yoldan çalışıyordu.
+    /// Overlay hit-test'e açılınca (bu task) <see cref="ForwardWheelToScroll"/> yalnız asıl KAYDIRMAYI (bubbling
+    /// <c>MouseWheel</c>) Scroll'a yeniden yükseltiyordu — bu ÜÇ bookkeeping'i ATLAYARAK: koşarken yığılmış
+    /// başlık üstünde tekerlek çevirmek follow-mode'u DURAKLATMIYOR, uçuştaki bir smooth scroll'u İPTAL ETMİYOR,
+    /// boşta-geri-açılma penceresini SIFIRLAMIYORDU. Fix: tek metot, iki çağıran.</para>
+    /// </summary>
+    private void OnUserWheel()
+    {
+        ScrollAnimator.CancelForUser(Scroll);
+        _lastUserScrollAtMs = NowMs();
+        Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
+    }
+
+    /// <summary>Overlay'e düşen bir tekerlek olayını (a) <see cref="OnUserWheel"/> ile bookkeeping'e sokar, (b)
+    /// asıl kaydırmayı Scroll'un KENDİ (bubbling) <c>MouseWheel</c>'ine yeniden yükseltir. Overlay, ScrollViewer'ın
+    /// görsel ATASI DEĞİL KARDEŞİDİR — routed event doğal olarak Overlay'in kendi ebeveynine (Grid) bubble eder,
+    /// Scroll'a hiç uğramaz. <c>RaiseEvent</c> Scroll'un sınıf handler'ını (ScrollViewer'ın kendi
+    /// <c>OnMouseWheel</c>'i) normal yoldan tetikler — üçüncü parti bir kütüphane olmadan nested-scroll telafisi
+    /// için standart WPF deseni. <b>[I-1]</b> Scroll'un <c>PreviewMouseWheel</c>'i (tunnel) BURADAN yeniden
+    /// YÜKSELTİLMEZ — yalnız bubbling <c>MouseWheel</c> yükseltilir, aksi halde Scroll'un kendi
+    /// <c>PreviewMouseWheel</c> aboneliği (ki zaten <see cref="OnUserWheel"/>'i çağırır) İKİNCİ KEZ ateşlenirdi.</summary>
+    private void ForwardWheelToScroll(object sender, MouseWheelEventArgs e)
     {
         if (e.Handled) return;
-        Scroll.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
+        OnUserWheel();
+        Scroll.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
         {
-            RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent,
+            RoutedEvent = Mouse.MouseWheelEvent,
         });
         e.Handled = true;
+    }
+
+    /// <summary>[review round 1 · M-5] Başlığa BASILAN element'i yakalar — <see cref="HeaderRoot_MouseLeftButtonUp"/>
+    /// yalnız AYNI element hâlâ yakalamayı tutuyorsa (basış BURADA başladı) tıklamayı jump'a çevirir. Yakalama
+    /// olmadan bir satıra basıp başlığın üstüne sürükleyip bırakmak (satır kendi tıklamasını iptal ettiğinde) da
+    /// jump tetiklerdi — WPF <c>MouseLeftButtonUp</c> yalnız BIRAKMA noktasındaki elementi bilir, BASMA noktasını
+    /// değil.</summary>
+    private void HeaderRoot_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is UIElement header) header.CaptureMouse();
     }
 
     /// <summary>
@@ -352,10 +401,17 @@ public partial class StickyLayerList : UserControl
     /// SAF <see cref="LayoutMetrics.JumpTargetForHeader"/>'da; burada yalnız hangi slotun tıklandığını okuyup
     /// mevcut smooth-scroll altyapısını (<see cref="AnimateScrollTo"/> — reduced-motion'da anında) çağırır.
     /// Seçim/filtre/konsol/graf'a HİÇ dokunmaz — yalnız scroll.
+    ///
+    /// <para><b>[review round 1 · M-5]</b> Basış BU başlıkta başlamadıysa (bkz. <see cref="HeaderRoot_MouseLeftButtonDown"/>)
+    /// jump tetiklenmez — bir satıra basıp başlığın üstüne sürükleyip bırakmak artık zararsızdır.</para>
     /// </summary>
-    private void HeaderRoot_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void HeaderRoot_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: { } dc } || Metrics is null) return;
+        if (sender is not FrameworkElement { DataContext: { } dc } header || Metrics is null) return;
+        bool pressStartedHere = header.IsMouseCaptured;
+        if (pressStartedHere) header.ReleaseMouseCapture();
+        if (!pressStartedHere) return; // [M-5] basış BAŞKA bir elementte (ör. bir satırda) başladı — jump YOK.
+
         int slotIndex = dc switch
         {
             HeaderEntry h => h.SlotIndex,
