@@ -94,9 +94,10 @@ public static class DsChrome
     /// hareketiyle asla true olmaz — stil bunu okusaydı "aktif kontrol hover'ı" hiçbir zaman ERİŞİLEMEZ kalırdı.
     ///
     /// <para>Çözüm HER ZAMAN etkin bir sarmalayıcı (şeffaf bir <c>Border</c>, düğmeyle AYNI sınırlarda) —
-    /// <see cref="WireHoverProxy"/> onun <c>MouseEnter</c>/<c>MouseLeave</c>'ini bu bayrağa yansıtır. Sarmalayıcı
-    /// disabled DEĞİLDİR, dolayısıyla hit-test'ten hiç dışlanmaz: düğme kendi alanını hit-test edemediğinde
-    /// hit, ARKASINDAKİ (aynı sınırlı) sarmalayıcıya düşer.</para>
+    /// <see cref="WireHoverProxy"/> onun <c>MouseEnter</c>/<c>MouseLeave</c>'ini bu bayrağa yansıtır. Doğru
+    /// mekanizma "hit arkaya düşer" DEĞİLDİR: WPF mouse-over'ı en üstteki (disabled) öğeye DEĞİL, en yakın
+    /// ETKİN ATAYA yönlendirir — burada o ata sarmalayıcı Border'ın KENDİSİDİR (düğmenin ebeveyni), çünkü
+    /// düğme o an disabled'dır.</para>
     /// </summary>
     public static readonly DependencyProperty IsHoverProxyProperty = DependencyProperty.RegisterAttached(
         "IsHoverProxy", typeof(bool), typeof(DsChrome), new PropertyMetadata(false));

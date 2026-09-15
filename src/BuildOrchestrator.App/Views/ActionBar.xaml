@@ -89,9 +89,10 @@
 
       <!-- ============================ SOL GRUP (sola yaslı, esnek) ============================ -->
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
-        <!-- [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır (komut kapısı) ve WPF disabled
-             öğeleri hit-test'ten dışlar — bu Border HER ZAMAN etkindir, hit onun üstüne düşer ve
-             DsChrome.WireHoverProxy (ActionBar ctor) MouseEnter/Leave'ini düğmenin IsHoverProxy'sine yansıtır. -->
+        <!-- [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır (komut kapısı) — disabled bir
+             düğmenin ÜSTÜNDE fare gezerken WPF mouse-over'ı düğmenin KENDİSİNE değil en yakın ETKİN ATAYA
+             yönlendirir; o ata bu Border'dır (düğmenin ebeveyni). DsChrome.WireHoverProxy (ActionBar ctor)
+             Border'ın MouseEnter/Leave'ini düğmenin IsHoverProxy'sine yansıtır. -->
         <Border Background="Transparent" VerticalAlignment="Center">
           <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Bar.Button.Secondary.Sm}"
                   Command="{Binding SyncCommand}" VerticalAlignment="Center" />

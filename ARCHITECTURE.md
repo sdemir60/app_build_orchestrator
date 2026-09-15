@@ -2909,13 +2909,12 @@ The action bar's chip, secondary-button, icon-button and segment-item styles eac
 (`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
 `BasedOn` the shared style, adding only the bar's hover triggers (§13.2 "The whole bar speaks one hover
 language") so the base styles the rest of the app uses (the ShellRoot filter chip, row icons, dialogs) are
-untouched. `Ds.Bar.Chip`'s neutral-hover trigger carries `IsChecked=False` as one of its own conditions, not
-just `IsMouseOver`+`IsEnabled`: a `BasedOn` style's own triggers are evaluated *after* the base style's, so
-without that third condition a checked-and-hovered chip matched *both* the neutral trigger (declared here) and
-`Ds.Chip`'s own `IsChecked` trigger (declared in the base), and the later one — the neutral trigger, because it
-belongs to the more-derived style — won, whitening a lit filter chip's text on hover instead of leaving its
-`amber-text` alone. The two triggers now key off opposite values of `IsChecked` and can never both match, so
-there is no ordering to get wrong.
+untouched. `Ds.Bar.Chip`'s neutral-hover trigger and its checked-hover trigger key off opposite values of
+`IsChecked` (`False` and `True`), so exactly one of them ever matches a given chip and there is no ordering
+between them to reason about. A checked, hovered chip — a lit filter chip, an open branch/worktree popover chip
+— answers only the checked-hover trigger: ground and hairline step to `amber-soft-hover`/`amber`, and its text
+stays whatever `Ds.Chip`'s own `IsChecked` trigger already set (`amber-text`), because the checked-hover trigger
+never touches `Foreground`. An unchecked, hovered chip answers only the neutral trigger.
 
 A running Sync or maintenance button is not a `ToggleButton`, so it has no `IsChecked` to key a hover trigger
 off; `DsChrome.IsActive` is the attached stand-in, set the moment the job starts and cleared the moment it ends,
@@ -2925,10 +2924,11 @@ command's `CanExecute` is false), and a disabled control is excluded from WPF's 
 `IsMouseOver` never becomes true regardless of where the pointer sits. `DsChrome.IsHoverProxy` is the answer:
 each of the four buttons (Sync, Clean, Optimize, Resolve) sits inside its own always-enabled `Border`, sized to
 its exact bounds and otherwise invisible, and `DsChrome.WireHoverProxy` wires that Border's `MouseEnter`/
-`MouseLeave` straight onto the button's `IsHoverProxy` — when the button itself cannot answer the hit test, it
-falls through to the Border sitting behind it, which can. The active-hover trigger reads `IsHoverProxy`, not
-`IsMouseOver`, and asks nothing of `IsEnabled` either, since the button is deliberately drawn live while its own
-command is closed.
+`MouseLeave` straight onto the button's `IsHoverProxy` — WPF routes mouse-over to the nearest *enabled* ancestor
+when the element the pointer is over is disabled, which is exactly the wrapping Border, so the Border (not the
+button) is what actually receives `MouseEnter`/`MouseLeave` for as long as the button stays disabled. The
+active-hover trigger reads `IsHoverProxy`, not `IsMouseOver`, and asks nothing of `IsEnabled` either, since the
+button is deliberately drawn live while its own command is closed.
 
 Σ's icon answers hover through a third, narrower channel of the same shape: `DsChrome.IconForeground`, set by
 `Ds.Bar.Chip`'s own Setter (`text-dim`, resting) and by its neutral-hover trigger (`text-primary`) exactly the

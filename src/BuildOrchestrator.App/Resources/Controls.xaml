@@ -192,8 +192,8 @@
     olma nedeninin AYNISı) ve bu düğme tam da o an (komut kapısı kapalı) disabled'dır — kendi IsMouseOver'ı
     gerçek fareyle asla true olmaz. Artık DsChrome.IsHoverProxy okur: ActionBar'ın PART_Sync'i saran HER ZAMAN
     etkin bir Border, MouseEnter/Leave'ini DsChrome.WireHoverProxy ile bu bayrağa yansıtır (bkz.
-    DsChrome.IsHoverProxyProperty'nin XML doc'u) — düğme kendi alanını hit-test edemediğinde hit ARKASINDAKİ
-    (aynı sınırlı) Border'a düşer.
+    DsChrome.IsHoverProxyProperty'nin XML doc'u) — düğme disabled iken WPF mouse-over'ı düğmenin KENDİSİNE
+    değil en yakın ETKİN ATAYA (bu Border, düğmenin ebeveyni) yönlendirir.
   -->
   <Style x:Key="Ds.Bar.Button.Secondary.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Sm}">
     <Style.Triggers>
