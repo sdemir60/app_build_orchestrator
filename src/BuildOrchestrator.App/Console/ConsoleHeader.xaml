@@ -68,6 +68,10 @@
                dalda bile) — code-behind bir tetikleyici (ShowProjectLog) beklemez. -->
           <StackPanel x:Name="DepIssueBadge" Grid.Column="4" Orientation="Horizontal" Margin="8,0,0,0"
                       VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
+            <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
+            <StackPanel.ToolTip>
+              <ToolTip x:Name="DepIssueTooltip" controls:AppTooltip.Side="Bottom" />
+            </StackPanel.ToolTip>
             <Viewbox Width="8" Height="8" VerticalAlignment="Center">
               <Canvas Width="24" Height="24">
                 <Path x:Name="DepIssueGlyph" Data="{DynamicResource Icon.AlertTri}"
@@ -85,6 +89,10 @@
                (satırın döngü tooltip'iyle AYNI cümle, kopya YASAK). -->
           <StackPanel x:Name="CycleBadge" Grid.Column="5" Orientation="Horizontal" Margin="8,0,0,0"
                       VerticalAlignment="Center" Visibility="Collapsed" Cursor="Arrow">
+            <!-- [final review M-6] tasarım side="bottom" — içerik code-behind'da yazılır. -->
+            <StackPanel.ToolTip>
+              <ToolTip x:Name="CycleTooltip" controls:AppTooltip.Side="Bottom" />
+            </StackPanel.ToolTip>
             <Viewbox Width="8" Height="8" VerticalAlignment="Center">
               <Canvas Width="24" Height="24">
                 <Path x:Name="CycleGlyph" Data="{DynamicResource Icon.AlertTri}"

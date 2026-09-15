@@ -105,7 +105,7 @@ public class ConsoleHeaderLiveRefreshTests
         // [R1 bulgu 2] Canlı VARIŞ: satırın kendi DepIssues'u değişir — seçim/ShowProjectLog TEKRAR ÇAĞRILMAZ.
         row.DepIssues = ["B"];
         Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
-        Assert.Equal("Dependency issue: B — last successful output referenced", header.DepIssueBadge.ToolTip);
+        Assert.Equal("Dependency issue: B — last successful output referenced", header.DepIssueTooltip.Content);
 
         // Canlı KAYBOLMA: liste aynı satırı temizler (ör. bir sonraki Sync) — rozet de birlikte iner.
         row.DepIssues = null;

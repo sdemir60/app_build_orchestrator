@@ -136,7 +136,7 @@ public class ConsoleHeaderDesignTests
         Assert.Equal("dependency issue", text.Text);
         Assert.Equal(amber, DsResources.ColorOf(text.Foreground));
 
-        Assert.Equal("Dependency issue: Sales.Data — last successful output referenced", header.DepIssueBadge.ToolTip);
+        Assert.Equal("Dependency issue: Sales.Data — last successful output referenced", header.DepIssueTooltip.Content);
         GC.KeepAlive(window);
     }
 
@@ -154,7 +154,22 @@ public class ConsoleHeaderDesignTests
         var text = Assert.Single(DsResources.Descendants(header.CycleBadge).OfType<TextBlock>());
         Assert.Equal("dependency cycle", text.Text);
 
-        Assert.Equal(RowWarning.InCycle, header.CycleBadge.ToolTip); // "In a dependency cycle" — satırla AYNI
+        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content); // "In a dependency cycle" — satırla AYNI
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Final review M-6] Tasarım iki rozetin tooltip'ini <c>side="bottom"</c> ister — uygulamanın
+    /// yerleşim mekanizması explicit bir <see cref="ToolTip"/> üzerindeki <see cref="AppTooltip.Side"/>'dır
+    /// (düz metin tooltip varsayılan Top'ta kalır).</summary>
+    [StaFact]
+    public void Both_badge_tooltips_open_below_the_badge()
+    {
+        var (header, window, _) = Realize(h => ShowProjectLog(h, inCycle: true, depIssues: ["OSYS.Sales.Data"]));
+
+        var dep = Assert.IsType<ToolTip>(header.DepIssueBadge.ToolTip);
+        var cycle = Assert.IsType<ToolTip>(header.CycleBadge.ToolTip);
+        Assert.Equal(AppTooltip.Bottom, AppTooltip.GetSide(dep));
+        Assert.Equal(AppTooltip.Bottom, AppTooltip.GetSide(cycle));
         GC.KeepAlive(window);
     }
 

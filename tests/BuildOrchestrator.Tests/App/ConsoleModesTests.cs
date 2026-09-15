@@ -56,7 +56,7 @@ public class ConsoleModesTests
         Assert.Equal(GraphStatus.Failed, header.StatusGlyphIcon.Status);
         Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
         Assert.Equal("Dependency issue: Sales.Data, Sales.Contracts — last successful output referenced",
-            header.DepIssueBadge.ToolTip);
+            header.DepIssueTooltip.Content);
         Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         Assert.Equal("87 lines", header.LinesText.Text);
     }
@@ -73,7 +73,7 @@ public class ConsoleModesTests
 
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
-        Assert.Equal(RowWarning.InCycle, header.CycleBadge.ToolTip);
+        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
         Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
     }
 

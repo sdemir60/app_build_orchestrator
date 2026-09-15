@@ -124,10 +124,11 @@ public partial class ConsoleHeader : UserControl
         var depIssues = row.DepIssues;
         bool hasDepIssue = depIssues is { Count: > 0 };
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
-        DepIssueBadge.ToolTip = hasDepIssue ? RowWarning.DepIssueDetail(depIssues!, row.NamePrefix) : null;
+        // [final review M-6] Tooltip nesneleri XAML'dedir (AppTooltip.Side="Bottom"); burada yalnız içerik yazılır.
+        DepIssueTooltip.Content = hasDepIssue ? RowWarning.DepIssueDetail(depIssues!, row.NamePrefix) : null;
 
         CycleBadge.Visibility = row.InCycle ? Visibility.Visible : Visibility.Collapsed;
-        CycleBadge.ToolTip = row.InCycle ? RowWarning.InCycle : null;
+        CycleTooltip.Content = row.InCycle ? RowWarning.InCycle : null;
     }
 
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]

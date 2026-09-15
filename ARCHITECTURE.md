@@ -2474,7 +2474,9 @@ lines.
   stays collapsed. The dependency-issue tooltip spells out every project by its short name
   (`RowWarning.DepIssueDetail`, comma-joined — the header has room a row's slot does not, so it never falls
   back to the row's "+N" abbreviation); the cycle tooltip is the same sentence the row's own triangle uses
-  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Copy log is a plain
+  (`RowWarning.InCycle`), read from the one shared constant rather than retyped. Both tooltips are explicit
+  `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they open below the badge; code-behind
+  only writes their content. Copy log is a plain
   `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no bespoke chrome; its copied-state
   green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy diagnostics button does,
   which means a hover during the 1.4 s window can hand control back to the style's own animated brush — an
