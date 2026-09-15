@@ -67,9 +67,14 @@ public class ConsoleHeaderLiveRefreshTests
     /// <see cref="ProjectRowViewModel.Status"/>'unu izler (satır ve graf da onu okur): bir döngü grubunda sırası
     /// kendisinde olmayan Started üye (<see cref="ProjectRowViewModel.IsCompiling"/> false) satırda Queued'dır,
     /// başlıkta da Queued olmalıdır — ikinci bir Started→Building eşlemesi başlıkta spinner döndürüyordu. Sıra
-    /// üyeye geçtiğinde (IsCompiling true) başlık seçim değişmeden spinner'a geçer.</summary>
+    /// üyeye geçtiğinde (IsCompiling true) başlık seçim değişmeden spinner'a geçer.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Statü YAZISI eskiden <c>State</c>'ten (motor sözlüğü, <c>ConsoleStatus.Name</c>)
+    /// geliyordu, yani bu senaryoda glyph Queued gösterirken yazı hâlâ "Building" yazıyordu (State hâlâ Started) —
+    /// ikon ile yazı ayrışıyordu. Kullanıcı kararıyla yazı da <see cref="ProjectRowViewModel.Status"/>'u izler;
+    /// ikon, yazı ve renk artık AYNI kaynaktan (<c>StatusGlyph.LabelFor</c>/<c>BrushKeyFor</c>) okunur.</para></summary>
     [StaFact]
-    public void Header_glyph_follows_the_rows_own_Status_including_a_live_IsCompiling_flip()
+    public void Header_glyph_and_status_word_follow_the_rows_own_Status_including_a_live_IsCompiling_flip()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
@@ -82,11 +87,13 @@ public class ConsoleHeaderLiveRefreshTests
         var (row, header) = SelectViaHeaderWiring(window, vm, idA);
 
         Assert.Equal(GraphStatus.Queued, header.StatusGlyphIcon.Status); // satırla AYNI
+        Assert.Equal("Queued", header.StatusNameText.Text); // yazı da satırla AYNI — State hâlâ Started'dır
 
         row.CycleWaiting = false; // sıra bu üyeye geçti — seçim DEĞİŞMEZ
         Assert.True(row.IsCompiling);
 
         Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status);
+        Assert.Equal("Building", header.StatusNameText.Text);
         var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
         Assert.Equal(Visibility.Visible, spinner.Visibility);
         GC.KeepAlive(window);

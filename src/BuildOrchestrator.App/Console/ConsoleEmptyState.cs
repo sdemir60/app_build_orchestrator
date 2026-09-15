@@ -15,7 +15,7 @@ namespace BuildOrchestrator.App.Console;
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
 /// <para><b>Metin İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
-/// (<see cref="ConsoleStatus.Name"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
+/// (<see cref="Controls.StatusGlyph.LabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
 /// (son başarıyla derlendiği commit, ya da hiç derlenmediği). Derlenmekte olan bir projenin tek satırı vardır:
 /// orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///
@@ -112,40 +112,4 @@ public static class ConsoleEmptyState
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
     private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";
-}
-
-/// <summary>
-/// [T56/3a → v1.18.0 §9] Proje-log modu panel başlığındaki statü adı + statü rengi eşlemesi — design-v1
-/// EN_STATUS ile birebir (Started→Building, Pending→Queued). Renkler token ANAHTARLARIdır (hardcode YASAK) —
-/// başlık kontrolü DynamicResource ile çözer.
-///
-/// <para><b>[DEĞİŞEN KURAL — v1.18.0]</b> Glyph eskiden burada Unicode bir karakterdi (<c>✓</c>/<c>✗</c>/…) ve
-/// başlık onu düz bir <c>TextBlock</c>'a yazıyordu — tasarım ise 13px çizilmiş <c>StatusGlyph</c> ister,
-/// <c>building</c>'de dönen amber bir yayla. Glyph artık ÇİZİLİR (<see cref="Controls.StatusGlyph"/>) ve
-/// satırın kendi <see cref="ProjectRowViewModel.Status"/>'unu okur (final review I-2 — bu sınıf glyph eşlemesi
-/// TAŞIMAZ, satır/graf ile tek kaynak); metin/renk eşlemesi (Name/BrushKey) motorun kendi kelime dağarcığını
-/// (Succeeded/Failed/Skipped/Started/Pending) korur.</para>
-/// </summary>
-public static class ConsoleStatus
-{
-
-    public static string Name(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => "Succeeded",
-        ProjectRowState.Failed => "Failed",
-        ProjectRowState.Skipped => "Skipped",
-        ProjectRowState.Started => "Building",
-        ProjectRowState.Pending => "Queued",
-        _ => state.ToString(),
-    };
-
-    public static string BrushKey(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => "Brush.StatusSuccessText",
-        ProjectRowState.Failed => "Brush.StatusFailText",
-        ProjectRowState.Skipped => "Brush.StatusSkippedText",
-        ProjectRowState.Started => "Brush.AmberText",
-        ProjectRowState.Pending => "Brush.StatusQueuedText",
-        _ => "Brush.TextSecondary",
-    };
 }

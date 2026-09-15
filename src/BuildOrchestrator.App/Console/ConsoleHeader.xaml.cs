@@ -12,7 +12,7 @@ namespace BuildOrchestrator.App.Console;
 /// <summary>[T56/3a+3b → v1.18.0 §9] Konsol panel başlığının iki modu (README §9 v1.18.0 "Konsol başlığı ve
 /// `Back` satırı"). Kod-tarafı sürülür (DP/binding şişkinliği yerine küçük, test edilebilir yüzey):
 /// <see cref="ShowNarrative"/> / <see cref="ShowProjectLog"/> modu değiştirir, <see cref="SetLineCount"/>
-/// sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan (<see cref="ConsoleStatus.BrushKey"/>)
+/// sağdaki "N lines" sayacını günceller. Statü rengi token ANAHTARIndan (<see cref="StatusGlyph.BrushKeyFor"/>)
 /// SetResourceReference ile canlı çözülür (hardcode YASAK).
 ///
 /// <para>[3b] Copy-log butonu (Ek A #3): yalnız proje-log modunda (log varken) görünür; <see cref="LogTextProvider"/>'ın
@@ -110,16 +110,23 @@ public partial class ConsoleHeader : UserControl
         ApplyProjectNameShrink(); // rozetlerin görünürlüğü değişmiş olabilir — sol bloğun payı da değişir
     }
 
-    /// <summary>[Final review I-2] Glyph satırın KENDİ <see cref="ProjectRowViewModel.Status"/>'unu okur —
-    /// satır ve graf da onu okur; başlık ikinci bir durum→glyph eşlemesi KURMAZ (Started ama derlenmeyen döngü
-    /// üyesi satırda Queued ise başlıkta da Queued'dır). Statü ADI ve rengi motorun kendi kelime dağarcığında
-    /// kalır (<see cref="ConsoleStatus"/>).</summary>
+    /// <summary>[Final review I-2 · kullanıcı kararı] Glyph, yazı VE renk satırın KENDİ
+    /// <see cref="ProjectRowViewModel.Status"/>'unu okur — satır ve graf da onu okur; başlık ikinci bir
+    /// durum→glyph/ad/renk eşlemesi KURMAZ (Started ama derlenmeyen döngü üyesi satırda Queued ise başlıkta da
+    /// Queued'dır — hem ikon hem yazı). Ad/renk tablosu <see cref="StatusGlyph.LabelFor"/>/
+    /// <see cref="StatusGlyph.BrushKeyFor"/>'dur — glyph'in KENDİ tablosu; ikinci bir kopya AÇILMAZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Yazı ve rengi eskiden <c>ConsoleStatus.Name/BrushKey(row.State)</c> ile
+    /// motorun dar <c>ProjectRowState</c> sözlüğünden geliyordu: bir döngü grubunda sırası kendisinde olmayan
+    /// Started üye satırda/ikonda Queued görünürken yazı hâlâ "Building" diyordu (State hâlâ Started) — ikon ile
+    /// yazı ayrışıyordu. Kullanıcı kararıyla üçü de tek kaynaktan okunur; kullanılmaz kalan <c>ConsoleStatus</c>
+    /// sınıfı silindi.</para></summary>
     private void ApplyStatus(ProjectRowViewModel row)
     {
         StatusGlyphIcon.Status = row.Status;
 
-        StatusNameText.Text = ConsoleStatus.Name(row.State);
-        StatusNameText.SetResourceReference(ForegroundProperty, ConsoleStatus.BrushKey(row.State));
+        StatusNameText.Text = StatusGlyph.LabelFor(row.Status);
+        StatusNameText.SetResourceReference(ForegroundProperty, StatusGlyph.BrushKeyFor(row.Status));
 
         var depIssues = row.DepIssues;
         bool hasDepIssue = depIssues is { Count: > 0 };
