@@ -261,4 +261,26 @@ public class ConsoleHeaderDesignTests
         GC.KeepAlive(narrowWindow);
         GC.KeepAlive(wideWindow);
     }
+
+    /// <summary>[Final review M-1] Sağ blok yalnız Copy log görünürlüğüyle değil, <c>N lines</c> metni
+    /// genişleyince de (999 → 1000) büyür — sol bloğun payı daralır ve proje adının <c>MaxWidth</c>'i o kadar
+    /// küçülmelidir. Tetik sağ bloğun KENDİ <c>SizeChanged</c>'idir; aksi halde ad, sağ blokla çakışana dek eski
+    /// payını korurdu.</summary>
+    [StaFact]
+    public void Widening_the_line_count_text_shrinks_the_project_names_MaxWidth_by_the_same_amount()
+    {
+        string longName = "OSYS." + new string('P', 60) + ".WorkOrder";
+        var (header, window, _) = Realize(h => ShowProjectLog(h, name: longName, lineCount: 999), width: 320);
+        double maxBefore = header.ProjectNameText.MaxWidth;
+        double rightBefore = header.RightBlock.ActualWidth;
+        Assert.True(double.IsFinite(maxBefore), "test kurgusu: ad kısıtlanmış olmalıydı");
+
+        header.SetLineCount(100_000); // Copy log zaten görünür — görünürlük değişmez, yalnız metin genişler
+        header.UpdateLayout();
+
+        double rightGrowth = header.RightBlock.ActualWidth - rightBefore;
+        Assert.True(rightGrowth > 1, "test kurgusu: sayaç metni genişlemedi");
+        Assert.Equal(maxBefore - rightGrowth, header.ProjectNameText.MaxWidth, 1);
+        GC.KeepAlive(window);
+    }
 }

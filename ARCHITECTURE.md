@@ -2445,8 +2445,9 @@ lines.
   shrink-on-demand behaviour is computed by hand instead: `ApplyProjectNameShrink` reads the *actual* rendered
   width of Back, the status glyph, the status name and whichever badges are visible (each plus its own margin),
   subtracts their sum from the available space, and caps the name's `MaxWidth` at what's left — recomputed
-  after every `ShowProjectLog`/`RefreshStatus` call, on a real Copy-log visibility flip, and on the header's own
-  `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the method
+  after every `ShowProjectLog`/`RefreshStatus` call, on the right block's own `SizeChanged` (Copy log appearing
+  or disappearing, or the `N lines` text widening from 999 to 1000), and on the header's own `SizeChanged` (a
+  live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the method
   forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
   already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the
   project-log half `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn

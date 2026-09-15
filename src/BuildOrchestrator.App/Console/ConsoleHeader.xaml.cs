@@ -45,6 +45,10 @@ public partial class ConsoleHeader : UserControl
         // payını tazeler — yalnız proje-log modundayken anlamlıdır, ShowNarrative'de ProjectLogGroup zaten
         // Collapsed'tır ve ApplyProjectNameShrink kendi kapısında (Mode kontrolü) no-op döner.
         SizeChanged += (_, _) => ApplyProjectNameShrink();
+        // [Final review M-1] Sağ blok (Copy log + "N lines") genişliğini değiştirdiğinde sol bloğun payı da
+        // değişir — Copy log görünürlük geçişi de, sayaç metninin genişlemesi de (999 → 1000). TEK tetik budur;
+        // SetLineCount ayrıca çağırmaz. Boşta tick metni değiştirmediği için bu olay boşta ateşlenmez.
+        RightBlock.SizeChanged += (_, _) => ApplyProjectNameShrink();
     }
 
     /// <summary>Test/okuma için mevcut mod.</summary>
@@ -144,11 +148,8 @@ public partial class ConsoleHeader : UserControl
 
         bool shouldShowCopy = lineCount > 0;
         if ((CopyLogButton.Visibility == Visibility.Visible) == shouldShowCopy) return; // DEĞİŞMEDİYSE YAZILMAZ
+        // Sağ bloğun genişliği değişir → ad payı RightBlock.SizeChanged üzerinden tazelenir (ctor).
         CopyLogButton.Visibility = shouldShowCopy ? Visibility.Visible : Visibility.Collapsed;
-        // Sağ bloğun genişliği değişti (Copy log göründü/kayboldu) → sol blok için kalan pay da değişir. Bu dal
-        // yalnız GERÇEK bir görünürlük geçişinde çalışır (200ms'lik tick'in HER turunda DEĞİL) — SetLineCount
-        // zaten koşulsuz çağrılır, ApplyProjectNameShrink'in kendi UpdateLayout()'u boşta ödenmemeli.
-        ApplyProjectNameShrink();
     }
 
     private void OnBackClick(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
