@@ -15,10 +15,18 @@ namespace BuildOrchestrator.Tests.App;
 /// [design v1.17.0 §9 "3" — Task 7] Event stream'in her satırında hover artık var — eski kural (tıklanamaz
 /// satırlarda "parıltıyı ezmesin" gerekçesiyle hover zemini hiç açılmıyordu) DEĞİŞTİ: tıklanamaz satır artık bir
 /// adım daha sessiz (<c>Brush.Surface</c>) zemin alır, tıklanabilir satır (mevcut) <c>Brush.SurfaceHover</c>'a
-/// açılır; imleç eşlemesi (tıklanamaz → Arrow, tıklanabilir → Hand) DEĞİŞMEDİ. Glow-once ile etkileşim: hover,
-/// parıltının O ANKİ rengeinden (<see cref="MotionTokens.TransitionColor"/>'ın retarget'ı — <c>SnapshotAndReplace</c>)
-/// doğru hedefe yumuşak geçer; ATLAMA yoktur ama parıltı KESİLİR — bkz.
-/// <see cref="Hovering_a_glowing_done_row_takes_over_the_animation_and_settles_on_the_correct_surface"/>.
+/// açılır; imleç eşlemesi (tıklanamaz → Arrow, tıklanabilir → Hand) DEĞİŞMEDİ.
+///
+/// <para><b>Glow-once ile etkileşim — [review round 1 fix] DÜZELTİLMİŞ karar: hover BEKLER.</b> Prototipin CSS
+/// <c>@keyframes bo-glow-once</c>'u (BuildApp.jsx:19) satırın <c>style.background</c>'ını (hover dahil) ezer ve
+/// kendi 1.1s'lik yayını sonuna kadar oynatır; hover zemini ancak yay bittiğinde görünür olur (BuildApp.jsx:1109
+/// + 1115). İLK turda burada "hover uçuştaki animasyonu ATLAMASIZ devralır" denmişti — bu YANLIŞTI: devralma
+/// gerçek bir animasyon sürerken bile parıltının 1.1s'lik doğal süresini KISALTIYORDU, prototipte öyle bir
+/// kısalma YOK. Doğru kural: parıltı sürerken (<c>EventStreamRow._glowRunning</c>) <c>ApplyBackground</c> hiçbir
+/// şey yazmaz; parıltı doğal olarak bitince (<c>Completed</c>) BİR KEZ yeniden çağrılır ve O ANKİ hover/seçim
+/// durumuna göre doğru zemine oturur — bkz.
+/// <see cref="Hover_that_begins_mid_glow_waits_for_the_glow_to_finish_before_taking_the_ground"/> ve
+/// <see cref="Hover_that_begins_before_the_glow_starts_still_waits_and_settles_on_the_hover_ground_once_it_ends"/>.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class EventStreamHoverTests
@@ -136,14 +144,15 @@ public class EventStreamHoverTests
     // ================================================================ glow-once ile etkileşim
 
     /// <summary>
-    /// [DEĞİŞEN KURAL] Eski davranış: <c>Done</c> satırı (tıklanamaz) hiç hover almazdı, gerekçe "parıltıyı
-    /// ezmesin". Artık her satırda hover var; seçilen davranış — parıltı SÜRERKEN hover gelirse zemin animasyonu
-    /// KESİLİR ama ATLAMA olmadan (<see cref="MotionTokens.TransitionColor"/> uçuştaki rengi
-    /// <c>HandoffBehavior.SnapshotAndReplace</c> ile devralır) doğru hover hedefine (tıklanamaz → <c>Brush.Surface</c>)
-    /// yumuşakça oturur; parıltı BİR KEZ oynanmış sayılır (<c>GlowPlayCount</c> artmaz).
+    /// [review round 1 fix — DEĞİŞEN KURAL] Eski davranış (Task 7 ilk turu): parıltı sürerken hover gelirse zemin
+    /// animasyonu KESİLİR, "ATLAMA olmadan" doğru hedefe devrederdi. Bu YANLIŞTI — prototipin CSS
+    /// <c>@keyframes bo-glow-once</c>'u satırın <c>background</c>'ını (hover dahil) ezer, yay 1.1s tam oynar
+    /// (BuildApp.jsx:19, 1109, 1115). Doğru kural: hover parıltı bitene dek zemine HİÇ dokunmaz — zemin parıltının
+    /// KENDİ rengidir (yeşilden şeffafa), <c>Brush.Surface</c> DEĞİL — parıltı doğal olarak bitince BİR KEZ doğru
+    /// hedefe oturur.
     /// </summary>
     [StaFact]
-    public void Hovering_a_glowing_done_row_takes_over_the_animation_and_settles_on_the_correct_surface()
+    public void Hover_that_begins_mid_glow_waits_for_the_glow_to_finish_before_taking_the_ground()
     {
         var vm = NewVm();
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
@@ -157,25 +166,72 @@ public class EventStreamHoverTests
         var row = view.Rows.Last();
         DispatcherPump.PumpUntil(() => row.GlowPlayCount >= 1, PumpTimeout);
 
-        // Non-vacuous: parıltı GERÇEKTEN sürüyor — yeşil, canlı bir saat.
+        // Non-vacuous: parıltı GERÇEKTEN sürüyor — yeşil, canlı bir saat; satır tıklanamaz (Brush.Surface hedefi
+        // parıltının rengiyle KARIŞMAYACAK kadar farklı, aşağıdaki NotEqual'lar için gerekli ön koşul).
         Assert.True(((SolidColorBrush)row.Background).HasAnimatedProperties);
         Assert.NotEqual(Colors.Transparent, DsResources.ColorOf(row.Background));
         Assert.False(row.ViewModel!.IsClickable);
+        var surfaceColor = DsResources.TokenColor(host, "Brush.Surface");
+        Assert.NotEqual(surfaceColor, DsResources.ColorOf(row.Background));
 
         // Parıltı devam ederken (1.1s'nin başlarında) hover gelir.
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(150));
         Enter(row);
 
-        // Hover devralır: zemin nihayetinde doğru hedefe (tıklanamaz → Brush.Surface) oturur — yeşilde asılı kalmaz,
-        // şeffafa da dönmez (satırın üstünde fare hâlâ var).
-        DispatcherPump.PumpUntil(
-            () => DsResources.ColorOf(row.Background) == DsResources.TokenColor(host, "Brush.Surface"), PumpTimeout);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.Surface"), DsResources.ColorOf(row.Background));
-        Assert.Equal(1, row.GlowPlayCount); // parıltı YENİDEN oynamadı — yalnız zemin devralındı
+        // [KİLİT NOKTA] Hover gelmesinden hemen sonra bile (parıltının hâlâ ortasında) zemin parıltının KENDİ
+        // yayında kalır: hover hedefine SIÇRAMAZ ve parıltının saati KESİLMEZ. Eski (round 1) kod burada anında
+        // Brush.Surface'e geçip animasyonu sökerdi — bu assert o davranışa karşı KIRMIZI verir.
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(150));
+        Assert.True(((SolidColorBrush)row.Background).HasAnimatedProperties, "hover parıltının saatini KESMEMELİ");
+        Assert.NotEqual(surfaceColor, DsResources.ColorOf(row.Background)); // hâlâ parıltının kendi rengi/yayı
+
+        // Parıltı doğal süresini (1.1s) tamamlayınca — ve ancak o zaman — hover zemini görünür olur.
+        DispatcherPump.PumpUntil(() => DsResources.ColorOf(row.Background) == surfaceColor, TimeSpan.FromSeconds(3));
+        Assert.Equal(surfaceColor, DsResources.ColorOf(row.Background));
+        Assert.Equal(1, row.GlowPlayCount); // parıltı YENİDEN oynamadı — yalnız doğal bitişte zemin oturdu
 
         Leave(row);
         DispatcherPump.PumpUntil(() => DsResources.ColorOf(row.Background) == Colors.Transparent, PumpTimeout);
         Assert.Equal(Colors.Transparent, DsResources.ColorOf(row.Background));
+        Assert.Equal(1, row.GlowPlayCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [review round 1 · finding 4] Fare parıltı BAŞLAMADAN (satır henüz <c>Loaded</c> olmadan, dolayısıyla
+    /// <c>ApplyGlow</c> hiç çalışmadan) satırın üstüne girerse — hover niyeti kaybolmamalı: parıltı yine tam
+    /// oynar (prototipin CSS keyframe'i her koşulda 0%'dan başlar, mevcut hover'ı da ezer) ama parıltı bitince
+    /// satır hover zemininde belirir, çünkü fare hâlâ üstündedir.
+    /// </summary>
+    [StaFact]
+    public void Hover_that_begins_before_the_glow_starts_still_waits_and_settles_on_the_hover_ground_once_it_ends()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\b.csproj", 900));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 0, 0, 2100)); // hatasız → Done UYGUN
+
+        // View'ı BİLEREK henüz bir pencereye/host'a takmadan kur: DataContext ataması satırları senkron üretir
+        // (RebuildRows), ama hiçbiri PresentationSource'a bağlı değildir — Loaded (dolayısıyla ApplyGlow) HENÜZ
+        // ateşlenmedi.
+        var host = DsResources.NewHost();
+        var view = new EventStreamView { AnimationsEnabledProvider = () => true, DataContext = vm };
+        var row = view.Rows.Last();
+        Assert.False(row.IsLoaded); // non-vacuous ön koşul: parıltı GERÇEKTEN henüz başlamadı
+        Assert.Equal(0, row.GlowPlayCount);
+
+        Enter(row); // Loaded'dan (dolayısıyla parıltıdan) ÖNCE hover başlar
+
+        var window = DsResources.Realize(host, view); // burada Loaded ateşlenir → ApplyGlow parıltıyı BAŞTAN oynatır
+        DispatcherPump.PumpUntil(() => row.GlowPlayCount >= 1, PumpTimeout);
+        Assert.True(((SolidColorBrush)row.Background).HasAnimatedProperties); // parıltı GERÇEKTEN çalışıyor
+
+        var surfaceColor = DsResources.TokenColor(host, "Brush.Surface");
+        DispatcherPump.PumpUntil(() => DsResources.ColorOf(row.Background) == surfaceColor, TimeSpan.FromSeconds(3));
+        Assert.Equal(surfaceColor, DsResources.ColorOf(row.Background)); // fare hâlâ üstünde → hover zemini oturdu
         Assert.Equal(1, row.GlowPlayCount);
         GC.KeepAlive(window);
     }

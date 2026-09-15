@@ -23,7 +23,11 @@
           <!-- Tampon satırları (EventStreamRow'lar kod-tarafı eklenir/silinir — StreamEvents ile birebir). -->
           <StackPanel x:Name="PART_Rows" />
 
-          <!-- Aktif satır: saat + imleç (12px kolon) + daktilo "{name} building…". BuildApp.jsx:713-725. -->
+          <!-- Aktif satır: saat + imleç (12px kolon) + daktilo "{name} building…". BuildApp.jsx:713-725.
+               [Task 7 · design v1.17.0 §9 "3"] Prototipte de (BuildApp.jsx:1181-1193) bu satırın onMouseEnter/
+               onMouseLeave'i YOKTUR — yalnız sabit cursor:pointer. Tampon satırlarının (EventStreamRow) hover
+               bandı BİLEREK buraya taşınmaz: bu satır göstergedir (bkz. EventStreamView.UpdateActiveLine), zemini
+               hep Transparent kalır, yalnız imleç Hand'dir. -->
           <Grid x:Name="PART_ActiveLine" MinHeight="24" Margin="10,0" Background="Transparent"
                 Cursor="Hand" Visibility="Collapsed">
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

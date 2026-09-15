@@ -1874,20 +1874,26 @@ participate in the shared selection. A run that finishes with zero failures glow
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
-**Every row answers hover, one step apart.** A clickable row (one carrying a project id — `ok`/`fail`/`skip`
-lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in the hand cursor; a row with nothing
-to click — `sync`/plain `info`/the closing `done` summary — steps to the quieter `surface` instead and keeps the
-plain arrow, so long-log tracking gets the same visual foothold without implying a click that would do nothing.
-The selected row's own `surface-raised` outranks both and does not move under the pointer. This replaced an
-earlier, narrower rule that gave hover to clickable rows only, on the theory that a background step on a
-non-clickable row would fight the done line's once-only flourish; in practice the two never actually collide,
-because `MotionTokens.TransitionColor` — the same step-and-animate primitive every hover surface in the app
-shares — takes over an in-flight animation from its *current* colour (`HandoffBehavior.SnapshotAndReplace`)
-rather than snapping to a stale base value. So a mouse arriving mid-glow does not flash or jump: it cuts the
-flourish's own fade short and eases from wherever it was to the hover ground, and leaving settles it back to
-whatever the row's resting state is (transparent, most of the time, since the glowing line has no project to
-click). The flourish itself still plays exactly once — hover taking over its ground has no bearing on the
-one-shot guard in `StreamEventViewModel.GlowPlayed`.
+**Every row answers hover, one step apart — but the once-only flourish always wins first.** A clickable row (one
+carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and
+swaps in the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps
+to the quieter `surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold
+without implying a click that would do nothing. The selected row's own `surface-raised` outranks both and does
+not move under the pointer. This replaced an earlier, narrower rule that gave hover to clickable rows only, on
+the theory that a background step on a non-clickable row would fight the done line's once-only flourish. The two
+*can* meet — the done line is exactly the row the flourish plays on, and it is never clickable — but the flourish
+does not budge for hover: it is a CSS `@keyframes` animation in the design that owns the row's background outright
+for its full 1.1 s regardless of what the pointer is doing, the same way the row's own colour or the daktilo
+cadence cannot be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag
+(`_glowRunning`): while the flourish's clock is live, `ApplyBackground` does not write to the ground at all — a
+mouse arriving mid-glow is *remembered*, not applied, and a mouse leaving mid-glow is forgotten the same way.
+Only when the flourish's own clock completes does `ApplyBackground` run once more, this time settling on whatever
+the row's *current* hover/selection state actually is — hover ground if the pointer is still there, transparent
+if it already left. The flourish still plays exactly once regardless — this dance is entirely about who owns the
+ground while it runs, and has no bearing on the one-shot guard in `StreamEventViewModel.GlowPlayed`. The active
+prompt line at the foot of the panel (§2.6, the live `{name} building…` indicator) deliberately sits outside all
+of this: it carries a fixed hand cursor and never steps its background on hover, in the design as much as here —
+it is a status line, not a stream row, and has nothing of its own to select.
 
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
 there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
