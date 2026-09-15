@@ -255,6 +255,10 @@ again against fresh inputs.
 Starting from a row clears the selection, so a graph focused on some node returns to the fitted view. While
 the run is in flight the row's play button becomes a red Stop and the other rows' actions wait.
 
+**Layer headings jump.** Hover one and it lifts a step; click it (mouse only — it is not a Tab stop) and the
+list scrolls that group's first row to sit just under the stacked headings above it. It only moves the scroll
+position — selection, the filter and the console are untouched.
+
 Projects that reference each other's output form a dependency cycle. *Build* never compiles them — it skips
 them with the reason `in dependency cycle`. **Resolve cycles** — the
 third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
@@ -327,7 +331,8 @@ moment you open the app, whether or not anything has happened yet.
 
 A project's log opens **at the beginning** and stays there — what you are looking for in a build log is the
 first error, not the last line — so it does not follow the output and does not return on its own. Scroll to
-the bottom yourself and it starts following again. `← Back` returns you to the run narrative at its end.
+the bottom yourself and it starts following again. The header's `Back` button (an arrow icon and the word
+"Back") returns you to the run narrative at its end.
 
 **Every project has a page, log or not.** A skipped project never writes a log file at all — the reason goes
 to the run's decision log — so clicking its card used to look like it did nothing. The page now opens either

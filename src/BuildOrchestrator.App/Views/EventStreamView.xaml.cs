@@ -446,10 +446,11 @@ public partial class EventStreamView : UserControl
 }
 
 /// <summary>
-/// [D3/T?] Event stream tek satırı görünümü (BuildApp.jsx:627-659) — kod-tarafı (parıltı/seçim/daktilo motion
+/// [D3/T?] Event stream tek satırı görünümü (BuildApp.jsx:1091-1127) — kod-tarafı (parıltı/seçim/daktilo motion
 /// sözleşmesince kod-tarafı, MotionTokens.cs). DataContext bir <see cref="StreamEventViewModel"/>'dir; satır onun
 /// INotifyPropertyChanged'ini dinler. Şerit 2px amber (yalnız seçili), zemin per-instance brush (seçili →
-/// <c>SurfaceRaised</c>, hover → <c>SurfaceHover</c>, parıltı → <c>StatusSuccessSoft</c>→şeffaf 1.1s bir kez).
+/// <c>SurfaceRaised</c>; hover'da HER satır — tıklanabilir → <c>SurfaceHover</c>, tıklanamaz → bir adım daha
+/// sessiz <c>Surface</c>, design v1.17.0 §9 "3"; parıltı → <c>StatusSuccessSoft</c>→şeffaf 1.1s bir kez).
 /// </summary>
 public sealed class EventStreamRow : Border
 {
@@ -612,19 +613,42 @@ public sealed class EventStreamRow : Border
         ApplyBackground();
     }
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL · design v1.17.0 §9 "3"] Eski davranış: tıklanamaz satır (done/sync/info) hiç hover
+    /// almazdı — gerekçe "parıltıyı ezmesin". Artık HER satırda hover var (prototip <c>StreamRow</c>,
+    /// BuildApp.jsx:1115): tıklanamaz satır bir adım daha sessiz <c>Brush.Surface</c>'e, tıklanabilir
+    /// <c>Brush.SurfaceHover</c>'a açılır — bkz. <see cref="ApplyBackground"/>. Fare parıltı SÜRERKEN girip
+    /// çıksa bile <c>_hover</c> burada GÜNCELLENİR (parıltı bitince hangi zemine oturulacağını bu alan
+    /// belirler) — zemine YAZMA kararı <see cref="ApplyBackground"/>'ın kendi guard'ındadır.
+    /// </summary>
     private void SetHover(bool hover)
     {
-        if (_vm is null || !_vm.IsClickable) return; // done/sync/info: hover zemini yok (parıltıyı ezmesin)
+        if (_vm is null) return;
         if (_hover == hover) return;
         _hover = hover;
         ApplyBackground();
     }
 
+    /// <summary>
+    /// Zemin hedefi: seçili → <c>SurfaceRaised</c> (hover'dan bağımsız, değişmez); hover'da tıklanabilir satır →
+    /// <c>SurfaceHover</c>, tıklanamaz satır → bir adım daha sessiz <c>Surface</c>; hiçbiri değilse şeffaf.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL] Parıltı sürerken hover BEKLER.</b> <see cref="_glowRunning"/> açıkken bu metot
+    /// hiçbir şey YAZMAZ — prototipin CSS <c>@keyframes bo-glow-once</c>'u satırın <c>style.background</c>'ını
+    /// (hover dahil) ezip kendi 1.1s'lik yayını sonuna kadar oynatıyor (BuildApp.jsx:1109+1115); hover zemini
+    /// ancak yay bittiğinde görünür olur. Eski iddia (paylaşılan <see cref="MotionTokens.TransitionColor"/>'ın
+    /// uçuştaki animasyonu ATLAMASIZ devralması, dolayısıyla hover'ın parıltıyı erken KESEBİLECEĞİ) YANLIŞTI:
+    /// devralma gerçek animasyon açıkken bile parıltının 1.1s'lik doğal süresini KISALTIR — prototipte öyle bir
+    /// kısalma yok. Parıltı doğal olarak bitince (<see cref="ApplyGlow"/>'un kurduğu <c>Completed</c>) bu metot
+    /// BİR KEZ yeniden çağrılır ve o ANKİ (<c>_hover</c>/seçim) duruma göre doğru zemine oturur.</para>
+    /// </summary>
     private void ApplyBackground()
     {
+        if (_glowRunning) return; // parıltı ezer — hover/seçim zemini parıltı bitene dek beklemede
         bool selected = _vm?.IsSelected ?? false;
+        bool clickable = _vm?.IsClickable ?? false;
         Color target = selected ? ResolveColor("Brush.SurfaceRaised")
-            : _hover && (_vm?.IsClickable ?? false) ? ResolveColor("Brush.SurfaceHover")
+            : _hover ? ResolveColor(clickable ? "Brush.SurfaceHover" : "Brush.Surface")
             : Colors.Transparent;
         MotionTokens.TransitionColor(this, _bgBrush, target);
     }
@@ -649,9 +673,17 @@ public sealed class EventStreamRow : Border
     private void OnLoaded(object sender, RoutedEventArgs e) => ApplyGlow();
 
     // ---------------------------------------------------------------- parıltı (bir kez)
+
+    /// <summary>[DEĞİŞEN KURAL] Parıltı sürdüğü sürece <c>true</c> — <see cref="ApplyBackground"/>'ın hover/seçim
+    /// zeminini BEKLETMESİNİN tek kaynağı bu alandır (prototip <c>@keyframes bo-glow-once</c>'un satırın
+    /// <c>background</c>'ını ezmesiyle AYNI sözleşme). Yay doğal biterken (<c>Completed</c>, <see cref="ApplyGlow"/>)
+    /// <c>false</c>'a döner ve <see cref="ApplyBackground"/> O ANDA yeniden çağrılır.</summary>
+    private bool _glowRunning;
+
     /// <summary>[A13.2] Yalnız <c>done</c>+hatasız satır: per-instance zemin <c>StatusSuccessSoft</c>→şeffaf, 1.1s
     /// EaseOut, BİR KEZ. <see cref="StreamEventViewModel.GlowPlayed"/> guard'ı container recycle'da tekrar oynatmaz;
-    /// reduced-motion'da hiç oynamaz (yalnız oynandı işaretlenir).</summary>
+    /// reduced-motion'da hiç oynamaz (yalnız oynandı işaretlenir — <see cref="_glowRunning"/> hiç açılmaz, hover
+    /// beklemeden anında yazar).</summary>
     private void ApplyGlow()
     {
         if (_vm is null || !_vm.GlowEligible || _vm.GlowPlayed) return;
@@ -664,10 +696,28 @@ public sealed class EventStreamRow : Border
         var anim = MotionTokens.SplineColorTo(from, Colors.Transparent, TimeSpan.FromMilliseconds(GlowMs), spline);
         anim.FillBehavior = FillBehavior.Stop;
         _bgBrush.Color = Colors.Transparent; // taban: Stop sonrası buraya döner (yeşile geri sıçrama YOK)
+        _glowRunning = true;
+        anim.Completed += OnGlowCompleted;
         _bgBrush.BeginAnimation(SolidColorBrush.ColorProperty, anim);
 
         _vm.GlowPlayed = true;
         GlowPlayCount++;
+    }
+
+    /// <summary>Parıltının doğal sonu (1.1s doldu) — <see cref="_glowRunning"/> kapanır ve zemin O ANKİ hover/seçim
+    /// durumuna göre BİR KEZ oturtulur.
+    ///
+    /// <para>Burada elle bir <c>Completed -=</c> aboneliği SÖKÜLMEZ: WPF'in <c>Timeline</c> altyapısında
+    /// <see cref="Timeline.Completed"/> olayını fiilen yayınlayan nesne o zaman çizelgesi için kurulan
+    /// <c>Clock</c>'tur, <c>Timeline</c>'ın kendisi değil — yani bu olayın <c>sender</c>'ı bir
+    /// <see cref="AnimationTimeline"/> değil bir <c>Clock</c>'tur, elle sökme burada o yüzden yapılmaz.
+    /// <see cref="ApplyGlow"/>'daki animasyon <c>FillBehavior.Stop</c> ve satır başına bir kez (<see
+    /// cref="StreamEventViewModel.GlowPlayed"/> guard'ı) oynadığından, bu abonelik satır başına TEK ve yerel bir
+    /// zaman çizelgesine bağlı kalır — büyüyen bir sızıntı oluşturmaz.</para></summary>
+    private void OnGlowCompleted(object? sender, EventArgs e)
+    {
+        _glowRunning = false;
+        ApplyBackground();
     }
 
     /// <summary>[Test] Container recycle'ı taklit eder — DataContext'i (aynı VM) yeniden bağlar ve Loaded yolunu

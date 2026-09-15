@@ -40,4 +40,16 @@ public class TooltipDelayTests
 
         Assert.True(ToolTipService.GetShowOnDisabled(owner));
     }
+
+    /// <summary>[Task 9 · B] <see cref="AppTooltipDefaults.DelayMsFor"/> birim hatasını pinler:
+    /// <c>TimeSpan.Milliseconds</c> yalnız 0-999 bileşenidir, TOPLAM ms değildir — eski kod
+    /// <c>SystemParameters.MouseHoverTime.Milliseconds</c> okuyordu, yani hover süresi ≥1 sn olduğunda (ör.
+    /// 1.2 sn) yanlış bir değer (200) dönüyordu. Doğrusu <c>TotalMilliseconds</c>'tır.</summary>
+    [Fact]
+    public void DelayMsFor_returns_the_total_milliseconds_not_the_sub_second_component()
+    {
+        Assert.Equal(1200, AppTooltipDefaults.DelayMsFor(TimeSpan.FromMilliseconds(1200)));
+        Assert.Equal(400, AppTooltipDefaults.DelayMsFor(TimeSpan.FromMilliseconds(400)));
+        Assert.Equal(0, AppTooltipDefaults.DelayMsFor(TimeSpan.Zero));
+    }
 }

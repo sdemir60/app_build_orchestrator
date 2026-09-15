@@ -14,6 +14,18 @@
          oturan şey içeriktir, imleç yerinde durur ve içerik ona doğru yerine gelir. `⌄ latest` pill de
          dışarıdadır: o içeriğin parçası değil, panelin afordansıdır. -->
     <Grid x:Name="PART_TiltHost">
+    <!-- [Task 6/design v1.17.0 §9 "3 — Konsol ve event stream"] Satır hover bandı: imlecin altındaki satırın tam
+         genişlik zemini. TextEditor'DAN ÖNCE (z-sırada ALTINDA) durur — TextEditor.Background Transparent
+         olduğundan bant metnin ALTINDA görünür. HorizontalAlignment=Stretch + host'un kendi padding'i olmadığı
+         için editörün 12px iç dolgusunu (Padding) AŞAR, panel kenarından kenara (prototip: .bo-cline,
+         BuildApp.jsx satır 62-63). Fill YEREL (donmamış) bir SolidColorBrush'tır — MotionTokens.TransitionColor
+         yalnız donmamış fırçaları animate edebilir (A13.2). Hit-test'e KAPALI: ne metin seçimini ne de imleç
+         kararını etkiler (ConsoleView.UpdateHoverBand/ForceArrowCursor). -->
+    <Rectangle x:Name="HoverBand" IsHitTestVisible="False" HorizontalAlignment="Stretch" VerticalAlignment="Top" Height="0">
+      <Rectangle.Fill>
+        <SolidColorBrush Color="Transparent" />
+      </Rectangle.Fill>
+    </Rectangle>
     <!-- [3b Minor 1] Base foreground token (Brush.TextPrimary) — colorizer her satırı zaten ezer; off-palette hex YOK. -->
     <!-- [SCROLLBAR] BuildApp.jsx:616: konsol kutusu overflow AUTO — AvalonEdit default'u Visible olduğundan
          açıkça çevrilir. Bar'ın kendi görünümü Controls.xaml'in implicit ScrollBar stilinden gelir. -->

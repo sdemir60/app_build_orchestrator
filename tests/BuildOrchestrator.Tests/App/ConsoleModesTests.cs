@@ -1,5 +1,6 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -19,8 +20,14 @@ public class ConsoleModesTests
 
     // ---------------------------------------------------------------- başlık modları
 
+    // [v1.18.0 §9] Sol grubun tamamı (Back + ad + statü + rozetler) artık TEK bir konteynerdir
+    // (ProjectLogGroup, Console/ConsoleHeader.xaml) — mod değişince o hücre bir kerede aç/kapa olur; alt
+    // öğelerin KENDİ Visibility'si ayrı ayrı sürülmez. Bu yüzden "gizli mi" iddiası artık gruba, "doğru
+    // dolduruldu mu" iddiası içeriğe (Text/Status/ToolTip) bakar — style/ikon/aralık pinleri
+    // ConsoleHeaderDesignTests'tedir (realize gerektirir).
+
     [StaFact]
-    public void Header_narrative_mode_shows_caps_label_and_hides_back_and_project_bits()
+    public void Header_narrative_mode_shows_caps_label_and_hides_the_project_log_group()
     {
         var header = new ConsoleHeader();
 
@@ -28,42 +35,62 @@ public class ConsoleModesTests
 
         Assert.Equal(ConsoleHeader.HeaderMode.Narrative, header.Mode);
         Assert.Equal(Visibility.Visible, header.ConsoleLabel.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.BackButton.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.ProjectNameText.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.StatusNameText.Visibility);
-        Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
+        Assert.Equal(Visibility.Collapsed, header.ProjectLogGroup.Visibility);
         Assert.Equal("12 lines", header.LinesText.Text);
     }
 
     [StaFact]
-    public void Header_project_log_mode_shows_back_name_status_and_dep_badge()
+    public void Header_project_log_mode_shows_name_status_and_dep_issue_badge_with_full_names_in_the_tooltip()
     {
         var header = new ConsoleHeader();
 
-        header.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Failed, hasDepIssue: true, lineCount: 87);
+        // [v1.18.0] Tooltip'in TAM listeyi yazdığını (satırın "+N" kısaltmasının AKSİNE) görmek için iki isim.
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Sales.Core", ProjectRowState.Failed, inCycle: false,
+            depIssues: ["OSYS.Sales.Data", "OSYS.Sales.Contracts"], namePrefix: "OSYS."), 87);
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.Equal(Visibility.Collapsed, header.ConsoleLabel.Visibility);
-        Assert.Equal(Visibility.Visible, header.BackButton.Visibility);
-        Assert.Equal(Visibility.Visible, header.ProjectNameText.Visibility);
+        Assert.Equal(Visibility.Visible, header.ProjectLogGroup.Visibility);
         Assert.Equal("OSYS.Sales.Core", header.ProjectNameText.Text);
         Assert.Equal("Failed", header.StatusNameText.Text);
+        Assert.Equal(GraphStatus.Failed, header.StatusGlyphIcon.Status);
         Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
+        Assert.Equal("Dependency issue: Sales.Data, Sales.Contracts — last successful output referenced",
+            header.DepIssueTooltip.Content);
+        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         Assert.Equal("87 lines", header.LinesText.Text);
     }
 
     [StaFact]
-    public void Header_project_log_without_dep_issue_hides_the_badge_and_switches_back_to_narrative()
+    public void Header_project_log_shows_the_cycle_badge_independently_of_the_dep_issue_badge()
+    {
+        // [v1.18.0] Prototipte (BuildApp.jsx:2615-2628) ikisi de KENDİ koşuluna bağlıdır ve AYNI ANDA
+        // görünebilir — satırdaki tek üçgenin öncelik sırasının (RowWarning.For) AKSİNE.
+        var header = new ConsoleHeader();
+
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Started, inCycle: true,
+            depIssues: null, namePrefix: "OSYS."), 3);
+
+        Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
+        Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
+        Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
+        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
+    }
+
+    [StaFact]
+    public void Header_project_log_without_warnings_hides_both_badges_and_switching_back_hides_the_group()
     {
         var header = new ConsoleHeader();
 
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, hasDepIssue: false, lineCount: 5);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
+            depIssues: null, namePrefix: ""), 5);
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
+        Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         Assert.Equal("Succeeded", header.StatusNameText.Text);
 
         header.ShowNarrative(3); // geri dönüş moddu tekrar anlatıya çevirir
         Assert.Equal(ConsoleHeader.HeaderMode.Narrative, header.Mode);
-        Assert.Equal(Visibility.Collapsed, header.BackButton.Visibility);
+        Assert.Equal(Visibility.Collapsed, header.ProjectLogGroup.Visibility);
         Assert.Equal("3 lines", header.LinesText.Text);
     }
 
@@ -71,7 +98,8 @@ public class ConsoleModesTests
     public void Header_back_button_raises_BackRequested()
     {
         var header = new ConsoleHeader();
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, hasDepIssue: false, lineCount: 0);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
+            depIssues: null, namePrefix: ""), 0);
         bool raised = false;
         header.BackRequested += (_, _) => raised = true;
 
@@ -124,7 +152,8 @@ public class ConsoleModesTests
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
-        header.ShowProjectLog("A", ProjectRowState.Started, hasDepIssue: false, vm.GetActiveLineCount());
+        header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
+            depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
         vm.SeedProjectDocument(projectId, text =>
             view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n')));
 

@@ -79,7 +79,7 @@ public partial class GraphView : UserControl
     /// alınır — tıklama alanı ise gövdede kalır, dolayısıyla büyümez.</para></summary>
     public static readonly double CellOverhang = Math.Max(
         SelectionRingInset,
-        GraphBeads.OrbitGapPx + GraphBeads.StrokeThickness / 2);
+        GraphBeads.MaxOrbitGapPx + GraphBeads.StrokeThickness / 2);
     /// <summary>Glyph, düğüm kenarının bu kadarıdır (§2.3: "node'un %52'si").</summary>
     public const double IconFactor = 0.52;
     /// <summary>Glyph kalem kalınlığı (§2.3: "1.8px stroke").</summary>
@@ -142,7 +142,8 @@ public partial class GraphView : UserControl
     /// ayrı sonsuz animasyon kurmak timing engine'i gereksiz yere meşgul ederdi.</summary>
     private AnimationClock? _beadsClock;
     private BeadsGeometry _beadsGeometry;
-    private DoubleCollection _beadsDash = GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize));
+    private DoubleCollection _beadsDash =
+        GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize, QuietGraphLayout.MinPitch));
     /// <summary>Son building düğüm bittikten sonra saati bırakan TEK ATIMLIK tetik (§2.3: noktalar dönerken
     /// söner). Talep üzerine kurulur; yeni bir building doğarsa iptal edilir.</summary>
     private DispatcherTimer? _beadsSpindown;
@@ -169,6 +170,10 @@ public partial class GraphView : UserControl
     // ---- [design v1.11.0 §9-4/§9-5] koreografiler: açılış (marking) ve bitiş (neon) ----
     private MarkStep _markStep = MarkStep.None;
     private IReadOnlySet<string> _markedNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    /// <summary>[v1.18.0 "sıralı teslim dalgası"] İşaretli düğümün dalga sırası (proje Id → <c>Order</c>) —
+    /// <see cref="MarkStep.Settle"/>'da node başına gecikmeyi (<see cref="MarkingChoreography.SettleDelayMs"/>)
+    /// hesaplamak için. Diğer adımlarda okunmaz.</summary>
+    private IReadOnlyDictionary<string, int> _markOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
     private EndStep _endStep = EndStep.None;
     private IReadOnlySet<string> _builtNodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyDictionary<string, int> _endOrder = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -399,19 +404,27 @@ public partial class GraphView : UserControl
     public void BeginOperation() => StopEndFinale();
 
     /// <summary>
-    /// [design v1.11.0 §9-4 · §2.3] Açılış koreografisinin adımını ve kapsamını grafa iter: node opaklıkları
-    /// "örtüşen veda"yı oynar (kapsam 0.45'e 440ms'de, geri kalan 0.18'e 1120ms'de — ikisi aynı anda biter).
+    /// [design v1.11.0 §9-4 · §2.3 · v1.18.0] Açılış koreografisinin adımını ve kapsamını grafa iter: node
+    /// opaklıkları "örtüşen veda"yı oynar (çevre 0.18'e 1120ms'de söner; kapsam Settle'da DOĞRUDAN koşu
+    /// seviyesine — <see cref="GraphNodeOpacity.RunDim"/> — iner, node başına gecikmeli, bkz.
+    /// <see cref="MarkingChoreography.SettleDelayMs"/>).
     ///
     /// <para>Kapsamın AMBER'a yanması ayrı bir kanal DEĞİLDİR: dalga sırasında sürücü satırların
     /// <c>Marked</c>'ını tek tek açar ve renk normal statü itişiyle (<see cref="UpdateStatuses"/>) gelir —
     /// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
     /// gerektirmez (bkz. ApplyNodeStatus'taki ölçülmüş sapma).</para>
     /// </summary>
-
-    public void SetMarking(MarkStep step, IReadOnlySet<string> markedNodeNames)
+    /// <param name="step">Koreografinin o anki adımı.</param>
+    /// <param name="markedNodeNames">Bu işlemin kapsamındaki (amber'a yanan) düğümlerin Id'leri.</param>
+    /// <param name="markOrder">[v1.18.0] Kapsamdaki her düğümün DALGA sırası — yalnız <see cref="MarkStep.Settle"/>
+    /// bunu okur ("sıralı teslim": node kendi sırasında, <see cref="MarkingChoreography.SettleDelayMs"/> kadar
+    /// gecikmeyle koşu seviyesine iner).</param>
+    public void SetMarking(MarkStep step, IReadOnlySet<string> markedNodeNames, IReadOnlyDictionary<string, int> markOrder)
     {
         ArgumentNullException.ThrowIfNull(markedNodeNames);
+        ArgumentNullException.ThrowIfNull(markOrder);
         _markedNodes = markedNodeNames;
+        _markOrder = markOrder;
         if (_markStep == step) { ApplyAllOpacities(); return; }
         _markStep = step;
         ApplyAllOpacities();
@@ -766,9 +779,10 @@ public partial class GraphView : UserControl
         double cell = size + CellOverhang * 2;
         _iconScale.ScaleX = _iconScale.ScaleY = size * IconFactor / IconViewBox;
 
-        // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
-        // aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.
-        var beads = GraphBeads.For(size);
+        // Düğüm boyutu YA DA hücre aralığı (pitch) değiştiyse yörüngenin ÇEVRESİ de değişir (bkz. GraphBeads.For:
+        // aralık kelepçesi ikisine de bakar) ⇒ desen ve paylaşımlı saat yeniden kurulur; aksi halde noktalar yeni
+        // çevreye tam bölünmez ve ek yerinde bindirirdi.
+        var beads = GraphBeads.For(size, _layout.Pitch);
         if (beads != _beadsGeometry)
         {
             _beadsGeometry = beads;
@@ -952,9 +966,10 @@ public partial class GraphView : UserControl
     // ---------------------------------------------------------------- beads (§2.3 building animasyonu)
 
     /// <summary>
-    /// [quiet] §2.3 "Building animasyonu — beads": derlenen düğümün 2.8px dışında dolanan sık amber
-    /// noktalar. Yörünge DOM'da sürekli durur, yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms
-    /// ease-out; noktalar DÖNERKEN söner, donup kaybolmaz.
+    /// [quiet] v1.18.0 "Beads bir tık kalın + hücreye kelepçeli yörünge": derlenen düğümün, hücre pitch'inden
+    /// geriye çözülen (0.8–2.8px) mesafede dışında dolanan sık amber noktalar. Yörünge DOM'da sürekli durur,
+    /// yalnız OPAKLIĞI değişir — girişte 420ms, çıkışta 640ms ease-out; noktalar DÖNERKEN söner, donup
+    /// kaybolmaz.
     ///
     /// <para>Zaten doğru durumdaki bir yörünge YENİDEN kurulmaz (<see cref="GraphNodeVisual.BeadsVisible"/>):
     /// koşarken statü itişi saniyede birkaç kez gelir ve her çağrıda animasyonu baştan başlatmak yörüngeyi
@@ -1008,16 +1023,20 @@ public partial class GraphView : UserControl
         };
         orbit.SetResourceReference(Shape.StrokeProperty, "Brush.AmberText");
         ApplyBeadsGeometry(orbit);
-        // Kareyi ÖRTMEZ (2.8px dışında) ama gövdenin DIŞINDA durur: gövde tıklama alanıdır ve yörünge
-        // taşmasının hit-test'e karışmaması gerekir.
+        // Kareyi ÖRTMEZ (hücre pitch'inden geriye çözülen bgap kadar dışında) ama gövdenin DIŞINDA durur:
+        // gövde tıklama alanıdır ve yörünge taşmasının hit-test'e karışmaması gerekir.
         visual.Cell.Children.Add(orbit);
         visual.Beads = orbit;
         if (_beadsClock is { } clock) orbit.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, clock);
     }
 
+    /// <summary>[v1.18.0] WPF <see cref="Rectangle"/> kalemi geometriyi <c>StrokeThickness/2</c> İÇERİ alır
+    /// (aynı gerekçe: bkz. <see cref="SelectionRingInset"/> dokümanı) — dolayısıyla YOLUN (kalem merkez
+    /// çizgisinin) <c>_beadsGeometry.Side</c> olması için dikdörtgenin kendisi kalınlık kadar BÜYÜK kurulur;
+    /// aksi halde yol <c>Side − StrokeThickness</c>'a küçülür ve desen/çevre hesabıyla uyuşmaz.</summary>
     private void ApplyBeadsGeometry(Rectangle orbit)
     {
-        orbit.Width = orbit.Height = _beadsGeometry.Side;
+        orbit.Width = orbit.Height = _beadsGeometry.Side + GraphBeads.StrokeThickness;
         orbit.RadiusX = orbit.RadiusY = _beadsGeometry.CornerRadius;
         orbit.StrokeDashArray = _beadsDash;
     }
@@ -1030,7 +1049,9 @@ public partial class GraphView : UserControl
         var spin = new DoubleAnimation
         {
             From = 0,
-            To = -_beadsGeometry.Perimeter,
+            // v1.18.0: kalınlık artık 1 değil (1.6) — dash birimi kalınlık ÇARPANI olduğu için hedef de
+            // buna BÖLÜNÜR (bkz. GraphBeads tip dokümanı).
+            To = -_beadsGeometry.Perimeter / GraphBeads.StrokeThickness,
             Duration = TimeSpan.FromMilliseconds(GraphBeads.CycleMs),
             RepeatBehavior = RepeatBehavior.Forever,
         };
@@ -1349,9 +1370,16 @@ public partial class GraphView : UserControl
         if (_markStep != MarkStep.None)
         {
             bool marked = _markedNodes.Contains(visual.Model.Id);
+            // [v1.18.0 "sıralı teslim dalgası"] Settle'da işaretli düğüm HEP BİRDEN değil, yandığı (dalga)
+            // sırayla koşu seviyesine iner — gecikme saf çekirdekte (SettleDelayMs), burada yalnız UYGULANIR.
+            // Çevre (işaretsiz) düğümde ve diğer adımlarda gecikme yoktur.
+            double delayMs = marked && _markStep == MarkStep.Settle
+                && _markOrder.TryGetValue(visual.Model.Id, out int order)
+                ? MarkingChoreography.SettleDelayMs(order, _markedNodes.Count)
+                : 0;
             ApplyOpacityTarget(visual,
                 MarkingChoreography.Opacity(_markStep, marked, MarkingChoreography.NodeEnvOpacity),
-                MarkingChoreography.GlideMs(_markStep, marked), EaseInOut);
+                MarkingChoreography.GlideMs(_markStep, marked), EaseInOut, delayMs);
             return;
         }
         if (_endStep != EndStep.None)
@@ -1382,24 +1410,9 @@ public partial class GraphView : UserControl
         }
 
         // Bekleme keyframe'lerle taşınır, bir timer DEĞİL: CSS'teki gecikmeli transition'ın karşılığı.
-        DoubleAnimationUsingKeyFrames animation;
-        if (holdMs > 0)
-        {
-            animation = new DoubleAnimationUsingKeyFrames();
-            animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
-                GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-            animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(
-                GraphNodeOpacity.Full, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs))));
-            animation.KeyFrames.Add(new SplineDoubleKeyFrame(
-                target,
-                KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(holdMs + GraphNodeOpacity.FadeMs)),
-                EaseStandard));
-        }
-        else
-        {
-            animation = MotionTokens.SplineTo(
-                target, TimeSpan.FromMilliseconds(glideMs ?? GraphNodeOpacity.GlideMs), EaseStandard);
-        }
+        var animation = holdMs > 0
+            ? DelayedSpline(GraphNodeOpacity.Full, target, holdMs, GraphNodeOpacity.FadeMs, EaseStandard)
+            : MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(glideMs ?? GraphNodeOpacity.GlideMs), EaseStandard);
 
         visual.OpacityAnimation = animation;
         visual.Body.BeginAnimation(OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
@@ -1407,17 +1420,38 @@ public partial class GraphView : UserControl
 
     /// <summary>[design v1.11.0 §9-4/§9-5] Koreografilerin ortak opaklık uygulayıcısı: hedef + süre + eğri
     /// dışarıdan gelir (koreografi kendi zamanlamasını taşır), "değişmediyse dokunma" kapısı ve
-    /// reduced-motion snap'i normal yolla AYNI kalır.</summary>
-    private void ApplyOpacityTarget(GraphNodeVisual visual, double target, double glideMs, KeySpline ease)
+    /// reduced-motion snap'i normal yolla AYNI kalır.
+    /// <para>[v1.18.0] <paramref name="delayMs"/> &gt; 0 ise düğüm önce (tam opaklıkta) BEKLER, sonra hedefe
+    /// akar — "sıralı teslim dalgası"nın node başına gecikmesi (bkz. <see cref="DelayedSpline"/>, ANINDA'nın
+    /// (0) özel hâli).</para></summary>
+    private void ApplyOpacityTarget(GraphNodeVisual visual, double target, double glideMs, KeySpline ease, double delayMs = 0)
     {
         if (target.Equals(visual.OpacityTarget)) return;
         visual.OpacityTarget = target;
 
         if (!AnimationsEnabledProvider()) { SnapOpacity(visual, target); return; }
 
-        var animation = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(glideMs), ease);
+        var animation = delayMs > 0
+            ? DelayedSpline(GraphNodeOpacity.Full, target, delayMs, glideMs, ease)
+            : MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(glideMs), ease);
         visual.OpacityAnimation = animation;
         visual.Body.BeginAnimation(OpacityProperty, animation, HandoffBehavior.SnapshotAndReplace);
+    }
+
+    /// <summary>Bir opaklık DP'sinin ortak "bekle, sonra eğriyle hedefe git" şekli — hold-fade
+    /// (<see cref="ApplyNodeOpacity"/>'nin <c>holdMs</c>'i) ve sıralı teslimin node gecikmesi
+    /// (<see cref="ApplyOpacityTarget"/>'in <c>delayMs</c>'i) AYNI üç-keyframe biçimini paylaşır (kopya YASAK):
+    /// <paramref name="from"/>'da iki DÜZ kare (0 ve <paramref name="delayMs"/>'te), sonra
+    /// <paramref name="delayMs"/>+<paramref name="glideMs"/>'te hedefe eğrili bir SPLINE kare.</summary>
+    private static DoubleAnimationUsingKeyFrames DelayedSpline(
+        double from, double target, double delayMs, double glideMs, KeySpline ease)
+    {
+        var animation = new DoubleAnimationUsingKeyFrames();
+        animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        animation.KeyFrames.Add(new DiscreteDoubleKeyFrame(from, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(delayMs))));
+        animation.KeyFrames.Add(new SplineDoubleKeyFrame(
+            target, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(delayMs + glideMs)), ease));
+        return animation;
     }
 
     private static void SnapOpacity(GraphNodeVisual visual, double target)

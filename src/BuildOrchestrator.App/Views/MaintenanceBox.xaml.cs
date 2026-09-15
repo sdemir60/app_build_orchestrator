@@ -85,6 +85,13 @@ public partial class MaintenanceBox : UserControl
         _resolveIconBox = Compose(PART_Resolve, "Icon.Unlink", AccessibilityNames.ResolveCyclesButton);
         _resolveIcon = IconPathOf(_resolveIconBox);
 
+        // [design v1.17.0 §9 fix round 1 · I-2] Koşan düğme disabled'dır — kendi IsMouseOver'ı asla true
+        // olmaz (WPF disabled öğeleri hit-test'ten dışlar). MaintenanceBox.xaml'in her düğmeyi AYRI AYRI saran
+        // HER ZAMAN etkin Border'ları gerçek hover sinyalini taşır (bkz. DsChrome.IsHoverProxyProperty'nin XML doc'u).
+        DsChrome.WireHoverProxy((Border)PART_Clean.Parent, PART_Clean);
+        DsChrome.WireHoverProxy((Border)PART_Optimize.Parent, PART_Optimize);
+        DsChrome.WireHoverProxy((Border)PART_Resolve.Parent, PART_Resolve);
+
         // Resolve'un işi MEVCUT döngü koşusudur (yüzey yer değiştirdi, iş değişmedi). Komut binding ile
         // bağlanır: DataContext sonradan gelse de düğme doğru komuta bakar.
         PART_Resolve.SetBinding(ButtonBase.CommandProperty, new Binding(nameof(RunViewModel.BuildCyclesCommand)));
@@ -108,12 +115,16 @@ public partial class MaintenanceBox : UserControl
     /// çağıran onu SAKLAR (<see cref="SetBusy"/>).</summary>
     private Viewbox Compose(Button button, string iconKey, string uiaName)
     {
-        if (TryFindResource("Ds.IconButton") is Style s) button.Style = s;
+        if (TryFindResource("Ds.Bar.IconButton") is Style s) button.Style = s;
         button.Width = ButtonWidth;
         button.Height = ButtonHeight;
         // Kutu tek parça okunur: düğmenin kendi kenarı yoktur, çerçeveyi kök Border taşır.
         button.BorderThickness = new Thickness(0);
-        var icon = IconVisual.Make(this, iconKey, "Brush.TextSecondary", IconSize);
+        // [design v1.17.0 §9 "Alt barda tek hover dili"] İkon artık SABİT bir fırça değil, düğmenin
+        // ANİMASYONLU Foreground'unu izler — nötr hover'da metin/ikon BİRLİKTE text-primary'ye geçer, koşarken
+        // (DsChrome.IsActive) amber-text'e. Rest değeri (Ds.Bar.IconButton'ın REST Foreground'u da
+        // TextSecondary'dir) DEĞİŞMEZ — yalnız mekanizma sabitten bağlıya döner.
+        var icon = IconVisual.BoundToForeground(button, iconKey, IconSize);
         button.Content = icon;
         AutomationProperties.SetName(button, uiaName);
         return icon;
@@ -155,13 +166,16 @@ public partial class MaintenanceBox : UserControl
         if (busy)
         {
             button.Content = new BuildingSpinner { Size = IconSize };
-            button.SetResourceReference(DsTransition.AnimatedBackgroundProperty, "Brush.AmberSoft");
+            // [design v1.17.0 §9] Amber-soft yüzey Ds.Bar.IconButton'ın IsActive tetikleyicisinden gelir
+            // (DsChrome.IsActive) — bar'ın tek hover diliyle AYNI mekanizma, manuel AnimatedBackground
+            // ataması YAPILMAZ.
+            DsChrome.SetIsActive(button, true);
             button.Opacity = 1;
         }
         else
         {
             button.Content = icon;
-            button.ClearValue(DsTransition.AnimatedBackgroundProperty);
+            DsChrome.SetIsActive(button, false);
             button.ClearValue(OpacityProperty);
         }
     }

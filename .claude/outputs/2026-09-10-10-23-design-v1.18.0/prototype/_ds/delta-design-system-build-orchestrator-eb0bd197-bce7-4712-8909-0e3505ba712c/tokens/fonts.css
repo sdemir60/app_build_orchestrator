@@ -1,0 +1,5 @@
+/* Delta Build Orchestrator — webfonts
+   Geist + Geist Mono (Vercel; Google Fonts üzerinden servis edilir).
+   NOT: Air-gapped Windows build için woff2 dosyaları self-host edilmelidir —
+   dosyalar sağlandığında buraya @font-face kuralları yazılıp import kaldırılır. */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500;600;700&display=swap');

@@ -213,17 +213,23 @@ public partial class ActionBarTests
     /// kaldırıldı ve işi kutunun üçüncü ikonu (unlink) devraldı. Gerekçe: Clean/Optimize/Resolve üçü de
     /// derleme ÖNCESİ hazırlık işleridir ve tasarım bunları tek kutuda toplar; üç etiketli düğme ayrıca barı
     /// 1240px minimumda taşırıyordu. Yer seçimi hâlâ anlamlıdır: ayracın öbür yanı sayaçlarındır ve kutu
-    /// Build'in yanına KONMADI — orası birincil aksiyonun yeridir.</para></summary>
+    /// Build'in yanına KONMADI — orası birincil aksiyonun yeridir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.17.0 §9 fix round 1 · I-2]</b> Sync artık ÇIPLAK bir çocuk değil,
+    /// kendi HER ZAMAN etkin hover-proxy <c>Border</c>'ının İÇİNDEDİR (koşarken disabled olduğu için WPF'in
+    /// hit-test dışlamasını atlatmak üzere — bkz. <c>DsChrome.IsHoverProxyProperty</c>). Eski iddia
+    /// <c>leftChildren[0]</c>'ın doğrudan <c>SyncButton</c> olduğunu varsayıyordu; artık bir <c>Border</c>'dır
+    /// ve <c>SyncButton</c> onun TEK çocuğudur.</para></summary>
     [StaFact]
     public void The_left_group_orders_sync_then_the_maintenance_box_then_a_separator_then_the_counter_chips()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
-        var leftGroup = Assert.IsType<StackPanel>(bar.SyncButton.Parent);
+        var leftGroup = Assert.IsType<StackPanel>(((Border)bar.SyncButton.Parent).Parent);
         var leftChildren = leftGroup.Children.Cast<UIElement>().ToList();
         Assert.Equal(4, leftChildren.Count);
-        Assert.Same(bar.SyncButton, leftChildren[0]);
+        var syncWrapper = Assert.IsType<Border>(leftChildren[0]);
+        Assert.Same(bar.SyncButton, syncWrapper.Child);
         Assert.Same(bar.MaintenanceBoxControl, leftChildren[1]);
         var leftSeparator = Assert.IsType<Border>(leftChildren[2]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), leftSeparator.Background);

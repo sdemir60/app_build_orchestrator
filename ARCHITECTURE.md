@@ -1781,6 +1781,33 @@ carries a `border-subtle` line along its bottom, and that line crosses the strip
 Layer headers are 24 px and stick **cumulatively**: the *i*-th visible header pins at `i × 24 px` and stays
 there as the ones below it pile up underneath.
 
+**A layer header is a navigation control, not just a label.** Hovering it opens one surface step — background to
+`surface-raised`, the bottom rule to `border`, the caps name and mono row count to `text-secondary` — over the
+existing 120 ms transition, with a hand cursor and a native `Jump to <layer>` tooltip that, like the row's icon
+buttons, opens after the OS hover delay (`AppTooltipDefaults.NativeDelayMs`, set on the header style) rather than
+instantly. Clicking it (in-flow or the stuck overlay copy — both share the one `HeaderTemplate`, so the wiring is one
+handler) scrolls the group's first visible row to sit just beneath the stacked headers above it; the target is pure
+arithmetic (`LayoutMetrics.JumpTargetForHeader`, §13.4), the motion is the same smooth scroll the list already uses
+elsewhere, instant under reduced motion. A click only counts if the press that started it landed on that same header
+(the header captures the mouse on press and checks it still holds capture on release) — pressing a row and dragging
+onto a header before releasing must not jump. Capture routes the release back to the header wherever the pointer is,
+so the release must also land inside the header's own bounds (press, drag away, release cancels, as a native click
+does), and the header must still be bound to the slot it was pressed on — a recycled in-flow container can carry the
+capture over to another layer's data. It never touches selection, the filter, the console or the graph — only the
+scroll position moves, and there is no collapse. The header is deliberately **mouse-only**: the design prototype asks
+for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard model (§13.9) already owns the
+arrow keys — rows are the only focusable stops, and `DirectionalNavigation="Contained"` walks exactly the focusable
+elements inside the list, headers included, the moment any of them becomes one. Keeping the header's root a `Border`
+rather than a `Control` keeps it `Focusable=false` for free, so it never enters the Tab order or the arrow-key
+traversal; making it a focus stop to answer Enter/Space would put headers in the path of "arrow keys move between
+rows," which the list's keyboard model does not allow. The stuck overlay copy is hit-test-visible for the same reason
+a header is clickable at all — most clicks land there, since it is the one users actually see. Because it sits beside
+the `ScrollViewer` rather than above it in the visual tree, a wheel notch over a stacked header would otherwise never
+reach the list *and* would skip the bookkeeping every other user-scroll already gets (cancelling an in-flight smooth
+scroll, pausing follow-mode, resetting the idle-resume window) — one handler folds both into a single `OnUserWheel`,
+called from the header band's forwarded wheel exactly as from the `ScrollViewer`'s own, so scrolling over the stack
+behaves identically to scrolling anywhere else in the list.
+
 The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
 the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
 headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
@@ -1850,6 +1877,26 @@ participate in the shared selection. A run that finishes with zero failures glow
 (`success-soft` → transparent over 1.1 s) — that is the *entire* success flourish; there is no green wave
 through the list or the graph.
 
+**Every row answers hover, one step apart — but the once-only flourish always wins first.** A clickable row (one
+carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in
+the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps to the quieter
+`surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold without implying a
+click that would do nothing. The selected row's own `surface-raised` outranks both and does not move under the
+pointer. A background step on a non-clickable row could in principle fight the done line's once-only flourish. The two
+*can* meet — the done line is exactly the row the flourish plays on, and it is never clickable — but the flourish does
+not budge for hover: it is a CSS `@keyframes` animation in the design that owns the row's background outright for its
+full 1.1 s regardless of what the pointer is doing, the same way the row's own colour or the typewriter cadence cannot
+be interrupted mid-flight either. `EventStreamRow` mirrors that ownership with one flag (`_glowRunning`): while the
+flourish's clock is live, `ApplyBackground` does not write to the ground at all — a mouse arriving mid-glow is
+*remembered*, not applied, and a mouse leaving mid-glow is forgotten the same way. Only when the flourish's own clock
+completes does `ApplyBackground` run once more, this time settling on whatever the row's *current* hover/selection
+state actually is — hover ground if the pointer is still there, transparent if it already left. The flourish still
+plays exactly once regardless — this dance is entirely about who owns the ground while it runs, and has no bearing on
+the one-shot guard in `StreamEventViewModel.GlowPlayed`. The active prompt line at the foot of the panel (§2.6, the
+live `{name} building…` indicator) deliberately sits outside all of this: it carries a fixed hand cursor and never
+steps its background on hover, in the design as much as here — it is a status line, not a stream row, and has nothing
+of its own to select.
+
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
 there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
 combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional situation, and
@@ -1863,6 +1910,30 @@ filter says "look at this set", and the two fought each other. A filter reaches 
 outside the visible set fade to the same 0.1 the unfocused set uses. The matching rule lives in one place
 (`ProjectFilter.Matches`): the graph is handed the list's visible names and never writes a second matcher, so
 the chip, the list and the graph can never disagree.
+
+**The whole bar speaks one hover language.** Every neutral control — Sync, the three maintenance icons, the
+counter chips, `N behind`, the branch/worktree/perf chips — steps to the same `neutral-700` ground with a
+`neutral-500` hairline on hover, and its label and icon whiten to `text-primary` together; a control that
+carries its own status colour (a status glyph, the building spinner or dot, the warning triangle) keeps that
+colour through the hover, because there colour is a status, not a hover state. `Σ` is the one partial exception:
+its icon rests one shade dimmer than its neighbours (`text-dim`, matching the design system's own chip-icon
+rule) rather than sharing the chip's own resting `text-secondary`, so it answers hover through its own channel
+— dim at rest, the same `text-primary` on hover — instead of simply following the chip's foreground the way the
+branch/worktree/perf icons do. A control that is already open or checked — a lit filter chip, an open
+branch/worktree popover — steps instead to `amber-soft-hover` with an `amber` hairline, and its text stays the
+fixed `amber-text` it already had: hover never overwrites what the state itself already said, and the two
+readings are mutually exclusive by construction (an unchecked and a checked control never answer the same
+trigger, so there is no race for the checked one to lose). The one control that opts out is the
+`Debug | Release` segment, where only the *unselected* option answers hover (`surface-raised`, `text-secondary`)
+— the selected one already sits on `surface-overlay`, and the two would blur into each other. Build and Stop
+keep their own primary/danger hover; they are the bar's one loud control. A disabled control never hovers, on
+top of the 0.45 dimming every control already carries. The one exception is a *running* Sync or maintenance
+job: its command is closed while the work is in flight, but the button is drawn live on purpose (below) — and
+WPF excludes a disabled control from hit-testing altogether (the same reason a disabled button needs
+`ToolTipService.ShowOnDisabled` to show a tooltip at all), so the button's own hover would never fire. Each of
+the four keeps its own always-live wrapper — an otherwise invisible `Border` occupying exactly its bounds —
+whose `MouseEnter`/`MouseLeave` is what
+actually answers hover in that window; the button's real `IsMouseOver` answers it everywhere else.
 
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
 itself); the branch chip (searchable popover); the `N behind` chip (§10.7) — drawn only when the distance is
@@ -1881,7 +1952,9 @@ branch, worktree and configuration controls lock; the perf chip stays live.
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
 1px×14 divider between the buttons. The buttons carry no label: three labelled buttons overflow the bar at its
 1240px minimum and crush the Build split-button, so the meaning lives in the tooltip, which stays readable
-while the button is dim (§13.8) — a button dimmed mid-run is exactly where the reason has to be legible. All
+while the button is dim (§13.8) — a button dimmed mid-run is exactly where the reason has to be legible. None of
+the three draws a hairline of its own on hover — the box's own border is the only edge the strip shows, so
+hovering a button answers with ground and icon only, size and dividers untouched. All
 three drive real commands, and **none of them writes its own enabled state**: that is the command's
 `CanExecute` alone, so the strip can never disagree with the engine behind it. *Clean* is the workspace reset
 and *Optimize* the workspace repair, both described below. *Resolve cycles* is the cycle run, disabled while
@@ -2011,7 +2084,13 @@ surface itself, request window included, so the Sync a Clean chains looks exactl
 the indicator belongs to the work, not to whoever started it. This is a **deliberate departure from the
 prototype**, which leaves the Sync button merely disabled and lets the ribbon's operation pill carry the whole
 story: two neighbouring jobs on one bar, one spinning and one inert, described the same state two ways. The
-pill's own narrative is unchanged; this is an addition to it.
+pill's own narrative is unchanged; this is an addition to it. Hovering a running button deepens the same
+surface once more — `amber-soft-hover` ground, and for Sync an `amber` hairline — the bar's single hover
+language extended to its one control whose command is closed but whose surface must still read as live; the
+*Sync* label stays out of amber either way, since the button is named, not restyled, by the work running under
+it. That hover answers through the button's always-live wrapper, not the button itself — the button is
+genuinely disabled in this window (its command's `CanExecute` is false), and WPF excludes a disabled control
+from hit-testing altogether, so its own `IsMouseOver` never becomes true no matter where the pointer sits.
 
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -2343,7 +2422,12 @@ two solve different problems, one a message WPF never delivers, the other a mess
 `LayoutMetrics` is the shared arithmetic behind sticky headers, follow-mode and selection scrolling: one
 cumulative offset table over mixed 36 px rows and 24 px headers, giving any row's absolute Y, the pinned header
 set at a given offset, and a row's scroll target. Sticky headers are an **overlay** (an `ItemsControl` above the
-`ScrollViewer` reading that table), not in-flow elements.
+`ScrollViewer` reading that table), not in-flow elements. A header click reads the same table through
+`JumpTargetForHeader`: the group's first row, less one header-height per stacked header above it (including
+itself), clamped to zero — the row lands exactly beneath the stack rather than under it. The formula never
+calls `OffsetOfRow` on a row that might not exist: it derives where the first row *would* start
+(`ContentTop + HeaderHeight`) so a layer emptied by the active filter still has a correct target for its
+header.
 
 ### 13.5 Console host
 
@@ -2352,6 +2436,57 @@ individually coloured, and MSBuild-verbose volume must not stall the UI. `TextBl
 `FlowDocument`/`RichTextBox` collapses under the volume; an `ItemsControl` of lines loses selection across
 lines.
 
+- **The header is one 28 px shell with two mutually exclusive contents**, never two controls. Its outer `Grid` has a
+  `*` column and an `Auto` column: the right block (Copy log + `N lines`) sits in the `Auto` column and never shrinks.
+  The left content's own inner `Grid` makes **every** column `Auto`, project name included — deliberately not `*`. A
+  `*` column always claims the whole remainder regardless of what its content actually needs, and every `Auto` column
+  after it starts at that column's *full* width rather than at the text's rendered edge; with the name in a `*`
+  column, a wide panel and a short name left a visible gap before the status glyph instead of the two sitting flush
+  (the prototype's name `span` is `white-space: nowrap` with no flex-grow — it shrinks, never grows, and its
+  neighbours are always immediately to its right). The real shrink-on-demand behaviour is computed by hand instead:
+  `ApplyProjectNameShrink` reads the *actual* rendered width of Back, the status glyph, the status name and whichever
+  badges are visible (each plus its own margin), subtracts their sum from the available space, and caps the name's
+  `MaxWidth` at what's left — recomputed after every `ShowProjectLog`/`RefreshStatus` call, on the right block's own
+  `SizeChanged` (Copy log appearing or disappearing, or the `N lines` text widening from 999 to 1000), and on the
+  header's own `SizeChanged` (a live splitter drag). Because WPF only refreshes `ActualWidth` after a layout pass, the
+  method forces one (`UpdateLayout`) before reading its neighbours — the same idiom `ConsoleView`'s scroll-pin logic
+  already uses for the same reason. In the narrative half only the caps `CONSOLE` label shows; in the project-log half
+  `Back` is a ghost/sm button (`Ds.Button.Ghost.Sm`, 24 px) whose content — the drawn `Icon.Back` arrow plus the word
+  "Back" — is built once in the constructor and bound to the button's own *animated* `Foreground`
+  (`IconVisual.BoundToForeground`), so the icon tracks the same hover fade the label text does; its `-6px` left margin
+  is not a clipping bug and not a full cancellation either — Ghost.Sm's own left padding is 10 px, so `-6` only takes
+  back six of those ten, leaving the icon 4 px further in than the panel's own 10 px inset, not flush with it. The
+  status glyph is a real `StatusGlyph` control (13 px) rather than a character — `building` draws its own spinning arc
+  through the control's embedded `BuildingSpinner`, every other state draws the dashed/solid ring. The glyph reads the
+  selected row's own `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never
+  keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
+  `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
+  (`StatusGlyph.LabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed vocabulary, so
+  word, colour and glyph are one call and cannot disagree. A dependency-issue badge and a cycle badge can appear
+  **together** (unlike the single triangle a project row shows, which picks one by priority): both are an 8 px
+  `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}` bindings so
+  they resolve as soon as the header is rooted in a live resource scope even while the badge itself stays collapsed.
+  The dependency-issue tooltip spells out every project by its short name (`RowWarning.DepIssueDetail`, comma-joined —
+  the header has room a row's slot does not, so it never falls back to the row's "+N" abbreviation); the cycle tooltip
+  is the same sentence the row's own triangle uses (`RowWarning.InCycle`), read from the one shared constant rather
+  than retyped. Both tooltips are explicit `ToolTip` objects declared in XAML with `AppTooltip.Side="Bottom"`, so they
+  open below the badge; code-behind only writes their content. Copy log is a plain `Ds.IconButton` (22×22, already the
+  design's "sm" size in this app) with no bespoke chrome; its copied-state green tint is written straight to
+  `Foreground` the same way `AboutDialog`'s Copy diagnostics button does, which means a hover during the 1.4 s window
+  can hand control back to the style's own animated brush — an accepted trade-off shared by both buttons.
+- **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs once, on
+  selection; a project already open can still change underneath the reader — a `Started` row reaching `Succeeded`, a
+  dependency-issue list arriving, a cycle membership settling — and none of those are selection events.
+  `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
+  (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
+  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
+  does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification
+  (`Fresh`, `Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
+  `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
+  word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
+  change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run
+  tick still owns only `SetLineCount` — status changes are comparatively rare (a handful per project per run) and are
+  pushed the instant they happen rather than polled, so the idle-tick stays allocation-free exactly as before.
 - The document stays **plain text**, so what the user copies is meaningful. Colour comes from an offset-based
   `DocumentColorizingTransformer`, and only lines whose *format is known* get one: MSBuild's own diagnostic
   shape (`… : error CS0103: …`, `… : warning MSB3277: …`) and the prefixes the application itself prints
@@ -2365,7 +2500,7 @@ lines.
   to the top pages the previous slice back in, in either mode. The backlog behind the window is mode-independent
   and grows as the window slides — lines trimmed off the top while the panel is following are moved into it, so
   nothing that scrolled past is unreachable. Only the *source* differs: a project page is seeded from the log on
-  disk (§5.5), the narrative from the view-model's full run buffer, which is what `← Back` hands over anyway.
+  disk (§5.5), the narrative from the view-model's full run buffer, which is what `Back` hands over anyway.
   Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
   streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
   unreachable even though the text was still buffered.
@@ -2396,7 +2531,7 @@ lines.
   way: the rows do leave, and the offset is reduced by exactly the height that left, so the reader's content
   does not move. Both are the mirror of the chunk loader's prepend compensation.
 - **Panel transitions are one piece, and the hinge is real.** Opening a project log and coming back with
-  `← Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
+  `Back` both settle the content **up from 14 px below**, hinged at its bottom edge, over 340 ms — a hinge,
   not a per-line cascade — so a three-line log and a two-hundred-line narrative open at the same rhythm. The
   prototype's `perspective(900px) rotateX(7deg)` is a genuine perspective projection: the receding top edge
   narrows, the advancing bottom edge widens. WPF's 2-D transforms are affine and cannot produce that
@@ -2448,21 +2583,19 @@ lines.
   during those 340 ms. Left alone they parked the panel one line short of the end: a small gap underneath and,
   because that is more than the 48 px threshold, an occasional `⌄ latest`.
 
-  **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the
-  other half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck
-  to the bottom again" while the editor still holds the *previous* document — at its top — measured a huge
-  distance and showed the pill for exactly as long as the pin took to run. It appeared and vanished on every
-  `← Back`. Ordered after the pin, the geometry is already right and the distance is zero. The run narrative
-  pins to the
-  **bottom**: the interesting thing is the latest line and the panel goes on following the stream. A project
-  log pins to the **top** and opens **not following**: what you are looking for in a build log is the first
-  error, and following would have thrown you to the bottom on the next live line. Scrolling down yourself
-  hands following back, by the same rule as any other user scroll. This is a deliberate departure from §5.1,
-  which pins both directions to the bottom.
+  **Reclaiming the follow happens after the pin, not before**, for the same reason and it is the whole of the other
+  half of that pill. The pill's visibility reads distance-from-bottom alone, so announcing "we are stuck to the bottom
+  again" while the editor still holds the *previous* document — at its top — measured a huge distance and showed the
+  pill for exactly as long as the pin took to run. It appeared and vanished on every `Back`. Ordered after the pin,
+  the geometry is already right and the distance is zero. The run narrative pins to the **bottom**: the interesting
+  thing is the latest line and the panel goes on following the stream. A project log pins to the **top** and opens
+  **not following**: what you are looking for in a build log is the first error, and following would have thrown you
+  to the bottom on the next live line. Scrolling down yourself hands following back, by the same rule as any other
+  user scroll. This is a deliberate departure from §5.1, which pins both directions to the bottom.
 - **A new operation empties the narrative in place.** The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
-  `← Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
+  `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
   by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
@@ -2471,6 +2604,40 @@ lines.
   2.8 % narrow with the rounding error spread unevenly between characters. On a monospace grid the cost is not
   only width but alignment. The bottom padding is wider than the top so the caret, which sits on the document's
   last line, is not flush against the horizontal scrollbar when one appears.
+- **The body's cursor is a plain arrow, and the row under it gets a full-width band.** A hand is reserved for
+  things that can be clicked; this panel has none, and AvalonEdit's own text I-beam was tried and dropped for
+  the same reason the event stream drops a third cursor language. The arrow is not a simple property assignment:
+  AvalonEdit's `SelectionMouseHandler` forces the I-beam (and, mid drag, an arrow over the current selection)
+  from inside the `QueryCursor` routed event, not from the static `Cursor` property — neither `TextArea` nor
+  `TextView` ever sets one. `ConsoleView` re-catches the same event one level up, on `TextEditor` itself, with
+  `handledEventsToo: true`: the bubble reaches AvalonEdit's handler first and reaches this one after. Only an
+  I-beam (or a position AvalonEdit never claimed at all) is overwritten with the arrow — AvalonEdit's own
+  `EnableHyperlinks` is on by default and resolves a real `Hand` over a link under Ctrl, and that decision is
+  left exactly as AvalonEdit made it, so a link in a build log still reads as clickable.
+
+  The row band is a `Rectangle` sitting behind the editor in the same cell — `TextEditor.Background` stays
+  transparent, so a rectangle drawn first shows through everywhere a glyph is not — filled with a local,
+  unfrozen brush that `MotionTokens.TransitionColor` steps between `Brush.Surface` and transparent, the same
+  primitive every other hover surface in the app uses. The colour only transitions when the band appears or
+  disappears; while it is already showing, the band moves instantly from line to line and only its geometry
+  changes. That state is tracked by the view itself rather than left to the primitive's own "already at the
+  target" guard, because that guard only short-circuits a brush that has never been animated: WPF keeps
+  `HasAnimatedProperties` set after an animation completes, so every call on a once-animated brush would build
+  and start a fresh animation. Because the rectangle is stretched to the width of the tilt host rather than the
+  editor's own content area, it reaches past the editor's padding to the panel's true edges, the full-bleed row
+  the design asks for — which is also why the mouse wiring lives on the editor control itself rather than on
+  the text view nested inside it: the text view sits *inside* that padding, and listening there alone would
+  have made the band vanish in exactly the strip it is supposed to cover. Which line is under the pointer is
+  answered by a pure helper (`ConsoleHoverBand.LineAt`, tested without any live editor) fed from the real
+  `TextView.VisualLines` on every `MouseMove`; a line only partially inside the viewport still gets a full
+  band, but that band is clipped to the text view's own rendered bounds so it cannot spill into the padding
+  above it or the horizontal scrollbar below. A resting pointer does not go stale, either — a scroll, a live
+  append, or a mode switch all replay the pointer's last known screen position through the same lookup, so the
+  band keeps following the line actually underneath it without needing its own clock; leaving the editor
+  (padding included) clears it. Nothing here opens a clock in the idle sense — the band only recomputes in
+  response to a real mouse or scroll event, per §14.5's idle rule. A pointer moving inside the banded line
+  returns before any lookup, and a refresh while the band is showing updates its position without starting a
+  colour animation.
 
 ### 13.6 Graph renderer
 
@@ -2655,13 +2822,23 @@ breaking the UI event budget. Spending most of that budget on a colour glide acr
 opacity is already animating is not defensible, and the budget is not negotiable.
 
 **Building is a bead orbit.** A project under construction carries dense amber dots circling a rounded-square
-track 2.8 px outside its node. The dots are a stroke dash pattern whose step divides the perimeter a whole
-number of times, so the pattern does not overlap itself where it closes; the orbit turns once every 4200 ms.
-Every orbit in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the
-perimeter is too, and N parallel builds would otherwise mean N infinite animations. The orbit fades in over
-420 ms and out over 640 ms, and the clock is released 700 ms after the last node stops building, so the dots
-fade *while still turning* rather than freezing in place. Resizing the panel changes the perimeter, so the
-pattern and the clock are rebuilt.
+track around its node. The distance to that track is not a fixed number: it is solved backward from the
+cell's own pitch, `(pitch − size − stroke thickness − 2) / 2`, clamped to 0.8–2.8 px — a dense graph pulls the
+track in toward the node, and a roomy one lets it drift out to the clamp's 2.8 px ceiling. The target on the
+far side of that formula is a 2 px gap between one node's dots and its neighbour's;
+so long as the clamp does not hit its floor, two orbits that would otherwise touch stay apart without the
+pitch search itself ever knowing beads exist. The dots are a stroke dash pattern whose step divides the
+perimeter a whole number of times, so the pattern does not overlap itself where it closes; the orbit turns once
+every 2400 ms. The pen is 1.6 px, and because WPF measures a dash pattern and a dash offset in multiples of
+stroke thickness rather than in pixels, both are divided by it to land on the absolute geometry the design
+specifies. The same pen also draws *inside* the rectangle it is given — the same rule the selection ring
+follows (above) — so the rectangle handed to WPF is a full pen wider than the track it is meant to trace, or
+the drawn path would fall a whole stroke short of the perimeter the dash pattern was computed for. Every orbit
+in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the perimeter is too,
+and N parallel builds would otherwise mean N infinite animations. The orbit fades in over 420 ms and out over
+640 ms, and the clock is released 700 ms after the last node stops building, so the dots fade *while still
+turning* rather than freezing in place. Resizing the panel changes the perimeter, so the pattern and the clock
+are rebuilt.
 
 **A skipped project is silent.** No orbit, no bright hold, no wave — it settles into its result colour and
 stays exactly as dim as the queue around it. An earlier version gave skipping the full announcement (a brief
@@ -2777,8 +2954,9 @@ resources — no hex, no milliseconds inline.
 
 One canonical gesture: clicking a project row, a graph node or a stream line selects that project **everywhere**
 — the graph pans to the node, the list scrolls to the row, the console switches to that project's log, the
-panel header enters `← Back` mode. Clicking the same element again, or `Back`, or Esc, clears it and follow-mode
-resumes. Text selection inside the console never clears the project selection.
+panel header switches to its project-log half with the `Back` button. Clicking the same element again, or
+`Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
+selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
@@ -2812,6 +2990,39 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
 | Status glyph · building spinner · status dot | Custom controls drawing rings and dots — the spinner is the glyph's dashed ring, rotating, so the dash pattern has one source and is converted to WPF's stroke-relative unit per stroke width. Rotation is the *only* thing that moves there: the glyph itself holds no animation clock, so it is not a motion owner and carries no motion seam |
 | Tracked text | Custom element for letter-spaced caps labels (§14.2) |
+
+The action bar's chip, secondary-button, icon-button and segment-item styles each carry a `Ds.Bar.*` sibling
+(`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
+`BasedOn` the shared style, adding only the bar's hover triggers (§13.2 "The whole bar speaks one hover
+language") so the base styles the rest of the app uses (the ShellRoot filter chip, row icons, dialogs) are
+untouched. `Ds.Bar.Chip`'s neutral-hover trigger and its checked-hover trigger key off opposite values of
+`IsChecked` (`False` and `True`), so exactly one of them ever matches a given chip and there is no ordering
+between them to reason about. A checked, hovered chip — a lit filter chip, an open branch/worktree popover chip
+— answers only the checked-hover trigger: ground and hairline step to `amber-soft-hover`/`amber`, and its text
+stays whatever `Ds.Chip`'s own `IsChecked` trigger already set (`amber-text`), because the checked-hover trigger
+never touches `Foreground`. An unchecked, hovered chip answers only the neutral trigger.
+
+A running Sync or maintenance button is not a `ToggleButton`, so it has no `IsChecked` to key a hover trigger
+off; `DsChrome.IsActive` is the attached stand-in, set the moment the job starts and cleared the moment it ends,
+read by the resting trigger the same way an open chip's `IsChecked` is. Its *hover* trigger, though, cannot key
+off the button's own `IsMouseOver` at all — the button is genuinely disabled for the run of the job (its
+command's `CanExecute` is false), and a disabled control is excluded from WPF's hit-testing outright, so its
+`IsMouseOver` never becomes true regardless of where the pointer sits. `DsChrome.IsHoverProxy` is the answer:
+each of the four buttons (Sync, Clean, Optimize, Resolve) sits inside its own always-enabled `Border`, sized to
+its exact bounds and otherwise invisible, and `DsChrome.WireHoverProxy` wires that Border's `MouseEnter`/
+`MouseLeave` straight onto the button's `IsHoverProxy` — WPF routes mouse-over to the nearest *enabled* ancestor
+when the element the pointer is over is disabled, which is exactly the wrapping Border, so the Border (not the
+button) is what actually receives `MouseEnter`/`MouseLeave` for as long as the button stays disabled. The
+active-hover trigger reads `IsHoverProxy`, not `IsMouseOver`, and asks nothing of `IsEnabled` either, since the
+button is deliberately drawn live while its own command is closed.
+
+Σ's icon answers hover through a third, narrower channel of the same shape: `DsChrome.IconForeground`, set by
+`Ds.Bar.Chip`'s own Setter (`text-dim`, resting) and by its neutral-hover trigger (`text-primary`) exactly the
+way `AnimatedForeground` carries the rest of the chip. It exists because Σ's chip shares `Ds.Chip`'s resting
+`Foreground` (`text-secondary`) with every other chip that has a label, but the design system draws a chip's
+*icon* one shade dimmer than its label at rest — binding Σ's icon straight to the chip's `Foreground` (the
+pattern the branch/worktree/perf icons use, where the icon's resting shade already equals the label's) would
+have raised Σ's icon to `text-secondary` at rest, losing that shade instead of merely failing to animate it.
 
 Three pieces of shared machinery keep the copies from multiplying:
 
@@ -3143,13 +3354,17 @@ would destroy the very rows the wave is marking.
 Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
-farewell** — every graph node outside the scope starts fading over 1120 ms, and 560 ms later the amber ones
-join it over 440 ms. The amber's shorter duration is deliberate: grey makes a much larger opacity drop and
-reads as *gone* halfway through, so ending the two at the same instant would look wrong; they finish 120 ms
-apart and are perceived as simultaneous. The farewell lives only in the graph — the list's own opacity holds
+farewell** — every graph node outside the scope starts fading to 0.18 over 1120 ms, and 560 ms later the scope
+begins its own **sequential handover**: each node dims straight to the run's own dim level (0.13 — the same
+value a queued node gets once the run actually begins), not all at once but in the order it lit, the first to
+light the first to dim, up to 40 ms apart per node (capped at a 700 ms tail) and 400 ms per glide. Landing on
+the run's own opacity rather than an intermediate amber is the point: a project that is already dimming when
+its own build starts does not visibly change again, so the handover from marking into running reads as one
+continuous motion instead of two. The farewell lives only in the graph — the list's own opacity holds
 at 1 through the whole choreography, because a run has visibly already begun by the time the farewell plays,
 and a second fade there did not read as new information, only as noise (measured). The wave itself is random
-rather than in build order by explicit decision.
+rather than in build order by explicit decision, and the handover reuses that same order — a project settles
+in the sequence it lit, not a freshly drawn one.
 
 Keeping the two surfaces together takes one deliberate wire. A row repaints itself from its own binding the
 instant it is marked, but the graph is a pushed channel: it is handed statuses, and if the wave does not hand
@@ -3170,12 +3385,16 @@ the button becomes *Stop*, the console records the request — and only the comm
 the scope and awaits a gate; the shell owns the timing and closes it.
 
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
-releases the gate but keeps its final step: the settled opacities (0.45 on the scope, 0.18 on the rest) stay
-on the graph while the engine plans. `runStarted` is what drops them — the shell pushes the run phase and the
-fresh statuses first and only then cancels the choreography, so the graph moves from the farewell straight
-into the run's own opacities in a single transition. The prototype starts the run in the same instant the
-sequence ends; under a real engine, holding the frame is the equivalent. Letting the sequence fall back to
-full brightness and dimming again seconds later, when the run began, read as a double fade.
+releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
+run's own opacity system gives a queued node, and 0.18 on the rest — stay on the graph while the engine plans.
+Landing exactly on the run's own dim level is what makes the hold invisible: nothing about the frame has to
+change when the run actually starts, because marking and running already agree on what a not-yet-building
+node looks like — there is no second value for the graph to step through on the way in.
+`runStarted` is what drops the hold — the shell pushes the run phase and the fresh statuses first
+and only then cancels the choreography, so the graph moves from the farewell straight into the run's own
+opacities with no step left to take. The prototype starts the run in the same instant the sequence ends; under
+a real engine, holding the frame is the equivalent. Letting the sequence fall back to full brightness and
+dimming again seconds later, when the run began, read as a double fade.
 
 Because nothing has been sent yet, **Stop during the choreography cancels the run rather than stopping it**:
 no `startRun`, no `stopRun`, and the console says `Cancelled — build not started`.
@@ -3871,8 +4090,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band | `App/Console/ConsoleView.xaml(.cs)` |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
+| Row hover band target-line geometry (pure) | `App/Console/ConsoleHoverBand.cs` |
 | Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
 | Batching, routing, render slice | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
 | Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |

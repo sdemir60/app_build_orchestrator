@@ -54,6 +54,12 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.17.0 §9 fix round 1 · I-2]</b> Her düğme artık ÇIPLAK bir çocuk
+    /// değil, kendi HER ZAMAN etkin hover-proxy <c>Border</c>'ının İÇİNDEDİR (koşarken disabled olduğu için
+    /// WPF'in hit-test dışlamasını atlatmak üzere — bkz. <c>DsChrome.IsHoverProxyProperty</c>). Ayraçlar
+    /// (index 1/3) SARILMAZ — onlar zaten kendi Border'ları, saracak bir düğme yok. Eski iddia
+    /// <c>children[0]/[2]/[4]</c>'ün doğrudan düğmeler olduğunu varsayıyordu; artık her biri o düğmeyi TEK
+    /// çocuk olarak taşıyan bir <c>Border</c>'dır.</summary>
     [StaFact]
     public void The_box_orders_clean_then_optimize_then_resolve_with_hairline_separators_between_them()
     {
@@ -63,9 +69,9 @@ public class MaintenanceBoxTests
         var strip = Assert.IsType<StackPanel>(Assert.IsType<Border>(box.Content).Child);
         var children = strip.Children.Cast<UIElement>().ToList();
         Assert.Equal(5, children.Count);
-        Assert.Same(box.CleanButton, children[0]);
-        Assert.Same(box.OptimizeButton, children[2]);
-        Assert.Same(box.ResolveButton, children[4]);
+        Assert.Same(box.CleanButton, Assert.IsType<Border>(children[0]).Child);
+        Assert.Same(box.OptimizeButton, Assert.IsType<Border>(children[2]).Child);
+        Assert.Same(box.ResolveButton, Assert.IsType<Border>(children[4]).Child);
 
         foreach (int i in new[] { 1, 3 })
         {
@@ -228,22 +234,59 @@ public class MaintenanceBoxTests
     /// "düğme tam da listede ve grafta turuncuyla işaretlenmiş projeleri derler, bağ görsel olarak kurulur"
     /// idi. v1.11.0 turuncuyu UI'dan tamamen çıkardı: o işaretin karşılığı artık yok (satırda tek amber üçgen
     /// kaldı), yani bağ kuracak bir renk de kalmadı. Döngünün varlığını düğmenin ENABLE durumu ve tooltip'i
-    /// söyler — ikisi de aşağıda ve komşu testlerde pinli.</para></summary>
+    /// söyler — ikisi de aşağıda ve komşu testlerde pinli.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.17.0 §9 "Alt barda tek hover dili"]</b> Eski iddia ikonun Stroke'unu
+    /// PAYLAŞILAN <c>Brush.TextSecondary</c> KAYNAĞIYLA (<c>Assert.Same</c>) kıyaslıyordu. İkon artık
+    /// <c>IconVisual.BoundToForeground</c> ile düğmenin ANİMASYONLU Foreground'una BAĞLI (nötr hover'da
+    /// metin/ikon BİRLİKTE text-primary'ye geçebilsin diye) — Stroke bu yüzden düğmenin KENDİ (donmamış) yerel
+    /// kopyasıdır, paylaşılan kaynakla referansça AYNI DEĞİLDİR. Kıyas artık RENK eşitliğiyle yapılır
+    /// (<c>DsResources</c> deseni, <c>SelectStyleTests</c>/<c>ProjectRowTests</c> ile AYNI).</para></summary>
     [StaFact]
     public void The_resolve_icon_stays_neutral_because_orange_left_the_ui()
     {
         var vm = NewVm();
         var (box, window) = Realize(vm);
 
-        Assert.Same(box.FindResource("Brush.TextSecondary"), box.ResolveIconBrush);
+        Assert.Equal(DsResources.TokenColor(box, "Brush.TextSecondary"), DsResources.ColorOf(box.ResolveIconBrush));
 
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node(@"C:\p\a.csproj", "A", 0), Node(@"C:\p\b.csproj", "B", 1)],
             [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
 
-        Assert.Same(box.FindResource("Brush.TextSecondary"), box.ResolveIconBrush);
+        Assert.Equal(DsResources.TokenColor(box, "Brush.TextSecondary"), DsResources.ColorOf(box.ResolveIconBrush));
         // ...ama düğme ARTIK anlamlıdır: döngü var, tooltip de onu söylüyor.
         Assert.Equal(BuildOrchestrator.App.AccessibilityNames.ResolveCyclesTooltip(1, 2), box.ResolveButton.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- [design v1.17.0 §9] ikon Foreground'u izler
+
+    /// <summary>[design v1.17.0 §9 "Alt barda tek hover dili" — mandated test] Bakım ikon düğmelerinin ikonu
+    /// artık SABİT bir fırça değil, düğmenin ANİMASYONLU <c>Foreground</c>'unu izler
+    /// (<c>IconVisual.BoundToForeground</c>) — nötr hover'da metin VE ikon BİRLİKTE <c>text-primary</c>'ye
+    /// geçer (README §9 v1.17.0 madde 1). Headless'ta gerçek mouse hover simüle edilemediği için (SelectStyleTests
+    /// deseni) doğrudan tetikleyici okumak yerine BURADA canlı bir üretim yolu kullanılır: koşan iş
+    /// (<c>DsChrome.IsActive</c>, <c>Ds.Bar.IconButton</c>'ın tetikleyicisi) düğmenin Foreground'unu GERÇEKTEN
+    /// <c>amber-text</c>'e taşır ve <see cref="MaintenanceBox.ResolveIconBrush"/> bunu İZLEMELİDİR — kanıtlanan
+    /// SABİT bir Stroke değil, Foreground'a kurulu CANLI bir <c>Binding</c>'tir (içerik busy'de spinner'a
+    /// dönse de Path nesnesi ve bağı YAŞAMAYA devam eder — bağın kaynağı sabit bir referanstır, görsel ağaca
+    /// bağlı değildir).</summary>
+    [StaFact]
+    public void The_resolve_icon_follows_its_buttons_foreground_when_the_button_goes_active()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        Assert.Equal(DsResources.TokenColor(box, "Brush.TextSecondary"), DsResources.ColorOf(box.ResolveIconBrush));
+
+        BuildOrchestrator.App.Controls.DsChrome.SetIsActive(box.ResolveButton, true);
+
+        Assert.Equal(DsResources.TokenColor(box, "Brush.AmberText"), DsResources.ColorOf(box.ResolveIconBrush));
+
+        BuildOrchestrator.App.Controls.DsChrome.SetIsActive(box.ResolveButton, false);
+
+        Assert.Equal(DsResources.TokenColor(box, "Brush.TextSecondary"), DsResources.ColorOf(box.ResolveIconBrush));
         GC.KeepAlive(window);
     }
 

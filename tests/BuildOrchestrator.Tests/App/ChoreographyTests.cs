@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -44,6 +45,10 @@ public class ChoreographyTests
     /// yazılmaz, yani sürücünün temizleme yazımı silinse bile assertion yeşil kalırdı.</summary>
     private static readonly RowFade StaleFade = new(0.3, MarkingChoreography.EnvGlideMs);
 
+    /// <summary>[v1.18.0] <c>SetMarking</c>'in üçüncü parametresi (dalga sırası) — yalnız Settle'da okunur;
+    /// onu sınamayan testler boş harita geçer.</summary>
+    private static readonly IReadOnlyDictionary<string, int> NoOrder = new Dictionary<string, int>();
+
     // ================================================================ saf çekirdek: açılış
 
     /// <summary>Dalga temposu: 110ms/node, ama zincir toplamı 1.1s'yi AŞMAZ — 36 projede de kısa kalır.</summary>
@@ -58,8 +63,16 @@ public class ChoreographyTests
         Assert.True(MarkingChoreography.StaggerMs(count) * (count - 1) <= MarkingChoreography.MaxWaveMs);
     }
 
-    /// <summary>Adımların sırası ve aralıkları (build-data.js:361-363): nötr 440 → dalga → sarı-gri an →
-    /// veda → nefes → koşu.</summary>
+    /// <summary>
+    /// Adımların sırası ve aralıkları (build-data.js:361-363, kuyruk v1.18.0): nötr 440 → dalga → sarı-gri
+    /// an → veda → <b>sıralı teslim (Settle) — koreografinin SON adımı</b> → koşu.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.18.0, README §9]</b> Eski `wait` (1860+W) ve `wait2` (2280+W) fazları
+    /// KALKTI: kapsam artık Settle'da bekleyip koşu başında 0.45'ten 0.13'e ATLAMIYOR, doğrudan koşu
+    /// seviyesine iniyor — bu yüzden koreografinin son adımı artık Settle'dır ve toplam süre
+    /// <c>2520+W</c>'den <c>2060+W</c>'ye indi (eski iki fazın 660ms'i, W'ye bağlı olmayan sabit payıyla
+    /// birlikte düştü).</para>
+    /// </summary>
     [Fact]
     public void The_steps_run_in_order_and_the_run_starts_after_the_last_one()
     {
@@ -71,9 +84,10 @@ public class ChoreographyTests
         Assert.Equal(440 + w, MarkingChoreography.StepAtMs(MarkStep.Hold, n));
         Assert.Equal(740 + w, MarkingChoreography.StepAtMs(MarkStep.DimEnv, n));
         Assert.Equal(1300 + w, MarkingChoreography.StepAtMs(MarkStep.Settle, n));
-        Assert.Equal(1860 + w, MarkingChoreography.StepAtMs(MarkStep.Wait, n));
-        Assert.Equal(2280 + w, MarkingChoreography.StepAtMs(MarkStep.Wait2, n));
-        Assert.Equal(2520 + w, MarkingChoreography.TotalMs(n));
+        Assert.Equal(2060 + w, MarkingChoreography.TotalMs(n));
+        // Eski `wait`/`wait2` fazları enum'dan da KALKTI (derleme zamanı pin) — beş adım kaldı, Settle SONUNCU.
+        Assert.Equal(5, MarkingChoreography.Steps.Count);
+        Assert.Equal(MarkStep.Settle, MarkingChoreography.Steps[^1]);
 
         double previous = -1;
         foreach (var step in MarkingChoreography.Steps)
@@ -84,26 +98,62 @@ public class ChoreographyTests
         }
     }
 
+    /// <summary>[design v1.18.0 README §9 "36 projede W ≈ 1465ms → koşu ~3.5s'de başlar"] TotalMs'in uç
+    /// örnekleri: tek elemanlı kapsamda dalga hiç yok (W = WaveTailMs), 36 projede spec'in kendi sayısı.</summary>
+    [Theory]
+    [InlineData(1, 380, 2440)]     // W = 0*stagger + 380
+    [InlineData(36, 1465, 3525)]   // README §9 v1.18.0'ın kendi örneği
+    public void TotalMs_matches_the_spec_examples(int count, double expectedW, double expectedTotal)
+    {
+        Assert.Equal(expectedW, MarkingChoreography.WaveSpanMs(count));
+        Assert.Equal(expectedTotal, MarkingChoreography.TotalMs(count));
+    }
+
+    /// <summary>[design v1.18.0 README §9 <c>settleStagger</c>] Sıralı teslimin tavanı: 700ms'lik kuyruk
+    /// 40ms/node'u AŞMAZ; JS <c>Math.round</c> paritesi için yuvarlama AwayFromZero'dur.</summary>
+    [Theory]
+    [InlineData(1, 0)]      // tek üyeli kapsamda gecikme yok
+    [InlineData(2, 40)]     // 700/1 = 700 → tavana çarpar
+    [InlineData(36, 20)]    // 700/35 = 20, tam sınırın altında
+    [InlineData(300, 2)]    // 700/299 ≈ 2.34 → 2
+    public void The_settle_stagger_caps_at_40ms_per_node_within_a_700ms_tail(int count, double expected) =>
+        Assert.Equal(expected, MarkingChoreography.SettleStaggerMs(count));
+
+    /// <summary>[design v1.18.0 §2.5 "sıralı teslim dalgası"] Node'un Settle gecikmesi dalga SIRASIYLA
+    /// (yeni bir random ÇEKMEZ) orantılıdır — ilk yanan ilk söner.</summary>
+    [Fact]
+    public void The_settle_delay_is_the_wave_order_times_the_settle_stagger()
+    {
+        const int n = 36;
+        double stagger = MarkingChoreography.SettleStaggerMs(n);
+
+        Assert.Equal(0, MarkingChoreography.SettleDelayMs(order: 0, n));       // ilk yanan hiç beklemez
+        Assert.Equal(stagger, MarkingChoreography.SettleDelayMs(order: 1, n));
+        Assert.Equal(stagger * 35, MarkingChoreography.SettleDelayMs(order: 35, n)); // son yanan tavanda bekler
+    }
+
     /// <summary>
-    /// <b>Örtüşen veda:</b> griler ÖNCE (1120ms) başlar, sarılar 560ms sonra (440ms) katılır ve ALGIDA aynı
-    /// anda biterler (sarı 120ms önce tamamlanır). Sarının süresinin kısa olması bir gözden kaçma değil,
-    /// ölçülmüş bir karardır.
+    /// <b>Örtüşen veda:</b> griler ÖNCE (1120ms) başlar, sarılar 560ms sonra katılır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.18.0]</b> Eski iddia: sarı 440ms'de (<c>MarkedGlideMs</c>) 0.45'e sönüyor ve
+    /// bu süre BİLEREK griden kısa tutuluyordu, öyle ki ikisi ALGIDA aynı anda bitiyordu (120ms fark). O
+    /// hedef 0.45'e özgüydü. v1.18.0'da sarı artık 0.45'te durmuyor, DOĞRUDAN koşu seviyesine
+    /// (<see cref="GraphNodeOpacity.RunDim"/>) iniyor ve süresi spec'in kendi sayısıyla (<c>SettleGlideMs</c>,
+    /// 400ms) değişti — "aynı anda biter" hedefi artık YOK (README §9 v1.18.0 bunu bir daha iddia etmiyor),
+    /// yalnız sarının griden KISA kalması korunur ki ilk düğüm hâlâ griler sönerken koşu seviyesine gelsin.</para>
     /// </summary>
     [Fact]
-    public void The_farewell_overlaps_so_the_greys_and_the_ambers_land_together()
+    public void The_farewell_overlaps_and_the_amber_stays_shorter_than_the_grey()
     {
         const int n = 4;
         double greyStart = MarkingChoreography.StepAtMs(MarkStep.DimEnv, n);
         double amberStart = MarkingChoreography.StepAtMs(MarkStep.Settle, n);
 
         Assert.Equal(560, amberStart - greyStart);                       // sarılar 560ms geç başlar
-        // ...ve ALGIDA aynı anda biterler: sarı 120ms ÖNCE tamamlanır. Fark bir gözden kaçma değil, ölçülmüş
-        // bir karardır — gri büyük bir opaklık düşüşü yaptığı için yolun ortasında "gitti" okunur
-        // (BuildApp.jsx:500 "sarılar ~120ms önce biter — algıda eşzamanlı").
         double greyEnds = greyStart + MarkingChoreography.EnvGlideMs;
-        double amberEnds = amberStart + MarkingChoreography.MarkedGlideMs;
-        Assert.Equal(120, greyEnds - amberEnds);
-        Assert.True(MarkingChoreography.MarkedGlideMs < MarkingChoreography.EnvGlideMs);
+        double amberEnds = amberStart + MarkingChoreography.SettleGlideMs;
+        Assert.Equal(160, greyEnds - amberEnds);                         // yeni fark (eskiden 120)
+        Assert.True(MarkingChoreography.SettleGlideMs < MarkingChoreography.EnvGlideMs);
     }
 
     /// <summary>Nötr anda kapsam da DÜZ GRİDİR — amber dalgayla gelir (BuildApp.jsx:296).
@@ -117,6 +167,30 @@ public class ChoreographyTests
         Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: true, MarkingChoreography.NodeEnvOpacity));
         Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Neutral, marked: false, MarkingChoreography.NodeEnvOpacity));
         Assert.Equal(1.0, MarkingChoreography.Opacity(MarkStep.Wave, marked: true, MarkingChoreography.NodeEnvOpacity));
+    }
+
+    /// <summary>
+    /// [design v1.18.0 §9 "settle hedefi ile koşu seviyesinin AYNI değer (0.13) olması bu tasarımın
+    /// çekirdeğidir"] <b>İşaretli node Settle'da doğrudan koşu seviyesine iner</b> — ikinci bir 0.13 sabiti
+    /// değil, <see cref="GraphNodeOpacity.RunDim"/>'in KENDİSİ. Çevre (işaretsiz) node hâlâ 0.18'dir
+    /// (değişmedi). Bu, <c>marking</c> → <c>running</c> geçişinde opaklık zıplaması olmamasının pin'idir:
+    /// koşu başlayınca sırada bekleyen bir node'un hedefi (<see cref="GraphNodeOpacity.Resolve"/>, queued/
+    /// discovered) AYNI sabittir.
+    /// </summary>
+    [Fact]
+    public void The_settle_target_for_a_marked_node_is_exactly_the_run_level_opacity()
+    {
+        double settleTarget = MarkingChoreography.Opacity(MarkStep.Settle, marked: true, MarkingChoreography.NodeEnvOpacity);
+        Assert.Equal(GraphNodeOpacity.RunDim, settleTarget);
+
+        double envTarget = MarkingChoreography.Opacity(MarkStep.Settle, marked: false, MarkingChoreography.NodeEnvOpacity);
+        Assert.Equal(MarkingChoreography.NodeEnvOpacity, envTarget); // 0.18, değişmedi
+
+        // ...ve koşu fazına geçtiğinde henüz sırası gelmemiş bir node'un hedefi TIPATIP aynı sayı — faz
+        // geçişinde CSS'in yeniden hesaplayacağı bir opaklık farkı kalmaz.
+        double runningQueuedTarget = GraphNodeOpacity.Resolve(
+            GraphStatus.Queued, GraphRunPhase.Running, hasSelection: false, inFocus: false, hovered: false);
+        Assert.Equal(settleTarget, runningQueuedTarget);
     }
 
     /// <summary>Dalga RANDOM akar — derleme sırasıyla DEĞİL (kullanıcı kararı). Sıra deterministiktir:
@@ -229,7 +303,7 @@ public class ChoreographyTests
         Assert.Same(greyToken, square.Stroke);       // ön-koşul: normalde PAYLAŞILAN token fırçası
         Assert.NotEqual(greyToken.Color, amberToken.Color);
 
-        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
+        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal), NoOrder);
         view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
 
         var lit = Assert.IsType<SolidColorBrush>(square.Stroke);
@@ -247,14 +321,120 @@ public class ChoreographyTests
         var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
         var square = view.NodeVisuals["a"].Square;
 
-        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal));
+        view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal), NoOrder);
         view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
         Assert.NotSame(TokenBrush(view, VisualStatus.Marked), square.Stroke); // ön-koşul: yerel fırçaya geçti
 
-        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal), NoOrder);
         view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Succeeded, VisualStatus.Succeeded)]);
 
         Assert.Same(TokenBrush(view, VisualStatus.Succeeded), square.Stroke);
+    }
+
+    /// <summary>
+    /// [design v1.18.0 §2.5 "sıralı teslim dalgası"] <b>Settle'da grafta node başına gecikme.</b> Üç işaretli
+    /// düğüm AYNI anda 0.13'e inmez — her biri kendi dalga sırası × <c>settleStagger</c> kadar bekler, sonra
+    /// 400ms ease-in-out'la iner. İşaretsiz (çevre) düğüm gecikmesiz, düz 0.18'dir (değişmedi).
+    /// </summary>
+    [StaFact]
+    public void Settle_staggers_each_marked_node_by_its_own_wave_order()
+    {
+        var view = Graph(
+            new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked),
+            new GraphNode("b", "b", 1, GraphStatus.Discovered, VisualStatus.Marked),
+            new GraphNode("c", "c", 2, GraphStatus.Discovered, VisualStatus.Marked),
+            new GraphNode("env", "env", 3, GraphStatus.Discovered, VisualStatus.Discovered));
+
+        var marked = new HashSet<string>(["a", "b", "c"], StringComparer.Ordinal);
+        var order = new Dictionary<string, int> { ["a"] = 0, ["b"] = 1, ["c"] = 2 };
+        double stagger = MarkingChoreography.SettleStaggerMs(marked.Count); // n=3 → min(40, round(700/2))=40
+
+        view.SetMarking(MarkStep.Settle, marked, order);
+
+        AssertSettleKeyframes(view, "a", delayMs: 0);
+        AssertSettleKeyframes(view, "b", delayMs: stagger);
+        AssertSettleKeyframes(view, "c", delayMs: stagger * 2);
+
+        // Çevre düğüm: gecikmesiz, tek keyframe'lik düz "hedefe git" (DelayedSpline'ın ÜÇ karesi değil).
+        var envAnimation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf("env"));
+        Assert.Single(envAnimation.KeyFrames);
+        Assert.Equal(MarkingChoreography.NodeEnvOpacity, envAnimation.KeyFrames[0].Value, 6);
+        Assert.Equal(MarkingChoreography.EnvGlideMs,
+            envAnimation.KeyFrames[0].KeyTime.TimeSpan.TotalMilliseconds, 6);
+    }
+
+    /// <summary>
+    /// Bir işaretli düğümün Settle animasyonu koşu seviyesine (0.13) <paramref name="delayMs"/>+400ms'de
+    /// varmalı. <paramref name="delayMs"/> &gt; 0 ise önce İKİ DÜZ kare (0 ve <paramref name="delayMs"/>'te
+    /// tam opaklıkta bekleme) gelir (<c>DelayedSpline</c>); ilk yanan node'da (<paramref name="delayMs"/> == 0)
+    /// gecikme yoktur ve animasyon çevre düğümle AYNI tek-kareli "hedefe git" şeklidir — bekleme SIFIR
+    /// süreliyse ekstra kareye gerek yoktur.
+    /// </summary>
+    private static void AssertSettleKeyframes(GraphView view, string nodeId, double delayMs)
+    {
+        var animation = Assert.IsType<DoubleAnimationUsingKeyFrames>(view.OpacityAnimationOf(nodeId));
+        if (delayMs > 0)
+        {
+            Assert.Equal(3, animation.KeyFrames.Count);
+            Assert.Equal(GraphNodeOpacity.Full, animation.KeyFrames[0].Value, 6);
+            Assert.Equal(TimeSpan.Zero, animation.KeyFrames[0].KeyTime.TimeSpan);
+            Assert.Equal(GraphNodeOpacity.Full, animation.KeyFrames[1].Value, 6);
+            Assert.Equal(delayMs, animation.KeyFrames[1].KeyTime.TimeSpan.TotalMilliseconds, 6);
+        }
+        else
+        {
+            Assert.Single(animation.KeyFrames);
+        }
+        var last = animation.KeyFrames[^1];
+        Assert.Equal(GraphNodeOpacity.RunDim, last.Value, 6);
+        Assert.Equal(delayMs + MarkingChoreography.SettleGlideMs, last.KeyTime.TimeSpan.TotalMilliseconds, 6);
+    }
+
+    /// <summary>
+    /// [design v1.18.0 §2.5] <b>"Zıplama yok" iddiasının gerçek kanıtı.</b> Ölçülen kısımlar teker teker
+    /// doğrudur (Settle hedefi == RunDim, GlideMs vb.) ama asıl garanti şudur: bir düğümün Settle'da başlattığı
+    /// gecikmeli animasyon nesnesi, hedef değeri DEĞİŞMEDİĞİ sürece KESİNTİYE UĞRAMADAN sürer —
+    /// <see cref="GraphView"/>'ın "değişmediyse dokunma" kapısı (<c>target.Equals(visual.OpacityTarget)</c>)
+    /// bunu sağlar. Üç senaryo pinlenir: (a) AYNI adım/kapsam tekrar itilirse (ör. dalganın son üyesi
+    /// işaretlendiğinde <c>PushGraph</c> yeniden çağrılır), (b) Settle sürerken başka bir düğümün statü itişi
+    /// (<c>UpdateStatuses</c>) gelirse, (c) koreografi biter (<c>SetMarking(None, …)</c>) ve graf koşu fazına
+    /// geçer — henüz sırası gelmemiş bir node'un hedefi (<c>Queued</c>, 0.13) Settle'daki hedefiyle AYNIYSA.
+    /// Kapı olmasa üçü de animasyonu SIFIRLAR ve node'un gecikmesi (dolayısıyla "sıralı" oluşu) her seferinde
+    /// baştan başlardı — (c)'de ayrıca marking→running geçişinde gerçek bir kare atlaması OLURDU.
+    /// </summary>
+    [StaFact]
+    public void The_settle_animation_survives_redundant_pushes_and_the_run_phase_handover()
+    {
+        var view = Graph(
+            new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked),
+            new GraphNode("b", "b", 1, GraphStatus.Discovered, VisualStatus.Marked));
+
+        var marked = new HashSet<string>(["a", "b"], StringComparer.Ordinal);
+        var order = new Dictionary<string, int> { ["a"] = 0, ["b"] = 1 };
+
+        view.SetMarking(MarkStep.Settle, marked, order);
+        var settleAnimation = view.OpacityAnimationOf("b"); // n=2 → stagger=40ms, b'nin gecikmesi > 0
+        Assert.NotNull(settleAnimation);
+
+        // (a) AYNI adım/kapsam/sıra TEKRAR itilir (ör. dalganın son PushGraph'ı) — animasyon YENİDEN
+        // KURULMAMALI, aksi halde b'nin gecikmesi sıfırlanır ve "kendi sırasında söner" kuralı bozulur.
+        view.SetMarking(MarkStep.Settle, marked, order);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b"));
+
+        // (b) Settle sürerken BAŞKA bir düğümün statü itişi gelir — b'nin animasyonunu KESMEMELİ.
+        view.UpdateStatuses([new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked)]);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b"));
+
+        // (c) Üretim sırası (MainWindow.ApplyMarkingToGraph → RunViewModel handler): koşu fazı ve statüler
+        // ÖNCE itilir (marking hâlâ Settle'da olduğu için opaklığı ETKİLEMEZ — marking > running önceliği),
+        // SONRA koreografi None'a düşürülür. b hâlâ Queued'sa (sırası gelmemiş) hedefi tam Settle'daki
+        // 0.13'le AYNIDIR — animasyon nesnesi burada da DEĞİŞMEMELİ.
+        view.RunPhase = GraphRunPhase.Running;
+        view.UpdateStatuses([new GraphNode("b", "b", 1, GraphStatus.Queued, VisualStatus.Queued)]);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b")); // marking hâlâ Settle — henüz etkilenmedi
+
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal), NoOrder);
+        Assert.Same(settleAnimation, view.OpacityAnimationOf("b")); // marking→running geçişinde zıplama YOK
     }
 
     /// <summary>Bir görsel durumun düğüm çerçevesi için çözülmüş token fırçası — test kendi anahtarını
@@ -395,7 +575,7 @@ public class ChoreographyTests
     {
         var (vm, driver) = Driven();
         int pushes = 0;
-        driver.PushToGraph = (_, _) => pushes++;
+        driver.PushToGraph = (_, _, _) => pushes++;
         var scope = vm.ScopeFor(RunMode.Build);
         Assert.Equal(2, scope.Count); // ön-koşul: A ve B
 
@@ -472,10 +652,10 @@ public class ChoreographyTests
     /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüm]</b> "Koşu zaten başlamış olduğu için listede ikinci bir
     /// sönme okunmuyordu." Eski iddia: veda fazında kapsam dışı satır
     /// <c>MarkingChoreography.RowEnvOpacity</c>'ye (eski değeri 0.3, 1120ms'de), kapsam içi satır Settle
-    /// adımında <see cref="MarkingChoreography.MarkedOpacity"/>'ye (0.45, 440ms'de) sönerdi. Artık satır
-    /// opaklığı koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR — sönme/geri gelme (veda + neon
-    /// finali) yalnız graf node'larında yaşar (<see cref="MarkingChoreography.NodeEnvOpacity"/> ve
-    /// <see cref="MarkingChoreography.MarkedOpacity"/> hâlâ ORADA, <c>GraphView</c> üzerinden okunur).</para>
+    /// adımında eski <c>MarkedOpacity</c>'ye (0.45, 440ms'de) sönerdi. Artık satır opaklığı koreografi boyunca
+    /// <see cref="RowFade.None"/>'da SABİTTİR — sönme/geri gelme (veda + neon finali) yalnız graf node'larında
+    /// yaşar (<see cref="MarkingChoreography.NodeEnvOpacity"/> hâlâ ORADA, <c>GraphView</c> üzerinden okunur;
+    /// kapsam içi hedef [v1.18.0] artık <see cref="GraphNodeOpacity.RunDim"/>'dir, 0.45 DEĞİL).</para>
     ///
     /// <para>Satırlar koreografiden ÖNCE <see cref="StaleFade"/> ile KİRLETİLİR — yeni kuralı gerçekten
     /// pinleyen şey budur: sürücünün her adımda yaptığı <see cref="RowFade.None"/> yazımı kaldırılırsa
@@ -536,29 +716,34 @@ public class ChoreographyTests
     }
 
     /// <summary>
-    /// [design v1.13.2 §3.2] <b>Doğal bitişte koreografi son adımında BEKLER.</b> Prototipte <c>startRun()</c>
-    /// koreografinin son anında çalışır (<c>build-data.js:445</c>): vedanın son opaklıkları (0.45/0.18) doğrudan
-    /// koşu opaklıklarına (1/0.13/0.2) geçer, arada 1.0'a geri dönüş yoktur. Burada komut koreografi bitince
-    /// gönderilir ve motor planlamaya saniyeler harcayabilir — o pencerede graf vedanın son hâlinde tutulur;
-    /// düşürmek yalnız <see cref="OperationChoreographer.Cancel"/>'ın işidir (koşu başladı ya da başlayamadı).
+    /// [design v1.13.2 §3.2 · v1.18.0] <b>Doğal bitişte koreografi son adımında BEKLER.</b> Prototipte
+    /// <c>startRun()</c> koreografinin son anında çalışır (<c>build-data.js:445</c>): vedanın son opaklıkları
+    /// (0.13 kapsam / 0.18 çevre) doğrudan koşu opaklıklarına (1/0.13/0.2) geçer, arada 1.0'a geri dönüş
+    /// yoktur. Burada komut koreografi bitince gönderilir ve motor planlamaya saniyeler harcayabilir — o
+    /// pencerede graf vedanın son hâlinde tutulur; düşürmek yalnız
+    /// <see cref="OperationChoreographer.Cancel"/>'ın işidir (koşu başladı ya da başlayamadı).
     ///
     /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden bitişte adım <see cref="MarkStep.None"/>'a düşüyor, graf
     /// 1.0'a GERİ geliyor ve <c>runStarted</c> gelince node'lar ikinci kez sönüyordu ("sönüş ve akış garip").</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — v1.18.0]</b> "Son adım" eskiden <c>Wait2</c> idi (kapsam 0.45'te bekliyordu);
+    /// o faz kalktı, koreografi artık <see cref="MarkStep.Settle"/>'da biter ve TUTULAN kare zaten koşu
+    /// seviyesindedir (0.13) — bu testin ismi de bunu yansıtır: "son adım" artık Settle.</para>
     /// </summary>
     [StaFact]
     public void When_the_choreography_ends_on_its_own_it_holds_its_last_step_until_the_run_takes_over()
     {
         var (vm, driver) = Driven();
         MarkStep lastPushed = MarkStep.None;
-        driver.PushToGraph = (step, _) => lastPushed = step;
+        driver.PushToGraph = (step, _, _) => lastPushed = step;
 
         var gate = driver.PlayAsync(vm.Projects, vm.ScopeFor(RunMode.Build));
         DispatcherPump.PumpUntil(() => gate.IsCompleted, TimeSpan.FromSeconds(6));
         Assert.True(gate.IsCompleted, "koreografi bitmedi — komut kapısı asılı kalırdı");
 
         Assert.False(driver.IsPlaying);
-        Assert.Equal(MarkStep.Wait2, driver.Step);          // son adım TUTULUR
-        Assert.Equal(MarkStep.Wait2, lastPushed);           // grafa None İTİLMEDİ: opaklıklar vedanın son hâlinde
+        Assert.Equal(MarkStep.Settle, driver.Step);         // son adım TUTULUR (eskiden Wait2)
+        Assert.Equal(MarkStep.Settle, lastPushed);           // grafa None İTİLMEDİ: opaklıklar vedanın son hâlinde
         Assert.Equal(2, vm.Projects.Count(r => r.Marked));  // işaret de durur — statü kanalı devralana dek
 
         driver.Cancel(vm.Projects);                         // runStarted → kabuk düşürür
@@ -613,7 +798,7 @@ public class ChoreographyTests
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
 
         view.BeginOperation();
-        view.SetMarking(MarkStep.Neutral, new HashSet<string>(StringComparer.Ordinal));
+        view.SetMarking(MarkStep.Neutral, new HashSet<string>(StringComparer.Ordinal), NoOrder);
 
         Assert.Equal(EndStep.None, view.EndStep);
         Assert.Equal(MarkStep.Neutral, view.MarkStep);
@@ -633,7 +818,7 @@ public class ChoreographyTests
         DispatcherPump.PumpUntil(() => view.EndStep == EndStep.Hold, TimeSpan.FromSeconds(2));
 
         view.BeginOperation();
-        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal));
+        view.SetMarking(MarkStep.None, new HashSet<string>(StringComparer.Ordinal), NoOrder);
 
         Assert.Equal(EndStep.None, view.EndStep);
     }

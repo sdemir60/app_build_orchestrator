@@ -13,6 +13,12 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 internal static class IconVisual
 {
+    /// <summary>[review R1 finding 3 — kopya YASAK] DS buton içeriğinin ikon↔etiket boşluğu
+    /// (_ds_bundle.js:104 <c>gap: 6</c>) — <c>ActionBar.ButtonContent</c> ve <c>ConsoleHeader</c>'ın Back
+    /// içeriği AYNI sayıyı ayrı ayrı taşıyordu; ikon-sarma deyiminin kendisi burada olduğu için sayı da
+    /// burada durur.</summary>
+    public const double LabelGap = 6;
+
     public static Viewbox Make(FrameworkElement resourceHost, string iconKey, string brushKey, double size, double viewBox = 24)
     {
         var path = new Path { StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round };
@@ -40,7 +46,27 @@ internal static class IconVisual
     /// <para><b>Kapsam:</b> KONTURLU ikonlar (chip ikonlarının tümü: branch/tree/chevron/chip-remove). Dolu
     /// ikonlar (<c>StrokeThickness</c> 0) için <see cref="Make"/> kullanılmalıdır.</para>
     /// </summary>
-    public static Viewbox BoundToForeground(Control chip, string iconKey, double size, double viewBox = 24)
+    public static Viewbox BoundToForeground(Control chip, string iconKey, double size, double viewBox = 24) =>
+        BoundTo(chip, Control.ForegroundProperty, iconKey, size, viewBox);
+
+    /// <summary>
+    /// [design v1.17.0 §9 fix round 1 · I-3] <see cref="BoundToForeground"/>'ın kardeşi, ama chip'in
+    /// <see cref="Control.Foreground"/>'una DEĞİL <see cref="DsChrome.IconForegroundProperty"/>'sine bağlanır —
+    /// tek tüketicisi Σ'dır: chip'in REST Foreground'u <c>text-secondary</c>iken Σ'nin ikonu tasarımda bir tık
+    /// daha soluk (<c>text-dim</c>) olmalı, doğrudan Foreground bağı bu farkı KAYBEDERdi (bkz.
+    /// <see cref="DsChrome.IconForegroundProperty"/>'nin XML doc'u). Kapsam ve kalınlık kuralı
+    /// <see cref="BoundToForeground"/> ile AYNIDIR (yalnız KONTURLU ikonlar).
+    /// </summary>
+    public static Viewbox BoundToIconForeground(Control chip, string iconKey, double size, double viewBox = 24) =>
+        BoundTo(chip, DsChrome.IconForegroundProperty, iconKey, size, viewBox);
+
+    /// <summary>[review round 2 finding 1 — kopya YASAK] <see cref="BoundToForeground"/> ve
+    /// <see cref="BoundToIconForeground"/>'ın PAYLAŞTIĞI gövde — ikisi de AYNI görseli (Path içindeki bir
+    /// Canvas'a sarılı Viewbox) kurar, TEK farkları Stroke'un bağlandığı KAYNAK DP'dir (chip'in kendi
+    /// Foreground'u ya da chip'e özel IconForeground kanalı). <paramref name="source"/> bir
+    /// <see cref="DependencyProperty"/> olduğu için <see cref="PropertyPath"/> ikisini de (hazır bir DP olan
+    /// <c>Control.ForegroundProperty</c> ve attached <c>DsChrome.IconForegroundProperty</c>) AYNI yoldan bağlar.</summary>
+    private static Viewbox BoundTo(Control chip, DependencyProperty source, string iconKey, double size, double viewBox)
     {
         ArgumentNullException.ThrowIfNull(chip);
         var path = new Path
@@ -51,7 +77,7 @@ internal static class IconVisual
         };
         path.SetResourceReference(Path.DataProperty, iconKey);
         path.SetResourceReference(Shape.StrokeThicknessProperty, iconKey + ".StrokeThickness");
-        path.SetBinding(Shape.StrokeProperty, new System.Windows.Data.Binding(nameof(Control.Foreground)) { Source = chip });
+        path.SetBinding(Shape.StrokeProperty, new System.Windows.Data.Binding { Path = new PropertyPath(source), Source = chip });
         var canvas = new Canvas { Width = viewBox, Height = viewBox };
         canvas.Children.Add(path);
         return new Viewbox

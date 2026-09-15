@@ -32,7 +32,14 @@ public static class AppTooltipDefaults
     /// kalmazdı) ama uygulama genelindeki GECİKMESİZ davranıştan çıkarılırlar: fare satır boyunca gezerken
     /// arka arkaya balon açılmaz, yalnız bir yerde bilerek beklenirse görünür.</para>
     /// </summary>
-    public static int NativeDelayMs => System.Windows.SystemParameters.MouseHoverTime.Milliseconds;
+    public static int NativeDelayMs => DelayMsFor(System.Windows.SystemParameters.MouseHoverTime);
+
+    /// <summary>[Task 9 · B — birim hatası] Saf, test edilebilir dönüşüm: <see cref="TimeSpan.TotalMilliseconds"/>
+    /// TOPLAM milisaniyedir. Eski kod bunun yerine <see cref="TimeSpan.Milliseconds"/>'i okuyordu — bu yalnız
+    /// TimeSpan'in 0-999 arası ALT-SANİYE bileşenidir, hover süresi 1 saniyeyi geçtiğinde (ör. 1.2 sn) 1200
+    /// yerine 200 dönerdi. Negatif bir hover süresi işletim sisteminden hiç gelmez, ama yuvarlama yine de
+    /// 0'a kenetlenir (savunmacı).</summary>
+    internal static int DelayMsFor(TimeSpan hoverTime) => Math.Max(0, (int)Math.Round(hoverTime.TotalMilliseconds));
 
     /// <summary>Bir öğeyi uygulama genelindeki gecikmesiz kipten çıkarır — bkz. <see cref="NativeDelayMs"/>.</summary>
     public static void UseNativeDelay(DependencyObject element)

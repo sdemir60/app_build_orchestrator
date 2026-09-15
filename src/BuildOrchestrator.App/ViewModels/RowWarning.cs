@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq;
 using BuildOrchestrator.App.Graph;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -17,6 +18,11 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public static class RowWarning
 {
+    /// <summary>[review R1 finding 3 — kopya YASAK] "Dependency issue: " önce satırın <see cref="For"/>'unda
+    /// İKİ, sonra başlığın <see cref="DepIssueDetail"/>'inde bir kez daha literal olarak yazılıyordu — üçü de
+    /// AYNI sözcüğü taşıdığı için tek kaynağa indirildi.</summary>
+    private const string DepIssuePrefix = "Dependency issue: ";
+
     /// <summary>Sıradan döngü üyeliği (prototip <c>warnText</c>, BuildApp.jsx:583).</summary>
     public const string InCycle = "In a dependency cycle";
 
@@ -44,7 +50,19 @@ public static class RowWarning
         // `Dependency issue: Sales.Core +2` — İLK adın kısası + kalanların SAYISI. Tam liste proje logundadır.
         string first = GraphNode.ShortLabel(depIssues[0], namePrefix);
         return depIssues.Count == 1
-            ? "Dependency issue: " + first
-            : string.Format(CultureInfo.InvariantCulture, "Dependency issue: {0} +{1}", first, depIssues.Count - 1);
+            ? DepIssuePrefix + first
+            : string.Format(CultureInfo.InvariantCulture, "{0}{1} +{2}", DepIssuePrefix, first, depIssues.Count - 1);
+    }
+
+    /// <summary>[v1.18.0 §9] Konsol başlığının dep-issue rozeti — satırın "+N" kısaltmasının AKSİNE tam
+    /// listeyi virgülle yazar (prototip <c>BuildApp.jsx:2616</c>: <c>depIssue.map(shortName).join(', ')</c>).
+    /// Kısaltma (<see cref="For"/>) daraltılmış slot içindir; başlığın tooltip'inde yer bol olduğu için
+    /// hiçbir proje adı gizlenmez. Kısa-ad türetimi AYNI otoriteden gelir (<see cref="GraphNode.ShortLabel"/>,
+    /// kopya YASAK).</summary>
+    public static string DepIssueDetail(IReadOnlyList<string> depIssues, string namePrefix)
+    {
+        ArgumentNullException.ThrowIfNull(depIssues);
+        string names = string.Join(", ", depIssues.Select(n => GraphNode.ShortLabel(n, namePrefix)));
+        return DepIssuePrefix + names + " — last successful output referenced";
     }
 }

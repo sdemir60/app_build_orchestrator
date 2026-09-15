@@ -15,7 +15,7 @@ namespace BuildOrchestrator.App.Console;
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
 /// <para><b>Metin İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
-/// (<see cref="ConsoleStatus.Name"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
+/// (<see cref="Controls.StatusGlyph.LabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
 /// (son başarıyla derlendiği commit, ya da hiç derlenmediği). Derlenmekte olan bir projenin tek satırı vardır:
 /// orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///
@@ -112,41 +112,4 @@ public static class ConsoleEmptyState
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
     private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";
-}
-
-/// <summary>
-/// [T56/3a] Proje-log modu panel başlığındaki statü glyph'i + statü adı + statü rengi eşlemesi — design-v1
-/// EN_STATUS ile birebir (Started→Building, Pending→Queued). Renkler token ANAHTARLARIdır (hardcode YASAK) —
-/// başlık kontrolü DynamicResource ile çözer.
-/// </summary>
-public static class ConsoleStatus
-{
-    public static string Glyph(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => "✓",
-        ProjectRowState.Failed => "✗",
-        ProjectRowState.Skipped => "—",
-        ProjectRowState.Started => "▸",
-        _ => "•",
-    };
-
-    public static string Name(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => "Succeeded",
-        ProjectRowState.Failed => "Failed",
-        ProjectRowState.Skipped => "Skipped",
-        ProjectRowState.Started => "Building",
-        ProjectRowState.Pending => "Queued",
-        _ => state.ToString(),
-    };
-
-    public static string BrushKey(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => "Brush.StatusSuccessText",
-        ProjectRowState.Failed => "Brush.StatusFailText",
-        ProjectRowState.Skipped => "Brush.StatusSkippedText",
-        ProjectRowState.Started => "Brush.AmberText",
-        ProjectRowState.Pending => "Brush.StatusQueuedText",
-        _ => "Brush.TextSecondary",
-    };
 }

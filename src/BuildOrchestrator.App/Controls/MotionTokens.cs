@@ -215,6 +215,14 @@ internal static class MotionTokens
     /// </summary>
     public static void TransitionColor(FrameworkElement host, SolidColorBrush brush, Color to)
     {
+        // [I-2 review round 1 · final review I-1] Kısa devre YALNIZ hiç animate edilmemiş (ya da snap yoluyla
+        // animasyonu sökülmüş) bir fırçada çalışır: zaten hedef renkteyse geçiş kurulmaz — tipik kullanım, bir
+        // satırın ilk uygulamasındaki Transparent→Transparent. WPF bir animasyon BİTTİKTEN sonra da (HoldEnd)
+        // HasAnimatedProperties'i true bırakır; bir kez animate edilmiş fırçada her çağrı yeni bir animasyon
+        // kurar. AYNI hedefle sık çağrılan bir tüketici (konsolun hover bandı gibi) bu guard'a GÜVENEMEZ —
+        // yalnız gerçek durum değişiminde çağırmalıdır.
+        if (!brush.HasAnimatedProperties && brush.Color == to) return;
+
         var fast = ResolveFast(host);
         if (!fast.Animate)
         {

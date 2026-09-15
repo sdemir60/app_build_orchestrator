@@ -116,6 +116,11 @@ public class TokenRealizeCoverageTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[v1.18.0 §9 — DEĞİŞEN KURAL] Rozet eskiden KIRMIZI dolu bir üçgendi (<c>Icon.DepWarn</c> +
+    /// <c>Brush.StatusFailText</c>, dolgu). Tasarım amber bir KONTUR üçgeni ister (<c>Icon.AlertTri</c> +
+    /// <c>Brush.AmberText</c>, satırın uyarı üçgeniyle AYNI dil). Data/Stroke/StrokeThickness XAML-yerel
+    /// <c>{DynamicResource}</c>'dır (kod-tarafı boyama YOK — sabit renk, ConsoleHeader.xaml), bu yüzden Collapsed
+    /// dalda bile (badge hiç görünür olmasa da) gerçek bir ağaca eklenir eklenmez çözülür.</summary>
     [StaFact]
     public void Console_header_realizes_and_its_dep_issue_badge_resolves_geometry_and_status_colour()
     {
@@ -127,12 +132,12 @@ public class TokenRealizeCoverageTests
         Assert.Equal(DsResources.TokenColor(host, "Brush.Surface"), DsResources.ColorOf(root.Background));
         Assert.Equal(DsResources.TokenColor(host, "Brush.TextFaint"), DsResources.ColorOf(header.LinesText.Foreground));
 
-        // Collapsed dal da olsa DynamicResource'lar okununca çözülür: ▲ dep-warn geometrisi (Icons.xaml) ve
-        // statü rengi bağlantısı burada kanıtlanır — anahtar adı sürüklenirse Data null kalır.
+        // Collapsed dal da olsa DynamicResource'lar okununca çözülür: ▲ amber kontur üçgeni geometrisi
+        // (Icons.xaml Icon.AlertTri) ve rengi burada kanıtlanır — anahtar adı sürüklenirse Data/Stroke null kalır.
         var badge = header.DepIssueBadge.Children.OfType<Viewbox>().Single();
         var glyph = ((Canvas)badge.Child).Children.OfType<System.Windows.Shapes.Path>().Single();
-        Assert.NotNull(glyph.Data);
-        Assert.Equal(DsResources.TokenColor(host, "Brush.StatusFailText"), DsResources.ColorOf(glyph.Fill));
+        Assert.Same(host.FindResource("Icon.AlertTri"), glyph.Data);
+        Assert.Equal(DsResources.TokenColor(host, "Brush.AmberText"), DsResources.ColorOf(glyph.Stroke));
         GC.KeepAlive(window);
     }
 }

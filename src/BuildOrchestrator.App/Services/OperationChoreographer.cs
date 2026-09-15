@@ -10,13 +10,14 @@ namespace BuildOrchestrator.App.Services;
 /// satırlara ve grafa bağlar.
 ///
 /// <para>Sıra: <b>nötr an → random dalga (kapsam tek tek amber'a yanar) → sarı-gri an → örtüşen veda →
-/// nefes.</b> Dalga, satırların <see cref="ProjectRowViewModel.Marked"/>'ını sırayla açarak oluşur —
-/// prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça animasyonu
-/// gerektirmez.</para>
+/// sıralı teslim (v1.18.0).</b> Dalga, satırların <see cref="ProjectRowViewModel.Marked"/>'ını sırayla açarak
+/// oluşur — prototipteki per-node <c>transition-delay</c>'in WPF karşılığı budur ve düğüm başına fırça
+/// animasyonu gerektirmez.</para>
 ///
 /// <para><b>Bitiş ve koşunun devralması.</b> Prototipte koşu koreografinin son anında başlar
-/// (<c>_mark(scope, () =&gt; startRun())</c>): vedanın son opaklıkları (0.45 / 0.18) doğrudan koşu
-/// opaklıklarına (1 / 0.13 / 0.2) geçer, arada "geri gelme" yoktur. Burada komut koreografi BİTİNCE gönderilir
+/// (<c>_mark(scope, () =&gt; startRun())</c>): [v1.18.0] vedanın son opaklıkları (0.18 çevre / 0.13 kapsam —
+/// kapsam artık DOĞRUDAN koşu seviyesinde) doğrudan koşu opaklıklarına (1 / 0.13 / 0.2) geçer, arada "geri
+/// gelme" yoktur. Burada komut koreografi BİTİNCE gönderilir
 /// (<c>RunViewModel.BeginRunAsync</c>'in kapısı) ve motor planlamaya (worktree → tarama → graf → incremental)
 /// saniyeler harcayabilir; bu pencerede ekran koreografinin <b>son adımında TUTULUR</b> (<see cref="Settle"/>) —
 /// <c>runStarted</c> gelince kabuk koşu fazını grafa iter ve ardından <see cref="Cancel"/> ile adımı düşürür,
@@ -34,6 +35,10 @@ public sealed class OperationChoreographer
     private readonly Func<bool> _animationsEnabled;
     private IReadOnlyList<ProjectRowViewModel> _scope = [];
     private int _runCount;
+    /// <summary>[v1.18.0] Kapsamdaki her üyenin DALGA sırası (<see cref="MarkingChoreography.Order"/>) —
+    /// grafın "sıralı teslim" gecikmesini (<see cref="MarkingChoreography.SettleDelayMs"/>) hesaplaması için
+    /// <see cref="PushToGraph"/> ile birlikte gider. Yeni bir random sıra DEĞİLDİR, dalgayla AYNIDIR.</summary>
+    private IReadOnlyDictionary<string, int> _orderById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
     public OperationChoreographer(Func<bool> animationsEnabled) =>
         _animationsEnabled = animationsEnabled ?? throw new ArgumentNullException(nameof(animationsEnabled));
@@ -44,8 +49,9 @@ public sealed class OperationChoreographer
     /// <summary>[test yüzeyi] Koreografi şu an oynuyor mu.</summary>
     public bool IsPlaying => _player.IsPlaying;
 
-    /// <summary>Grafa adım/kapsam iten kablo — <c>MainWindow</c> bağlar (kabuk bilgisi buraya sızmasın).</summary>
-    public Action<MarkStep, IReadOnlySet<string>>? PushToGraph { get; set; }
+    /// <summary>Grafa adım/kapsam/sıra iten kablo — <c>MainWindow</c> bağlar (kabuk bilgisi buraya sızmasın).
+    /// Üçüncü parametre (proje Id → dalga sırası) yalnız <see cref="MarkStep.Settle"/>'da anlamlıdır.</summary>
+    public Action<MarkStep, IReadOnlySet<string>, IReadOnlyDictionary<string, int>>? PushToGraph { get; set; }
 
     /// <summary>
     /// Koreografiyi baştan oynatır. Kapsam BOŞSA (ya da reduced-motion) hiç oynamaz: satırlar yalnız
@@ -75,15 +81,19 @@ public sealed class OperationChoreographer
         _runCount++;
         _scope = scope;
 
-        if (scope.Count == 0 || !_animationsEnabled())
+        int n = scope.Count;
+        var order = MarkingChoreography.Order(n, _runCount);
+        var orderById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < n; i++) orderById[scope[i].Id] = order[i];
+        _orderById = orderById;
+
+        if (n == 0 || !_animationsEnabled())
         {
             foreach (var row in scope) row.Marked = true;
             PushGraph();
             return;
         }
 
-        int n = scope.Count;
-        var order = MarkingChoreography.Order(n, _runCount);
         double stagger = MarkingChoreography.StaggerMs(n);
 
         var steps = new List<(double AtMs, Action Do)>();
@@ -100,9 +110,11 @@ public sealed class OperationChoreographer
     }
 
     /// <summary>
-    /// Doğal bitiş: bekleyen koşu komutu serbest bırakılır ama adım (<see cref="MarkStep.Wait2"/>) ve grafa
+    /// Doğal bitiş: bekleyen koşu komutu serbest bırakılır ama adım (<see cref="MarkStep.Settle"/>) ve grafa
     /// itilmiş opaklıklar <b>olduğu gibi KALIR</b> — ekran koşu başlayana dek vedanın son hâlinde bekler.
-    /// Sıfırlama yalnız <see cref="Cancel"/>'dadır (koşu başladı ya da başlayamadı).
+    /// Sıfırlama yalnız <see cref="Cancel"/>'dadır (koşu başladı ya da başlayamadı). [v1.18.0] Bu artık ZATEN
+    /// koşu seviyesindedir (<see cref="MarkingChoreography.Opacity"/>) — eski `wait`/`wait2` fazlarının
+    /// kalktığı sürümde bu bekleme koşuya devrederken hiçbir opaklık farkı bırakmaz.
     /// </summary>
     private void Settle()
     {
@@ -137,10 +149,10 @@ public sealed class OperationChoreographer
     /// [DEĞİŞEN KURAL — v1.13.2, ölçüm: "koşu zaten başlamış olduğu için listede ikinci bir sönme
     /// okunmuyordu"] Satırlara ARTIK koreografi opaklığı yazılmaz — her adımda <see cref="RowFade.None"/>
     /// (opaklık 1) yazılır. Eski kural: kapsam dışı satır <c>MarkingChoreography.RowEnvOpacity</c>'ye (eski
-    /// değeri 0.3), kapsam içi satır vedanın sarı yarısında <see cref="MarkingChoreography.MarkedOpacity"/>'ye
-    /// (0.45) sönerdi. Veda ve neon finali artık YALNIZ grafta yaşar — <see cref="PushGraph"/> yolu
-    /// DEĞİŞMEDİ, graf hâlâ aynı opaklık zincirini (<see cref="MarkingChoreography.Opacity"/> +
-    /// <see cref="MarkingChoreography.NodeEnvOpacity"/>) okur.
+    /// değeri 0.3), kapsam içi satır vedanın sarı yarısında eski <c>MarkedOpacity</c>'ye (0.45) sönerdi. Veda
+    /// ve neon finali artık YALNIZ grafta yaşar — <see cref="PushGraph"/> yolu DEĞİŞMEDİ, graf hâlâ aynı
+    /// opaklık zincirini (<see cref="MarkingChoreography.Opacity"/> + <see cref="MarkingChoreography.NodeEnvOpacity"/>)
+    /// okur ([v1.18.0] hedef artık <see cref="GraphNodeOpacity.RunDim"/>'dir, 0.45 DEĞİL).
     /// </summary>
     private void Enter(MarkStep step, IReadOnlyList<ProjectRowViewModel> allRows)
     {
@@ -166,5 +178,6 @@ public sealed class OperationChoreographer
     private void PushGraph() =>
         // Graf düğümleri proje Id'siyle anahtarlanır (ad benzersiz değildir) — küme de Id taşır.
         PushToGraph?.Invoke(Step,
-            new HashSet<string>(_scope.Where(r => r.Marked).Select(r => r.Id), StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(_scope.Where(r => r.Marked).Select(r => r.Id), StringComparer.OrdinalIgnoreCase),
+            _orderById);
 }

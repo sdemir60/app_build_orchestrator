@@ -141,7 +141,12 @@ public static class AccessibilityNames
     public const string RevealInExplorer = "Reveal in Explorer";
     public const string OpenInVisualStudio = "Open in Visual Studio";
 
-    // ---- [A13/T5] Konsol paneli ----
+    // ---- [A13/T5 → v1.18.0 §9] Konsol paneli ----
+    /// <summary>[v1.18.0] Proje-log başlığının Back butonu. Content'i artık bir ikon + metin
+    /// <c>StackPanel</c>'dır (düz "← Back" metni DEĞİL), bu yüzden WPF'in peer'ı adı içerikten türetemez —
+    /// ad AÇIKÇA verilir (<c>AddLayer</c>/<c>CopyLog</c> ile aynı kural).</summary>
+    public const string BackButton = "Back";
+
     /// <summary>Konsol başlığındaki ikon-yalnız copy butonu. AYNI metin hem tooltip hem UIA-adıdır (sayaç
     /// chip'leriyle aynı kural) — buton başarılı kopyada tooltip'i geçici "Copied"e çevirir, adı ise
     /// DEĞİŞMEZ: ad kontrolün işlevini tarif eder, anlık geri bildirimini değil.</summary>

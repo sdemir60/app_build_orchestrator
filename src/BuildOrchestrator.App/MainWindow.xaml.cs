@@ -32,6 +32,12 @@ public partial class MainWindow : Window
     private readonly CancellationTokenSource _consoleCts = new();
     private readonly DispatcherTimer _elapsedTimer = new() { Interval = TimeSpan.FromMilliseconds(200) };
 
+    /// <summary>[v1.18.0 review R1 finding 2] Proje-log başlığının statüsünü/rozetlerini kendi SATIRININ
+    /// değişimine bağlayan abonelik hedefi — <see cref="TrackHeaderRow"/> tek yerden kurar/söker. Başlık
+    /// eskiden yalnız SEÇİM değiştiğinde tazeleniyordu; seçili bir proje derlerken bitirirse (Started→Succeeded)
+    /// glyph sonsuza dek dönerdi ve dep-issue/cycle rozetleri bayatlardı.</summary>
+    private ProjectRowViewModel? _headerTrackedRow;
+
     // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
     // [A13/T1 fix-1 · C1] Store ARTIK ctor'dan gelir (varsayılan üretim yolu birebir aynı: JsonUiStateStore
     // + DefaultPath). Gerekçe <see cref="MainWindow(EngineHost, RunViewModel, ConsoleBatcher, ResourceDictionary, IUiStateStore)"/>'da.
@@ -328,7 +334,7 @@ public partial class MainWindow : Window
             if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
             await StartEngineAsync();
         };
-        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); };
+        Closed += (_, _) => { _consoleCts.Cancel(); _console.Complete(); _elapsedTimer.Stop(); TrackHeaderRow(null); };
 
         // [M-3 fix wave] Oturum kapanışı Closing'i tetikler ama e.Cancel'i YOK SAYAR — _exiting hâlâ false ise
         // OnClosing tray'e düşer ve K5 balloon'unu yakabilir. SessionEnding (Closing'den ÖNCE) _exiting'i erken set eder.
@@ -545,7 +551,8 @@ public partial class MainWindow : Window
             if (row is null) return;
 
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
-            Shell.ConsoleHeaderControl.ShowProjectLog(row.Name, row.State, row.HasDepIssue, _vm.GetActiveLineCount());
+            Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
+            TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
@@ -564,8 +571,44 @@ public partial class MainWindow : Window
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
+        TrackHeaderRow(null); // [R1 finding 2] anlatıya dönüldü — eski satırın aboneliği bırakılır
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
+    }
+
+    /// <summary>[v1.18.0 review R1 finding 2] Başlığın statü/rozetlerini SEÇİLİ satırın kendi
+    /// <see cref="INotifyPropertyChanged"/> bildirimine bağlar (bir önceki satırın aboneliği önce bırakılır —
+    /// tek abonelik). <paramref name="row"/> null ise (anlatıya dönüş) yalnız bırakılır.
+    ///
+    /// <para>[test yüzeyi] <c>internal</c>: gerçek bir motor round-trip'i olmadan (fake <c>EngineHost</c>
+    /// <c>SendAsync</c>'i SENKRON fırlatır — bkz. <see cref="OnSelectedProjectChangedAsync"/>'in kendi
+    /// yorumu) proje-log moduna GERÇEKTEN girilemez; testler bu iki satırı (<c>ShowProjectLog</c> +
+    /// <c>TrackHeaderRow</c>) <c>OnSelectedProjectChangedAsync</c>'in yaptığı SIRAYLA doğrudan çağırır — bu,
+    /// <c>ConsoleHeaderLiveRefreshTests</c>'in GERÇEK abonelik/bırakma mantığını (bu metodun kendisini) test
+    /// etmesini sağlar, taklit bir kopyasını değil.</para></summary>
+    internal void TrackHeaderRow(ProjectRowViewModel? row)
+    {
+        if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged -= OnHeaderTrackedRowChanged;
+        _headerTrackedRow = row;
+        if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged += OnHeaderTrackedRowChanged;
+    }
+
+    /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
+    /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
+    /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
+    /// (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
+    /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
+    private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        switch (e.PropertyName)
+        {
+            case nameof(ProjectRowViewModel.State):
+            case nameof(ProjectRowViewModel.Status):
+            case nameof(ProjectRowViewModel.DepIssues):
+            case nameof(ProjectRowViewModel.InCycle):
+                Shell.ConsoleHeaderControl.RefreshStatus((ProjectRowViewModel)sender!);
+                break;
+        }
     }
 
     /// <summary>[3b] ConsoleHeader.BackRequested'tan çağrılır: kart seçimini kaldırır → konsol run anlatısına
@@ -685,9 +728,10 @@ public partial class MainWindow : Window
     /// olmazsa graf ancak koşu tikinin (200ms) insafıyla tazelenir — 36 projede tempo ~31ms/node olduğu için
     /// dalga listede akıcı, grafta kesik kesik görünür. Tasarım ikisinin SENKRON olmasını ister (§9-4).</para>
     /// </summary>
-    internal void ApplyMarkingToGraph(MarkStep step, IReadOnlySet<string> markedProjectIds)
+    internal void ApplyMarkingToGraph(
+        MarkStep step, IReadOnlySet<string> markedProjectIds, IReadOnlyDictionary<string, int> markOrder)
     {
-        Shell.GraphHost.SetMarking(step, markedProjectIds);
+        Shell.GraphHost.SetMarking(step, markedProjectIds, markOrder);
         PushGraphStatuses();
     }
 
@@ -760,11 +804,11 @@ public partial class MainWindow : Window
                 // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
                 // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
                 //
-                // [SIRA ÖNEMLİ — design v1.13.2 §3.2] Koşu fazı ve statüler grafa koreografi düşürülmeden ÖNCE
-                // itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
+                // [SIRA ÖNEMLİ — design v1.13.2 §3.2 · v1.18.0] Koşu fazı ve statüler grafa koreografi düşürülmeden
+                // ÖNCE itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
                 // Cancel adımı düşürdüğü anda grafın normal opaklık yolu artık koşu fazını görür — vedanın son
-                // hâlinden (0.45/0.18) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel önce
-                // herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
+                // hâlinden (0.13 kapsam / 0.18 çevre) koşu opaklıklarına (1/0.13/0.2) TEK geçiş. Ters sırada Cancel
+                // önce herkesi 1.0'a getirir, PushGraphRunPhase sonra yeniden söndürürdü.
                 PushGraphRunPhase();
                 PushGraphStatuses();
                 if (_vm.IsRunning || !_vm.IsStarting)
