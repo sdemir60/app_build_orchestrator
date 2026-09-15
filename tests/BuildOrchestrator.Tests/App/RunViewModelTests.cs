@@ -1687,14 +1687,22 @@ public class RunViewModelTests
     }
 
     /// <summary>
-    /// [Task 4 review — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA koşullu
-    /// SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı gerekçe — üye
-    /// grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez; "rebuilds when it
-    /// builds successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz. Satır bugünkü (Task 4
-    /// öncesi) davranışa döner: <c>UpToDate</c>, <c>Conditional=false</c>.
+    /// [Task 4 review round 1+2 — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA
+    /// koşullu SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı
+    /// gerekçe — üye grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez;
+    /// "rebuilds when it builds successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — round 2]</b> Round 1'in iddiası satırın <c>UpToDate</c>'e (Task 4 öncesi
+    /// davranış) döndüğüydü. Eksikti: grup YAKINSADIYSA (<c>CycleUnsettled=false</c>) defter GERÇEKTEN not+kök
+    /// yazar ve bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi <c>WaitingForDependency</c> okur
+    /// (<c>WillBuild</c> döngü kapsamı yüzünden yine <c>false</c>'a zorlanır, ama gerekçe bir disk olgusu
+    /// olarak hesaplanmaya devam eder — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
+    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Artık canlı geçiş
+    /// motorun bir sonraki önizlemesiyle BİREBİR AYNI üçlüyü (<c>WillBuild=false</c>, <c>WaitingForDependency</c>,
+    /// <c>Conditional=false</c>) üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te de gelir).</para>
     /// </summary>
     [Fact]
-    public async Task A_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_without_being_conditional()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1706,10 +1714,46 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         Assert.True(row.InCycle); // ön-koşul
-        Assert.False(row.Conditional);
-        Assert.False(row.WillBuild);
-        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
-        Assert.Null(row.DependencyRoots);
+        Assert.False(row.Conditional);   // TEK BAŞINA asla koşullu değil — grup mekanizmasına tabi
+        Assert.False(row.WillBuild);     // döngü kapsamı yüzünden zorlanır (Build bir SCC'yi asla derlemez)
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // ama disk olgusu budur
+        Assert.Equal(["Up"], row.DependencyRoots);
+        Assert.NotNull(row.LastBuiltAt);
+    }
+
+    /// <summary>
+    /// [Task 4 review round 2 — I1] Bir sonraki Sync (post-round-2) bu üye için AYNEN bu üçlüyü üretir — etiket
+    /// TİTREMEMELİ. Bilinçli olarak eski (round 1) <c>UpToDate</c> tahminiyle de çalıştırılıp KIRMIZI gösterildi
+    /// (bkz. yorum satırı), sonra doğru değere geri alındı.
+    /// </summary>
+    [Fact]
+    public async Task A_converged_cycle_member_wait_label_survives_a_sync_without_flipping()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
+            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+        var beforeSync = Label();
+        // Reason bir disk olgusudur ve Conditional=false olduğu için DecisionLabel default'a düşer — sıradan
+        // affected/modified, "waiting" sözü VERİLMEZ (üye tek başına asla koşullu değil).
+        Assert.Equal("affected", beforeSync.Word);
+        Assert.True(beforeSync.Stale);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator: outOfScope⇒WillBuild=false, gerekçe yine de
+        // WaitingForDependency; AppliesTo: WillBuild==true şartı düşer ⇒ Conditional=false).
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.WaitingForDependency,
+            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: false, DependencyRoots: ["Up"])]));
+
+        var afterSync = Label();
+        Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
     }
 
     /// <summary>

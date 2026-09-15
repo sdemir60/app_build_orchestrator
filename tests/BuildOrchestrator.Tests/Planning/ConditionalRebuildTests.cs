@@ -121,31 +121,39 @@ public class ConditionalRebuildTests
         Assert.False(ConditionalRebuild.AppliesTo(Waiting(willBuild: false), RunMode.Cycles, false, false));
     }
 
-    // ---------------------------------------------------------------- AppliesAfterSuccess [Task 4 review — I1]
+    // ---------------------------------------------------------------- AfterSuccess [Task 4 review round 1+2 — I1]
 
     [Fact]
-    public void a_plain_project_succeeding_with_a_dep_issue_applies_after_success()
-        => Assert.True(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: false, ["Up"]));
+    public void a_plain_project_succeeding_with_a_dep_issue_waits_and_is_conditional()
+        => Assert.Equal((true, WillBuildReason.WaitingForDependency, true),
+            ConditionalRebuild.AfterSuccess(inCycle: false, cycleUnsettled: false, ["Up"]));
 
     [Fact]
-    public void a_success_without_a_dep_issue_never_applies()
-        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: false, depIssues: null));
+    public void a_success_without_a_dep_issue_is_up_to_date()
+        => Assert.Equal((false, WillBuildReason.UpToDate, false),
+            ConditionalRebuild.AfterSuccess(inCycle: false, cycleUnsettled: false, depIssues: null));
 
-    /// <summary>[I1 (i)] Bir SCC üyesi TEK BAŞINA hiçbir zaman koşullu değildir (<see cref="AppliesTo"/>'nun
-    /// <c>!cycleGroupMember</c> kuralıyla AYNI) — dep-issue'lu bitse bile: bir Cycles koşusunda grubuyla
-    /// derlenir (turlar), bir Build koşusunda zaten hiç dispatch edilmez. "Rebuilds when it builds
-    /// successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.</summary>
+    /// <summary>
+    /// [I1 (i) · round 2] Bir SCC üyesi TEK BAŞINA hiçbir zaman koşullu DEĞİLDİR (<see cref="AppliesTo"/>'nun
+    /// <c>!cycleGroupMember</c> kuralıyla AYNI) — ama bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi
+    /// yine de <c>WaitingForDependency</c> okur ("etiket bir disk olgusudur" kuralı, §13.2): defter GERÇEKTEN
+    /// not+kök yazdı (grup YAKINSADI, sonuç güvenilir), yalnız <c>WillBuild</c> döngü kapsamı yüzünden
+    /// <c>false</c>'a ZORLANIR. Canlı geçiş bu ÜÇLÜYÜ BİREBİR üretmeli — aksi hâlde etiket bir sonraki Sync'te
+    /// FLİP EDER (round 1'in bıraktığı boşluk: <c>UpToDate</c> canlı → <c>WaitingForDependency</c> Sync sonrası).
+    /// </summary>
     [Fact]
-    public void a_cycle_member_never_applies_after_success_even_with_a_dep_issue()
-        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: true, cycleUnsettled: false, ["Up"]));
+    public void a_converged_cycle_member_with_a_dep_issue_waits_without_being_conditional()
+        => Assert.Equal((false, WillBuildReason.WaitingForDependency, false),
+            ConditionalRebuild.AfterSuccess(inCycle: true, cycleUnsettled: false, ["Up"]));
 
-    /// <summary>[I1 (ii)] Yakınsamayan bir grubun üyesi (<c>trustedResult=false</c>, RunCoordinator onu PERSIST
-    /// ETMEZ) her zaman bir döngü üyesidir — <paramref name="inCycle"/> zaten kapsar; <c>cycleUnsettled</c>
-    /// tek başına da (varsayımsal olarak inCycle=false ile birleşse bile) hiçbir zaman "koşullu" sonucunu
-    /// tetiklemez, çünkü koşulluluk tekil projelere ait bir kavramdır.</summary>
+    /// <summary>[I1 (ii)] Yakınsamayan bir grubun tavana dayanmış üyesi (<c>trustedResult=false</c>,
+    /// <c>RunCoordinator</c> onu PERSIST ETMEZ) — defter bu başarıdan HİÇBİR ŞEY öğrenmedi, bir sonraki Sync'in
+    /// ne diyeceğini TAHMİN ETMEK için elde yeni bir bilgi yok. Satır bugünkü <c>UpToDate</c> olgusuna döner
+    /// (Task 4 öncesi davranış — burada iyileştirilecek bir şey YOK, çünkü hiçbir şey kaydedilmedi).</summary>
     [Fact]
-    public void cycle_unsettled_alone_never_applies_after_success()
-        => Assert.False(ConditionalRebuild.AppliesAfterSuccess(inCycle: false, cycleUnsettled: true, ["Up"]));
+    public void an_unsettled_cycle_member_with_a_dep_issue_is_left_as_up_to_date()
+        => Assert.Equal((false, WillBuildReason.UpToDate, false),
+            ConditionalRebuild.AfterSuccess(inCycle: true, cycleUnsettled: true, ["Up"]));
 
     // ---------------------------------------------------------------- RootNames
 

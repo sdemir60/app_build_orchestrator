@@ -1357,10 +1357,10 @@ Full analysis happens **only** in Sync; the implicit Sync that precedes a Build 
 evaluation cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
 Build, pressed right now, would decide, and the preview says so directly: a project this run would only
 evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
-(`ConditionalRebuild.AppliesTo`, simulating `Build`) rather than left `false` until a run's own preview
-overwrites it. Leaving it `false` was tried and measured wrong: the row's wave and queue colour are read at the
-moment *Build* is clicked, before the new run's own preview has arrived, so they read Sync's last preview — a
-conditional project would light amber for one frame and drop grey the instant the real preview landed.
+(`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
+read at the moment *Build* is clicked, before the new run's own preview has arrived — at that instant Sync's
+preview is the only opinion the App has, so it has to already carry the answer a conditional project's row will
+need a moment later, or the row lights amber for one frame and drops grey as soon as the real preview lands.
 
 If the remote is unreachable, the fetch failure is swallowed: a warning line is printed, the target SHA falls
 back to the local HEAD, and the flow continues. The degraded path does **not** skip topology or the will-build
@@ -1765,7 +1765,7 @@ and MSBuild, not invented terms — plus one three-part combination for a projec
 | `never built` | no build output on disk (a `Clean` produces this too) |
 | `failed · retry` | the last attempt failed, so it is queued again |
 | `up to date · 2h` | it is current; the tail is the age of the last successful build |
-| `affected · up to date · just now` | it built successfully against a dependency that was failing, its own signature has not changed since, and this run is actually waiting on that dependency — the tail's native tooltip names the failed root(s) |
+| `affected · up to date · just now` | it built successfully against a dependency that was failing, its own signature has not changed since, and this run is actually waiting on that dependency — the tail's native tooltip names the recorded root(s) |
 
 The waiting row is `affected` in every sense the word already carries — its own files are unchanged, a
 dependency is the reason — with a second tail bolted on to say *this run will not touch it either*: `up to date`
@@ -1774,12 +1774,14 @@ label that exceeds what design v1.16.0 specifies (134 px, for `up to date · jus
 wider, so the slot is 204 px, wide enough to fit it without clipping — a deliberate departure from the design
 package, a user decision.
 
-That label is only shown when the current run is **actually** gating the project on its dependency
-(`WaitingForDependency` and the engine's own `Conditional` flag, both true). The reason alone is not enough: a
-row triggered straight from itself, a Rebuild, or an SCC member all force the build regardless of the recorded
-root, so the tail's promise ("this run leaves it alone") would be a lie there. Forced scope falls back to the
-plain `affected`/`modified` read of the same underlying fact — the label still never claims more than the run
-will actually do (see the scope paragraph below).
+That label is only shown when the project is **actually** gated on its dependency — `WaitingForDependency` and
+the engine's own `Conditional` flag, both true. The reason alone is not enough: a row triggered straight from
+itself, a Rebuild, or an SCC member all force the build regardless of the recorded root, so the tail's promise
+("this run leaves it alone") would be a lie there — the `Conditional` flag is what tells them apart, and it
+comes from the same source whether it arrives with a run's own preview or with Sync's (§10.2, which predicts
+what a plain Build would do). Forced scope falls back to the plain `affected`/`modified` read of the same
+underlying fact — the label still never claims more than the run will actually do (see the scope paragraph
+below).
 
 **The word is a fact; the tail can be a promise, and a promise is only made when it will be kept.** `retry`
 means "the next Build will try this again" — and a plain Build never compiles a dependency cycle, so a cycle
@@ -1810,9 +1812,17 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
 failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
 next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
-`up to date` — its dependency was still broken when it built, so the row reads `affected · up to date · just
-now` instead, taken straight from that success's own event, and it drops out of the run's definite queue (next
-paragraph) rather than being counted done.
+`up to date` — its dependency was still broken when it built, so a plain project's row reads `affected · up to
+date · just now` instead, taken straight from that success's own event, and it drops out of the run's definite
+queue (next paragraph) rather than being counted done.
+
+A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
+converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
+Build never compiles it and Cycles compiles it with its whole group — so its live row reads plain `affected`
+(prominent, no tail), matching exactly what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
+`Conditional=false`) rather than the `up to date · just now` that would only flip back to `affected` at the
+next Sync. A member whose group did not converge changed nothing the ledger can act on, so its row reads
+`up to date · just now` like any other success — there is no new fact to predict ahead of Sync.
 
 **The slot is not a result column.** What a run did is carried by the stripe, the dot, the glyph and the
 duration; the slot always answers the same question — *what does this project's output need?* After a Sync that

@@ -1833,42 +1833,41 @@ public sealed partial class RunViewModel : ObservableObject
         // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
         // [Task 4 — kök neden C · DEĞİŞEN KURAL] Eskiden HER başarı (dep-issue'lu dahil) buradan koşulsuz
         // WillBuild=false olurdu — motorun kendi kuralıyla (WillBuildEvaluator: DepIssueRoots biliniyorsa
-        // WaitingForDependency, WillBuild HÂLÂ true) ÇELİŞİYORDU. Bu run içinde dep-issue'lu biten bir başarı
-        // artık "dirty" (Conditional=true) kalır: kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds)
-        // GİRMEZ ama bir sonraki Build'de kökü düzelirse yine derlenmesi gerekir.
-        // [Task 4 review — I1] Karar App'te TÜRETİLMEZ (eskiden burada `depIssues is { Count: > 0 }` yazıyordu,
-        // motorun ConditionalRebuild.AppliesTo'sundan (özellikle "!cycleGroupMember") sessizce ayrışıyordu — bir
-        // SCC üyesi ya da yakınsamayan bir grubun üyesi dep-issue'lu bitse bile ASLA tek başına koşullu
-        // DEĞİLDİR, bkz. AppliesAfterSuccess'in XML yorumu) — TEK Core fonksiyonuna sorulur.
-        bool waitingForDependency = ConditionalRebuild.AppliesAfterSuccess(row.InCycle, cycleUnsettled, depIssues);
+        // WaitingForDependency) ÇELİŞİYORDU. Bu run içinde dep-issue'lu biten bir tekil proje artık "dirty"
+        // (Conditional=true) kalır: kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds) GİRMEZ ama bir
+        // sonraki Build'de kökü düzelirse yine derlenmesi gerekir. Bir döngü üyesi de aynı gerekçeyi
+        // (WaitingForDependency) taşır ama Conditional=false kalır — TEK BAŞINA asla koşullu değildir (bkz.
+        // aşağıdaki AfterSuccess çağrısının yorumu).
+        // [Task 4 review round 2 — I1] Üçlü (WillBuild/Reason/Conditional) App'te TÜRETİLMEZ — motorun bir
+        // sonraki önizlemesinin (WillBuildEvaluator + ConditionalRebuild.AppliesTo) AYNEN kendisi TEK yerden
+        // sorulur (ConditionalRebuild.AfterSuccess). Round 1'in kendi kopyası (yalnız bool) bir SCC üyesi için
+        // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
+        // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
+        // gelmesi bu boşluğu kapatır.
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
-            row.WillBuild = waitingForDependency;
-            row.Conditional = waitingForDependency;
-            row.DependencyRoots = waitingForDependency ? depIssues : null;
+            var after = ConditionalRebuild.AfterSuccess(row.InCycle, cycleUnsettled, depIssues);
+            row.WillBuild = after.WillBuild;
+            row.Conditional = after.Conditional;
+            row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? depIssues : null;
+            row.WillBuildReason = after.Reason;
         }
-        else
+        else if (state == ProjectRowState.Succeeded) // Clean
         {
-            // Failed/Clean: önceki bir preview'dan kalmış olabilecek koşullu bayrak/kökler bu satır için artık
-            // ANLAMSIZ — LastFailed/NeverBuilt gerekçesi kendi tooltip'ini yazar, "bekliyor" olgusu taşımaz.
             row.Conditional = false;
             row.DependencyRoots = null;
-        }
-        // [design v1.16.0 §2.4] Satırın KARAR ETİKETİ de canlı geçişi izler: koşu biter bitmez derlenen satır
-        // "up to date · just now" yazar, patlayan satır "failed · retry", dep-issue'lu biten satır "affected ·
-        // up to date · just now" (soluk, bekliyor). Olgular motorun bir sonraki önizlemesini BEKLEMEZ — o
-        // önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir gerekçeyi
-        // ("modified") taşırdı.
-        row.WillBuildReason = state switch
-        {
             // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
             // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
-            ProjectRowState.Succeeded when RunIsClean => WillBuildReason.NeverBuilt,
-            ProjectRowState.Succeeded when waitingForDependency => WillBuildReason.WaitingForDependency,
-            ProjectRowState.Succeeded => WillBuildReason.UpToDate,
-            ProjectRowState.Failed => WillBuildReason.LastFailed,
-            _ => row.WillBuildReason,
-        };
+            row.WillBuildReason = WillBuildReason.NeverBuilt;
+        }
+        else // Failed
+        {
+            // Önceki bir preview'dan kalmış olabilecek koşullu bayrak/kökler bu satır için artık ANLAMSIZ —
+            // LastFailed gerekçesi kendi tooltip'ini yazar, "bekliyor" olgusu taşımaz.
+            row.Conditional = false;
+            row.DependencyRoots = null;
+            row.WillBuildReason = WillBuildReason.LastFailed;
+        }
         if (state == ProjectRowState.Succeeded)
         {
             row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
