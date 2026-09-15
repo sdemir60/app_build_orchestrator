@@ -45,8 +45,8 @@ public class ConsoleModesTests
         var header = new ConsoleHeader();
 
         // [v1.18.0] Tooltip'in TAM listeyi yazdığını (satırın "+N" kısaltmasının AKSİNE) görmek için iki isim.
-        header.ShowProjectLog("OSYS.Sales.Core", ProjectRowState.Failed, inCycle: false,
-            depIssues: ["OSYS.Sales.Data", "OSYS.Sales.Contracts"], namePrefix: "OSYS.", lineCount: 87);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Sales.Core", ProjectRowState.Failed, inCycle: false,
+            depIssues: ["OSYS.Sales.Data", "OSYS.Sales.Contracts"], namePrefix: "OSYS."), 87);
 
         Assert.Equal(ConsoleHeader.HeaderMode.ProjectLog, header.Mode);
         Assert.Equal(Visibility.Collapsed, header.ConsoleLabel.Visibility);
@@ -68,8 +68,8 @@ public class ConsoleModesTests
         // görünebilir — satırdaki tek üçgenin öncelik sırasının (RowWarning.For) AKSİNE.
         var header = new ConsoleHeader();
 
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Started, inCycle: true,
-            depIssues: null, namePrefix: "OSYS.", lineCount: 3);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Started, inCycle: true,
+            depIssues: null, namePrefix: "OSYS."), 3);
 
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
@@ -82,8 +82,8 @@ public class ConsoleModesTests
     {
         var header = new ConsoleHeader();
 
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
-            depIssues: null, namePrefix: "", lineCount: 5);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
+            depIssues: null, namePrefix: ""), 5);
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Collapsed, header.CycleBadge.Visibility);
         Assert.Equal("Succeeded", header.StatusNameText.Text);
@@ -98,8 +98,8 @@ public class ConsoleModesTests
     public void Header_back_button_raises_BackRequested()
     {
         var header = new ConsoleHeader();
-        header.ShowProjectLog("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
-            depIssues: null, namePrefix: "", lineCount: 0);
+        header.ShowProjectLog(ConsoleHeaderRow.For("OSYS.Base", ProjectRowState.Succeeded, inCycle: false,
+            depIssues: null, namePrefix: ""), 0);
         bool raised = false;
         header.BackRequested += (_, _) => raised = true;
 
@@ -152,8 +152,8 @@ public class ConsoleModesTests
         await load.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Tıklama anı: başlık + gövde SENKRON proje-loguna geçer (pump beklenmeden).
-        header.ShowProjectLog("A", ProjectRowState.Started, inCycle: false,
-            depIssues: null, namePrefix: "", vm.GetActiveLineCount());
+        header.ShowProjectLog(ConsoleHeaderRow.For("A", ProjectRowState.Started, inCycle: false,
+            depIssues: null, namePrefix: ""), vm.GetActiveLineCount());
         vm.SeedProjectDocument(projectId, text =>
             view.PlayCascade(text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n')));
 

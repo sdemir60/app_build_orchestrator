@@ -33,7 +33,7 @@ public class ConsoleHeaderLiveRefreshTests
         var row = vm.Projects.Single(p => p.Id == projectId);
         var header = window.Shell.ConsoleHeaderControl;
         // [MainWindow.OnSelectedProjectChangedAsync'in proje-log dalıyla AYNI sıra]
-        header.ShowProjectLog(row.Name, row.State, row.InCycle, row.DepIssues, row.NamePrefix, 0);
+        header.ShowProjectLog(row, 0);
         window.TrackHeaderRow(row);
         return (row, header);
     }
@@ -60,6 +60,35 @@ public class ConsoleHeaderLiveRefreshTests
         Assert.Equal(GraphStatus.Succeeded, header.StatusGlyphIcon.Status);
         Assert.Equal("Succeeded", header.StatusNameText.Text);
         Assert.Equal(Visibility.Collapsed, spinner.Visibility); // aynı kontrol örneği — artık dönmüyor
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Final review I-2 — tek doğruluk kaynağı] Başlığın glyph'i satırın KENDİ
+    /// <see cref="ProjectRowViewModel.Status"/>'unu izler (satır ve graf da onu okur): bir döngü grubunda sırası
+    /// kendisinde olmayan Started üye (<see cref="ProjectRowViewModel.IsCompiling"/> false) satırda Queued'dır,
+    /// başlıkta da Queued olmalıdır — ikinci bir Started→Building eşlemesi başlıkta spinner döndürüyordu. Sıra
+    /// üyeye geçtiğinde (IsCompiling true) başlık seçim değişmeden spinner'a geçer.</summary>
+    [StaFact]
+    public void Header_glyph_follows_the_rows_own_Status_including_a_live_IsCompiling_flip()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string idA = MainWindowHost.IdOf("A");
+        vm.OnEvent(new BuildOrchestrator.Contracts.Ipc.ProjectStartedEvent("r1", idA, "A"));
+        var rowA = vm.Projects.Single(p => p.Id == idA);
+        rowA.CycleWaiting = true; // Started ama derlenmiyor — satır Queued gösterir
+        Assert.Equal(GraphStatus.Queued, rowA.Status); // ön-koşul: satırın kendi statüsü
+
+        var (row, header) = SelectViaHeaderWiring(window, vm, idA);
+
+        Assert.Equal(GraphStatus.Queued, header.StatusGlyphIcon.Status); // satırla AYNI
+
+        row.CycleWaiting = false; // sıra bu üyeye geçti — seçim DEĞİŞMEZ
+        Assert.True(row.IsCompiling);
+
+        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status);
+        var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
+        Assert.Equal(Visibility.Visible, spinner.Visibility);
         GC.KeepAlive(window);
     }
 

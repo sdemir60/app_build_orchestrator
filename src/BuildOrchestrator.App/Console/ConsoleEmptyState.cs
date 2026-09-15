@@ -121,24 +121,13 @@ public static class ConsoleEmptyState
 ///
 /// <para><b>[DEĞİŞEN KURAL — v1.18.0]</b> Glyph eskiden burada Unicode bir karakterdi (<c>✓</c>/<c>✗</c>/…) ve
 /// başlık onu düz bir <c>TextBlock</c>'a yazıyordu — tasarım ise 13px çizilmiş <c>StatusGlyph</c> ister,
-/// <c>building</c>'de dönen amber bir yayla. Glyph artık ÇİZİLİR (<see cref="Controls.StatusGlyph"/>); bu sınıf
-/// ona hangi <see cref="Controls.GraphStatus"/>'u vereceğini söyler — metin/renk eşlemesi (Name/BrushKey)
-/// DEĞİŞMEDİ, motorun kendi kelime dağarcığını (Succeeded/Failed/Skipped/Started/Pending) korur.</para>
+/// <c>building</c>'de dönen amber bir yayla. Glyph artık ÇİZİLİR (<see cref="Controls.StatusGlyph"/>) ve
+/// satırın kendi <see cref="ProjectRowViewModel.Status"/>'unu okur (final review I-2 — bu sınıf glyph eşlemesi
+/// TAŞIMAZ, satır/graf ile tek kaynak); metin/renk eşlemesi (Name/BrushKey) motorun kendi kelime dağarcığını
+/// (Succeeded/Failed/Skipped/Started/Pending) korur.</para>
 /// </summary>
 public static class ConsoleStatus
 {
-    /// <summary>[v1.18.0] Çizilmiş <see cref="Controls.StatusGlyph"/>'in okuduğu görsel statü. Motorun
-    /// <see cref="ProjectRowState"/>'i (Started/Pending/…) ile grafın <see cref="Controls.GraphStatus"/>'u
-    /// (Building/Queued/…) aynı isimler olsa da AYRI enum'lardır — eşleme burada, TEK yerde.</summary>
-    public static Controls.GraphStatus VisualStatus(ProjectRowState state) => state switch
-    {
-        ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
-        ProjectRowState.Failed => Controls.GraphStatus.Failed,
-        ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
-        ProjectRowState.Started => Controls.GraphStatus.Building,
-        ProjectRowState.Pending => Controls.GraphStatus.Queued,
-        _ => Controls.GraphStatus.Discovered,
-    };
 
     public static string Name(ProjectRowState state) => state switch
     {

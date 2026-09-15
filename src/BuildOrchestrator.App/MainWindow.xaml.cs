@@ -551,8 +551,7 @@ public partial class MainWindow : Window
             if (row is null) return;
 
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
-            Shell.ConsoleHeaderControl.ShowProjectLog(
-                row.Name, row.State, row.InCycle, row.DepIssues, row.NamePrefix, _vm.GetActiveLineCount());
+            Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
             TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
@@ -594,18 +593,20 @@ public partial class MainWindow : Window
         if (_headerTrackedRow is not null) _headerTrackedRow.PropertyChanged += OnHeaderTrackedRowChanged;
     }
 
-    /// <summary>Başlığı etkileyen ÜÇ alan: statü, dependency-issue listesi, döngü üyeliği. Diğer her
-    /// <see cref="ProjectRowViewModel"/> bildirimi (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve
-    /// görmezden gelinir — ProjectRow.OnVmPropertyChanged'in switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
+    /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
+    /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
+    /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
+    /// (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
+    /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
     private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
         {
             case nameof(ProjectRowViewModel.State):
+            case nameof(ProjectRowViewModel.Status):
             case nameof(ProjectRowViewModel.DepIssues):
             case nameof(ProjectRowViewModel.InCycle):
-                var row = (ProjectRowViewModel)sender!;
-                Shell.ConsoleHeaderControl.RefreshStatus(row.State, row.InCycle, row.DepIssues, row.NamePrefix);
+                Shell.ConsoleHeaderControl.RefreshStatus((ProjectRowViewModel)sender!);
                 break;
         }
     }

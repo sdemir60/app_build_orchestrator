@@ -74,23 +74,18 @@ public partial class ConsoleHeader : UserControl
 
     /// <summary>Proje-log modu: Back + proje adı (mono) + statü glyph/adı + (varsa) dependency-issue/cycle
     /// rozetleri + copy + N lines.</summary>
-    /// <param name="projectName">Tam proje adı (kısaltılmaz — panel daralınca TEK kısalan öğe budur).</param>
-    /// <param name="state">Motorun bu koşudaki statüsü — statü glyph'i/adı/rengi buradan türer.</param>
-    /// <param name="inCycle">[v1.18.0] Bu proje bir bağımlılık döngüsünün üyesi mi — döngü rozetinin kapısı.</param>
-    /// <param name="depIssues">[v1.18.0] Bu proje için tespit edilen dependency-uyarısı kök adları (tam liste —
-    /// satırın "+N" kısaltmasının AKSİNE, tooltip'te HEPSİ yazılır). Boş/null ise rozet gizlenir.</param>
-    /// <param name="namePrefix">Kısa-ad öneği (<see cref="Graph.GraphNode.CommonDotPrefix"/>) — dep-issue
-    /// tooltip'i adları bununla kısaltır (tek otorite, kopya YASAK).</param>
+    /// <param name="row">Seçili satır — tam adı (kısaltılmaz; panel daralınca TEK kısalan öğe budur), statü
+    /// glyph'i (<see cref="ProjectRowViewModel.Status"/>), statü adı/rengi (motor durumu), döngü üyeliği ve
+    /// dependency-issue listesi + kısa-ad öneği buradan okunur (bkz. <see cref="ApplyStatus"/>).</param>
     /// <param name="lineCount">Sağdaki "N lines" sayacı.</param>
-    public void ShowProjectLog(string projectName, ProjectRowState state, bool inCycle,
-        IReadOnlyList<string>? depIssues, string namePrefix, int lineCount)
+    public void ShowProjectLog(ProjectRowViewModel row, int lineCount)
     {
         Mode = HeaderMode.ProjectLog;
         ConsoleLabel.Visibility = Visibility.Collapsed;
         ProjectLogGroup.Visibility = Visibility.Visible;
 
-        ProjectNameText.Text = projectName;
-        ApplyStatus(state, inCycle, depIssues, namePrefix);
+        ProjectNameText.Text = row.Name;
+        ApplyStatus(row);
 
         // Copy log yalnız gerçekten log varken (Ek A #3 / prototip: selSt.log.length > 0). Görünürlük artık
         // TEK yerde — SetLineCount, proje-log modunda lineCount>0'a göre karar verir (M-3 ile satır geldikçe tazelenir).
@@ -104,26 +99,31 @@ public partial class ConsoleHeader : UserControl
     /// çağrılır; seçili proje AYNI kalırken kendi statüsü değiştiğinde (ör. Started→Succeeded, ya da
     /// dependency-issue/cycle üyeliği geldiğinde) MainWindow bunu çağırır — aksi halde başlık bir kez
     /// kurulduktan sonra donuyordu (spinner sonsuza dek dönerdi, rozetler bayatlardı).</summary>
-    public void RefreshStatus(ProjectRowState state, bool inCycle, IReadOnlyList<string>? depIssues, string namePrefix)
+    public void RefreshStatus(ProjectRowViewModel row)
     {
         if (Mode != HeaderMode.ProjectLog) return; // anlatıdayken görünmez bir başlığı boşuna tazeleme
-        ApplyStatus(state, inCycle, depIssues, namePrefix);
+        ApplyStatus(row);
         ApplyProjectNameShrink(); // rozetlerin görünürlüğü değişmiş olabilir — sol bloğun payı da değişir
     }
 
-    private void ApplyStatus(ProjectRowState state, bool inCycle, IReadOnlyList<string>? depIssues, string namePrefix)
+    /// <summary>[Final review I-2] Glyph satırın KENDİ <see cref="ProjectRowViewModel.Status"/>'unu okur —
+    /// satır ve graf da onu okur; başlık ikinci bir durum→glyph eşlemesi KURMAZ (Started ama derlenmeyen döngü
+    /// üyesi satırda Queued ise başlıkta da Queued'dır). Statü ADI ve rengi motorun kendi kelime dağarcığında
+    /// kalır (<see cref="ConsoleStatus"/>).</summary>
+    private void ApplyStatus(ProjectRowViewModel row)
     {
-        StatusGlyphIcon.Status = ConsoleStatus.VisualStatus(state);
+        StatusGlyphIcon.Status = row.Status;
 
-        StatusNameText.Text = ConsoleStatus.Name(state);
-        StatusNameText.SetResourceReference(ForegroundProperty, ConsoleStatus.BrushKey(state));
+        StatusNameText.Text = ConsoleStatus.Name(row.State);
+        StatusNameText.SetResourceReference(ForegroundProperty, ConsoleStatus.BrushKey(row.State));
 
+        var depIssues = row.DepIssues;
         bool hasDepIssue = depIssues is { Count: > 0 };
         DepIssueBadge.Visibility = hasDepIssue ? Visibility.Visible : Visibility.Collapsed;
-        DepIssueBadge.ToolTip = hasDepIssue ? RowWarning.DepIssueDetail(depIssues!, namePrefix) : null;
+        DepIssueBadge.ToolTip = hasDepIssue ? RowWarning.DepIssueDetail(depIssues!, row.NamePrefix) : null;
 
-        CycleBadge.Visibility = inCycle ? Visibility.Visible : Visibility.Collapsed;
-        CycleBadge.ToolTip = inCycle ? RowWarning.InCycle : null;
+        CycleBadge.Visibility = row.InCycle ? Visibility.Visible : Visibility.Collapsed;
+        CycleBadge.ToolTip = row.InCycle ? RowWarning.InCycle : null;
     }
 
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]

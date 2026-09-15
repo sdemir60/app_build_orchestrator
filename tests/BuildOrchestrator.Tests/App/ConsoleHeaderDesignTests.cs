@@ -46,7 +46,7 @@ public class ConsoleHeaderDesignTests
         ProjectRowState state = ProjectRowState.Succeeded, bool inCycle = false,
         IReadOnlyList<string>? depIssues = null, string namePrefix = "OSYS.", int lineCount = 42)
     {
-        header.ShowProjectLog(name, state, inCycle, depIssues, namePrefix, lineCount);
+        header.ShowProjectLog(ConsoleHeaderRow.For(name, state, inCycle, depIssues, namePrefix), lineCount);
         return header;
     }
 

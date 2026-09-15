@@ -2456,9 +2456,12 @@ lines.
   left padding is 10 px, so `-6` only takes back six of those ten, leaving the icon 4 px further in than the
   panel's own 10 px inset, not flush with it. The status glyph is a real `StatusGlyph` control (13 px) rather
   than a character — `building` draws its own spinning arc through the control's embedded `BuildingSpinner`,
-  every other state draws the dashed/solid ring — and the status word next to it keeps the engine's own
-  vocabulary (`ConsoleStatus.Name`/`BrushKey`, unchanged from the narrower `ProjectRowState` domain the header
-  has always spoken, not the graph's wider `GraphStatus`). A dependency-issue badge and a cycle badge can
+  every other state draws the dashed/solid ring. The glyph reads the selected row's own
+  `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never keeps a
+  second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
+  `Queued` in the row and in the header alike. The status word next to it keeps the engine's own vocabulary
+  (`ConsoleStatus.Name`/`BrushKey`, over the narrower `ProjectRowState` domain, not the graph's wider
+  `GraphStatus`). A dependency-issue badge and a cycle badge can
   appear **together** (unlike the single triangle a project row shows, which picks one by priority): both are
   an 8 px `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}`
   bindings so they resolve as soon as the header is rooted in a live resource scope even while the badge itself
@@ -2469,13 +2472,14 @@ lines.
   `Ds.IconButton` (22×22, already the design's "sm" size in this app) with no bespoke chrome; its copied-state
   green tint is written straight to `Foreground` the same way `AboutDialog`'s Copy diagnostics button does,
   which means a hover during the 1.4 s window can hand control back to the style's own animated brush — an
-  accepted, previously shipped trade-off, not new here.
+  accepted trade-off shared by both buttons.
 - **The header keeps watching the selected row, not just the moment it was selected.** `ShowProjectLog` runs
   once, on selection; a project already open can still change underneath the reader — a `Started` row reaching
   `Succeeded`, a dependency-issue list arriving, a cycle membership settling — and none of those are selection
   events. `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s
   `PropertyChanged` (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
-  `State`/`DepIssues`/`InCycle` alone — every other row notification (`Fresh`, `Marked`, `Fade`, …) is not the
+  `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while
+  `State` does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification (`Fresh`, `Marked`, `Fade`, …) is not the
   header's concern and is ignored, the same filtered `switch` idiom `ProjectRow.OnVmPropertyChanged` already
   uses for its own row. `RefreshStatus` touches only the glyph, the status word and the two badges; it does not
   re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status change mid-read cannot reset the
