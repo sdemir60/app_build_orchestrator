@@ -1689,16 +1689,19 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
-    /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir (<c>_willBuildIds</c>
-    /// ile AYNI koşul). <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
+    /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
+    /// (aşağıda); <c>_willBuildIds</c> koşullu projeyi hâlâ içerir. <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
     /// (<paramref name="inCycle"/>): motorun bu run'daki kapsamı üyeler + transitif upstream'dir
     /// (<c>CycleRunScope</c>), ama kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da bu
     /// run'ın "kuyruğu" DEĞİLDİR — gri bekler, <c>projectStarted</c> geldiğinde normal yoldan Building'e geçer.
     /// <c>mode</c> <see cref="_currentRunMode"/>'dan okunur — <see cref="OnRunStarted"/>'ın TEK yazdığı alan
     /// (review fix M-2: eskiden Stream.cs partial'ının kendi alanı okunuyordu, bu satır kararını stream'in
-    /// işleme SIRASINA bağımlı kılıyordu; bkz. alanın kendi XML yorumu).</summary>
+    /// işleme SIRASINA bağımlı kılıyordu; bkz. alanın kendi XML yorumu).
+    /// <para><b>[koşullu yeniden derleme]</b> Motorun <see cref="BuildPreviewItem.Conditional"/> dediği proje
+    /// kuyrukta DEĞİLDİR: WillBuild=true olsa da kesin derlenecek değildir — kökü hâlâ hatalıysa atlanır. Karar
+    /// motorundur; burada yalnız okunur.</para></summary>
     private static bool InRunQueueFor(BuildPreviewItem item, RunMode? mode, bool inCycle) =>
-        mode == RunMode.Cycles ? inCycle : item.WillBuild == true;
+        mode == RunMode.Cycles ? inCycle : item.WillBuild == true && !item.Conditional;
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
     /// EnsureRow yalnız YENİ satırlar için initialState uygular, var olan satırın State'ini DEĞİŞTİRMEZ, bu

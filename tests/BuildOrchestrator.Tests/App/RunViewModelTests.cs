@@ -219,6 +219,36 @@ public class RunViewModelTests
         Assert.Equal(stale.Status, GraphBinder.StatusOf(stale, synced: true));
     }
 
+    // [koşullu yeniden derleme] Motor koşullu projeyi önizlemede Conditional=true ile işaretler: WillBuild=true
+    // kalır (pre-skip edilmedi) ama kesin derlenecek DEĞİLDİR — kökü hâlâ hatalıysa "dependency still failing"
+    // ile atlanır. Kuyruk (amber) yalnız kesin derleneceklerdir; koşullu satır gri bekler. Kök düzeldiyse
+    // projectStarted gelir ve normal yoldan Building'e geçer.
+    [Fact]
+    public async Task A_conditional_project_in_a_build_run_is_not_queued()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string rootId = @"C:\p\up.csproj";
+        const string waitingId = @"C:\p\down.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(rootId, "Up", true, null, WillBuildReason.LastFailed),
+            new BuildPreviewItem(waitingId, "Down", true, null, WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        var root = vm.Projects.Single(p => p.Id == rootId);
+        var waiting = vm.Projects.Single(p => p.Id == waitingId);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, root.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, waiting.Status);
+        Assert.Equal(waiting.Status, GraphBinder.StatusOf(waiting, synced: true));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", waitingId, "Down")); // kök düzeldi, motor derliyor
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, waiting.Status);
+    }
+
     // [Task 2/cycles — kök neden B] Resolve cycles'ta kuyruk YALNIZ döngü üyelerine yazılır (InRunQueueFor artık
     // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
     // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
