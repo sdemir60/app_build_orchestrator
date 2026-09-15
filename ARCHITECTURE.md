@@ -2819,8 +2819,8 @@ opacity is already animating is not defensible, and the budget is not negotiable
 **Building is a bead orbit.** A project under construction carries dense amber dots circling a rounded-square
 track around its node. The distance to that track is not a fixed number: it is solved backward from the
 cell's own pitch, `(pitch − size − stroke thickness − 2) / 2`, clamped to 0.8–2.8 px — a dense graph pulls the
-track in toward the node, and a roomy one lets it drift out to the same 2.8 px the earlier design used as a
-constant. The target on the far side of that formula is a 2 px gap between one node's dots and its neighbour's;
+track in toward the node, and a roomy one lets it drift out to the clamp's 2.8 px ceiling. The target on the
+far side of that formula is a 2 px gap between one node's dots and its neighbour's;
 so long as the clamp does not hit its floor, two orbits that would otherwise touch stay apart without the
 pitch search itself ever knowing beads exist. The dots are a stroke dash pattern whose step divides the
 perimeter a whole number of times, so the pattern does not overlap itself where it closes; the orbit turns once

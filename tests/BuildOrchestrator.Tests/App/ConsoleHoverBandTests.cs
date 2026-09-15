@@ -334,8 +334,8 @@ public class ConsoleHoverBandTests
 
     /// <summary>
     /// [Review round 2 M-2, senaryo a] Bir satırdan KÜÇÜK bir scroll (animasyonlu kaydırmanın ara kareleri gibi)
-    /// belge-Y'yi hâlâ AYNI satırın aralığında bırakabilir — <see cref="ConsoleView.RefreshHoverBand"/> önbelleği
-    /// temizlemeden <see cref="ConsoleView.UpdateHoverBand"/>'a devretseydi, o metodun kendi "aynı satır"
+    /// belge-Y'yi hâlâ AYNI satırın aralığında bırakabilir — <see cref="ConsoleView.RefreshHoverBand"/> `_forceHoverRefresh`
+    /// bayrağını işaretlemeden <see cref="ConsoleView.UpdateHoverBand"/>'a devretseydi, o metodun kendi "aynı satır"
     /// kısayolu (I-2 perf) devreye girer ve EKRAN konumu YENİDEN HESAPLANMAZDI — bant içerikten kopup eski
     /// pikselde asılı kalırdı. İmleç fiziksel olarak kımıldamasa da (yeniden çağrılan Y AYNI), scroll GERÇEKTEN
     /// olduğu için bandın ekran konumu genel olarak izlenebilir biçimde güncellenmelidir.
@@ -378,8 +378,8 @@ public class ConsoleHoverBandTests
 
     /// <summary>
     /// [Review round 2 M-2, senaryo b] Aynı scroll offsette (mod değişimi/`ClearRunDocument` sözleşmesi) çok
-    /// daha KISA bir belgeye geçilirse, eski bantlı satır artık YOK — önbellek temizlenmeden bırakılsaydı belge-Y
-    /// hâlâ eski (yanlış) aralıkta sayılabilir ve bant, hiçbir satırın olmadığı bir yerde asılı kalırdı.
+    /// daha KISA bir belgeye geçilirse, eski bantlı satır artık YOK — `_forceHoverRefresh` bayrağı işaretlenmeden
+    /// bırakılsaydı belge-Y hâlâ eski (yanlış) aralıkta sayılabilir ve bant, hiçbir satırın olmadığı bir yerde asılı kalırdı.
     /// </summary>
     [StaFact]
     public void Real_document_swap_at_the_same_offset_does_not_keep_a_stale_band_where_no_line_exists()

@@ -996,7 +996,8 @@ public partial class ConsoleView : UserControl
     /// çağrılır; O metot da ARTIK (aynı review) zaten hedef renkteyse yeniden animasyon KURMAZ — guard TEK yerde,
     /// kopya YASAK. <b>[M-2 review round 2]</b> Bu kısayol yalnız gerçek <c>MouseMove</c>'dan (aynı çağrı içinde
     /// hem Y HEM scroll offset sabit) gelen tekrar çağrılar için güvenlidir — <see cref="RefreshHoverBand"/>
-    /// SCROLL sonrası çağırdığında önbelleği ÖNCE temizler (aşağıda), aksi halde satır KİMLİĞİ değişmese bile
+    /// SCROLL sonrası çağırdığında <see cref="_forceHoverRefresh"/> bayrağını ÖNCE işaretler (önbelleğin
+    /// KENDİSİNE, <see cref="_hoveredLine"/>'a hiç dokunmadan), aksi halde satır KİMLİĞİ değişmese bile
     /// (belge-Y hâlâ aynı aralıkta — ör. bir satırdan küçük bir scroll) EKRANDAKİ konumu güncellenmez ve bant
     /// içerikten kopup asılı kalırdı.</para>
     ///
@@ -1022,18 +1023,22 @@ public partial class ConsoleView : UserControl
     internal void UpdateHoverBand(double mouseYInTextView)
     {
         _lastMouseYInTextView = mouseYInTextView;
-        var view = EditorControl.TextArea.TextView;
-        if (!view.VisualLinesValid || view.VisualLines.Count == 0) { HideHoverBandVisual(); return; }
-
-        double documentY = mouseYInTextView + view.ScrollOffset.Y;
 
         // [I-2] Aynı satır aralığında kalınıyorsa (satır içi piksel hareketleri) hiçbir şey yeniden hesaplanmaz.
         // [M-2 review round 2] RefreshHoverBand bu kısayolu _forceHoverRefresh ile BİLEREK atlatır (yapısal bir
         // tazelemede satır KİMLİĞİ aynı kalsa bile EKRAN geometrisi yeniden hesaplanmalıdır) — bayrak burada
         // TÜKETİLİR, önbelleğin KENDİSİNE (_hoveredLine) hiç dokunulmaz: o alan yalnız "bant şu an görünür mü"
         // sorusunun tek doğruluk kaynağıdır (HideHoverBandVisual'ın idempotency guard'ı da ona bakar).
+        // Bayrak, aşağıdaki VisualLinesValid erken dönüşünden ÖNCE tüketilir: aksi halde o dönüş bayrağı hiç
+        // sıfırlamadan geri dönerdi ve bir sonraki (tazeleme kaynaklı OLMAYAN, sıradan) MouseMove'a SIZARDI.
         bool skipSameLineShortcut = _forceHoverRefresh;
         _forceHoverRefresh = false;
+
+        var view = EditorControl.TextArea.TextView;
+        if (!view.VisualLinesValid || view.VisualLines.Count == 0) { HideHoverBandVisual(); return; }
+
+        double documentY = mouseYInTextView + view.ScrollOffset.Y;
+
         if (!skipSameLineShortcut && _hoveredLine is { } cached &&
             documentY >= cached.Top && documentY < cached.Top + cached.Height)
             return;
@@ -1071,16 +1076,17 @@ public partial class ConsoleView : UserControl
     /// (<see cref="_lastMouseYInTextView"/> null — yalnız GERÇEK <see cref="HideHoverBand"/> onu temizler)
     /// hiçbir şey yapmaz: uzaktaki bir scroll bandı GERİ GETİRMEMELİDİR.
     ///
-    /// <para><b>[review round 2 — DEĞİŞEN KURAL]</b> Önbellek (<see cref="_hoveredLine"/>) burada ÖNCE
-    /// temizlenir. Eski hâli <see cref="UpdateHoverBand"/>'a doğrudan devrediyordu ve belge-Y hâlâ eski satırın
-    /// aralığındaysa (bir satırdan KÜÇÜK bir scroll — animasyonlu kaydırmanın ara kareleri gibi) o metodun kendi
-    /// "aynı satır" kısayoluna TAKILIYORDU: satır KİMLİĞİ değişmemiş sayılıyor, ekran konumu YENİDEN
-    /// HESAPLANMIYORDU — bant içerikle birlikte kaymak yerine eski pikselde asılı kalıyordu. Aynı sorun bir
-    /// belge değişiminde de (mod değişimi, aynı offsette çok daha kısa bir belge) oluşurdu: eski (Top,Height)
-    /// artık YANLIŞ bir satırı (ya da hiç var olmayan bir satırı) tarif ederken kısayol onu sorgusuzca
-    /// KORUYORDU. Yapısal bir tazeleme YAPISAL OLARAK farklı bir andır — satır kimliği aynı kalsa bile ekran
-    /// geometrisi (dolayısıyla Margin/Height) YENİDEN hesaplanmalıdır; bu yüzden önbellek her seferinde
-    /// atlanır, MouseMove'un satır-içi kısayolu ise (I-2 perf) dokunulmadan kalır.</para></summary>
+    /// <para><b>[review round 2 — DEĞİŞEN KURAL]</b> <see cref="_forceHoverRefresh"/> bayrağı burada ÖNCE
+    /// işaretlenir — önbelleğin KENDİSİNE (<see cref="_hoveredLine"/>) hiç dokunulmaz. Eski hâli
+    /// <see cref="UpdateHoverBand"/>'a doğrudan devrediyordu ve belge-Y hâlâ eski satırın aralığındaysa (bir
+    /// satırdan KÜÇÜK bir scroll — animasyonlu kaydırmanın ara kareleri gibi) o metodun kendi "aynı satır"
+    /// kısayoluna TAKILIYORDU: satır KİMLİĞİ değişmemiş sayılıyor, ekran konumu YENİDEN HESAPLANMIYORDU — bant
+    /// içerikle birlikte kaymak yerine eski pikselde asılı kalıyordu. Aynı sorun bir belge değişiminde de (mod
+    /// değişimi, aynı offsette çok daha kısa bir belge) oluşurdu: eski (Top,Height) artık YANLIŞ bir satırı (ya
+    /// da hiç var olmayan bir satırı) tarif ederken kısayol onu sorgusuzca KORUYORDU. Yapısal bir tazeleme
+    /// YAPISAL OLARAK farklı bir andır — satır kimliği aynı kalsa bile ekran geometrisi (dolayısıyla
+    /// Margin/Height) YENİDEN hesaplanmalıdır; bu yüzden kısayol bayrakla her seferinde atlatılır, MouseMove'un
+    /// satır-içi kısayolu ise (I-2 perf) dokunulmadan kalır.</para></summary>
     private void RefreshHoverBand()
     {
         if (_lastMouseYInTextView is not { } y) return;

@@ -779,8 +779,9 @@ public partial class GraphView : UserControl
         double cell = size + CellOverhang * 2;
         _iconScale.ScaleX = _iconScale.ScaleY = size * IconFactor / IconViewBox;
 
-        // Düğüm boyutu değiştiyse yörüngenin ÇEVRESİ de değişir ⇒ desen ve paylaşımlı saat yeniden kurulur;
-        // aksi halde noktalar yeni çevreye tam bölünmez ve ek yerinde bindirirdi.
+        // Düğüm boyutu YA DA hücre aralığı (pitch) değiştiyse yörüngenin ÇEVRESİ de değişir (bkz. GraphBeads.For:
+        // aralık kelepçesi ikisine de bakar) ⇒ desen ve paylaşımlı saat yeniden kurulur; aksi halde noktalar yeni
+        // çevreye tam bölünmez ve ek yerinde bindirirdi.
         var beads = GraphBeads.For(size, _layout.Pitch);
         if (beads != _beadsGeometry)
         {

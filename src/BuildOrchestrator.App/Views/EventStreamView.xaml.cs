@@ -705,11 +705,18 @@ public sealed class EventStreamRow : Border
     }
 
     /// <summary>Parıltının doğal sonu (1.1s doldu) — <see cref="_glowRunning"/> kapanır ve zemin O ANKİ hover/seçim
-    /// durumuna göre BİR KEZ oturtulur. <c>Completed</c> parıltının kendi zaman çizelgesinde tek atımlık bir olay
-    /// olduğu için handler'ı burada söküyoruz — aksi hâlde referans (kullanılmayan da olsa) süresiz asılı kalırdı.</summary>
+    /// durumuna göre BİR KEZ oturtulur.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Burada elle bir <c>Completed -=</c> aboneliği SÖKÜLMEZ: WPF'in <c>Timeline</c>
+    /// altyapısında <see cref="Timeline.Completed"/> olayını fiilen yayınlayan nesne o zaman çizelgesi için
+    /// kurulan <c>Clock</c>'tur, <c>Timeline</c>'ın kendisi değil — yani bu olayın <c>sender</c>'ı bir
+    /// <see cref="AnimationTimeline"/> DEĞİL bir <c>Clock</c>'tur. Eski kod <c>sender is AnimationTimeline</c>
+    /// diye kontrol ediyordu; bu koşul asla sağlanmadığından abonelik hiç SÖKÜLMÜYORDU (ölü kod, yanlış iddia).
+    /// <see cref="ApplyGlow"/>'daki animasyon <c>FillBehavior.Stop</c> ve satır başına bir kez (<see
+    /// cref="StreamEventViewModel.GlowPlayed"/> guard'ı) oynadığından, bu abonelik satır başına TEK kalır ve
+    /// kalıcı bir sızıntı oluşturmaz — bu yüzden burada sökmek yerine yalnız doğru iddiayı yazıyoruz.</para></summary>
     private void OnGlowCompleted(object? sender, EventArgs e)
     {
-        if (sender is AnimationTimeline anim) anim.Completed -= OnGlowCompleted;
         _glowRunning = false;
         ApplyBackground();
     }
