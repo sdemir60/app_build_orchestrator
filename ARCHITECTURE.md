@@ -438,7 +438,11 @@ Three of these carry the whole model:
   name→path map of solutions and the reverse-layer warnings. The graph panel, the layer grouping and
   "Open in Visual Studio" all read from this one event.
 - **`buildPreview`** delivers the will-build set before the first per-project event of a run, so rows are
-  populated before anything starts.
+  populated before anything starts. Each item also carries the reason (§7.4), and for a project waiting on a
+  failed dependency the display names of its recorded roots — the row's tooltip prints them, the App never
+  composes them. `conditional` marks a project **this run** evaluates only when its turn comes (§8.3): it may
+  still compile, so `willBuild` stays `true`, but it is not part of the queue. The flag is a run fact — a Sync
+  preview, a `Rebuild`, a row's target and a cycle-group member never carry it.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
   semantics, dirty plus transitive dependents), and the up-to-date count.
@@ -709,9 +713,16 @@ every member reads `false`, which is the truth — nothing in that run will comp
 
 During a run the value is live: the moment a project succeeds it turns `false`.
 
-**The evaluator also returns why** — never built, last build failed, built against a failed dependency, or the
-signature changed — and it returns it even for a project the run will not compile, such as a cycle member
-outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
+**`true` is not always a promise.** A project whose last success was linked against a failed dependency, whose
+signature has not moved and whose ledger note names the root dependencies reads `true` with the reason
+*waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
+roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
+the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
+*built against a failed dependency*, because nothing could tell the run when to stop waiting.
+
+**The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
+failed dependency, or built against a failed dependency whose roots are unknown — and it returns it even for a
+project the run will not compile, such as a cycle member outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
 together with two facts: whether the project's **own** files changed (stored content fingerprint versus
 today's) and when it was last built successfully.
 
@@ -720,8 +731,9 @@ today's) and when it was last built successfully.
 `build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
 worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the **built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
-duration, a flag marking that this success was linked against a failed dependency (§8.3) and the signature at
-which this project's cycle last failed to converge (§8.8). The content fingerprint is stored *next to* the
+duration, a flag marking that this success was linked against a failed dependency together with the project
+ids of that dependency issue's roots (§8.3), and the signature at which this project's cycle last failed to
+converge (§8.8). The content fingerprint is stored *next to* the
 signature rather than folded into it because it answers a different question — "did this project's own files
 change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
@@ -799,8 +811,8 @@ copies follow the same rule: only the copy that holds the target is updated befo
 separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
 the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
-dependents of a failure succeeded carrying a dependency issue, so their record is flagged (§8.3) and they come
-along too. The one deliberate difference is the elapsed clock: the new run counts from zero,
+dependents of a failure succeeded carrying a dependency issue, so their record is flagged with its roots
+(§8.3) and they come along as soon as one of those roots builds successfully. The one deliberate difference is the elapsed clock: the new run counts from zero,
 because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
@@ -902,15 +914,42 @@ Domain.Parts`, closed back on its first member so it reads as a cycle rather tha
 that has to hold a path is a tooltip doing a log's job. The path still composes from a single place, so no
 surface can drift into its own wording.
 
-**Such a success is recorded, with a note.** It is written to the build state like any other success, but
-flagged, and the evaluator turns that flag into "will build" until the dependency is fixed (§7.4). The set of
-projects that rebuild is exactly what it always was; what changed is that the ledger now moves. The rule used
-to be *don't record it at all*, on the reasoning that a fresh signature would let the project be skipped
-forever if the failed dependency recovered without a source change. The reasoning was right and it is still
-enforced — just one layer later. What was wrong was the cost: `depIssues` are inherited down the whole chain,
-so a handful of real failures poisons the graph and nothing gets recorded. Measured on a real run:
-74 succeeded, 24 failed, 96 carrying a dependency issue — and not one of the 74 was written. Incremental
-building was effectively off and every Sync said "everything will build".
+**Such a success is recorded, with a note and its roots.** It is written to the build state like any other
+success, but flagged, and the flag carries the **project ids** of the roots — the failures of this run, the
+roots inherited down the chain, and the stale inputs of a single-project run. Ids, not names: the run looks the
+roots up in its own results and in the ledger, and a name is not unique. The rule used to be *don't record it at
+all*, on the reasoning that a fresh signature would let the project be skipped forever if the failed dependency
+recovered without a source change. The reasoning was right and it is still enforced — just one layer later.
+What was wrong was the cost: `depIssues` are inherited down the whole chain, so a handful of real failures
+poisons the graph and nothing gets recorded. Measured on a real run: 74 succeeded, 24 failed, 96 carrying a
+dependency issue — and not one of the 74 was written. Incremental building was effectively off and every Sync
+said "everything will build".
+
+**The note triggers a rebuild when a root recovers, not on every Build.** Recompiling a project while its root
+still fails buys nothing — it links to the same last successful output again — and it meant projects the
+marking wave never lit turning amber and compiling on the next `Build`. So a noted
+project whose signature has not moved is *waiting for dependency* (§7.4) and is evaluated when its turn comes,
+because only then — every dependency terminal — is the roots' result in this run known (`ConditionalRebuild`):
+
+| A recorded root… | reads as |
+|---|---|
+| compiled in this run and succeeded | recovered |
+| compiled in this run and failed | still failing |
+| not compiled in this run (up to date, out of scope, cycle) — last recorded result success | recovered |
+| not compiled in this run — last recorded result failure | still failing |
+| no longer in the workspace, or without a record | recovered (build — the safe direction) |
+
+One recovered root is enough: the project compiles normally and its note is cleared or renewed by the ordinary
+rule. When every root still fails the project is skipped as `skipped — dependency still failing`, with the roots
+named on its `decision.log` line; its record — note, roots, built signature — is left exactly as it was, so the
+next run asks the same question. Its roots still enter the inherited accumulation: a dependent that does compile
+links to this project's stale output and must carry the note on, or it would read as up to date for good once the
+root recovers. Such a skip is not counted among the run's dependency-affected projects — nothing was compiled.
+
+The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
+a row's target compiles unconditionally (§8.1); a member of a cycle group compiles with its group, since skipping
+one member would leave the group half built. A record written before roots were stored carries no roots and
+compiles on every `Build` as it always did.
 
 ### 8.4 ETA
 
@@ -1042,7 +1081,8 @@ log is the real record, and the channel is still drained to completion so no wri
 
 **Per project.** At dispatch time all dependencies are already terminal, so `depIssues` can be computed before
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
-that this project's own dependents will inherit). The invocation request carries the solution directory, a
+that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
+before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the solution directory, a
 restore flag derived from the presence of `packages.config`, and — in worktree mode only — the isolated
 intermediate path. The project's log file is opened before and closed after the invocation, so a late line
 cannot be silently dropped. The first line written is the real MSBuild command line. On success the build state
@@ -3567,7 +3607,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5) | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external roots (path and source) and whether to update them (§10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
@@ -4001,7 +4041,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
-| Dependency-issue propagation (failed roots, stale inputs of a scoped run) | `Core/Scheduling/DepIssueTracker.cs` |
+| Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
+| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
