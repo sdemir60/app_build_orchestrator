@@ -2582,6 +2582,22 @@ lines.
   2.8 % narrow with the rounding error spread unevenly between characters. On a monospace grid the cost is not
   only width but alignment. The bottom padding is wider than the top so the caret, which sits on the document's
   last line, is not flush against the horizontal scrollbar when one appears.
+- **The body's cursor is a plain arrow, and the row under it gets a full-width band.** A hand is reserved for
+  things that can be clicked; this panel has none, and AvalonEdit's own text I-beam was tried and dropped for
+  the same reason the event stream drops a third cursor language. The arrow is not a simple property assignment:
+  AvalonEdit's `SelectionMouseHandler` forces the I-beam (and, mid drag, an arrow over the current selection)
+  from inside the `QueryCursor` routed event, not from the static `Cursor` property — neither `TextArea` nor
+  `TextView` ever sets one. `ConsoleView` re-catches the same event one level up, on `TextEditor` itself, with
+  `handledEventsToo: true`: the bubble reaches AvalonEdit's handler first and reaches this one after, so
+  whatever AvalonEdit decided is overwritten with the arrow regardless. The row band is a `Rectangle` sitting
+  behind the editor in the same cell — `TextEditor.Background` stays transparent, so a rectangle drawn first shows
+  through everywhere a glyph is not — filled with a local, unfrozen brush that `MotionTokens.TransitionColor`
+  steps between `Brush.Surface` and transparent, the same primitive every other hover surface in the app uses.
+  Because that rectangle is stretched to the width of the tilt host rather than the editor's own content area,
+  it reaches past the editor's 12 px padding to the panel's true edges, the same full-bleed row the design asks
+  for. Which line is under the pointer is answered by a pure helper (`ConsoleHoverBand.LineAt`, tested without
+  any live editor) fed from the real `TextView.VisualLines` on every `MouseMove`; leaving the text view clears
+  it. Nothing here opens a clock — the band only moves in response to a real mouse event, per §14.5's idle rule.
 
 ### 13.6 Graph renderer
 
@@ -4033,8 +4049,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band | `App/Console/ConsoleView.xaml(.cs)` |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
+| Row hover band target-line geometry (pure) | `App/Console/ConsoleHoverBand.cs` |
 | Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
 | Batching, routing, render slice | `App/Console/ConsoleBatcher.cs`, `ConsoleBatchRouter.cs`, `ConsoleRenderSlice.cs` |
 | Chunk stitch and scroll compensation | `App/Console/ChunkStitch.cs` |

@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -64,6 +65,8 @@ public partial class ConsoleView : UserControl
     private bool _idleReady;
     private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
+    // [Task 6] Satır hover bandının YEREL (donmamış) fırçası — MotionTokens.TransitionColor bunu animate eder.
+    private readonly SolidColorBrush _hoverBandBrush;
 
     // Kaskat durumu (yalnız UI thread'inde).
     // [design v1.7.0 §2.5] Panel geçişinin tek parça "tilt in" ölçüleri (prototip: 14px + 340ms + rotateX 7°).
@@ -141,6 +144,19 @@ public partial class ConsoleView : UserControl
         UserScrollSignal.Wire(this, _bottomAnchor.NotifyUserScroll);
         // [A13/T5] Pill'in adı host'tan gelir (hangi akışın sonu — bkz. LatestPill.AccessibleName).
         Pill.AccessibleName = AccessibilityNames.LatestConsole;
+        // [Task 6/design v1.17.0 §9] Konsol gövdesi standart OK imleci ister — AvalonEdit'in TextArea'sı kendi
+        // IBeam'ini yönlendirilmiş QueryCursor olayı ÜZERİNDEN dayatır (statik Cursor özelliği değil, bkz.
+        // ForceArrowCursor doc'u). Aynı olay burada (üst ata EditorControl) handledEventsToo:true ile YENİDEN
+        // yakalanır: kabarcıklanma AvalonEdit'in kararından SONRA buraya ulaşır, SON SÖZÜ biz söyleriz.
+        EditorControl.AddHandler(Mouse.QueryCursorEvent, new QueryCursorEventHandler(ForceArrowCursor), handledEventsToo: true);
+        // Belt-and-suspenders: AvalonEdit'in hiç ele almadığı konumlarda (QueryCursor bubbling'i hiç
+        // tetiklenmeyen köşe durumlar) statik değer de Arrow'dur — üç seviye de gerçekten Arrow görünsün diye.
+        EditorControl.Cursor = Cursors.Arrow;
+        EditorControl.TextArea.Cursor = Cursors.Arrow;
+        EditorControl.TextArea.TextView.Cursor = Cursors.Arrow;
+        _hoverBandBrush = (SolidColorBrush)HoverBand.Fill;
+        EditorControl.TextArea.TextView.MouseMove += (_, e) => UpdateHoverBand(e.GetPosition(EditorControl.TextArea.TextView).Y);
+        EditorControl.TextArea.TextView.MouseLeave += (_, _) => HideHoverBand();
         // [A13/T1 fix-1 · I-D] EventStreamView.ctor:97 deseni: unload'da SONSUZ blink saatleri bırakılır (aksi
         // halde ağaçtan çıkmış bir görünümün iki clock'u timing engine'de 30fps'te uyanık kalırdı). Uçuştaki
         // daktilo/kaskat BURADA commit EDİLMEZ: commit doküman yazan bir DAVRANIŞTIR ve unload'da yeni bir
@@ -897,4 +913,80 @@ public partial class ConsoleView : UserControl
     // [T59] Controls.MotionTokens'a taşındı (ScrollAnimator/BottomAnchor/FollowScroll/LatestPill AYNI ihtiyacı
     // duyar) — kopya YASAK; davranış DEĞİŞMEDİ (aynı TryFindResource + aynı fallback deseni).
     private Duration ResolveDuration(string key, double fallbackMs) => MotionTokens.ResolveDuration(this, key, fallbackMs);
+
+    // ---------------------------------------------------------------- [Task 6] ok imleç + satır hover bandı
+
+    /// <summary>
+    /// [Task 6/design v1.17.0 §9 "3 — Konsol ve event stream"] Konsol gövdesinin imleci standart OK'tur — el
+    /// işareti yalnız tıklanabilir öğelere aittir, bu panelde metin I-beam'i istenmedi (spec'in kendi "Denenen ve
+    /// bırakılan" notu).
+    ///
+    /// <para><b>Neden yönlendirilmiş bir olay, statik <c>Cursor</c> özelliği değil:</b> AvalonEdit'in
+    /// <c>SelectionMouseHandler</c>'ı (decompile ile doğrulandı) IBeam'i — ve sürükle-bırak sırasında Arrow'u —
+    /// <c>TextArea.QueryCursor</c> yönlendirilmiş olayını ELE ALARAK dayatır; <c>TextArea</c>/<c>TextView</c>
+    /// hiçbir yerde kendi <c>Cursor</c> özelliğini ATAMAZ. Statik <c>Cursor</c> bu yüzden yalnız AvalonEdit'in
+    /// hiç ele almadığı konumlarda (editör sınırlarının dışı) işe yarar — asıl metin gövdesinde etkisizdir.</para>
+    ///
+    /// <para>Aynı olay burada üst atada (<c>EditorControl</c>) <c>handledEventsToo:true</c> ile YENİDEN
+    /// yakalanır: kabarcıklanma <c>TextView</c>'den başlar, AvalonEdit'in kararından (ele alınmış ya da değil)
+    /// SONRA buraya ulaşır ve SON SÖZÜ biz söyleriz — AvalonEdit'in seçtiği değer ne olursa olsun ezilir.
+    /// <c>internal</c>: testler üretimin ÇAĞIRDIĞI metodun ta kendisini gerçek bir <c>RaiseEvent</c> ile
+    /// tetikleyebilsin.</para>
+    /// </summary>
+    internal void ForceArrowCursor(object sender, QueryCursorEventArgs e)
+    {
+        e.Cursor = Cursors.Arrow;
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// [Task 6/design v1.17.0 §9] İmlecin altındaki satırı tam genişlik, <see cref="ConsolePalette"/>'in DEĞİL
+    /// doğrudan <c>Brush.Surface</c> zeminli bir bantla işaretler — event stream'in satır hover'ıyla AYNI
+    /// algısal adım ("iki panelde hover adımı eşittir"). Hedef satırın hesabı saf
+    /// <see cref="ConsoleHoverBand.LineAt"/>'a çıkarılmıştır (renderer'sız test edilebilir); burası yalnız GERÇEK
+    /// <c>TextView.VisualLines</c> listesini ona besler ve sonucu <see cref="HoverBand"/>'ın Margin/Height'ına
+    /// uygular.
+    ///
+    /// <para><b>Neden bir Y PARAMETRESİ, gerçek <c>MouseMove</c>'dan okuma değil:</b>
+    /// <see cref="EvaluateChunkScroll"/> ile AYNI desen — gerçek <c>MouseDevice</c> konumu (OS imlecinin gerçek
+    /// ekran konumu) headless'ta simüle edilemez; üretim kablosu (ctor) konumu ÇIKARIP buraya geçer, testler
+    /// üretimin çağırdığı metodu doğrudan sürer.</para>
+    ///
+    /// <para>Bant <see cref="PART_TiltHost"/>'un TAM genişliğini kaplar (<c>HorizontalAlignment="Stretch"</c> +
+    /// host'un kendi padding'i yok) — editörün kendi 12px iç dolgusunu (<c>Padding</c>) aşar, panel kenarından
+    /// kenara. Renk kuralı, hiza, satır yüksekliği ve metin seçilebilirliği ETKİLENMEZ: bant salt görsel bir
+    /// zemindir (hit-test'e kapalı) ve <see cref="TextEditor.Background"/> Transparent olduğu için metnin
+    /// ALTINDA kalır.</para>
+    ///
+    /// <para>Ek saat AÇMAZ (ARCHITECTURE §14.5, boşta-saat kuralı): yalnız çağrıldığında (gerçek
+    /// <c>MouseMove</c>) çalışır, boşta hiçbir şey koşmaz. Renk geçişi zaten hedefteyken
+    /// <see cref="MotionTokens.TransitionColor"/> no-op'tur — komşu satırlar arasında sürekli gelen
+    /// <c>MouseMove</c> akışı gereksiz yere yeniden animasyon KURMAZ.</para>
+    /// </summary>
+    internal void UpdateHoverBand(double mouseYInTextView)
+    {
+        var view = EditorControl.TextArea.TextView;
+        if (!view.VisualLinesValid || view.VisualLines.Count == 0) { HideHoverBand(); return; }
+
+        double documentY = mouseYInTextView + view.ScrollOffset.Y;
+        var lines = new List<(double Top, double Height)>(view.VisualLines.Count);
+        foreach (var visual in view.VisualLines) lines.Add((visual.VisualTop, visual.Height));
+
+        if (ConsoleHoverBand.LineAt(lines, documentY) is not { } line) { HideHoverBand(); return; }
+
+        // [PositionPrompt deseni] Referans TİLT KABIDIR (PART_TiltHost), ConsoleView değil — editör ve bant
+        // aynı kabın içindedir, aralarındaki mesafe geçiş animasyonundan ETKİLENMEZ.
+        var point = view.TransformToAncestor(PART_TiltHost).Transform(new Point(0, line.Top - view.ScrollOffset.Y));
+        if (!double.IsFinite(point.Y)) { HideHoverBand(); return; }
+
+        HoverBand.Height = line.Height;
+        HoverBand.Margin = new Thickness(0, point.Y, 0, 0);
+        MotionTokens.TransitionColor(this, _hoverBandBrush, ResolveHoverBandColor());
+    }
+
+    /// <summary>Fare panelden çıkınca bant kalkar (design v1.17.0 §9) — <c>TextView.MouseLeave</c>'e kablanır.</summary>
+    private void HideHoverBand() => MotionTokens.TransitionColor(this, _hoverBandBrush, Colors.Transparent);
+
+    private Color ResolveHoverBandColor() =>
+        TryFindResource("Brush.Surface") is SolidColorBrush brush ? brush.Color : Colors.Transparent;
 }
