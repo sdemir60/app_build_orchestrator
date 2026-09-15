@@ -13,12 +13,17 @@
           Background="{DynamicResource Brush.SurfaceRaised}"
           BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1"
           CornerRadius="{DynamicResource Radius.Xs}">
+    <!-- [design v1.17.0 §9 fix round 1 · I-2] Her düğme kendi HER ZAMAN etkin Border'ına sarılır: koşarken
+         disabled olan düğme WPF'in hit-test'inden dışlanır, hit ARKASINDAKİ (aynı sınırlı) Border'a düşer ve
+         DsChrome.WireHoverProxy (MaintenanceBox.Build) onun MouseEnter/Leave'ini düğmenin IsHoverProxy'sine
+         yansıtır. Sarmalayıcı AYRI olmak ZORUNDADIR (kutunun tamamını saran tek bir Border DEĞİL) — aksi
+         halde bir düğmenin üstündeki hover, komşusunun aktif-hover'ını da yanlışlıkla tetiklerdi. -->
     <StackPanel x:Name="PART_Strip" Orientation="Horizontal">
-      <Button x:Name="PART_Clean" />
+      <Border Background="Transparent"><Button x:Name="PART_Clean" /></Border>
       <Border x:Name="PART_Sep1" Width="1" Height="14" Background="{DynamicResource Brush.Border}" />
-      <Button x:Name="PART_Optimize" />
+      <Border Background="Transparent"><Button x:Name="PART_Optimize" /></Border>
       <Border x:Name="PART_Sep2" Width="1" Height="14" Background="{DynamicResource Brush.Border}" />
-      <Button x:Name="PART_Resolve" />
+      <Border Background="Transparent"><Button x:Name="PART_Resolve" /></Border>
     </StackPanel>
   </Border>
 </UserControl>

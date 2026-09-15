@@ -47,6 +47,15 @@ public static class DsTransition
         "AnimatedBorderBrush", typeof(Brush), typeof(DsTransition),
         new PropertyMetadata(null, (d, e) => Apply(d, BorderBrushTarget(d), e.NewValue as Brush)));
 
+    /// <summary>[design v1.17.0 §9 fix round 1 · I-3] Tıpkı <see cref="AnimatedForegroundProperty"/> gibi ama
+    /// hedefi öğenin GERÇEK <c>Foreground</c>'u DEĞİL, <see cref="DsChrome.IconForegroundProperty"/>'dir —
+    /// bir öğenin ikon rengi kendi metninkinden BAĞIMSIZ olarak geçişe ihtiyaç duyduğunda (Σ chip'i: rest
+    /// text-dim, hover text-primary; chip'in kendi Foreground'u rest'te text-secondary'dir ve ikisi KARIŞTIRILAMAZ).
+    /// Hedef sabit olduğundan (tip'e göre dallanmaz) bir *Target çözümleyicisi gerekmez.</summary>
+    public static readonly DependencyProperty AnimatedIconForegroundProperty = DependencyProperty.RegisterAttached(
+        "AnimatedIconForeground", typeof(Brush), typeof(DsTransition),
+        new PropertyMetadata(null, (d, e) => Apply(d, DsChrome.IconForegroundProperty, e.NewValue as Brush)));
+
     /// <summary>[T60] Switch başparmağının 120ms'lik yatay kayması (_ds_bundle.js:901
     /// <c>transform: translateX(12px)</c>). Öğeye lokal bir <see cref="TranslateTransform"/> kurar ve
     /// <c>X</c>'ini <see cref="MotionTokens.TransitionDouble"/> ile sürer.</summary>
@@ -76,6 +85,9 @@ public static class DsTransition
 
     public static void SetAnimatedBorderBrush(DependencyObject d, Brush? value) => d.SetValue(AnimatedBorderBrushProperty, value);
     public static Brush? GetAnimatedBorderBrush(DependencyObject d) => (Brush?)d.GetValue(AnimatedBorderBrushProperty);
+
+    public static void SetAnimatedIconForeground(DependencyObject d, Brush? value) => d.SetValue(AnimatedIconForegroundProperty, value);
+    public static Brush? GetAnimatedIconForeground(DependencyObject d) => (Brush?)d.GetValue(AnimatedIconForegroundProperty);
 
     public static void SetAnimatedTranslateX(DependencyObject d, double value) => d.SetValue(AnimatedTranslateXProperty, value);
     public static double GetAnimatedTranslateX(DependencyObject d) => (double)d.GetValue(AnimatedTranslateXProperty);

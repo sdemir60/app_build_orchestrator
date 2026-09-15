@@ -89,8 +89,13 @@
 
       <!-- ============================ SOL GRUP (sola yaslı, esnek) ============================ -->
       <StackPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
-        <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Bar.Button.Secondary.Sm}"
-                Command="{Binding SyncCommand}" VerticalAlignment="Center" />
+        <!-- [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır (komut kapısı) ve WPF disabled
+             öğeleri hit-test'ten dışlar — bu Border HER ZAMAN etkindir, hit onun üstüne düşer ve
+             DsChrome.WireHoverProxy (ActionBar ctor) MouseEnter/Leave'ini düğmenin IsHoverProxy'sine yansıtır. -->
+        <Border Background="Transparent" VerticalAlignment="Center">
+          <Button x:Name="PART_Sync" Style="{DynamicResource Ds.Bar.Button.Secondary.Sm}"
+                  Command="{Binding SyncCommand}" VerticalAlignment="Center" />
+        </Border>
         <!-- [design v1.7.0 §2.7-2] Bakım kutusu (Clean · Optimize · Resolve cycles) Sync'in KOMŞUSUDUR:
              üçü de derleme ÖNCESİ hazırlık işleridir ve birlikte okunurlar. Build'in yanına konmadı — orası
              birincil aksiyonun (accent) yeridir ve bunlar onun varyantı DEĞİL, ondan önce gelen işlerdir.

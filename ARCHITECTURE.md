@@ -1868,18 +1868,27 @@ the chip, the list and the graph can never disagree.
 counter chips, `N behind`, the branch/worktree/perf chips — steps to the same `neutral-700` ground with a
 `neutral-500` hairline on hover, and its label and icon whiten to `text-primary` together; a control that
 carries its own status colour (a status glyph, the building spinner or dot, the warning triangle) keeps that
-colour through the hover, because there colour is a status, not a hover state. A control that is already open
-or checked — a lit filter chip, an open branch/worktree popover — steps instead to `amber-soft-hover` with an
-`amber` hairline, and its text stays the fixed `amber-text` it already had: hover never overwrites what the
-state itself already said. The one control that opts out is the `Debug | Release` segment, where only the
-*unselected* option answers hover (`surface-raised`, `text-secondary`) — the selected one already sits on
-`surface-overlay`, and the two would blur into each other. Build and Stop keep their own primary/danger hover;
-they are the bar's one loud control and were never part of the confusion this replaced — before it, Sync
-stepped its own ground, the maintenance icons went from transparent to `surface-raised`, the chips moved ground
-but froze their hairline and text, and the segment answered nothing at all, four different answers to the same
-gesture. A disabled control never hovers, on top of the 0.45 dimming every control already carries. The one
-exception is a *running* Sync or maintenance job: its command is closed while the work is in flight, but the
-button is drawn live on purpose (below), so it keeps answering hover the way an open chip does.
+colour through the hover, because there colour is a status, not a hover state. `Σ` is the one partial exception:
+its icon rests one shade dimmer than its neighbours (`text-dim`, matching the design system's own chip-icon
+rule) rather than sharing the chip's own resting `text-secondary`, so it answers hover through its own channel
+— dim at rest, the same `text-primary` on hover — instead of simply following the chip's foreground the way the
+branch/worktree/perf icons do. A control that is already open or checked — a lit filter chip, an open
+branch/worktree popover — steps instead to `amber-soft-hover` with an `amber` hairline, and its text stays the
+fixed `amber-text` it already had: hover never overwrites what the state itself already said, and the two
+readings are mutually exclusive by construction (an unchecked and a checked control never answer the same
+trigger, so there is no race for the checked one to lose). The one control that opts out is the
+`Debug | Release` segment, where only the *unselected* option answers hover (`surface-raised`, `text-secondary`)
+— the selected one already sits on `surface-overlay`, and the two would blur into each other. Build and Stop
+keep their own primary/danger hover; they are the bar's one loud control and were never part of the confusion
+this replaced — before it, Sync stepped its own ground, the maintenance icons went from transparent to
+`surface-raised`, the chips moved ground but froze their hairline and text, and the segment answered nothing at
+all, four different answers to the same gesture. A disabled control never hovers, on top of the 0.45 dimming
+every control already carries. The one exception is a *running* Sync or maintenance job: its command is closed
+while the work is in flight, but the button is drawn live on purpose (below) — and WPF excludes a disabled
+control from hit-testing altogether (the same reason a disabled button needs `ToolTipService.ShowOnDisabled` to
+show a tooltip at all), so the button's own hover would never fire. Each of the four keeps its own always-live
+wrapper — an otherwise invisible `Border` occupying exactly its bounds — whose `MouseEnter`/`MouseLeave` is what
+actually answers hover in that window; the button's real `IsMouseOver` answers it everywhere else.
 
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
 itself); the branch chip (searchable popover); the `N behind` chip (§10.7) — drawn only when the distance is
@@ -2033,7 +2042,10 @@ story: two neighbouring jobs on one bar, one spinning and one inert, described t
 pill's own narrative is unchanged; this is an addition to it. Hovering a running button deepens the same
 surface once more — `amber-soft-hover` ground, and for Sync an `amber` hairline — the bar's single hover
 language extended to its one control whose command is closed but whose surface must still read as live; the
-*Sync* label stays out of amber either way, since the button is named, not restyled, by the work running under it.
+*Sync* label stays out of amber either way, since the button is named, not restyled, by the work running under
+it. That hover answers through the button's always-live wrapper, not the button itself — the button is
+genuinely disabled in this window (its command's `CanExecute` is false), and WPF excludes a disabled control
+from hit-testing altogether, so its own `IsMouseOver` never becomes true no matter where the pointer sits.
 
 **No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
 topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
@@ -2897,11 +2909,34 @@ The action bar's chip, secondary-button, icon-button and segment-item styles eac
 (`Ds.Bar.Chip`, `Ds.Bar.Chip.Action`, `Ds.Bar.Button.Secondary.Sm`, `Ds.Bar.IconButton`, `Ds.Bar.Segment.Item`) —
 `BasedOn` the shared style, adding only the bar's hover triggers (§13.2 "The whole bar speaks one hover
 language") so the base styles the rest of the app uses (the ShellRoot filter chip, row icons, dialogs) are
-untouched. A running Sync or maintenance button is not a `ToggleButton`, so it has no `IsChecked` to key a
-hover trigger off; `DsChrome.IsActive` is the attached stand-in, set the moment the job starts and cleared the
-moment it ends, read by the same two triggers (resting and hovered) that an open chip's `IsChecked` reads —
-and, being a plain flag rather than a command gate, its hover trigger does not require `IsEnabled`, since the
-button is deliberately drawn live while its own command is closed.
+untouched. `Ds.Bar.Chip`'s neutral-hover trigger carries `IsChecked=False` as one of its own conditions, not
+just `IsMouseOver`+`IsEnabled`: a `BasedOn` style's own triggers are evaluated *after* the base style's, so
+without that third condition a checked-and-hovered chip matched *both* the neutral trigger (declared here) and
+`Ds.Chip`'s own `IsChecked` trigger (declared in the base), and the later one — the neutral trigger, because it
+belongs to the more-derived style — won, whitening a lit filter chip's text on hover instead of leaving its
+`amber-text` alone. The two triggers now key off opposite values of `IsChecked` and can never both match, so
+there is no ordering to get wrong.
+
+A running Sync or maintenance button is not a `ToggleButton`, so it has no `IsChecked` to key a hover trigger
+off; `DsChrome.IsActive` is the attached stand-in, set the moment the job starts and cleared the moment it ends,
+read by the resting trigger the same way an open chip's `IsChecked` is. Its *hover* trigger, though, cannot key
+off the button's own `IsMouseOver` at all — the button is genuinely disabled for the run of the job (its
+command's `CanExecute` is false), and a disabled control is excluded from WPF's hit-testing outright, so its
+`IsMouseOver` never becomes true regardless of where the pointer sits. `DsChrome.IsHoverProxy` is the answer:
+each of the four buttons (Sync, Clean, Optimize, Resolve) sits inside its own always-enabled `Border`, sized to
+its exact bounds and otherwise invisible, and `DsChrome.WireHoverProxy` wires that Border's `MouseEnter`/
+`MouseLeave` straight onto the button's `IsHoverProxy` — when the button itself cannot answer the hit test, it
+falls through to the Border sitting behind it, which can. The active-hover trigger reads `IsHoverProxy`, not
+`IsMouseOver`, and asks nothing of `IsEnabled` either, since the button is deliberately drawn live while its own
+command is closed.
+
+Σ's icon answers hover through a third, narrower channel of the same shape: `DsChrome.IconForeground`, set by
+`Ds.Bar.Chip`'s own Setter (`text-dim`, resting) and by its neutral-hover trigger (`text-primary`) exactly the
+way `AnimatedForeground` carries the rest of the chip. It exists because Σ's chip shares `Ds.Chip`'s resting
+`Foreground` (`text-secondary`) with every other chip that has a label, but the design system draws a chip's
+*icon* one shade dimmer than its label at rest — binding Σ's icon straight to the chip's `Foreground` (the
+pattern the branch/worktree/perf icons use, where the icon's resting shade already equals the label's) would
+have raised Σ's icon to `text-secondary` at rest, losing that shade instead of merely failing to animate it.
 
 Three pieces of shared machinery keep the copies from multiplying:
 

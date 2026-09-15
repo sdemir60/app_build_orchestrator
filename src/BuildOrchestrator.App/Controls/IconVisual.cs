@@ -66,4 +66,34 @@ internal static class IconVisual
             VerticalAlignment = VerticalAlignment.Center,
         };
     }
+
+    /// <summary>
+    /// [design v1.17.0 §9 fix round 1 · I-3] <see cref="BoundToForeground"/>'ın kardeşi, ama chip'in
+    /// <see cref="Control.Foreground"/>'una DEĞİL <see cref="DsChrome.IconForegroundProperty"/>'sine bağlanır —
+    /// tek tüketicisi Σ'dır: chip'in REST Foreground'u <c>text-secondary</c>iken Σ'nin ikonu tasarımda bir tık
+    /// daha soluk (<c>text-dim</c>) olmalı, doğrudan Foreground bağı bu farkı KAYBEDERdi (bkz.
+    /// <see cref="DsChrome.IconForegroundProperty"/>'nin XML doc'u). Kapsam ve kalınlık kuralı
+    /// <see cref="BoundToForeground"/> ile AYNIDIR (yalnız KONTURLU ikonlar).
+    /// </summary>
+    public static Viewbox BoundToIconForeground(Control chip, string iconKey, double size, double viewBox = 24)
+    {
+        ArgumentNullException.ThrowIfNull(chip);
+        var path = new Path
+        {
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            StrokeLineJoin = PenLineJoin.Round,
+        };
+        path.SetResourceReference(Path.DataProperty, iconKey);
+        path.SetResourceReference(Shape.StrokeThicknessProperty, iconKey + ".StrokeThickness");
+        path.SetBinding(Shape.StrokeProperty,
+            new System.Windows.Data.Binding { Path = new PropertyPath(DsChrome.IconForegroundProperty), Source = chip });
+        var canvas = new Canvas { Width = viewBox, Height = viewBox };
+        canvas.Children.Add(path);
+        return new Viewbox
+        {
+            Width = size, Height = size, Stretch = Stretch.Uniform, Child = canvas,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+    }
 }

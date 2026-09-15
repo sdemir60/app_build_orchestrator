@@ -186,6 +186,14 @@
     disabled'dır (ikinci bir Sync anlamsız) ama görsel olarak AKTİF kalmalıdır — bu yüzden IsActive'in hover
     eşleniği IsEnabled ŞARTI ARAMAZ (nötr hover'ın aksine). Etiket ("Sync") amber'a DÖNMEZ (kimliğini korur) —
     bu yüzden IsActive tetikleyicileri Foreground'u hiç YAZMAZ, yalnız zemin/kenar.
+
+    [fix round 1 · I-2 — DEĞİŞEN KURAL] Aktif+hover tetikleyicisi eskiden IsMouseOver okuyordu — GERÇEKTE HİÇ
+    TETİKLENEMEZDİ: WPF disabled bir öğeyi hit-test'ten TAMAMEN dışlar (ToolTipService.ShowOnDisabled'ın var
+    olma nedeninin AYNISı) ve bu düğme tam da o an (komut kapısı kapalı) disabled'dır — kendi IsMouseOver'ı
+    gerçek fareyle asla true olmaz. Artık DsChrome.IsHoverProxy okur: ActionBar'ın PART_Sync'i saran HER ZAMAN
+    etkin bir Border, MouseEnter/Leave'ini DsChrome.WireHoverProxy ile bu bayrağa yansıtır (bkz.
+    DsChrome.IsHoverProxyProperty'nin XML doc'u) — düğme kendi alanını hit-test edemediğinde hit ARKASINDAKİ
+    (aynı sınırlı) Border'a düşer.
   -->
   <Style x:Key="Ds.Bar.Button.Secondary.Sm" TargetType="Button" BasedOn="{StaticResource Ds.Button.Secondary.Sm}">
     <Style.Triggers>
@@ -204,7 +212,7 @@
       <MultiTrigger>
         <MultiTrigger.Conditions>
           <Condition Property="controls:DsChrome.IsActive" Value="True" />
-          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="controls:DsChrome.IsHoverProxy" Value="True" />
         </MultiTrigger.Conditions>
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoftHover}" />
         <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Amber}" />
@@ -390,27 +398,40 @@
     geçer, çipler zemin açar ama kenar/metni sabit tutar, segment hiç yanıt vermez). Tek kural, BasedOn zinciriyle
     Ds.Chip'in üstüne EKLENİR (paylaşılan Ds.Chip DEĞİŞMEZ — ShellRoot filtre chip'i/satır ikonları/dialog'lar
     ondan etkilenmez):
-      • NÖTR hover (disabled DIŞINDA): zemin neutral-700, kenar neutral-500, metin VE ikon text-primary — üçü
-        BİRLİKTE (chip'in Foreground'una bağlı her ikon/etiket/değer bunu otomatik izler, bkz. IconVisual.
-        BoundToForeground / ChipLabel / ChipMonoValue).
+      • NÖTR hover (disabled ve İŞARETLİ DIŞINDA): zemin neutral-700, kenar neutral-500, metin text-primary —
+        chip'in Foreground'una bağlı her etiket/değer bunu otomatik izler (bkz. ChipLabel/ChipMonoValue), ikon
+        ya AYNI Foreground'a bağlıdır (branch/worktree/perf: IconVisual.BoundToForeground) ya da chip'e ÖZEL
+        bir kanaldan (Σ: IconVisual.BoundToIconForeground, aşağıdaki AnimatedIconForeground) — ikisi ayrıdır,
+        çünkü Σ'nin ikonu rest'te bir tık daha soluktur (bkz. DsChrome.IconForegroundProperty).
+      • [fix round 1 · I-1 — DEĞİŞEN KURAL] Bu MultiTrigger IsChecked=False de İSTER: eskiden yalnız
+        IsMouseOver+IsEnabled istiyordu ve İŞARETLİ bir chip hover alınca da eşleşiyordu — BasedOn zincirinde
+        DERİVE edilen tetikleyici BASE'in (Ds.Chip) IsChecked=True tetikleyicisinden SONRA değerlendirildiği
+        için bu Foreground'u amber-text'ten text-primary'ye EZİYORDU (metin sabit kalması gerekirken beyazlıyordu).
+        İki MultiTrigger artık KARŞILIKLI DIŞLAYICI (IsChecked=False / =True) — hangisi eşleşirse EŞLEŞSİN,
+        ikisi asla AYNI ANDA tetiklenmez, bu yüzden ORTAK bir Foreground yazma yarışı da YOKTUR.
       • AKTİF (IsChecked) + hover: zemin amber-soft-hover, kenar amber — metin amber-text SABİT kalır (bu
         MultiTrigger Foreground'u YAZMAZ; Ds.Chip'in kendi IsChecked tetikleyicisi zaten amber-text yazmıştır ve
-        SONRA gelen bu trigger yalnız zemin/kenarı ezer). Aktif+hover trigger'ı nötr hover'ın ALTINDA durur ki
-        her iki koşul da sağlandığında (checked chip hover alırken) SONRA gelen kazansın.
+        NÖTR tetikleyici artık İŞARETLİ durumda hiç EŞLEŞMEDİĞİ için onu EZMEZ).
       • Disabled kontrol hover ALMAZ: her iki tetikleyici de IsEnabled=True ister (Base zaten 0.45 opaklığa
         söndürür — MultiTrigger bunu bir daha teyit eder, brief'in "MultiTrigger IsMouseOver+IsEnabled" notu).
     Tüketiciler: Σ/building/succeeded/failed/skipped/warn sayaç çipleri, branch/worktree/perf chip'leri.
   -->
   <Style x:Key="Ds.Bar.Chip" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Chip}">
+    <!-- [fix round 1 · I-3] Σ'nin ikon-özel rest rengi (text-dim) — bkz. DsChrome.IconForegroundProperty. -->
+    <Setter Property="controls:DsTransition.AnimatedIconForeground" Value="{DynamicResource Brush.TextDim}" />
     <Style.Triggers>
       <MultiTrigger>
         <MultiTrigger.Conditions>
           <Condition Property="IsMouseOver" Value="True" />
           <Condition Property="IsEnabled" Value="True" />
+          <!-- [fix round 1 · I-1] bkz. yukarıdaki DEĞİŞEN KURAL notu. -->
+          <Condition Property="IsChecked" Value="False" />
         </MultiTrigger.Conditions>
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Neutral700}" />
         <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
         <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+        <!-- [fix round 1 · I-3] Σ'nin ikonu nötr hover'da text-primary'ye döner (diğer tüketiciler için inert). -->
+        <Setter Property="controls:DsTransition.AnimatedIconForeground" Value="{DynamicResource Brush.TextPrimary}" />
       </MultiTrigger>
       <MultiTrigger>
         <MultiTrigger.Conditions>
@@ -571,6 +592,12 @@
     görünmelidir). Foreground=AmberText hem resting hem hover'da SABİT kalır (Ds.IconButton.Toggle'ın IsChecked
     deseniyle AYNI) — içerik zaten spinner'a döndüğü için görünür etkisi yoktur, ama Foreground'a bağlı her
     tüketici (ör. ileride eklenecek bir ikon) tutarlı kalır.
+
+    [fix round 1 · I-2 — DEĞİŞEN KURAL] Aktif+hover tetikleyicisi eskiden IsMouseOver okuyordu — GERÇEKTE HİÇ
+    TETİKLENEMEZDİ (Ds.Bar.Button.Secondary.Sm'deki AYNI notla aynı gerekçe: bu üç düğme koşarken disabled'dır,
+    disabled bir öğe WPF'in hit-test'inden TAMAMEN dışlanır). Artık DsChrome.IsHoverProxy okur: MaintenanceBox
+    her düğmeyi saran HER ZAMAN etkin bir Border, MouseEnter/Leave'ini DsChrome.WireHoverProxy ile bu bayrağa
+    yansıtır.
   -->
   <Style x:Key="Ds.Bar.IconButton" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
     <Style.Triggers>
@@ -589,7 +616,7 @@
       <MultiTrigger>
         <MultiTrigger.Conditions>
           <Condition Property="controls:DsChrome.IsActive" Value="True" />
-          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="controls:DsChrome.IsHoverProxy" Value="True" />
         </MultiTrigger.Conditions>
         <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.AmberSoftHover}" />
       </MultiTrigger>

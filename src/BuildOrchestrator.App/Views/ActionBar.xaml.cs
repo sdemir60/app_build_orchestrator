@@ -76,6 +76,10 @@ public partial class ActionBar : UserControl
         PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
+        // [design v1.17.0 §9 fix round 1 · I-2] Sync koşarken disabled'dır — kendi IsMouseOver'ı asla true
+        // olmaz (WPF disabled öğeleri hit-test'ten dışlar). ActionBar.xaml'in onu saran HER ZAMAN etkin
+        // Border'ı gerçek hover sinyalini taşır (bkz. DsChrome.IsHoverProxyProperty'nin XML doc'u).
+        DsChrome.WireHoverProxy((Border)PART_Sync.Parent, PART_Sync);
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -232,29 +236,27 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- sayaç chip'leri
     private void BuildCounterChips()
     {
-        // [design v1.17.0 §9] Σ ikonu KASITLI OLARAK Foreground'a BAĞLANMAZ: chip'in Foreground'u
-        // (Ds.Bar.Chip → Ds.Chip) rest'te Brush.TextSecondary'dir, ama Σ ikonunun tasarımdaki dinlenme rengi
-        // bir tık daha soluk olan Brush.TextDim'dir (_ds_bundle.js Chip'in ikon span'i — "active ? amber-text :
-        // text-dim", metin/değer ise "text-secondary"/"text-primary"). Doğrudan bağ bu rest farkını KAYBEDER;
-        // Σ hiç aktif olmadığı için (ActionBar.BuildCounterChips altındaki Click handler'ı bkz.) amber-text'e
-        // hiç geçmeyecek bir bağdan kazanılacak tek şey nötr hover'da text-primary'ye dönmesidir — brief bu
-        // dinlenme rengini AÇIKÇA korunacak diye pinler, bu yüzden sabit fırça BİLİNÇLİ olarak kalır.
-        _sigmaChip = AddCounterChip(IconVisual.Make(this, "Icon.Sigma", "Brush.TextDim", ChipIconSize), out _sigmaValue,
-            AccessibilityNames.FilterAll, first: true);
+        // [design v1.17.0 §9 fix round 1 · I-3] Σ ikonu artık hover'a KENDİ (chip'in Foreground'undan AYRI)
+        // kanalıyla tepki verir: DsChrome.IconForeground, Ds.Bar.Chip'in nötr-hover MultiTrigger'ında
+        // rest=text-dim → hover=text-primary olarak sürülür. Chip'in KENDİ Foreground'u (rest'te text-secondary)
+        // bağlanmadı — Σ'nin ikonu tasarımda BİR TIK DAHA SOLUKTUR (bkz. DsChrome.IconForegroundProperty'nin
+        // XML doc'u); doğrudan Foreground bağı bu rest farkını KAYBEDERdi.
+        _sigmaChip = AddCounterChip(chip => IconVisual.BoundToIconForeground(chip, "Icon.Sigma", ChipIconSize),
+            out _sigmaValue, AccessibilityNames.FilterAll, first: true);
         _sigmaChip.Click += (_, _) => { _vm?.ToggleFilter(null); _sigmaChip.IsChecked = false; }; // Σ HER ZAMAN temizler (ActiveFilter zaten null'sa ToggleFilter no-op'tur → PropertyChanged gelmez → burada zorla)
 
-        _buildingChip = AddCounterChip(BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
+        _buildingChip = AddCounterChip(_ => BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
 
-        _succeededChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _succeededChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _succeededValue, AccessibilityNames.FilterSucceeded);
         _succeededChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Succeeded);
 
-        _failedChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _failedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _failedValue, AccessibilityNames.FilterFailed);
         _failedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Failed);
 
-        _skippedChip = AddCounterChip(new StatusGlyph { Status = GraphStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _skippedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _skippedValue, AccessibilityNames.FilterSkipped);
         _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
 
@@ -263,22 +265,27 @@ public partial class ActionBar : UserControl
         // [DEĞİŞEN KURAL] Eskiden burada İKİ chip vardı: turuncu ⚠ (cycle) ve kırmızı ▲ (dep-affected).
         // v1.11.0 turuncuyu UI'dan çıkardı ve döngü ile dep-issue'yu TEK amber uyarı üçgeninde birleştirdi;
         // iki ayrı filtre iki ayrı renk ima ediyordu. Chip artık tek ve amberdir.
-        _warnChip = AddCounterChip(WarnIcon(), out _warnValue, AccessibilityNames.FilterWarn);
+        _warnChip = AddCounterChip(_ => WarnIcon(), out _warnValue, AccessibilityNames.FilterWarn);
         _warnChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Warn);
     }
 
     // [E5/T47] AYNI metin hem tooltip hem UIA-adı (ikon-yalnız chip'in görsel içeriği ekran okuyucuya bir şey
     // söylemez) — tek kaynak AccessibilityNames.
-    private ToggleButton AddCounterChip(UIElement icon, out TextBlock value, string label, bool first = false)
+    // [design v1.17.0 §9 fix round 1 · I-3] İkon artık ÖNCEDEN kurulup PARAMETRE olarak gelmez — bir FACTORY
+    // alır ve chip'i ÖNCE kurup SONRA çağırır, çünkü Σ'nin ikonu (IconVisual.BoundToIconForeground) chip'in
+    // KENDİSİNE bağlanmak zorundadır.
+    private ToggleButton AddCounterChip(Func<ToggleButton, UIElement> iconFactory, out TextBlock value, string label, bool first = false)
     {
-        var content = new StackPanel { Orientation = Orientation.Horizontal };
-        content.Children.Add(icon);
-        value = CounterValue();
-        content.Children.Add(value);
-
-        var chip = new ToggleButton { Content = content, ToolTip = label, VerticalAlignment = VerticalAlignment.Center };
+        var chip = new ToggleButton { ToolTip = label, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(chip, label);
         if (TryFindResource("Ds.Bar.Chip") is Style s) chip.Style = s;
+
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(iconFactory(chip));
+        value = CounterValue();
+        content.Children.Add(value);
+        chip.Content = content;
+
         if (!first) chip.Margin = new Thickness(ChipStripGap, 0, 0, 0); // bar gap 8 (ilk chip HARİÇ)
         PART_CounterChips.Children.Add(chip);
         return chip;

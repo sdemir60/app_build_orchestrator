@@ -54,6 +54,12 @@ public class MaintenanceBoxTests
         GC.KeepAlive(window);
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.17.0 §9 fix round 1 · I-2]</b> Her düğme artık ÇIPLAK bir çocuk
+    /// değil, kendi HER ZAMAN etkin hover-proxy <c>Border</c>'ının İÇİNDEDİR (koşarken disabled olduğu için
+    /// WPF'in hit-test dışlamasını atlatmak üzere — bkz. <c>DsChrome.IsHoverProxyProperty</c>). Ayraçlar
+    /// (index 1/3) SARILMAZ — onlar zaten kendi Border'ları, saracak bir düğme yok. Eski iddia
+    /// <c>children[0]/[2]/[4]</c>'ün doğrudan düğmeler olduğunu varsayıyordu; artık her biri o düğmeyi TEK
+    /// çocuk olarak taşıyan bir <c>Border</c>'dır.</summary>
     [StaFact]
     public void The_box_orders_clean_then_optimize_then_resolve_with_hairline_separators_between_them()
     {
@@ -63,9 +69,9 @@ public class MaintenanceBoxTests
         var strip = Assert.IsType<StackPanel>(Assert.IsType<Border>(box.Content).Child);
         var children = strip.Children.Cast<UIElement>().ToList();
         Assert.Equal(5, children.Count);
-        Assert.Same(box.CleanButton, children[0]);
-        Assert.Same(box.OptimizeButton, children[2]);
-        Assert.Same(box.ResolveButton, children[4]);
+        Assert.Same(box.CleanButton, Assert.IsType<Border>(children[0]).Child);
+        Assert.Same(box.OptimizeButton, Assert.IsType<Border>(children[2]).Child);
+        Assert.Same(box.ResolveButton, Assert.IsType<Border>(children[4]).Child);
 
         foreach (int i in new[] { 1, 3 })
         {

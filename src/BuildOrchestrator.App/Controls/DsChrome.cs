@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Shapes;
 
 namespace BuildOrchestrator.App.Controls;
@@ -82,6 +83,55 @@ public static class DsChrome
 
     public static void SetIsActive(DependencyObject d, bool value) => d.SetValue(IsActiveProperty, value);
     public static bool GetIsActive(DependencyObject d) => (bool)d.GetValue(IsActiveProperty);
+
+    /// <summary>
+    /// [design v1.17.0 §9 fix round 1 · I-2] Gerçek <c>IsMouseOver</c>'ın YERİNE geçen hover sinyali — TEK
+    /// tüketicisi <see cref="IsActiveProperty"/> ile aynı düğmelerdir (koşan Sync/Clean/Optimize/Resolve).
+    /// WPF, <c>IsEnabled=False</c> bir öğeyi hit-test'ten TAMAMEN dışlar (aynı gerekçeyle
+    /// <c>ToolTipService.ShowOnDisabled</c> vardır — disabled bir düğmenin tooltip'i normalde hiç açılmaz);
+    /// bu düğmelerin komut kapısı iş sürerken KAPALIDIR (<c>CanExecute=false</c> → WPF'in kendi coerce'ı
+    /// <c>IsEnabled</c>'ı false yapar), yani düğmenin KENDİ <c>IsMouseOver</c>'ı bu pencerede GERÇEK fare
+    /// hareketiyle asla true olmaz — stil bunu okusaydı "aktif kontrol hover'ı" hiçbir zaman ERİŞİLEMEZ kalırdı.
+    ///
+    /// <para>Çözüm HER ZAMAN etkin bir sarmalayıcı (şeffaf bir <c>Border</c>, düğmeyle AYNI sınırlarda) —
+    /// <see cref="WireHoverProxy"/> onun <c>MouseEnter</c>/<c>MouseLeave</c>'ini bu bayrağa yansıtır. Sarmalayıcı
+    /// disabled DEĞİLDİR, dolayısıyla hit-test'ten hiç dışlanmaz: düğme kendi alanını hit-test edemediğinde
+    /// hit, ARKASINDAKİ (aynı sınırlı) sarmalayıcıya düşer.</para>
+    /// </summary>
+    public static readonly DependencyProperty IsHoverProxyProperty = DependencyProperty.RegisterAttached(
+        "IsHoverProxy", typeof(bool), typeof(DsChrome), new PropertyMetadata(false));
+
+    public static void SetIsHoverProxy(DependencyObject d, bool value) => d.SetValue(IsHoverProxyProperty, value);
+    public static bool GetIsHoverProxy(DependencyObject d) => (bool)d.GetValue(IsHoverProxyProperty);
+
+    /// <summary>
+    /// <paramref name="wrapper"/>'ın (her zaman etkin, hit-test edilebilir bir ata — bkz. <see cref="IsHoverProxyProperty"/>)
+    /// <c>MouseEnter</c>/<c>MouseLeave</c>'ini <paramref name="target"/>'ın <see cref="IsHoverProxyProperty"/>'sine
+    /// yansıtır. Çağıran, <paramref name="target"/>'ı <paramref name="wrapper"/>'ın TEK ve TAM sınırlı çocuğu
+    /// yapmaktan sorumludur — aksi halde sarmalayıcının hit alanı düğmeninkiyle örtüşmez ve sinyal yanlış anda
+    /// (ör. komşu bir düğmenin üstündeyken) tetiklenir.
+    /// </summary>
+    public static void WireHoverProxy(FrameworkElement wrapper, DependencyObject target)
+    {
+        wrapper.MouseEnter += (_, _) => SetIsHoverProxy(target, true);
+        wrapper.MouseLeave += (_, _) => SetIsHoverProxy(target, false);
+    }
+
+    /// <summary>
+    /// [design v1.17.0 §9 fix round 1 · I-3] Bir sayaç CHIP'inin ikon-ÖZEL rengi — chip'in kendi
+    /// <c>Control.Foreground</c>'undan BAĞIMSIZDIR. Tek tüketicisi Σ'dır: DS'in <c>Chip</c> bileşeninde
+    /// ikon span'i rest'te <c>text-dim</c>, chip'in geri kalanı (etiket/değer) ise <c>text-secondary</c>/
+    /// <c>text-primary</c>'dir — Σ'nin chip'i hiç aktif olmadığından ve <c>Ds.Chip</c>'in REST Foreground'u
+    /// <c>text-secondary</c> olduğundan, ikonu doğrudan chip'in Foreground'una bağlamak (<c>BoundToForeground</c>
+    /// deseni) rest rengini YANLIŞ değere (text-dim yerine text-secondary) taşırdı. Bu ayrı, PAYLAŞILMAYAN
+    /// kanal rest'i text-dim'de tutup yalnız nötr hover'da text-primary'ye taşımayı (<c>Ds.Bar.Chip</c>'in
+    /// <see cref="DsTransition.AnimatedIconForegroundProperty"/> setter'ları) mümkün kılar.
+    /// </summary>
+    public static readonly DependencyProperty IconForegroundProperty = DependencyProperty.RegisterAttached(
+        "IconForeground", typeof(Brush), typeof(DsChrome), new PropertyMetadata(null));
+
+    public static void SetIconForeground(DependencyObject d, Brush? value) => d.SetValue(IconForegroundProperty, value);
+    public static Brush? GetIconForeground(DependencyObject d) => (Brush?)d.GetValue(IconForegroundProperty);
 
     private static void OnFocusRingOffsetChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
