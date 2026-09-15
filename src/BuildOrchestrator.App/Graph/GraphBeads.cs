@@ -43,8 +43,11 @@ public static class GraphBeads
     public const double NeighborGapPx = 2.0;
     /// <summary>Köşe yarıçapı tavanı (JSX:381).</summary>
     public const double MaxCornerRadius = 6.8;
-    /// <summary>İki nokta arasındaki HEDEF aralık; gerçek adım çevreye tam bölünecek biçimde yuvarlanır.</summary>
-    public const double BeadSpacingPx = 3.2;
+    /// <summary>İki nokta arasındaki HEDEF aralık; gerçek adım çevreye tam bölünecek biçimde yuvarlanır.
+    /// <para><b>[kullanıcı kararı — tasarımdan BİLİNÇLİ sapma]</b> §9 v1.18.0 3.2px diyordu: 1.6px kalemle
+    /// noktalar arası boşluk nokta kadar kalıyor, halka tek tek nokta değil bulanık bir kesik çizgi gibi
+    /// okunuyordu. 4.4px'te görünen boşluk nokta çapının ~1.75 katıdır.</para></summary>
+    public const double BeadSpacingPx = 4.4;
     /// <summary>Yörüngedeki asgari nokta sayısı — altına inilirse desen "noktalar" değil "çizgiler" olur.</summary>
     public const int MinBeadCount = 8;
     /// <summary>Yörünge kalemi. <b>Eski değer 1'di</b> ("1'den farklı olamaz" sözleşmesi geçerliydi) —
@@ -52,8 +55,12 @@ public static class GraphBeads
     /// için desen/saat BUNA BÖLÜNEREK uygulanır (bkz. <see cref="DashArrayFor"/>).</summary>
     public const double StrokeThickness = 1.6;
 
-    /// <summary>Bir turun süresi. <b>Eski değer 4200ms'ti</b> — v1.18.0 yörüngeyi hızlandırdı.</summary>
-    public const double CycleMs = 2400.0;
+    /// <summary>Bir turun süresi.
+    /// <para><b>[kullanıcı kararı — tasarımdan BİLİNÇLİ sapma]</b> §9 v1.18.0 2400ms diyordu. Yörünge 30 fps
+    /// dekoratif karede çizilir (<c>MotionTokens.DecorativeFrameRate</c>); 2400ms'de en büyük düğümde bir nokta
+    /// her karede adımın ~0.46'sını geçiyor ve noktalar dönerken birbirine karışıyordu (canlı uygulamada
+    /// görüldü). 4000ms'de oran ~0.2'dir, hareketin yönü okunur.</para></summary>
+    public const double CycleMs = 4000.0;
     /// <summary>Building'e girişte opaklığın 1'e çıkma süresi (§2.3).</summary>
     public const double FadeInMs = 420.0;
     /// <summary>Bitişte opaklığın 0'a inme süresi (§2.3).</summary>

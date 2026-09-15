@@ -86,8 +86,8 @@ public class GraphBeadsTests
     }
 
     /// <summary>
-    /// AYIRT EDİCİ: adım çevreyi TAM böler — desen ek yerinde bindirmez. Hedef aralık artık 3.2 (eskiden
-    /// 3.4). Üç pitch/size senaryosu (tipik, bol, yoğun) da kapsanır.
+    /// AYIRT EDİCİ: adım çevreyi TAM böler — desen ek yerinde bindirmez. Üç pitch/size senaryosu (tipik, bol,
+    /// yoğun) da kapsanır.
     /// </summary>
     [Theory]
     [InlineData(20.0, 12.0)]
@@ -100,7 +100,7 @@ public class GraphBeadsTests
         double count = g.Perimeter / g.DashStep;
         Assert.Equal(Math.Round(count), count, 9);
         Assert.True(count >= GraphBeads.MinBeadCount, $"pitch {pitch}/size {nodeSize}'de yalnız {count} nokta kaldı");
-        // Adım hedef aralığın (3.2) yakınında kalır — yuvarlama onu başka bir mertebeye taşımaz.
+        // Adım hedef aralığın yakınında kalır — yuvarlama onu başka bir mertebeye taşımaz.
         Assert.InRange(g.DashStep, GraphBeads.BeadSpacingPx * 0.6, GraphBeads.BeadSpacingPx * 1.6);
     }
 
@@ -122,18 +122,55 @@ public class GraphBeadsTests
         Assert.True(dash.IsFrozen, "desen donmuş değil — düğümler arasında paylaşılamaz");
     }
 
-    /// <summary>§9 v1.18.0'ın sayıları — birinin sessizce kayması bu testi düşürür.
-    /// <b>Eski değerler (v1.3.0, artık geçersiz):</b> kalınlık 1.0, hedef aralık 3.4, tur 4200ms, sabit
-    /// dışarı mesafe 2.8.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — kullanıcı kararı, tasarımdan BİLİNÇLİ sapma] Noktalar dönerken birbirine KARIŞMAZ:
+    /// en büyük düğümde bir karede kat edilen yol, noktalar arası adımın 0.2'sini aşmaz.
+    ///
+    /// <para><b>Eski iddia (v1.18.0 sayıları):</b> aralık 3.2px, tur 2400ms. <b>Ölçüm:</b> en büyük düğümde
+    /// (24px, 44 pitch) yörüngede 33 nokta vardı; 30 fps dekoratif karede bir nokta her karede adımın ~0.46'sını
+    /// geçiyordu — yarıya yakın bir oranda göz hareketin yönünü okuyamaz ve noktalar "birbirine geçiyor" gibi
+    /// görünür (kullanıcı canlı uygulamada gördü). Kural artık oranı pinler, sayıyı değil.</para>
+    /// </summary>
     [Fact]
-    public void The_beads_numbers_are_pinned_to_their_v1_18_0_spec_values()
+    public void Beads_move_at_most_a_fifth_of_their_step_per_decorative_frame_on_the_largest_node()
+    {
+        var g = GraphBeads.For(QuietGraphLayout.MaxNodeSize, QuietGraphLayout.MaxPitch);
+        double beads = g.Perimeter / g.DashStep;
+        double framesPerLap = GraphBeads.CycleMs / 1000.0 * BuildOrchestrator.App.Controls.MotionTokens.DecorativeFrameRate;
+
+        double stepFractionPerFrame = beads / framesPerLap;
+
+        Assert.True(stepFractionPerFrame <= 0.2 + 1e-9,
+            $"bir karede adımın {stepFractionPerFrame:0.###}'i geçiliyor — noktalar birbirine karışır");
+    }
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — kullanıcı kararı] Noktalar arasındaki GÖRÜNEN boşluk nokta çapından belirgin büyüktür
+    /// (en az 1.5 katı). <b>Eski iddia:</b> 3.2px aralık ve 1.6px kalemle boşluk nokta kadardı (1.6px) — halka
+    /// tek tek nokta değil bulanık bir kesik çizgi gibi okunuyordu.
+    /// </summary>
+    [Fact]
+    public void The_visible_gap_between_beads_is_clearly_wider_than_a_bead()
+    {
+        double gap = GraphBeads.BeadSpacingPx - GraphBeads.StrokeThickness;
+
+        Assert.True(gap >= 1.5 * GraphBeads.StrokeThickness,
+            $"boşluk {gap:0.##}px, nokta {GraphBeads.StrokeThickness}px — noktalar ayrışmaz");
+    }
+
+    /// <summary>Beads sayıları — birinin sessizce kayması bu testi düşürür. Kalınlık, kelepçe ve solma
+    /// süreleri §9 v1.18.0'dandır; aralık ve tur KULLANICI KARARIYLA tasarımdan saptı (bkz. yukarıdaki iki
+    /// test). <b>Eski değerler:</b> v1.3.0 kalınlık 1.0 / aralık 3.4 / tur 4200ms / sabit dışarı mesafe 2.8;
+    /// v1.18.0 aralık 3.2 / tur 2400ms.</summary>
+    [Fact]
+    public void The_beads_numbers_are_pinned()
     {
         Assert.Equal(0.8, GraphBeads.MinOrbitGapPx, 6);
         Assert.Equal(2.8, GraphBeads.MaxOrbitGapPx, 6);
         Assert.Equal(2.0, GraphBeads.NeighborGapPx, 6);
-        Assert.Equal(3.2, GraphBeads.BeadSpacingPx, 6);
+        Assert.Equal(4.4, GraphBeads.BeadSpacingPx, 6);
         Assert.Equal(1.6, GraphBeads.StrokeThickness, 6);
-        Assert.Equal(2400.0, GraphBeads.CycleMs, 6);
+        Assert.Equal(4000.0, GraphBeads.CycleMs, 6);
         Assert.Equal(420.0, GraphBeads.FadeInMs, 6);
         Assert.Equal(640.0, GraphBeads.FadeOutMs, 6);
         Assert.Equal(700.0, GraphBeads.SpinAfterStopMs, 6);

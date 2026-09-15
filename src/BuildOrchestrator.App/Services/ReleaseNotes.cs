@@ -118,7 +118,7 @@ public static class ReleaseNotes
             new(NoteKind.Changed, "The console header's Back is a ghost button with an arrow icon now, and only the project name shortens when the panel narrows — Back and the line count never do. Its status glyph is drawn and updates live, down to a spinner while building, Copy log is an icon button, and a dependency issue or a dependency cycle shows its own amber warning with a tooltip."),
             new(NoteKind.Changed, "The console body's cursor is a plain arrow — a hand is kept only for links — and the line underneath it gets a full-width highlight band."),
             new(NoteKind.Changed, "Every row in the event stream answers hover now, not only the clickable ones, one step apart; a run's closing success glow still plays out in full before hover takes over a row."),
-            new(NoteKind.Changed, "The graph's building dots are a tick thicker and turn faster, and their orbit stays clamped to each node's own cell so neighbouring builds never touch, even in a dense graph."),
+            new(NoteKind.Changed, "The graph's building dots are a tick thicker and spaced wider, turning at a steady pace the eye can follow, and their orbit stays clamped to each node's own cell so neighbouring builds never touch, even in a dense graph."),
             new(NoteKind.Removed, "The orange cycle colour — a dependency cycle now shows as one amber warning triangle."),
             new(NoteKind.Removed, "The separate will-build dot — the commit pair already says what is stale."),
         ]),
