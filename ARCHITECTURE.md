@@ -2379,7 +2379,7 @@ The pull switch has a note of its own, and it is quieter still: it prints only w
 projects the flag does nothing, and saying otherwise would describe work that is not happening.
 
 The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
-external one prints only when the count actually changed — `External projects → 3 — scanned with the
+external one prints only when the count actually changed — `External projects → 3 — built before the
 repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
 layers stays quiet about a list it did not change.
 
@@ -2401,7 +2401,7 @@ required` — and nothing is reset: the user syncs when ready. The first setup s
 starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
-`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
 pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
 layers (the field order the file is written in, not just a key that happens to be present) and holding only
 cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
@@ -2424,8 +2424,8 @@ A file that omits `pullExternalBeforeBuild` leaves the pull switch where it is, 
 already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
-and a missing or unrecognized `vcs` reads as Git — both are simulated in the design package's own prototype and
-carried through unchanged. A file that omits the key entirely leaves the draft's external list untouched, the
+the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
+older file carries included (§10.6) — and an entry whose path is blank is skipped. A file that omits the key entirely leaves the draft's external list untouched, the
 same rule the repository root already followed; a file that carries the key — an empty array included —
 replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file

@@ -132,13 +132,13 @@ the running instance first — tray icon → Exit).
    rail — **General**, **Workspace**, **External projects**, **Layers** — and on first run it opens on
    Workspace, where the repository root lives (the one thing the tool cannot run without — *Save* stays
    disabled while it is empty, and the footer says why); afterwards it opens on General. External projects and
-   layers are optional.
+   layers are optional. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
+   run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
+   opens the dialog with the file picker already up.
 
    **General** holds switches in three groups — Startup, Build and Notifications. *Pull before build* (see
    step 4) is the one that works today; *Start with Windows*, *Start minimized to tray*, *Close to tray* and
-   *Show notifications* are shown but not wired yet, are not saved, and reset whenever the dialog opens. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
-   run it reads *Save and sync*. If you already have a settings file, *Import
-   settings…* on the invitation opens the dialog with the file picker already up.
+   *Show notifications* are shown but not wired yet, are not saved, and reset whenever the dialog opens.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file). Everything found under a card joins the same project list and

@@ -8,7 +8,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
-/// <c>{ app, version, repositoryRoot, externalProjects[{ path, vcs }], layers[{ name, pattern }] }</c> —
+/// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
 /// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
 /// <see cref="FileName"/>'dir.
