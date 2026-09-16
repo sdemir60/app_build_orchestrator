@@ -9,6 +9,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -130,6 +131,46 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
     [ObservableProperty] private WillBuildReason? _willBuildReason;
 
+    /// <summary>[Task 4 · koşullu yeniden derleme] Bu KOŞU bu satırı GERÇEKTEN koşullu mu değerlendiriyor —
+    /// <see cref="BuildPreviewItem.Conditional"/>'dan AYNEN (<see cref="RunViewModel.OnBuildPreview"/>). <c>true</c>
+    /// yalnız Build/Cycles'ta, kapsam zorlanmamışken (satırdan Build DEĞİL) ve bir SCC üyesi değilken —
+    /// <see cref="BuildOrchestrator.Core.Planning.ConditionalRebuild.AppliesTo"/> (Core) kararı.
+    /// <see cref="RunViewModel.ScopeFor"/>'un dalgası
+    /// ve <see cref="RunViewModel.InRunQueueFor"/>'un kuyruğu AYNI bayrağı okur (tek doğruluk kaynağı, kopya
+    /// YASAK): koşullu proje ne dalgada ne kuyruktadır — WillBuild=true olsa da KESİN değildir.
+    /// <see cref="ViewModels.DecisionLabel"/> da bunu okur: <see cref="WillBuildReason.WaitingForDependency"/>
+    /// TEK BAŞINA "bekliyor" demez, bu koşu GERÇEKTEN bekletiyorsa der.</summary>
+    [ObservableProperty] private bool _conditional;
+
+    /// <summary>[Task 4 · koşullu yeniden derleme] <see cref="WillBuildReason.WaitingForDependency"/> iken
+    /// defterdeki kök bağımlılıkların GÖRÜNEN adları — <see cref="ViewModels.DecisionLabel"/>'in tooltip'i
+    /// bunları yazar (<see cref="BuildPreviewItem.DependencyRoots"/>'tan AYNEN). Diğer gerekçelerde null.</summary>
+    [ObservableProperty] private IReadOnlyList<string>? _dependencyRoots;
+
+    /// <summary>[Task 1 — kök neden A] Bu satır ŞU AN KOŞAN run'ın KENDİ kuyruğunda mı — <see cref="Status"/>'un
+    /// <c>Queued</c> dalı bunu okur, <see cref="WillBuild"/>'i DEĞİL. YALNIZ bu koşunun
+    /// <see cref="BuildPreviewEvent"/>'inden yazılır (<see cref="RunViewModel.OnBuildPreview"/>,
+    /// <see cref="RunViewModel.InRunQueueFor"/> — kuyruk üyeliğinin TEK karar yeri). Sıfırlanmanın TEK başlangıç
+    /// noktası <see cref="RunViewModel.OnRunStarted"/>'ın kendi (moddan bağımsız) döngüsüdür, TEK bitiş noktası
+    /// <see cref="RunViewModel.PropagateRunActive"/> (<see cref="IsRunActive"/> düşerken) — <see cref="RunViewModel.NeutralizeRows"/>
+    /// buna BİLEREK DOKUNMAZ (review fix M-2: iki nokta zaten kopya olurdu; bkz. o metodun yorumu).
+    /// <para><b>[DEĞİŞEN KURAL — Task 1]</b> Eskiden <see cref="Status"/>'un Queued dalı doğrudan
+    /// <see cref="WillBuild"/>'i okurdu — genel plan bayrağı, ait olduğu koşuyu BİLMEZ. Tek proje koşusunda
+    /// motorun önizlemesi yalnız hedefi taşır (§8.1, <c>ProjectRunScope</c>); diğer satırların WillBuild'i
+    /// Sync'ten kalan bayat değerdi ve nötrleme onu KASITLI korurdu (plan, kapsam hesabı için ayrı yaşamalı) —
+    /// sonuç, koşu boyunca ilgisiz satırların da amber yanması ve koşu bitince griye dönmesiydi (ölçülen kusur,
+    /// bkz. <c>.claude/outputs/2026-09-15-16-06-run-scope-and-queued-colour-investigation.md</c> §2.1).
+    /// <c>InRunQueue</c> ayrı bir kanaldır: <see cref="WillBuild"/> kapsam hesabı (<see cref="RunViewModel.ScopeFor"/>)
+    /// ve karar etiketi için YAŞAMAYA devam eder, kuyruk rengi artık yalnız BU koşunun kendi cevabını
+    /// okur.</para>
+    /// <para><b>[DEĞİŞEN KURAL — Task 2]</b> Cycles modunda kapsam İÇİNDE olmak (WillBuild=true, motor gerçekten
+    /// derleyecek) kuyruğa girmek için YETMEZ: yalnız döngü üyeleri (<see cref="InCycle"/>) kuyruktadır, bayat
+    /// bir kapsam-içi upstream bağımlılık gri bekler. Bkz. <see cref="RunViewModel.InRunQueueFor"/>.</para></summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private bool _inRunQueue;
+
     /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
     /// doğrudan taşınır.</summary>
@@ -192,13 +233,14 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
-    /// <see cref="InCycle"/> + <see cref="WillBuild"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
+    /// <see cref="InCycle"/> + <see cref="InRunQueue"/> + <see cref="IsRunActive"/> sinyallerinin TEK eşleme yeri
     /// (kart yalnız bunu okur; eşleme mantığı kontrolde kopyalanmaz). <c>cycle</c> ve <c>queued</c> ayrı IPC
     /// alanları TAŞIMAZ — ikisi de eldeki topoloji/run sinyallerinden TÜRETİLİR:
     /// <list type="bullet">
     /// <item><b>cycle</b>: <see cref="InCycle"/>=true olan, bu koşu hakkında HENÜZ BİR ŞEY SÖYLENMEMİŞ satır.
     /// Bkz. aşağıdaki "döngü glyph'i koşu-öncesidir" notu.</item>
-    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) planlanmış (<see cref="WillBuild"/>==true)
+    /// <item><b>queued</b>: bir run uçuştayken (<see cref="IsRunActive"/>) BU koşunun kendi buildPreview'inin
+    /// planladığı (<see cref="InRunQueue"/>==true — <see cref="WillBuild"/> DEĞİL, bkz. o alanın XML yorumu)
     /// ama henüz başlamamış (Pending) satır. Run bitince <see cref="IsRunActive"/> düşer → yine Discovered.</item>
     /// </list>
     ///
@@ -221,7 +263,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         ProjectRowState.Skipped => Controls.GraphStatus.Skipped,
         // Buradan aşağısı YALNIZ Pending'dir: koşu bu satırı planladıysa kuyruk, planlamadıysa (ya da koşu
         // yoksa) döngü üyeliği — o da yoksa ölü envanter.
-        _ when IsRunActive && WillBuild == true => Controls.GraphStatus.Queued,
+        // [Task 1 — DEĞİŞEN KURAL] WillBuild==true DEĞİL: o genel plan bayrağıdır ve BU koşuyu bilmez (bkz.
+        // InRunQueue'nun XML yorumu). Kuyruk artık yalnız bu koşunun kendi buildPreview'inden gelir.
+        _ when IsRunActive && InRunQueue => Controls.GraphStatus.Queued,
         // [design v1.7.0 §5] Döngü ÜYELİĞİ bir statü DEĞİLDİR: kalıcı bir yapısal özelliktir ve kendi
         // kanalında (nokta + uyarı üçgeni + graf çekirdeği) yaşar. Statü kanalı yalnız "bu koşuda ne oldu"yu
         // söyler; üyelik onu asla ezmez — eskiden Pending bir üye Cycle statüsüne düşüyor ve satır
@@ -349,6 +393,22 @@ public sealed partial class RunViewModel : ObservableObject
     private PendingLoad? _pendingLoad; // yalnız UI thread'inde dokunulur (LoadProjectLogAsync + OnProjectLogChunk)
 
     private string? _currentRunId;
+    // [Task 2 review fix M-2] Bu run'ın modu — TEK yazıcı OnRunStarted'dır (koşulsuz, moddan bağımsız döngüyle
+    // AYNI noktada). Eskiden Stream.cs partial'ının kendi `_streamRunMode`'u OKUNUYORDU: o alan
+    // AppendStreamFor'da (OnEvent'in OnRunStarted'dan SONRA çağırdığı ikinci dal) yazılıyordu — bugün
+    // doğruydu (tek çağıranlı test sırası RunStartedEvent→BuildPreviewEvent bunu garantiliyordu) ama satır
+    // kararının (InRunQueueFor, OnProjectSkipped) doğruluğu STREAM'in işleme sırasına bağlı kalıyordu; yeni bir
+    // event tipi ya da sıra değişikliği sessizce kırabilirdi. Artık TEK alan burada yazılır, Stream.cs kendi
+    // `_streamRunMode`'unu SİLİP bunu okur (kopya YASAK).
+    private RunMode? _currentRunMode;
+    // [Task 2 review fix M-1/I-2] Bu run boyunca (Cycles modunda) SkipReasons.OutOfCycleScope ile bastırılan
+    // satır sayısı — _willBuildIds ile AYNI noktada (OnRunStarted) sıfırlanır, run'ın SONUNA kadar birikir
+    // (Stream.cs'in KENDİ `_outOfScopeSkips`'i gibi ara ara FLUSH edilmez — o alan yalnız stream'in toplu
+    // satırının görüntü tamponudur, kümülatif bir toplam DEĞİLDİR, bu yüzden burada YENİDEN KULLANILAMAZ).
+    // İki tüketicisi var: <see cref="UpdateEta"/> (kapsam dışı satırlar hiç terminal olmadığı için "completed"
+    // sayısını bunlarla düzeltir) ve run'ın kapanış satırı (motorun kendi <c>Skipped</c> sayısından bunu düşer
+    // — bkz. RunViewModel.Stream.cs'in RunCompletedEvent dalı).
+    private int _outOfScopeSkipCount;
     private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
@@ -376,6 +436,25 @@ public sealed partial class RunViewModel : ObservableObject
     // yorum burada "Sync sonrası GELMEZ" diyordu — bayattı ve grafın besleme boşluğunu araştırırken yanıltıcı
     // oldu.)
     private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
+
+    // [final review — C1] Önizlemenin KİRLİ gördüğü her proje (WillBuild==true), KOŞULLU olanlar DAHİL —
+    // _willBuildIds'in üst kümesi. İki soru Task 4'ten beri ayrıdır ve ayrı kaynak isterler: "bu koşuda KESİN
+    // ne derlenecek" (payda/kuyruk/dalga → _willBuildIds, koşullu HARİÇ) ile "ortada derlenecek bir şey var mı"
+    // (AllClean → bu küme). İkisi tek kümeden okunduğunda, dirty kümesi tamamen koşullu olan bir koşu "her şey
+    // güncel" raporluyordu: koşullu proje WillBuild=true kalır ve motor sırası geldiğinde kökü sağlıklıysa onu
+    // GERÇEKTEN derler (ConditionalRebuild.Decide) — yani MSBuild derlerken şerit "Checking…", bitişte yeşil
+    // "Everything up to date" diyordu. Küme _willBuildIds ile AYNI noktalarda (ClearPreviewSets) tazelenir.
+    private readonly HashSet<string> _dirtyIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Önizlemeden türeyen İKİ kümeyi birlikte tazeler — ayrı ayrı temizlenebilselerdi biri bayat
+    /// kalır ve <see cref="AllClean"/> ile <see cref="WillBuildCount"/> sessizce ayrışırdı. Dört çağıranı da
+    /// "eldeki plan artık geçerli değil" demenin bir biçimidir: yeni run, yeni Sync, branch/repo değişimi
+    /// (<c>ResetRowsToHollow</c>) ve Clean (<c>ClearPlanSurface</c>).</summary>
+    private void ClearPreviewSets()
+    {
+        _willBuildIds.Clear();
+        _dirtyIds.Clear();
+    }
 
     /// <summary>
     /// Bir <c>BuildPreviewEvent</c> uygulandı — plan kanalı (<see cref="ProjectRowViewModel.WillBuild"/>)
@@ -431,8 +510,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>null</c>. <see cref="EtaText"/> (string) ayrı kalır (başka tüketiciler için); şerit numeric <c>EtaMs</c>'i kullanır.</summary>
     [ObservableProperty] private long? _etaMs;
 
-    /// <summary>[D2/T38] Bu koşuda derlenecek proje YOK (SABİT willBuild kümesi boş) — şerit faz-metni ve progress
-    /// kolu bunu okur (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.</summary>
+    /// <summary>[D2/T38] Önizleme KİRLİ tek bir proje bile görmedi — şerit faz-metni ve progress kolu bunu okur
+    /// (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.
+    /// <para><b>[final review — C1 · DEĞİŞEN KURAL]</b> Kaynak <see cref="WillBuildCount"/> (KESİN küme) DEĞİL
+    /// <see cref="_dirtyIds"/>'tir: koşullu bir proje kesin kümeye girmez ama motor sırası geldiğinde kökü
+    /// sağlıklıysa onu derler, yani "kesin küme boş" ile "yapacak iş yok" AYNI SORU DEĞİLDİR. Eski hâlde dirty
+    /// kümesi tamamen koşullu olan bir koşu derlerken "Checking…", biterken yeşil "Everything up to date"
+    /// diyordu.</para></summary>
     [ObservableProperty] private bool _allClean = true;
 
     /// <summary>[D2/T38] Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</summary>
@@ -859,7 +943,18 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>false</c> → <b>düz nötr gri</b>: bir İŞLEM başladı; renk bundan sonra yalnız onun hikâyesini anlatır
     /// ve kapsam amber'a ancak işaretleme dalgasıyla yanar.
     /// </param>
-    private void NeutralizeRows(bool fresh)
+    /// <param name="clearMarks">
+    /// [Task 1 review fix — I-1] <c>true</c> (varsayılan) → işaret (<see cref="ProjectRowViewModel.Marked"/>)
+    /// de düşer — <c>BeginRunAsync</c>'in tıklama anı (bir ÖNCEKİ işlemin izini siler, YENİ dalga henüz
+    /// yanmadı) ve Sync'in fresh nötrlemesi (bir işlem bile değil) için doğru olan budur.
+    /// <c>false</c> → işaret KORUNUR: <see cref="OnRunStarted"/>'ın Rebuild'e özel çağrısı için — o an, İSTEK
+    /// tıklama anında zaten dalga yanmış ve satır <c>Marked=true</c> olmuş OLABİLİR (koreografi
+    /// <c>BeginRunAsync</c>'te, bu çağrıdan ÖNCE oynar); burası tekrar <c>false</c> yazarsa dalganın amberi
+    /// runStarted'ın KENDİ anında söner ve I-1'in kapattığı boşluk (runStarted → buildPreview arası bir kare
+    /// gri) Rebuild'de YENİDEN açılır. İşaretin gerçek düşüş noktası <c>BuildPreviewApplied</c>'dır
+    /// (<c>MainWindow</c>), moddan bağımsız.
+    /// </param>
+    private void NeutralizeRows(bool fresh, bool clearMarks = true)
     {
         foreach (var row in Projects)
         {
@@ -873,15 +968,27 @@ public sealed partial class RunViewModel : ObservableObject
             row.CycleWaiting = false;
             row.SkipReason = null;
             row.Fresh = fresh;
-            row.Marked = false;
+            if (clearMarks) row.Marked = false;
+            // [Task 1 review fix — M-2] InRunQueue BİLEREK burada sıfırlanmaz: tek başlangıç noktası
+            // OnRunStarted'ın kendi (moddan bağımsız, koşulsuz) döngüsüdür — üç çağıranın ikisinde
+            // (BeginRunAsync'in tıklama anı, Sync'in fresh nötrlemesi) bu run henüz runStarted'a ULAŞMAMIŞTIR
+            // ve IsRunActive zaten false'tur (Status'un Queued dalı onu okumaz), üçüncüsünde (Rebuild'in
+            // runStarted'ı) OnRunStarted zaten AYNI satırları bir satır yukarıda sıfırlamıştır — burada
+            // TEKRARLAMAK kopya (CLAUDE.md) olurdu. Tek bitiş noktası PropagateRunActive'dir (IsRunActive
+            // düşerken).
         }
     }
 
+    /// <summary>[Task 4 — kök neden C] Build dalgası yalnız KESİN derlenecekleri yakar — koşullu (<see
+    /// cref="ProjectRowViewModel.Conditional"/>) bir proje kökü hâlâ hatalıysa atlanabilir, dolayısıyla dalgada
+    /// amber'a yanmaz. Bu, motorun kesin kuyruğuyla (<see cref="InRunQueueFor"/>'un Build dalı) AYNI bayraktan
+    /// türer — tek doğruluk kaynağı (kopya YASAK). Yalnız tam (kapsamsız) Build'te anlamlıdır: satırdan
+    /// tetiklenen hedef bu metoda hiç uğramaz (<see cref="BeginRunAsync"/> tek elemanlı bir liste kurar).</summary>
     public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
     {
         RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
         RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
-        _ => [.. Projects.Where(r => r.WillBuild == true)],
+        _ => [.. Projects.Where(r => r.WillBuild == true && !r.Conditional)],
     };
 
     /// <summary>[design v1.11.0 §9-5] Bu koşuda GERÇEKTEN derlenen projeler (succeeded ∪ failed) — bitiş
@@ -1282,7 +1389,14 @@ public sealed partial class RunViewModel : ObservableObject
     private void PropagateRunActive()
     {
         bool active = RunActive;
-        foreach (var row in Projects) row.IsRunActive = active;
+        foreach (var row in Projects)
+        {
+            row.IsRunActive = active;
+            // [Task 1] Koşu biterken (IsRunActive düşerken) kuyruk da düşer — bir sonraki koşuya stale bayrak
+            // taşınmaz (bkz. ProjectRowViewModel.InRunQueue'nun XML yorumu). Koşu sürerken dokunulmaz: bu run'ın
+            // KENDİ buildPreview'i tek üreticidir.
+            if (!active) row.InRunQueue = false;
+        }
     }
 
     /// <summary>[tek proje] Kilit (<see cref="IsMidRunLocked"/>) her satıra itilir ve kilit düşerken hedef
@@ -1379,12 +1493,15 @@ public sealed partial class RunViewModel : ObservableObject
         OnPropertyChanged(nameof(VisibleProjects));
     }
 
-    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) <see cref="_willBuildIds"/>'ten türetir —
-    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).</summary>
+    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) önizleme kümelerinden türetir —
+    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).
+    /// <para>[final review — C1] <c>wb</c>/<c>fin</c> KESİN kümeden (<see cref="_willBuildIds"/>), <c>allClean</c>
+    /// ise önizlemenin gördüğü TÜM kirlilikten (<see cref="_dirtyIds"/>, koşullu dahil) gelir — bkz. o alanın
+    /// yorumu.</para></summary>
     private void RecomputeWillBuildSurface()
     {
         WillBuildCount = _willBuildIds.Count;
-        AllClean = _willBuildIds.Count == 0;
+        AllClean = _dirtyIds.Count == 0;
         int fin = 0;
         foreach (var row in Projects)
             if (_willBuildIds.Contains(row.Id) &&
@@ -1535,6 +1652,9 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
+        // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
+        _currentRunMode = e.Mode;
         // [design v1.11.0 §2.2] İşlem pill'i motorun CEVABINDAN da yazılır, yalnız tıklamadan değil: koşuyu
         // hangi yol başlatmış olursa olsun (komut, ileride bir kısayol ya da dışarıdan gelen bir run) pill
         // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
@@ -1542,7 +1662,13 @@ public sealed partial class RunViewModel : ObservableObject
         CurrentOperation = OperationLabel.ForRunMode(e.Mode);
         // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
         // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
-        foreach (var row in Projects) row.Fresh = false;
+        // [Task 1 — kök neden A · review fix M-2] Kuyruğun TEK başlangıç noktası BURASIDIR — KOŞULSUZ (moddan
+        // bağımsız) sıfırlanır. NeutralizeRows'un aşağıdaki (Rebuild) çağrısı InRunQueue'ya DOKUNMAZ (kopya
+        // olurdu, bkz. NeutralizeRows'un yorumu): Build/Cycles'ta runStarted NeutralizeRows'suz da gelebilir
+        // (bkz. bu event'in XML yorumu) ve önizleme HENÜZ gelmedi — "runStarted anında hiçbir satır kuyruk
+        // değildir" değişmezi moddan bağımsız burada garanti edilir. Hemen ardından gelen BuildPreviewEvent
+        // gerçek kuyruğu doldurur.
+        foreach (var row in Projects) { row.Fresh = false; row.InRunQueue = false; }
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -1564,8 +1690,13 @@ public sealed partial class RunViewModel : ObservableObject
         // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
         // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
         // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
-        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false);
-        _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
+        // [Task 1 review fix — I-1] clearMarks: false — bu an itibariyle (IsRunning=true'nun property-changed
+        // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
+        // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
+        // runStarted→buildPreview boşluğu Rebuild'de yeniden açılır.
+        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false, clearMarks: false);
+        ClearPreviewSets(); // [D2] önizleme kümeleri bu run için taze — hemen ardından BuildPreviewEvent doldurur
+        _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
@@ -1589,7 +1720,11 @@ public sealed partial class RunViewModel : ObservableObject
         foreach (var item in e.Items)
         {
             var row = EnsureRow(item.ProjectId, item.Name, ProjectRowState.Pending);
-            if (item.WillBuild == true) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
+            // [Task 4 — carried item 1] Koşullu proje (WaitingForDependency, bu koşu gerçekten bekletiyor)
+            // KESİN derlenecekler kümesine GİRMEZ: köküyle birlikte atlanabilir. Paydaş TEK yerden okur —
+            // InRunQueueFor'un Build/Rebuild dalıyla AYNI bayrak (kopya YASAK).
+            if (item.WillBuild == true) _dirtyIds.Add(item.ProjectId); // [final review — C1] "ortada iş var mı" kümesi
+            if (item.WillBuild == true && !item.Conditional) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
             // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
             // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).
             // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
@@ -1600,10 +1735,31 @@ public sealed partial class RunViewModel : ObservableObject
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
+            row.Conditional = item.Conditional;         // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
+            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — WillBuild/Reason'la AYNI guard
+            row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
     }
+
+    /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
+    /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
+    /// (aşağıda). <b>[Task 4 — DEĞİŞEN KURAL]</b> <c>_willBuildIds</c> de ARTIK aynı bayrağı okur ve koşullu
+    /// projeyi İÇERMEZ — eski hâlde ikisi ayrışıyordu (kuyruk dışlar, ilerleme paydası sayardı), Task 4
+    /// <c>OnBuildPreview</c>'daki tek ekleme noktasını (<c>!item.Conditional</c>) AYNI kaynağa bağladı.
+    /// <b>[Task 2 — kök neden B] Cycles modunda kuyruk YALNIZ döngü üyelerine yazılır</b>
+    /// (<paramref name="inCycle"/>): motorun bu run'daki kapsamı üyeler + transitif upstream'dir
+    /// (<c>CycleRunScope</c>), ama kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da bu
+    /// run'ın "kuyruğu" DEĞİLDİR — gri bekler, <c>projectStarted</c> geldiğinde normal yoldan Building'e geçer.
+    /// <c>mode</c> <see cref="_currentRunMode"/>'dan okunur — <see cref="OnRunStarted"/>'ın TEK yazdığı alan
+    /// (review fix M-2: eskiden Stream.cs partial'ının kendi alanı okunuyordu, bu satır kararını stream'in
+    /// işleme SIRASINA bağımlı kılıyordu; bkz. alanın kendi XML yorumu).
+    /// <para><b>[koşullu yeniden derleme]</b> Motorun <see cref="BuildPreviewItem.Conditional"/> dediği proje
+    /// kuyrukta DEĞİLDİR: WillBuild=true olsa da kesin derlenecek değildir — kökü hâlâ hatalıysa atlanır. Karar
+    /// motorundur; burada yalnız okunur.</para></summary>
+    private static bool InRunQueueFor(BuildPreviewItem item, RunMode? mode, bool inCycle) =>
+        mode == RunMode.Cycles ? inCycle : item.WillBuild == true && !item.Conditional;
 
     /// <summary>[Task 17] buildPreview'ın önceden oluşturduğu bir satır varsa (Pending) onu Started'a TAŞIR —
     /// EnsureRow yalnız YENİ satırlar için initialState uygular, var olan satırın State'ini DEĞİŞTİRMEZ, bu
@@ -1627,6 +1783,29 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnProjectSkipped(ProjectSkippedEvent e)
     {
+        // [Task 2/cycles — kök neden B · review fix I-1] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor
+        // kapsam dışı her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama
+        // kullanıcı bu projeyi hiç istemedi — satır motorun "atladım" STATÜSÜNÜ TAŞIMAZ, nötr (Pending/
+        // Discovered) kalır: State dokunulmaz, atlandı sayacı (RunCounters) ve atlandı filtresi
+        // (ProjectFilter.Skipped) bu projeyi hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda
+        // birikiyordu (RunViewModel.Stream.cs, DEĞİŞMEDİ). [DEĞİŞEN KURAL — review fix I-1] SkipReason'a YİNE
+        // DE yazılır: motor bu run için WillBuild'i her pre-skip'te (kapsam dışı da GERÇEKTEN kirli de) false
+        // ZORLAR (RunCoordinator.cs — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan
+        // söylemesin"), yani State Pending'de kalınca satırın TEK kanıtı bu alandır — yazılmazsa
+        // ConsoleEmptyState.Pending() elde kalan tek bilgiden ("WillBuild=false") "Up to date" der, kapsam dışı
+        // ama GERÇEKTEN kirli bir proje için YALAN olurdu. SkipReason'ın App'teki TEK tüketicisi
+        // ConsoleEmptyState'tir (bkz. ConsoleEmptyState.Pending/Reason) — sayaç/filtre State okur, bundan
+        // ETKİLENMEZ. Bir sonraki run'ın NeutralizeRows'u bunu zaten temizliyor (kopya sıfırlama YOK). Kapsam
+        // İÇİ gerçek bir "up to date" skip (SkipReasons.UpToDate) bu dalın DIŞINDA kalır ve aşağıdaki normal
+        // yoldan Skipped'a geçmeye devam eder.
+        if (_currentRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
+        {
+            EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Pending).SkipReason = e.Reason;
+            _outOfScopeSkipCount++; // [Task 2 review fix M-1/I-2] bkz. alanın kendi XML yorumu
+            UpdateEta(); // [Task 17 deseni — Task 2 review fix M-1] bu da motor açısından bir "tamamlanma"dır
+            return;
+        }
+
         var row = EnsureRow(e.ProjectId, Path.GetFileNameWithoutExtension(e.ProjectId), ProjectRowState.Skipped);
         row.State = ProjectRowState.Skipped;
         row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar
@@ -1680,20 +1859,43 @@ public sealed partial class RunViewModel : ObservableObject
         // [tek proje · Clean] Bir Clean koşusunda bu geçiş YAPILMAZ ve bu bir istisna değil aynı kuralın kendisi:
         // orada başarı "derlendi" demek değil "çıktıları silindi" demektir, yani proje güncel DEĞİL, tam tersine
         // derlenmesi gereken hâle gelmiştir. Motor da aynı anda defter kaydını siler (BuildStateStore.Remove).
-        if (state == ProjectRowState.Succeeded && !RunIsClean) row.WillBuild = false;
-        // [design v1.16.0 §2.4] Satırın KARAR ETİKETİ de canlı geçişi izler: koşu biter bitmez derlenen satır
-        // "up to date · just now" yazar, patlayan satır "failed · retry". Olgular motorun bir sonraki
-        // önizlemesini BEKLEMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık
-        // doğru olmayan bir gerekçeyi ("modified") taşırdı.
-        row.WillBuildReason = state switch
+        // [Task 4 — kök neden C · DEĞİŞEN KURAL] Eskiden HER başarı (dep-issue'lu dahil) buradan koşulsuz
+        // WillBuild=false olurdu — motorun kendi kuralıyla (WillBuildEvaluator: DepIssueRoots biliniyorsa
+        // WaitingForDependency) ÇELİŞİYORDU. Bu run içinde dep-issue'lu biten bir tekil proje artık "dirty"
+        // (Conditional=true) kalır: kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds) GİRMEZ ama bir
+        // sonraki Build'de kökü düzelirse yine derlenmesi gerekir. Bir döngü üyesi de aynı gerekçeyi
+        // (WaitingForDependency) taşır ama Conditional=false kalır — TEK BAŞINA asla koşullu değildir (bkz.
+        // aşağıdaki AfterSuccess çağrısının yorumu).
+        // [Task 4 review round 2 — I1] Üçlü (WillBuild/Reason/Conditional) App'te TÜRETİLMEZ — motorun bir
+        // sonraki önizlemesinin (WillBuildEvaluator + ConditionalRebuild.AppliesTo) AYNEN kendisi TEK yerden
+        // sorulur (ConditionalRebuild.AfterSuccess). Round 1'in kendi kopyası (yalnız bool) bir SCC üyesi için
+        // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
+        // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
+        // gelmesi bu boşluğu kapatır.
+        if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
+            var after = ConditionalRebuild.AfterSuccess(row.InCycle, cycleUnsettled, depIssues);
+            row.WillBuild = after.WillBuild;
+            row.Conditional = after.Conditional;
+            row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? depIssues : null;
+            row.WillBuildReason = after.Reason;
+        }
+        else if (state == ProjectRowState.Succeeded) // Clean
+        {
+            row.Conditional = false;
+            row.DependencyRoots = null;
             // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
             // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
-            ProjectRowState.Succeeded when RunIsClean => WillBuildReason.NeverBuilt,
-            ProjectRowState.Succeeded => WillBuildReason.UpToDate,
-            ProjectRowState.Failed => WillBuildReason.LastFailed,
-            _ => row.WillBuildReason,
-        };
+            row.WillBuildReason = WillBuildReason.NeverBuilt;
+        }
+        else // Failed
+        {
+            // Önceki bir preview'dan kalmış olabilecek koşullu bayrak/kökler bu satır için artık ANLAMSIZ —
+            // LastFailed gerekçesi kendi tooltip'ini yazar, "bekliyor" olgusu taşımaz.
+            row.Conditional = false;
+            row.DependencyRoots = null;
+            row.WillBuildReason = WillBuildReason.LastFailed;
+        }
         if (state == ProjectRowState.Succeeded)
         {
             row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
@@ -1745,10 +1947,22 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     private void UpdateEta()
     {
+        // [Task 2 review fix M-1] total motorun bu run'a özel plan boyutudur (_totalProjects — tek-proje run'da
+        // zaten 1'e kesilir, DEĞİŞMEDİ); _willBuildIds/WillBuildCount'a geçmek burada ÇALIŞMAZ, çünkü bazı
+        // testler (ör. RunViewModelTests.EtaText_shows_XofN_fallback_before_any_completion_no_bogus_number)
+        // hiç BuildPreviewEvent göndermeden runStarted'ın kendi X/N fallback'ini pinler — o an _willBuildIds hep
+        // boştur ve "total<=0" erken dönüşü ETA'yı tamamen susturur.
         int total = _totalProjects ?? Projects.Count;
         if (total <= 0) { EtaText = ""; return; }
 
-        int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped);
+        // [Task 2 review fix M-1] Cycles'ta kapsam dışı satırlar artık HİÇBİR ZAMAN terminal olmuyor (bkz.
+        // OnProjectSkipped) — düzeltilmezse "completed" workspace'teki HER kapsam dışı proje kadar geride
+        // kalır ve "remaining"/queuedCount'u (aşağıda) kalıcı olarak şişirip ETA'yı abartırdı.
+        // _outOfScopeSkipCount TEK bu amaç için (bkz. alanın kendi yorumu) — Stream.cs'in kendi
+        // `_outOfScopeSkips`'i BURADA KULLANILAMAZ: o alan görüntü tamponudur, her PushStream'de FLUSH edilip
+        // sıfırlanır (kümülatif bir toplam değildir).
+        int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
+            + _outOfScopeSkipCount;
         // [cycle rounds/I2] "building" kovası PARALEL çalışan işler içindir (toplamı paralelliğe bölünür) —
         // bir SCC üyesi oraya AİT DEĞİLDİR, koşuyor olsa bile: grubun üyeleri sıralı invoke edilir ve grup en
         // az BaselineRounds tur çalışır. Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur

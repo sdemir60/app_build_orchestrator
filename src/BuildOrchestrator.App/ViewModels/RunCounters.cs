@@ -2,7 +2,14 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [C2] Proje listesinin durum sayaçları — üst şerit/chip rozetleri bunu okur. <c>Queued</c> = henüz
-/// başlamamış (<see cref="ProjectRowState.Pending"/>) satırlar. <c>DepAffected</c> yalnız <b>succeeded</b> +
+/// başlamamış (<see cref="ProjectRowState.Pending"/>) satırlar — verilen satır kümesindeki HER Pending satırı
+/// sayar, hangi run'a ait olduğuna BAKMAZ. <b>[Task 2]</b> Bu yüzden <see cref="RibbonText"/>'in run-kapsamlı
+/// iki yüzeyi (Stopped satırının "N not built"'i, ETA'nın building+queued kapısı) artık BUNU okumaz: kapsam
+/// dışı bir proje (ör. Resolve cycles'ta <c>SkipReasons.OutOfCycleScope</c>) run boyunca Pending'de kalır
+/// (bkz. <see cref="RunViewModel.OnProjectSkipped"/>) ve bu sayacı şişirirdi — o iki yüzey bunun yerine run'ın
+/// KENDİ SABİT willBuild-kalan sayısını okur. Sayacın kendisi DEĞİŞMEDİ: genel "kaç Pending satır var" sorusuna
+/// hâlâ doğru cevap verir, yalnız bu iki tüketici artık ayrı (zaten kapsamlı) bir kaynağa geçti.
+/// <c>DepAffected</c> yalnız <b>succeeded</b> +
 /// dep-issue taşıyan satırları sayar (build-data.js:524-528) — filtre chip'i "dep" (statüden bağımsız,
 /// bkz. <see cref="ProjectFilter"/>) ile bilerek FARKLIDIR: özet "kaç proje başarıyla derlendi ama yine de
 /// bir bağımlılık uyarısı taşıyor" sorusunu yanıtlar. <c>StuckCycles</c> [cycle rounds/Task 8] yakınsamayan

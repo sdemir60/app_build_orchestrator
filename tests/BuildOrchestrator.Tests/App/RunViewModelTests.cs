@@ -172,6 +172,319 @@ public class RunViewModelTests
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // run bitti → dinlenme
     }
 
+    // [Task 1 — kök neden A] Kuyruk artık BU koşunun kendi buildPreview'inden türer, genel WillBuild
+    // bayrağından DEĞİL. Tek proje koşusunda motorun planı tek düğüme kesilir (ProjectRunScope) — önizleme
+    // yalnız hedefi taşır. Sync'ten kalan bayat WillBuild=true'yu taşıyan diğer bir satır bu yüzden koşu
+    // boyunca Discovered kalmalı, runStarted ile buildPreview arasında da (bir an) amber'a düşmemeli.
+    [Fact]
+    public async Task A_single_project_run_leaves_a_stale_sibling_row_discovered_never_queued()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string targetId = @"C:\p\a.csproj";
+        const string staleId = @"C:\p\b.csproj";
+
+        // Sync'in tam önizlemesi: ikisi de dirty (WillBuild=true).
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(targetId, "A", true),
+            new BuildPreviewItem(staleId, "B", true),
+        ]));
+        var target = vm.Projects.Single(p => p.Id == targetId);
+        var stale = vm.Projects.Single(p => p.Id == staleId);
+        Assert.True(target.WillBuild);
+        Assert.True(stale.WillBuild); // ön-koşul: B hâlâ "dirty" — bayat bilgi koşu boyunca KORUNUR
+
+        // Satırdan Build: yalnız A hedef. runStarted, kendi önizlemesinden ÖNCE gelir.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, target.Status); // önizleme YOK → kuyruk yok
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status);
+
+        // Motorun planı tek düğüme kesilir: önizleme YALNIZ hedefi taşır.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(targetId, "A", true)]));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, target.Status);     // planlandı
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status);   // bayat B kuyrukta DEĞİL
+        Assert.True(stale.WillBuild); // [ayrışma yok] WillBuild kapsam/karar için hâlâ true — yalnız kuyruk rengi ayrıştı
+
+        vm.OnEvent(new ProjectStartedEvent("r1", targetId, "A"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, target.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status); // koşu boyunca değişmez
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", targetId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status); // koşu sonunda da Discovered
+
+        // Tek eşleme yeri: graf de AYNI statüyü okur.
+        Assert.Equal(target.Status, GraphBinder.StatusOf(target, synced: true));
+        Assert.Equal(stale.Status, GraphBinder.StatusOf(stale, synced: true));
+    }
+
+    // [koşullu yeniden derleme] Motor koşullu projeyi önizlemede Conditional=true ile işaretler: WillBuild=true
+    // kalır (pre-skip edilmedi) ama kesin derlenecek DEĞİLDİR — kökü hâlâ hatalıysa "dependency still failing"
+    // ile atlanır. Kuyruk (amber) yalnız kesin derleneceklerdir; koşullu satır gri bekler. Kök düzeldiyse
+    // projectStarted gelir ve normal yoldan Building'e geçer.
+    [Fact]
+    public async Task A_conditional_project_in_a_build_run_is_not_queued()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string rootId = @"C:\p\up.csproj";
+        const string waitingId = @"C:\p\down.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(rootId, "Up", true, null, WillBuildReason.LastFailed),
+            new BuildPreviewItem(waitingId, "Down", true, null, WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        var root = vm.Projects.Single(p => p.Id == rootId);
+        var waiting = vm.Projects.Single(p => p.Id == waitingId);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, root.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, waiting.Status);
+        Assert.Equal(waiting.Status, GraphBinder.StatusOf(waiting, synced: true));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", waitingId, "Down")); // kök düzeldi, motor derliyor
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, waiting.Status);
+    }
+
+    // [Task 2/cycles — kök neden B] Resolve cycles'ta kuyruk YALNIZ döngü üyelerine yazılır (InRunQueueFor artık
+    // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
+    // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
+    // (SkipReasons.OutOfCycleScope) State'e hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered
+    // kalır, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ — [review fix I-1] SkipReason'ı YİNE DE
+    // taşır (ConsoleEmptyStateTests bunun neden gerekli olduğunu ayrıca pinler). Kapsam içi GERÇEK bir "up to
+    // date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    [Fact]
+    public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        const string memberId = @"C:\p\member.csproj";
+        const string staleDepId = @"C:\p\staledep.csproj";
+        const string upToDateDepId = @"C:\p\uptodate.csproj";
+        const string outOfScopeId = @"C:\p\outofscope.csproj";
+
+        static ProjectNode Node(string id, string name, int order, bool inCycle) => new(
+            id, name, id, SolutionNames: [], Dependencies: [], BuildOrder: order,
+            LayerIndex: null, LayerName: null, InCycle: inCycle, WillBuild: null);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+        [
+            Node(memberId, "Member", 0, inCycle: true),
+            Node(staleDepId, "StaleDep", 1, inCycle: false),
+            Node(upToDateDepId, "UpToDateDep", 2, inCycle: false),
+            Node(outOfScopeId, "OutOfScope", 3, inCycle: false),
+        ], [], [], []));
+
+        var member = vm.Projects.Single(p => p.Id == memberId);
+        var staleDep = vm.Projects.Single(p => p.Id == staleDepId);
+        var upToDateDep = vm.Projects.Single(p => p.Id == upToDateDepId);
+        var outOfScope = vm.Projects.Single(p => p.Id == outOfScopeId);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 1, "Debug", 0));
+        // Cycles'ta motorun plan'ı TÜM workspace'i kapsar (tek-proje Build'in aksine) — kapsam dışı da
+        // WillBuild=false ile önizlemede GÖRÜNÜR (RunCoordinator.cs'in seed mekanizması); yalnız InRunQueue
+        // kararı üyelikle daralır.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            new BuildPreviewItem(staleDepId, "StaleDep", true),
+            new BuildPreviewItem(upToDateDepId, "UpToDateDep", false),
+            new BuildPreviewItem(outOfScopeId, "OutOfScope", false),
+        ]));
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, member.Status);      // üye: kuyrukta (amber)
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, staleDep.Status); // kapsam içi bayat bağımlılık: gri bekler
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, upToDateDep.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status);
+
+        // Kapsam içi bayat bağımlılık normal yoldan derlenir.
+        vm.OnEvent(new ProjectStartedEvent("r1", staleDepId, "StaleDep"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, staleDep.Status);
+        vm.OnEvent(new ProjectSucceededEvent("r1", staleDepId, 100));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, staleDep.Status);
+
+        // Kapsam içi gerçek "up to date" skip normal Skipped'a geçer ve SAYILIR.
+        vm.OnEvent(new ProjectSkippedEvent("r1", upToDateDepId, SkipReasons.UpToDate));
+        Assert.Equal(ProjectRowState.Skipped, upToDateDep.State);
+        Assert.Equal(SkipReasons.UpToDate, upToDateDep.SkipReason);
+
+        // Kapsam dışı pre-skip motorun kendi gerekçesiyle gelir; State'i HİÇ etkilemez (Pending kalır) ama
+        // [review fix I-1] SkipReason'ı YİNE DE taşır — satırın TEK kanıtı budur (WillBuild motor tarafından
+        // false ZORLANMIŞ, bkz. ConsoleEmptyState.Pending'in yorumu), ConsoleEmptyStateTests bunu ayrıca pinler.
+        vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
+        Assert.Equal(ProjectRowState.Pending, outOfScope.State);
+        Assert.Equal(SkipReasons.OutOfCycleScope, outOfScope.SkipReason);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status);
+
+        // Üye derlenir.
+        vm.OnEvent(new ProjectStartedEvent("r1", memberId, "Member"));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Building, member.Status);
+        vm.OnEvent(new ProjectSucceededEvent("r1", memberId, 50));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, member.Status);
+
+        // Atlandı sayacı yalnız kapsam içi skip'i sayar (kapsam dışı hiç sayılmaz).
+        Assert.Equal(1, vm.Counters.Skipped);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 1, 0, 200));
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status); // run sonunda da Discovered
+
+        // Atlandı filtresi kapsam dışını listelemez; kapsam içi gerçek skip'i listeler.
+        var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
+        Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
+        Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+    }
+
+    // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası
+    // motorun GERÇEKTEN söylediği gerekçeyi gösterir, ConsoleEmptyState'in WillBuild=false'tan (motor bunu
+    // TÜM pre-skip'ler için zorlar, kapsam dışı da güncel de) "Up to date" TÜRETMESİNİ engeller. Bu, satır
+    // seviyesinde ConsoleModesTests'in ayrı bir testinde de pinlenir (ConsoleEmptyState.Pending).
+    [Fact]
+    public async Task Out_of_cycle_scope_row_keeps_its_SkipReason_so_its_project_page_states_the_real_cause()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string outOfScopeId = @"C:\p\outofscope.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(outOfScopeId, "OutOfScope", false)]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
+
+        var row = vm.Projects.Single(p => p.Id == outOfScopeId);
+        Assert.Equal(ProjectRowState.Pending, row.State); // görsel/sayaç yüzeyi ETKİLENMEZ
+        Assert.Equal(SkipReasons.OutOfCycleScope, row.SkipReason); // ama kanıt taşınır
+    }
+
+    // [Task 2 review fix I-2] Motorun kendi RunCompletedEvent.Skipped'i kapsam dışı pre-skip'leri de sayar
+    // (RunCoordinator.cs'in seed'i) — App'in RunCounters.Skipped'i (satır State'inden türer) artık bunları hiç
+    // saymadığı için (bkz. OnProjectSkipped) aynı run için stream'in kapanış satırı ile ribbon/sayaç FARKLI
+    // sayı gösterirdi ("6 skipped" vs "1 skipped"). Kapanış satırı motorun sayısından
+    // _outOfScopeSkipCount'u düşerek ikisini hizalar.
+    [Fact]
+    public async Task Completion_stream_line_and_the_apps_own_skipped_counter_agree_when_a_cycles_run_has_out_of_scope_pre_skips()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string memberId = @"C:\p\member.csproj";
+        var outOfScopeIds = new[] { @"C:\p\out0.csproj", @"C:\p\out1.csproj", @"C:\p\out2.csproj" };
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1 + outOfScopeIds.Length, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            .. outOfScopeIds.Select(id => new BuildPreviewItem(id, id, false)),
+        ]));
+        foreach (string id in outOfScopeIds) vm.OnEvent(new ProjectSkippedEvent("r1", id, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectStartedEvent("r1", memberId, "Member"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", memberId, 50));
+
+        // Motorun kendi toplamı: 3 kapsam dışı + 0 kapsam içi skip = 3. App'in kendi sayacı 0 kapsam içi
+        // skip gördü (üye derlendi, kapsam dışı hiç sayılmaz) — ikisi FARKLI sayılardır, kapanış satırı bunu
+        // motorun sayısından düzeltmelidir.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 3, Queued: 0, DurationMs: 200));
+
+        Assert.Equal(0, vm.Counters.Skipped); // App'in kendi kapsam-farkında sayacı
+        var doneLine = Assert.Single(vm.StreamEvents, e => e.Kind == StreamKind.Done);
+        Assert.Equal(StreamText.Completed(failed: 0, succeeded: 1, skipped: 0, depAffected: 0, durationMs: 200), doneLine.Text);
+    }
+
+    // [Task 2 review fix M-1] Cycles'ta kapsam dışı satırlar artık hiçbir zaman terminal olmuyor (bkz.
+    // OnProjectSkipped) — UpdateEta'nın "completed" sayısı bunları saymazsa SONSUZA DEK eksik kalırdı (o
+    // satırlar hiç "bitmeyecek"), X/N fallback'i (ve smoothing sonrası ETA) kalıcı olarak abartırdı.
+    // _outOfScopeSkipCount bu boşluğu kapatır — motor bu projeleri zaten "bitirmiştir" (pre-skip), App'in kendi
+    // "completed" sayacı da bunu yansıtmalı.
+    [Fact]
+    public async Task Eta_text_counts_out_of_scope_pre_skips_as_completed_in_a_cycles_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string memberId = @"C:\p\member.csproj";
+        const string out1 = @"C:\p\out1.csproj";
+        const string out2 = @"C:\p\out2.csproj";
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 3, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(memberId, "Member", true),
+            new BuildPreviewItem(out1, "Out1", false),
+            new BuildPreviewItem(out2, "Out2", false),
+        ]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", out1, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectSkippedEvent("r1", out2, SkipReasons.OutOfCycleScope));
+
+        // 3 toplam; kapsam dışı 2'si App'in satır State'inde ASLA terminal olmayacak (bkz. OnProjectSkipped)
+        // ama motor onları zaten bitirdi — completed 2 olmalı (yalnız üye M hâlâ Pending), 0 DEĞİL.
+        Assert.Equal("2/3 · 0s", vm.EtaText);
+    }
+
+    // [Task 2 review fix M-4] Task 2'nin RibbonTextTests'teki birim testleri RibbonText.Compose'u izole
+    // çağırıyordu; bu test AYNI iddiayı uçtan uca (gerçek VM event sırasıyla) pinler — tek-proje bir Build
+    // durdurulduğunda "not built" sayısı workspace'teki HER Pending satırı değil, bu run'ın KENDİ (tek elemanlı)
+    // kapsamını sayar.
+    [Fact]
+    public async Task Stopping_a_single_project_run_reports_not_built_scoped_to_the_runs_own_set_not_the_whole_workspace()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\repo" }; // RibbonLine HasWorkspace ister
+
+        // Sync'in tam önizlemesi: workspace'te 3 proje, ikisi dirty.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true),  // kapsam dışı kalacak bayat kardeş
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", false), // zaten güncel
+        ]));
+
+        // Satırdan Build: yalnız A hedef — motorun önizlemesi (Task 1) yalnız hedefi taşır.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        // Eski (c.Queued tabanlı) formül B'yi ve C'yi de sayardı (ikisi de hâlâ Pending) → "3 not built".
+        // Doğrusu yalnız A'dır: bu run'ın kendi kuyruğu (WillBuildCount=1, FinishedOfWillBuild=0).
+        Assert.Equal("▸ Stopped — 0/1 · 1 not built", vm.RibbonLine.Text);
+    }
+
+    // [Task 1 review fix — M-4] InRunQueue'nun BİTİŞ noktası PropagateRunActive'dir (IsRunActive düşerken) —
+    // Stop de, motor ölümü de IsRunning'i (dolayısıyla IsRunActive'i) false yapar, ikisi de kuyruğu düşürmeli.
+    // Aksi halde durdurulan/motoru ölen bir run'ın kuyruğa aldığı satır ekranda KALICI amber asılı kalırdı.
+    [Fact]
+    public async Task Stopping_a_run_drops_InRunQueue_so_the_queued_row_returns_to_discovered()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // kuyruk da düştü
+    }
+
+    [Fact]
+    public async Task Engine_death_drops_InRunQueue_so_the_queued_row_returns_to_discovered()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
+
+        vm.OnEngineExited(139);
+
+        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, row.Status); // kuyruk da düştü
+    }
+
     // [Fix wave 1, Minor 6] TickElapsed building satırların CANLI süresini ilerletir; building OLMAYAN satırlara
     // dokunmaz. Deterministik saat enjekte edilir (D8: sleep/poll yok).
     [Fact]
@@ -1306,6 +1619,184 @@ public class RunViewModelTests
         Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
         Assert.False(row.OwnFilesChanged);
         Assert.NotNull(row.LastBuiltAt);
+    }
+
+    /// <summary>
+    /// [Task 4 — kök neden C] Bu koşuda dep-issue'lu biten bir başarı "succeeded→clean" (UpToDate) geçişine
+    /// GİRMEZ: bağımlılığı hâlâ hatalıydı, çıktı bayat bir bağımlılığa link'li. Satır <c>WaitingForDependency</c>
+    /// gerekçesine geçer (kökler event'ten — Sync'i beklemez), <c>Conditional=true</c> olur (kesin derlenecekler
+    /// kümesine girmez) ve <c>LastBuiltAt</c> yine ŞİMDİ'ye güncellenir (kart az önce derlendi).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden HER başarı (dep-issue'lu dahil) <c>UpToDate</c>'e düşerdi.
+    /// </summary>
+    [Fact]
+    public async Task A_success_with_a_live_dep_issue_transitions_to_waiting_for_dependency_not_up_to_date()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.DepIssue, OwnFilesChanged: false)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.WillBuild);       // hâlâ "dirty" — kök düzelene kadar bayat kalır (WillBuildEvaluator'la AYNI)
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason);
+        Assert.True(row.Conditional);     // kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds) GİRMEZ
+        Assert.Equal(["Up"], row.DependencyRoots);
+        Assert.NotNull(row.LastBuiltAt);  // az önce derlendi
+    }
+
+    /// <summary>
+    /// [Task 4 review — C1] Bu koşuda dep-issue'lu biten bir satırın etiketi bir SONRAKİ Sync'te AYNI kalmalı:
+    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu. Sync'in kendi önizlemesi ARTIK
+    /// <c>Conditional</c>'ı da taşıdığı için (bkz. <c>SyncWorkspaceServiceTests.
+    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c> — DEĞİŞEN KURAL)
+    /// satır Sync'ten sonra da soluk "affected · up to date · just now" der; eski kural (Sync'in önizlemesi hep
+    /// <c>Conditional=false</c> gönderirdi) etiketi belirgin "affected"e düşürürdü — kullanıcı hiçbir şey
+    /// yapmadığı hâlde ekranın "değişti" görünmesi.
+    /// </summary>
+    [Fact]
+    public async Task A_dep_issue_wait_label_survives_a_sync_without_flipping()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.DepIssue, OwnFilesChanged: false)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
+            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+        var beforeSync = Label();
+        Assert.Equal("affected", beforeSync.Word);
+        Assert.False(beforeSync.Stale);
+
+        // Run biter, sonra bir Sync koşar — NeutralizeRows(fresh:true) State'i Pending'e döndürür (IsRunning
+        // false olmalı), Sync'in kendi önizlemesi disk hâlini (değişmemiş) aynen yansıtır.
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.WaitingForDependency,
+            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: true, DependencyRoots: ["Up"])]));
+
+        var afterSync = Label();
+        Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
+    }
+
+    /// <summary>
+    /// [Task 4 review round 1+2 — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA
+    /// koşullu SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı
+    /// gerekçe — üye grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez;
+    /// "rebuilds once that dependency is healthy again" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — round 2]</b> Round 1'in iddiası satırın <c>UpToDate</c>'e (Task 4 öncesi
+    /// davranış) döndüğüydü. Eksikti: grup YAKINSADIYSA (<c>CycleUnsettled=false</c>) defter GERÇEKTEN not+kök
+    /// yazar ve bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi <c>WaitingForDependency</c> okur
+    /// (<c>WillBuild</c> döngü kapsamı yüzünden yine <c>false</c>'a zorlanır, ama gerekçe bir disk olgusu
+    /// olarak hesaplanmaya devam eder — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
+    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Artık canlı geçiş
+    /// motorun bir sonraki önizlemesiyle BİREBİR AYNI üçlüyü (<c>WillBuild=false</c>, <c>WaitingForDependency</c>,
+    /// <c>Conditional=false</c>) üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te de gelir).</para>
+    /// </summary>
+    [Fact]
+    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_without_being_conditional()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.True(row.InCycle); // ön-koşul
+        Assert.False(row.Conditional);   // TEK BAŞINA asla koşullu değil — grup mekanizmasına tabi
+        Assert.False(row.WillBuild);     // döngü kapsamı yüzünden zorlanır (Build bir SCC'yi asla derlemez)
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // ama disk olgusu budur
+        Assert.Equal(["Up"], row.DependencyRoots);
+        Assert.NotNull(row.LastBuiltAt);
+    }
+
+    /// <summary>
+    /// [Task 4 review round 2 — I1] Bir sonraki Sync (post-round-2) bu üye için AYNEN bu üçlüyü üretir — etiket
+    /// TİTREMEMELİ. Bilinçli olarak eski (round 1) <c>UpToDate</c> tahminiyle de çalıştırılıp KIRMIZI gösterildi
+    /// (bkz. yorum satırı), sonra doğru değere geri alındı.
+    /// </summary>
+    [Fact]
+    public async Task A_converged_cycle_member_wait_label_survives_a_sync_without_flipping()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"]));
+
+        var row = Assert.Single(vm.Projects);
+        RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
+            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+        var beforeSync = Label();
+        // Reason bir disk olgusudur ve Conditional=false olduğu için DecisionLabel default'a düşer — sıradan
+        // affected/modified, "waiting" sözü VERİLMEZ (üye tek başına asla koşullu değil).
+        Assert.Equal("affected", beforeSync.Word);
+        Assert.True(beforeSync.Stale);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator: outOfScope⇒WillBuild=false, gerekçe yine de
+        // WaitingForDependency; AppliesTo: WillBuild==true şartı düşer ⇒ Conditional=false).
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.WaitingForDependency,
+            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: false, DependencyRoots: ["Up"])]));
+
+        var afterSync = Label();
+        Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
+    }
+
+    /// <summary>
+    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi de (<c>CycleUnsettled=true</c> — arkasında
+    /// durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) aynı kuralın altındadır: canlı geçiş
+    /// onu koşullu SANMAZ. <c>CycleUnsettled</c> zaten yalnız döngü üyeleri için doğru olabildiğinden bu, (i)'in
+    /// aynı korumasının farklı bir teline dokunduğunu doğrular.
+    /// </summary>
+    [Fact]
+    public async Task An_unsettled_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.Conditional);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Null(row.DependencyRoots);
+    }
+
+    /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>
+    [Fact]
+    public async Task A_success_without_a_dep_issue_still_transitions_to_up_to_date()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120)); // DepIssues null
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.False(row.Conditional);
+        Assert.Null(row.DependencyRoots);
     }
 
     /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>

@@ -194,11 +194,21 @@ public class ConsoleModesTests
                 skipReason: SkipReasons.UpToDate, currentSha: sha, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu uçuşta, sıra bu satırda değil — plan gerekçesi will-build'den gelir.
+        // [Task 1 review fix — I-2] "Queued" artık yalnız runActive'e değil, BU koşunun kendi kuyruğuna
+        // (InRunQueue) da bağlı — bkz. Row helper'ının ve ConsoleEmptyState.Pending'in yorumu.
         Assert.Equal(
             ["Queued — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
-                runActive: true, lastBuiltAt: twoHoursAgo), now));
+                runActive: true, inRunQueue: true, lastBuiltAt: twoHoursAgo), now));
+
+        // Koşu uçuşta AMA bu satır BU koşunun kendi kuyruğunda DEĞİL (tek proje koşusunda bayat bir komşu) —
+        // "Queued" DEĞİL, düz plan metni.
+        Assert.Equal(
+            ["Will build — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
+                runActive: true, inRunQueue: false, lastBuiltAt: twoHoursAgo), now));
 
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
         // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
@@ -230,10 +240,74 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
     }
 
+    /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
+    /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır
+    /// (RunCoordinator.cs, tüm pre-skip'ler için — kapsam dışı da GERÇEKTEN güncel de aynı yoldan geçer). Satır
+    /// yine de SkipReason'ı taşır, tam bu yüzden: sayfa motorun GERÇEKTEN söylediği (kapsam dışı) gerekçeyi
+    /// gösterir, WillBuild=false'tan türeyen "Up to date" YALANINI DEĞİL — bir proje GERÇEKTEN kirli olsa bile.</summary>
+    [Fact]
+    public void Out_of_cycle_scope_pending_row_states_the_real_reason_not_up_to_date()
+    {
+        Assert.Equal(
+            ["Not needed by a dependency cycle — outside this run's scope.", "Never built by this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                skipReason: SkipReasons.OutOfCycleScope)));
+    }
+
+    /// <summary>[Task 5 review round 1 — M-10] Bu koşu GERÇEKTEN koşullu bekletiyorsa (<c>Conditional</c>)
+    /// "Will build" YALANDIR — motor bu projeyi kökü hâlâ hatalıysa atlayabilir. Sayfa artık satırın kendi
+    /// etiketiyle (<see cref="DecisionLabel"/>) AYNI cümleyi söyler — kopya YASAK, tek kaynak orada.</summary>
+    [Fact]
+    public void A_conditionally_waiting_row_states_the_dependency_it_is_waiting_on_not_will_build()
+    {
+        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
+        Assert.Equal(
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
+                "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
+                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+
+        // [DEĞİŞEN KURAL — YOK] Aynı gerekçe ama bu koşu ZORLUYORSA (Conditional=false — satırdan Build,
+        // Rebuild, bir SCC üyesi) söz tutulmaz: davranış DEĞİŞMEDİ, genel "Will build in this run." dalına düşer
+        // — DecisionLabel'in aynı ayrımı (bkz. o dosyanın "conditional" parametresi) burada da geçerli.
+        Assert.Equal(
+            ["Will build in this run.", "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
+                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+    }
+
+    /// <summary>[final review — I1] Motor projeyi GERÇEKTEN koşullu olduğu için atladıysa
+    /// (<see cref="SkipReasons.DependencyStillFailing"/>) sayfa, kullanıcının o sayfayı açmasının TEK nedenini
+    /// söyler: hangi bağımlılık. Gerekçe, bekleyen satırınkiyle (yukarıdaki test) ve satırın kendi etiketiyle
+    /// AYNI cümledir — kopya YASAK, tek kaynak <see cref="DecisionLabel"/>. Eskiden bu dal switch'te YOKTU ve
+    /// sayfa genel "Skipped in this run." diyordu.</summary>
+    [Fact]
+    public void A_row_skipped_because_its_dependency_is_still_failing_names_that_dependency()
+    {
+        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
+        Assert.Equal(
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
+                "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
+                skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
+                willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
+                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+    }
+
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
-        bool runActive = false, DateTimeOffset? lastBuiltAt = null) =>
+        bool runActive = false, DateTimeOffset? lastBuiltAt = null, bool? inRunQueue = null,
+        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "") =>
         new(@"C:\p\a.csproj", "A", state)
         {
             SkipReason = skipReason,
@@ -243,6 +317,13 @@ public class ConsoleModesTests
             CurrentSha = currentSha,
             LastBuiltAt = lastBuiltAt,
             IsRunActive = runActive,
+            // [Task 1 review fix — I-2] Belirtilmezse runActive'i izler (eski tek-bayraklı davranışla aynı
+            // çağıran deneyimi) — yalnız iki senaryonun ayrıştığı yeni testler açıkça geçer.
+            InRunQueue = inRunQueue ?? runActive,
+            // [Task 5 review round 1 — M-10] Koşullu bekleme (WaitingForDependency) senaryosu için.
+            Conditional = conditional,
+            DependencyRoots = dependencyRoots,
+            NamePrefix = namePrefix,
         };
 
     /// <summary>

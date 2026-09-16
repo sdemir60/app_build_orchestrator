@@ -133,7 +133,11 @@ public sealed class OperationChoreographer
         Finish(allRows);
     }
 
-    /// <summary>Kapsam işaretini de siler — yeni bir işlemin <c>_neutralize</c>'ı ve koşu başlangıcı bunu yapar.</summary>
+    /// <summary>Kapsam işaretini de siler — <c>MainWindow</c>'un iki çağırdığı yer vardır: run hiç
+    /// BAŞLAMADIYSA (istek reddedildi/gönderim düştü) hemen; run GERÇEKTEN başladıysa run'ın kendi
+    /// <c>BuildPreviewApplied</c>'ı geldiğinde (statü kanalı — <c>InRunQueue</c> — devraldığı AN), <b>ASLA</b>
+    /// <c>runStarted</c>'ın kendi anında değil — aksi halde işaret ile kuyruk arasında bir kare boşluk (grinin
+    /// gözükmesi) oluşur (Task 1 review fix I-1, <c>ARCHITECTURE.md</c> §14.3).</summary>
     public void ClearMarks(IReadOnlyList<ProjectRowViewModel> allRows)
     {
         ArgumentNullException.ThrowIfNull(allRows);

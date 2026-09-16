@@ -22,10 +22,11 @@ public sealed partial class RunViewModel
     // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (Continue re-emit'te çift satır olmaz).
     private RunMode? _pendingRunStartMode;
 
-    // [Task 2/cycles] _pendingRunStartMode BuildPreview'da TEMİZLENİYOR (yukarıdaki alan) — kapsam-dışı
-    // toplayıcı ise RunCompleted'a kadar (koşunun SONUNA kadar) hangi modda olduğumuzu bilmek zorunda,
-    // bu yüzden AYRI bir alan: RunStartedEvent'te set edilir, EndRun'da sıfırlanmaz.
-    private RunMode? _streamRunMode;
+    // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
+    // RunViewModel.cs'in `_currentRunMode` alanı (OnRunStarted). Eskiden burada AYRI bir `_streamRunMode` vardı
+    // ve bu partial'ın kendi AppendStreamFor'unda (OnEvent'in OnRunStarted'dan SONRA çağırdığı ikinci dal)
+    // yazılıyordu — satır kararı (InRunQueueFor, OnProjectSkipped) o alanı okuyunca DOĞRU sonucu stream'in
+    // işleme SIRASINA borçlu kalıyordu (yeni bir event tipi/sıra değişikliği sessizce kırabilirdi).
 
     // [Task 2/cycles] Cycles koşusunda SkipReasons.OutOfCycleScope gerekçeli skip'ler burada BİRİKİR (satır
     // YAZILMAZ) — PushStream'in başında tek Info satırına flush edilir (bkz. PushStream).
@@ -45,16 +46,18 @@ public sealed partial class RunViewModel
 
     /// <summary>[tek proje · Clean] Uçuştaki koşu bir <b>Clean</b> mi — <see cref="OnProjectDone"/> bunu okur
     /// ("başarı" orada güncelliğe değil, çıktının SİLİNMİŞ olmasına karşılık gelir). Kaynak, koşunun modunu
-    /// zaten tutan <see cref="_streamRunMode"/>'dur: ikinci bir alan tutulmaz (kopya YASAK).</summary>
-    private bool RunIsClean => _streamRunMode == RunMode.Clean;
+    /// zaten tutan <see cref="RunViewModel._currentRunMode"/>'dur: ikinci bir alan tutulmaz (kopya YASAK).</summary>
+    private bool RunIsClean => _currentRunMode == RunMode.Clean;
 
     /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — şerit koşu satırını
     /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar) ve bakım kutusu Resolve düğmesini
     /// buna göre amber zemin + spinner'a çevirir.
     /// <para>İki terimi de bildirimlidir: <c>IsRunning</c> (yani <c>RunActive</c>) attribute zinciriyle,
-    /// <see cref="_streamRunMode"/> ise atandığı yerde AÇIKÇA yayınlar — türetilmiş özellikler kendiliğinden
-    /// <c>PropertyChanged</c> üretmez ve kutu, şerit gibi başka bir bildirimin sırtına binemez.</para></summary>
-    public bool IsResolvingCycles => _streamRunMode == RunMode.Cycles && RunActive;
+    /// <see cref="RunViewModel._currentRunMode"/> ise <see cref="RunViewModel.OnRunStarted"/>'da AÇIKÇA
+    /// yayınlar — türetilmiş özellikler kendiliğinden <c>PropertyChanged</c> üretmez ve kutu, şerit gibi başka
+    /// bir bildirimin sırtına binemez (bkz. aşağıdaki <c>OnPropertyChanged(nameof(IsResolvingCycles))</c>
+    /// çağrısı, RunStartedEvent'in kendi dalında).</para></summary>
+    public bool IsResolvingCycles => _currentRunMode == RunMode.Cycles && RunActive;
 
     /// <summary>[design v1.7.0 §3.7] Şu anki tur ve tavan — motorun kararı (<c>CycleRoundStartedEvent</c>);
     /// tur henüz başlamadıysa (upstream/prerequisite aşaması) <c>0</c>.</summary>
@@ -122,7 +125,10 @@ public sealed partial class RunViewModel
                 // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
-                _streamRunMode = e.Mode;
+                // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE
+                // RunViewModel.cs'in OnRunStarted'ı onu zaten yazmıştır (tek yazıcı). Bildirim yine BURADA: o
+                // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
+                // gerekir.
                 OnPropertyChanged(nameof(IsResolvingCycles)); // bakım kutusunun Resolve spinner'ı bunu okur
                 // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
@@ -136,8 +142,13 @@ public sealed partial class RunViewModel
 
             case BuildPreviewEvent:
                 // [D3 §2] Ertelenen run-start satırını burada yay — OnBuildPreview (OnEvent'te BUNDAN ÖNCE) hem
-                // _willBuildIds'i doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
+                // önizleme kümelerini doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
                 // TEMİZLE ki re-emit edilen bir BuildPreview çift satır yaymasın.
+                // [final review — C1 · DEĞİŞEN KURAL] Açılış satırının sayısı KESİN kümeden (_willBuildIds)
+                // DEĞİL, koşunun PLANINDAN (_dirtyIds — koşullu projeler dahil) gelir: kesin küme Task 4'ten beri
+                // koşulluyu dışlıyor ve dirty kümesi tamamen koşullu olan bir koşu konsolu "Build started — 0
+                // projects" diye açıyordu — hemen ardından o projeyi derlerken. Satır koşunun ne kadar iş
+                // DEĞERLENDİRECEĞİNİ söyler; kaçının kesin olduğunu şerit zaten ayrı sayar.
                 if (_pendingRunStartMode is { } mode)
                 {
                     int parallelism = _runParallelism ?? Parallelism;
@@ -147,12 +158,12 @@ public sealed partial class RunViewModel
                         // için hem gramer hem anlam olarak yanlıştı (paralellik onu tarif etmez).
                         _ when RunTargetId is { } targetId => StreamText.SingleProjectStarted(mode, ResolveName(targetId)),
                         // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
-                        // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
+                        // üyeleri sıralı derlenir. Kırılım dirty ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
                         // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.
                         RunMode.Cycles => StreamText.CyclesStarted(
-                            members: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) == true),
-                            prerequisites: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) != true)),
-                        _ => StreamText.BuildStarted(_willBuildIds.Count, parallelism),
+                            members: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) == true),
+                            prerequisites: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) != true)),
+                        _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;
                 }
@@ -197,9 +208,9 @@ public sealed partial class RunViewModel
             case ProjectSkippedEvent e:
                 // [Task 2/cycles] Kapsam-dışı skip proje başına satır YAZMAZ — sayaç birikir, sonraki
                 // PushStream'in başında tek toplu satıra flush edilir (ör. bir sonraki skip/built/completed).
-                if (_streamRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
+                if (_currentRunMode == RunMode.Cycles && e.Reason == SkipReasons.OutOfCycleScope)
                 {
-                    _outOfScopeSkips++;
+                    _outOfScopeSkips++; // görüntü tamponu — PushStream'de FLUSH edilir (bkz. alanın kendi yorumu)
                     break;
                 }
                 PushStream(StreamKind.Skip, e.ProjectId, StreamText.Skipped(ResolveName(e.ProjectId), e.Reason));
@@ -252,14 +263,22 @@ public sealed partial class RunViewModel
                     PushStream(StreamKind.Info, null, StreamText.Stopped(e.Queued)); // stopped → info (parıltı YOK)
                 else
                 {
+                    // [Task 2 review fix I-2] e.Skipped motorun KENDİ toplamıdır ve kapsam dışı pre-skip'leri de
+                    // sayar (RunCoordinator.cs'in seed'i, ReadySetScheduler'ın Skipped bütçesi) — Ribbon'un
+                    // c.Skipped'i (RunCounters, satır State'inden türer) bunları artık hiç saymadığı için
+                    // (bkz. RunViewModel.OnProjectSkipped) ikisi aynı run için FARKLI sayı gösterirdi ("348
+                    // skipped" vs "1 skipped"). _outOfScopeSkipCount BU run'ın kümülatif toplamıdır (Stream'in
+                    // KENDİ `_outOfScopeSkips`'i DEĞİL — o bir görüntü tamponudur, flush'ta sıfırlanır ve run
+                    // sonuna kadar TOPLAM tutmaz); "N outside cycle scope" satırı (yukarıdaki flush) AYRI kalır,
+                    // burada yalnız kapanış satırının sayısı düzeltilir.
                     PushStream(StreamKind.Done, null,
-                        StreamText.Completed(e.Failed, e.Succeeded, e.Skipped, e.DepIssueCount, e.DurationMs));
+                        StreamText.Completed(e.Failed, e.Succeeded, e.Skipped - _outOfScopeSkipCount, e.DepIssueCount, e.DurationMs));
                     // [Task 6] Bu dal yalnız e.Outcome != Stopped iken koşar (yukarıdaki if'in AKSİ) — Cycles
                     // koşusunun KENDİSİ bu satırı yaymaz (zaten o modda, ipucu anlamsız). Sayaç Projects'ten
                     // OKUNUR: WillBuild bir Cycles koşusuyla temizlenmediği sürece (döngü üyesi normal Build'de
                     // pre-skip edilir, üye asla invoke edilmez) InCycle&&WillBuild==true satırlar "hâlâ kirli
                     // döngü üyesi" demektir.
-                    if (_streamRunMode != RunMode.Cycles)
+                    if (_currentRunMode != RunMode.Cycles)
                     {
                         int n = Projects.Count(p => p.InCycle && p.WillBuild == true);
                         if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));

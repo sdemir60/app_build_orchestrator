@@ -67,19 +67,57 @@ public class WillBuildTests
         => Assert.False(WillBuildEvaluator.Evaluate(true, null, null, buildCycles: false));
 
     /// <summary>
-    /// Bağımlılığı BAŞARISIZ olmuş bir başarı, bayat bir çıktıya link'lidir: kendi kaynağı değişmese bile
-    /// bağımlılık düzelene kadar YENİDEN DERLENİR.
+    /// [DEĞİŞEN KURAL — koşullu yeniden derleme] Kök bağımlılıkları BİLİNMEYEN (eski) dep-issue kaydı hâlâ
+    /// kesin derlenir.
     ///
-    /// <para>Bu kural eskiden koordinatörde, "böyle bir başarıyı deftere hiç yazma" biçiminde duruyordu —
-    /// ama o, defterin ilerlemesini tamamen durduruyordu (ölçüldü: 24 hatalı projenin depIssue'su 96 projeye
-    /// yayıldığı bir koşuda 74 başarının 0'ı yazıldı). Kayıt artık yazılıyor, güvenlik ise BURAYA taşındı:
-    /// kaydın <see cref="BuildState.DepIssue"/> notu varsa proje derleme listesinde kalır.</para>
+    /// <para><b>Eski iddia:</b> "bağımlılığı başarısız olmuş bir başarı, kendi kaynağı değişmese bile HER
+    /// Build'de yeniden derlenir" — kayıt ne olursa olsun. Bu güvenlik eskiden koordinatörde "böyle bir başarıyı
+    /// deftere hiç yazma" biçiminde duruyordu (defteri durdurduğu ölçüldü: 74 başarının 0'ı yazıldı) ve buraya
+    /// taşınmıştı.</para>
+    ///
+    /// <para><b>Değişme gerekçesi:</b> tetik yanlış yerdeydi. Bağımlılık hâlâ patlıyorken yeniden derlemek aynı
+    /// bayat çıktıya yeniden link'lemekten başka bir şey yapmıyordu; ikinci Build'de dalganın yakmadığı düzinelerce
+    /// proje amber'a dönüp gerçekten derleniyordu (inceleme raporu §2.3). Kök kimlikleri artık deftere yazıldığı
+    /// için karar "kök düzeldiğinde" verilebiliyor (<see cref="WillBuildReason.WaitingForDependency"/>). Kök
+    /// listesi olmayan kayıtta o soru sorulamaz — eski davranış güvenli yön olarak kalır.</para>
     /// </summary>
     [Fact]
-    public void true_when_the_last_success_was_built_against_a_failed_dependency()
+    public void true_when_the_last_success_was_built_against_a_failed_dependency_with_unknown_roots()
         => Assert.True(WillBuildEvaluator.Evaluate(false, "sig1",
             new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Succeeded, DepIssue: true),
             buildCycles: false));
+
+    /// <summary>Kökleri bilinen, imzası değişmemiş dep-issue kaydı KOŞULLUDUR: WillBuild <c>true</c> kalır (bu
+    /// koşu onu derleyebilir, pre-skip EDİLMEZ) ama gerekçe onun kesin değil, kök düzelirse derleneceğini söyler.</summary>
+    [Fact]
+    public void a_dep_issue_record_with_known_roots_and_an_unchanged_signature_is_waiting_for_its_dependency()
+    {
+        var state = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.WaitingForDependency, reason);
+        Assert.True(willBuild);
+    }
+
+    /// <summary>Senaryo 5: imzası değişmiş dep-issue'lu proje KOŞULLU DEĞİL — kendi değişikliği onu kesin
+    /// derletir, gerekçe de bunu söyler.</summary>
+    [Fact]
+    public void a_dep_issue_record_whose_signature_moved_is_a_plain_signature_change()
+    {
+        var withRoots = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
+
+        Assert.Equal(WillBuildReason.SignatureChanged, ReasonOf("sig2", withRoots));
+        Assert.True(WillBuildEvaluator.Evaluate(false, "sig2", withRoots, buildCycles: false));
+    }
+
+    /// <summary>Boş kök listesi "kök bilinmiyor" ile aynıdır — koşullu sayılmaz.</summary>
+    [Fact]
+    public void an_empty_root_list_counts_as_unknown_roots()
+        => Assert.Equal(WillBuildReason.DepIssue, ReasonOf("sig1",
+            new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true, DepIssueRoots: [])));
 
     /// <summary>Not TEMİZ bir kayıtta yoktur — aynı imza güncel demektir (kontrol grubu).</summary>
     [Fact]
@@ -109,6 +147,7 @@ public class WillBuildTests
         => Assert.Equal(WillBuildReason.LastFailed,
             ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Failed)));
 
+    /// <summary>Senaryo 4: kök listesi olmayan (bu alandan önce yazılmış) kayıt bugünkü gerekçeyi taşır.</summary>
     [Fact]
     public void reason_is_dep_issue_when_the_last_success_was_built_against_a_failed_dependency()
         => Assert.Equal(WillBuildReason.DepIssue,

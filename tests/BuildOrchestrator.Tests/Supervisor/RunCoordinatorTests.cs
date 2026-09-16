@@ -1184,11 +1184,10 @@ public class RunCoordinatorTests
     /// <b>sıfırı</b> yazıldı — depIssue zincir boyunca miras alındığı için birkaç hata tüm grafı zehirliyor,
     /// incremental derleme fiilen devre dışı kalıyor ve her Sync "hepsi derlenecek" diyordu.</para>
     ///
-    /// <para>Güvenlik kaybolmadı, YER DEĞİŞTİRDİ: kayıt <c>DepIssue=true</c> notu taşır ve
-    /// <see cref="WillBuildEvaluator"/> bu notu görünce projeyi yine derleme listesinde tutar
-    /// (bkz. <c>WillBuildTests.true_when_the_last_success_was_built_against_a_failed_dependency</c>).
-    /// Yeniden derlenecek KÜME bugünküyle birebir aynıdır; değişen tek şey defterin ve kartın gerçeği
-    /// söylemesi (sha çifti artık ilerler).</para>
+    /// <para>Güvenlik kaybolmadı, YER DEĞİŞTİRDİ: kayıt <c>DepIssue=true</c> notu ve KÖK kimliklerini
+    /// (<c>DepIssueRoots</c>) taşır; <see cref="WillBuildEvaluator"/> bu notu görünce projeyi koşullu sayar ve koşu
+    /// onu kök düzeldiğinde yeniden derler (bkz. <c>ConditionalRebuildRunTests</c>). Defter ve kart gerçeği
+    /// söyler (sha çifti ilerler).</para>
     /// </summary>
     [Fact]
     public async Task A_success_carrying_a_dep_issue_is_persisted_with_the_dep_issue_flag()
@@ -1216,11 +1215,13 @@ public class RunCoordinatorTests
             var state = store.Load();
             var downState = Assert.Contains(Id("Down"), state);
             Assert.True(downState.DepIssue, "depIssue taşıyan başarı NOTLA yazılmalı");
+            Assert.Equal([Id("Up")], downState.DepIssueRoots); // kök KİMLİĞİ (ad değil) — koşullu karar bununla aranır
             Assert.Equal("sig", downState.BuiltSignature);  // taze imza yazıldı
             Assert.Equal("headsha", downState.BuiltCommit); // sha çifti artık ilerler
 
             var soloState = Assert.Contains(Id("Solo"), state); // temiz success — kontrol grubu
             Assert.False(soloState.DepIssue);
+            Assert.Null(soloState.DepIssueRoots);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

@@ -618,6 +618,37 @@ public class ChoreographyTests
         Assert.Equal(["Cyc"], vm.ScopeFor(RunMode.Cycles).Select(r => r.Name));
     }
 
+    /// <summary>
+    /// [Task 4 — kök neden C · review round 1, C1] Dalga yalnız KESİN derlenecekleri yakar: koşullu bir proje
+    /// (<see cref="WillBuildReason.WaitingForDependency"/>, motorun <c>Conditional</c> dediği)
+    /// <c>WillBuild==true</c> olsa da dalgada amber'a yanmaz — kökü hâlâ hatalıysa atlanabilir. Bu, motorun
+    /// kesin kuyruğuyla AYNI kümedir (Task 1'in <c>InRunQueueFor</c>'unun Build dalıyla, tek doğruluk kaynağı).
+    ///
+    /// <para><b>Kritik olan an burada TAM OLARAK budur:</b> hiçbir run BAŞLAMADI (aşağıda <c>RunStartedEvent</c>
+    /// YOK) — elde duran TEK önizleme bu Sync'inki. <c>ScopeFor</c>'u Build tıklamasının ANINDA çağıran
+    /// <c>BeginRunAsync</c> da tam bu durumu okur (motorun kendi çalışan-run önizlemesi henüz gelmemiştir).
+    /// Girdi <see cref="BuildOrchestrator.Core.Workspace.SyncWorkspaceService"/>'in ARTIK gerçekten ürettiği
+    /// şekildir (bkz. <c>SyncWorkspaceServiceTests.
+    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c>, DEĞİŞEN KURAL):
+    /// eskiden Sync'in önizlemesi <c>Conditional</c>'ı HİÇ taşımazdı (her zaman <c>false</c>), yani bu tam anda
+    /// dalga D'yi de yakardı — motorun kendi önizlemesi (gerçek <c>true</c>) gelince D bir kare sonra griye
+    /// düşerdi.</para>
+    /// </summary>
+    [Fact]
+    public void The_build_wave_excludes_a_conditional_project_immediately_after_sync_before_any_run_starts()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node("A", 0), Node("D", 1)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 1));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\A.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\D.csproj", "D", true, Reason: WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        Assert.Equal(["A"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+    }
+
     /// <summary>Reduced-motion: koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam yalnız işaretlenir ve
     /// satırlar tam opak kalır.</summary>
     [Fact]

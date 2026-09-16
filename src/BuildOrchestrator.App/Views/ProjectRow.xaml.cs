@@ -148,6 +148,9 @@ public partial class ProjectRow : UserControl
     internal StatusDot Dot => PART_Dot;
     internal TextBlock DurationText => PART_Duration;
     internal TextBlock DecisionText => PART_Decision;
+    /// <summary>[Task 4 review — I2] Karar etiketinin oturduğu sağ blok — ölçüm testleri XAML'ın
+    /// <c>MinWidth</c>'ini buradan GERÇEKTEN okur (ikinci bir sabit kopyalamaz); yuva küçülürse test yakalar.</summary>
+    internal FrameworkElement RightBlock => PART_RightBlock;
     /// <summary>[L1] Hover eylem bloğu — İLK HOVER'a kadar <c>null</c> (hiç kurulmaz).</summary>
     internal FrameworkElement? HoverIcons => _actions?.HoverIcons;
     internal ProjectRowActions? Actions => _actions;
@@ -290,6 +293,14 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.LastBuiltAt):
             case nameof(ProjectRowViewModel.OwnFilesChanged):
             case nameof(ProjectRowViewModel.WillBuildReason):
+            // [final review — I2] Etiketin girdileri burada BİTER: Conditional ve DependencyRoots da
+            // DecisionLabel.For'a girer (koşullu satır "affected · up to date · 2h" der, zorlanan satır düz
+            // "affected"). [ObservableProperty] yalnız DEĞİŞİMDE bildirir ve önizleme üçlüyü sırayla yazar
+            // (WillBuild → Reason → Conditional), yani ilk ikisi AYNI kalıp yalnız Conditional dönen bir
+            // önizlemenin (kapsam dışı koşullu satır, satırdan tetiklenen tek proje koşusu) tek bildirimi
+            // bunlardır — listede olmadıkları için etiket koşu boyunca bayat kalıyordu.
+            case nameof(ProjectRowViewModel.Conditional):
+            case nameof(ProjectRowViewModel.DependencyRoots):
                 ApplyDecision();
                 break;
         }
@@ -471,7 +482,7 @@ public partial class ProjectRow : UserControl
         var decision = _vm is null
             ? RowDecision.None
             : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                DateTimeOffset.Now, _vm.InCycle);
+                DateTimeOffset.Now, _vm.InCycle, _vm.Conditional, _vm.DependencyRoots, _vm.NamePrefix);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

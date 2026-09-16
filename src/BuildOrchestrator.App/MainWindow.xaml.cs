@@ -191,7 +191,17 @@ public partial class MainWindow : Window
         // [plan kanalı] Önizleme grafın ÜÇÜNCÜ besleme sinyalidir. Topoloji önizlemeden ÖNCE geldiği için
         // SetGraph anında satırlar planı henüz bilmez; statü kanalı (Counters) ise WillBuild'i taşımaz ve
         // record-struct eşitliğiyle bildirimi yutar. Bu abonelik olmadan Sync'ten sonra küpler nötr kalır.
-        _vm.BuildPreviewApplied += (_, _) => PushGraphStatuses();
+        //
+        // [Task 1 review fix — I-1] Kapsamın işareti (Marked) de BURADA, statü kanalına devrederken silinir —
+        // runStarted'daki IsRunning dalı ARTIK silmiyor (bkz. o dalın yorumu). Bu run'ın kendi buildPreview'i
+        // InRunQueue'yu doldurduğu AN (koşu uçuştaysa) Marked'ı Queued devralır; koşu uçuşta DEĞİLSE (motor
+        // öldü/Stop geldi ve preview yine de yolda kalmış olabilir) ClearMarks yine de zararsızdır — silinecek
+        // bir işaret zaten kalmaz.
+        _vm.BuildPreviewApplied += (_, _) =>
+        {
+            PushGraphStatuses();
+            if (_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
+        };
         RefreshProjectGroups();
         RebuildGraph();
 
@@ -797,12 +807,14 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
-                // [design v1.11.0 §9-4] Koşu GERÇEKTEN başladı → açılış koreografisi biter ve statü kanalı
-                // devralır (işaretlilik silinir: queued/building zaten amberdir).
+                // [design v1.11.0 §9-4] Koşu GERÇEKTEN başladı → açılış koreografisinin ZAMANLAYICISI biter
+                // (Cancel) — ama işaretlilik (Marked) burada SİLİNMEZ (bkz. aşağıdaki [Task 1 review fix — I-1]).
                 //
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
-                // hiç açılmadı). İşaret o zaman da silinmelidir — aksi halde başlamayan bir işlemin amber kapsamı
+                // hiç açılmadı). İşaret o zaman HEMEN silinir — aksi halde başlamayan bir işlemin amber kapsamı
                 // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                // Koşu SONA ERDİĞİNDE de (IsRunning true'dan false'a düşerken, Stop/engine ölümü/tamamlanma —
+                // hepsi IsRunning'i false yapar) aynı dal işaretin silinmesini garanti eder.
                 //
                 // [SIRA ÖNEMLİ — design v1.13.2 §3.2 · v1.18.0] Koşu fazı ve statüler grafa koreografi düşürülmeden
                 // ÖNCE itilir: koreografi doğal bitişinde son adımında BEKLER (OperationChoreographer.Settle) ve
@@ -814,7 +826,21 @@ public partial class MainWindow : Window
                 if (_vm.IsRunning || !_vm.IsStarting)
                 {
                     _choreographer.Cancel(_vm.Projects);
-                    _choreographer.ClearMarks(_vm.Projects);
+                    // [Task 1 review fix — I-1] Run GERÇEKTEN BAŞLADIYSA (IsRunning) işaret HEMEN SİLİNMEZ:
+                    // kuyruk artık InRunQueue'dan gelir (Task 1) ve o YALNIZ bu run'ın kendi buildPreview'inden
+                    // yazılır — runStarted ile buildPreview arasında gerçek bir IPC boşluğu vardır (Supervisor
+                    // bu ikisi arasında stateStore.Load + proje başına OwnFilesChanged hesaplar,
+                    // RunCoordinator.cs ~885-905), her IPC olayı kendi Dispatcher.InvokeAsync turudur (~293).
+                    // Eskiden burada ClearMarks de birlikte çağrılıyordu: WillBuild (genel, koşuyu bilmeyen bayrak)
+                    // o boşlukta hâlâ true olduğu için Queued sanki kesintisiz sürüyormuş GİBİ görünürdü — Task 1
+                    // WillBuild'i InRunQueue'yla değiştirince (kök neden A'yı kapatırken) bu yanılsama bozuldu ve
+                    // gerçek boşluk görünür oldu: Marked hem InRunQueue false olduğu için kapsam bir kare için
+                    // gri görünüp hemen ardından geri yanıyordu (ARCHITECTURE §14.3 ihlali — "the amber the
+                    // marking wave lit must not go out when the run begins"). İşaretin silinmesi artık
+                    // BuildPreviewApplied'a taşındı (yukarıda, ctor'da): bu run'ın kendi kuyruğu InRunQueue'yu
+                    // devraldığı AN silinir, amber hiç sönmez. Run hiç BAŞLAMADIYSA (isteğin reddi) burada hâlâ
+                    // HEMEN silinir: hiçbir preview asla gelmeyecektir.
+                    if (!_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
                 }
                 break;
             case nameof(RunViewModel.Phase):

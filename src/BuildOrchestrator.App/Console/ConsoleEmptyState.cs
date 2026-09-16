@@ -1,3 +1,4 @@
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -44,8 +45,9 @@ public static class ConsoleEmptyState
         ArgumentNullException.ThrowIfNull(row);
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
-        string reason = Reason(row);
-        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, now ?? DateTimeOffset.Now)];
+        var at = now ?? DateTimeOffset.Now;
+        string reason = Reason(row, at);
+        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, at)];
     }
 
     /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.</summary>
@@ -55,27 +57,41 @@ public static class ConsoleEmptyState
         && row.WillBuildReason == WillBuildReason.NeverBuilt;
 
     /// <summary>İlk satır: bu proje NEDEN bu durumda.</summary>
-    private static string Reason(ProjectRowViewModel row) => row.State switch
+    private static string Reason(ProjectRowViewModel row, DateTimeOffset now) => row.State switch
     {
         // Motor bu koşuda bu projeyi atladı ve gerekçesini SÖYLEDİ (SkipReasons — tek doğruluk kaynağı).
         ProjectRowState.Skipped => row.SkipReason switch
         {
             SkipReasons.UpToDate => "Up to date — nothing to compile in this run.",
             SkipReasons.InDependencyCycle => InCycleText,
-            SkipReasons.OutOfCycleScope => "Not needed by a dependency cycle — outside this run's scope.",
+            SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
             SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
+            // [final review — I1] Koşullu proje sırası geldi ve kökleri hâlâ hatalıydı: sayfanın açılma
+            // nedeni TAM OLARAK "hangi bağımlılık" sorusudur, genel "Skipped in this run." onu yutuyordu.
+            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) ve satırın kendi etiketiyle AYNI kaynaktan
+            // gelir (kopya YASAK). Kapı motorun gerekçesiyle satırın bayrağını birlikte arar: bayrak bir
+            // şekilde düşmüşse (zorlanmış kapsam) aşağıdaki genel dal doğru cümleyi zaten söyler.
+            SkipReasons.DependencyStillFailing when row.Conditional => WaitingForDependencyReason(row, now),
             _ => "Skipped in this run.",
         },
         // Bunlar SAVUNMACIdır: derlenen bir proje her zaman log yazar. Log yine de yoksa (disk hatası, run
         // dizini silindi) sayfa boş kalmaz — ne olduğu söylenir.
         ProjectRowState.Succeeded => "Built in this run — its log is no longer on disk.",
         ProjectRowState.Failed => "Failed in this run — its log is no longer on disk.",
-        _ => Pending(row),
+        _ => Pending(row, now),
     };
 
     /// <summary>Henüz bu koşuda konuşulmamış satır: elde plan vardır (will-build üç durumlu).</summary>
-    private static string Pending(ProjectRowViewModel row)
+    private static string Pending(ProjectRowViewModel row, DateTimeOffset now)
     {
+        // [Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e TAŞIMAZ
+        // (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ama SkipReason'ı yine de taşır, tam da bu yüzden.
+        // Bu kontrol İLK sırada: aksi halde satırın önizleme anında ZORLANMIŞ WillBuild=false'u (RunCoordinator.cs
+        // — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan söylemesin", tüm pre-skip
+        // edilenler için, kapsam dışı da güncel de aynı yoldan geçer) aşağıdaki "Up to date" dalına düşer ve
+        // GERÇEKTEN kirli ama kapsam dışı bir proje için yanlış konuşurdu. Metin Skipped dalındakiyle AYNI
+        // sabiti okur (kopya YASAK) — motor konuşsa da konuşmasa da kullanıcı aynı cümleyi görür.
+        if (row.SkipReason == SkipReasons.OutOfCycleScope) return OutOfCycleScopeText;
         // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman WillBuild=false verir (Build bir
         // döngüyü asla derlemez, ARCHITECTURE §7.4) — o "false"u "güncel" diye okumak yanlış olurdu.
         if (row.InCycle) return InCycleText;
@@ -83,16 +99,35 @@ public static class ConsoleEmptyState
             return "Not analysed yet — run Sync to see what this project will do.";
         if (!willBuild) return "Up to date — nothing to compile.";
 
-        // Bir koşu uçuştaysa bu satır KUYRUKTADIR; değilse yalnız bir plandır.
-        string head = row.IsRunActive ? "Queued" : "Will build";
+        // Bir koşu uçuştaysa VE bu satır BU koşunun kendi kuyruğundaysa KUYRUKTADIR; değilse yalnız bir plandır.
+        // [Task 1 review fix — I-2] Eskiden yalnız row.IsRunActive okurdu — genel plan bayrağının (WillBuild)
+        // ait olduğu koşuyu bilmediği aynı kusur (kök neden A): tek proje koşusunda bayat bir komşu satır
+        // grafta/listede Discovered iken burada "Queued" yazardı. Tek doğruluk kaynağı Status'tur (kopya YASAK) —
+        // o zaten Pending dalında IsRunActive && InRunQueue'yu okur.
+        string head = row.Status == GraphStatus.Queued ? "Queued" : "Will build";
         return row.WillBuildReason switch
         {
             WillBuildReason.NeverBuilt => $"{head} — this tool has never built it.",
             WillBuildReason.LastFailed => $"{head} — its last build failed.",
             WillBuildReason.DepIssue => $"{head} — its last success was linked against a failed dependency.",
             WillBuildReason.SignatureChanged => $"{head} — the signature changed since the last successful build.",
+            // [Task 5 review round 1 — M-10] Bu koşu GERÇEKTEN koşullu bekletiyorsa (row.Conditional) "Will
+            // build"/"Queued" YALANDIR — proje kökü hâlâ hatalıysa bu koşu onu atlayabilir. Metin satırın kendi
+            // etiketiyle AYNI kaynaktan gelir (DecisionLabel.For'un Title'ı, RowWarning.DepIssuePrefix köküyle) —
+            // kopya YASAK: sayfa ve satır aynı cümleyi söyler. Conditional=false ise (satırdan Build, Rebuild,
+            // SCC üyesi) söz zorlanmıştır ve aşağıdaki genel dala düşer.
+            WillBuildReason.WaitingForDependency when row.Conditional => WaitingForDependencyReason(row, now),
             _ => $"{head} in this run.",
         };
+    }
+
+    /// <summary>[Task 5 review round 1 — M-10] <see cref="DecisionLabel.For"/>'un ürettiği tooltip metniyle
+    /// (kelimesi kelimesine) AYNI cümle — tek doğruluk kaynağı orada, burada yalnız çağrılır.</summary>
+    private static string WaitingForDependencyReason(ProjectRowViewModel row, DateTimeOffset now)
+    {
+        string title = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
+            now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix).Title;
+        return title.EndsWith('.') ? title : title + ".";
     }
 
     /// <summary>
@@ -112,4 +147,8 @@ public static class ConsoleEmptyState
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
     private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";
+
+    /// <summary>[Task 2 review fix I-1] Kapsam dışı bir satır İKİ yoldan da (motor konuştu / konuşmadı, bkz.
+    /// <see cref="Reason"/>'ın Skipped ve Pending dalları) aynı cümleyi verir — kopya YASAK.</summary>
+    private const string OutOfCycleScopeText = "Not needed by a dependency cycle — outside this run's scope.";
 }

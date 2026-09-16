@@ -64,7 +64,10 @@ public static class RibbonText
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
     /// <param name="hasWorkspace">Repo seçili mi (prototip <c>workspace</c>).</param>
-    /// <param name="allClean">Bu koşuda derlenecek proje YOK (her şey güncel) — prototip <c>eng.allClean</c>.</param>
+    /// <param name="allClean">Önizleme KİRLİ tek bir proje bile görmedi (koşullu olanlar DAHİL — bkz.
+    /// <see cref="RunViewModel.AllClean"/>), yani ortada derlenecek bir iş yok — prototip <c>eng.allClean</c>.
+    /// <paramref name="willBuild"/> ile AYNI ŞEY DEĞİLDİR: o yalnız KESİN derlenecekleri sayar, dolayısıyla
+    /// <c>willBuild==0</c> iken bile koşu koşullu bir proje derliyor olabilir.</param>
     /// <param name="c">Durum sayaçları (failed/succeeded/skipped/dep-affected/building/queued).</param>
     /// <param name="willBuild">Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</param>
     /// <param name="finishedOfWillBuild">willBuild kümesinden tamamlanan sayısı (prototip <c>fin</c>).</param>
@@ -162,7 +165,8 @@ public static class RibbonText
                         "Brush.TextSecondary", "building");
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Building {0}/{1} · {2}{3}",
-                        finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs), EtaSuffix(etaMs, c) ?? ""),
+                        finishedOfWillBuild, willBuild, DurationFormat.Elapsed(elapsedMs),
+                        EtaSuffix(etaMs, willBuild, finishedOfWillBuild, c) ?? ""),
                     "Brush.TextSecondary", null);
 
             // [Stopping] Stop istendi, uçuştakiler drain oluyor. Running satırı BURADA kullanılamaz: Stop'a
@@ -181,9 +185,13 @@ public static class RibbonText
             // Kalanlar için "queued" DENMEZ: Continue yüzeyi yok, o projeler bir sonraki Build'de baştan
             // işlenecek. Satır yalnız olguyu söyler — sürdürülebilirlik sözü vermez.
             case AppPhase.Stopped:
+                // [Task 2] c.Queued DEĞİL willBuild-finishedOfWillBuild: RunCounters.Queued HER Pending satırı
+                // sayar (bkz. o alanın XML yorumu) — kapsam dışı olanlar dahil. willBuild/finishedOfWillBuild
+                // bu run'ın KENDİ SABİT kümesidir (hem tek-proje Build'de hem Resolve cycles'ta zaten doğru
+                // kapsamlıdır), "not built" onun tümleyenidir.
                 return new RibbonLine(
                     string.Format(CultureInfo.InvariantCulture, "▸ Stopped — {0}/{1} · {2} not built",
-                        finishedOfWillBuild, willBuild, c.Queued),
+                        finishedOfWillBuild, willBuild, willBuild - finishedOfWillBuild),
                     "Brush.TextDim", null);
 
             case AppPhase.Done:
@@ -193,7 +201,12 @@ public static class RibbonText
                 // bilerek açık bırakıldı). Bu dal RunCounters'ı HİÇ okumadan sabit metin döndürüyordu — "Completed — … skipped …"
                 // dalından bile daha güçlü bir false-green (döngünün VAR OLMADIĞINI ima eder). AYNI StuckCyclesSuffix
                 // (kopya YASAK) burada da eklenir; StuckCycles==0 iken ek boş kalır, metin BYTE-FOR-BYTE aynı kalır.
-                if (allClean)
+                // [final review — C1 guard] Kapıda <c>c.Failed == 0</c> da vardır ve sırası şudur: HATA her
+                // özetin üstündedir. Dal eskiden sayaçlara bakmadan önce geldiği için, "hiçbir şey kirli değil"
+                // diye açılan ama içinde bir proje patlayan bir koşu (koşullu bir projeyi derleyip patlatan run
+                // tam olarak budur — önizlemesinde KESİN bir will-build kalemi yoktur) koşulsuz YEŞİL
+                // raporlanıyordu. Hata varsa aşağıdaki "Completed — N failed …" dalı konuşur.
+                if (allClean && c.Failed == 0)
                     return new RibbonLine(
                         string.Format(CultureInfo.InvariantCulture,
                             "Everything up to date — {0} projects checked in {1}, nothing to build{2}",
@@ -239,10 +252,21 @@ public static class RibbonText
     /// <c>eta != null &amp;&amp; building + queued &gt; 0</c> kapısı geçilirse <c>eta &lt; 4000</c> →
     /// <c>" · almost done"</c>, aksi <c>" · ~{max(5, round(eta/5000)*5)}s left"</c>; kapı geçilmezse <c>null</c>.
     /// Eşik/yuvarlama sabitleri <see cref="EtaCalculator"/>'dan okunur (TEK kaynak; matematik YENİDEN yazılmaz).
+    /// <para><b>[DEĞİŞEN KURAL — Task 2]</b> Kapının "queued" yarısı artık <see cref="RunCounters.Queued"/>
+    /// DEĞİL <paramref name="willBuild"/>-<paramref name="finishedOfWillBuild"/>'dir: o sayaç HER Pending
+    /// satırı sayar (kapsam dışı olanlar dahil — Resolve cycles'ta bunlar artık koşu boyunca Pending kalıyor,
+    /// bkz. <see cref="RunViewModel.OnProjectSkipped"/>), <c>willBuild</c> ise bu run'ın KENDİ SABİT kümesidir
+    /// ve zaten doğru kapsamlıdır.</para>
     /// </summary>
-    public static string? EtaSuffix(long? etaMs, RunCounters c)
+    public static string? EtaSuffix(long? etaMs, int willBuild, int finishedOfWillBuild, RunCounters c)
     {
-        if (etaMs is not { } eta || c.Building + c.Queued <= 0)
+        // [Task 2 review fix M-3] c.Building teknik olarak GEREKSİZDİR: derlenmekte olan bir satır henüz
+        // terminal değildir, yani zaten willBuild-finishedOfWillBuild'in İÇİNDEDİR (iki terim ÇAKIŞIR, toplam
+        // building rows'u iki kez sayar) — ama kapı yalnız "> 0" sorar, çakışma sonucu DEĞİŞTİRMEZ (building>0
+        // iken zaten >0'dır, building==0 iken remaining tek başına karar verir). Terim orijinal prototip
+        // formülüyle (`building + queued`) aynı yapıyı BİLEREK korur ve building bir satırın (ör. bir invariant
+        // ihlaliyle) willBuild kümesinin DIŞINDA kalması durumunda bile kapıyı açık tutar — savunmacı, zararsız.
+        if (etaMs is not { } eta || c.Building + (willBuild - finishedOfWillBuild) <= 0)
             return null; // kapı: canlı bir ETA yok ya da derlenen/kuyrukta hiçbir şey kalmadı
 
         if (eta < EtaCalculator.AlmostDoneThresholdMs)

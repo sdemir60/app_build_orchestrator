@@ -20,8 +20,11 @@ public static class RowWarning
 {
     /// <summary>[review R1 finding 3 — kopya YASAK] "Dependency issue: " önce satırın <see cref="For"/>'unda
     /// İKİ, sonra başlığın <see cref="DepIssueDetail"/>'inde bir kez daha literal olarak yazılıyordu — üçü de
-    /// AYNI sözcüğü taşıdığı için tek kaynağa indirildi.</summary>
-    private const string DepIssuePrefix = "Dependency issue: ";
+    /// AYNI sözcüğü taşıdığı için tek kaynağa indirildi. <b>[Task 4 review — M3]</b> <c>internal</c>: <see
+    /// cref="DecisionLabel"/>'in <c>WaitingForDependency</c> tooltip'i de AYNI kelimeyi kullanır — kayıtlı
+    /// kökler her zaman "FAILED" değildir (tek-proje koşusunun bayat bıraktığı bir bağımlılık da kök olabilir,
+    /// bkz. <c>ProjectRunScope</c>), "Built against a FAILED dependency" iddiası orada yanlıştı.</summary>
+    internal const string DepIssuePrefix = "Dependency issue: ";
 
     /// <summary>Sıradan döngü üyeliği (prototip <c>warnText</c>, BuildApp.jsx:583).</summary>
     public const string InCycle = "In a dependency cycle";

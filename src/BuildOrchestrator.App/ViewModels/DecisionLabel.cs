@@ -1,3 +1,5 @@
+using System.Linq;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 
@@ -62,9 +64,22 @@ public static class DecisionLabel
     /// <param name="now">Şimdi (yaş hesabı için).</param>
     /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
     /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
+    /// <param name="conditional">[koşullu yeniden derleme] Bu KOŞU projeyi gerçekten koşullu mu değerlendiriyor
+    /// (<see cref="BuildPreviewItem.Conditional"/>) — <c>reason</c> <see cref="WillBuildReason.WaitingForDependency"/>
+    /// olsa bile TEK BAŞINA "bekliyor" demez: o gerekçe bir disk OLGUSUDUR (bu proje bir zamanlar hatalı bir
+    /// bağımlılığa karşı derlendi), ama bu koşu onu ZORLUYOR olabilir (satırdan tetiklenen hedef, Rebuild, bir
+    /// SCC üyesi) — o durumda söz tutulmaz ve satır sıradan <c>affected</c>/<c>modified</c> olgusuna düşer
+    /// (bkz. <see cref="DecisionLabel"/>'in "etiket bir disk olgusudur" kuralı: <c>failed · retry</c>'nin
+    /// kuyruğu da aynı gerekçeyle yalnız gerçekten derlenecek satırda çıkar).</param>
+    /// <param name="dependencyRoots">Gerekçe <see cref="WillBuildReason.WaitingForDependency"/> VE
+    /// <paramref name="conditional"/> iken tooltip'in yazdığı kök adları (<see
+    /// cref="BuildPreviewItem.DependencyRoots"/>) — kısaltma <paramref name="namePrefix"/> ile
+    /// <see cref="GraphNode.ShortLabel"/> üzerinden (uyarı üçgeninin kısa-ad diliyle AYNI, kopya YASAK).</param>
+    /// <param name="namePrefix">Kök adlarının kısaltılacağı ortak önek — bkz. <paramref name="dependencyRoots"/>.</param>
     public static RowDecision For(
         bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt,
-        DateTimeOffset now, bool inCycle = false)
+        DateTimeOffset now, bool inCycle = false, bool conditional = false,
+        IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "")
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
@@ -86,6 +101,32 @@ public static class DecisionLabel
                 string? age = AgeFormat.Age(lastBuiltAt, now);
                 return new("up to date", age,
                     age is null ? "Up to date" : $"Up to date — last built {age} ago", Stale: false);
+
+            // [koşullu yeniden derleme] Yalnız bu koşu GERÇEKTEN bekletiyorsa (conditional): söz tutulur ve
+            // yuva "şimdilik dokunulmaz" der. Zorlanan bir kapsamda (satırdan Build, Rebuild, SCC üyesi)
+            // conditional=false gelir — o durum aşağıdaki default'a düşer ve sıradan affected/modified olgusunu
+            // yazar (kullanıcı kararı: .claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md).
+            case WillBuildReason.WaitingForDependency when conditional:
+            {
+                string? waitAge = AgeFormat.Age(lastBuiltAt, now);
+                string tail = waitAge is null ? "up to date" : $"up to date · {waitAge}";
+                // [Task 4 — kullanıcı kararı, seçenek D] "failed" İDDİA EDİLMEZ: kayıtlı kökler her zaman
+                // BAŞARISIZ olmayabilir — tek proje koşusunun bıraktığı bayat (derlenmemiş, ama dirty/döngü
+                // üyesi) bir bağımlılık da kök olarak kaydedilir (ConditionalRebuild.AppliesTo'nun beslediği
+                // DepIssueRoots, bkz. ProjectRunScope). "Rebuilds ONCE THAT DEPENDENCY IS HEALTHY AGAIN" da bu
+                // yüzden — söz "yeniden derlenince" değil "kök SAĞLIKLI olunca"dır: ConditionalRebuild.Decide
+                // kökü ya bu koşuda başarıyla derlendiğinde ya da HİÇ derlenmeden yalnız defterdeki son sonucu
+                // başarı OLDUĞUNDA serbest bırakır — "sağlıklı" ikisini de doğru kapsar, "rebuilds" yalnız
+                // birincisini iddia ederdi. Metin RowWarning'in AYNI kelimesini kullanır (kopya YASAK: tek
+                // kaynak RowWarning.DepIssuePrefix); boş kök listesi (uydurma varsayımla asla olmamalı, ama
+                // savunmacı) parantezsiz bir cümleye düşer.
+                string title = dependencyRoots is { Count: > 0 }
+                    ? $"{RowWarning.DepIssuePrefix}"
+                        + string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)))
+                        + " — rebuilds once that dependency is healthy again"
+                    : "Rebuilds once that dependency is healthy again";
+                return new("affected", tail, title, Stale: false);
+            }
 
             default:
                 // SignatureChanged ve DepIssue: ikisinde de proje bayattır, ayrımı "kendi dosyası değişti mi"

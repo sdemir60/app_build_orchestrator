@@ -14,10 +14,12 @@ using BuildOrchestrator.Contracts.Model;
 /// bilinen çıktısına karşı derlendi. <see cref="All"/>'a girerler (event, ▲ sayacı, defter notu) ama
 /// <see cref="Direct"/>/<see cref="Indirect"/>'e DEĞİL: onlar bu koşuda PATLAYAN kökleri anlatır ve uyarı
 /// satırları başka bir cümleyle yazılır.</param>
+/// <param name="RootIds"><see cref="All"/>'ın KİMLİK karşılığı (doğrudan + miras + bayat; tekil, sıralı): dependent'ların
+/// miras birikimi ve defter notunun kökleri (<c>BuildState.DepIssueRoots</c>) bundan yazılır.</param>
 public sealed record DepIssueResult(IReadOnlyList<string> All, IReadOnlyList<string> Direct, IReadOnlyList<string> Indirect,
-    IReadOnlyList<StaleRoot> Stale)
+    IReadOnlyList<StaleRoot> Stale, IReadOnlyList<string> RootIds)
 {
-    public static readonly DepIssueResult Empty = new([], [], [], []);
+    public static readonly DepIssueResult Empty = new([], [], [], [], []);
 }
 
 /// <summary>
@@ -42,14 +44,14 @@ public sealed record StaleRoot(string Name, bool InCycle);
 /// (<c>ReadySetScheduler.IsReadyLocked</c>) o projenin TÜM bağımlılıkları o anda zaten terminaldir (Completed'ta) —
 /// bu yüzden hem <paramref name="completed"/> hem <paramref name="depIssuesById"/> sorguları tutarlıdır (dependency
 /// hâlâ koşuyor olamaz). <paramref name="depIssuesById"/>, ÇAĞIRANIN her proje tamamlandığında (bu metodun
-/// döndürdüğü <see cref="DepIssueResult.All"/> ile) doldurduğu bir birikimdir — burada yalnız OKUNUR.
+/// döndürdüğü <see cref="DepIssueResult.RootIds"/> ile) doldurduğu bir birikimdir — burada yalnız OKUNUR.
 /// </summary>
 public static class DepIssueTracker
 {
     /// <param name="dependencyIds">Hesaplanan projenin <see cref="ProjectNode.Dependencies"/>'i (üretici projectId'ler).</param>
     /// <param name="completed">Scheduler'ın tamamlanmış sonuçları (<c>ReadySetScheduler.Completed</c>) — projectId → BuildResult.</param>
-    /// <param name="depIssuesById">Şimdiye kadar tamamlanmış projelerin ÖNCEDEN hesaplanmış depIssues'u (projectId →
-    /// kök adlar). Bir bağımlılık bu sözlükte yoksa (ör. henüz hiç depIssue taşımadı, ya da cycle nedeniyle
+    /// <param name="depIssuesById">Şimdiye kadar tamamlanmış projelerin ÖNCEDEN hesaplanmış kökleri (projectId →
+    /// kök proje KİMLİKLERİ, yani <see cref="DepIssueResult.RootIds"/>). Bir bağımlılık bu sözlükte yoksa (ör. henüz hiç depIssue taşımadı, ya da cycle nedeniyle
     /// construction'da pre-skip edildiği için hiç dispatch edilmedi) miras edilecek bir şey yok sayılır.</param>
     /// <param name="nameOf">projectId → görünen ad (warn satırları ve DepIssues'a YAZILAN, ham id DEĞİL).</param>
     /// <param name="stale">[tek proje] Bu koşuda derlenmeyen bayat bağımlılıklar (<c>ProjectRunScope</c>'tan);
@@ -67,18 +69,19 @@ public static class DepIssueTracker
         ArgumentNullException.ThrowIfNull(depIssuesById);
         ArgumentNullException.ThrowIfNull(nameOf);
 
-        SortedSet<string>? direct = null;
-        SortedSet<string>? inherited = null;
+        // Hesap KİMLİKLERLE yapılır, adlar en sonda türetilir: birikim kök kimliklerini taşır (defter notu ve
+        // koşullu yeniden derleme kökü kimlikle arar; ad tekil değildir).
+        var directIds = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var inheritedIds = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (string depId in dependencyIds)
         {
             // Yalnız FAILED kökler taşınır — Skipped/Succeeded bir bağımlılık depIssue ÜRETMEZ (v7 A6).
             if (completed.TryGetValue(depId, out var result) && result == BuildResult.Failed)
-                (direct ??= new(StringComparer.Ordinal)).Add(nameOf(depId));
+                directIds.Add(depId);
 
             if (depIssuesById.TryGetValue(depId, out var inheritedFromDep))
-                foreach (string root in inheritedFromDep)
-                    (inherited ??= new(StringComparer.Ordinal)).Add(root);
+                inheritedIds.UnionWith(inheritedFromDep);
         }
 
         // Bayat kökler ad sıralı (D8) — aynı ad iki kez listelenmişse bir kez.
@@ -89,23 +92,28 @@ public static class DepIssueTracker
                 .ToList()
             : null;
 
-        if (direct is null && inherited is null && staleRoots is null) return DepIssueResult.Empty;
+        if (directIds.Count == 0 && inheritedIds.Count == 0 && staleRoots is null) return DepIssueResult.Empty;
 
+        var direct = new SortedSet<string>(directIds.Select(nameOf), StringComparer.Ordinal);
         // Indirect = inherited EKSİ direct: bir kök hem doğrudan hem zincirden geliyorsa (diamond + doğrudan
         // bağımlılık aynı anda) yalnız Direct'te sayılır — warn satırı iki kez yazılmaz.
-        var indirectOnly = inherited is null ? new SortedSet<string>(StringComparer.Ordinal)
-            : direct is null ? inherited
-            : new SortedSet<string>(inherited.Except(direct), StringComparer.Ordinal);
+        var indirectOnly = new SortedSet<string>(
+            inheritedIds.Where(id => !directIds.Contains(id)).Select(nameOf), StringComparer.Ordinal);
+        indirectOnly.ExceptWith(direct);
 
-        var all = new SortedSet<string>(StringComparer.Ordinal);
-        if (direct is not null) all.UnionWith(direct);
-        if (inherited is not null) all.UnionWith(inherited);
+        var all = new SortedSet<string>(direct, StringComparer.Ordinal);
+        all.UnionWith(indirectOnly);
         if (staleRoots is not null) all.UnionWith(staleRoots.Select(s => s.Name));
+
+        var rootIds = new SortedSet<string>(directIds, StringComparer.OrdinalIgnoreCase);
+        rootIds.UnionWith(inheritedIds);
+        if (stale is { Count: > 0 }) rootIds.UnionWith(stale.Select(s => s.Id));
 
         return new DepIssueResult(
             All: [.. all],
-            Direct: direct is null ? [] : [.. direct],
-            Indirect: indirectOnly.Count == 0 ? [] : [.. indirectOnly],
-            Stale: staleRoots ?? []);
+            Direct: [.. direct],
+            Indirect: [.. indirectOnly],
+            Stale: staleRoots ?? [],
+            RootIds: [.. rootIds]);
     }
 }

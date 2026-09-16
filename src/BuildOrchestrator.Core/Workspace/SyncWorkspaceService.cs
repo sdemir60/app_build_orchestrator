@@ -48,8 +48,16 @@ public sealed class SyncWorkspaceService(
     /// düğümler hollow (<c>WillBuild=null</c>) kalır ve sayaçlar RAPORLANMAZ (0 yazmak "hepsi güncel" yalanı olurdu).</param>
     /// <param name="OwnChanged">[v1.16.0] KENDİ dosyaları değişmiş projeler (Fast geçişi) — satırın karar
     /// etiketi <c>modified</c> ile <c>affected</c> ayrımını buradan okur.</param>
+    /// <param name="ConditionalIds">[Task 4 review — C1 · DEĞİŞEN KURAL] Sync'in <c>WillBuild</c> zaten bir
+    /// sonraki DÜZ Build'in kararını önceden söylediği için (§10.2, "Sync = örtük Build'in ucuz hâli") bu küme de
+    /// o Build'in <c>ConditionalRebuild.AppliesTo</c>'sudur — hesap TEK BURADA yapılır, hem <see cref="ToBuild"/>
+    /// hem önizlemenin <c>Conditional</c> alanı ONDAN okur (kopya YASAK). Eski kural "Sync bir koşu değildir,
+    /// Conditional yazılmaz" idi; ölçülen kusur: önizleme her zaman <c>false</c> gönderdiği için Sync'ten hemen
+    /// sonra tıklanan bir Build'de dalga bir an koşullu projeyi de yakıyor, motorun kendi önizlemesi gelince
+    /// (gerçek <c>Conditional=true</c>) satır griye düşüyordu — hem renk hem etiket bir kare titriyordu.</param>
     private readonly record struct WillBuildOutcome(
-        BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known);
+        BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known,
+        IReadOnlySet<string> ConditionalIds);
 
     private static readonly IReadOnlySet<string> EmptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -150,12 +158,24 @@ public sealed class SyncWorkspaceService(
             Cycles: outcome.Plan.Cycles,
             Solutions: ToSolutionRefs(scan),
             LayerWarnings: outcome.Plan.LayerWarnings ?? []));
+        // Kök adları (WaitingForDependency etiketinin tooltip'i) planın düğümlerinden çözülür.
+        // [Task 4 review — C1 · DEĞİŞEN KURAL] Conditional ARTIK yazılır: eski gerekçe "o bir koşu olgusudur,
+        // Sync bir koşu değildir" doğruydu ama App'in gözünden yanlış sonuç veriyordu — Sync'in kendi önizlemesi
+        // App'in TEK bildiği hâldir ve bir Build tıklanana kadar öyle kalır (§13.2/§14.3). O önizleme her zaman
+        // Conditional=false derse, dalga/kuyruk/etiket koşullu bir projeyi Build başlamadan ÖNCE (tıklama anının
+        // ScopeFor'u) kesin sanır; motorun kendi önizlemesi gelince (gerçek değer) satır bir kare içinde griye/
+        // faint'e döner. Sync'in WillBuild'i zaten "bir sonraki düz Build ne yapar"ın cevabı olduğundan
+        // (WillBuildOutcome.ConditionalIds — TEK hesap, kopya YASAK) Conditional de aynı soruyu cevaplamalıdır.
+        var nameById = outcome.Plan.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.OrdinalIgnoreCase);
         emit(new BuildPreviewEvent(
             outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason,
                     OwnFilesChanged: outcome.Known ? outcome.OwnChanged.Contains(n.Id) : null,
-                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id)))
+                    LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id),
+                    Conditional: outcome.ConditionalIds.Contains(n.Id),
+                    DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
+                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -241,20 +261,34 @@ public sealed class SyncWorkspaceService(
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            // [Task 4 review — C1 · DEĞİŞEN KURAL] "N to build" yalnız KESİN derlenecekleri sayar VE önizlemenin
+            // Conditional alanı (aşağıda emit edilir) AYNI kümeyi taşır — koşullu (<see
+            // cref="WillBuildReason.WaitingForDependency"/>) bir proje kökü hâlâ hatalıysa bir sonraki Build
+            // onu atlayabilir. Tek kaynak, TEK geçişte hesaplanır: bir sonraki düz Build'in AYNI düğüme vereceği
+            // karar (ConditionalRebuild.AppliesTo — RunCoordinator'ın kuyruğunu/dalgasını besleyen aynı
+            // fonksiyon). Sync bir koşu DEĞİLDİR ve `RunMode.Build` argümanı bunu simüle eder — Sync'in kendi
+            // WillBuild'i zaten "bir sonraki düz Build ne yapar" sorusunun cevabıdır (§10.2), Conditional de aynı
+            // soruyu sorar. Eski kural (yalnız sayaç için hesaplanır, önizlemeye hiç yazılmazdı) App'te bir kare
+            // titremeye yol açıyordu: bkz. WillBuildOutcome.ConditionalIds'in XML yorumu.
+            var conditionalIds = safePlan.Nodes
+                .Where(n => ConditionalRebuild.AppliesTo(n, RunMode.Build, scopedRun: false, cycleGroupMember: false))
+                .Select(n => n.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             return new WillBuildOutcome(
                 Plan: safePlan,
                 OwnChanged: ownChanged,
                 Changed: ownChanged.Count,
-                ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true),
+                ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
-                Known: true);
+                Known: true,
+                ConditionalIds: conditionalIds);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Tanı KULLANICIYA gider (Core'un konsola doğrudan yazması gerekmez — [D4] zaten stdout'u yalnız
             // NDJSON'a ayırır): pass atlandığında will-dot'lar sessizce hollow kalacağı için sebebin görünmesi şart.
             emit(Warn($"warning: change detection was skipped — project states stay unknown ({ex.Message})"));
-            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false);
+            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false, ConditionalIds: EmptySet);
         }
     }
 

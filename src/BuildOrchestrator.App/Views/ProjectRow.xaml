@@ -68,13 +68,15 @@
           </Grid>
         </Grid>
 
-        <!-- 4) Sağ blok (MinWidth 134 — design v1.16.0 §2.4): hover→aç-ikonları, değilse KARAR ETİKETİ.
-             Genişlik bir kez büyüdü: en uzun etiket ("up to date · just now") mono 10.5px'te 132px sürüyor ve
-             eski 118px'lik yuva onu kırpıp ad kolonundan yer çalıyordu.
+        <!-- 4) Sağ blok (MinWidth 204 — design v1.16.0 §2.4, koşullu yeniden derleme etiketiyle Task 4'te
+             yeniden ölçüldü): hover→aç-ikonları, değilse KARAR ETİKETİ.
+             Genişlik iki kez büyüdü: önce "up to date · just now" için 118→134; Task 4 "affected · up to date ·
+             just now" üç parçalı etiketini ekledi (mono 10.5px'te ~202px sürüyor) — kullanıcı onaylı BİLİNÇLİ
+             sapma, tasarımın 134px'lik tek-parçalı yuvasından (bkz. plan "Hedef davranış").
              [L1/It-5 perf] Hover ikonları + VS-chooser popover'ı BURADA DEĞİL: Views/ProjectRowActions.xaml'e
              taşındı ve İLK HOVER'da kod-tarafı buraya eklenir (ProjectRow.xaml.cs EnsureActions). Görsel sonuç
              aynı — hover edilmemiş satır o alt-ağacın 16 nesnesini artık hiç ödemez. -->
-        <Grid x:Name="PART_RightBlock" Grid.Column="2" Margin="8,0,0,0" MinWidth="134"
+        <Grid x:Name="PART_RightBlock" Grid.Column="2" Margin="8,0,0,0" MinWidth="204"
               VerticalAlignment="Center" HorizontalAlignment="Right">
           <!-- Karar etiketi: mono 10.5px (token ölçeğinde YOK — prototip literal, kasıtlı). İki Run: asıl
                sözcük (derlenecekse secondary, güncelse faint) ve "·" sonrası kuyruk (HER ZAMAN faint).

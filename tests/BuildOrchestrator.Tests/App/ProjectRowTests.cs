@@ -599,18 +599,20 @@ public class ProjectRowTests
     // sırayla değişti: (a) v1.7.0'da döngü üyeliği şeridi ARTIK EZMEZ; (b) discovered ile skipped AYNI gridir;
     // (c) v1.11.0'da QUEUED da AMBER'dır — kuyruk bir sonuç değil, işlemin kapsamıdır ve işaretleme dalgasıyla
     // yanan renk koşu başlayınca sönmez (eski değer `Brush.StatusQueued` idi).
+    // [DEĞİŞEN KURAL — Task 1] Queued artık WillBuild'ten DEĞİL, ProjectRowViewModel.InRunQueue'dan türer —
+    // WillBuild genel bir plan bayrağıdır ve BU koşuyu bilmez (bkz. InRunQueue'nun XML yorumu).
     [StaTheory]
     [InlineData(ProjectRowState.Started, false, false, "Brush.Amber")]
     [InlineData(ProjectRowState.Succeeded, false, false, "Brush.StatusSuccess")]
     [InlineData(ProjectRowState.Failed, false, false, "Brush.StatusFail")]
     [InlineData(ProjectRowState.Skipped, false, false, "Brush.StatusSkippedBorder")]
     [InlineData(ProjectRowState.Pending, true, false, "Brush.StatusSkippedBorder")] // üyelik şeridi ezmez
-    [InlineData(ProjectRowState.Pending, false, true, "Brush.Amber")]  // willBuild + run uçuşta → queued
+    [InlineData(ProjectRowState.Pending, false, true, "Brush.Amber")]  // inRunQueue + run uçuşta → queued
     public void Status_stripe_uses_the_right_token_brush_per_status(
         ProjectRowState state, bool inCycle, bool queued, string expectedKey)
     {
         var vm = new ProjectRowViewModel("id", "Foo", state) { InCycle = inCycle };
-        if (queued) { vm.WillBuild = true; vm.IsRunActive = true; }
+        if (queued) { vm.InRunQueue = true; vm.IsRunActive = true; }
         var (row, window, host) = Realize(vm);
 
         Assert.Equal(DsResources.TokenColor(host, expectedKey), DsResources.ColorOf(row.Stripe.Fill));
@@ -745,38 +747,77 @@ public class ProjectRowTests
     }
 
     /// <summary>
-    /// [design v1.16.0 §2.4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
+    /// [design v1.16.0 §2.4 · Task 4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
     ///
-    /// <para><b>DEĞİŞEN KURAL.</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu: eksik yarı
-    /// varken yarım ok basılmaması (iki yön), iki yarının da 7 haneye inmesi, geç gelen hedefin satırı
-    /// tazelemesi ve çiftin 118px'lik yuvaya sığması. Yuvada artık commit yok — kararın kendisi var (sözcük
-    /// seçimi <see cref="DecisionLabelTests"/>'te). Ölçüm iddiası KALIR, yalnız sınırı büyür: en uzun etiket
-    /// ("up to date · just now") 134px'lik yuvaya sığmalıdır; eski 118px onu kırpıp ad kolonundan yer
-    /// çalıyordu. "Geç gelen olgu satırı tazeler" iddiası da kalır — yalnız gelen şey artık sha değil olgudur.</para>
+    /// <para><b>DEĞİŞEN KURAL (iki kez).</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu; sonra
+    /// yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu). Task 4 kullanıcı onaylı
+    /// koşullu yeniden derleme etiketini ekledi: <c>affected · up to date · just now</c> üç parçalıdır ve
+    /// ondan daha UZUNDUR — o artık en uzun etiket, yuva bunu sığdıracak kadar YENİDEN ölçülüp büyütüldü (bkz.
+    /// <c>.claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md</c>, "Hedef davranış" — 134px'ten
+    /// BİLİNÇLİ sapma, kullanıcı kararı). Ölçüm iddiası KALIR, yalnız metin ve sınır büyür.</para>
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
+    ///
+    /// <para><b>[Task 4 review — I2]</b> Sınır artık XAML'dan GERÇEKTEN OKUNUR (<c>row.RightBlock.MinWidth</c>,
+    /// <see cref="ProjectRow.RightBlock"/>) — ikinci bir sabit (kopya YASAK) test dosyasında TUTULMAZ. Eskiden
+    /// burada bir <c>const double RightBlockMinWidth = 204</c> vardı: XAML'daki <c>MinWidth</c> küçültülse bile
+    /// test kendi sabit kopyasına karşı yeşil kalırdı, kırılan gerçek yuvayı YAKALAMAZDI.</para>
     /// </summary>
     [StaFact]
     public void The_longest_decision_label_fits_inside_the_right_block()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = false,
-            WillBuildReason = WillBuildReason.UpToDate,
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.WaitingForDependency,
+            Conditional = true,
+            DependencyRoots = ["Up"],
             LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
         };
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
         row.UpdateLayout();
 
-        Assert.Equal("up to date · just now", row.DecisionText.Text);
+        Assert.Equal("affected · up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
+        double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
-        Assert.True(width <= 134, $"en uzun karar etiketi 134px yuvaya sığmadı: {width}px");
+        Assert.True(width <= slotMinWidth, $"en uzun karar etiketi {slotMinWidth}px yuvaya sığmadı: {width}px");
 
-        // Kontrol grubu: eski 118px'lik yuva bu etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
-        Assert.True(width > 118, $"etiket eski 118px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
+        // Kontrol grubu: eski 134px'lik yuva bu YENİ etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
+        Assert.True(width > 134, $"etiket eski 134px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[final review — I2] Etiketi besleyen olgular <c>WillBuild</c>/<c>WillBuildReason</c> ile
+    /// BİTMEZ: <c>Conditional</c> ve <c>DependencyRoots</c> da <see cref="DecisionLabel.For"/>'a girer. Satırın
+    /// property-changed anahtarında bu iki ad YOKTU ve <c>[ObservableProperty]</c> yalnız DEĞİŞİMDE bildirim
+    /// yayar; önizleme üçlüyü sırayla (WillBuild → Reason → Conditional) yazdığı için WillBuild ve gerekçe AYNI
+    /// kalıp yalnız <c>Conditional</c> dönen bir önizleme (Resolve cycles'ta kapsam dışı koşullu satır, ya da
+    /// satırdan tetiklenen tek proje koşusu) etiketi HİÇ tazelemiyordu — satır koşu boyunca bayat soluk
+    /// "affected · up to date · 2h" gösteriyordu.</summary>
+    [StaFact]
+    public void Flipping_only_the_conditional_flag_repaints_the_decision_label()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        {
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.WaitingForDependency,
+            OwnFilesChanged = false,
+            LastBuiltAt = DateTimeOffset.Now.AddHours(-2),
+            Conditional = true,
+            DependencyRoots = ["OSYS.Up"],
+        };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal("affected · up to date · 2h", row.DecisionText.Text); // koşullu: söz tutulur, soluk
+        var waiting = row.DecisionText.Inlines.OfType<Run>().First().Foreground;
+
+        vm.Conditional = false; // bu koşu ZORLUYOR (satırdan Build / Rebuild / SCC üyesi) — söz yok
+        row.UpdateLayout();
+
+        Assert.Equal("affected", row.DecisionText.Text);
+        Assert.NotEqual(waiting, row.DecisionText.Inlines.OfType<Run>().First().Foreground); // bekleyen iş: belirgin
         GC.KeepAlive(window);
     }
 

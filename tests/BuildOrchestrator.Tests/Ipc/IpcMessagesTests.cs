@@ -371,6 +371,36 @@ public class IpcMessagesTests
         Assert.Null(back.Items[2].Reason);
     }
 
+    /// <summary>Koşullu proje IPC sınırını ayırt edilebilir geçer: gerekçe <c>waitingForDependency</c>,
+    /// <c>conditional</c> bayrağı ve kök adları. Kökleri olmayan satır alanı hiç yazmaz; alansız eski satır
+    /// koşullu değildir. Liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir).</summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_conditional_marker_and_root_names_across_the_wire()
+    {
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, null, WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["OSYS.Up", "OSYS.Up2"]),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true, null, WillBuildReason.SignatureChanged),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains("\"reason\":\"waitingForDependency\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"dependencyRoots\":[\"OSYS.Up\",\"OSYS.Up2\"]", json, StringComparison.Ordinal);
+        Assert.Equal(1, json.Split("\"dependencyRoots\"").Length - 1);
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.True(back.Items[0].Conditional);
+        Assert.False(back.Items[1].Conditional);
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":true}]}""",
+            IpcJson.Options));
+        Assert.False(Assert.Single(legacy.Items).Conditional);
+        Assert.Null(legacy.Items[0].DependencyRoots);
+    }
+
     [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {

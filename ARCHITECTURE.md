@@ -438,10 +438,16 @@ Three of these carry the whole model:
   name→path map of solutions and the reverse-layer warnings. The graph panel, the layer grouping and
   "Open in Visual Studio" all read from this one event.
 - **`buildPreview`** delivers the will-build set before the first per-project event of a run, so rows are
-  populated before anything starts.
+  populated before anything starts. Each item also carries the reason (§7.4), and for a project waiting on a
+  failed dependency the display names of its recorded roots — the row's tooltip prints them, the App never
+  composes them. `conditional` marks a project **this run** evaluates only when its turn comes (§8.3): it may
+  still compile, so `willBuild` stays `true`, but it is not part of the queue. A `Rebuild`, a row's target and a
+  cycle-group member never carry it — those compile unconditionally. Sync's own preview does carry it, computed
+  the same way, because Sync answers what a plain `Build` would decide (§10.2).
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
-  semantics, dirty plus transitive dependents), and the up-to-date count.
+  semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
+  conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count.
 
 `runStarted.cpuCapPercent` reports the cap that was **actually** written to the job, not the one that was
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
@@ -696,7 +702,8 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 
 **The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
 the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's **decision
-label** — `modified`, `affected`, `never built`, `failed · retry`, or `up to date · 2h` (§13.2) — and the
+label** — `modified`, `affected`, `never built`, `failed · retry`, `up to date · 2h`, or the three-part
+`affected · up to date · just now` for a project waiting on a failed dependency (§13.2) — and the
 scope of the marking wave when an operation actually begins. The tri-state itself is unchanged: it still
 decides what a run compiles, and it still feeds the counters.
 
@@ -709,9 +716,16 @@ every member reads `false`, which is the truth — nothing in that run will comp
 
 During a run the value is live: the moment a project succeeds it turns `false`.
 
-**The evaluator also returns why** — never built, last build failed, built against a failed dependency, or the
-signature changed — and it returns it even for a project the run will not compile, such as a cycle member
-outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
+**`true` is not always a promise.** A project whose last success was linked against a failed dependency, whose
+signature has not moved and whose ledger note names the root dependencies reads `true` with the reason
+*waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
+roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
+the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
+*built against a failed dependency*, because nothing could tell the run when to stop waiting.
+
+**The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
+failed dependency, or built against a failed dependency whose roots are unknown — and it returns it even for a
+project the run will not compile, such as a cycle member outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
 together with two facts: whether the project's **own** files changed (stored content fingerprint versus
 today's) and when it was last built successfully.
 
@@ -720,8 +734,9 @@ today's) and when it was last built successfully.
 `build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
 worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the **built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
-duration, a flag marking that this success was linked against a failed dependency (§8.3) and the signature at
-which this project's cycle last failed to converge (§8.8). The content fingerprint is stored *next to* the
+duration, a flag marking that this success was linked against a failed dependency together with the project
+ids of that dependency issue's roots (§8.3), and the signature at which this project's cycle last failed to
+converge (§8.8). The content fingerprint is stored *next to* the
 signature rather than folded into it because it answers a different question — "did this project's own files
 change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a
@@ -745,7 +760,7 @@ defaults.
 
 | Mode | Set of projects |
 |---|---|
-| `Build` | the will-build set (incremental) |
+| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use |
 | `Rebuild` | all projects; cached state ignored |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 | `Clean` | the run's scope, with `-t:Clean` instead of a compile — Visual Studio's *Clean*. Sent only from a row today (§13.2) |
@@ -787,9 +802,11 @@ the same reason a compile is: there is nothing to build.
 whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
 output. It is surfaced as a dependency issue (§8.3) — a warning line at the head of the target's log
 (`X has pending changes and was not rebuilt in this run — last known output referenced`, or the cycle wording
-for a cycle-mate), the triangle on the row, and the note in the build state — so the next `Build` compiles
-the target again. Without the note the target's fresh signature, which already contains the dependency's new
-source term, would read as up to date for good: the same permanent-stale-binary hole the `Cycles` scope
+for a cycle-mate), the triangle on the row, and the note in the build state, with that dependency's project id
+recorded as a root — so a later `Build` compiles the target again once that root is healthy again, rather than
+on every `Build` regardless (§8.3, `ConditionalRebuild`). Without the note the target's fresh signature, which
+already contains the dependency's new source term, would read as up to date for good: the same
+permanent-stale-binary hole the `Cycles` scope
 closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
 not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
 member built alone can never make its group read as up to date for the next `Cycles` run. External working
@@ -799,14 +816,31 @@ copies follow the same rule: only the copy that holds the target is updated befo
 separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
 the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
-dependents of a failure succeeded carrying a dependency issue, so their record is flagged (§8.3) and they come
-along too. The one deliberate difference is the elapsed clock: the new run counts from zero,
-because it is a new run.
+dependents of a failure succeeded carrying a dependency issue, so their record is flagged with its roots
+(§8.3) and they come along as soon as one of those roots is healthy again — recovered in this run, or already
+recorded as successful, per the table there. The one deliberate difference is the elapsed clock: the new run
+counts from zero, because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
 workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
 into a single line, `N outside cycle scope — skipped`. `decision.log` still records each one under its own
 name; only the live stream collapses them.
+
+The App carries the same restraint into the row list, the counters and the ribbon: an out-of-scope project
+never shows a "skipped" row, is never counted as skipped, and never appears under the *Skipped* filter chip —
+the engine's own pre-skip for it is not this run's business, so its status and colour do not change (§13.2).
+Only a project genuinely inside the scope — a cycle member or the upstream this run pulled in — that comes
+back `skipped — up to date` reads as a result. The project's own page is the one place the pre-skip does
+reach: opening it states the same reason the engine gave, because every pre-skipped project's will-build flag
+reads `false` for the run's whole life regardless of why (§13.2) — a page that stayed silent about the reason
+would read a possibly-dirty, merely-out-of-scope project as `Up to date`, which is not the same claim.
+
+The same containment reaches the queue colour, the run's own closing line and the two run-scoped counters
+(§13.2, §14.3): a workspace with hundreds of unrelated projects leaves hundreds of grey-forever rows that must
+not silently inflate *how many are still not built*, the *finishing soon* gate, or the tally the run's closing
+narrative reads out loud — all three read a small, exact number for a full `Build`, where every un-started row
+genuinely belongs to the run, and the distinction only bites once a run's own scope is smaller than the
+workspace.
 
 **Why the scope reaches upstream.** A member compiled against a *dirty* dependency's previous-generation DLL
 comes back green while its output is stale — and the run then persists that member's signature. Because the
@@ -886,15 +920,49 @@ Domain.Parts`, closed back on its first member so it reads as a cycle rather tha
 that has to hold a path is a tooltip doing a log's job. The path still composes from a single place, so no
 surface can drift into its own wording.
 
-**Such a success is recorded, with a note.** It is written to the build state like any other success, but
-flagged, and the evaluator turns that flag into "will build" until the dependency is fixed (§7.4). The set of
-projects that rebuild is exactly what it always was; what changed is that the ledger now moves. The rule used
-to be *don't record it at all*, on the reasoning that a fresh signature would let the project be skipped
-forever if the failed dependency recovered without a source change. The reasoning was right and it is still
-enforced — just one layer later. What was wrong was the cost: `depIssues` are inherited down the whole chain,
-so a handful of real failures poisons the graph and nothing gets recorded. Measured on a real run:
-74 succeeded, 24 failed, 96 carrying a dependency issue — and not one of the 74 was written. Incremental
-building was effectively off and every Sync said "everything will build".
+**Such a success is recorded, with a note and its roots.** It is written to the build state like any other
+success, but flagged, and the flag carries the **project ids** of the roots — the failures of this run, the
+roots inherited down the chain, and the stale inputs of a single-project run. Ids, not names: the run looks the
+roots up in its own results and in the ledger, and a name is not unique. The rule used to be *don't record it at
+all*, on the reasoning that a fresh signature would let the project be skipped forever if the failed dependency
+recovered without a source change. The reasoning was right and it is still enforced — just one layer later.
+What was wrong was the cost: `depIssues` are inherited down the whole chain, so a handful of real failures
+poisons the graph and nothing gets recorded. Measured on a real run: 74 succeeded, 24 failed, 96 carrying a
+dependency issue — and not one of the 74 was written. Incremental building was effectively off and every Sync
+said "everything will build".
+
+**The note triggers a rebuild when a root recovers, not on every Build.** Recompiling a project while its root
+still fails buys nothing — it links to the same last successful output again — and it meant projects the
+marking wave never lit turning amber and compiling on the next `Build`. So a noted
+project whose signature has not moved is *waiting for dependency* (§7.4) and is evaluated when its turn comes,
+because only then — every dependency terminal — is the roots' result in this run known (`ConditionalRebuild`):
+
+| A recorded root… | reads as |
+|---|---|
+| compiled in this run and succeeded | recovered |
+| compiled in this run and failed | still failing |
+| not compiled in this run (up to date, out of scope, cycle) — last recorded result success | recovered |
+| not compiled in this run — last recorded result failure | still failing |
+| no longer in the workspace, or without a record | recovered (build — the safe direction) |
+
+One recovered root is enough: the project compiles normally and its note is cleared or renewed by the ordinary
+rule. When every root still fails the project is skipped as `skipped — dependency still failing`, with the roots
+named on its `decision.log` line; its record — note, roots, built signature — is left exactly as it was, so the
+next run asks the same question. Its roots still enter the inherited accumulation: a dependent that does compile
+links to this project's stale output and must carry the note on, or it would read as up to date for good once the
+root recovers. Such a skip is not counted among the run's dependency-affected projects — nothing was compiled.
+
+A root named on that line is not always freshly observed. A root that is itself a dormant cycle member, for
+instance, is pre-skipped in a `Build` run without ever being attempted — the table above still reads its *last
+recorded* result, because that is all there is. The line says so: a root this run actually watched fail reads
+by its bare name (`Up`); a root whose "still failing" verdict came only from the ledger, not this run, reads
+`Up (last known failure)`. The same classification `Decide` uses to reach its verdict produces the label — one
+function, not a second guess re-derived from the same data (`ConditionalRebuild.DescribeStillFailingRoots`).
+
+The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
+a row's target compiles unconditionally (§8.1); a member of a cycle group compiles with its group, since skipping
+one member would leave the group half built. A record written before roots were stored carries no roots and
+compiles on every `Build` as it always did.
 
 ### 8.4 ETA
 
@@ -1026,7 +1094,8 @@ log is the real record, and the channel is still drained to completion so no wri
 
 **Per project.** At dispatch time all dependencies are already terminal, so `depIssues` can be computed before
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
-that this project's own dependents will inherit). The invocation request carries the solution directory, a
+that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
+before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the solution directory, a
 restore flag derived from the presence of `packages.config`, and — in worktree mode only — the isolated
 intermediate path. The project's log file is opened before and closed after the invocation, so a late line
 cannot be silently dropped. The first line written is the real MSBuild command line. On success the build state
@@ -1291,7 +1360,13 @@ git fetch origin <branch> --no-tags   (ref-only)
 ```
 
 Full analysis happens **only** in Sync; the implicit Sync that precedes a Build is cheap because of the
-evaluation cache.
+evaluation cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
+Build, pressed right now, would decide, and the preview says so directly: a project this run would only
+evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
+(`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
+read at the moment *Build* is clicked, before the new run's own preview has arrived — at that instant Sync's
+preview is the only opinion the App has, so it has to already carry the answer a conditional project's row will
+need a moment later, or the row lights amber for one frame and drops grey as soon as the real preview lands.
 
 If the remote is unreachable, the fetch failure is swallowed: a warning line is printed, the target SHA falls
 back to the local HEAD, and the flow continues. The degraded path does **not** skip topology or the will-build
@@ -1682,12 +1757,12 @@ standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
-a right-aligned block (min 134 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
+a right-aligned block (min 204 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
 Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
 warning slot, and a 46 px duration column.
 
 The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
-and MSBuild, not invented terms:
+and MSBuild, not invented terms — plus one three-part combination for a project waiting on a dependency:
 
 | Label | What the engine found |
 |---|---|
@@ -1696,6 +1771,23 @@ and MSBuild, not invented terms:
 | `never built` | no build output on disk (a `Clean` produces this too) |
 | `failed · retry` | the last attempt failed, so it is queued again |
 | `up to date · 2h` | it is current; the tail is the age of the last successful build |
+| `affected · up to date · just now` | it built successfully against a dependency that was failing, its own signature has not changed since, and this run is actually waiting on that dependency — the tail's native tooltip names the recorded root(s) |
+
+The waiting row is `affected` in every sense the word already carries — its own files are unchanged, a
+dependency is the reason — with a second tail bolted on to say *this run will not touch it either*: `up to date`
+(plus the usual age). Both tails after the word are faint, so the row reads `affected` first. This is the one
+label that exceeds what design v1.16.0 specifies (134 px, for `up to date · just now`): the three-part label is
+wider, so the slot is 204 px, wide enough to fit it without clipping — a deliberate departure from the design
+package, a user decision.
+
+That label is only shown when the project is **actually** gated on its dependency — `WaitingForDependency` and
+the engine's own `Conditional` flag, both true. The reason alone is not enough: a row triggered straight from
+itself, a Rebuild, or an SCC member all force the build regardless of the recorded root, so the tail's promise
+("this run leaves it alone") would be a lie there — the `Conditional` flag is what tells them apart, and it
+comes from the same source whether it arrives with a run's own preview or with Sync's (§10.2, which predicts
+what a plain Build would do). Forced scope falls back to the plain `affected`/`modified` read of the same
+underlying fact — the label still never claims more than the run will actually do (see the scope paragraph
+below).
 
 **The word is a fact; the tail can be a promise, and a promise is only made when it will be kept.** `retry`
 means "the next Build will try this again" — and a plain Build never compiles a dependency cycle, so a cycle
@@ -1725,7 +1817,18 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
 failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
-next Sync.
+next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
+`up to date` — its dependency was still broken when it built, so a plain project's row reads `affected · up to
+date · just now` instead, taken straight from that success's own event, and it drops out of the run's definite
+queue (next paragraph) rather than being counted done.
+
+A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
+converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
+Build never compiles it and Cycles compiles it with its whole group — so its live row reads plain `affected`
+(prominent, no tail), matching exactly what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
+`Conditional=false`) rather than the `up to date · just now` that would only flip back to `affected` at the
+next Sync. A member whose group did not converge changed nothing the ledger can act on, so its row reads
+`up to date · just now` like any other success — there is no new fact to predict ahead of Sync.
 
 **The slot is not a result column.** What a run did is carried by the stripe, the dot, the glyph and the
 duration; the slot always answers the same question — *what does this project's output need?* After a Sync that
@@ -1750,10 +1853,12 @@ for it. Starting from a row is not selecting the row:
 the selection and the filter drop, exactly as they do for a full run, so a graph that was focused on some node
 glides back to the fitted view and the console returns to the run log; the opening choreography marks just
 that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
-console (`build requested — X (single project)`) and in the stream's opening line. While the run is in flight
-the target row's play button turns into a red **Stop** that stays visible without hover and drives the same
-stop command as the action bar; every other row's play button is disabled and its tooltip says why
-(`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
+console (`build requested — X (single project)`) and in the stream's opening line. Colour follows the same cut:
+the engine's own preview for this run names only the target, so only the target's row turns queued-amber —
+every other row, however dirty a stale Sync left it, reads plain grey for the run's whole life (§14.3). While
+the run is in flight the target row's play button turns into a red **Stop** that stays visible without hover and
+drives the same stop command as the action bar; every other row's play button is disabled and its tooltip says
+why (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
 is Visual Studio's project clean — `-t:Clean` on that project — and it locks with the other two while a run is
 in flight. It is not the maintenance box's *Clean* — the workspace reset described under the maintenance box
 below — and neither is the *Clean* in the Build split menu.
@@ -1961,6 +2066,20 @@ and *Optimize* the workspace repair, both described below. *Resolve cycles* is t
 the topology has no cycle. Its icon is neutral: orange left the
 interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
 carried by the button's enabled state and its tooltip.
+
+*Resolve cycles* drives the row list and the graph too, and its own scope (§8.1: members plus their transitive
+upstream) splits the plan-coloured rows in two. The queue colour — the amber a row wears while it waits its
+turn — lights only the cycle members: a stale upstream dependency this run also pulls in and compiles reads
+plain grey until its own `projectStarted` arrives, exactly the "queued reads only the running operation's own
+plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row genuinely outside
+the scope never turns colour at all, and it never turns `Skipped` either: the engine's own pre-skip for it
+(`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
+reach the row's status or colour, the *Skipped* filter chip, or the skipped counter — those read the row
+exactly as a Sync left it, for the run's whole life. The one place the pre-skip does reach is the row's own
+project page: it states the same reason, because the run's own preview already forced the row's will-build flag
+`false` (every pre-skipped project's is, regardless of why, §8.1) and a page that said nothing would read a
+possibly-dirty, merely-out-of-scope project as `Up to date`. Only a row the run actually touched — a member,
+or the upstream it pulled in — can end the run coloured or counted.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
@@ -3163,6 +3282,22 @@ and the two cycle states below. `queued` is amber, not grey: being in the queue 
 scope of the operation that is running, and the amber the marking wave lit must not go out when the run
 begins.
 
+**Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
+(`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
+which run is in flight. The queue flag is cleared in exactly two places — at the start of every run, before that
+run's own preview has had a chance to say anything, and when the run ends — and in between it is written only by
+that run's own preview, never re-derived from the standing `WillBuild`. The distinction matters exactly when the
+two disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview names only
+that project, and every other row — however dirty a stale Sync left it — is never handed the flag and stays
+plain grey for the run's whole life. Between the run starting and that preview arriving, the marking wave (above)
+carries the target's amber on its own — the two channels hand off without the colour going out.
+
+A project this run only evaluates conditionally (§8.3) is dirty (`WillBuild=true`) but is not handed the queue
+flag either — it may still be skipped once its turn comes, if its recorded root has not recovered, so amber at
+the start of the run would be a promise the run might not keep. The engine's own preview says so directly
+(`Conditional`); the row, the marking wave and the run's fixed progress denominator all read that one flag,
+never re-derive it.
+
 **The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
 inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's
 amber warning triangle. Nowhere else do the frame and the cube part company. The cube lights at the operation's
@@ -3175,7 +3310,8 @@ it. This is not the orange channel returning — the tone is the warning's own a
 known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
 place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
 stale is still readable without colour, from the **decision label** in the row's right slot — `modified`,
-`affected`, `never built`, `failed · retry`, `up to date · 2h`. The mode drops the moment
+`affected`, `never built`, `failed · retry`, `up to date · 2h`, `affected · up to date · just now` for a
+project waiting on a failed dependency (§13.2). The mode drops the moment
 an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
 shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
 stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
@@ -3525,7 +3661,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5) | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external roots (path and source) and whether to update them (§10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
@@ -3959,7 +4095,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
-| Dependency-issue propagation (failed roots, stale inputs of a scoped run) | `Core/Scheduling/DepIssueTracker.cs` |
+| Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
+| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |

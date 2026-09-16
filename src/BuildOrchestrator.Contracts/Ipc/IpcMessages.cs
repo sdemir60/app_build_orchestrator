@@ -450,8 +450,55 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// satırları alansız çözülür.</param>
 /// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı — <c>up to date · 2h</c> etiketindeki
 /// göreli yaşın kaynağı. Hiç başarıyla derlenmemiş projede <c>null</c> ("never built" olgusu budur).</param>
+/// <param name="Conditional">Bu proje bir sonraki DÜZ Build tarafından koşullu değerlendirilir mi
+/// (<c>ConditionalRebuild.AppliesTo</c>): sırası geldiğinde yalnız kayıtlı kök bağımlılıklarından biri
+/// düzeldiyse derlenir, aksi hâlde <c>dependency still failing</c> ile atlanır. Kuyruğun (kesin derlenecekler)
+/// üyesi DEĞİLDİR — <see cref="WillBuild"/> yine <c>true</c> olabilir, çünkü koşu onu pre-skip etmez.
+/// Rebuild'de, satırdan tetiklenen hedefte ve SCC grubu üyesinde <c>false</c>'tur — bunlar koşulsuz derler.
+/// <b>[DEĞİŞEN KURAL — Task 4 review]</b> Sync önizlemesi de bunu taşır (<c>AppliesTo(node, Build, scopedRun:
+/// false, cycleGroupMember: false)</c> ile simüle edilir — Sync bir koşu DEĞİLDİR ama <see cref="WillBuild"/>
+/// zaten "bir sonraki düz Build ne yapar"ın cevabıdır, <c>Conditional</c> aynı soruyu sorar): App'in Sync'ten
+/// hemen sonra tıklanan bir Build'de dalgayı/kuyruğu bu alandan kurduğu an (motorun kendi önizlemesi henüz
+/// gelmeden) hâlâ Sync'in son değeridir — eskiden hep <c>false</c> gelirdi ve koşullu proje bir kare yanlış
+/// amber/etiket taşıyıp griye/soluğa dönerdi. Alan default'lu: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="DependencyRoots">Gerekçe <see cref="WillBuildReason.WaitingForDependency"/> iken defterdeki kök
+/// bağımlılıkların GÖRÜNEN adları (ad sıralı) — satır etiketinin tooltip'i bunları yazar; App metni kendisi
+/// üretmez. Diğer gerekçelerde <c>null</c> (JSON'a yazılmaz).</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
-    WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null);
+    WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null,
+    bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null)
+{
+    // Liste alanı: derleyicinin record eşitliği referansa düşer (JSON round-trip farklı örnek üretir) — ProjectNode
+    // ile aynı gerekçe, kök adları sıralı içerikle karşılaştırılır.
+    public bool Equals(BuildPreviewItem? other) =>
+        other is not null
+        && ProjectId == other.ProjectId
+        && Name == other.Name
+        && WillBuild == other.WillBuild
+        && BuiltCommit == other.BuiltCommit
+        && Reason == other.Reason
+        && OwnFilesChanged == other.OwnFilesChanged
+        && LastBuiltAt == other.LastBuiltAt
+        && Conditional == other.Conditional
+        && (DependencyRoots is null
+            ? other.DependencyRoots is null
+            : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots));
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(ProjectId);
+        hash.Add(Name);
+        hash.Add(WillBuild);
+        hash.Add(BuiltCommit);
+        hash.Add(Reason);
+        hash.Add(OwnFilesChanged);
+        hash.Add(LastBuiltAt);
+        hash.Add(Conditional);
+        foreach (string root in DependencyRoots ?? []) hash.Add(root);
+        return hash.ToHashCode();
+    }
+}
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
 /// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>

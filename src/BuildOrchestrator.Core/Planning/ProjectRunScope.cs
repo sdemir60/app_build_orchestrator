@@ -22,8 +22,8 @@ using BuildOrchestrator.Core.Scheduling;
 /// persist edilir ve bir sonraki Build onu "güncel" sayıp bir daha derlemez — proje kalıcı olarak bayat bir
 /// DLL'e link'li kalır, §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayacak ikinci mekanizma
 /// yoktur. Kapsamı genişletmek yerine (tasarım "build with dependencies" istemedi) bağımlılık dep-issue
-/// olarak hedefe yapışır: log başında uyarı, satırda üçgen, defterde NOT (§8.3) — ve o not bir sonraki
-/// Build'de hedefi derleme listesinde tutar. Bilinmeyen (<c>null</c>) de bayat sayılır: güvenli yön bir kez
+/// olarak hedefe yapışır: log başında uyarı, satırda üçgen, defterde NOT ve bayat bağımlılık KÖK olarak (§8.3)
+/// — o not bir sonraki Build'de hedefi, kök derlenip başarılı olduğunda yeniden derletir. Bilinmeyen (<c>null</c>) de bayat sayılır: güvenli yön bir kez
 /// daha derlemektir.</para>
 ///
 /// <para><b>Döngü üyesi hedef</b> tek başına, döngü dışıymış gibi derlenir (<see cref="ProjectNode.InCycle"/>

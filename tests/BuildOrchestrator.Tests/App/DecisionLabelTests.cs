@@ -20,8 +20,8 @@ public class DecisionLabelTests
 
     private static RowDecision For(
         bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null,
-        bool inCycle = false)
-        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, Now, inCycle);
+        bool inCycle = false, bool conditional = false, IReadOnlyList<string>? roots = null, string prefix = "")
+        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, Now, inCycle, conditional, roots, prefix);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -161,6 +161,77 @@ public class DecisionLabelTests
     {
         Assert.Equal("affected", For(true, WillBuildReason.SignatureChanged, ownChanged: null).Word);
         Assert.Equal("affected", For(true, WillBuildReason.DepIssue, ownChanged: null).Word);
+    }
+
+    /// <summary>
+    /// [koşullu yeniden derleme · Task 4] Bu koşu GERÇEKTEN bekletiyorsa (<c>conditional</c>) yuva tabloya göre
+    /// <c>affected · up to date · &lt;yaş&gt;</c> yazar, SOLUKTUR (kullanıcı onaylı tasarımdan bilinçli sapma:
+    /// <c>Stale=false</c>, ".claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md" §"Hedef davranış"),
+    /// ve tooltip kök adlarını taşır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 4 review, M3]</b> İlk iddia tooltip'in "Built against a FAILED
+    /// dependency (…)" dediğiydi. Yanlıştı: kayıtlı kökler her zaman başarısız OLMAYABİLİR — tek proje
+    /// koşusunun bıraktığı bayat (derlenmemiş ama dirty/döngü üyesi) bir bağımlılık da <c>DepIssueRoots</c>'a
+    /// girer (bkz. <c>ProjectRunScope</c>'un "bayat bağımlılık" mekanizması). Metin artık <c>RowWarning</c>'in
+    /// üçgen tooltip'iyle AYNI nötr kelimeyi kullanır ("Dependency issue: ", tek kaynak
+    /// <c>RowWarning.DepIssuePrefix</c>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı, seçenek D]</b> Ara sürüm "rebuilds when it builds
+    /// successfully" diyordu. Bu da tam doğru değildi: "it builds" bir bağımlılığın YENİDEN DERLENMESİNİ ima
+    /// eder, oysa <c>ConditionalRebuild.Decide</c> kökü İKİ yoldan serbest bırakır — bu koşuda başarıyla
+    /// derlendiğinde YA DA hiç derlenmeden yalnız defterdeki son sonucu başarı OLDUĞUNDA (kaynak değişmeden
+    /// düzelme, §8.3). Nihai söz "rebuilds once that dependency is healthy again" — "sağlıklı" ikisini de
+    /// doğru kapsar, "derlenince" yalnız birincisini iddia ederdi.</para>
+    /// </summary>
+    [Fact]
+    public void A_project_that_this_run_genuinely_waits_on_reads_affected_up_to_date()
+    {
+        var decision = For(true, WillBuildReason.WaitingForDependency, conditional: true,
+            builtAt: Now.AddHours(-2), roots: ["Up"]);
+
+        Assert.Equal("affected", decision.Word);
+        Assert.Equal("up to date · 2h", decision.Tail);
+        Assert.False(decision.Stale);
+        Assert.Equal("Dependency issue: Up — rebuilds once that dependency is healthy again", decision.Title);
+    }
+
+    /// <summary>Yaş bilinmiyorsa (eski kayıt) kuyruk uydurma bir sayı taşımaz — <c>UpToDate</c>'in kuralıyla AYNI.</summary>
+    [Fact]
+    public void A_waiting_project_without_a_timestamp_has_no_age_in_its_tail()
+        => Assert.Equal("up to date", For(true, WillBuildReason.WaitingForDependency, conditional: true,
+            roots: ["Up"]).Tail);
+
+    /// <summary>Birden çok kök virgülle, ortak önek kısaltılarak (uyarı üçgeninin diliyle AYNI, kopya YASAK).</summary>
+    [Fact]
+    public void Multiple_roots_are_comma_joined_and_short_named()
+        => Assert.Equal("Dependency issue: A, Zeta — rebuilds once that dependency is healthy again",
+            For(true, WillBuildReason.WaitingForDependency, conditional: true,
+                roots: ["OSYS.A", "OSYS.Zeta"], prefix: "OSYS.").Title);
+
+    /// <summary>[Task 4 review — M3] Kökler bilinmiyorsa (savunmacı — <c>WillBuildEvaluator</c>'ın kuralı
+    /// gereği pratikte olmaz) parantez BOŞ basılmaz; cümle köksüz de doğru okunur.</summary>
+    [Fact]
+    public void An_empty_root_list_does_not_print_empty_parentheses()
+        => Assert.Equal("Rebuilds once that dependency is healthy again",
+            For(true, WillBuildReason.WaitingForDependency, conditional: true, roots: []).Title);
+
+    /// <summary>
+    /// [carried item 2] Bu koşu projeyi ZORLUYORSA (satırdan Build, Rebuild, SCC üyesi — <c>conditional=false</c>)
+    /// gerekçe hâlâ <c>WaitingForDependency</c> olabilir (motor kararı önizlemeden ÖNCE, kapsamdan bağımsız
+    /// verilir) ama yuva "bekliyor" SÖZÜ VERMEZ: satır bu koşuda GERÇEKTEN dokunulacaktır, "up to date" yalanı
+    /// olurdu. Sıradan affected/modified olgusuna düşer — DecisionLabel'in "etiket bir disk olgusudur, ama söz
+    /// de verdirmez" kuralıyla aynı aile (bkz. <c>A_failed_row_that_this_run_will_not_retry_makes_no_promise</c>).
+    /// </summary>
+    [Fact]
+    public void A_forced_scope_does_not_promise_the_waiting_label()
+    {
+        var forced = For(true, WillBuildReason.WaitingForDependency, ownChanged: false, conditional: false,
+            roots: ["Up"]);
+        Assert.Equal("affected", forced.Word);
+        Assert.Equal("Its own files are unchanged — a dependency changed", forced.Title);
+
+        var forcedModified = For(true, WillBuildReason.WaitingForDependency, ownChanged: true, conditional: false);
+        Assert.Equal("modified", forcedModified.Word);
     }
 
     [Fact]

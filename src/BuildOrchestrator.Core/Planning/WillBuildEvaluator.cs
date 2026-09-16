@@ -25,7 +25,16 @@ using BuildOrchestrator.Contracts.Model;
 /// Ölçüldü ki o kural defterin ilerlemesini tamamen durduruyor: depIssue zincir boyunca miras alındığı
 /// için birkaç gerçek hata tüm grafı zehirliyor (bir koşuda 24 hata → 96 proje → 74 başarının 0'ı
 /// yazıldı) ve incremental derleme fiilen devre dışı kalıyordu. Kayıt artık yazılıyor, karar BURADA
-/// veriliyor — yeniden derlenecek küme aynı, ama defter ve kartın sha çifti gerçeği söylüyor.</para>
+/// veriliyor.</para>
+///
+/// <para><b>Koşullu yeniden derleme.</b> Not, kök bağımlılıkların kimliklerini de taşıyorsa
+/// (<see cref="BuildState.DepIssueRoots"/>) ve projenin imzası kayıtlı imzayla AYNIYSA gerekçe
+/// <see cref="WillBuildReason.WaitingForDependency"/>'dir: WillBuild <c>true</c> kalır (koşu onu pre-skip
+/// etmez), ama koşu projeyi sırası geldiğinde <see cref="ConditionalRebuild"/> ile değerlendirir ve yalnız bir
+/// kök düzeldiyse derler — hâlâ patlayan bir bağımlılığa karşı yeniden derlemek aynı bayat çıktıya yeniden
+/// link'lemekten başka bir şey yapmaz. İmza değiştiyse gerekçe <see cref="WillBuildReason.SignatureChanged"/>'dir
+/// (kendi değişikliği kesin derletir); kökleri bilinmeyen eski kayıt <see cref="WillBuildReason.DepIssue"/>
+/// olarak kesin derlenir — güvenli yön.</para>
 ///
 /// <para><b>Bilinen dar ayrışma (Cycles koşusu içinde):</b> bir SCC'nin üyeleri KISMEN temiz olduğunda —
 /// bileşik imza ortak olduğu için pratikte yalnız bir üyenin state kaydı hiç yokken — koordinatörün grup
@@ -70,10 +79,13 @@ public static class WillBuildEvaluator
         var reason =
             state?.BuiltSignature is null ? WillBuildReason.NeverBuilt
             : state.LastResult != BuildResult.Succeeded ? WillBuildReason.LastFailed
-            : state.DepIssue ? WillBuildReason.DepIssue          // bayat bağımlılığa link'li (yukarıdaki nota bak)
-            : string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
-                ? WillBuildReason.UpToDate
-                : WillBuildReason.SignatureChanged;
+            : !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
+                ? WillBuildReason.SignatureChanged                // kendi değişikliği kesin derletir — not ne olursa olsun
+            : state.DepIssue                                      // bayat bağımlılığa link'li (yukarıdaki nota bak)
+                ? state.DepIssueRoots is { Count: > 0 }
+                    ? WillBuildReason.WaitingForDependency        // kökler biliniyor: koşu kök düzelince derler
+                    : WillBuildReason.DepIssue                    // kök bilinmiyor (eski kayıt): güvenli yön, derlenir
+            : WillBuildReason.UpToDate;
 
         return (outOfScope ? false : reason != WillBuildReason.UpToDate, reason);
     }

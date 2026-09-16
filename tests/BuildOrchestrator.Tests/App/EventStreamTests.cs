@@ -441,6 +441,27 @@ public class EventStreamTests
         Assert.Equal($"a skipped — {SkipReasons.InDependencyCycle}", line.Text);
     }
 
+    /// <summary>
+    /// [Task 4 — koşullu yeniden derleme] Koşullu bir projenin ("dependency still failing") skip'i sıradan bir
+    /// skip gibi satır satır akar — Cycles'ın kapsam-dışı ("not needed by a dependency cycle") toplu satırıyla
+    /// KARIŞMAZ: gerekçe farklı bir <see cref="SkipReasons"/> sabitidir ve bu koşuda GERÇEKTEN sırası gelip
+    /// değerlendirilmiş bir projedir (kapsam dışı gibi "hiç işlenmedi" değil). Metin tek kaynaktan
+    /// (<see cref="SkipReasons"/>) — ikinci bir "dependency still failing" literali stream tarafında YOK.
+    /// </summary>
+    [Fact]
+    public void A_dependency_still_failing_skip_streams_like_an_ordinary_skip()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\down.csproj", SkipReasons.DependencyStillFailing));
+
+        var line = Assert.Single(vm.StreamEvents, l => l.ProjectId == @"C:\p\down.csproj");
+        Assert.Equal(StreamText.Skipped("down", SkipReasons.DependencyStillFailing), line.Text);
+        Assert.Equal($"down skipped — {SkipReasons.DependencyStillFailing}", line.Text);
+    }
+
     /// <summary>[Task 2] Cycles koşusunda kapsam-dışı (<see cref="SkipReasons.OutOfCycleScope"/>) skip'ler
     /// proje başına satır YAZMAZ — sonraki stream olayından ÖNCE tek toplu Info satırına katlanır. "Güncel"
     /// (<see cref="SkipReasons.UpToDate"/>) skip AYRI kalır ve satır satır akmaya devam eder.</summary>

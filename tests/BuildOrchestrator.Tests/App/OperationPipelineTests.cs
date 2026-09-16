@@ -270,6 +270,13 @@ public class OperationPipelineTests
     /// olduğu için hiçbir bilgi kaybolmaz, yalnız anında değil dalga hâlinde belirir. Eski kural yürürlükte
     /// kalsaydı koreografinin ilk iki adımı (nötr an + dalga) hiç görünmezdi: kapsam daha tıklama anında
     /// amber olurdu.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 1]</b> "Motor cevap verdi" adımı artık gerçek olay sırasıyla sürülür
+    /// (<c>runStarted</c> + BU koşunun kendi <c>buildPreview</c>'i), doğrudan <c>vm.IsRunning = true</c> ve
+    /// <c>row.WillBuild = true</c> ATANMASIYLA DEĞİL: kuyruk artık <see cref="ProjectRowViewModel.InRunQueue"/>
+    /// okur ve o YALNIZ bu koşunun kendi önizlemesinden yazılır — eski atama satırdaki bayat WillBuild'i taşırdı
+    /// ve yeni kuralla artık Queued'u ÜRETMEZ (bkz. <c>RunViewModelTests.A_single_project_run_leaves_a_stale_
+    /// sibling_row_discovered_never_queued</c>).</para>
     /// </summary>
     [Fact]
     public void While_a_run_is_only_requested_the_scope_is_still_plain_grey()
@@ -281,7 +288,6 @@ public class OperationPipelineTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 1, 0, 10));
 
         var row = Row(vm, "a");
-        row.WillBuild = true;
 
         vm.IsStarting = true;  // koşu İSTENDİ — motor henüz cevap vermedi (planlama penceresi)
         Assert.Equal(GraphStatus.Discovered, row.Status);
@@ -290,7 +296,10 @@ public class OperationPipelineTests
         row.Marked = true;     // ...dalga bu satıra geldi
         Assert.Equal(VisualStatus.Marked, row.VisualStatus);
 
-        vm.IsRunning = true;   // motor cevap verdi — statü kanalı devralır
+        // Motor cevap verdi — statü kanalı devralır: GERÇEK olay sırası (runStarted + bu koşunun KENDİ
+        // önizlemesi), IsRunning'i doğrudan atamak DEĞİL (bkz. yukarıdaki Task 1 notu).
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem("a", "A", true)]));
         Assert.Equal(GraphStatus.Queued, row.Status);
         Assert.Equal(VisualStatus.Queued, row.VisualStatus);
     }

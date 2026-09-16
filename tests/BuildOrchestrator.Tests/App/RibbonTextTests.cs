@@ -258,6 +258,22 @@ public class RibbonTextTests
         Assert.Equal("succeeded", line.Glyph);
     }
 
+    /// <summary>[final review — C1 guard] All-clean dalı <c>c.Failed &gt; 0</c> kontrolünden ÖNCE geliyordu:
+    /// "hiçbir şey kirli değil" diye açılan ama içinde bir hata biten koşu, koşulsuz YEŞİL "Everything up to
+    /// date — … nothing to build" raporluyordu. Hata her özetin üstündedir — satırın asla yutamayacağı tek
+    /// olgudur, önizleme ne demiş olursa olsun (koşunun derlemeye karar verip patlattığı koşullu bir proje tam
+    /// olarak bu hâldir: önizlemesinde KESİN bir will-build kalemi yoktur).</summary>
+    [Fact]
+    public void Done_allClean_line_never_reports_success_when_the_run_has_a_failure()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(succeeded: 0, failed: 1),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        // Süre bu dalda DurationFormat.Elapsed'tir (all-clean dalının fmtDur'u DEĞİL) — 4200ms ⇒ "4s".
+        Assert.Equal("Completed — 1 failed · 0 succeeded · 0 skipped · 4s", line.Text);
+        Assert.Equal("Brush.StatusFailText", line.BrushKey);
+        Assert.Equal("failed", line.Glyph);
+    }
+
     [Fact]
     public void Done_with_failures_line_lists_failed_succeeded_dep_skipped_warnings_and_elapsed()
     {
@@ -331,15 +347,37 @@ public class RibbonTextTests
     [InlineData(1_000, " · almost done")]
     public void Eta_suffix_matches_the_prototype_thresholds(long eta, string expected)
     {
-        // Kapı: building + queued > 0 olmalı, aksi halde suffix null döner.
-        Assert.Equal(expected, RibbonText.EtaSuffix(eta, Counters(building: 1)));
+        // Kapı: building + (willBuild - finishedOfWillBuild) > 0 olmalı, aksi halde suffix null döner.
+        Assert.Equal(expected, RibbonText.EtaSuffix(eta, willBuild: 0, finishedOfWillBuild: 0, Counters(building: 1)));
     }
 
     [Fact]
     public void Eta_is_hidden_once_nothing_is_building_or_queued()
     {
-        Assert.Null(RibbonText.EtaSuffix(34_000, Counters(building: 0, queued: 0)));
-        Assert.Null(RibbonText.EtaSuffix(null, Counters(building: 1, queued: 3)));
+        Assert.Null(RibbonText.EtaSuffix(34_000, willBuild: 0, finishedOfWillBuild: 0, Counters(building: 0, queued: 0)));
+        Assert.Null(RibbonText.EtaSuffix(null, willBuild: 1, finishedOfWillBuild: 0, Counters(building: 1, queued: 3)));
+    }
+
+    // [Task 2 — kök neden B] RunCounters.Queued HER Pending satırı sayar, hangi run'a ait olduğuna BAKMAZ —
+    // Resolve cycles'ta kapsam dışı bir proje artık koşu boyunca Pending kalıyor (bkz.
+    // RunViewModel.OnProjectSkipped) ve bu sayacı şişirirdi. Kapı artık willBuild-finishedOfWillBuild'i okur:
+    // bu run'ın KENDİ SABİT kümesi, zaten doğru kapsamlı.
+    [Fact]
+    public void Eta_gate_ignores_a_queued_counter_inflated_by_out_of_scope_pending_rows()
+    {
+        // building=0, willBuild-finished=0 (bu run'ın kendi kapsamında iş kalmadı) ama c.Queued=12 —
+        // workspace'teki ilgisiz Pending satırlardan (kapsam dışı) gelen şişirilmiş sayı.
+        Assert.Null(RibbonText.EtaSuffix(5000, willBuild: 5, finishedOfWillBuild: 5, Counters(building: 0, queued: 12)));
+    }
+
+    // [Task 2 — kök neden B] Aynı şişirme "N not built" metnine de sızmamalı: willBuild/finishedOfWillBuild
+    // bu run'ın kendi kapsamıdır, c.Queued workspace'in tamamındaki Pending satırları sayar.
+    [Fact]
+    public void Stopped_line_ignores_a_queued_counter_inflated_by_out_of_scope_pending_rows()
+    {
+        var line = RibbonText.Compose(AppPhase.Stopped, true, false, Counters(queued: 50),
+            willBuild: 10, finishedOfWillBuild: 3, totalProjects: 14, elapsedMs: 30_000, etaMs: null, checkDurMs: null, warnings: 0);
+        Assert.Equal("▸ Stopped — 3/10 · 7 not built", line.Text); // 7 = 10-3, DEĞİL 50
     }
 
     [Fact]

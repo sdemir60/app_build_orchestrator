@@ -16,8 +16,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <c>AssemblyName</c>'i üretebilir) kimlik olamaz — bkz. <see cref="GraphNode"/>.</para>
 ///
 /// <para><b>Statü otoritesi:</b> <see cref="StatusOf"/> eşlemeyi YENİDEN yazmaz — satır varsa
-/// <see cref="ProjectRowViewModel.Status"/>'a delege eder (State/InCycle/WillBuild/IsRunActive'in TEK eşleme
-/// yeri). İkinci bir otorite (çift switch) bir review kusuru olurdu.</para>
+/// <see cref="ProjectRowViewModel.Status"/>'a delege eder (State/InCycle/<see cref="ProjectRowViewModel.InRunQueue"/>/
+/// IsRunActive'in TEK eşleme yeri). İkinci bir otorite (çift switch) bir review kusuru olurdu.</para>
 /// </summary>
 public static class GraphBinder
 {
@@ -122,7 +122,7 @@ public static class GraphBinder
     /// <list type="bullet">
     /// <item>Sync yapılmamışsa (<paramref name="synced"/> false) her şey <see cref="GraphStatus.Discovered"/>.</item>
     /// <item>Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) <see cref="GraphStatus.Discovered"/>.</item>
-    /// <item>Satır varsa doğrudan <see cref="ProjectRowViewModel.Status"/> (State+WillBuild+IsRunActive'in tek
+    /// <item>Satır varsa doğrudan <see cref="ProjectRowViewModel.Status"/> (State+InRunQueue+IsRunActive'in tek
     /// eşleme yeri). Burada eşleme KOPYALANMAZ. Döngü üyeliği bu kanalda DEĞİLDİR (design v1.7.0 §5): düğümün
     /// kendi <c>InCycle</c> alanında taşınır ve çekirdek rengini belirler.</item>
     /// </list></summary>
