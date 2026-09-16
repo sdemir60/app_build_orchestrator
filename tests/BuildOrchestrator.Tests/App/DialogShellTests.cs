@@ -80,6 +80,8 @@ public class DialogShellTests
         }
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> ESKİ genişlik 660px (Task 1'de About eski düzenini
+    /// korudu); v1.19.0 düzeni About'u 620px'e indirir.</summary>
     [StaFact]
     public void About_uses_the_shell_with_rounded_clip_and_shell_footer()
     {
@@ -87,7 +89,7 @@ public class DialogShellTests
         using (scope)
         {
             var frame = Frame(dialog.Scrim);
-            Assert.Equal(660.0, frame.ActualWidth);
+            Assert.Equal(620.0, frame.ActualWidth);
             AssertRoundedClip(frame);
             AssertShellFooter(dialog, dialog.Scrim, ButtonWithContent(dialog, "Close"));
         }

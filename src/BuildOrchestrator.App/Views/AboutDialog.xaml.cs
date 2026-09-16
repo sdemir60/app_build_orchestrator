@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -18,17 +18,21 @@ namespace BuildOrchestrator.App.Views;
 /// <summary>[About] Shortcuts sekmesinin bir satırı (görünüm modeli).</summary>
 internal readonly record struct ShortcutRow(string Description, IReadOnlyList<string> Gestures, bool Unavailable);
 
-/// <summary>[About] Third-party sekmesinin bir satırı — sürüm çalışma zamanında çözülür, boş olabilir.</summary>
-internal readonly record struct NoticeRow(string DisplayName, string Version, string License);
+/// <summary>[design v1.19.0 §2.10] Shortcuts sekmesinin bir caps grubu (görünüm modeli).</summary>
+internal sealed record ShortcutGroupRows(string Title, IReadOnlyList<ShortcutRow> Rows);
 
 /// <summary>
-/// [About] İkinci modal diyalog: ürün kimliği + klavye kısayolları + ortam/tanı + üçüncü-taraf lisansları.
-/// Kabuk (scrim, çerçeve, odak tuzağı, Esc/scrim ile kapanma, giriş) üç dialogun ORTAK kabuğudur:
-/// <see cref="Controls.ModalDialog"/>.
+/// [design v1.19.0 §2.10] About: ürün kimliği + About / Environment / Shortcuts sekmeleri. Kabuk (scrim, çerçeve,
+/// odak tuzağı, Esc/scrim ile kapanma, giriş) üç dialogun ORTAK kabuğudur: <see cref="Controls.ModalDialog"/>.
 ///
 /// <para><b>İnce view:</b> gösterilen her şey saf tiplerden gelir — <see cref="AppIdentity"/>,
-/// <see cref="ShortcutCatalog"/>, <see cref="DiagnosticsReport"/>, <see cref="ThirdPartyNotices"/>. Burada
-/// hiçbir metin, sürüm ya da yol YENİDEN YAZILMAZ.</para>
+/// <see cref="ShortcutCatalog"/>, <see cref="DiagnosticsReport"/>, <see cref="ReleaseNotes"/>. Burada hiçbir metin,
+/// sürüm ya da yol YENİDEN YAZILMAZ. About sekmesinin Version/Engine/Copyright satırları, Environment sekmesinin
+/// iki grubu ve "Copy diagnostics" metni AYNI <see cref="DiagnosticsSnapshot"/>'tan okunur.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Third-party sekmesi (ve atıf tablosu
+/// <c>ThirdPartyNotices</c>) KALDIRILDI — bilinçli tasarım kararı; Geist lisans metni <c>Assets/GEIST-LICENSE.txt</c>
+/// olarak dağıtımda kalır.</para>
 ///
 /// <para><b>MSBuild LAZY çözülür:</b> <c>vswhere</c> bir child process başlatır ve About'u AÇMAK bunu
 /// tetiklememelidir. Çözüm Environment sekmesi İLK kez seçildiğinde başlar; sonucu diyalog ömrü boyunca
@@ -61,6 +65,9 @@ public partial class AboutDialog : Controls.ModalDialog
     public AboutDialog()
     {
         InitializeComponent();
+        string whatsNew = ReleaseNotes.WhatsNewInLabel(AppIdentity.Version);
+        WhatsNewLabel.Text = whatsNew;
+        AutomationProperties.SetName(WhatsNewButton, whatsNew); // içerik StackPanel → ad AÇIKÇA verilir
         ResetCopyVisual();
     }
 
@@ -68,9 +75,14 @@ public partial class AboutDialog : Controls.ModalDialog
     /// (gerçek panoya dokunmadan geri bildirim doğrulanır — D8).</summary>
     public Func<string, bool> ClipboardWriter { get; set; } = ClipboardRetry.SetText;
 
-    /// <summary>[test yüzeyi] Environment sekmesinin O ANDA çizdiği satırlar — "Copy diagnostics" de AYNI
-    /// listeyi metne çevirir.</summary>
-    internal IReadOnlyList<DiagnosticsLine> DiagnosticsLines { get; private set; } = [];
+    /// <summary>[test yüzeyi] O ANDA çizilen tanı modeli — About sekmesi, Environment sekmesi ve "Copy
+    /// diagnostics" AYNI nesneden okur.</summary>
+    internal DiagnosticsSnapshot? Diagnostics { get; private set; }
+
+    /// <summary>[design v1.19.0 §2.10] About sekmesinin <c>What's new in {sürüm}</c> butonuna basıldı — diyalog
+    /// kendini KAPATMIŞTIR. What's new'i açmak MainWindow'un işidir (sparkle butonuyla AYNI yol; okunmadı noktası
+    /// orada söner) — diyalog kalıcı durumu ve diğer katmanları BİLMEZ.</summary>
+    public event Action? WhatsNewRequested;
 
     /// <summary>[test yüzeyi] "Copied" geri bildirimi görünür mü.</summary>
     internal bool IsShowingCopied => _copyFeedback.Copied;
@@ -92,8 +104,9 @@ public partial class AboutDialog : Controls.ModalDialog
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İMZA bir <c>openOnWhatsNew</c> parametresi
     /// taşıyordu: görülmemiş bir sürüm varsa diyalog DOĞRUDAN What's new sekmesinde açılırdı. What's new
-    /// kendi diyaloguna (<see cref="NotesDialog"/>) taşındığı için bu yönlendirme kalktı — About artık HER
-    /// açılışta Shortcuts'ta başlar (yönlendirme MainWindow'da sparkle butonuna/Ctrl+F1'e gider).</para>
+    /// kendi diyaloguna (<see cref="NotesDialog"/>) taşındığı için bu yönlendirme kalktı (yönlendirme MainWindow'da
+    /// sparkle butonuna/Ctrl+F1'e gider). <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Her açılış ilk sekmede
+    /// başlar — ilk sekme artık Shortcuts değil <b>About</b>'tur.</para>
     /// </summary>
     public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild)
     {
@@ -104,28 +117,20 @@ public partial class AboutDialog : Controls.ModalDialog
         _msBuild = DiagnosticsReport.Resolving;
         _msBuildRequested = false;
 
-        ProductText.Text = AppIdentity.Product;
-        TaglineText.Text = AppIdentity.Tagline;
-        // [design-v1.1.0] TEK sürüm satırı. Eskiden burada `{app} · engine {engine} · {telif}` vardı; motor
-        // sürümünün yeri Environment sekmesidir, başlıkta tekrarı gürültüydü.
-        IdentityText.Text = string.Format(CultureInfo.InvariantCulture, "{0} · {1}",
-            AppIdentity.Version, AppIdentity.Copyright);
-
-        ShortcutRows.ItemsSource = ShortcutCatalog.All
-            .Select(e => new ShortcutRow(e.Description, e.Gestures,
-                Unavailable: e.Id == ShortcutId.RestoreFromTray && !hotkeyRegistered))
+        // [design v1.19.0 §2.10] Grup bilgisi ve sırası katalogdadır; burada yalnız görünüm modeline çevrilir.
+        ShortcutGroups.ItemsSource = ShortcutCatalog.GroupOrder
+            .Select(g => new ShortcutGroupRows(ShortcutCatalog.GroupTitle(g), ShortcutCatalog.All
+                .Where(e => e.Group == g)
+                .Select(e => new ShortcutRow(e.Description, e.Gestures,
+                    Unavailable: e.Id == ShortcutId.RestoreFromTray && !hotkeyRegistered))
+                .ToList()))
             .ToList();
-
-        ThirdPartyRows.ItemsSource = ThirdPartyNotices.All
-            .Select(c => new NoticeRow(c.DisplayName, ThirdPartyNotices.ResolveVersion(c) ?? "", c.License))
-            .ToList();
-        FontLicenseNoteText.Text = ThirdPartyNotices.FontLicenseNote;
 
         RefreshDiagnostics();
 
-        // [design v1.13.0 §2.10] ⓘ ve F1 her zaman Shortcuts'ta açar — What's new'e yönlendirme YOKTUR
-        // artık (o dialog kendi butonundan/Ctrl+F1'den açılır).
-        ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
+        // [design v1.19.0 §2.10] ⓘ ve F1 her zaman About sekmesinde açar — What's new'e yönlendirme YOKTUR
+        // (o dialog kendi butonundan, Ctrl+F1'den ya da About sekmesindeki butondan açılır).
+        AboutTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı, odak dialogun içine — ortak kabuk (ModalDialog).
         ShowDialog();
@@ -133,13 +138,17 @@ public partial class AboutDialog : Controls.ModalDialog
 
     // ---------------------------------------------------------------- tanı
 
-    /// <summary>Satırları TEK yerden (<see cref="DiagnosticsReport"/>) yeniden kurar. Yol metinleri üretimin
+    /// <summary>Tanı modelini TEK yerden (<see cref="DiagnosticsReport"/>) yeniden kurar ve üç satır listesini
+    /// ondan besler. Kimlik değerleri <see cref="AppIdentity"/>'den, motor değerleri motorun KENDİ bildiriminden
+    /// (<see cref="RunViewModel.EngineVersion"/>, <see cref="RunViewModel.EnginePid"/>), yol metinleri üretimin
     /// kendi static'lerinden gelir — burada YENİDEN YAZILMAZ.</summary>
     private void RefreshDiagnostics()
     {
         if (_run is not { } run) return;
-        DiagnosticsLines = DiagnosticsReport.Compose(new DiagnosticsInput(
-            AppVersion: AppIdentity.Version,
+        var diagnostics = DiagnosticsReport.Compose(new DiagnosticsInput(
+            Product: AppIdentity.Product,
+            Version: AppIdentity.Version,
+            Copyright: AppIdentity.Copyright,
             EngineVersion: run.EngineVersion,
             EnginePid: run.EnginePid,
             Runtime: RuntimeInformation.FrameworkDescription,
@@ -149,7 +158,10 @@ public partial class AboutDialog : Controls.ModalDialog
             StateFile: JsonUiStateStore.DefaultPath,
             LogsRoot: RunLogPaths.DefaultLogsRoot,
             WorktreePool: WorktreeManager.DefaultPoolRoot));
-        EnvironmentRows.ItemsSource = DiagnosticsLines;
+        Diagnostics = diagnostics;
+        IdentityRows.ItemsSource = diagnostics.Identity;
+        RuntimeRows.ItemsSource = diagnostics.Runtime;
+        PathsRows.ItemsSource = diagnostics.Paths;
     }
 
     // Environment sekmesi İLK kez seçildiğinde vswhere'i başlatır; sonuç cache'lenir (ikinci seçim çözmez).
@@ -242,12 +254,9 @@ public partial class AboutDialog : Controls.ModalDialog
         _copyRevertTimer.Start();
     }
 
-    /// <summary>[design-v1.2.1 §2.10] Panoya giden metin: ilk satır ürün + sürüm, ardından tüm Environment
-    /// satırları. Başlık satırı olmadan çıktı, nereden geldiği belirsiz bir anahtar/değer yığınıdır.</summary>
-    internal string DiagnosticsText() =>
-        string.Format(CultureInfo.InvariantCulture, "{0} {1}", AppIdentity.Product, AppIdentity.Version)
-        + Environment.NewLine
-        + DiagnosticsReport.ToText(DiagnosticsLines);
+    /// <summary>[design v1.19.0 §2.10] Panoya giden metin — biçimi <see cref="DiagnosticsReport.ToText"/>'indir
+    /// (başlık satırı + hizalı Engine/Runtime/Paths), girdisi ekrandaki AYNI modeldir.</summary>
+    internal string DiagnosticsText() => Diagnostics is { } d ? DiagnosticsReport.ToText(d) : "";
 
     private DispatcherTimer CreateRevertTimer()
     {
@@ -282,4 +291,12 @@ public partial class AboutDialog : Controls.ModalDialog
 
     // Scrim tıklaması ve Esc ortak kabuktadır (ModalDialog).
     private void OnClose(object sender, RoutedEventArgs e) => CloseDialog();
+
+    /// <summary>[design v1.19.0 §2.10] Önce About kapanır, sonra istek bildirilir: What's new açılırken About artık
+    /// görünür bir katman değildir (Esc zinciri tek katman iner).</summary>
+    private void OnWhatsNew(object sender, RoutedEventArgs e)
+    {
+        CloseDialog();
+        WhatsNewRequested?.Invoke();
+    }
 }

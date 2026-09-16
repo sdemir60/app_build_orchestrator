@@ -24,11 +24,6 @@ public partial class NotesDialog : ModalDialog
     /// gereği onu çizen kontrolde ADLANDIRILMIŞ tek bir sabit olarak durur.</summary>
     public const double InstalledChipCapsPx = 9.5;
 
-    /// <summary>[v1.19.0 §2.11] Madde metninin satır yüksekliği ORANI (CSS <c>line-height: 1.62</c>). WPF mutlak
-    /// DIP ister; oran çizim anında <c>FontSize.Sm</c> token'ının çözülmüş değeriyle çarpılır (13 × 1.62 = 21.06)
-    /// — punto token'da değişirse satır yüksekliği onu izler.</summary>
-    public const double NoteLineHeightRatio = 1.62;
-
     /// <summary>[v1.19.0 §2.11] Madde metninin ölçü sınırı (CSS <c>maxWidth: 500</c>).</summary>
     public const double NoteMaxWidth = 500;
 
@@ -258,7 +253,8 @@ public partial class NotesDialog : ModalDialog
         group.Children.Add(heading);
 
         var list = new StackPanel { Margin = new Thickness(13, 7, 0, 0) };
-        double lineHeight = (double)FindResource("FontSize.Sm") * NoteLineHeightRatio;
+        // [v1.19.0 §2.11] CSS `line-height: 1.62` → LineHeight.Reading13 token'ı (About paragrafıyla ORTAK).
+        double lineHeight = (double)FindResource("LineHeight.Reading13");
         foreach (var note in items)
         {
             var text = new TextBlock

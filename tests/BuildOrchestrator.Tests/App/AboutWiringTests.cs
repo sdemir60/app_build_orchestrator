@@ -79,13 +79,13 @@ public class AboutWiringTests
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — design v1.13.0 §2.10, D4/T9]</b> ESKİ İDDİA (design v1.9.0): görülmemiş bir sürüm
-    /// varsa About DOĞRUDAN What's new sekmesinde açılırdı. What's new kendi diyaloguna taşındığı için bu
-    /// yönlendirme KALKTI: ⓘ ve F1 artık okunmadı durumundan BAĞIMSIZ, HER ZAMAN Shortcuts'ta açar (yeni
-    /// sürüme yönlendirme sparkle butonunun/Ctrl+F1'in işi — bkz. <c>NotesDialogWiringTests</c>).
+    /// <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> ESKİ İDDİA (design v1.13.0): ⓘ ve F1 HER ZAMAN ilk sekme olan
+    /// <b>Shortcuts</b>'ta açardı. v1.19.0 sekme sırasını mantıksal hâle getirdi (About → Environment → Shortcuts)
+    /// ve F1 artık <b>About</b>'ta açar — okunmadı durumundan yine BAĞIMSIZ (yeni sürüme yönlendirme sparkle
+    /// butonunun/Ctrl+F1'in işi; About sekmesinde ayrıca bir What's new butonu vardır).
     /// </summary>
     [StaFact]
-    public void About_always_opens_on_the_shortcuts_tab_even_with_unseen_notes()
+    public void About_always_opens_on_the_about_tab_even_with_unseen_notes()
     {
         using var temp = new TempDir(); // taze — SeenVersion yazılmamış (görülmemiş sürüm hâli)
         var (window, _) = MainWindowHost.New(temp);
@@ -95,9 +95,32 @@ public class AboutWiringTests
         window.AboutOverlay.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange (AboutDialogHost deseni)
 
         var tabs = DsResources.Descendants(window.AboutOverlay).OfType<RadioButton>().ToList();
-        Assert.NotEmpty(tabs);
-        Assert.True(tabs[0].IsChecked); // Shortcuts
+        Assert.Equal("About", tabs[0].Content);
+        Assert.True(tabs[0].IsChecked);
         Assert.All(tabs.Skip(1), t => Assert.False(t.IsChecked));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[design v1.19.0 §2.10] About sekmesinin <c>What's new in {sürüm}</c> butonu About'u KAPATIR ve
+    /// What's new'i MainWindow'un KENDİ yolundan (sparkle butonuyla aynı <c>OnNotesRequested</c>) açar — okunmadı
+    /// noktası söner ve görüldü kararı kalıcı duruma yazılır. Diyalog MainWindow'u bilmez; yalnız isteği bildirir.</summary>
+    [StaFact]
+    public void The_whats_new_button_in_about_closes_about_and_opens_whats_new_through_the_window()
+    {
+        using var temp = new TempDir(); // taze — okunmadı noktası VAR
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+        Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility); // ön-koşul
+
+        Click(window.InfoButton);
+        window.AboutOverlay.UpdateLayout();
+        Click(window.AboutOverlay.WhatsNewButton);
+
+        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
+        Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
+        Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
+        Assert.Equal(AppIdentity.Version,
+            new JsonUiStateStore(System.IO.Path.Combine(temp.Path, "ui-state.json")).Load().SeenVersion);
         GC.KeepAlive(window);
     }
 

@@ -56,4 +56,19 @@ public class WhatsNewTests
         Assert.Equal(3, ReleaseNotes.OpenByDefault);
         Assert.Equal("Earlier versions (4)", ReleaseNotes.EarlierVersionsLabel(4));
     }
+
+    /// <summary>[design v1.19.0 §2.10/§2.11] "What's new in {sürüm}" cümlesinin TEK yeri: sparkle butonunun
+    /// görülmemiş-sürüm tooltip'i (MainWindow) ve About sekmesinin What's new butonu AYNI yardımcıdan okur.
+    /// Kaynak guard'ı: cümle kalıbı başka hiçbir üretim dosyasında literal olarak geçmez.</summary>
+    [Fact]
+    public void The_whats_new_in_sentence_has_a_single_source()
+    {
+        Assert.Equal("What's new in 1.2.3", ReleaseNotes.WhatsNewInLabel("1.2.3"));
+
+        var offenders = SourceGuard.ScanApp("*.cs", new System.Text.RegularExpressions.Regex("\"What's new in "),
+            allowedFiles: [System.IO.Path.Combine("Services", "ReleaseNotes.cs")], skipCommentLines: true)
+            .Concat(SourceGuard.ScanApp("*.xaml", new System.Text.RegularExpressions.Regex("What's new in "),
+                skipCommentLines: true));
+        Assert.Empty(offenders);
+    }
 }

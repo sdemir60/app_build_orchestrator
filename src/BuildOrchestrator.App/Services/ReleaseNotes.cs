@@ -64,6 +64,12 @@ public static class ReleaseNotes
     /// <summary>[§2.10] "Son 3 sürüm açık, gerisi katlı."</summary>
     public const int OpenByDefault = 3;
 
+    /// <summary>[design v1.13.1/v1.19.0 §2.10/§2.11] <c>What's new in {sürüm}</c> — cümlenin TEK yeri. İki tüketicisi
+    /// vardır: görülmemiş sürüm varken sparkle butonunun tooltip'i (MainWindow) ve About sekmesinin What's new
+    /// butonu (WhatsNewTests kaynak guard'ı pinler).</summary>
+    public static string WhatsNewInLabel(string version) =>
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, "What's new in {0}", version);
+
     /// <summary>Katlı kısmın ghost butonunun etiketi.</summary>
     public static string EarlierVersionsLabel(int count) =>
         string.Format(System.Globalization.CultureInfo.InvariantCulture, "Earlier versions ({0})", count);

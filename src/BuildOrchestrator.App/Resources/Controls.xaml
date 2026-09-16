@@ -689,8 +689,9 @@
     padding 1, gap 1 (:311-317). Seçenek (:332-352): padding '0 10px', radius-xs, text-xs/500;
     seçili surface-overlay + text-primary, seçili değil saydam + text-dim.
 
-    Varsayılan boy DS `size="sm"`dir (h=22 → dış 24): uygulamada Segment TEK yerde ve sm olarak kullanılır
-    (BuildApp.jsx:1585 `<DS.Segment size="sm" …>`), brief'in pinlediği ölçü de 24'tür.
+    Varsayılan boy DS `size="sm"`dir (h=22 → dış 24): action bar'ın Debug/Release seçicisi sm'dir
+    (BuildApp.jsx:1585 `<DS.Segment size="sm" …>`), brief'in pinlediği ölçü de 24'tür. [design v1.19.0 §2.10]
+    About'un sekme anahtarı DS'in `md` boyudur (h=24 → dış 26): Ds.Segment.Md yalnız yüksekliği değiştirir.
 
     TİP: ItemsControl + RadioButton — kaynak `role="radiogroup"` / `role="radio"` kullanır (:302, :332).
   -->
@@ -719,6 +720,10 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <Style x:Key="Ds.Segment.Md" TargetType="ItemsControl" BasedOn="{StaticResource Ds.Segment}">
+    <Setter Property="Height" Value="26" />
   </Style>
 
   <Style x:Key="Ds.Segment.Item" TargetType="RadioButton" BasedOn="{StaticResource Ds.Button.Base}">

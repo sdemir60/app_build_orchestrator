@@ -395,18 +395,19 @@ Esc closes the topmost layer first, so a lower one (an unsaved Settings draft, s
 ### About
 
 The `i` button sits at the right end of the title bar's command group, and `F1` toggles the same screen. Its
-heading holds both marks in one composition — the product mark, the product name and one mono line with the
-version and copyright on the left; a *licensed to* block with the company logo on the right. Three tabs
-follow, and ⓘ/`F1` always land on the first one:
+heading holds both marks in one composition — the product mark, the product name with a small version chip and
+the tagline on the left; a *licensed to* block with the company logo on the right. Three tabs follow, and
+ⓘ/`F1` always land on the first one:
 
-- **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
-  key can never drift from what the screen claims.
-- **Environment** — application and engine version, engine PID, .NET runtime, OS, the resolved `MSBuild.exe`
-  and its version, the repository root, and the state, log and worktree-pool paths. *Copy diagnostics* puts
-  all of it on the clipboard as one aligned block, headed by the product and version, to paste into a support
-  request.
-- **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
-  the Geist fonts under the SIL Open Font License.
+- **About** — a short description of what the app does, then the application version, the engine version (or
+  `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
+- **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS) and *Paths* (the resolved
+  `MSBuild.exe` and its version, the repository root, and the state, log and worktree-pool paths).
+- **Shortcuts** — the table above in two groups, *Build* and *Application*, rendered from the same source the
+  app binds its keys from, so a rebound key can never drift from what the screen claims.
+
+*Copy diagnostics* in the footer puts the product and version, the engine version and every Environment row on
+the clipboard as one aligned block, to paste into a support request.
 
 `MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
 Environment tab is opened rather than when the screen appears.
@@ -424,7 +425,7 @@ Changed / Fixed / Performance / Removed. The three newest versions are open and 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new
 version. Opening the dialog clears the dot for good; it does not return until the next version ships. About's
-`i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the Shortcuts tab.
+`i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the About tab.
 
 Esc closes whichever dialog is on top first: What's new, then About, then Settings, so a lower one's state
 survives a stray keypress.
@@ -510,6 +511,3 @@ here by default.
 The one third-party licence *text* that is included and redistributed is the **Geist** and **Geist Mono**
 fonts, licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`,
 which is copied into the publish output as `Assets\GEIST-LICENSE.txt`.
-
-The full inventory of third-party components — the NuGet packages the application ships with, their runtime
-versions and their licences — is listed in the About screen's *Third-party* tab.

@@ -96,6 +96,22 @@ public class NoTurkishUserTextTests
 
     private static string[] ExceptedFiles => [.. FileExceptions.Select(e => e.File)];
 
+    /// <summary>
+    /// Özel adlar — bir DİL metni değil, bir ADDIR; literalden ÇIKARILDIKTAN sonra kalan metin taranır. Dosya
+    /// muafiyetinden DAR tutulur: aynı literalin geri kalanı (ve aynı dosyanın diğer literalleri) guard'a tabi
+    /// kalır. Her biri TEK SATIR gerekçeyle.
+    /// </summary>
+    private static readonly (string Name, string Reason)[] ProperNounExceptions =
+    [
+        ("Delta Yazılım",
+         "Firmanın tescilli adı — telif satırının parçası (Directory.Build.props, design v1.19.0 §2.10, kullanıcı kararı)."),
+    ];
+
+    /// <summary>Bir ihlal satırından özel adlar çıkarılınca kural HÂLÂ eşleşiyor mu — eşleşmiyorsa ihlal yalnız
+    /// özel addan doğmuştur ve düşer.</summary>
+    private static IEnumerable<string> WithoutProperNouns(IEnumerable<string> offenders, Regex rule) =>
+        offenders.Where(o => rule.IsMatch(ProperNounExceptions.Aggregate(o, (text, n) => text.Replace(n.Name, ""))));
+
     // ================================================================================================
     // ANA GUARD
     // ================================================================================================
@@ -144,8 +160,8 @@ public class NoTurkishUserTextTests
         var offenders = new List<string>();
         foreach (var (pattern, _, _) in RepoScanSurfaces)
             foreach (var rule in new[] { TurkishCharacters, TurkishWords })
-                offenders.AddRange(SourceGuard.ScanRepoLiterals(
-                    pattern, rule, ignoredCallers: IgnoredCallers, excludedRootFolders: ExcludedRepoRoots));
+                offenders.AddRange(WithoutProperNouns(SourceGuard.ScanRepoLiterals(
+                    pattern, rule, ignoredCallers: IgnoredCallers, excludedRootFolders: ExcludedRepoRoots), rule));
 
         Assert.True(offenders.Count == 0, Report("Türkçe (script/MSBuild)", offenders));
     }
@@ -224,6 +240,40 @@ public class NoTurkishUserTextTests
                      + SourceGuard.ScanLiteralText(file, content, extension, TurkishCharacters, IgnoredCallers).Count;
             Assert.True(hits > 0, $"istisna ARTIK GEREKSİZ, kaldır: {file} ({reason})");
         }
+    }
+
+    [Fact] // Özel ad istisnası ÖLÜ kalmasın: ad hâlâ taranan bir yüzeyde geçiyor ve hâlâ ihlal doğuruyor mu?
+    public void Every_proper_noun_exception_is_still_live_and_still_needed()
+    {
+        foreach (var (name, reason) in ProperNounExceptions)
+        {
+            var hits = RepoScanSurfaces
+                .SelectMany(s => SourceGuard.ScanRepoLiterals(s.Pattern, TurkishCharacters, ignoredCallers: IgnoredCallers,
+                    excludedRootFolders: ExcludedRepoRoots))
+                .Concat(SourceGuard.ScanSrcLiterals("*.cs", TurkishCharacters, ExceptedFiles, IgnoredCallers))
+                .Concat(SourceGuard.ScanSrcLiterals("*.xaml", TurkishCharacters, ExceptedFiles, IgnoredCallers))
+                .Count(o => o.Contains(name, StringComparison.Ordinal));
+            Assert.True(hits > 0, $"istisna ARTIK GEREKSİZ, kaldır: {name} ({reason})");
+        }
+    }
+
+    [Fact] // Özel ad istisnası DAR mı: yalnız adı düşürür, aynı literaldeki Türkçe metni DÜŞÜRMEZ
+    public void A_proper_noun_is_exempt_but_Turkish_text_around_it_is_not()
+    {
+        const string fake = """
+            <Project>
+              <PropertyGroup>
+                <Copyright>© 2026 Delta Yazılım</Copyright>
+                <Description>Delta Yazılım tarafından geliştirildi</Description>
+              </PropertyGroup>
+            </Project>
+            """;
+
+        var raw = SourceGuard.ScanLiteralText("Fake.props", fake, ".props", TurkishCharacters);
+        Assert.Equal(2, raw.Count); // muafiyet OLMADAN ikisi de yakalanır
+
+        string only = Assert.Single(WithoutProperNouns(raw, TurkishCharacters));
+        Assert.Contains("tarafından", only);
     }
 
     // ================================================================================================
