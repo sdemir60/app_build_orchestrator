@@ -45,8 +45,9 @@ public static class ConsoleEmptyState
         ArgumentNullException.ThrowIfNull(row);
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
-        string reason = Reason(row);
-        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, now ?? DateTimeOffset.Now)];
+        var at = now ?? DateTimeOffset.Now;
+        string reason = Reason(row, at);
+        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, at)];
     }
 
     /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.</summary>
@@ -56,7 +57,7 @@ public static class ConsoleEmptyState
         && row.WillBuildReason == WillBuildReason.NeverBuilt;
 
     /// <summary>İlk satır: bu proje NEDEN bu durumda.</summary>
-    private static string Reason(ProjectRowViewModel row) => row.State switch
+    private static string Reason(ProjectRowViewModel row, DateTimeOffset now) => row.State switch
     {
         // Motor bu koşuda bu projeyi atladı ve gerekçesini SÖYLEDİ (SkipReasons — tek doğruluk kaynağı).
         ProjectRowState.Skipped => row.SkipReason switch
@@ -71,11 +72,11 @@ public static class ConsoleEmptyState
         // dizini silindi) sayfa boş kalmaz — ne olduğu söylenir.
         ProjectRowState.Succeeded => "Built in this run — its log is no longer on disk.",
         ProjectRowState.Failed => "Failed in this run — its log is no longer on disk.",
-        _ => Pending(row),
+        _ => Pending(row, now),
     };
 
     /// <summary>Henüz bu koşuda konuşulmamış satır: elde plan vardır (will-build üç durumlu).</summary>
-    private static string Pending(ProjectRowViewModel row)
+    private static string Pending(ProjectRowViewModel row, DateTimeOffset now)
     {
         // [Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e TAŞIMAZ
         // (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ama SkipReason'ı yine de taşır, tam da bu yüzden.
@@ -104,8 +105,23 @@ public static class ConsoleEmptyState
             WillBuildReason.LastFailed => $"{head} — its last build failed.",
             WillBuildReason.DepIssue => $"{head} — its last success was linked against a failed dependency.",
             WillBuildReason.SignatureChanged => $"{head} — the signature changed since the last successful build.",
+            // [Task 5 review round 1 — M-10] Bu koşu GERÇEKTEN koşullu bekletiyorsa (row.Conditional) "Will
+            // build"/"Queued" YALANDIR — proje kökü hâlâ hatalıysa bu koşu onu atlayabilir. Metin satırın kendi
+            // etiketiyle AYNI kaynaktan gelir (DecisionLabel.For'un Title'ı, RowWarning.DepIssuePrefix köküyle) —
+            // kopya YASAK: sayfa ve satır aynı cümleyi söyler. Conditional=false ise (satırdan Build, Rebuild,
+            // SCC üyesi) söz zorlanmıştır ve aşağıdaki genel dala düşer.
+            WillBuildReason.WaitingForDependency when row.Conditional => WaitingForDependencyReason(row, now),
             _ => $"{head} in this run.",
         };
+    }
+
+    /// <summary>[Task 5 review round 1 — M-10] <see cref="DecisionLabel.For"/>'un ürettiği tooltip metniyle
+    /// (kelimesi kelimesine) AYNI cümle — tek doğruluk kaynağı orada, burada yalnız çağrılır.</summary>
+    private static string WaitingForDependencyReason(ProjectRowViewModel row, DateTimeOffset now)
+    {
+        string title = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
+            now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix).Title;
+        return title.EndsWith('.') ? title : title + ".";
     }
 
     /// <summary>

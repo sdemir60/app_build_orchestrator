@@ -801,9 +801,11 @@ the same reason a compile is: there is nothing to build.
 whose signature is dirty (or unknown) is a **stale** input: the target links to that dependency's previous
 output. It is surfaced as a dependency issue (§8.3) — a warning line at the head of the target's log
 (`X has pending changes and was not rebuilt in this run — last known output referenced`, or the cycle wording
-for a cycle-mate), the triangle on the row, and the note in the build state — so the next `Build` compiles
-the target again. Without the note the target's fresh signature, which already contains the dependency's new
-source term, would read as up to date for good: the same permanent-stale-binary hole the `Cycles` scope
+for a cycle-mate), the triangle on the row, and the note in the build state, with that dependency's project id
+recorded as a root — so a later `Build` compiles the target again once that root is healthy again, rather than
+on every `Build` regardless (§8.3, `ConditionalRebuild`). Without the note the target's fresh signature, which
+already contains the dependency's new source term, would read as up to date for good: the same
+permanent-stale-binary hole the `Cycles` scope
 closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
 not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
 member built alone can never make its group read as up to date for the next `Cycles` run. External working
@@ -827,7 +829,7 @@ never shows a "skipped" row, is never counted as skipped, and never appears unde
 the engine's own pre-skip for it is not this run's business, so its status and colour do not change (§13.2).
 Only a project genuinely inside the scope — a cycle member or the upstream this run pulled in — that comes
 back `skipped — up to date` reads as a result. The project's own page is the one place the pre-skip does
-reach: opening it states the same reason the engine gave, because every pre-skipped project's will-build dot
+reach: opening it states the same reason the engine gave, because every pre-skipped project's will-build flag
 reads `false` for the run's whole life regardless of why (§13.2) — a page that stayed silent about the reason
 would read a possibly-dirty, merely-out-of-scope project as `Up to date`, which is not the same claim.
 
@@ -2072,7 +2074,7 @@ the scope never turns colour at all, and it never turns `Skipped` either: the en
 (`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
 reach the row's status or colour, the *Skipped* filter chip, or the skipped counter — those read the row
 exactly as a Sync left it, for the run's whole life. The one place the pre-skip does reach is the row's own
-project page: it states the same reason, because the run's own preview already forced the row's will-build dot
+project page: it states the same reason, because the run's own preview already forced the row's will-build flag
 `false` (every pre-skipped project's is, regardless of why, §8.1) and a page that said nothing would read a
 possibly-dirty, merely-out-of-scope project as `Up to date`. Only a row the run actually touched — a member,
 or the upstream it pulled in — can end the run coloured or counted.

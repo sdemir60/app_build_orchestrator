@@ -94,7 +94,7 @@ public static class ReleaseNotes
             new(NoteKind.Added, "Settings has an External projects section: git working copies outside the repository root, kept in build order."),
             new(NoteKind.Added, "External projects are scanned into the same graph as the repository's own and build first, in their own External group at the top of the list."),
             new(NoteKind.Added, "Pull before build, in the External projects header: every build refreshes each external working copy first — turn it off to build them exactly as they are on disk."),
-            new(NoteKind.Added, "Each row says what will happen to it and why: modified, affected, never built, failed · retry, or up to date with the age of its last successful build."),
+            new(NoteKind.Added, "Each row says what will happen to it and why: modified, affected, never built, failed · retry, up to date with the age of its last successful build, or — waiting on a dependency that has to recover first — affected · up to date with that age."),
             new(NoteKind.Added, "A behind chip next to the branch shows how far the repository has fallen behind its remote; clicking it fast-forwards — never a merge commit, never a rebase, never on a dirty tree."),
             new(NoteKind.Added, "The console reports where an external working copy landed after an update, and the Sync line says how many commits you are behind."),
             new(NoteKind.Added, "A layer heading in the project list is a shortcut too: hover lifts it, and clicking (mouse only) scrolls that group's first row up to sit just under the stacked headings above it. It only moves the scroll position — selection, the filter and the console are untouched."),
@@ -124,8 +124,8 @@ public static class ReleaseNotes
             new(NoteKind.Fixed, "Building a single project from its row no longer flickers the rest of the list amber: only the target project queues, and every other row stays neutral grey for the whole run."),
             new(NoteKind.Fixed, "Resolve cycles now queues only the cycle's own members in amber. Their dependencies wait grey and turn amber only while actually building, and projects outside the cycle are left untouched — never counted or listed as skipped, though their own project page still explains why they were not built."),
             new(NoteKind.Fixed, "A project that succeeded against a failing dependency is no longer rebuilt on every Build. It waits until that dependency is healthy again — built successfully in this run, or already successful on record — and then rebuilds in the same run."),
-            new(NoteKind.Changed, "A row waiting on a failed dependency reads \"affected · up to date · <age>\" in a faint tone, with a tooltip naming the dependency that has to succeed first; the decision slot widened to fit the longer label."),
-            new(NoteKind.Changed, "Counters, progress, and Sync's \"N to build\" line now count only projects that will definitely be built, not ones merely waiting on a dependency."),
+            new(NoteKind.Changed, "A row waiting on a failed dependency reads “affected · up to date · 2h” in a faint tone, with a tooltip naming which dependency has to be healthy again — built successfully, or already successful on record; the decision slot widened to fit the longer label."),
+            new(NoteKind.Changed, "The run's progress, the ribbon's counts and Sync's “N to build” line now count only projects that will definitely be built, not ones merely waiting on a dependency."),
         ]),
     ];
 }

@@ -207,8 +207,9 @@ the running instance first — tray icon → Exit).
    compiles the whole workspace; the second is incremental again.
 
 5. **Build / Rebuild** — from the split button and its menu:
-   - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on a
-     failure.
+   - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on
+     one of those — except a project that already built successfully against a dependency that was failing,
+     which waits until that dependency recovers instead of being retried every time.
    - *Rebuild* — all projects, cached state ignored.
    - *Clean* — `msbuild /t:Clean` on every solution, caches untouched. No engine behind it yet; the item is
      there and disabled, and says so.
@@ -252,8 +253,8 @@ project alone, and it compiles it even when nothing changed: pressing play is an
 *Rebuild* runs MSBuild's own clean-then-build for it, and *Clean* is Visual Studio's project clean —
 `msbuild /t:Clean` on that project, nothing compiled and no caches touched; afterwards the project is marked
 for building again, because its outputs are gone. Dependencies are never rebuilt, and one that is stale is
-reported as a dependency issue on the row and in the project log, so the next *Build* compiles the project
-again against fresh inputs.
+reported as a dependency issue on the row and in the project log, so a later *Build* compiles the project
+again once that dependency is healthy again — not on every *Build* regardless.
 Starting from a row clears the selection, so a graph focused on some node returns to the fitted view. While
 the run is in flight the row's play button becomes a red Stop and the other rows' actions wait.
 
