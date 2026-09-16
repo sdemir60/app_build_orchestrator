@@ -106,9 +106,21 @@ public partial class SettingsDialog : ModalDialog
     /// <summary>Bölümü seçer — raydaki tıklamanın yaptığının aynısı.</summary>
     internal void ShowSection(SettingsSection section) => RailItem(section).IsChecked = true;
 
+    /// <summary>[design v1.19.0 §2.9] Sayfalar TEK <c>Body</c> ScrollViewer'ını paylaşır: bölüm değişince (ray
+    /// tıklaması ya da <see cref="ShowSection"/>) yeni sayfa en üstten başlar, önceki sayfanın kaydırma payı taşınmaz.</summary>
+    private void OnSectionChecked(object sender, RoutedEventArgs e) => Body.ScrollToTop();
+
     /// <summary>[design v1.8.0 §2.9] First run: henüz workspace yok. Kaydetmek aynı zamanda kurulumdur (düğme
     /// <c>Save and sync</c> der) ve diyalog Workspace sayfasında açılır.</summary>
     private bool IsFirstRun => _run?.HasWorkspace != true;
+
+    /// <summary>[design v1.19.0 §2.9] Açılış bölümü: first run'da Workspace (başlamak için gereken tek zorunlu ayar
+    /// orada), sonrasında General.</summary>
+    private SettingsSection OpeningSection => IsFirstRun ? SettingsSection.Workspace : SettingsSection.General;
+
+    /// <summary>[design v1.19.0 §2.9] Açılışta odak, açılan sayfanın ilk girdisine gider (Workspace: repository root
+    /// input'u, General: ilk switch) — başlık satırının kapat düğmesine değil.</summary>
+    protected override UIElement InitialFocusScope => Page(OpeningSection);
 
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
@@ -123,11 +135,10 @@ public partial class SettingsDialog : ModalDialog
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();
-        // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir: first run'da Workspace (başlamak için
-        // gereken tek zorunlu ayar orada), sonrasında General.
-        ShowSection(IsFirstRun ? SettingsSection.Workspace : SettingsSection.General);
-        // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, odağı diyaloğun İÇİNE taşıma (ilk
-        // input tercih edilir) ve giriş ModalDialog'dadır.
+        // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir (OpeningSection).
+        ShowSection(OpeningSection);
+        // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, giriş ve odağı diyaloğun İÇİNE taşıma
+        // ModalDialog'dadır; odağın düşeceği yer açılan sayfadır (InitialFocusScope → sayfanın ilk girdisi).
         //
         // [DEĞİŞEN KURAL — design v1.19.0] ESKİ: Settings giriş animasyonu OYNATMAZDI (yalnız About ve What's
         // new oynatırdı); prototipin ortak DialogShell'i ds-dialog-in'i üçüne de takar — Settings de 180ms fade
@@ -169,6 +180,9 @@ public partial class SettingsDialog : ModalDialog
     {
         if (sender is FrameworkElement { DataContext: ExternalRowViewModel row }) _draft?.RemoveExternal(row);
     }
+
+    // [design v1.19.0 §2.9] External projects'in alt satırındaki "Pull before build" düğmesi: anahtar General'dadır.
+    private void OnShowGeneral(object sender, RoutedEventArgs e) => ShowSection(SettingsSection.General);
 
     // ---- Workspace (design v1.8.0 §2.9) ----
 

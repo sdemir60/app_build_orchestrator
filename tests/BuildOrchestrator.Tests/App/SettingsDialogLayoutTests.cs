@@ -476,7 +476,35 @@ public class SettingsDialogLayoutTests
         dialog.Draft!.RepositoryRoot = @"D:\repo";
         dialog.UpdateLayout();
         Assert.True(dialog.Save.IsEnabled);
-        Assert.True(reason.Visibility != Visibility.Visible || string.IsNullOrEmpty(reason.Text),
-            "Save açıkken neden satırı görünmemeli");
+        // Save açıkken neden YOKTUR: boş metinli ama "Visible" bir satır değil, düpedüz Collapsed.
+        Assert.Null(dialog.Draft!.SaveBlockedReason);
+        Assert.Equal(Visibility.Collapsed, reason.Visibility);
+    }
+
+    // ---------------------------------------------------------------- kaydırma
+
+    /// <summary>Sayfaların hepsi TEK <c>Body</c> ScrollViewer'ında durur; bölüm değişince önceki sayfanın kaydırma
+    /// payı yeni sayfaya taşınmaz — yeni sayfa en üstten başlar (ray tıklaması da <see cref="SettingsDialog.ShowSection"/>
+    /// da aynı yoldan).</summary>
+    [StaFact]
+    public void Switching_sections_starts_the_new_page_at_the_top()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r =>
+        {
+            r.LayerPatterns = [.. Enumerable.Range(0, 20).Select(i => new LayerPattern(i, "^A" + i, "Layer " + i))];
+            r.ExternalProjects = [.. Enumerable.Range(0, 20).Select(i => new ExternalProject(@"C:\ext" + i))];
+        });
+        using var _scope = scope;
+
+        dialog.ShowSection(SettingsSection.Layers);
+        dialog.UpdateLayout();
+        dialog.Body.ScrollToVerticalOffset(200);
+        dialog.UpdateLayout();
+        Assert.Equal(200.0, dialog.Body.VerticalOffset, precision: 1); // ön-koşul: gerçekten kaydı
+
+        dialog.RailItem(SettingsSection.External).IsChecked = true;
+        dialog.UpdateLayout();
+        Assert.True(dialog.Body.ScrollableHeight > 200, "External sayfası da kayacak kadar uzun olmalı (ayırt edicilik)");
+        Assert.Equal(0.0, dialog.Body.VerticalOffset);
     }
 }

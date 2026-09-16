@@ -132,7 +132,11 @@ the running instance first — tray icon → Exit).
    rail — **General**, **Workspace**, **External projects**, **Layers** — and on first run it opens on
    Workspace, where the repository root lives (the one thing the tool cannot run without — *Save* stays
    disabled while it is empty, and the footer says why); afterwards it opens on General. External projects and
-   layers are optional. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
+   layers are optional.
+
+   **General** holds switches in three groups — Startup, Build and Notifications. *Pull before build* (see
+   step 4) is the one that works today; *Start with Windows*, *Start minimized to tray*, *Close to tray* and
+   *Show notifications* are shown but not wired yet, are not saved, and reset whenever the dialog opens. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
    run it reads *Save and sync*. If you already have a settings file, *Import
    settings…* on the invitation opens the dialog with the file picker already up.
 
@@ -190,7 +194,8 @@ the running instance first — tray icon → Exit).
    to no project at all is called out: Sync warns, Build refuses to start.
 
    Before each Build their working copies are refreshed, in card order — unless you turn **Pull before build**
-   off, the switch at the top of that page. Each root gets a fetch and a fast-forward — never a `pull`, so
+   off, under *Settings → General* (the line at the bottom of the External projects page says whether it is on
+   and takes you there). Each root gets a fetch and a fast-forward — never a `pull`, so
    nothing is rewritten on your behalf.
    **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
    commit or stash them and press Build again. A branch that has diverged from its remote stops the

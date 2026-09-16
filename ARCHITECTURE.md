@@ -2283,8 +2283,9 @@ host being the dialog's own area, which the scrim stretches over the whole windo
 window is resized; the arithmetic lives in one pure function (`DialogSize`). The shell's behaviour is shared the
 same way: a scrim press closes the dialog while a press inside the frame never reaches the scrim, Esc closes it
 and is marked handled, the scrim is a cyclic focus scope so Tab cannot escape to the window behind, and opening
-lays the dialog out before moving keyboard focus to its first control — before layout, focus navigation finds
-nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
+lays the dialog out before moving keyboard focus inside — to the first control of a subtree the dialog names
+(Settings names the page it opens on), or else to the first control of the dialog — because before layout,
+focus navigation finds nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
 duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
 typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
 is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
@@ -2299,13 +2300,22 @@ reserved for status. The rows are radio buttons, so the rail is reachable and na
 External projects and Layers carry a mono count of the draft's cards on the right, drawn only while it is above
 zero and following the draft live. The right pane scrolls on its own, so switching sections never resizes the
 dialog, and its scrollbar column stays reserved whether a scrollbar is needed or not — a list crossing the
-overflow threshold does not shave pixels off every input already on screen. Every page opens with the same head:
-a title and a single line of description. The dialog opens on Workspace on first run — the one setting the tool
-cannot run without lives there — and on General every time after that.
+overflow threshold does not shave pixels off every input already on screen. All pages share that one scroller,
+so switching sections starts the new page at the top rather than at the previous page's offset. Every page opens
+with the same head: a title and a single line of description. The dialog opens on Workspace on first run — the
+one setting the tool cannot run without lives there — and on General every time after that, with keyboard focus
+on the first input of that page: the repository root input, or the first switch.
 
 The rail exists because settings grow. A single column put every section under the previous one and each new
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
-without widening the dialog. **General** is that place, and for now it holds only its page head.
+without widening the dialog. **General** is that place. Its rows come from one catalog
+(`GeneralSettingsCatalog`) in three groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
+to tray*), *Build* (*Pull before build*) and *Notifications* (*Show notifications*) — and every row is drawn by
+one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
+right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
+no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
+switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Only
+*Pull before build* drives behaviour so far; the other four switches live in the draft alone (§20).
 
 **Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
 required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
@@ -2319,14 +2329,15 @@ independently, each against its own collection. An empty path on any card disabl
 an empty layer name. The list starts **empty** and shows the same dashed empty-state box the Layers page uses.
 *Add external project* appends a blank card.
 
-Under the page head sits a **rule row**: a hairline stretching across, then a caps *Pull before build* label with
-a switch. It reads as a setting that belongs to the section, which is what it is — whether every build refreshes
-these working copies first (§10.6). It is
-deliberately not a chip in the action bar: that bar carries per-run choices (configuration, perf, branch,
-worktree), while this one follows the external list itself and changes rarely. The explanation lives in a
-tooltip rather than a second description line, so the body text and the card list are untouched. The switch
-follows the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and
-*Clear* returns it to on rather than off.
+*Pull before build* — whether every build refreshes these working copies first (§10.6) — is a switch on
+**General**, not on this page: it is a behaviour of the build, and General is where the dialog collects those, so
+the external page stays a list. The page still says where the switch went and what it is set to: under the cards
+a hairline and one line read *Card order sets the order the working copies are updated. Updating them before a
+build is on* (or *off*, following the draft live), followed by a ghost *Pull before build* button that moves the
+rail to General. The switch is deliberately not a chip in the action bar: that bar carries per-run choices
+(configuration, perf, branch, worktree), while this one follows the external list and changes rarely. It follows
+the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and *Clear*
+returns it to on rather than off.
 The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync scans
 each card's path and the projects it finds join the graph as ordinary rows, Build updates their working copies
 first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
@@ -2362,7 +2373,7 @@ they were applied, it would carry stale ones: the grouping would be wrong for a 
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
-The switch has a note of its own, and it is quieter still: it prints only when the value actually changed
+The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
 *and* external projects are defined — `Pull before build on — external working copies update first`, or
 `Pull before build off — external working copies are used as they are`. In a workspace with no external
 projects the flag does nothing, and saying otherwise would describe work that is not happening.
@@ -2394,7 +2405,8 @@ starts there anyway and the note would be noise.
 pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
 layers (the field order the file is written in, not just a key that happens to be present) and holding only
 cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
-every external card, and returns the switch to on. All
+every external card, and returns every General switch to its default — *Pull before build* to on. Of General,
+only *Pull before build* travels in the file. All
 three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
@@ -2408,7 +2420,7 @@ name` or `Check the highlighted pattern`, in that order of priority. The draft d
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits `pullExternalBeforeBuild` leaves the switch where it is, the same rule the external list
+A file that omits `pullExternalBeforeBuild` leaves the pull switch where it is, the same rule the external list
 already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
@@ -3962,6 +3974,9 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
+- **Four General switches are not wired yet.** *Start with Windows*, *Start minimized to tray*, *Close to tray*
+  and *Show notifications* live only in the Settings draft: they are not saved, exported or imported, and change
+  no behaviour — every time the dialog opens they are back at their defaults.
 
 ---
 
@@ -4237,6 +4252,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings General page catalog (groups, rows, defaults, dependencies) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 

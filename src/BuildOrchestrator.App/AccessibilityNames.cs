@@ -192,7 +192,8 @@ public static class AccessibilityNames
     /// <summary>Harici proje kartındaki mono path input'u — kolon başlığı "PROJECT PATH", watermark bir
     /// ÖRNEK yoldur, etiket değildir.</summary>
     public const string ExternalProjectPath = "External project path";
-    /// <summary>[design v1.15.0 §2.9] Bölüm başlığındaki switch — ekran okuyucu caps etiketi değil bu adı duyar.</summary>
+    /// <summary>[design v1.15.0 → v1.19.0 §2.9] General → BUILD grubundaki Pull before build switch'i — ekran okuyucu
+    /// kısa etiketi değil, ne güncellendiğini söyleyen bu adı duyar (GeneralSettingsCatalog).</summary>
     public const string PullExternalsBeforeBuild = "Pull external working copies before build";
 
     // ---- [A13/T5] Worktree popover: hedef satırı ----

@@ -1086,14 +1086,55 @@
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
   </Style>
 
-  <!-- Caps etiket/kolon başlığı (REPOSITORY ROOT, LAYER NAME/PATTERN, PULL BEFORE BUILD hepsi AYNI font kimliğini
-       paylaşır) — Margin/Text/hizalama ÇAĞIRANDA kalır (o kısımlar gerçekten farklı). -->
+  <!-- Caps etiket/kolon başlığı (REPOSITORY ROOT, LAYER NAME/PATTERN hepsi AYNI font kimliğini paylaşır) —
+       Margin/Text/hizalama ÇAĞIRANDA kalır (o kısımlar gerçekten farklı). -->
   <Style x:Key="Ds.Settings.CapsHeading" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.2xs}" />
     <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Emphasis}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
   </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip `caps`] General sayfasının grup başlığı (STARTUP · BUILD · NOTIFICATIONS):
+       kolon başlığıyla AYNI font kimliği, tek farkı text-dim (kolon başlıkları text-faint'tir, prototip `colCap`). -->
+  <Style x:Key="Ds.Settings.GroupHeading" TargetType="TextBlock" BasedOn="{StaticResource Ds.Settings.CapsHeading}">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip ToggleRow] Standart ayar satırı — General'ın TÜM satırları bu tek şablonla
+       çizilir (veri: GeneralSettingRowViewModel). Yatay, üstten hizalı; padding 13 0; satırlar arası 1px
+       border-subtle (grubun ilk satırında YOK). Solda ad 13px/500 text-primary + 3px altında açıklama 12px text-dim
+       snug, en çok 430; sağda 20px arayla Ds.Switch (üstten 1). UIA adı SwitchName (etiket; pull'da mevcut ad).
+       Bağımlı satır (IsEnabled=False): switch DS'in kendi pasif opaklığına söner, metin sütunu AYNI değeri switch'ten
+       okur — opaklık iki yerde yazılmaz ve switch iki kez sönmez; layout değişmez. -->
+  <Style x:Key="Ds.Settings.ToggleRow" TargetType="Border">
+    <Setter Property="Padding" Value="0,13" />
+    <Setter Property="BorderThickness" Value="0,1,0,0" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderSubtle}" />
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding IsFirstInGroup}" Value="True">
+        <Setter Property="BorderThickness" Value="0" />
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+  <DataTemplate x:Key="Ds.Settings.ToggleRowTemplate">
+    <Border Style="{DynamicResource Ds.Settings.ToggleRow}" IsEnabled="{Binding IsEnabled}">
+      <DockPanel>
+        <CheckBox x:Name="Switch" DockPanel.Dock="Right" Margin="20,1,0,0" VerticalAlignment="Top"
+                  Style="{DynamicResource Ds.Switch}"
+                  AutomationProperties.Name="{Binding SwitchName}"
+                  IsChecked="{Binding IsOn, Mode=TwoWay}" />
+        <StackPanel Opacity="{Binding Opacity, ElementName=Switch}">
+          <TextBlock Text="{Binding Label}" FontSize="{DynamicResource FontSize.Sm}"
+                     FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextPrimary}" />
+          <TextBlock Text="{Binding Description}" Margin="0,3,0,0" MaxWidth="430" HorizontalAlignment="Left"
+                     TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight"
+                     LineHeight="{DynamicResource LineHeight.Snug12}"
+                     FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </DataTemplate>
 
   <!-- Kart kabuğu (katman VE harici proje kartı) — 36px, 1px border, radius-md; sürüklenirken surface-raised +
        border-strong (IsDragging, IDragReorderItem'ın İKİ türevi de taşır: LayerRowViewModel + ExternalRowViewModel). -->

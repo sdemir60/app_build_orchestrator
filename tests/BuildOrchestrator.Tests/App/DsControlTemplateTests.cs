@@ -270,7 +270,7 @@ public class DsControlTemplateTests
     }
 
     /// <summary>
-    /// Etiketsiz switch (Ayarlar → PULL BEFORE BUILD, BuildApp.jsx:1903) yalnız ray kadar yer kaplar. Kaynakta
+    /// Etiketsiz switch (Ayarlar → General'ın ayar satırları, Ds.Settings.ToggleRow) yalnız ray kadar yer kaplar. Kaynakta
     /// etiket ile ray arası `gap: 8`dir (:843) ve CSS gap tek çocukta boşluk üretmez; şablondaki 8px margin ise
     /// içerik yokken de kalıyor ve switch'in sağına görünmez bir 8px ekliyordu.
     /// </summary>

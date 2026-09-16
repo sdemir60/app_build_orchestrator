@@ -14,9 +14,9 @@ using static BuildOrchestrator.Tests.App.MainWindowHost;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [design v1.15.0 §2.9] EXTERNAL PROJECTS bölümünün başlık satırındaki <c>Pull before build</c> switch'i:
-/// harici çalışma kopyaları her build'den ÖNCE güncellensin mi. Bölüme ait bir KURAL olduğu için kartların
-/// yanında değil başlıkta durur; alt bara (per-run seçimler) konulmaz.
+/// [design v1.15.0 → v1.19.0 §2.9] <c>Pull before build</c> switch'i: harici çalışma kopyaları her build'den ÖNCE
+/// güncellensin mi. Settings → General'ın BUILD grubunda durur (v1.15.0'da External projects bölümünün başlık
+/// satırındaydı); alt bara (per-run seçimler) konulmaz.
 ///
 /// <para>Dialog kuralı korunur: <b>Save'e kadar hiçbir şey uygulanmaz</b>. Varsayılan AÇIK — bayrak öncesi
 /// kaydedilmiş bir kurulum bugünkü davranışı sürdürür.</para>
@@ -141,26 +141,37 @@ public class PullBeforeBuildTests
 
     // ---------------------------------------------------------------- görünüm
 
+    private static CheckBox PullSwitch(BuildOrchestrator.App.Views.SettingsDialog dialog) =>
+        DsResources.RealizedObjects(dialog.Page(BuildOrchestrator.App.Views.SettingsSection.General)).OfType<CheckBox>()
+            .Single(c => System.Windows.Automation.AutomationProperties.GetName(c) == AccessibilityNames.PullExternalsBeforeBuild);
+
+    /// <summary>[DEĞİŞEN KURAL — design v1.19.0 §2.9] ESKİ İDDİA
+    /// (<c>The_section_header_carries_the_caps_label_the_switch_and_its_tooltip</c>): switch External projects
+    /// sayfasının başındaki kural satırında, <c>PULL BEFORE BUILD</c> caps etiketi ve açıklama tooltip'iyle dururdu.
+    /// Ayarlar çoğaldıkça davranış anahtarları General'da toplandı: switch artık BUILD grubunun satırıdır (etiket +
+    /// tek satır açıklama, tooltip yok). Yeri değişti, bağı değişmedi — taslağın gerçek bayrağına bağlıdır ve Save
+    /// onu UiState'e ve RunViewModel'e götürür.</summary>
     [StaFact]
     [Trait("Category", "Wpf")]
-    public void The_section_header_carries_the_caps_label_the_switch_and_its_tooltip()
+    public void The_general_page_carries_the_switch_and_save_applies_it()
     {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized(r => r.ExternalProjects = [Mail]);
         using var _scope = scope;
 
-        // [DEĞİŞEN KURAL — design v1.19.0 §2.9] Satır External projects SAYFASINDA durur; soldaki
-        // "EXTERNAL PROJECTS" caps etiketi kalktı (sayfanın başlığı PaneHead'dir, tekrar etmez).
-        var page = dialog.Page(BuildOrchestrator.App.Views.SettingsSection.External);
-        var texts = DsResources.RealizedObjects(page).OfType<TextBlock>().Select(t => t.Text).ToList();
-        Assert.DoesNotContain("EXTERNAL PROJECTS", texts);
-        Assert.Contains("PULL BEFORE BUILD", texts);
-
-        var toggle = DsResources.RealizedObjects(page).OfType<CheckBox>()
-            .Single(c => c.Name == "PullExternalsSwitch");
+        var toggle = PullSwitch(dialog);
         Assert.Equal(dialog.FindResource("Ds.Switch"), toggle.Style);
         Assert.True(toggle.IsChecked);                                  // varsayılan AÇIK
-        Assert.Equal(AccessibilityNames.PullExternalsBeforeBuild,
-            System.Windows.Automation.AutomationProperties.GetName(toggle));
+        Assert.Null(toggle.ToolTip);
+
+        toggle.IsChecked = false;
+        Assert.False(dialog.Draft!.PullExternalsBeforeBuild);
+        Assert.True(run.UpdateExternals);                               // Save'e kadar uygulanmaz
+
+        dialog.Save.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+        Assert.False(store.State.UpdateExternals);
+        DispatcherPump.PumpUntil(() => !run.UpdateExternals, TimeSpan.FromSeconds(5));
+        Assert.False(run.UpdateExternals);
     }
 
     [StaFact]
@@ -170,8 +181,6 @@ public class PullBeforeBuildTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.UpdateExternals = false);
         using var _scope = scope;
 
-        var toggle = DsResources.RealizedObjects(dialog).OfType<CheckBox>()
-            .Single(c => c.Name == "PullExternalsSwitch");
-        Assert.False(toggle.IsChecked);
+        Assert.False(PullSwitch(dialog).IsChecked);
     }
 }

@@ -80,6 +80,27 @@ public class SettingsDialogFocusTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.19.0 §2.9] Açılışta odak, açılan SAYFANIN ilk girdisine gider — başlık satırının kapat
+    /// düğmesine değil: first run'da (Workspace) repository root input'u, sonraki açılışlarda (General) ilk switch.
+    /// <para><b>Ölçüldü (kırmızı):</b> kabuğun genel kuralı (<c>MoveFocus(First)</c>) scrim'in ilk odaklanabilir
+    /// kontrolünü seçer; o da başlık satırındaki kapat (X) düğmesiydi.</para></summary>
+    [StaFact]
+    public void Opening_focuses_the_first_input_of_the_opened_page()
+    {
+        var (firstRun, _, _, firstScope) = SettingsDialogHost.OpenRealized(r => r.RootPath = "");
+        using (firstScope)
+            Assert.Same(firstRun.RootInput, Keyboard.FocusedElement);
+
+        var (later, _, _, laterScope) = SettingsDialogHost.OpenRealized();
+        using (laterScope)
+        {
+            var focused = Keyboard.FocusedElement as CheckBox;
+            Assert.NotNull(focused);
+            Assert.True(DsResources.IsSelfOrDescendantOf(focused, later.Page(SettingsSection.General)));
+            Assert.Equal("Start with Windows", AutomationProperties.GetName(focused));
+        }
+    }
+
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 
     /// <summary>[A13/T3b · b2 → design v1.19.0 §2.9] Settings kabuğu 880×576 SABİT.

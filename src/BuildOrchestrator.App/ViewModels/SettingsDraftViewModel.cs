@@ -79,10 +79,28 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// tek gerçek varsayılan boş listedir).</summary>
     public ObservableCollection<ExternalRowViewModel> Externals { get; } = [];
 
-    /// <summary>[design v1.15.0 §2.9] Harici çalışma kopyaları her build'den ÖNCE güncellensin mi — EXTERNAL
-    /// PROJECTS bölümünün başlık satırındaki switch. Bölüme ait bir KURAL olduğu için kartların yanında değil
-    /// başlıkta durur. Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
-    [ObservableProperty] private bool _pullExternalsBeforeBuild = true;
+    /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
+    /// doğar (sıra/metin burada yeniden yazılmaz).
+    /// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <c>Start with Windows</c>, <c>Start minimized
+    /// to tray</c>, <c>Close to tray</c> ve <c>Show notifications</c> yalnız bu taslakta yaşar — <see cref="CommitAsync"/>
+    /// onları yazmaz, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşımaz, konsola not düşmez; diyalog her açılışta
+    /// yeni bir taslak kurduğu için varsayılana dönerler. <see cref="ClearAll"/> onları da varsayılanına döndürür
+    /// (prototip parity). Yalnız <c>Pull before build</c> gerçektir: <see cref="PullExternalsBeforeBuild"/>.</para></summary>
+    public IReadOnlyList<GeneralSettingGroupViewModel> GeneralGroups { get; }
+
+    private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];
+
+    /// <summary>Bir General anahtarının taslak satırı.</summary>
+    public GeneralSettingRowViewModel GeneralRow(GeneralSetting setting) => _generalRows[setting];
+
+    /// <summary>[design v1.15.0 → v1.19.0 §2.9] Harici çalışma kopyaları her build'den ÖNCE güncellensin mi — General
+    /// sayfasının BUILD grubundaki <c>Pull before build</c> satırının KENDİSİ (iki yüz tek değer). Varsayılan AÇIK;
+    /// Save'e kadar yalnız taslaktır.</summary>
+    public bool PullExternalsBeforeBuild
+    {
+        get => GeneralRow(GeneralSetting.PullBeforeBuild).IsOn;
+        set => GeneralRow(GeneralSetting.PullBeforeBuild).IsOn = value;
+    }
 
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
@@ -100,7 +118,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true)
     {
         _repositoryRoot = repositoryRoot;
-        _pullExternalsBeforeBuild = pullExternalsBeforeBuild;
+        GeneralGroups = BuildGeneralGroups();
+        PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -184,7 +203,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     public void ClearAll()
     {
         RepositoryRoot = null;
-        PullExternalsBeforeBuild = true; // [§2.9 v1.15.0] switch VARSAYILANINA döner, kapanmaz
+        // [§2.9] General anahtarları (pull dahil) VARSAYILANINA döner — kapanmaz.
+        foreach (var row in _generalRows.Values) row.IsOn = row.Definition.Default;
         for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
         for (int i = Externals.Count - 1; i >= 0; i--) RemoveExternal(Externals[i]);
     }
@@ -226,6 +246,32 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.UpdateExternals = PullExternalsBeforeBuild;
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild);
+    }
+
+    /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
+    /// <see cref="PullExternalsBeforeBuild"/> bildirimine bağlar.</summary>
+    private List<GeneralSettingGroupViewModel> BuildGeneralGroups()
+    {
+        var groups = GeneralSettingsCatalog.Groups.Select((g, gi) => new GeneralSettingGroupViewModel(
+            g.Title, gi == 0, [.. g.Rows.Select((d, ri) => new GeneralSettingRowViewModel(d, ri == 0))])).ToList();
+        foreach (var row in groups.SelectMany(g => g.Rows)) _generalRows.Add(row.Definition.Setting, row);
+
+        foreach (var row in _generalRows.Values)
+        {
+            if (row.Definition.DependsOn is not { } parentKey) continue;
+            var parent = _generalRows[parentKey];
+            row.IsEnabled = parent.IsOn;
+            parent.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) row.IsEnabled = parent.IsOn;
+            };
+        }
+
+        _generalRows[GeneralSetting.PullBeforeBuild].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(PullExternalsBeforeBuild));
+        };
+        return groups;
     }
 
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);

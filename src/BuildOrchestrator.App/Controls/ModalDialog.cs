@@ -112,8 +112,18 @@ public class ModalDialog : UserControl
         UpdateLayout();
         if (_frame is not null) PopIn.PlayDialog(_frame);
         Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bir şey bulamazsa bile odak burada kalır)
+        // Dialog bir kapsam verdiyse odak onun İLK odaklanabilir çocuğuna gider (Next, kapsamın kendisinden sonraki
+        // ilk sekme durağıdır = ilk çocuğu); kapsam boşsa ve gezinme dışarı kaçtıysa genel kurala düşülür.
+        if (InitialFocusScope is { } scope
+            && scope.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next))
+            && scope.IsKeyboardFocusWithin)
+            return;
         _scrim?.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
     }
+
+    /// <summary>Açılışta odağın aranacağı alt ağaç (ör. Settings'in açılan sayfası); <c>null</c> (varsayılan) = scrim'in
+    /// ilk odaklanabilir kontrolü. <see cref="ShowDialog"/> yerleşimden SONRA okur.</summary>
+    protected virtual UIElement? InitialFocusScope => null;
 
     /// <summary>Dialogu kapatır — Close/Cancel düğmeleri, scrim, Esc ve MainWindow'un Esc güvenlik ağı (odak
     /// dialog dışındayken) hep BU yoldan geçer.</summary>

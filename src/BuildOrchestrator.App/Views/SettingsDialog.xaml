@@ -93,7 +93,7 @@
                 IsEnabled="{Binding CanSave}" Style="{DynamicResource Ds.Button.Primary.Md}" />
       </StackPanel>
       <!-- Geri bildirim ve neden AYNI yuvayı paylaşır: neden yalnız geri bildirim satırı boşken görünür. Neden metni
-           taslaktan gelir (SaveBlockedReason — Save açıkken null, yani görünse de boştur). -->
+           taslaktan gelir (SaveBlockedReason — Save açıkken null ve satır Collapsed). -->
       <Grid Margin="10,0" VerticalAlignment="Center">
         <TextBlock x:Name="FeedbackText" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                    FontSize="{DynamicResource FontSize.Xs}" />
@@ -106,6 +106,10 @@
               <Style.Triggers>
                 <DataTrigger Binding="{Binding Text, ElementName=FeedbackText}" Value="">
                   <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+                <!-- Save açıkken neden YOK: boş metinli görünür bir satır bırakılmaz (sonraki tetikleyici önce gelir). -->
+                <DataTrigger Binding="{Binding SaveBlockedReason}" Value="{x:Null}">
+                  <Setter Property="Visibility" Value="Collapsed" />
                 </DataTrigger>
               </Style.Triggers>
             </Style>
@@ -125,10 +129,11 @@
     <!-- Bölüm rayı (196px): surface zemin (dialogdan bir kademe koyu — iki panel okuması buradan gelir), sağda
          border-subtle, padding 10 8. Sıra General · Workspace · External projects · Layers; sayaçlar taslaktan
          CANLI okunur (Tag → Ds.Settings.RailItem şablonu, yalnız >0 iken görünür). Açılış bölümü kod-tarafıdır
-         (Open). -->
+         (Open). Bölüm değişince (tıklama ya da ShowSection) sayfa en üstten başlar: sayfalar TEK ScrollViewer'ı
+         paylaşır ve önceki sayfanın kaydırma payı yeniye taşınmamalı (OnSectionChecked). -->
     <Border x:Name="Rail" Grid.Column="0" Width="196" Padding="8,10" BorderThickness="0,0,1,0"
             Background="{DynamicResource Brush.Surface}" BorderBrush="{DynamicResource Brush.BorderSubtle}">
-      <StackPanel>
+      <StackPanel ToggleButton.Checked="OnSectionChecked">
         <RadioButton x:Name="GeneralRailItem" Content="General" Style="{DynamicResource Ds.Settings.RailItem}" />
         <RadioButton x:Name="WorkspaceRailItem" Content="Workspace" Style="{DynamicResource Ds.Settings.RailItem}" />
         <RadioButton x:Name="ExternalRailItem" Content="External projects" Tag="{Binding Externals.Count}"
@@ -148,12 +153,31 @@
       <Grid Margin="20,20,20,24">
 
         <!-- ============================ GENERAL ============================
-             [design v1.19.0] Şimdilik yalnız sayfa iskeleti + PaneHead; ayar satırları sonraki adımda gelir. -->
+             [design v1.19.0 §2.9] Gruplar ve satırlar GeneralSettingsCatalog'dan (taslak: GeneralGroups) doğar; her
+             satır TEK şablonla çizilir (Ds.Settings.ToggleRow) — yeni ayar = kataloğa bir satır, burada düzen işi yok.
+             Grup: caps başlık (Ds.Settings.GroupHeading) → 5px → satırlar; gruplar arası 22px. Yalnız Pull before
+             build davranışa bağlıdır; diğer dört anahtar henüz yalnız taslaktır (SettingsDraftViewModel.GeneralGroups). -->
         <StackPanel x:Name="GeneralPage"
                     Visibility="{Binding IsChecked, ElementName=GeneralRailItem, Converter={StaticResource PageVisibility}}">
           <TextBlock Text="General" Style="{DynamicResource Ds.Settings.PaneTitle}" />
           <TextBlock Text="How the app starts and behaves. Every setting applies when you save."
                      Style="{DynamicResource Ds.Settings.PaneDescription}" />
+          <ItemsControl x:Name="GeneralGroupsList" ItemsSource="{Binding GeneralGroups}" Focusable="False">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="{x:Type vm:GeneralSettingGroupViewModel}">
+                <StackPanel x:Name="Group" Margin="0,22,0,0">
+                  <TextBlock Text="{Binding Title}" Style="{DynamicResource Ds.Settings.GroupHeading}" />
+                  <ItemsControl Margin="0,5,0,0" Focusable="False" ItemsSource="{Binding Rows}"
+                                ItemTemplate="{DynamicResource Ds.Settings.ToggleRowTemplate}" />
+                </StackPanel>
+                <DataTemplate.Triggers>
+                  <DataTrigger Binding="{Binding IsFirst}" Value="True">
+                    <Setter TargetName="Group" Property="Margin" Value="0" />
+                  </DataTrigger>
+                </DataTemplate.Triggers>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
         </StackPanel>
 
         <!-- ============================ WORKSPACE ============================
@@ -165,8 +189,21 @@
           <TextBlock Text="The folder that holds the solutions. Projects and the dependency graph are discovered from it on Sync."
                      Style="{DynamicResource Ds.Settings.PaneDescription}" />
           <TextBlock Text="REPOSITORY ROOT" Margin="0,0,0,7" Style="{DynamicResource Ds.Settings.CapsHeading}" />
-          <DockPanel LastChildFill="True">
-            <Button DockPanel.Dock="Right" Margin="8,0,0,0" Click="OnChangeRepository"
+          <!-- Grid (DockPanel DEĞİL): input ağaçta Browse'dan ÖNCE gelir — Tab sırası input → Browse ve açılış odağı
+               sayfanın ilk girdisine (input'a) düşer (ModalDialog.InitialFocusScope). -->
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <!-- Watermark bir ÖRNEK yoldur, ürüne özel değildir; ad ayrıca verilir. -->
+            <TextBox x:Name="RepoRootInput" Grid.Column="0" VerticalAlignment="Center"
+                     Style="{DynamicResource Ds.Input}"
+                     FontFamily="{x:Static controls:AppFonts.Mono}"
+                     controls:DsChrome.Watermark="D:\src\myapp"
+                     AutomationProperties.Name="{x:Static app:AccessibilityNames.RepositoryRootInput}"
+                     Text="{Binding RepositoryRoot, UpdateSourceTrigger=PropertyChanged}" />
+            <Button Grid.Column="1" Margin="8,0,0,0" Click="OnChangeRepository"
                     AutomationProperties.Name="{x:Static app:AccessibilityNames.BrowseRepositoryRoot}"
                     Style="{DynamicResource Ds.Button.Secondary.Md}">
               <StackPanel Orientation="Horizontal">
@@ -181,14 +218,7 @@
                 <TextBlock Text="Browse…" VerticalAlignment="Center" />
               </StackPanel>
             </Button>
-            <!-- Watermark bir ÖRNEK yoldur, ürüne özel değildir; ad ayrıca verilir. -->
-            <TextBox x:Name="RepoRootInput" VerticalAlignment="Center"
-                     Style="{DynamicResource Ds.Input}"
-                     FontFamily="{x:Static controls:AppFonts.Mono}"
-                     controls:DsChrome.Watermark="D:\src\myapp"
-                     AutomationProperties.Name="{x:Static app:AccessibilityNames.RepositoryRootInput}"
-                     Text="{Binding RepositoryRoot, UpdateSourceTrigger=PropertyChanged}" />
-          </DockPanel>
+          </Grid>
           <TextBlock Text="Required — nothing is discovered without it." Margin="0,9,0,0"
                      FontSize="{DynamicResource FontSize.2xs}" Foreground="{DynamicResource Brush.TextFaint}" />
         </StackPanel>
@@ -198,34 +228,14 @@
              (SettingsDraftViewModel.CommitAsync) ve her Sync/Build komutuyla motora gider; taranan projeler ve çalışma
              kopyası kökü Core'da her koşuda yeniden çözülür (ARCHITECTURE §10.6). Kartın altındakiler ayrılmış
              "External" katmanına girer: build-order'da ana repo projelerinden önce gelirler. Kart sırası yalnız
-             çalışma kopyalarının güncellenme sırasıdır. PaneHead metni git-only uyarlamadır (TFVC kaldırıldı). -->
+             çalışma kopyalarının güncellenme sırasıdır. PaneHead metni git-only uyarlamadır (TFVC kaldırıldı).
+             [DEĞİŞEN KURAL — design v1.19.0] ESKİ: sayfanın başında Pull before build kural satırı (hairline + caps
+             etiket + switch, açıklama tooltip'te) dururdu; anahtar General'ın BUILD grubuna taşındı. -->
         <StackPanel x:Name="ExternalPage"
                     Visibility="{Binding IsChecked, ElementName=ExternalRailItem, Converter={StaticResource PageVisibility}}">
           <TextBlock Text="External projects" Style="{DynamicResource Ds.Settings.PaneTitle}" />
           <TextBlock Text="Projects outside the repository root — a folder, a solution or a project file; the git working copy is found from the path. They are built before everything else."
                      Style="{DynamicResource Ds.Settings.PaneDescription}" />
-
-          <!-- [design v1.15.0 §2.9] Pull before build kuralı: esneyen 1px çizgi + caps etiket + switch; açıklama
-               tooltip'te. Bölüm başlığı artık PaneHead olduğu için satırın soldaki caps adı kalktı. -->
-          <Grid Margin="0,0,0,12">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Height="1" Margin="0,0,12,0" VerticalAlignment="Center"
-                    Background="{DynamicResource Brush.BorderSubtle}" />
-            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-              <StackPanel.ToolTip>
-                <ToolTip controls:AppTooltip.Side="Top">Every build starts by updating each external working copy — git pull --ff-only or tf get, one command per copy. Off: the copies are built as they are on disk.</ToolTip>
-              </StackPanel.ToolTip>
-              <TextBlock Text="PULL BEFORE BUILD" VerticalAlignment="Center" Margin="0,0,9,0"
-                         Style="{DynamicResource Ds.Settings.CapsHeading}" />
-              <CheckBox x:Name="PullExternalsSwitch" Style="{DynamicResource Ds.Switch}"
-                        VerticalAlignment="Center"
-                        AutomationProperties.Name="{x:Static app:AccessibilityNames.PullExternalsBeforeBuild}"
-                        IsChecked="{Binding PullExternalsBeforeBuild, Mode=TwoWay}" />
-            </StackPanel>
-          </Grid>
 
           <!-- Boş durum — Layers'ın PAYLAŞTIĞI kutu (Ds.Settings.EmptyState*). -->
           <Grid x:Name="ExternalEmptyState">
@@ -273,6 +283,31 @@
           <Button Content="Add external project" Click="OnAddExternal"
                   AutomationProperties.Name="Add external project"
                   Style="{DynamicResource Ds.Settings.AddRow}" />
+
+          <!-- [design v1.19.0 §2.9] Pull before build General'a taşındı; burada NEREYE gittiği ve açık/kapalı olduğu
+               yazılır (taslaktan CANLI). marginTop 20, paddingTop 14, üstte 1px border-subtle; sarmalı satır, gap 6 —
+               ghost düğmenin −6 solu kendi iç boşluğunu metne yaklaştırır. Düğme rayı General'a alır. -->
+          <Border x:Name="PullBeforeBuildNote" Margin="0,20,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0"
+                  BorderBrush="{DynamicResource Brush.BorderSubtle}">
+            <WrapPanel>
+              <TextBlock x:Name="PullBeforeBuildSummary" Margin="0,0,6,0" VerticalAlignment="Center"
+                         FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}"><Run
+                         Text="Card order sets the order the working copies are updated. Updating them before a build is " /><Run>
+                  <Run.Style>
+                    <Style TargetType="Run">
+                      <Setter Property="Text" Value="off" />
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding PullExternalsBeforeBuild}" Value="True">
+                          <Setter Property="Text" Value="on" />
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </Run.Style>
+                </Run><Run Text="." /></TextBlock>
+              <Button x:Name="PullBeforeBuildLink" Content="Pull before build" Margin="-6,0,0,0"
+                      VerticalAlignment="Center" Click="OnShowGeneral" Style="{DynamicResource Ds.Button.Ghost.Sm}" />
+            </WrapPanel>
+          </Border>
         </StackPanel>
 
         <!-- ============================ LAYERS ============================ -->
