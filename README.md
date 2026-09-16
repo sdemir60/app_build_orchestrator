@@ -156,8 +156,10 @@ the running instance first — tray icon → Exit).
    in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
    node draws a dashed border. What is stale is still readable, from the **decision label** at the right end of
    each row: `modified` (its own files changed), `affected` (only a dependency changed), `never built`,
-   `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. Colour
-   arrives when you press something.
+   `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. A
+   project that built successfully against a dependency that was failing, and has not changed since, reads
+   `affected · up to date · <age>` instead: the next Build leaves it alone until that dependency succeeds
+   again, and its native tooltip names which one. Colour arrives when you press something.
 
    The Sync line in the console also says where you stand against the remote:
    `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next

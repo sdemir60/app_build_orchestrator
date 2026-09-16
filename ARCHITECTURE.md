@@ -445,7 +445,8 @@ Three of these carry the whole model:
   preview, a `Rebuild`, a row's target and a cycle-group member never carry it.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
-  semantics, dirty plus transitive dependents), and the up-to-date count.
+  semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
+  conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count.
 
 `runStarted.cpuCapPercent` reports the cap that was **actually** written to the job, not the one that was
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
@@ -700,7 +701,8 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 
 **The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
 the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's **decision
-label** — `modified`, `affected`, `never built`, `failed · retry`, or `up to date · 2h` (§13.2) — and the
+label** — `modified`, `affected`, `never built`, `failed · retry`, `up to date · 2h`, or the three-part
+`affected · up to date · just now` for a project waiting on a failed dependency (§13.2) — and the
 scope of the marking wave when an operation actually begins. The tri-state itself is unchanged: it still
 decides what a run compiles, and it still feeds the counters.
 

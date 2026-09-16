@@ -121,6 +121,11 @@ public static class ReleaseNotes
             new(NoteKind.Changed, "The graph's building dots are a tick thicker and spaced wider, turning at a steady pace the eye can follow, and their orbit stays clamped to each node's own cell so neighbouring builds never touch, even in a dense graph."),
             new(NoteKind.Removed, "The orange cycle colour — a dependency cycle now shows as one amber warning triangle."),
             new(NoteKind.Removed, "The separate will-build dot — the commit pair already says what is stale."),
+            new(NoteKind.Fixed, "Building a single project from its row no longer flickers the rest of the list amber: only the target project queues, and every other row stays neutral grey for the whole run."),
+            new(NoteKind.Fixed, "Resolve cycles now queues only the cycle's own members in amber. Their dependencies wait grey and turn amber only while actually building, and projects outside the cycle are left untouched — never counted or listed as skipped, though their own project page still explains why they were not built."),
+            new(NoteKind.Fixed, "A project that succeeded against a failing dependency is no longer rebuilt on every Build. It waits until that dependency is healthy again — built successfully in this run, or already successful on record — and then rebuilds in the same run."),
+            new(NoteKind.Changed, "A row waiting on a failed dependency reads \"affected · up to date · <age>\" in a faint tone, with a tooltip naming the dependency that has to succeed first; the decision slot widened to fit the longer label."),
+            new(NoteKind.Changed, "Counters, progress, and Sync's \"N to build\" line now count only projects that will definitely be built, not ones merely waiting on a dependency."),
         ]),
     ];
 }
