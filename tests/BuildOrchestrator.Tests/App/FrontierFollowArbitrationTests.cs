@@ -9,18 +9,21 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [E4 fix — FIX 1 / FIX 2.2] Frontier follow'un CANLI arbitration cycle'ı: GERÇEK (ekran dışı realize edilmiş) bir
-/// <see cref="StickyLayerList"/> + GERÇEK bir <see cref="ScrollArbiter"/> üstünde wheel → pause → (uzakta) duraklı kal
-/// → near-bottom → RESUME, ve seçim → pause / deselect → resume. Bu, review'ın istediği ≥1 canlı-arbitration
-/// regresyon kilididir: "live FollowFrontier kararı arbiter'a bağlı".
+/// <see cref="StickyLayerList"/> + GERÇEK bir <see cref="ScrollArbiter"/> üstünde wheel → pause → (panelin
+/// NERESİNDE olursa olsun) duraklı kal, ve seçim → pause / deselect → resume. Bu, review'ın istediği ≥1
+/// canlı-arbitration regresyon kilididir: "live FollowFrontier kararı arbiter'a bağlı".
 ///
 /// <para>Follow gate = <c>MainWindow.FollowFrontier</c>'ın okuduğu <see cref="ScrollArbiter.CanFollowFrontier"/> VE
 /// <c>FollowScrollController.FollowRow</c>'un okuduğu <see cref="ScrollAnimator.GetIsUserSuppressed"/> — ikisi de
-/// temiz olmalı ki takip oynasın. Kaydırma near-bottom/away ayrımı için gerçek scroll geometrisi gerektiğinden
-/// <c>[StaFact]</c> + ekran dışı realize (StickyReveal deseni).</para>
+/// temiz olmalı ki takip oynasın. Kaydırma konumunun karara girmediğini göstermek gerçek scroll geometrisi
+/// gerektirdiğinden <c>[StaFact]</c> + ekran dışı realize (StickyReveal deseni).</para>
 ///
-/// <para><b>Kapsam:</b> burası "liste dibine dönüş" yolunu pinler. Diğer iki geri-açılma yolu (frontier'e
-/// dönüş, boşta kalma) ve niyet kapıları (seçim, filtre) üretim zinciri üzerinden ayrı sınıflarda pinlidir —
-/// <see cref="FrontierFollowResumeTests"/> ve <see cref="FrontierFollowIntentTests"/>.</para>
+/// <para><b>[DEĞİŞEN KURAL]</b> Bu sınıf eskiden "liste DİBİNE dönüş takibi anında geri açar" yolunu pinliyordu
+/// (<c>A_frontier_wheel_pauses_follow_and_returning_near_the_bottom_resumes_it</c>) — konsol/stream'in
+/// bottom-anchor'ıyla geometrik simetri gerekçesiyle. Yol kaldırıldı: bu panelde dip "yeni içeriğin geldiği yer"
+/// değildir, ve konum-tabanlı geri açılma kullanıcının sürüklemesinin ÜRETTİĞİ ScrollChanged'lerde tetiklenerek
+/// duraklamayı siliyordu. Gerekçe ve tek kalan kapı (boşta penceresi) için bkz.
+/// <see cref="FrontierFollowResumeTests"/>; niyet kapıları (seçim, filtre) <see cref="FrontierFollowIntentTests"/>.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class FrontierFollowArbitrationTests
@@ -37,18 +40,23 @@ public class FrontierFollowArbitrationTests
         list.Scroll.RaiseEvent(new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, -120)
         { RoutedEvent = UIElement.PreviewMouseWheelEvent });
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL] Tekerlek İKİ suppress'i de kurar ve kullanıcı listenin NERESİNE giderse gitsin — dibine
+    /// inse bile — duraklama kalkmaz. Eski iddia bunun tersiydi: dibe 48 px kala duraklama anında kalkardı
+    /// (<c>ResumeFrontierIfNearBottom</c>, her <c>ScrollChanged</c>'de). Kaldırılma gerekçesi sınıf özetindedir.
+    /// </summary>
     [StaFact]
-    public void A_frontier_wheel_pauses_follow_and_returning_near_the_bottom_resumes_it()
+    public void A_frontier_wheel_pauses_follow_and_no_scroll_position_resumes_it()
     {
         var arbiter = new ScrollArbiter();
         var list = new StickyLayerList { AnimationsEnabledProvider = () => false, Arbiter = arbiter };
         list.SetGroups([new StickyLayerList.LayerGroup("", Rows(24))]);
         var host = DsResources.NewHost();
         var window = DsResources.Realize(host, list);
-        // Kaydırılabilir olana dek pompala (içerik > viewport, eşiğin ötesinde) — near-bottom/away ayrımı gerçek geometri ister.
-        DispatcherPump.PumpUntil(
-            () => list.Scroll.ScrollableHeight > StickyLayerList.FrontierResumeThresholdPx + 10, TimeSpan.FromSeconds(2));
-        Assert.True(list.Scroll.ScrollableHeight > StickyLayerList.FrontierResumeThresholdPx + 10);
+        // Kaydırılabilir olana dek pompala (içerik > viewport) — "dibe indi" iddiası gerçek geometri ister.
+        double scrollableEnough = LayoutMetrics.DefaultRowHeight * 2;
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > scrollableEnough, TimeSpan.FromSeconds(2));
+        Assert.True(list.Scroll.ScrollableHeight > scrollableEnough);
 
         // 0) Başlangıç (tepede, seçim yok, suppress yok) → follow devrede.
         Assert.True(FollowWouldEngage(list, arbiter));
@@ -59,22 +67,15 @@ public class FrontierFollowArbitrationTests
         Assert.True(ScrollAnimator.GetIsUserSuppressed(list.Scroll));
         Assert.False(FollowWouldEngage(list, arbiter));                  // follow DURAKLADI
 
-        // 2) Kullanıcı near-bottom DEĞİL (tepede) — resume ATEŞLENMEZ (uzaktayken re-engage yok, follow duraklı kalır).
-        Assert.True(list.Scroll.VerticalOffset < StickyLayerList.FrontierResumeThresholdPx); // gerçekten tepedeyiz
-        list.ResumeFrontierIfNearBottom();
-        Assert.True(ScrollAnimator.GetIsUserSuppressed(list.Scroll));
-        Assert.False(FollowWouldEngage(list, arbiter));                  // hâlâ duraklı
-
-        // 3) Kullanıcı dibe (frontier bölgesine) döndü → resume: İKİ suppress de TEK yoldan temizlenir → follow sürer.
+        // 2) Kullanıcı listenin DİBİNE iner — gerçek ScrollChanged'ler akar. Duraklama KALKMAZ.
         list.Scroll.ScrollToVerticalOffset(list.Scroll.ScrollableHeight);
         list.UpdateLayout();
         DispatcherPump.PumpUntil(
             () => list.Scroll.VerticalOffset >= list.Scroll.ScrollableHeight - 0.5, TimeSpan.FromSeconds(2));
-        list.ResumeFrontierIfNearBottom();
 
-        Assert.False(arbiter.IsSuppressed(ScrollPanel.Frontier));        // arbiter regional bit temizlendi
-        Assert.False(ScrollAnimator.GetIsUserSuppressed(list.Scroll));   // ScrollAnimator flag temizlendi (ayrışmadılar)
-        Assert.True(FollowWouldEngage(list, arbiter));                   // follow RESUME
+        Assert.True(arbiter.IsSuppressed(ScrollPanel.Frontier));
+        Assert.True(ScrollAnimator.GetIsUserSuppressed(list.Scroll));
+        Assert.False(FollowWouldEngage(list, arbiter));                  // hâlâ duraklı — konum karara girmez
         GC.KeepAlive(window);
     }
 

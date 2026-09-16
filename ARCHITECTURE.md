@@ -1899,7 +1899,9 @@ onto a header before releasing must not jump. Capture routes the release back to
 so the release must also land inside the header's own bounds (press, drag away, release cancels, as a native click
 does), and the header must still be bound to the slot it was pressed on — a recycled in-flow container can carry the
 capture over to another layer's data. It never touches selection, the filter, the console or the graph — only the
-scroll position moves, and there is no collapse. The header is deliberately **mouse-only**: the design prototype asks
+scroll position moves, and there is no collapse. The jump is a user scroll like any other, so it pauses
+follow-mode (below): the smooth scroll it starts would otherwise clear the pause the way any programmatic move does,
+and the next follow tick would pull the user straight back to the frontier. The header is deliberately **mouse-only**: the design prototype asks
 for `role="button" tabIndex={0}` plus Enter/Space, but this list's existing keyboard model (§13.9) already owns the
 arrow keys — rows are the only focusable stops, and `DirectionalNavigation="Contained"` walks exactly the focusable
 elements inside the list, headers included, the moment any of them becomes one. Keeping the header's root a `Border`
@@ -1956,16 +1958,15 @@ Scrolling the list also stops it — the user's scroll always wins. What counts 
 not the movement: a wheel notch, a drag of the scrollbar thumb or a click in its trough, a navigation key. All
 three arrive through the one signal every scrolling panel here shares (§13.4), which is why dragging the bar pauses
 follow exactly as the wheel does; reading the movement instead would be unable to tell the user's drag from
-follow's own animation. That pause is not
-permanent either: it lifts as soon as the user can be considered to be watching again, by either of two routes. Bringing the list back to the
-**frontier row** (within 48 px of the viewport) resumes it, which reads the intent directly. Leaving the list
-untouched for three seconds also resumes it, which closes a pause the user has simply forgotten about; every
-further scroll restarts that window, so follow cannot cut in while scrolling is still going on. Returning to the
-**bottom** of the list resumes it too, the same 48 px threshold the console and the stream use for their bottom
-anchor — kept for symmetry, though for this panel the bottom is rarely where the action is.
+follow's own animation. Clicking a layer header to jump counts too.
 
-Only routing the resume through the bottom was the original design, and it was wrong in practice: during a run
-the frontier sits in the middle of the list, so a single wheel notch parked follow for the rest of the build.
+That pause is not permanent, and it lifts by exactly one route: leaving the list untouched for five seconds.
+Every further scroll restarts that window, so follow cannot cut in while the user is still scrolling, and
+where the list happens to be — the frontier row on screen, off screen, the bottom — plays no part. Position
+cannot tell "I came back to watch" from "I am reading here": resuming whenever the frontier row was near the
+viewport meant that a user scrolling on the same screen as the compiling row had the pause cleared on every
+follow tick and the viewport taken back continuously, while the same gesture away from the frontier waited
+politely. One gesture cannot behave two ways depending on where it happens, so the resume has one gate.
 
 **Console.** See §13.5.
 

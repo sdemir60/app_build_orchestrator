@@ -68,8 +68,14 @@ public static class ScrollAnimator
     {
         SetVerticalOffset(target, GetVerticalOffset(target)); // taban = animasyonun tuttuğu GERÇEK konum
         target.BeginAnimation(VerticalOffsetProperty, null);
-        SetIsUserSuppressed(target, true);
+        SuppressForUser(target);
     }
+
+    /// <summary>Uçuştaki hareketi İPTAL ETMEDEN kullanıcı-suppress bayrağını kurar — kullanıcının KENDİ
+    /// başlattığı programatik bir hareket için (katman başlığı jump'ı). <see cref="AnimateTo"/> bayrağı her
+    /// çağrıda temizler, çünkü tipik çağıranı otomatik takiptir; ama hareketi kullanıcı istediyse takip onu
+    /// ezmemelidir. Çağıran bunu <see cref="AnimateTo"/>'dan SONRA çağırır.</summary>
+    public static void SuppressForUser(UIElement target) => SetIsUserSuppressed(target, true);
 
     /// <summary>[E4 fix] Kullanıcı-suppress bayrağını AÇIKÇA (yeni bir <see cref="AnimateTo"/> başlatmadan) temizler —
     /// <see cref="CancelForUser"/>'ın (bayrağı KURAN) simetriği. Frontier follow'un "kullanıcı dibe/frontier'e geri

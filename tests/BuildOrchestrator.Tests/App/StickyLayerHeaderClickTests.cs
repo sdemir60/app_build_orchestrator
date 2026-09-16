@@ -484,6 +484,33 @@ public class StickyLayerHeaderClickTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// Katman başlığına tıklamak da bir KULLANICI KAYDIRMASIDIR: liste kullanıcının istediği yere gider ve
+    /// frontier takibi — tekerlek/çubuk/tuşta olduğu gibi — duraklar.
+    ///
+    /// <para><b>Ölçülen kusur:</b> jump <c>ScrollAnimator.AnimateTo</c>'ya iniyor, o da "yeni programatik
+    /// hareket, kullanıcı iptali artık geçersiz" diyerek suppress bayrağını TEMİZLİYORDU. Sonuç: koşarken bir
+    /// katmana atlamak takibi serbest bırakıyor, bir sonraki 200 ms'lik tick kullanıcıyı derlenen satıra geri
+    /// çekiyordu. Takibi duraklatmak jump'ın KENDİ hareketini iptal etmez — ikisi ayrı şeydir.</para>
+    /// </summary>
+    [StaFact]
+    public void Clicking_a_layer_header_pauses_follow_like_any_other_user_scroll()
+    {
+        var list = RealizeThenFeed(out var window);
+        var arbiter = new ScrollArbiter();
+        list.Arbiter = arbiter;
+        DispatcherPump.PumpUntil(() => list.Scroll.ScrollableHeight > 0, TimeSpan.FromSeconds(3));
+        Assert.False(list.IsFollowSuppressedByUser);              // ön-koşul
+        Assert.False(arbiter.IsSuppressed(ScrollPanel.Frontier)); // ön-koşul
+
+        Click(list, InFlowHeaderBorder(list, "L1"));
+
+        Assert.True(list.Scroll.VerticalOffset > 0, "ön-koşul: jump listeyi HİÇ kaydırmadı");
+        Assert.True(list.IsFollowSuppressedByUser, "katman başlığına tıklamak follow'u DURAKLATMADI");
+        Assert.True(arbiter.IsSuppressed(ScrollPanel.Frontier), "katman başlığı jump'ı arbiter'a HABER VERMEDİ");
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- klavye modeli KIRILMAZ (mouse-only karar)
 
     /// <summary>
