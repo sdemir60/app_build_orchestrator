@@ -27,27 +27,21 @@
                                  Foreground="{DynamicResource Brush.TextDim}" />
     </DataTemplate>
 
-    <!-- Kimlik satırı (About sekmesi): en az 27px, etiket 124px 12px text-dim, 18px aralık, değer mono 12px. -->
-    <DataTemplate x:Key="IdentityRow">
-      <DockPanel MinHeight="27">
-        <TextBlock DockPanel.Dock="Left" Width="124" Text="{Binding Label}" VerticalAlignment="Center"
-                   FontSize="{DynamicResource FontSize.Xs}"
-                   Foreground="{DynamicResource Brush.TextDim}" />
-        <TextBlock Margin="18,0,0,0" Text="{Binding Value}" VerticalAlignment="Center"
-                   FontFamily="{x:Static controls:AppFonts.Mono}"
-                   FontSize="{DynamicResource FontSize.Xs}"
-                   Foreground="{DynamicResource Brush.TextSecondary}" />
-      </DockPanel>
-    </DataTemplate>
+    <!-- Üç sekmenin satırı en az 27px — ölçünün TEK yeri (Diagnostics ve Shortcuts satırları bu stili kullanır). -->
+    <Style x:Key="AboutRow" TargetType="DockPanel">
+      <Setter Property="MinHeight" Value="27" />
+    </Style>
 
-    <!-- Environment satırı: kimlik satırıyla AYNI ölçü; değer hücresi kırpılmaz, yatay kayar.
+    <!-- Tanı satırı — About sekmesinin kimlik satırları ve Environment'ın iki grubu AYNI şablonu kullanır: etiket
+         124px 12px text-dim, 18px aralık, değer mono 12px. Kısa değer taşmaz; tekerlek o durumda ebeveyne devredilir.
+         Değer hücresi kırpılmaz, yatay kayar.
          [DEĞİŞEN KURAL — design v1.13.1 §2.10] ESKİ: TextTrimming="CharacterEllipsis" ile kırpılır, tam metin
          ToolTip'te dururdu. "Ellipsis + title ipucu" olarak denendi, İSTENMEDİ — tam metni okumanın zaten bir yolu
          var (footer'daki Copy diagnostics). YENİ: satır KIRILMAZ, yatay kayar; çubuk GÖRÜNMEZ (Hidden) ve dikey
          ASLA kaymaz (Disabled — tek satır içerik). Tekerlek yönlendirmesi OnEnvironmentValueWheel'dedir
          (AboutDialog.xaml.cs): hücre GERÇEKTEN taşıyorsa yatay kaydırır, taşmıyorsa olayı ebeveyne DEVREDER. -->
-    <DataTemplate x:Key="EnvironmentRow">
-      <DockPanel MinHeight="27">
+    <DataTemplate x:Key="DiagnosticsRow">
+      <DockPanel Style="{StaticResource AboutRow}">
         <TextBlock DockPanel.Dock="Left" Width="124" Text="{Binding Label}" VerticalAlignment="Center"
                    FontSize="{DynamicResource FontSize.Xs}"
                    Foreground="{DynamicResource Brush.TextDim}" />
@@ -181,7 +175,7 @@
                    FontSize="{DynamicResource FontSize.Sm}"
                    Foreground="{DynamicResource Brush.TextSecondary}" />
         <Border Height="1" Margin="0,18,0,14" Background="{DynamicResource Brush.BorderSubtle}" />
-        <ItemsControl x:Name="IdentityRows" ItemTemplate="{StaticResource IdentityRow}" />
+        <ItemsControl x:Name="IdentityRows" ItemTemplate="{StaticResource DiagnosticsRow}" />
         <!-- What's new in {sürüm}: ghost sm, sol margin −10 (etiket satır etiketleriyle hizalı). About KAPANIR ve
              istek bildirilir; What's new'i MainWindow açar (OnNotesRequested — okunmadı noktası orada söner).
              Etiket ve UIA adı kod-tarafı (ReleaseNotes.WhatsNewInLabel — cümlenin tek yeri). -->
@@ -218,12 +212,12 @@
         <StackPanel Margin="0,0,0,16">
           <ContentPresenter Content="{x:Static services:DiagnosticsReport.RuntimeTitle}"
                             ContentTemplate="{StaticResource GroupTitle}" />
-          <ItemsControl x:Name="RuntimeRows" ItemTemplate="{StaticResource EnvironmentRow}" />
+          <ItemsControl x:Name="RuntimeRows" ItemTemplate="{StaticResource DiagnosticsRow}" />
         </StackPanel>
         <StackPanel Margin="0,0,0,16">
           <ContentPresenter Content="{x:Static services:DiagnosticsReport.PathsTitle}"
                             ContentTemplate="{StaticResource GroupTitle}" />
-          <ItemsControl x:Name="PathsRows" ItemTemplate="{StaticResource EnvironmentRow}" />
+          <ItemsControl x:Name="PathsRows" ItemTemplate="{StaticResource DiagnosticsRow}" />
         </StackPanel>
       </StackPanel>
     </ScrollViewer>
@@ -249,7 +243,7 @@
                 <ItemsControl.ItemTemplate>
                   <DataTemplate>
                     <!-- Satır en az 27px: solda açıklama 13px text-secondary, sağda Ds.Kbd'ler (4px arayla). -->
-                    <DockPanel MinHeight="27">
+                    <DockPanel Style="{StaticResource AboutRow}">
                       <ItemsControl DockPanel.Dock="Right" ItemsSource="{Binding Gestures}" VerticalAlignment="Center">
                         <ItemsControl.ItemsPanel>
                           <ItemsPanelTemplate><StackPanel Orientation="Horizontal" /></ItemsPanelTemplate>

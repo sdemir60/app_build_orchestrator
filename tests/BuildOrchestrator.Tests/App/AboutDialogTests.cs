@@ -275,6 +275,20 @@ public class AboutDialogTests
 
     /// <summary>[design v1.19.0 §2.10] Third-party YOK: ne sekmesi ne de tipi (atıf tablosu ve satır modeli
     /// silindi; <c>Assets/GEIST-LICENSE.txt</c> dağıtımda kalır — FontAssetTests/PublishLayoutTests).</summary>
+    /// <summary>[kopya YASAK] Satır ölçüleri (27px satır, 124px etiket, 18px aralık) AboutDialog.xaml'de TEK kez
+    /// tanımlanır: kimlik ve ortam satırları aynı satır şablonunu, Shortcuts satırı aynı satır stilini kullanır.
+    /// ESKİ HÂL: <c>IdentityRow</c> ve <c>EnvironmentRow</c> şablonları etiket hücresini ve ölçüleri ikişer kez
+    /// taşıyordu, 27 Shortcuts satırında üçüncü kez yazılıydı (review bulgusu).</summary>
+    [Fact]
+    public void About_row_measures_are_defined_once_in_the_dialog_xaml()
+    {
+        string xaml = System.IO.File.ReadAllText(
+            System.IO.Path.Combine(RepoPaths.AppSrcRoot, "Views", "AboutDialog.xaml"));
+        foreach (string measure in new[] { "\"27\"", "Width=\"124\"", "\"18,0,0,0\"" })
+            Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(xaml, System.Text.RegularExpressions.Regex.Escape(measure)).Count);
+        Assert.DoesNotContain("x:Key=\"IdentityRow\"", xaml);
+    }
+
     [StaFact]
     public void There_is_no_third_party_tab_and_no_notices_type()
     {
