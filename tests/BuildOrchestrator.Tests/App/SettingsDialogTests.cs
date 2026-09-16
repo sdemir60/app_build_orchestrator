@@ -37,10 +37,10 @@ public class SettingsDialogTests
         // [DEĞİŞEN KURAL — design v1.8.0 §2.9] CanSave'in İKİNCİ koşulu eklendi: repository root BOŞ olamaz
         // ("uygulamanın çalışması için zorunlu tek ayar budur"). Bu testin konusu KATMAN validasyonudur, bu
         // yüzden kök dolu bir zeminde ölçülür — root kuralının kendisi ayrı bir testte pinlenir.
+        // [DEĞİŞEN KURAL — design v1.19.0 §2.9] Taze taslak BOŞTUR (OSYS ön-dolumu kalktı) ve Add layer BOŞ satır
+        // ekler; eskiden varsayılanlar önce boşaltılıyor, eklenen satır "Layer 1" adıyla Save'i açık bırakıyordu.
         var editor = new SettingsDraftViewModel(null, @"D:\repo");
-        // [değişti] Taze taslak ARTIK 4 varsayılan satırla gelir (LayerDefaults). Bu testin konusu
-        // Save-validation'dır — tek satırlık bir zeminde ölçülür, o yüzden varsayılanlar önce boşaltılır.
-        for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]);
+        Assert.Empty(editor.Layers);
 
         // [D7 re-review][Fix6] Save butonunun IsEnabled bağlaması CanSave'in PropertyChanged YAYIMLADIĞINA
         // dayanır (XAML: IsEnabled="{Binding CanSave}") — bu olmadan buton canlı GÜNCELLENMEZ (yalnız ilk
@@ -51,11 +51,13 @@ public class SettingsDialogTests
             if (e.PropertyName == nameof(SettingsDraftViewModel.CanSave)) canSaveNotifications++;
         };
 
-        editor.AddLayer(); // "Layer 1", regex boş
+        editor.AddLayer(); // ad ve regex boş
         Assert.True(canSaveNotifications > 0, "Add layer sonrası CanSave bildirimi YOK");
         var row = Assert.Single(editor.Layers);
 
-        // Boş regex GEÇERLİdir → Save bloklanMAZ.
+        // Boş ad bloklar; ad dolunca boş regex GEÇERLİdir → Save bloklanMAZ.
+        Assert.False(editor.CanSave);
+        row.Name = "Core";
         Assert.Equal("", row.Regex);
         Assert.False(row.RegexInvalid);
         Assert.True(editor.CanSave);
@@ -84,41 +86,138 @@ public class SettingsDialogTests
         Assert.True(canSaveNotifications > 0, "Remove layer sonrası CanSave bildirimi YOK");
     }
 
-    [Fact] // Kayıtlı katman YOKKEN taslak varsayılanlarla DOLU gelir — kullanıcı hiç uğraşmadan Save diyebilsin.
-    public async Task A_fresh_draft_is_prefilled_with_the_default_layers()
+    /// <summary>Kayıtlı katman YOKKEN taslak BOŞTUR — Layers sayfası boş-durum kutusuyla açılır.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9, kullanıcı kararı 2026-09-16]</b> ESKİ İDDİA
+    /// (<c>A_fresh_draft_is_prefilled_with_the_default_layers</c>): taslak dört OSYS varsayılanıyla
+    /// (<c>OSYS.Types</c> … <c>OSYS.UI</c>, <c>LayerDefaults</c>) DOLU gelirdi. Gerekçe: araç ürüne özel bir ön-dolum
+    /// taşımaz; yeni satırlar yalnız ürün-bağımsız PLACEHOLDER gösterir (<see cref="LayerPlaceholders"/>).</para></summary>
+    [Fact]
+    public async Task A_fresh_draft_has_no_layers()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        var store = NewStore();
         Assert.Null(run.LayerPatterns); // kayıtlı katman yok
 
         var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
 
-        Assert.Equal(
-            ["OSYS.Types", "OSYS.Business", "OSYS.Orchestration", "OSYS.UI"],
-            draft.Layers.Select(r => r.Name));
-        Assert.Equal(@"^OSYS\.Types\.", draft.Layers[0].Regex);
-
-        // Taslağın dolu gelmesi tek başına HİÇBİR ŞEY uygulamaz/kaydetmez — açılışta seed YOKtur.
-        Assert.Null(run.LayerPatterns);
-        Assert.Empty(store.State.LayerPatterns);
+        Assert.Empty(draft.Layers);
     }
 
-    [Fact] // Kayıtlı liste BOŞ ama null DEĞİL: "tüm katmanları sil + Save" sonrası canlı durum tam olarak budur
-           // (LayerPatterns = boş liste). Diyalog yeniden açıldığında yine varsayılanlar görünmelidir.
-    public void A_draft_built_from_an_emptied_layer_list_still_shows_the_defaults()
+    /// <summary>Kayıtlı liste BOŞ ama null DEĞİL ("tüm katmanları sil + Save" sonrası canlı durum) — taslak yine
+    /// BOŞ açılır.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA
+    /// (<c>A_draft_built_from_an_emptied_layer_list_still_shows_the_defaults</c>): boş liste null gibi
+    /// varsayılanları gösterirdi. Ön-dolum kalktığı için ikisi de boş taslaktır.</para></summary>
+    [Fact]
+    public void A_draft_built_from_an_emptied_layer_list_is_empty()
     {
         IReadOnlyList<LayerPattern> emptied = []; // "hepsini sil + Save" sonrası RunViewModel.LayerPatterns
 
-        var draft = new SettingsDraftViewModel(emptied, null);
+        Assert.Empty(new SettingsDraftViewModel(emptied, null).Layers);
+    }
 
-        // Varsayılanların BİREBİR metni A_fresh_draft_is_prefilled_with_the_default_layers'ta pinlidir; burada
-        // pinlenen kural "boş liste null ile AYNI davranır" — ctor koşulu `initial is not null`'a kayarsa bu
-        // taslak SIFIR satırla açılır ve karşılaştırma düşer.
+    /// <summary>[design v1.19.0 §2.9] <c>Add layer</c> BOŞ bir satır ekler (ad ve desen <c>""</c>).
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ davranış satırı <c>Layer N</c> adıyla eklerdi (N = yeni satır sayısı);
+    /// artık değer değil placeholder gösterilir.</para></summary>
+    [Fact]
+    public void Add_layer_appends_an_empty_row()
+    {
+        var draft = new SettingsDraftViewModel([new LayerPattern(0, "^A", "Alpha")], @"D:\repo");
+
+        draft.AddLayer();
+
+        Assert.Equal(2, draft.Layers.Count);
+        Assert.Equal("", draft.Layers[1].Name);
+        Assert.Equal("", draft.Layers[1].Regex);
+    }
+
+    /// <summary>[design v1.19.0 §2.9] Satır placeholder'larının TEK kaynağı — ürün adı taşımayan standart katman
+    /// iskeleti, sıra ve metin birebir (<c>LAYER_PLACEHOLDERS</c>).</summary>
+    [Fact]
+    public void Layer_placeholders_are_the_six_product_neutral_pairs_in_order()
+    {
         Assert.Equal(
-            new SettingsDraftViewModel(null, null).Layers.Select(r => (r.Name, r.Regex)),
-            draft.Layers.Select(r => (r.Name, r.Regex)));
-        Assert.NotEmpty(draft.Layers); // non-vacuous: iki taraf da boş olsaydı karşılaştırma anlamsız kalırdı
+            [
+                ("Core", @"^MyApp\.(Core|Common)\."),
+                ("Infrastructure", @"^MyApp\.(Data|Infrastructure)\."),
+                ("Domain", @"^MyApp\.Domain\."),
+                ("Services", @"^MyApp\.Services\."),
+                ("Api", @"\.Api$"),
+                ("Client", @"^MyApp\.(Web|Client|Mobile)\."),
+            ],
+            LayerPlaceholders.Pairs);
+    }
+
+    /// <summary>[design v1.19.0 §2.9] Her satır placeholder'ını SATIR İNDEKSİNE göre alır ve 6'dan sonra başa
+    /// döner (7. satır = 1. çift).</summary>
+    [Fact]
+    public void Layer_rows_take_their_placeholders_from_the_row_index_and_wrap_after_six()
+    {
+        var draft = new SettingsDraftViewModel(null, @"D:\repo");
+        for (int i = 0; i < 7; i++) draft.AddLayer();
+
+        for (int i = 0; i < 6; i++)
+        {
+            Assert.Equal(LayerPlaceholders.Pairs[i].Name, draft.Layers[i].NamePlaceholder);
+            Assert.Equal(LayerPlaceholders.Pairs[i].Pattern, draft.Layers[i].PatternPlaceholder);
+        }
+        Assert.Equal("Core", draft.Layers[6].NamePlaceholder);
+        Assert.Equal(@"^MyApp\.(Core|Common)\.", draft.Layers[6].PatternPlaceholder);
+    }
+
+    /// <summary>[design v1.19.0 §2.9] Placeholder satıra değil İNDEKSE aittir: sürükle-bırak (<c>Move</c>) ya da
+    /// silme sonrası her satır YENİ indeksinin çiftini gösterir.</summary>
+    [Fact]
+    public void Reordering_or_removing_layers_moves_the_placeholders_to_the_new_indexes()
+    {
+        var draft = new SettingsDraftViewModel(null, @"D:\repo");
+        draft.AddLayer();
+        draft.AddLayer();
+        draft.AddLayer();
+        var first = draft.Layers[0];
+
+        draft.Layers.Move(0, 2); // DragReorderBehavior'ın kullandığı bildirim
+
+        Assert.Same(first, draft.Layers[2]);
+        Assert.Equal("Domain", first.NamePlaceholder);
+        Assert.Equal("Core", draft.Layers[0].NamePlaceholder);
+
+        draft.RemoveLayer(draft.Layers[0]);
+        Assert.Equal("Infrastructure", first.NamePlaceholder); // artık indeks 1
+    }
+
+    /// <summary>[design v1.19.0 §2.9] Save kapalıyken footer'ın tek satırlık NEDENİ — CanSave'in AYNI koşullarından,
+    /// öncelik sırasıyla: kök → harici path → katman adı → desen. Save açıkken neden YOKTUR.</summary>
+    [Fact]
+    public void The_save_blocked_reason_follows_the_design_priority_and_clears_when_save_is_allowed()
+    {
+        var draft = new SettingsDraftViewModel([new LayerPattern(0, "([", "")], null, [new ExternalProject("")]);
+        var reasons = new List<string?>();
+        draft.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsDraftViewModel.SaveBlockedReason)) reasons.Add(draft.SaveBlockedReason);
+        };
+
+        Assert.Equal("Repository root is required", draft.SaveBlockedReason);
+        Assert.False(draft.CanSave);
+
+        draft.RepositoryRoot = @"D:\repo";
+        Assert.Equal("Every external project needs a path", draft.SaveBlockedReason);
+
+        draft.Externals[0].Path = @"C:\a";
+        Assert.Equal("Every layer needs a name", draft.SaveBlockedReason);
+
+        draft.Layers[0].Name = "Core";
+        Assert.Equal("Check the highlighted pattern", draft.SaveBlockedReason);
+
+        draft.Layers[0].Regex = "^A";
+        Assert.Null(draft.SaveBlockedReason);
+        Assert.True(draft.CanSave);
+
+        // Her geçiş bildirildi — footer satırı canlı güncellenir.
+        Assert.Equal(
+            ["Every external project needs a path", "Every layer needs a name", "Check the highlighted pattern", null],
+            reasons.Distinct());
     }
 
     [Fact] // Kayıtlı katman VARSA taslak onların kopyasıdır — varsayılan kullanıcının tanımlarını ASLA ezmez.
@@ -133,25 +232,6 @@ public class SettingsDialogTests
         var row = Assert.Single(draft.Layers);
         Assert.Equal("Alpha", row.Name);
         Assert.Equal("^A", row.Regex);
-    }
-
-    [Fact] // "Restore default layers": düzenlenmiş taslağı varsayılanlara döndürür, Save'siz KALICI DEĞİL.
-    public async Task Restore_default_layers_replaces_the_draft_without_touching_the_live_state()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        var store = NewStore();
-        IReadOnlyList<LayerPattern> live = [new LayerPattern(0, "^A", "Alpha")];
-        run.LayerPatterns = live;
-        var draft = new SettingsDraftViewModel(run.LayerPatterns, null);
-
-        draft.LoadSampleLayers();
-
-        Assert.Equal(4, draft.Layers.Count);
-        Assert.Equal("OSYS.Types", draft.Layers[0].Name);
-        Assert.Equal("OSYS.UI", draft.Layers[3].Name);
-        Assert.Same(live, run.LayerPatterns);        // canlı pattern'lere DOKUNULMADI
-        Assert.Empty(store.State.LayerPatterns);     // diske yazılmadı
     }
 
     [Fact]
@@ -193,10 +273,9 @@ public class SettingsDialogTests
     }
 
     /// <summary>Save: BİREBİR konsol notu + <see cref="RunViewModel.LayerPatterns"/> + UiState persist'i.
-    /// <para><b>Eski iddia (değişti):</b> bu test "Load sample layers"in 6 örnek katmanını
-    /// (<c>Layer 0 — Core</c> / <c>^OSYS\.(Base$|Common\.)</c>) pinliyordu. Örnek katmanlar kaldırıldı,
-    /// yerlerini OSYS varsayılanları (<see cref="LayerDefaults"/>, 4 katman) aldı; pinlenen kural aynı —
-    /// Save notu, pattern sırası ve persist şekli.</para></summary>
+    /// <para><b>Eski iddia (değişti):</b> bu test önce "Load sample layers"in 6 örnek katmanını, sonra dört OSYS
+    /// varsayılanını pinliyordu. [design v1.19.0] Ön-dolum tamamen kalktı; taslak burada AÇIKÇA iki katmanla
+    /// kurulur — pinlenen kural aynı: Save notu, pattern sırası ve persist şekli.</para></summary>
     [Fact]
     public async Task Saving_layers_writes_the_exact_console_note_and_persists_the_patterns()
     {
@@ -204,22 +283,26 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        var editor = new SettingsDraftViewModel(null, null); // taze taslak = 4 varsayılan
-        Assert.Equal(4, editor.Layers.Count);
+        var editor = new SettingsDraftViewModel(null, null);
+        editor.AddLayer();
+        editor.Layers[0].Name = " Core ";
+        editor.Layers[0].Regex = @"^MyApp\.Core\.";
+        editor.AddLayer();
+        editor.Layers[1].Name = "Api";
 
         await editor.CommitAsync(run, store);
 
         // (a) BİREBİR konsol notu (BuildApp.jsx:1423).
-        Assert.Contains("Layer definitions updated — 4 layers", run.GetRunDocumentText());
+        Assert.Contains("Layer definitions updated — 2 layers", run.GetRunDocumentText());
 
-        // (b) RunViewModel.LayerPatterns set edildi (Order = 0..3, üstten alta).
+        // (b) RunViewModel.LayerPatterns set edildi (Order = 0..1, üstten alta, ad trim'li).
         Assert.NotNull(run.LayerPatterns);
-        Assert.Equal([0, 1, 2, 3], run.LayerPatterns!.Select(p => p.Order));
-        Assert.Equal("OSYS.Types", run.LayerPatterns[0].Name);
-        Assert.Equal(@"^OSYS\.Types\.", run.LayerPatterns[0].Regex);
+        Assert.Equal([0, 1], run.LayerPatterns!.Select(p => p.Order));
+        Assert.Equal("Core", run.LayerPatterns[0].Name);
+        Assert.Equal(@"^MyApp\.Core\.", run.LayerPatterns[0].Regex);
 
         // (c) UiState'e persist edildi (aynı şekil).
-        Assert.Equal(4, store.State.LayerPatterns.Count);
+        Assert.Equal(2, store.State.LayerPatterns.Count);
         Assert.Equal(run.LayerPatterns, store.State.LayerPatterns);
 
         // Emptied → farklı BİREBİR not + persist boşalır.
@@ -456,7 +539,7 @@ public class SettingsDialogTests
         Assert.Equal(@"D:\new\repo", run.RootPath);
         Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State));
         Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
-        Assert.Equal(4, store.State.LayerPatterns.Count); // varsayılan taslak da aynı Save'de persist edildi
+        Assert.Empty(store.State.LayerPatterns); // boş taslak da aynı Save'de persist edildi (ön-dolum yok)
     }
 
     // ================================================================ [K5 · design v1.14.0 §9] EXTERNAL PROJECTS
@@ -468,7 +551,6 @@ public class SettingsDialogTests
     public void Save_is_blocked_only_by_an_empty_external_path_never_by_a_filled_one()
     {
         var editor = new SettingsDraftViewModel(null, @"D:\repo");
-        for (int i = editor.Layers.Count - 1; i >= 0; i--) editor.RemoveLayer(editor.Layers[i]); // katman gürültüsü at
 
         int canSaveNotifications = 0;
         editor.PropertyChanged += (_, e) =>
@@ -524,7 +606,7 @@ public class SettingsDialogTests
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var store = NewStore();
 
-        var editor = new SettingsDraftViewModel(null, @"D:\repo"); // 4 varsayılan katman
+        var editor = new SettingsDraftViewModel(null, @"D:\repo");
         editor.AddExternal();
         editor.Externals[0].Path = @"C:\src\shared\Delta.Common\Delta.Common.csproj";
 
@@ -594,77 +676,59 @@ public class SettingsDialogTests
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsDialogViewTests
 {
-    /// <summary>[A13/T3a · a2/a3] design-v1 §2.9 BİREBİR: <c>LAYERS</c> caps başlığı, açıklama cümlesi ("Other"
-    /// mono Run'la BİRLEŞİK okunur — <c>TextBlock.Text</c> tüm Inline'ları düzleştirir) ve boş-katman kesikli
-    /// kutu metni. Kutu METNİ burada pinlenir; GÖRÜNÜRLÜK kuralı
-    /// <c>Empty_state_box_appears_only_after_every_layer_row_is_deleted</c>'tedir.</summary>
+    /// <summary>[A13/T3a · a3] Boş-katman kesikli kutusunun metni BİREBİR ve görünürlüğü: kayıtlı katman yokken
+    /// taze diyalogda GÖRÜNÜR, ilk satır eklenince gizlenir, son satır silinince geri gelir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA
+    /// (<c>Empty_state_box_appears_only_after_every_layer_row_is_deleted</c>): taze diyalog dört OSYS varsayılanıyla
+    /// açıldığı için kutu ancak tüm satırlar silinince görünürdü. Ön-dolum kalktı; kutu baştan görünür. LAYERS caps
+    /// başlığı ve uzun açıklama da kalktı — sayfa başlığı PaneHead'dir
+    /// (<see cref="SettingsDialogLayoutTests.Every_page_opens_with_its_pane_head"/>).</para></summary>
     [StaFact]
-    public void Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim()
+    public void Layers_empty_state_box_shows_on_a_fresh_dialog_and_hides_while_a_row_exists()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
-
-        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
-        var texts = blocks.Select(t => t.Text).ToList();
-        Assert.Contains("LAYERS", texts);
-
-        // description TextBlock 3 <Run>'dan kurulu — headless'ta TextBlock.Text (ContentStart/End tabanlı)
-        // Inlines'ı yansıtmaz; Run'lar doğrudan birleştirilir (aynı okunabilir metin, farklı okuma yolu).
-        // [K5] EXTERNAL PROJECTS'in açıklaması da 3 Run'dan kurulu (aynı "before" vurgusu deseni) — artık İKİ
-        // 3-Run'lı blok var, bu yüzden LAYERS'ınki "regex" sözcüğüyle ayırt edilir (yalnız Layers açıklaması taşır).
-        string description = string.Concat(
-            blocks.Single(b => b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text.Contains("regex")))
-                .Inlines.OfType<Run>().Select(r => r.Text));
-        Assert.Equal(
-            "Projects are grouped by the first matching pattern (regex on the project name), top to bottom; " +
-            "card order is the layer order in the list. Non-matching projects fall under Other.",
-            description);
-
-        Assert.Contains("No layers yet — projects show as a single list in build order.", texts);
-    }
-
-    /// <summary>Boş-durum kutusu ARTIK taze diyalogda görünmez: taslak varsayılanlarla dolu açılır. Kutu
-    /// yalnız kullanıcı TÜM satırları silince ortaya çıkar.
-    /// <para><b>Eski iddia (değişti):</b> <c>Settings_dialog_pins_the_layers_caption_description_and_empty_state_box_verbatim</c>
-    /// kutuyu "katman yokken (taze LayerPatterns null) görünür" diye pinliyordu. Varsayılan taslak geldiğinden
-    /// taze diyalogda 4 satır vardır; kuralın kendisi (satır yoksa kutu) korunur, tetikleyicisi değişti.</para></summary>
-    [StaFact]
-    public void Empty_state_box_appears_only_after_every_layer_row_is_deleted()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
-        using var _scope = scope;
-
-        var box = DsResources.RealizedObjects(dialog).OfType<Grid>().Single(g => g.Name == "EmptyState");
-        Assert.Equal(Visibility.Collapsed, box.Visibility); // taze diyalog: 4 varsayılan satır var
-
-        var draft = (SettingsDraftViewModel)dialog.DataContext;
-        for (int i = draft.Layers.Count - 1; i >= 0; i--) draft.RemoveLayer(draft.Layers[i]);
+        dialog.ShowSection(SettingsSection.Layers);
         dialog.UpdateLayout();
 
+        var box = dialog.EmptyState;
+        Assert.Contains(DsResources.RealizedObjects(box).OfType<TextBlock>(),
+            t => t.Text == "No layers yet — projects show as a single list in build order.");
+        Assert.Equal(Visibility.Visible, box.Visibility);
+
+        var draft = (SettingsDraftViewModel)dialog.DataContext;
+        draft.AddLayer();
+        dialog.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, box.Visibility);
+
+        draft.RemoveLayer(draft.Layers[0]);
+        dialog.UpdateLayout();
         Assert.Equal(Visibility.Visible, box.Visibility);
     }
 
     /// <summary>[A13/T3a · a9] design-v1 §2.9: <c>Add layer</c> (ghost, ikon+etiket) · <c>Cancel</c> · <c>Save</c>
-    /// (primary) · <c>Restore default layers</c> (ghost) — davranışları <see cref="SettingsDialogTests"/>'te
-    /// pinlidir (<c>Saving_layers_writes_the_exact_console_note_and_persists_the_patterns</c> ·
-    /// <c>Cancel_discards_the_draft</c> · <c>Restore_default_layers_replaces_the_draft_without_touching_the_live_state</c>);
-    /// burada pinlenen yalnız etiketlerin BİREBİR metnidir.</summary>
+    /// (primary) — davranışları <see cref="SettingsDialogTests"/>'te pinlidir
+    /// (<c>Saving_layers_writes_the_exact_console_note_and_persists_the_patterns</c> · <c>Cancel_discards_the_draft</c>);
+    /// burada pinlenen yalnız etiketlerin BİREBİR metnidir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA: footer solunda ghost <c>Load sample layers</c>
+    /// düğmesi vardı (daha önce <c>Restore default layers</c>). Ön-dolum kalktığı için düğme de kalktı — yokluğu
+    /// <see cref="SettingsDialogLayoutTests.The_footer_has_no_sample_layers_button_and_carries_the_design_tooltips"/>'te
+    /// pinlidir.</para></summary>
     [StaFact]
     public void Settings_dialog_footer_and_add_layer_button_labels_are_verbatim()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
+        dialog.ShowSection(SettingsSection.Layers);
+        dialog.UpdateLayout();
 
         var buttons = DsResources.RealizedObjects(dialog).OfType<Button>().ToList();
         Assert.Contains(buttons, b => Equals(b.Content, "Cancel"));
         // Fixture'ın kökü DOLUDUR (HasWorkspace) → düğme "Save"dir. First run'daki "Save and sync" varyantı
         // ayrı bir testte pinlenir (design v1.8.0 §2.9).
         Assert.Contains(buttons, b => Equals(b.Content, "Save"));
-        // [DEĞİŞEN KURAL — §2.9] Sol ghost düğmenin adı "Restore default layers" idi; tasarım metni
-        // "Load sample layers"dır ve daha doğrudur: varsayılan konfigürasyon BOŞTUR, bu düğme örnekleri DOLDURUR.
-        Assert.Contains(buttons, b => Equals(b.Content, "Load sample layers"));
 
-        // "Add layer": Content bir StackPanel'dir (ikon + TextBlock) — etiket ayrı aranır.
+        // "Add layer": etiket paylaşılan Ds.Settings.AddRow şablonunun (ikon + TextBlock) içinde çizilir.
         var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains("Add layer", texts);
     }
@@ -722,58 +786,39 @@ public class SettingsDialogViewTests
 
     // ================================================================ [K5 · design v1.14.0 §9] EXTERNAL PROJECTS
 
-    /// <summary>[K5] Gövde sırası BİREBİR: WORKSPACE → EXTERNAL PROJECTS → LAYERS (§9: "harici projeler
-    /// derleme sırasının başında olduğu için katmanlardan önce durur"). Geometri kanıtı (TranslatePoint) —
-    /// tree-walk sırasına değil GERÇEK ekran konumuna bakar.</summary>
+    /// <summary>[design v1.19.0 §2.9] Bölüm SIRASI artık rayın sırasıdır: General · Workspace · External projects ·
+    /// Layers — harici projeler hâlâ katmanlardan ÖNCE durur (derleme sırasının başındadırlar).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA
+    /// (<c>Settings_dialog_sections_appear_in_workspace_external_layers_order</c>): tek kolonlu gövdede WORKSPACE →
+    /// EXTERNAL PROJECTS → LAYERS caps başlıkları alt alta dururdu ve sıra dikey konumdan ölçülürdü. Gövde sol raylı
+    /// iki panele bölündü; sıra rayda ölçülür, ölçü ayrıntısı
+    /// <see cref="SettingsDialogLayoutTests.The_rail_is_196px_on_surface_with_the_four_sections_in_order"/>'tedir.</para></summary>
     [StaFact]
-    public void Settings_dialog_sections_appear_in_workspace_external_layers_order()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
-            run => run.ExternalProjects = [new ExternalProject(@"C:\a")]);
-        using var _scope = scope;
-
-        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
-        double YOf(string text) => blocks.Single(b => b.Text == text).TranslatePoint(new Point(0, 0), dialog).Y;
-
-        double workspaceY = YOf("WORKSPACE");
-        double externalY = YOf("EXTERNAL PROJECTS");
-        double layersY = YOf("LAYERS");
-
-        Assert.True(workspaceY < externalY, "WORKSPACE, EXTERNAL PROJECTS'ten önce durmalı");
-        Assert.True(externalY < layersY, "EXTERNAL PROJECTS, LAYERS'tan önce durmalı");
-    }
-
-    /// <summary>[K5] design v1.14.0 §9 BİREBİR: caps başlığı, açıklama (3 Run — "before" vurgusu ayrı) ve
-    /// boş-durum kutusunun metni. "before" text-secondary + 500 taşır (§9: "before sözcüğü text-secondary, 500").
-    /// <para><b>[DEĞİŞEN KURAL]</b> §9'un cümlesi "They are built before everything else, <i>in this order</i>"
-    /// idi. "before" iddiası KORUNUR ve doğrudur (ayrılmış <c>External</c> katmanı, index −1); "in this order"
-    /// DÜŞTÜ — kart sırası yalnız çalışma kopyalarının tazelenme sırasıdır, harici projeler arasındaki derleme
-    /// sırası topolojiden gelir. 3-Run yapısı, vurgulanan sözcük ve tipografi korunur.</para>
-    /// <para><b>[DEĞİŞEN KURAL — design v1.16.0 §2.9]</b> Metin, kart sırasının ne olmadığını AÇIKÇA söyleyen
-    /// bir cümleyle bitiyor: sıranın tek anlamı çalışma kopyalarının güncellenme sırasıdır. Önceki hâli "in
-    /// this order"ı düşürmüştü ama yerine hiçbir şey koymamıştı — kullanıcı sıralamanın neye yaradığını
-    /// tahmin etmek zorunda kalıyordu.</para></summary>
-    [StaFact]
-    public void Settings_dialog_pins_the_external_projects_caption_description_and_empty_state_box_verbatim()
+    public void Settings_sections_appear_in_general_workspace_external_layers_order_on_the_rail()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var blocks = DsResources.RealizedObjects(dialog).OfType<TextBlock>().ToList();
-        var texts = blocks.Select(t => t.Text).ToList();
-        Assert.Contains("EXTERNAL PROJECTS", texts);
+        SettingsSection[] order = [SettingsSection.General, SettingsSection.Workspace, SettingsSection.External, SettingsSection.Layers];
+        var ys = order.Select(s => dialog.RailItem(s).TranslatePoint(new Point(0, 0), dialog).Y).ToList();
+        Assert.Equal(ys.OrderBy(y => y), ys);
+        Assert.Equal(4, ys.Distinct().Count());
+    }
 
-        var description = blocks.Single(b =>
-            b.Inlines.Count == 3 && b.Inlines.OfType<Run>().Any(r => r.Text == "before"));
-        Assert.Equal(
-            """Projects outside the repository root — a folder, a solution or a project file. The git working copy root is found from the path upwards. They are built before everything else; the rest follows the layers below. Card order only sets the order the working copies are updated — among themselves they build in dependency order.""",
-            string.Concat(description.Inlines.OfType<Run>().Select(r => r.Text)));
+    /// <summary>[K5] Harici projeler boş-durum kutusunun metni BİREBİR (v1.19.0'da DEĞİŞMEDİ).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA
+    /// (<c>Settings_dialog_pins_the_external_projects_caption_description_and_empty_state_box_verbatim</c>): bölüm
+    /// <c>EXTERNAL PROJECTS</c> caps başlığı ve "before" vurgulu üç Run'lık uzun açıklamayla açılırdı. v1.19.0 uzun
+    /// gerekçe metinlerini kaldırdı; sayfa tek satırlık PaneHead ile açılır
+    /// (<see cref="SettingsDialogLayoutTests.Every_page_opens_with_its_pane_head"/>).</para></summary>
+    [StaFact]
+    public void Settings_dialog_pins_the_external_projects_empty_state_box_verbatim()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
 
-        var emphasis = description.Inlines.OfType<Run>().Single(r => r.Text == "before");
-        Assert.Equal(dialog.FindResource("Brush.TextSecondary"), emphasis.Foreground);
-        Assert.Equal(dialog.FindResource("FontWeight.Emphasis"), emphasis.FontWeight);
-
-        Assert.Contains("No external projects — only what is discovered under the repository root is built.", texts);
+        Assert.Contains(DsResources.RealizedObjects(dialog.ExternalEmptyState).OfType<TextBlock>(),
+            t => t.Text == "No external projects — only what is discovered under the repository root is built.");
     }
 
     /// <summary>[K5] Harici liste — katmanların AKSİNE — VARSAYILAN OLARAK BOŞTUR (bir "seed" kavramı yok);
@@ -785,7 +830,7 @@ public class SettingsDialogViewTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var box = DsResources.RealizedObjects(dialog).OfType<Grid>().Single(g => g.Name == "ExternalEmptyState");
+        var box = dialog.ExternalEmptyState;
         Assert.Equal(Visibility.Visible, box.Visibility); // taze diyalog: harici liste BAŞTAN boş
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;
@@ -795,17 +840,21 @@ public class SettingsDialogViewTests
         Assert.Equal(Visibility.Collapsed, box.Visibility);
     }
 
-    /// <summary>[K5] "Add external project": VM satırı (boş path + Git) VE gerçekten realize edilen bir kart
-    /// (path input'u ekranda, doğru satıra bağlı) — "kart" iddiasının GEOMETRİK değil ama GERÇEK kanıtı.</summary>
+    /// <summary>[K5] "Add external project": VM satırı (boş path) VE gerçekten realize edilen bir kart
+    /// (path input'u ekranda, doğru satıra bağlı) — "kart" iddiasının GEOMETRİK değil ama GERÇEK kanıtı.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> Watermark ürüne özeldi
+    /// (<c>C:\src\shared\Delta.Common\Delta.Common.csproj</c>); artık ürün-bağımsız <c>MyApp.Common</c> örneğidir.
+    /// Kart yalnız External projects sayfası görünürken realize olur.</para></summary>
     [StaFact]
     public void Add_external_project_appends_a_realized_card_with_an_empty_path_and_git_selected()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
+        dialog.ShowSection(SettingsSection.External);
+        dialog.UpdateLayout();
 
         var addButton = DsResources.RealizedObjects(dialog).OfType<Button>()
-            .Single(b => b.Content is StackPanel panel
-                         && panel.Children.OfType<TextBlock>().Any(t => t.Text == "Add external project"));
+            .Single(b => Equals(b.Content, "Add external project"));
         addButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
         dialog.UpdateLayout();
 
@@ -814,7 +863,7 @@ public class SettingsDialogViewTests
         Assert.Equal("", row.Path);   // §9: "boş path'li kart ekler"
 
         var pathInput = DsResources.Descendants(dialog).OfType<TextBox>()
-            .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == @"C:\src\shared\Delta.Common\Delta.Common.csproj");
+            .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == @"C:\src\shared\MyApp.Common\MyApp.Common.csproj");
         Assert.Same(row, pathInput.DataContext);
     }
 

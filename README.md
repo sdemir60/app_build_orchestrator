@@ -128,10 +128,12 @@ the running instance first — tray icon → Exit).
 ## Using it
 
 1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
-   a folder picker: starting takes more than one setting now. Settings opens with the repository root (the one
-   thing the tool cannot run without — *Save* stays disabled while it is empty), then the optional external
-   roots, then the optional layer definitions. *Browse…* only stages the folder in the dialog; *Save* is
-   what applies it, and on first run it reads *Save and sync*. If you already have a settings file, *Import
+   a folder picker: starting takes more than one setting now. Settings is split into sections down a left
+   rail — **General**, **Workspace**, **External projects**, **Layers** — and on first run it opens on
+   Workspace, where the repository root lives (the one thing the tool cannot run without — *Save* stays
+   disabled while it is empty, and the footer says why); afterwards it opens on General. External projects and
+   layers are optional. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
+   run it reads *Save and sync*. If you already have a settings file, *Import
    settings…* on the invitation opens the dialog with the file picker already up.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
@@ -139,6 +141,9 @@ the running instance first — tray icon → Exit).
    the same graph as the repository's own projects, in an *External* group at the top, and is built first.
    Cards reorder the same way layer cards do, by dragging the grip; that order is the order their working
    copies are refreshed in. What Build does with them is step 4 below.
+
+   **Layers** start empty. *Add layer* appends a blank row; its inputs show example names and patterns as
+   placeholders, never as values.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -172,7 +177,7 @@ the running instance first — tray icon → Exit).
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
-   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — a folder, a `.sln` or a `.csproj`.
+   them under *Settings → External projects*: type or paste the path — a folder, a `.sln` or a `.csproj`.
    That path is the whole card; the git working copy above it is found for you.
 
    Sync then scans that path the same way it scans the repository root. A folder contributes every project
@@ -185,7 +190,7 @@ the running instance first — tray icon → Exit).
    to no project at all is called out: Sync warns, Build refuses to start.
 
    Before each Build their working copies are refreshed, in card order — unless you turn **Pull before build**
-   off, the switch in the section's header. Each root gets a fetch and a fast-forward — never a `pull`, so
+   off, the switch at the top of that page. Each root gets a fetch and a fast-forward — never a `pull`, so
    nothing is rewritten on your behalf.
    **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
    commit or stash them and press Build again. A branch that has diverged from its remote stops the
@@ -384,7 +389,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has WORKSPACE, EXTERNAL PROJECTS and LAYERS). If it cannot be registered — another application
+(Settings has General, Workspace, External projects and Layers). If it cannot be registered — another application
 already owns that combination — it is silently disabled; the tray icon still restores the window, and the
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 

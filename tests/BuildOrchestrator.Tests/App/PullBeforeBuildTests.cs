@@ -148,11 +148,14 @@ public class PullBeforeBuildTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var texts = DsResources.RealizedObjects(dialog).OfType<TextBlock>().Select(t => t.Text).ToList();
-        Assert.Contains("EXTERNAL PROJECTS", texts);
+        // [DEĞİŞEN KURAL — design v1.19.0 §2.9] Satır External projects SAYFASINDA durur; soldaki
+        // "EXTERNAL PROJECTS" caps etiketi kalktı (sayfanın başlığı PaneHead'dir, tekrar etmez).
+        var page = dialog.Page(BuildOrchestrator.App.Views.SettingsSection.External);
+        var texts = DsResources.RealizedObjects(page).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.DoesNotContain("EXTERNAL PROJECTS", texts);
         Assert.Contains("PULL BEFORE BUILD", texts);
 
-        var toggle = DsResources.RealizedObjects(dialog).OfType<CheckBox>()
+        var toggle = DsResources.RealizedObjects(page).OfType<CheckBox>()
             .Single(c => c.Name == "PullExternalsSwitch");
         Assert.Equal(dialog.FindResource("Ds.Switch"), toggle.Style);
         Assert.True(toggle.IsChecked);                                  // varsayılan AÇIK

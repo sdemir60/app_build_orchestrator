@@ -39,16 +39,14 @@ internal static class SettingsDialogHost
     /// <summary>Realize edilmiş + <see cref="SettingsDialog.Open"/> edilmiş diyalog. Dönen <see cref="IDisposable"/>
     /// hem ekran dışı pencereyi canlı tutar hem de <see cref="EngineHost"/>'u kapatır — o ctor inert DEĞİLDİR:
     /// <c>JobObject.CreateKillOnClose()</c> ile bir Win32 handle açar (lens2/lens3 · C9).</summary>
-    /// <param name="windowWidth">Host penceresinin genişliği — 900: ortak kabuk dialogu host − 48'e kelepçeler
-    /// (design v1.19.0) ve 800'lük ekran dışı pencerenin istemci alanı (786) 760px'lik Settings'i 738'e
-    /// daraltırdı. 900, tasarım genişliğini kelepçeye TAKILMADAN sığdırır.</param>
+    /// <param name="windowWidth">Host penceresinin genişliği — 1000: ortak kabuk dialogu host − 48'e kelepçeler
+    /// ve 880px'lik Settings (design v1.19.0 §2.9) istemci alanının 48px içine sığmalıdır; 900'lük pencerenin
+    /// istemci alanı (886) onu 838'e daraltırdı. 1000, tasarım genişliğini kelepçeye TAKILMADAN sığdırır.</param>
     /// <param name="windowHeight">Host penceresinin yüksekliği — AboutDialogHost/NotesDialogHost'un AYNI kararı
-    /// (700 yükseklik): varsayılan 400×200'de gövde <c>MinHeight</c>'ı (task-D6, 300px) pencereden BÜYÜK kalır ve
-    /// dialog dikeyde kırpılırdı (DsResources.Realize gerekçesiyle AYNI risk). Pencere yüksekliğine bağlı gövde
-    /// sınırını (<see cref="SettingsBodyHeight"/>) AYRICA sınayan çağıranlar bu iki parametreyi ELLE verir.</param>
+    /// (700 yükseklik): istemci alanı − 48, 576px'lik sabit yüksekliği kelepçeye takılmadan taşır.</param>
     public static (SettingsDialog dialog, RunViewModel run, FakeStore store, IDisposable scope) OpenRealized(
         Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null,
-        double windowWidth = 900, double windowHeight = 700)
+        double windowWidth = 1000, double windowHeight = 700)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };

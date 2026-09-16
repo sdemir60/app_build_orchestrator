@@ -10,9 +10,12 @@ using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
 
+/// <summary>[design v1.19.0 §2.9] Settings rayının bölümleri, raydaki sırasıyla.</summary>
+internal enum SettingsSection { General, Workspace, External, Layers }
+
 /// <summary>
-/// [D7/T66 · K5] Settings modal diyaloğu (ince view). <b>WORKSPACE</b> (design v1.8.0 §2.9),
-/// <b>EXTERNAL PROJECTS</b> (design v1.14.0 §9) ve <b>LAYERS</b> bölümlerinin üçü de
+/// [D7/T66 · K5 · design v1.19.0 §2.9] Settings modal diyaloğu (ince view): sol raydan seçilen dört sayfa —
+/// <b>General</b>, <b>Workspace</b>, <b>External projects</b>, <b>Layers</b>. Sayfaların hepsi
 /// <see cref="SettingsDraftViewModel"/>'e (test edilebilir taslak) bağlıdır — Save'e kadar canlı
 /// <see cref="RunViewModel"/>'e dokunulmaz. Save = commit (persist + katmanlar + harici projeler + bekleyen
 /// repo kökü + TEK Sync, <see cref="SettingsDraftViewModel.CommitAsync"/>), Cancel/scrim/Esc = taslağı at.
@@ -49,7 +52,6 @@ public partial class SettingsDialog : ModalDialog
     /// <summary>Clear ikonunun TABAN (armed olmayan) tooltip'i — XAML'in kendi değeri (kopya YASAK: burada
     /// yeniden yazılmaz, yalnız <see cref="DisarmClear"/> geri yüklemek için OKUR).</summary>
     private readonly object? _clearBaseTooltip;
-    private Window? _hostWindow;
 
     public SettingsDialog()
     {
@@ -74,11 +76,39 @@ public partial class SettingsDialog : ModalDialog
     internal Button Import => ImportButton;
     internal Button Clear => ClearButton;
     internal Button Save => SaveButton;
-    internal Button SampleLayers => SampleLayersButton;
+    internal Button CloseButton => CloseSettingsButton;
     internal TextBox RootInput => RepoRootInput;
     internal TextBlock Feedback => FeedbackText;
+    internal TextBlock BlockedReason => BlockedReasonText;
     internal ShapePath ClearIcon => ClearGlyph;
     internal bool IsClearArmed => _clearArmed;
+
+    /// <summary>[design v1.19.0 §2.9] Bölümün ray satırı — bölüm ↔ XAML eşlemesinin TEK yeri.</summary>
+    internal RadioButton RailItem(SettingsSection section) => section switch
+    {
+        SettingsSection.General => GeneralRailItem,
+        SettingsSection.Workspace => WorkspaceRailItem,
+        SettingsSection.External => ExternalRailItem,
+        SettingsSection.Layers => LayersRailItem,
+        _ => throw new ArgumentOutOfRangeException(nameof(section)),
+    };
+
+    /// <summary>Bölümün sayfası (görünürlüğü XAML'de ray satırının seçimine bağlıdır).</summary>
+    internal FrameworkElement Page(SettingsSection section) => section switch
+    {
+        SettingsSection.General => GeneralPage,
+        SettingsSection.Workspace => WorkspacePage,
+        SettingsSection.External => ExternalPage,
+        SettingsSection.Layers => LayersPage,
+        _ => throw new ArgumentOutOfRangeException(nameof(section)),
+    };
+
+    /// <summary>Bölümü seçer — raydaki tıklamanın yaptığının aynısı.</summary>
+    internal void ShowSection(SettingsSection section) => RailItem(section).IsChecked = true;
+
+    /// <summary>[design v1.8.0 §2.9] First run: henüz workspace yok. Kaydetmek aynı zamanda kurulumdur (düğme
+    /// <c>Save and sync</c> der) ve diyalog Workspace sayfasında açılır.</summary>
+    private bool IsFirstRun => _run?.HasWorkspace != true;
 
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
@@ -93,7 +123,9 @@ public partial class SettingsDialog : ModalDialog
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();
-        TrackHostWindowSize();
+        // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir: first run'da Workspace (başlamak için
+        // gereken tek zorunlu ayar orada), sonrasında General.
+        ShowSection(IsFirstRun ? SettingsSection.Workspace : SettingsSection.General);
         // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, odağı diyaloğun İÇİNE taşıma (ilk
         // input tercih edilir) ve giriş ModalDialog'dadır.
         //
@@ -102,32 +134,6 @@ public partial class SettingsDialog : ModalDialog
         // + 6px yükselir (DialogShellTests.Settings_now_plays_the_dialog_entrance).
         ShowDialog();
     }
-
-    /// <summary>[design v1.14.0 §2.9 · ruling task-D6] Gövdenin (<see cref="Body"/>) üst yükseklik sınırını
-    /// dialogu barındıran PENCEREYE bağlar: WPF'te <c>vh</c> (tarayıcı viewport'u) yoktur, en yakın karşılık
-    /// dialogun İÇİNDE yaşadığı <see cref="System.Windows.Window"/>'un <c>ActualHeight</c>'ıdır — bağlayıcı
-    /// sınır ekran değil PENCEREDİR. Hesabın kendisi <see cref="SettingsBodyHeight"/>'ta TEK yerde
-    /// (kopya YASAK); burada yalnız GÜNCEL pencereyi bulup ilk değeri uygular ve pencere yeniden
-    /// boyutlandığında (<see cref="OnHostWindowSizeChanged"/>) yeniden çağrılmasını KURAR.
-    ///
-    /// <para>Abonelik İDEMPOTENTtir: diyalog kapanıp yeniden açıldığında (aynı üst pencerede) tekrar tekrar
-    /// çağrılır ama aynı pencereye İKİNCİ KEZ abone OLUNMAZ.</para></summary>
-    private void TrackHostWindowSize()
-    {
-        var window = Window.GetWindow(this);
-        if (!ReferenceEquals(window, _hostWindow))
-        {
-            if (_hostWindow is not null) _hostWindow.SizeChanged -= OnHostWindowSizeChanged;
-            _hostWindow = window;
-            if (_hostWindow is not null) _hostWindow.SizeChanged += OnHostWindowSizeChanged;
-        }
-        UpdateBodyHeightLimit();
-    }
-
-    private void OnHostWindowSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBodyHeightLimit();
-
-    private void UpdateBodyHeightLimit() =>
-        Body.MaxHeight = SettingsBodyHeight.MaxHeightFor(_hostWindow?.ActualHeight ?? 0);
 
     /// <summary>[design v1.10.0 §2.4] First run'daki <c>Import settings…</c> kısayolu: diyaloğu açar ve dosya
     /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
@@ -141,10 +147,10 @@ public partial class SettingsDialog : ModalDialog
     /// Clear'ın kurulu durumunu sıfırlar — taslak zaten bir kopyadır ve atılır.</summary>
     protected override void OnDialogClosing() => ResetFeedback();
 
-    /// <summary>[design v1.8.0 §2.9] First run'da (henüz workspace yok) kaydetmek AYNI ZAMANDA kurulumdur —
-    /// düğme bunu söyler: <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
+    /// <summary>[design v1.8.0 §2.9] First run'da kaydetmek AYNI ZAMANDA kurulumdur — düğme bunu söyler:
+    /// <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
     private void RefreshSaveLabel() =>
-        SaveButton.Content = _run?.HasWorkspace == true ? "Save" : "Save and sync";
+        SaveButton.Content = IsFirstRun ? "Save and sync" : "Save";
 
     // ---- Layers ----
 
@@ -153,12 +159,6 @@ public partial class SettingsDialog : ModalDialog
     private void OnRemoveLayer(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: LayerRowViewModel row }) _draft?.RemoveLayer(row);
-    }
-
-    private void OnLoadSampleLayers(object sender, RoutedEventArgs e)
-    {
-        _draft?.LoadSampleLayers();
-        DisarmClear();
     }
 
     // ---- External projects (design v1.14.0 §9 · K5) ----

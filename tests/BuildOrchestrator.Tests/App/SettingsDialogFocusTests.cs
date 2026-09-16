@@ -82,91 +82,30 @@ public class SettingsDialogFocusTests
 
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 
-    /// <summary>[A13/T3b · b2 → task-D6/T12] design-v1 README §2.9: "Settings dialog (760px)".
+    /// <summary>[A13/T3b · b2 → design v1.19.0 §2.9] Settings kabuğu 880×576 SABİT.
     /// <c>DesignTokenScaleTests.cs:141</c> içinde geçen 620 AYRI bir kalemdir (<c>Size.WindowMinHeight</c>) —
     /// karıştırılmaz (brief notu).
     ///
-    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ İDDİA: 620px — üç dialog (Settings/About/What's new)
-    /// AYNI kalıbı paylaşıyordu. YENİ: her dialog bugünkü içeriğine değil BÜYÜME YÖNÜNE göre ölçülüyor;
-    /// Settings en çok büyüyecek olan (bugün root + katman kartları, yarın MSBuild yolu/paralellik/worktree
-    /// havuzu/bildirim tercihleri — form + iki kolonlu kart en geniş bileşimdir) → 760px. Büyüme sürerse bir
-    /// bölüm listesi (sol nav) eklenir, genişlik yine 760'ta kalır.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ İDDİA: 620px — üç dialog AYNI kalıbı paylaşıyordu;
+    /// sonra 760px (büyüme yönüne göre ölçü, "büyüme sürerse sol bir bölüm listesi eklenir").</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: 760px genişlik, yükseklik içerikten doğar ve gövde
+    /// 300–460px arasında pencerenin %56'sını izlerdi (<c>SettingsBodyHeight</c> + dört gövde-yüksekliği testi).
+    /// v1.19.0 o öngörülen sol bölüm listesini ekledi: dialog 880×576 SABİT, gövde kalan alanı doldurur ve kendi
+    /// içinde kayar; tek dış sınır kabuğun host − 48 kelepçesidir (<c>DialogShellTests</c>). Pencereye bağlı gövde
+    /// hesabı kalktığı için o dört test gerekçesiyle SİLİNDİ; yerine "bölüm değişince boy değişmez" gelir
+    /// (<see cref="SettingsDialogLayoutTests.The_dialog_is_880_by_576_and_keeps_that_size_on_every_section"/>).</para></summary>
     [StaFact]
-    public void Settings_dialog_shell_is_seven_hundred_sixty_pixels_wide()
+    public void Settings_dialog_shell_is_880_by_576()
     {
         // [fix-1 · B6/C9] Kurulum + EngineHost sahipliği tek yerde (SettingsDialogHost).
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
             var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-            Assert.Equal(760.0, shell.Width);
-            Assert.Equal(760.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
-        }
-    }
-
-    // ================================================================ [task-D6/T12 · design v1.14.0 §2.9]
-    // Gövde kendi içinde kaydırılır: üst sınır min(pencere-yüksekliği × 56%, 460px) — SAF hesap
-    // SettingsBodyHeight'ta (kopya YASAK); burada yalnız GERÇEK pencereye KABLAJ sınanır. Alt taban 300px
-    // ScrollViewer.MinHeight'a sabit bağlanır (XAML, x:Static).
-
-    /// <summary>Alt taban HER pencerede sabittir — WPF'in kendi Min/Max önceliği (Min, Max'ı ezer) çok küçük
-    /// pencerede dialogun çökmesini bu tek satır üzerinden engeller.
-    /// <para><b>[review fix-1]</b> Tavanın <c>Settings_body_max_height_caps_at_460_in_a_tall_window</c>'da
-    /// SERT literal (460.0) ile pinlendiği AYNI desen: yalnız sembolle (<c>SettingsBodyHeight.MinFloor</c>)
-    /// karşılaştırmak totolojikti — sabit kayarsa bu satır ASLA kırılmaz, yalnız KABLAJ bozulursa kırılır.
-    /// Literal satır sabitin KENDİSİ 300'ün dışına kayarsa da kırılır.</para></summary>
-    [StaFact]
-    public void Settings_body_min_height_is_300_so_the_dialog_never_collapses()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
-        using (scope)
-        {
-            Assert.Equal(SettingsBodyHeight.MinFloor, dialog.Body.MinHeight); // kablaj: XAML gerçekten OKUYOR
-            Assert.Equal(300.0, dialog.Body.MinHeight);                      // sert literal: değer GERÇEKTEN 300
-        }
-    }
-
-    /// <summary>Büyük pencere: gövde 460px'te SABİTLENİR (tasarımın üst sınırı) — pencere ne kadar büyürse
-    /// büyüsün dialog ekranı kaplamaya devam ETMEZ.</summary>
-    [StaFact]
-    public void Settings_body_max_height_caps_at_460_in_a_tall_window()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 1200);
-        using (scope)
-        {
-            Assert.Equal(460.0, dialog.Body.MaxHeight);
-        }
-    }
-
-    /// <summary>Orta pencere: üst sınır pencere yüksekliğinin GERÇEKTEN %56'sını izler (ne taban ne tavana
-    /// yapışık) — kablajın <see cref="SettingsBodyHeight.MaxHeightFor"/>'u GERÇEK <c>Window.ActualHeight</c>'la
-    /// çağırdığının doğrudan kanıtı.</summary>
-    [StaFact]
-    public void Settings_body_max_height_follows_56_percent_of_the_window_between_the_floor_and_the_cap()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 700);
-        using (scope)
-        {
-            Assert.Equal(SettingsBodyHeight.MaxHeightFor(700), dialog.Body.MaxHeight, precision: 3);
-            Assert.Equal(392.0, dialog.Body.MaxHeight, precision: 3); // 700 × 0.56 — ne 300 ne 460
-        }
-    }
-
-    /// <summary>Ruling task-D6: hesap pencere yeniden boyutlandığında YENİDEN çağrılır — bir kere hesaplanıp
-    /// unutulmaz. GraphRealizationPerfTests'teki AYNI desen (<c>window.Height = …; content.UpdateLayout();</c>).</summary>
-    [StaFact]
-    public void Settings_body_max_height_updates_when_the_hosting_window_is_resized()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(windowHeight: 1200);
-        using (scope)
-        {
-            Assert.Equal(460.0, dialog.Body.MaxHeight); // başlangıç: tavana yapışık
-
-            var window = Window.GetWindow(dialog)!;
-            window.Height = 700;
-            dialog.UpdateLayout();
-
-            Assert.Equal(392.0, dialog.Body.MaxHeight, precision: 3); // YENİDEN hesaplandı — 700 × 0.56
+            Assert.Equal(880.0, shell.Width);
+            Assert.Equal(576.0, shell.Height);
+            Assert.Equal(880.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
+            Assert.Equal(576.0, shell.ActualHeight);
         }
     }
 
@@ -207,6 +146,12 @@ public class SettingsDialogFocusTests
             r => r.LayerPatterns = [.. Enumerable.Range(0, 20).Select(i => new LayerPattern(i, "^A" + i, "Layer " + i))],
             windowHeight: 1200);
         using var _overflowScope = overflowScope;
+        // [design v1.19.0] Kartlar yalnız Layers sayfası görünürken realize olur.
+        foreach (var dialog in new[] { fits, overflowing })
+        {
+            dialog.ShowSection(SettingsSection.Layers);
+            dialog.UpdateLayout();
+        }
 
         var fitsBar = BodyVerticalScrollBar(fits.Body);
         var overflowingBar = BodyVerticalScrollBar(overflowing.Body);
@@ -230,6 +175,8 @@ public class SettingsDialogFocusTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run =>
             run.LayerPatterns = [new LayerPattern(0, "^A", "Layer A"), new LayerPattern(1, "^B", "Layer B")]);
         using var _scope = scope;
+        dialog.ShowSection(SettingsSection.Layers);
+        dialog.UpdateLayout();
 
         var editor = (SettingsDraftViewModel)dialog.DataContext;
         Assert.Equal(2, editor.Layers.Count); // ön-koşul: iki kart gerçekten var
@@ -245,8 +192,9 @@ public class SettingsDialogFocusTests
         double top1 = card1.TranslatePoint(new Point(0, 0), dialog).Y;
         Assert.Equal(42.0, top1 - top0, precision: 1);
 
+        // [design v1.19.0] Watermark artık satır indeksinin placeholder'ıdır — kutu UIA adıyla bulunur.
         var nameBox = DsResources.Descendants(card0).OfType<TextBox>()
-            .Single(t => BuildOrchestrator.App.Controls.DsChrome.GetWatermark(t) == "Layer name");
+            .Single(t => AutomationProperties.GetName(t) == AccessibilityNames.LayerName);
         Assert.Equal(170.0, nameBox.Width);
         Assert.Equal(170.0, nameBox.ActualWidth);
     }
@@ -260,6 +208,8 @@ public class SettingsDialogFocusTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
             [new ExternalProject(@"C:\a"), new ExternalProject(@"C:\b")]);
         using var _scope = scope;
+        dialog.ShowSection(SettingsSection.External);
+        dialog.UpdateLayout();
 
         var draft = (SettingsDraftViewModel)dialog.DataContext;
         Assert.Equal(2, draft.Externals.Count); // ön-koşul: iki kart gerçekten var
@@ -288,22 +238,17 @@ public class SettingsDialogFocusTests
         Assert.Equal(AccessibilityNames.ExternalProjectPath, AutomationProperties.GetName(pathInput));
     }
 
-    /// <summary>[review fix — Bulgu 2] Bölüm ayracı prototipin ÖLÇÜSÜNÜ taşır: üst 18 / alt 16
-    /// (BuildApp.jsx:1833 <c>margin: '18px 0 16px'</c>). Önceki turda paylaşılan stil sessizce 18/18'e
-    /// yuvarlanmıştı — ruling prototip kazanır. İki ayraç da (Workspace→External, External→Layers) AYNI
-    /// <c>Ds.Settings.SectionDivider</c> stilini paylaştığı için TEK assertion ikisini de kapsar.</summary>
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ İDDİA
+    /// (<c>Section_dividers_use_an_eighteen_top_sixteen_bottom_margin</c>): tek kolonlu gövdede bölümleri iki
+    /// <c>Ds.Settings.SectionDivider</c> ayracı (üst 18 / alt 16) ayırırdı. Bölümler artık ayrı sayfalardır; ayraç ve
+    /// stili kalktı — burada yokluğu pinlenir (ölü bir stil sessizce geri gelmesin).</summary>
     [StaFact]
-    public void Section_dividers_use_an_eighteen_top_sixteen_bottom_margin()
+    public void Sections_are_pages_and_no_section_divider_style_remains()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
 
-        var dividerStyle = dialog.FindResource("Ds.Settings.SectionDivider");
-        var dividers = DsResources.RealizedObjects(dialog).OfType<Border>()
-            .Where(b => ReferenceEquals(b.Style, dividerStyle)).ToList();
-
-        Assert.Equal(2, dividers.Count); // Workspace→External + External→Layers — ikisi de gerçekten realize oldu
-        Assert.All(dividers, b => Assert.Equal(new Thickness(0, 18, 0, 16), b.Margin));
+        Assert.Null(dialog.TryFindResource("Ds.Settings.SectionDivider"));
     }
 
     /// <summary>[K5] <paramref name="row"/> bilerek <c>object</c>'tir: hem <see cref="LayerRowViewModel"/> hem
@@ -319,7 +264,7 @@ public class SettingsDialogFocusTests
     /// <summary>Bir katman kartının PATTERN input'u (ad input'unun İKİZİ — <c>CardBorder</c>'ın izinden gider).</summary>
     private static TextBox PatternInputOf(ItemsControl list, LayerRowViewModel row) =>
         DsResources.Descendants(CardBorder(list, row)).OfType<TextBox>()
-            .Single(t => DsChrome.GetWatermark(t) != "Layer name");
+            .Single(t => AutomationProperties.GetName(t) == AccessibilityNames.LayerPattern);
 
     /// <summary>Gövdenin KENDİ dikey scrollbar'ı — <c>Descendants(body).OfType&lt;ScrollBar&gt;()</c> tek başına
     /// YETMEZ: her katman kartındaki TextBox'ın KENDİ şablonu da bir <c>PART_ContentHost</c> ScrollViewer'ı (ve

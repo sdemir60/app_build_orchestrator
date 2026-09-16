@@ -23,6 +23,12 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
     /// template-local trigger; sürüklenirken <c>Brush.SurfaceRaised</c> + <c>Brush.BorderStrong</c>).</summary>
     [ObservableProperty] private bool _isDragging;
 
+    /// <summary>[design v1.19.0 §2.9] Satırın taslak listesindeki indeksi — placeholder'lar buradan türer. Sahibi
+    /// <see cref="SettingsDraftViewModel"/>'dir: her ekleme/silme/taşımada yeniden yazar.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NamePlaceholder), nameof(PatternPlaceholder))]
+    private int _index;
+
     public LayerRowViewModel(string name, string regex)
     {
         _name = name;
@@ -32,6 +38,12 @@ public sealed partial class LayerRowViewModel : ObservableObject, IDragReorderIt
     /// <summary>[D7] Regex derlenemiyor mu — input'un kırmızı (invalid) durumu. LayerEngine'in EKLEDİĞİ
     /// sınırlı-matchTimeout ctor'uyla AYNI compile-check (boş regex GEÇERLİdir → invalid DEĞİL).</summary>
     public bool RegexInvalid => !LayerEngine.IsPatternCompilable(Regex);
+
+    /// <summary>[design v1.19.0 §2.9] Ad input'unun placeholder'ı — satır indeksinin çifti (<see cref="LayerPlaceholders"/>).</summary>
+    public string NamePlaceholder => LayerPlaceholders.For(Index).Name;
+
+    /// <summary>[design v1.19.0 §2.9] Desen input'unun placeholder'ı — satır indeksinin çifti.</summary>
+    public string PatternPlaceholder => LayerPlaceholders.For(Index).Pattern;
 }
 
 /// <summary>[K5] Settings diyaloğundaki EXTERNAL PROJECTS editörünün tek satırı — düzenlenebilir bir yol.
@@ -78,9 +90,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     [ObservableProperty] private string? _repositoryRoot;
 
     /// <summary>Taslak = kayıtlı pattern'lerin DERİN kopyası (Order'a göre; editör sırası = katman sırası).
-    /// Kayıtlı katman YOKSA (null ya da boş) taslak <see cref="LayerDefaults"/> ile DOLU kurulur — araç
-    /// paylaşıldığında kimse katmanları elle yazmasın. Bu YALNIZ taslaktır: Save'e basılmadıkça ne
-    /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir; uygulama açılışında seed YOKtur.
+    /// Kayıtlı katman YOKSA (null ya da boş) taslak BOŞ kurulur — [design v1.19.0 §2.9] ürüne özel bir ön-dolum
+    /// yoktur; yeni satırlar yalnız placeholder gösterir (<see cref="LayerPlaceholders"/>). Save'e basılmadıkça ne
+    /// <see cref="RunViewModel.LayerPatterns"/> ne UiState değişir.
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
     /// taslak da boş kalır.</summary>
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
@@ -94,8 +106,6 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (initial is { Count: > 0 })
             foreach (var p in initial.OrderBy(p => p.Order))
                 AddRow(new LayerRowViewModel(p.Name, p.Regex));
-        else
-            AddDefaultRows();
 
         if (initialExternals is { Count: > 0 })
             foreach (var e in initialExternals)
@@ -108,21 +118,33 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// v1.14.0/§9] bir harici projenin path'i BOŞ (trim sonrası) — katman adı kuralıyla AYNI sertlik.
     /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI
     /// (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
-    public bool CanSave =>
-        !string.IsNullOrWhiteSpace(RepositoryRoot)
-        && Layers.All(r => r.Name.Trim().Length > 0 && !r.RegexInvalid)
-        && Externals.All(x => x.Path.Trim().Length > 0);
+    public bool CanSave => SaveBlockedReason is null;
 
-    // Root, CanSave'in ikinci koşuludur — değiştiğinde düğmenin de haberi olmalı.
-    partial void OnRepositoryRootChanged(string? value) => OnPropertyChanged(nameof(CanSave));
+    /// <summary>[design v1.19.0 §2.9] Save kapalıyken footer'ın okuduğu TEK satırlık neden; Save açıkken <c>null</c>.
+    /// <see cref="CanSave"/> bundan türer — iki özellik aynı koşulları iki kez yazmaz. Öncelik tasarımın sırasıdır:
+    /// kök → harici path → katman adı → desen (kullanıcı hangi sayfada olursa olsun ilk engeli okur).</summary>
+    public string? SaveBlockedReason =>
+        string.IsNullOrWhiteSpace(RepositoryRoot) ? RootRequiredReason
+        : Externals.Any(x => x.Path.Trim().Length == 0) ? ExternalPathRequiredReason
+        : Layers.Any(r => r.Name.Trim().Length == 0) ? LayerNameRequiredReason
+        : Layers.Any(r => r.RegexInvalid) ? InvalidPatternReason
+        : null;
 
-    /// <summary>[design v1.8.0/§2.9 "Load sample layers"] Taslağı örnek katmanlarla (<see cref="LayerDefaults"/>)
-    /// doldurur. A13.2 reset yasağı: <c>Clear()</c> yerine sondan sil + ekle (yalnız Remove/Add bildirimleri).</summary>
-    public void LoadSampleLayers()
+    private const string RootRequiredReason = "Repository root is required";
+    private const string ExternalPathRequiredReason = "Every external project needs a path";
+    private const string LayerNameRequiredReason = "Every layer needs a name";
+    private const string InvalidPatternReason = "Check the highlighted pattern";
+
+    /// <summary>Save kapısının iki yüzü (<see cref="CanSave"/> düğmeyi, <see cref="SaveBlockedReason"/> footer
+    /// satırını sürer) her tetikleyicide BİRLİKTE bildirilir.</summary>
+    private void NotifySaveGate()
     {
-        for (int i = Layers.Count - 1; i >= 0; i--) RemoveLayer(Layers[i]);
-        AddDefaultRows();
+        OnPropertyChanged(nameof(SaveBlockedReason));
+        OnPropertyChanged(nameof(CanSave));
     }
+
+    // Root, Save kapısının ilk koşuludur — değiştiğinde düğmenin de haberi olmalı.
+    partial void OnRepositoryRootChanged(string? value) => NotifySaveGate();
 
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 
@@ -167,13 +189,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         for (int i = Externals.Count - 1; i >= 0; i--) RemoveExternal(Externals[i]);
     }
 
-    private void AddDefaultRows()
-    {
-        foreach (var (name, regex) in LayerDefaults.Layers) AddRow(new LayerRowViewModel(name, regex));
-    }
-
-    public void AddLayer() =>
-        AddRow(new LayerRowViewModel($"Layer {Layers.Count + 1}", ""));
+    /// <summary>[design v1.19.0 §2.9] <c>Add layer</c>: BOŞ bir satır (ad ve desen boş) — input'lar satır indeksinin
+    /// placeholder'ını gösterir.</summary>
+    public void AddLayer() => AddRow(new LayerRowViewModel("", ""));
 
     public void RemoveLayer(LayerRowViewModel row) => Layers.Remove(row);
 
@@ -213,34 +231,37 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     private void AddRow(LayerRowViewModel row) => Layers.Add(row);
     private void AddExternalRow(ExternalRowViewModel row) => Externals.Add(row);
 
-    // [D7] CanSave tüm satırların ad/regex'ine bağlıdır — satır ekleme/çıkarmada ve her satır değişiminde tazelenir.
+    // [D7] Save kapısı tüm satırların ad/regex'ine bağlıdır — satır ekleme/çıkarmada ve her satır değişiminde
+    // tazelenir. [design v1.19.0] Her koleksiyon değişiminde (Move dahil) satır indeksleri de yeniden yazılır:
+    // placeholder satıra değil indekse aittir.
     private void OnLayersChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (e.OldItems is not null)
             foreach (LayerRowViewModel row in e.OldItems) row.PropertyChanged -= OnRowChanged;
         if (e.NewItems is not null)
             foreach (LayerRowViewModel row in e.NewItems) row.PropertyChanged += OnRowChanged;
-        OnPropertyChanged(nameof(CanSave));
+        for (int i = 0; i < Layers.Count; i++) Layers[i].Index = i;
+        NotifySaveGate();
     }
 
     private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(LayerRowViewModel.Name) or nameof(LayerRowViewModel.RegexInvalid))
-            OnPropertyChanged(nameof(CanSave));
+            NotifySaveGate();
     }
 
-    // [K5] Layers'ın OnLayersChanged/OnRowChanged ikizi — CanSave'in üçüncü koşulu (boş harici path) burada tazelenir.
+    // [K5] Layers'ın OnLayersChanged/OnRowChanged ikizi — Save kapısının boş harici path koşulu burada tazelenir.
     private void OnExternalsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (e.OldItems is not null)
             foreach (ExternalRowViewModel row in e.OldItems) row.PropertyChanged -= OnExternalRowChanged;
         if (e.NewItems is not null)
             foreach (ExternalRowViewModel row in e.NewItems) row.PropertyChanged += OnExternalRowChanged;
-        OnPropertyChanged(nameof(CanSave));
+        NotifySaveGate();
     }
 
     private void OnExternalRowChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ExternalRowViewModel.Path)) OnPropertyChanged(nameof(CanSave));
+        if (e.PropertyName == nameof(ExternalRowViewModel.Path)) NotifySaveGate();
     }
 }

@@ -193,20 +193,6 @@ public class SettingsPortabilityTests
         Assert.Equal(@"C:\new", row.Path);
     }
 
-    /// <summary>[K5, §9] "Load sample layers harici listeye DOKUNMAZ" — örnekler yalnız katmanları doldurur.</summary>
-    [StaFact]
-    public void Load_sample_layers_does_not_touch_the_external_projects()
-    {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
-        using var _scope = scope;
-        dialog.Draft!.AddExternal();
-        dialog.Draft!.Externals[0].Path = @"C:\a";
-
-        Click(dialog.SampleLayers);
-
-        Assert.Equal([@"C:\a"], dialog.Draft!.Externals.Select(e => e.Path));
-    }
-
     /// <summary>[§2.9] Import'un geri bildirimi katman sayısını ve (varsa) kökü söyler.</summary>
     [Fact]
     public void The_import_feedback_counts_the_layers_and_mentions_the_root()
@@ -416,19 +402,34 @@ public class SettingsPortabilityTests
         Assert.Equal(baseTooltip, dialog.Clear.ToolTip);  // tooltip tabana DÖNDÜ
     }
 
-    /// <summary>Başka bir eyleme geçmek Clear'ın kurulu onayını DÜŞÜRÜR — kullanıcı fikrini değiştirmiştir.</summary>
+    /// <summary>Başka bir eyleme geçmek Clear'ın kurulu onayını DÜŞÜRÜR — kullanıcı fikrini değiştirmiştir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> "Başka eylem" eskiden <c>Load sample layers</c>'tı; düğme
+    /// kalktı. Aynı kural Export ile ölçülür (seçici iptal edilse bile onay düşer).</para></summary>
     [StaFact]
     public void Another_action_disarms_a_pending_clear()
     {
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            r => r.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
         using var _scope = scope;
+        dialog.PickExportPath = () => null;
         Click(dialog.Clear);
         Assert.True(dialog.IsClearArmed);
 
-        Click(dialog.SampleLayers);
+        Click(dialog.Export);
 
         Assert.False(dialog.IsClearArmed);
-        Assert.NotEmpty(dialog.Draft!.Layers); // ...ve örnekler yüklendi (Clear DEĞİL)
+        Assert.Equal(["Alpha"], dialog.Draft!.Layers.Select(l => l.Name)); // Clear UYGULANMADI
+    }
+
+    /// <summary>[design v1.19.0 §2.9] Clear'ın TABAN tooltip'i birebir <c>Clear settings — empty the form</c>; kurulu
+    /// hâlde footer'la aynı <c>Click again to clear</c>'a döner (bkz. <see cref="Clear_asks_once_before_it_empties_the_form"/>).</summary>
+    [StaFact]
+    public void Clear_base_tooltip_says_it_empties_the_form()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        Assert.Equal("Clear settings — empty the form", dialog.Clear.ToolTip);
     }
 
     /// <summary>[design v1.10.0 §2.4] First run kısayolu: diyalog açılır ve dosya seçici HEMEN tetiklenir.</summary>

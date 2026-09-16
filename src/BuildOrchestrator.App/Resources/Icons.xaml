@@ -167,6 +167,10 @@
     <!-- BuildApp.jsx:65 plus -->
     <PathGeometry x:Key="Icon.Plus" Figures="M5 12h14 M12 5v14" />
 
+    <!-- [design v1.19.0 §2.9] prototype/app/BuildApp.jsx `I.close` (lucide x, strokeWidth 2) — Settings başlık
+         satırının kapat butonu. İki <path>: `M18 6 6 18` + `m6 6 12 12`; ikinci figürün `m`'i mutlak `M`'e çevrilir. -->
+    <PathGeometry x:Key="Icon.Close" Figures="M18 6 6 18 M6 6l12 12" />
+
     <!-- BuildApp.jsx:54 back -->
     <PathGeometry x:Key="Icon.Back" Figures="m12 19-7-7 7-7 M19 12H5" />
 
@@ -340,6 +344,7 @@
     <sys:Double x:Key="Icon.ChevUp.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Down.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Plus.StrokeThickness">2</sys:Double>
+    <sys:Double x:Key="Icon.Close.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Rot.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Redo.StrokeThickness">2</sys:Double>
 

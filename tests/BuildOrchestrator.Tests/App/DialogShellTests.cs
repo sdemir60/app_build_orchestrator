@@ -95,6 +95,8 @@ public class DialogShellTests
         }
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.19.0 §2.9]</b> ESKİ ölçü 760px genişlik + içerikten doğan yükseklik
+    /// (Task 1'de Settings eski düzenini korudu); v1.19.0 sol raylı düzeni 880×576 SABİTTİR.</summary>
     [StaFact]
     public void Settings_uses_the_shell_with_rounded_clip_and_shell_footer()
     {
@@ -102,7 +104,8 @@ public class DialogShellTests
         using (scope)
         {
             var frame = Frame(dialog.Scrim);
-            Assert.Equal(760.0, frame.ActualWidth);
+            Assert.Equal(880.0, frame.ActualWidth);
+            Assert.Equal(576.0, frame.ActualHeight);
             AssertRoundedClip(frame);
             AssertShellFooter(dialog, dialog.Scrim, ButtonWithContent(dialog, "Cancel"));
         }

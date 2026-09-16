@@ -2290,24 +2290,38 @@ typography (the UI font and `text-primary`) is set on the dialog rather than the
 is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
 re-implements any of this; a source guard keeps it that way.
 
-The Settings dialog is 760 px wide and carries three sections. **WORKSPACE** comes first: a mono repository-root
-input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
-stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, then another hairline, then the
-**LAYERS** editor.
+The Settings dialog is a fixed 880 × 576 px, split into two panes under a head row that carries the title and a
+close button taking the same path as *Cancel*. Down the left runs a 196 px **section rail** on the `surface`
+tone — a step darker than the dialog, which is what makes the two panes read as two — listing **General**,
+**Workspace**, **External projects** and **Layers**. The active row sits on `surface-overlay` in `text-primary`;
+the others are transparent in `text-dim` and take `surface-raised` on hover. There is no amber here: accent is
+reserved for status. The rows are radio buttons, so the rail is reachable and navigable from the keyboard.
+External projects and Layers carry a mono count of the draft's cards on the right, drawn only while it is above
+zero and following the draft live. The right pane scrolls on its own, so switching sections never resizes the
+dialog, and its scrollbar column stays reserved whether a scrollbar is needed or not — a list crossing the
+overflow threshold does not shave pixels off every input already on screen. Every page opens with the same head:
+a title and a single line of description. The dialog opens on Workspace on first run — the one setting the tool
+cannot run without lives there — and on General every time after that.
 
-**External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
-the repository root discovers, so the section's position tells that story before any card does. A card is a
-path — a folder, a solution or a project file — in a full-width mono input
-(the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
-this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
-raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
-against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
-name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
-Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
+The rail exists because settings grow. A single column put every section under the previous one and each new
+setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
+without widening the dialog. **General** is that place, and for now it holds only its page head.
 
-The section's **header is a rule row**: the caps label on the left, a hairline stretching across the middle,
-and on the right a second caps label, *Pull before build*, with a switch. It reads as a setting that belongs to
-the section, which is what it is — whether every build refreshes these working copies first (§10.6). It is
+**Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
+required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
+
+**External projects** come before Layers in the rail on purpose: they build *before* everything the repository
+root discovers. A card is a path — a folder, a solution or a project file — in a full-width mono input, and the
+git working copy is found from that path; with a single column there is no column header. Cards share the layer
+card's parts byte-for-byte — the same 36 px shell with its border, radius and raised-on-drag look, the same grip,
+remove button and *Add* button styles, the same `Mouse.Capture` reordering — and the two lists reorder
+independently, each against its own collection. An empty path on any card disables *Save*, the same severity as
+an empty layer name. The list starts **empty** and shows the same dashed empty-state box the Layers page uses.
+*Add external project* appends a blank card.
+
+Under the page head sits a **rule row**: a hairline stretching across, then a caps *Pull before build* label with
+a switch. It reads as a setting that belongs to the section, which is what it is — whether every build refreshes
+these working copies first (§10.6). It is
 deliberately not a chip in the action bar: that bar carries per-run choices (configuration, perf, branch,
 worktree), while this one follows the external list itself and changes rarely. The explanation lives in a
 tooltip rather than a second description line, so the body text and the card list are untouched. The switch
@@ -2318,20 +2332,6 @@ each card's path and the projects it finds join the graph as ordinary rows, Buil
 first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
 not scan it — so a card pointing at nothing buildable is a warning in Sync and a refused run in Build, not a
 red input here.
-
-Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
-it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
-and a pattern side by side, and the sections a wider config surface would add next — an MSBuild path,
-parallelism, a worktree pool, notification preferences — all extend the same two-column shape, which makes it
-the widest of the three. If growth continues, the next step is a section list down the left rather than a wider
-dialog; the width stays at 760 px either way.
-
-The body — everything between the title row and the footer — scrolls inside itself instead of letting the
-dialog grow past the window around it: its height is clamped between 300 px and 460 px, tracking 56% of that
-window's height in between, and recomputed whenever the window is resized. The floor keeps the dialog from
-collapsing when the layer list is empty; the ceiling keeps it off the screen edges once the list grows long. The
-scrollbar's column stays reserved whether a scrollbar is currently needed or not, so a row crossing the overflow
-threshold does not shave ten pixels off every input already on screen the way a plain auto-hiding bar would.
 
 The root lives here rather than behind a folder picker because starting takes more than one setting now — a
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
@@ -2345,12 +2345,12 @@ Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` an
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
 Neighbours snap without animation. An invalid regex puts its input into the invalid state and disables *Save*.
 
-When no layers have been saved yet, the editor opens pre-filled with four OSYS defaults, in match order:
-`OSYS.Types`, `OSYS.Business`, `OSYS.Orchestration`, `OSYS.UI` — each an anchored regex that matches the
-layer's name as a prefix of the project name (`^OSYS\.Types\.` and so on). The footer's *Load sample layers*
-button re-fills the editor from that same list at any time. Neither the initial fill nor the restore
-is a startup seed: the defaults live only in this dialog's draft, and nothing reaches disk or the engine until
-*Save* is pressed.
+When no layers have been saved, the Layers page opens **empty** — the tool carries no product-specific defaults —
+with the dashed empty-state box; the *Layer name* and *Pattern* column headers appear only once a row exists.
+*Add layer* appends a blank row whose inputs show placeholders rather than values, taken by row index from one
+product-neutral list (`Core` / `^MyApp\.(Core|Common)\.`, then `Infrastructure`, `Domain`, `Services`, `Api`,
+`Client`, wrapping after six — `LayerPlaceholders`). A placeholder belongs to the position, not the row: after a
+drag every card shows the pair for its new index.
 
 *Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
 draft — the pending root, external cards and all — without touching anything live.
@@ -2389,7 +2389,7 @@ A root that changes *later* announces itself in the console — `Repository root
 required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
 starts there anyway and the note would be noise.
 
-**Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
+**Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
 pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
 layers (the field order the file is written in, not just a key that happens to be present) and holding only
@@ -2401,6 +2401,12 @@ first press turns the icon red and prints a warning, cancels itself after 2.4 s,
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
 file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
 while the form stays untouched.
+
+While no feedback is showing and *Save* is disabled, that same footer line says why, faint and on one line,
+whichever page is open: `Repository root is required`, `Every external project needs a path`, `Every layer needs a
+name` or `Check the highlighted pattern`, in that order of priority. The draft derives the reason from the very
+conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
+line cannot disagree.
 
 A file that omits `pullExternalBeforeBuild` leaves the switch where it is, the same rule the external list
 already follows: a file cannot silently reset a setting it does not carry.
@@ -4094,7 +4100,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
-| Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
+| Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `App/Services/ReleaseNotes.cs` |
 
@@ -4230,7 +4236,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Settings draft state (layers, external roots + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
@@ -4259,7 +4265,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
-| Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
+| Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |

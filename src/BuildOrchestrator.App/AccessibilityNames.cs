@@ -185,6 +185,8 @@ public static class AccessibilityNames
     public const string ExportSettings = "Export settings to a file";
     public const string ImportSettings = "Import settings from a file";
     public const string ClearSettings = "Clear the repository root and all layers";
+    /// <summary>[design v1.19.0 §2.9] Başlık satırının ikon-yalnız kapat (X) düğmesi — Cancel ile aynı yol; tooltip kısa <c>Close</c>.</summary>
+    public const string CloseSettings = "Close settings";
 
     // ---- [K5 · design v1.14.0 §9] Settings: EXTERNAL PROJECTS satırı ----
     /// <summary>Harici proje kartındaki mono path input'u — kolon başlığı "PROJECT PATH", watermark bir
