@@ -158,7 +158,7 @@ the running instance first — tray icon → Exit).
    each row: `modified` (its own files changed), `affected` (only a dependency changed), `never built`,
    `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. A
    project that built successfully against a dependency that was failing, and has not changed since, reads
-   `affected · up to date · <age>` instead: the next Build leaves it alone until that dependency succeeds
+   `affected · up to date · <age>` instead: a later Build leaves it alone until that dependency is healthy
    again, and its native tooltip names which one. Colour arrives when you press something.
 
    The Sync line in the console also says where you stand against the remote:

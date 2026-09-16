@@ -816,8 +816,9 @@ separate command: in both cases the user presses *Build* again, and the incremen
 the set the old modes produced. Projects that finished green persisted their signature and are skipped as up
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
 dependents of a failure succeeded carrying a dependency issue, so their record is flagged with its roots
-(§8.3) and they come along as soon as one of those roots builds successfully. The one deliberate difference is the elapsed clock: the new run counts from zero,
-because it is a new run.
+(§8.3) and they come along as soon as one of those roots is healthy again — recovered in this run, or already
+recorded as successful, per the table there. The one deliberate difference is the elapsed clock: the new run
+counts from zero, because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
 workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
