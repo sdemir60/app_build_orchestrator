@@ -746,7 +746,8 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[design v1.14.0 §9 · externals] Harici proje listesi (yalnız yol) — Store tarafından seed edilir,
     /// Settings Save'de yeniden yazılır (<see cref="RunViewModel.ApplySettingsAsync"/>) ve HER Sync/Build
-    /// komutuyla motora GÖNDERİLİR (sıralamayı Ayarlar editörü kurar, kararı Core verir — SIRA build sırasıdır).
+    /// komutuyla motora GÖNDERİLİR (sıralamayı Ayarlar editörü kurar, kararı Core verir — SIRA çalışma kopyalarının güncellenme
+    /// sırasıdır; harici projeler arasındaki build sırası bağımlılık kenarlarından gelir).
     /// <see cref="LayerPatterns"/>'ın aksine <c>null</c> ayrımı GEREKMEZ (motor tarafında "yok" ile "boş"
     /// arasında bir fark YOK) — bu yüzden hep boş listeyle başlar; tel üzerine boş liste <c>null</c> olarak
     /// çıkar (<see cref="ExternalProjectsForWire"/>) ki eski NDJSON şekli bayt-bayt korunsun.</summary>

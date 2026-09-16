@@ -61,7 +61,8 @@ public sealed class UiState
 
     /// <summary>[design v1.14.0 §9] Settings editörünün EXTERNAL PROJECTS listesi (yalnız yol) — Save'de
     /// katmanlarla AYNI commit'te yazılır, startup'ta <see cref="ViewModels.RunViewModel.ExternalProjects"/>'e
-    /// seed edilir ve her Sync/Build komutuyla motora gider. SIRA ANLAMLIDIR: build sırası tam olarak budur —
+    /// seed edilir ve her Sync/Build komutuyla motora gider. SIRA ANLAMLIDIR: çalışma kopyalarının güncellenme sırası tam olarak budur (build sırası
+    /// bağımlılık kenarlarından gelir) —
     /// <see cref="LayerPatterns"/>'ın deseniyle AYNI, ayrı bir <c>order</c> alanı yazılmaz.
     /// <para>Setter null'ı boş listeye çevirir: diskte açıkça <c>"ExternalProjects": null</c> yazan bir dosya
     /// (elle düzenleme, yarım yazım) aksi halde koleksiyonu null bırakır ve ilk okuma tüm yerleşimi
