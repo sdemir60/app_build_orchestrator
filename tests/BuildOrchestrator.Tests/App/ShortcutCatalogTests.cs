@@ -65,6 +65,22 @@ public class ShortcutCatalogTests
         }
     }
 
+    /// <summary>[design v1.19.0 §2.10] Kısayollar iki caps gruba ayrılır — grup bilgisi katalogda TEK yerde durur
+    /// (About onu yeniden kurmaz): <b>BUILD</b> (Build, Rebuild) · <b>APPLICATION</b> (Focus filter, About, What's
+    /// new, Escape, Restore from tray). Grup içi sıra kataloğun kendi sırasıdır.</summary>
+    [Fact]
+    public void Entries_are_grouped_into_build_and_application()
+    {
+        Assert.Equal([ShortcutGroup.Build, ShortcutGroup.Application], ShortcutCatalog.GroupOrder);
+        Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild],
+            ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Build).Select(e => e.Id));
+        Assert.Equal(
+            [ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.WhatsNew, ShortcutId.Escape, ShortcutId.RestoreFromTray],
+            ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Application).Select(e => e.Id));
+        Assert.Equal("Build", ShortcutCatalog.GroupTitle(ShortcutGroup.Build));
+        Assert.Equal("Application", ShortcutCatalog.GroupTitle(ShortcutGroup.Application));
+    }
+
     [Fact]
     public void Get_returns_exactly_one_entry_per_id()
     {

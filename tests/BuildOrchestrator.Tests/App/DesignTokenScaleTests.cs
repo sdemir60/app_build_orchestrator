@@ -109,8 +109,12 @@ public sealed class DesignTokenScaleTests
 
         // WPF LineHeight mutlak DIP ister: CSS oranı × punto.
         Assert.Equal(13 * 1.35, (double)t["LineHeight.Snug13"]);    // --leading-snug
+        Assert.Equal(12 * 1.35, (double)t["LineHeight.Snug12"], 6); // --leading-snug @ text-xs (design v1.19.0 PaneHead)
         Assert.Equal(13 * 1.5, (double)t["LineHeight.Normal13"]);   // --leading-normal
         Assert.Equal(12 * 1.55, (double)t["LineHeight.Mono12"], 3); // --leading-mono
+        // [design v1.19.0 §2.10/§2.11] okuma ölçüsü: CSS'te token DEĞİL, iki dialogun (What's new maddeleri,
+        // About paragrafı) ortak ham `line-height: 1.62`'si — tek yerde adlandırılır.
+        Assert.Equal(13 * 1.62, (double)t["LineHeight.Reading13"], 6);
         Assert.Equal(0.07, (double)t["Tracking.Caps"]);             // --tracking-caps 0.07em
     }
 

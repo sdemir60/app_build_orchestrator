@@ -128,17 +128,26 @@ the running instance first — tray icon → Exit).
 ## Using it
 
 1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
-   a folder picker: starting takes more than one setting now. Settings opens with the repository root (the one
-   thing the tool cannot run without — *Save* stays disabled while it is empty), then the optional external
-   roots, then the optional layer definitions. *Browse…* only stages the folder in the dialog; *Save* is
-   what applies it, and on first run it reads *Save and sync*. If you already have a settings file, *Import
-   settings…* on the invitation opens the dialog with the file picker already up.
+   a folder picker: starting takes more than one setting now. Settings is split into sections down a left
+   rail — **General**, **Workspace**, **External projects**, **Layers** — and on first run it opens on
+   Workspace, where the repository root lives (the one thing the tool cannot run without — *Save* stays
+   disabled while it is empty, and the footer says why); afterwards it opens on General. External projects and
+   layers are optional. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
+   run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
+   opens the dialog with the file picker already up.
+
+   **General** holds switches in three groups — Startup, Build and Notifications. *Pull before build* (see
+   step 4) is the one that works today; *Start with Windows*, *Start minimized to tray*, *Close to tray* and
+   *Show notifications* are shown but not wired yet, are not saved, and reset whenever the dialog opens.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file). Everything found under a card joins the same project list and
    the same graph as the repository's own projects, in an *External* group at the top, and is built first.
    Cards reorder the same way layer cards do, by dragging the grip; that order is the order their working
    copies are refreshed in. What Build does with them is step 4 below.
+
+   **Layers** start empty. *Add layer* appends a blank row; its inputs show example names and patterns as
+   placeholders, never as values.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
@@ -172,7 +181,7 @@ the running instance first — tray icon → Exit).
    `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
    `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
-   them under *Settings → EXTERNAL PROJECTS*: type or paste the path — a folder, a `.sln` or a `.csproj`.
+   them under *Settings → External projects*: type or paste the path — a folder, a `.sln` or a `.csproj`.
    That path is the whole card; the git working copy above it is found for you.
 
    Sync then scans that path the same way it scans the repository root. A folder contributes every project
@@ -185,7 +194,8 @@ the running instance first — tray icon → Exit).
    to no project at all is called out: Sync warns, Build refuses to start.
 
    Before each Build their working copies are refreshed, in card order — unless you turn **Pull before build**
-   off, the switch in the section's header. Each root gets a fetch and a fast-forward — never a `pull`, so
+   off, under *Settings → General* (the line at the bottom of the External projects page says whether it is on
+   and takes you there). Each root gets a fetch and a fast-forward — never a `pull`, so
    nothing is rewritten on your behalf.
    **Uncommitted changes stop the run before it starts**, with a line naming the project and its folder:
    commit or stash them and press Build again. A branch that has diverged from its remote stops the
@@ -384,7 +394,7 @@ and every `MSBuild.exe` under it, then brings a fresh engine up.
 | `Alt+B` | Global hotkey: bring the window back from the tray |
 
 The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has WORKSPACE, EXTERNAL PROJECTS and LAYERS). If it cannot be registered — another application
+(Settings has General, Workspace, External projects and Layers). If it cannot be registered — another application
 already owns that combination — it is silently disabled; the tray icon still restores the window, and the
 About screen marks that row *unavailable* so the loss is visible rather than mysterious.
 
@@ -395,35 +405,37 @@ Esc closes the topmost layer first, so a lower one (an unsaved Settings draft, s
 ### About
 
 The `i` button sits at the right end of the title bar's command group, and `F1` toggles the same screen. Its
-heading holds both marks in one composition — the product mark, the product name and one mono line with the
-version and copyright on the left; a *licensed to* block with the company logo on the right. Three tabs
-follow, and ⓘ/`F1` always land on the first one:
+heading holds both marks in one composition — the product mark, the product name with a small version chip and
+the tagline on the left; a *licensed to* block with the company logo on the right. Three tabs follow, and
+ⓘ/`F1` always land on the first one:
 
-- **Shortcuts** — the table above, rendered from the same source the app binds its keys from, so a rebound
-  key can never drift from what the screen claims.
-- **Environment** — application and engine version, engine PID, .NET runtime, OS, the resolved `MSBuild.exe`
-  and its version, the repository root, and the state, log and worktree-pool paths. *Copy diagnostics* puts
-  all of it on the clipboard as one aligned block, headed by the product and version, to paste into a support
-  request.
-- **Third-party** — the OSS components the app ships with, their runtime versions and licences, including
-  the Geist fonts under the SIL Open Font License.
+- **About** — a short description of what the app does, then the application version, the engine version (or
+  `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
+- **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS) and *Paths* (the resolved
+  `MSBuild.exe` and its version, the repository root, and the state, log and worktree-pool paths).
+- **Shortcuts** — the table above in two groups, *Build* and *Application*, rendered from the same source the
+  app binds its keys from, so a rebound key can never drift from what the screen claims.
+
+*Copy diagnostics* in the footer puts the product and version, the engine version and every Environment row on
+the clipboard as one aligned block, to paste into a support request.
 
 `MSBuild.exe` is located through `vswhere`, which costs a child process, so it resolves the first time the
 Environment tab is opened rather than when the screen appears.
 
 ### What's new
 
-A dedicated 620 px dialog, opened from its own title-bar button — a four-point star between the gear and
+A dedicated 720 × 600 px dialog, opened from its own title-bar button — a four-point star between the gear and
 `i` — or with `Ctrl+F1` (a toggle: pressing it again closes the dialog). It carries no identity block and no
-tabs; the body is release notes only, newest version first, grouped into Added / Changed / Fixed /
-Performance / Removed. The three newest versions are open and the rest fold under an *Earlier versions*
-button; the running version's line carries a small, neutral `INSTALLED` chip next to its number. There is no
-pop-up on launch.
+tabs; the header shows the installed version in a small mono chip, and the body is release notes only, newest
+version first. Each version keeps its number, date and — on the running version — a neutral `INSTALLED` chip
+in a left column that stays in view while its notes scroll; the notes sit on the right, grouped into Added /
+Changed / Fixed / Performance / Removed. The three newest versions are open and the rest fold under an
+*Earlier versions* button. There is no pop-up on launch.
 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new
 version. Opening the dialog clears the dot for good; it does not return until the next version ships. About's
-`i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the Shortcuts tab.
+`i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the About tab.
 
 Esc closes whichever dialog is on top first: What's new, then About, then Settings, so a lower one's state
 survives a stray keypress.
@@ -509,6 +521,3 @@ here by default.
 The one third-party licence *text* that is included and redistributed is the **Geist** and **Geist Mono**
 fonts, licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`,
 which is copied into the publish output as `Assets\GEIST-LICENSE.txt`.
-
-The full inventory of third-party components — the NuGet packages the application ships with, their runtime
-versions and their licences — is listed in the About screen's *Third-party* tab.

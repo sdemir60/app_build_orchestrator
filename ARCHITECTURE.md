@@ -105,7 +105,7 @@ reads it from its own assembly and reports it in `engineReady`, and the App prin
 
 That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
 version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
-the tray balloons and the About hero all draw from it — a guard forbids the product name appearing as a literal
+the tray balloons and the About dialog all draw from it — a guard forbids the product name appearing as a literal
 in any App source file. The copyright is read as one string rather than composed from a year and a company,
 because a copyright year is not a runtime value.
 
@@ -2272,48 +2272,77 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
-The Settings dialog is 760 px wide and carries three sections. **WORKSPACE** comes first: a mono repository-root
-input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
-stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, then another hairline, then the
-**LAYERS** editor.
+**The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
+`Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
+centred on it (`surface-raised`, a `border-strong` hairline, radius 8, the overlay shadow), and inside that frame
+a vertical stack of head, an optional tab strip, a body that takes the remaining height, and an optional footer
+strip padded 12 px × 18 px under a `border-subtle` hairline. The frame's content is clipped to the frame's inner
+rounded corner — a plain rectangular clip would let a coloured rail or footer paint over the corner. The frame
+takes a design width and, optionally, a fixed height, and both are capped at the host's size minus 48 px — the
+host being the dialog's own area, which the scrim stretches over the whole window — and re-capped whenever the
+window is resized; the arithmetic lives in one pure function (`DialogSize`). The shell's behaviour is shared the
+same way: a scrim press closes the dialog while a press inside the frame never reaches the scrim, Esc closes it
+and is marked handled, the scrim is a cyclic focus scope so Tab cannot escape to the window behind, and opening
+lays the dialog out before moving keyboard focus inside — to the first control of a subtree the dialog names
+(Settings names the page it opens on), or else to the first control of the dialog — because before layout,
+focus navigation finds nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
+duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
+typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
+is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
+re-implements any of this; a source guard keeps it that way.
 
-**External projects** sit between Workspace and Layers on purpose: they are meant to build *before* everything
-the repository root discovers, so the section's position tells that story before any card does. A card is a
-path — a folder, a solution or a project file — in a full-width mono input
-(the design system's `<select>`, ported to a `ComboBox` template since the app had no combo-box style before
-this). Cards share the layer card's shell byte-for-byte — same 36 px height, same border and radius, same
-raised-on-drag look, same grip and `Mouse.Capture` reordering — and the two lists reorder independently, each
-against its own collection. An empty path on any card disables *Save*, the same severity as an empty layer
-name. The list starts **empty** (unlike Layers, it has no seed) and shows the same dashed empty-state box the
-Layers section uses when its own list is empty. *Add external project* appends a blank, Git-sourced card.
+The Settings dialog is a fixed 880 × 576 px, split into two panes under a head row that carries the title and a
+close button taking the same path as *Cancel*. Down the left runs a 196 px **section rail** on the `surface`
+tone — a step darker than the dialog, which is what makes the two panes read as two — listing **General**,
+**Workspace**, **External projects** and **Layers**. The active row sits on `surface-overlay` in `text-primary`;
+the others are transparent in `text-dim` and take `surface-raised` on hover. There is no amber here: accent is
+reserved for status. The rows are radio buttons, so the rail is reachable and navigable from the keyboard.
+External projects and Layers carry a mono count of the draft's cards on the right, drawn only while it is above
+zero and following the draft live. The right pane scrolls on its own, so switching sections never resizes the
+dialog, and its scrollbar column stays reserved whether a scrollbar is needed or not — a list crossing the
+overflow threshold does not shave pixels off every input already on screen. All pages share that one scroller,
+so switching sections starts the new page at the top rather than at the previous page's offset. Every page opens
+with the same head: a title and a single line of description. The dialog opens on Workspace on first run — the
+one setting the tool cannot run without lives there — and on General every time after that, with keyboard focus
+on the first input of that page: the repository root input, or the first switch.
 
-The section's **header is a rule row**: the caps label on the left, a hairline stretching across the middle,
-and on the right a second caps label, *Pull before build*, with a switch. It reads as a setting that belongs to
-the section, which is what it is — whether every build refreshes these working copies first (§10.6). It is
-deliberately not a chip in the action bar: that bar carries per-run choices (configuration, perf, branch,
-worktree), while this one follows the external list itself and changes rarely. The explanation lives in a
-tooltip rather than a second description line, so the body text and the card list are untouched. The switch
-follows the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and
-*Clear* returns it to on rather than off.
+The rail exists because settings grow. A single column put every section under the previous one and each new
+setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
+without widening the dialog. **General** is that place. Its rows come from one catalog
+(`GeneralSettingsCatalog`) in three groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
+to tray*), *Build* (*Pull before build*) and *Notifications* (*Show notifications*) — and every row is drawn by
+one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
+right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
+no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
+switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Only
+*Pull before build* drives behaviour so far; the other four switches live in the draft alone (§20).
+
+**Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
+required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
+
+**External projects** come before Layers in the rail on purpose: they build *before* everything the repository
+root discovers. A card is a path — a folder, a solution or a project file — in a full-width mono input, and the
+git working copy is found from that path; with a single column there is no column header. Cards share the layer
+card's parts byte-for-byte — the same 36 px shell with its border, radius and raised-on-drag look, the same grip,
+remove button and *Add* button styles, the same `Mouse.Capture` reordering — and the two lists reorder
+independently, each against its own collection. An empty path on any card disables *Save*, the same severity as
+an empty layer name. The list starts **empty** and shows the same dashed empty-state box the Layers page uses.
+*Add external project* appends a blank card.
+
+*Pull before build* — whether every build refreshes these working copies first (§10.6) — is a switch on
+**General**, not on this page: it is a behaviour of the build, and General is where the dialog collects those, so
+the external page stays a list. The page still says where the switch went and what it is set to: under the cards
+a hairline and one line read *Card order sets the order the working copies are updated. Updating them before a
+build is on* (or *off*, following the draft live), followed by a ghost *Pull before build* button that moves the
+rail to General. The switch is deliberately not a chip in the action bar: that bar carries per-run choices
+(configuration, perf, branch, worktree), while this one follows the external list and changes rarely. It follows
+the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and *Clear*
+returns it to on rather than off.
 The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync scans
 each card's path and the projects it finds join the graph as ordinary rows, Build updates their working copies
 first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
 not scan it — so a card pointing at nothing buildable is a warning in Sync and a refused run in Build, not a
 red input here.
-
-Its width is picked the same way About's and What's new's are — for the direction each grows in, not for what
-it holds today. Settings is the one most likely to grow: it already holds the root plus layer cards with a name
-and a pattern side by side, and the sections a wider config surface would add next — an MSBuild path,
-parallelism, a worktree pool, notification preferences — all extend the same two-column shape, which makes it
-the widest of the three. If growth continues, the next step is a section list down the left rather than a wider
-dialog; the width stays at 760 px either way.
-
-The body — everything between the title row and the footer — scrolls inside itself instead of letting the
-dialog grow past the window around it: its height is clamped between 300 px and 460 px, tracking 56% of that
-window's height in between, and recomputed whenever the window is resized. The floor keeps the dialog from
-collapsing when the layer list is empty; the ceiling keeps it off the screen edges once the list grows long. The
-scrollbar's column stays reserved whether a scrollbar is currently needed or not, so a row crossing the overflow
-threshold does not shave ten pixels off every input already on screen the way a plain auto-hiding bar would.
 
 The root lives here rather than behind a folder picker because starting takes more than one setting now — a
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
@@ -2327,12 +2356,12 @@ Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` an
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
 Neighbours snap without animation. An invalid regex puts its input into the invalid state and disables *Save*.
 
-When no layers have been saved yet, the editor opens pre-filled with four OSYS defaults, in match order:
-`OSYS.Types`, `OSYS.Business`, `OSYS.Orchestration`, `OSYS.UI` — each an anchored regex that matches the
-layer's name as a prefix of the project name (`^OSYS\.Types\.` and so on). The footer's *Load sample layers*
-button re-fills the editor from that same list at any time. Neither the initial fill nor the restore
-is a startup seed: the defaults live only in this dialog's draft, and nothing reaches disk or the engine until
-*Save* is pressed.
+When no layers have been saved, the Layers page opens **empty** — the tool carries no product-specific defaults —
+with the dashed empty-state box; the *Layer name* and *Pattern* column headers appear only once a row exists.
+*Add layer* appends a blank row whose inputs show placeholders rather than values, taken by row index from one
+product-neutral list (`Core` / `^MyApp\.(Core|Common)\.`, then `Infrastructure`, `Domain`, `Services`, `Api`,
+`Client`, wrapping after six — `LayerPlaceholders`). A placeholder belongs to the position, not the row: after a
+drag every card shows the pair for its new index.
 
 *Browse…* only writes the picked path into the draft's root input; Cancel, Esc and a scrim click discard the
 draft — the pending root, external cards and all — without touching anything live.
@@ -2344,13 +2373,13 @@ they were applied, it would carry stale ones: the grouping would be wrong for a 
 would describe the previous list. The Sync itself is unconditional: Save does not compare old and new state to
 decide whether to run it.
 
-The switch has a note of its own, and it is quieter still: it prints only when the value actually changed
+The pull switch has a note of its own, and it is quieter still: it prints only when the value actually changed
 *and* external projects are defined — `Pull before build on — external working copies update first`, or
 `Pull before build off — external working copies are used as they are`. In a workspace with no external
 projects the flag does nothing, and saying otherwise would describe work that is not happening.
 
 The external project note is quieter than the layer one: the layer line prints on *every* Save, but the
-external one prints only when the count actually changed — `External projects → 3 — scanned with the
+external one prints only when the count actually changed — `External projects → 3 — built before the
 repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
 layers stays quiet about a list it did not change.
 
@@ -2371,12 +2400,13 @@ A root that changes *later* announces itself in the console — `Repository root
 required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
 starts there anyway and the note would be noise.
 
-**Export · Import · Clear.** The footer carries three icon buttons beside *Load sample layers*. Export writes
-`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path, vcs }],
+**Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
+`build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
 pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
 layers (the field order the file is written in, not just a key that happens to be present) and holding only
 cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
-every external card, and returns the switch to on. All
+every external card, and returns every General switch to its default — *Pull before build* to on. Of General,
+only *Pull before build* travels in the file. All
 three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
@@ -2384,48 +2414,71 @@ empties the form. Feedback for all three sits on the same footer line for 2.4 s,
 file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
 while the form stays untouched.
 
-A file that omits `pullExternalBeforeBuild` leaves the switch where it is, the same rule the external list
+While no feedback is showing and *Save* is disabled, that same footer line says why, faint and on one line,
+whichever page is open: `Repository root is required`, `Every external project needs a path`, `Every layer needs a
+name` or `Check the highlighted pattern`, in that order of priority. The draft derives the reason from the very
+conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
+line cannot disagree.
+
+A file that omits `pullExternalBeforeBuild` leaves the pull switch where it is, the same rule the external list
 already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
-and a missing or unrecognized `vcs` reads as Git — both are simulated in the design package's own prototype and
-carried through unchanged. A file that omits the key entirely leaves the draft's external list untouched, the
+the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
+older file carries included (§10.6) — and an entry whose path is blank is skipped. A file that omits the key entirely leaves the draft's external list untouched, the
 same rule the repository root already followed; a file that carries the key — an empty array included —
 replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
 carried the key at all.
 
-The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same `Ds.Dialog`
-border, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog does
-not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to the
-end state under reduced motion. Its width, though, no longer follows Settings': the two used to share one
-620 px figure, but a dialog's width is now chosen for the direction it grows in rather than for what it holds
-today, and About is a static reference — version, shortcuts, environment, third-party notices — that only ever
-grows *taller*, as the third-party list lengthens, which argues for the narrowest figure of the three. It grew
-slightly wider anyway, to 660 px, because the longest line the Environment tab carries — a full `MSBuild.exe`
-path — still would not fit on one line at a width worth paying for; rather than chase it with an ever wider
-dialog, the tab scrolls that line sideways instead (below), and 660 px is where that trade-off settled.
+The About dialog is the second modal on the shared shell; its identity block fills the head and the tab switch
+sits in the shell's tab strip. It is 620 px wide and its height follows its content around a **fixed** 284 px body:
+About is a static reference — who the product is, what it runs on, which keys it answers — and nothing in it grows
+with use, so the narrowest of the three dialogs is the right figure. The longest line it carries, a full
+`MSBuild.exe` path, still does not fit on one line at that width; rather than chase it with a wider dialog, that
+line scrolls sideways (below).
 
-It has no title row. In its place is an identity block that holds both marks in one composition: the product
-mark at 30 px, the product name, the one-line description, and a single mono line carrying the application
-version and the copyright. The company lock sits opposite — a hairline, a tracked `LICENSED TO` label, and the
-company logo — and drops out entirely when there is no company logo. The version appears **once**; the engine's
-version belongs to the Environment tab, and repeating it in the heading was noise.
+It has no title row. In its place is an identity block (padded 20 px top and bottom, 18 px sides) that holds both
+marks in one composition: the 28 px product mark, the product name with a mono **version chip** 9 px beside it —
+19 px tall, a `border-strong` hairline on `surface`, the application version in 11 px — and the one-line tagline
+4 px below. The company lock sits opposite — a 28 px hairline, a tracked `LICENSED TO` label and, 6 px below it,
+the company logo — and drops out entirely when there is no company logo. The version appears **once** in the
+head; the copyright and the engine's version are rows of the About tab, not a second line under the name.
 
-The body is tabbed rather than one long scroll, because the things it carries — keyboard shortcuts,
-environment, third-party notices — have nothing to say to each other. The tab switch is `Ds.Segment`, the same
-component the action bar uses for Debug/Release, so no new interaction pattern enters the design system. The
-content area carries a **fixed** height: switching tabs must not move the footer, and a pane that outgrows it
-scrolls inside itself rather than stretching the dialog. ⓘ and `F1` always open on the first tab (Shortcuts) —
-there is no conditional routing left inside About; the paragraph below covers where that used to go.
+The body is tabbed rather than one long scroll, because what it carries has three audiences that do not overlap:
+**About · Environment · Shortcuts**, in that order, and ⓘ and `F1` always open on About. The tab switch is
+`Ds.Segment` at the design system's `md` size (`Ds.Segment.Md`, 26 px outer) — the same component the action
+bar uses for Debug/Release at `sm`, so no new interaction pattern enters the design system. It sits in its own
+band, padded 6 px top, 18 px sides and 14 px bottom, over a full-width `border-subtle` hairline, so the segment
+reads as the head of the body rather than hanging off the identity block. The body's 284 px is **fixed**:
+switching tabs must not move the footer, and a pane that outgrows it scrolls inside itself; its content is
+inset 14 px top, 18 px sides and 20 px bottom.
 
-Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows from
-the same table the window binds its keys from, the environment rows from the diagnostics model, the notices
-from the third-party table. It composes no text of its own. `MSBuild.exe` resolution is the one asynchronous
-value: `vswhere` is a child process, so it runs when the Environment tab is first selected, not when the
-dialog opens, and the row reads `resolving…` until it lands. *Copy diagnostics* prepends the product and
-version to those rows so a pasted report says what it came from, and confirms with the check icon and the
-success tone for the same 1.4 s the console's copy button uses.
+- **About** opens with a short paragraph on what the product does (13 px `text-secondary`, a 1.62 line height
+  shared with What's new through the `LineHeight.Reading13` token, wrapping at 470 px), a hairline, and three
+  label/value rows — `Version`, `Engine` and `Copyright`; a row is at least 27 px tall, with a 124 px label, an
+  18 px gap and a mono value. `Version` and `Copyright` come off the assembly, `Engine` is the version the engine
+  itself reported and reads `not started` until it has. Under the rows a ghost *What's new in {version}* button
+  closes About and asks the window to open What's new through the same path as the title-bar button, so the
+  unread mark clears exactly as it does there.
+- **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS — and **PATHS** — the resolved
+  `MSBuild.exe`, the repository root, the state file, the logs and the worktree pool. The application and engine
+  versions are not repeated here.
+- **Shortcuts** is two caps groups, **BUILD** and **APPLICATION**; each row is the catalog's description and its
+  key caps, and the global restore hotkey is marked `unavailable` when its registration failed.
+
+Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows and
+their groups from the same catalog the window binds its keys from, and the About rows, both Environment groups
+and the clipboard text from **one** diagnostics model (`DiagnosticsReport`), so no value is written twice. It
+composes no text of its own. `MSBuild.exe` resolution is the one asynchronous value: `vswhere` is a child
+process, so it runs when the Environment tab is first selected, not when the dialog opens, and the row reads
+`resolving…` until it lands. *Copy diagnostics* sits in the footer's left corner, pulled 10 px left so its label
+lines up with the 18 px gutter; it writes a title line with the product and version followed by the engine,
+runtime and path rows in one aligned column, and confirms with the check icon and the success tone for the same
+1.4 s the console's copy button uses. *Close* sits on the right.
+
+There is deliberately no third-party tab: the dialog is not an attribution inventory. The one licence text the
+product redistributes — the Geist fonts' — ships next to the executable as `Assets/GEIST-LICENSE.txt`.
 
 A value that overflows its column — the resolved `MSBuild.exe` path is the usual case — is not truncated. An
 ellipsis with the full path in a tooltip was tried and dropped: the row instead sits in its own horizontally
@@ -2436,21 +2489,31 @@ whether or not it has anything to scroll, so a row that merely sits there would 
 most of the tab's surface. Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics*
 already puts the full text one click away.
 
-**What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
-border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or
-tab switch: the dialog has exactly one job. A two-line header carries the title and a one-line description on
-the left and, right-aligned, the installed version under a small caps label; the version block sits 3 px
-higher than a plain baseline match would give it, because a mono line at `line-height: 1` sits low against a
-sans line next to it. The body is a **fixed** 400 px — not a minimum — for the same reason About's content
-area is fixed: an *Earlier versions* button that unfolds the whole history must not push the dialog past the
-screen, so the list scrolls inside its own box instead. Versions are listed newest first: a mono number, a
-neutral `INSTALLED` chip on the running one (a bordered pill, not the quiet unbordered `CURRENT` label an
-earlier pass tried), a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured
-swatch and a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed,
-Fixed, Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold
-under an *Earlier versions (N)* button aligned flush with the content column (its own left padding cancelled
-by a negative margin), and the fold returns on the next open. The footer carries only *Close* — *Copy
-diagnostics* stays on About, where the rest of the diagnostics live.
+**What's new is the third modal on the shared shell**, and the one with the fixed size: 720 × 600 px, without
+About's identity block or tab switch — the dialog has exactly one job. The head row (padded 20 px top, 18 px
+sides, 16 px bottom, over a `border-subtle` hairline) carries the title with a one-line description 3 px below
+it on the left, and on the right a single mono version chip — 20 px tall, `surface` fill, a `border-strong`
+hairline, the installed version in 12 px `text-secondary`. Because the dialog's height is fixed, the body simply
+takes what the head and footer leave and scrolls inside itself, so an *Earlier versions* button that unfolds
+the whole history never pushes the dialog past the window; the scrolling list is inset 22 px top, 18 px sides and
+24 px bottom.
+
+Each version is a **two-column block**: an 84 px identity column, a 26 px gap, and the notes. The identity column
+stacks the mono version number, the date 6 px below it in 11 px `text-faint`, and — on the running version — a
+16 px neutral `INSTALLED` chip (a bordered pill on `surface` with 9.5 px caps, not the quiet unbordered
+`CURRENT` label an earlier pass tried), so every date sits in the same column instead of trailing off at the
+far edge. That column is **sticky**: as the body scrolls, it follows the top of its block and stops at the
+block's bottom. WPF has no sticky positioning, so the decision is one pure function —
+`clamp(scrollTop − blockTop, 0, blockHeight − columnHeight)` (`StickyColumn`) — written into the column's
+translate transform on every scroll change. The notes column holds category **blocks** 15 px apart (a 6 px
+coloured swatch and a caps heading, the items 7 px below it and indented 13 px), with items 10 px apart at a
+1.62 line height and wrapping at 500 px. The categories are fixed in order — Added, Changed, Fixed,
+Performance, Removed — and an empty one is not drawn. Versions are separated by 22 px, a `border-subtle`
+hairline and another 22 px. The three newest versions are open; the rest fold under an *Earlier versions (N)*
+button with a down chevron, placed in the notes column of the same two-column grid below its own hairline and
+aligned flush with the note text (its own left padding cancelled by a negative margin); the fold returns on
+the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
+diagnostics live.
 
 This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
 dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
@@ -3635,7 +3698,8 @@ proves the ordering without spending real time.
 All interface text, project names and logs are **English**; code comments and the decision records are Turkish.
 The tone is calm, precise, engineering: no exclamation marks, no jokes, exact numbers and exact state —
 `Completed — 3 failed · 24 succeeded · 9 skipped · 1m 12s`. A guard test fails if Turkish text reaches a
-user-visible string.
+user-visible string. A proper noun is not language: the company's registered name in the copyright
+(`Delta Yazılım`) is the guard's one named exception, and it exempts only the name, never the text around it.
 
 ### 14.7 Prohibitions
 
@@ -3741,7 +3805,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | No hardcoded motion | no inline durations/easings outside `Motion.xaml` |
 | No hand-rolled colour keyframe | every colour timeline comes from the shared factory, so no surface can miss the premultiplied-alpha rule of §14.5 |
 | No sleep-poll | no `Thread.Sleep`-based waiting in tests — synchronization is by handle or signal |
-| No Turkish user text | no Turkish string reaches a user-visible surface |
+| No Turkish user text | no Turkish string reaches a user-visible surface; named proper nouns (the company's registered name) are the only exemption, and each must still occur |
 | Token realize coverage | every declared token actually resolves when the resource dictionaries are realized |
 | Publish layout | the single-file publish rejection and the supervisor-folder wiring stay in place |
 | Anti-slop | the prohibited visual patterns of §14.7 |
@@ -3752,7 +3816,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
 | App icon provenance | the multi-size ICO is rendered from the product mark, not the company icon |
 | App icon background | every ICO frame's corners are transparent — the tile has not come back |
-| Third-party attribution | every `PackageReference` has an entry in the notices table, and each entry resolves a real assembly version |
+| Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
+| "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
 
 ### 17.3 Determinism
 
@@ -3909,6 +3974,9 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
+- **Four General switches are not wired yet.** *Start with Windows*, *Start minimized to tray*, *Close to tray*
+  and *Show notifications* live only in the Settings draft: they are not saved, exported or imported, and change
+  no behaviour — every time the dialog opens they are back at their defaults.
 
 ---
 
@@ -4045,9 +4113,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
-| Shortcut display text and descriptions (single source) | `App/Shell/ShortcutCatalog.cs` |
-| Product identity, diagnostics report, third-party notices | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs`, `ThirdPartyNotices.cs` |
-| Default layer definitions (Settings draft + *Restore default layers*) | `App/Shell/LayerDefaults.cs` |
+| Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
+| Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
+| Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `App/Services/ReleaseNotes.cs` |
 
@@ -4183,7 +4251,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
-| Settings draft state (layers, external roots + pending root) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
+| Settings General page catalog (groups, rows, defaults, dependencies) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
@@ -4212,9 +4281,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
-| Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
-| About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
-| What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
+| Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
+| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
+| About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
+| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |

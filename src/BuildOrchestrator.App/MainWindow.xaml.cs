@@ -273,6 +273,9 @@ public partial class MainWindow : Window
         // bu olguyu bilmiyor, bkz. NotesDialog.NotesSeen).
         NotesOverlay.NotesSeen += OnNotesSeen;
         RefreshUnseenNotesMark();
+        // [design v1.19.0 §2.10] About sekmesinin "What's new in {sürüm}" butonu: About kendini kapatır, What's new
+        // sparkle butonuyla AYNI yoldan açılır — görüldü işareti de o yolda (NotesSeen) yazılır.
+        AboutOverlay.WhatsNewRequested += OnNotesRequested;
 
         // [design v1.11.0 §9-4/§9-5] İki koreografi: açılış (işaretleme dalgası — satır + graf) ve bitiş
         // (neon tutuşma — YALNIZ graf). Sürücü kabukta durur çünkü zamanlama ve görsel katman burasıdır;
@@ -430,7 +433,7 @@ public partial class MainWindow : Window
     {
         var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
         string sentence = HasUnseenNotes
-            ? string.Format(CultureInfo.InvariantCulture, "What's new in {0}", AppIdentity.Version)
+            ? ReleaseNotes.WhatsNewInLabel(AppIdentity.Version)
             : notes.Description;
         var tooltip = new System.Windows.Controls.ToolTip
         {

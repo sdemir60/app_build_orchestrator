@@ -43,6 +43,8 @@ public class IconGeometryTests
         // yıldız (tasarım kaynağında adı "sparkle"; anahtar adı burada buton rolüyle verilir — bkz.
         // Icons.xaml'deki gerekçe: SuccessFlourishTests'in kutlama sözlüğü guard'ıyla isim çakışmasın diye).
         "Icon.WhatsNew",
+        // [design v1.19.0 §2.9] Settings başlık satırının kapat (X) butonu — lucide x.
+        "Icon.Close",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —

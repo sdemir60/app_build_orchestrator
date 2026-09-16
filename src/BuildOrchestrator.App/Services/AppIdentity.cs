@@ -36,6 +36,14 @@ public static class AppIdentity
     /// Burada durur çünkü ikon da ürün kimliğidir (<see cref="Product"/>'ın kardeşi).</para></summary>
     public const string AppIconUri = "pack://application:,,,/BuildOrchestrator.App;component/Assets/app-icon.ico";
 
+    /// <summary>[design v1.19.0 §2.10] About sekmesinin tanım paragrafı — metnin tek yeri. Ürün adı YENİDEN
+    /// YAZILMAZ, <see cref="Product"/>'tan okunur (paragraf onunla başlar). <see cref="Tagline"/> gibi bunun da
+    /// bir assembly attribute karşılığı yoktur.</summary>
+    public static string Overview { get; } =
+        Product + " discovers the projects under the repository root, works out the dependency graph and builds in "
+        + "that order — only what changed, in parallel where the graph allows. The plan, the running build and its "
+        + "result stay visible while it works.";
+
     /// <summary>About hero'sundaki tek cümlelik ürün tanımı. Bunun bir assembly attribute karşılığı YOKTUR
     /// (<c>AssemblyDescription</c> MSBuild'de <c>&lt;Description&gt;</c> ile kurulur ve paket açıklamasıdır) —
     /// metnin tek yeri burasıdır.</summary>

@@ -1,7 +1,6 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Shapes;
 using ShapePath = System.Windows.Shapes.Path;
 using System.Windows.Threading;
@@ -11,9 +10,12 @@ using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
 
+/// <summary>[design v1.19.0 §2.9] Settings rayının bölümleri, raydaki sırasıyla.</summary>
+internal enum SettingsSection { General, Workspace, External, Layers }
+
 /// <summary>
-/// [D7/T66 · K5] Settings modal diyaloğu (ince view). <b>WORKSPACE</b> (design v1.8.0 §2.9),
-/// <b>EXTERNAL PROJECTS</b> (design v1.14.0 §9) ve <b>LAYERS</b> bölümlerinin üçü de
+/// [D7/T66 · K5 · design v1.19.0 §2.9] Settings modal diyaloğu (ince view): sol raydan seçilen dört sayfa —
+/// <b>General</b>, <b>Workspace</b>, <b>External projects</b>, <b>Layers</b>. Sayfaların hepsi
 /// <see cref="SettingsDraftViewModel"/>'e (test edilebilir taslak) bağlıdır — Save'e kadar canlı
 /// <see cref="RunViewModel"/>'e dokunulmaz. Save = commit (persist + katmanlar + harici projeler + bekleyen
 /// repo kökü + TEK Sync, <see cref="SettingsDraftViewModel.CommitAsync"/>), Cancel/scrim/Esc = taslağı at.
@@ -22,7 +24,7 @@ namespace BuildOrchestrator.App.Views;
 /// değiştirir: Save'e kadar hiçbir şey uygulanmaz ve onay dialogu yoktur — Clear'ın "onayı" iki aşamalı
 /// düğmenin kendisidir.</para>
 /// </summary>
-public partial class SettingsDialog : UserControl
+public partial class SettingsDialog : ModalDialog
 {
     /// <summary>[§2.9] Footer geri bildiriminin ve Clear'ın iki-aşamalı penceresinin süresi.</summary>
     internal const double FeedbackMs = 2400;
@@ -50,7 +52,6 @@ public partial class SettingsDialog : UserControl
     /// <summary>Clear ikonunun TABAN (armed olmayan) tooltip'i — XAML'in kendi değeri (kopya YASAK: burada
     /// yeniden yazılmaz, yalnız <see cref="DisarmClear"/> geri yüklemek için OKUR).</summary>
     private readonly object? _clearBaseTooltip;
-    private Window? _hostWindow;
 
     public SettingsDialog()
     {
@@ -75,11 +76,48 @@ public partial class SettingsDialog : UserControl
     internal Button Import => ImportButton;
     internal Button Clear => ClearButton;
     internal Button Save => SaveButton;
-    internal Button SampleLayers => SampleLayersButton;
+    internal Button CloseButton => CloseSettingsButton;
     internal TextBox RootInput => RepoRootInput;
     internal TextBlock Feedback => FeedbackText;
+    internal TextBlock BlockedReason => BlockedReasonText;
     internal ShapePath ClearIcon => ClearGlyph;
     internal bool IsClearArmed => _clearArmed;
+
+    /// <summary>[design v1.19.0 §2.9] Bölüm ↔ XAML eşlemesinin TEK yeri: her bölümün ray satırı ve sayfası (sayfanın
+    /// görünürlüğü XAML'de ray satırının seçimine bağlıdır).</summary>
+    private (RadioButton RailItem, FrameworkElement Page) Parts(SettingsSection section) => section switch
+    {
+        SettingsSection.General => (GeneralRailItem, GeneralPage),
+        SettingsSection.Workspace => (WorkspaceRailItem, WorkspacePage),
+        SettingsSection.External => (ExternalRailItem, ExternalPage),
+        SettingsSection.Layers => (LayersRailItem, LayersPage),
+        _ => throw new ArgumentOutOfRangeException(nameof(section)),
+    };
+
+    /// <summary>Bölümün ray satırı.</summary>
+    internal RadioButton RailItem(SettingsSection section) => Parts(section).RailItem;
+
+    /// <summary>Bölümün sayfası.</summary>
+    internal FrameworkElement Page(SettingsSection section) => Parts(section).Page;
+
+    /// <summary>Bölümü seçer — raydaki tıklamanın yaptığının aynısı.</summary>
+    internal void ShowSection(SettingsSection section) => RailItem(section).IsChecked = true;
+
+    /// <summary>[design v1.19.0 §2.9] Sayfalar TEK <c>Body</c> ScrollViewer'ını paylaşır: bölüm değişince (ray
+    /// tıklaması ya da <see cref="ShowSection"/>) yeni sayfa en üstten başlar, önceki sayfanın kaydırma payı taşınmaz.</summary>
+    private void OnSectionChecked(object sender, RoutedEventArgs e) => Body.ScrollToTop();
+
+    /// <summary>[design v1.8.0 §2.9] First run: henüz workspace yok. Kaydetmek aynı zamanda kurulumdur (düğme
+    /// <c>Save and sync</c> der) ve diyalog Workspace sayfasında açılır.</summary>
+    private bool IsFirstRun => _run?.HasWorkspace != true;
+
+    /// <summary>[design v1.19.0 §2.9] Açılış bölümü: first run'da Workspace (başlamak için gereken tek zorunlu ayar
+    /// orada), sonrasında General.</summary>
+    private SettingsSection OpeningSection => IsFirstRun ? SettingsSection.Workspace : SettingsSection.General;
+
+    /// <summary>[design v1.19.0 §2.9] Açılışta odak, açılan sayfanın ilk girdisine gider (Workspace: repository root
+    /// input'u, General: ilk switch) — başlık satırının kapat düğmesine değil.</summary>
+    protected override UIElement InitialFocusScope => Page(OpeningSection);
 
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
@@ -94,39 +132,16 @@ public partial class SettingsDialog : UserControl
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();
-        Visibility = Visibility.Visible;
-        Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bulamazsa bile odak burada kalır)
-        // [D7 re-review][Fix1] Odağı UserControl'ün KENDİSİNDEN diyaloğun İÇİNE taşı (ilk input tercih edilir) —
-        // Scrim bir FocusManager.IsFocusScope olduğundan bu arama diyalog alt-ağacıyla SINIRLIdır.
-        Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
-        TrackHostWindowSize();
+        // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir (OpeningSection).
+        ShowSection(OpeningSection);
+        // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, giriş ve odağı diyaloğun İÇİNE taşıma
+        // ModalDialog'dadır; odağın düşeceği yer açılan sayfadır (InitialFocusScope → sayfanın ilk girdisi).
+        //
+        // [DEĞİŞEN KURAL — design v1.19.0] ESKİ: Settings giriş animasyonu OYNATMAZDI (yalnız About ve What's
+        // new oynatırdı); prototipin ortak DialogShell'i ds-dialog-in'i üçüne de takar — Settings de 180ms fade
+        // + 6px yükselir (DialogShellTests.Settings_now_plays_the_dialog_entrance).
+        ShowDialog();
     }
-
-    /// <summary>[design v1.14.0 §2.9 · ruling task-D6] Gövdenin (<see cref="Body"/>) üst yükseklik sınırını
-    /// dialogu barındıran PENCEREYE bağlar: WPF'te <c>vh</c> (tarayıcı viewport'u) yoktur, en yakın karşılık
-    /// dialogun İÇİNDE yaşadığı <see cref="System.Windows.Window"/>'un <c>ActualHeight</c>'ıdır — bağlayıcı
-    /// sınır ekran değil PENCEREDİR. Hesabın kendisi <see cref="SettingsBodyHeight"/>'ta TEK yerde
-    /// (kopya YASAK); burada yalnız GÜNCEL pencereyi bulup ilk değeri uygular ve pencere yeniden
-    /// boyutlandığında (<see cref="OnHostWindowSizeChanged"/>) yeniden çağrılmasını KURAR.
-    ///
-    /// <para>Abonelik İDEMPOTENTtir: diyalog kapanıp yeniden açıldığında (aynı üst pencerede) tekrar tekrar
-    /// çağrılır ama aynı pencereye İKİNCİ KEZ abone OLUNMAZ.</para></summary>
-    private void TrackHostWindowSize()
-    {
-        var window = Window.GetWindow(this);
-        if (!ReferenceEquals(window, _hostWindow))
-        {
-            if (_hostWindow is not null) _hostWindow.SizeChanged -= OnHostWindowSizeChanged;
-            _hostWindow = window;
-            if (_hostWindow is not null) _hostWindow.SizeChanged += OnHostWindowSizeChanged;
-        }
-        UpdateBodyHeightLimit();
-    }
-
-    private void OnHostWindowSizeChanged(object sender, SizeChangedEventArgs e) => UpdateBodyHeightLimit();
-
-    private void UpdateBodyHeightLimit() =>
-        Body.MaxHeight = SettingsBodyHeight.MaxHeightFor(_hostWindow?.ActualHeight ?? 0);
 
     /// <summary>[design v1.10.0 §2.4] First run'daki <c>Import settings…</c> kısayolu: diyaloğu açar ve dosya
     /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
@@ -136,20 +151,14 @@ public partial class SettingsDialog : UserControl
         OnImport(this, new RoutedEventArgs());
     }
 
-    private void Close()
-    {
-        ResetFeedback();
-        Visibility = Visibility.Collapsed;
-    }
+    /// <summary>Her kapanış yolu (Cancel, Save, scrim, Esc, MainWindow'un Esc güvenlik ağı) geri bildirimi ve
+    /// Clear'ın kurulu durumunu sıfırlar — taslak zaten bir kopyadır ve atılır.</summary>
+    protected override void OnDialogClosing() => ResetFeedback();
 
-    /// <summary>[E5/T46] Esc zincirinin dialog katmanı için dışarıdan kapatma (MainWindow güvenlik ağı — odak
-    /// dialog dışındayken). Dialog odaklıyken Esc'i zaten <see cref="OnKeyDown"/> yakalar (handled).</summary>
-    public void CloseDialog() => Close();
-
-    /// <summary>[design v1.8.0 §2.9] First run'da (henüz workspace yok) kaydetmek AYNI ZAMANDA kurulumdur —
-    /// düğme bunu söyler: <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
+    /// <summary>[design v1.8.0 §2.9] First run'da kaydetmek AYNI ZAMANDA kurulumdur — düğme bunu söyler:
+    /// <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
     private void RefreshSaveLabel() =>
-        SaveButton.Content = _run?.HasWorkspace == true ? "Save" : "Save and sync";
+        SaveButton.Content = IsFirstRun ? "Save and sync" : "Save";
 
     // ---- Layers ----
 
@@ -160,12 +169,6 @@ public partial class SettingsDialog : UserControl
         if (sender is FrameworkElement { DataContext: LayerRowViewModel row }) _draft?.RemoveLayer(row);
     }
 
-    private void OnLoadSampleLayers(object sender, RoutedEventArgs e)
-    {
-        _draft?.LoadSampleLayers();
-        DisarmClear();
-    }
-
     // ---- External projects (design v1.14.0 §9 · K5) ----
 
     private void OnAddExternal(object sender, RoutedEventArgs e) => _draft?.AddExternal();
@@ -174,6 +177,9 @@ public partial class SettingsDialog : UserControl
     {
         if (sender is FrameworkElement { DataContext: ExternalRowViewModel row }) _draft?.RemoveExternal(row);
     }
+
+    // [design v1.19.0 §2.9] External projects'in alt satırındaki "Pull before build" düğmesi: anahtar General'dadır.
+    private void OnShowGeneral(object sender, RoutedEventArgs e) => ShowSection(SettingsSection.General);
 
     // ---- Workspace (design v1.8.0 §2.9) ----
 
@@ -267,19 +273,10 @@ public partial class SettingsDialog : UserControl
     {
         if (_draft is null || _run is null || _store is null || !_draft.CanSave) return;
         var (draft, run, store) = (_draft, _run, _store);
-        Close();
+        CloseDialog();
         await draft.CommitAsync(run, store);
     }
 
-    private void OnCancel(object sender, RoutedEventArgs e) => Close(); // taslak (kopya) atılır
-
-    // Scrim tıklaması kapatır (Cancel); diyaloğun kendi içine tıklama scrim'e ULAŞMAZ.
-    private void OnScrimClick(object sender, MouseButtonEventArgs e) => Close();
-    private void OnDialogClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        if (e.Key == Key.Escape) { Close(); e.Handled = true; } // BuildApp.jsx:1312
-    }
+    // Taslak (kopya) atılır. Scrim tıklaması ve Esc (BuildApp.jsx:1312) aynı Cancel anlamıyla ortak kabuktadır.
+    private void OnCancel(object sender, RoutedEventArgs e) => CloseDialog();
 }

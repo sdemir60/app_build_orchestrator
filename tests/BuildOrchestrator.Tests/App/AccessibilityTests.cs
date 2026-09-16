@@ -185,7 +185,9 @@ public class AccessibilityTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
             run => run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
         using var _scope = scope;
-        dialog.UpdateLayout(); // katman satırı GERÇEKTEN kurulsun (ItemsControl kabı)
+        // [design v1.19.0] Katman kartı yalnız Layers sayfası görünürken kurulur (ItemsControl kabı).
+        dialog.ShowSection(SettingsSection.Layers);
+        dialog.UpdateLayout();
 
         var inputs = DsResources.RealizedObjects(dialog).OfType<TextBox>().ToList();
         // [DEĞİŞEN KURAL — design v1.8.0 §2.9] Diyalogda ARTIK ÜÇ input var: katman satırının iki alanı ve
@@ -193,9 +195,11 @@ public class AccessibilityTests
         Assert.Equal(3, inputs.Count); // ön-koşul: satır kuruldu (yoksa aşağıdaki iddialar vakum olurdu)
         var byWatermark = inputs.ToDictionary(t => DsChrome.GetWatermark(t)!, AutomationProperties.GetName,
             StringComparer.Ordinal);
-        Assert.Equal(AccessibilityNames.LayerName, byWatermark["Layer name"]);
-        Assert.Equal(AccessibilityNames.LayerPattern, byWatermark[@"^OSYS\.Domain\."]);
-        Assert.Equal(AccessibilityNames.RepositoryRootInput, byWatermark[@"D:\src\osys"]);
+        // [DEĞİŞEN KURAL — design v1.19.0 §2.9] Watermark'lar ürün-bağımsız placeholder'lardır: ad kutusu satır
+        // indeksinin adı (`Layer name` DEĞİL), desen kutusu onun deseni (`^OSYS\.Domain\.` DEĞİL), kök `D:\src\myapp`.
+        Assert.Equal(AccessibilityNames.LayerName, byWatermark["Core"]);
+        Assert.Equal(AccessibilityNames.LayerPattern, byWatermark[@"^MyApp\.(Core|Common)\."]);
+        Assert.Equal(AccessibilityNames.RepositoryRootInput, byWatermark[@"D:\src\myapp"]);
     }
 
     /// <summary>[A13/T5 · n5] Worktree hedef listesindeki çöp kutusu ikon-yalnızdır ve satır başına BİR tane
@@ -433,6 +437,7 @@ public class AccessibilityTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
             run => run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
         using var _scope = scope;
+        dialog.ShowSection(SettingsSection.Layers); // [design v1.19.0] katman kartı yalnız kendi sayfasında kurulur
         dialog.UpdateLayout();
 
         var surfaces = shellObjects.Where(o => !actionBarSubtree.Contains(o))
@@ -475,6 +480,8 @@ public class AccessibilityTests
                      AccessibilityNames.LatestEvents,
                      AccessibilityNames.LayerName,                            // n4
                      AccessibilityNames.LayerPattern,
+                     AccessibilityNames.CloseSettings,                        // design v1.19.0 başlık satırı
+                     "Layers",                                                // design v1.19.0 bölüm rayı
                      AccessibilityNames.DeleteWorktreeNamed("main-1"),        // n5
                      "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
                  })

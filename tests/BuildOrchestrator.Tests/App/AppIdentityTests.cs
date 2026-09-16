@@ -41,6 +41,27 @@ public class AppIdentityTests
             typeof(AppIdentity).Assembly.GetCustomAttribute<AssemblyCopyrightAttribute>()!.Copyright);
     }
 
+    /// <summary>[design v1.19.0 §2.10] Telif metni tasarımın yazdığı gibi: <c>© 2026 Delta Yazılım</c>. Değer
+    /// props'ta TEK yerde durur; About sekmesinin Copyright satırı ve assembly attribute'u oradan okur.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ DEĞER <c>© 2026 Delta</c> idi ve yalnız "tek kaynak"
+    /// kuralı pinliydi, metnin kendisi değil. Tasarım firma adını tam yazar; props dosyası UTF-8 kalmalı (ı).</para></summary>
+    [Fact]
+    public void The_copyright_reads_as_the_design_writes_it()
+    {
+        Assert.Equal("© 2026 Delta Yazılım", Props().Descendants(None + "Copyright").Single().Value);
+        Assert.Equal("© 2026 Delta Yazılım", AppIdentity.Copyright);
+    }
+
+    /// <summary>[design v1.19.0 §2.10] About sekmesinin tanım paragrafı — metin birebir, tek yeri
+    /// <see cref="AppIdentity.Overview"/>.</summary>
+    [Fact]
+    public void The_overview_paragraph_is_verbatim()
+        => Assert.Equal(
+            "Build Orchestrator discovers the projects under the repository root, works out the dependency graph and "
+            + "builds in that order — only what changed, in parallel where the graph allows. The plan, the running "
+            + "build and its result stay visible while it works.",
+            AppIdentity.Overview);
+
     [Fact]
     public void The_tagline_is_a_single_sentence()
     {

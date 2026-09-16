@@ -18,8 +18,19 @@ public enum ShortcutId
     RestoreFromTray,
 }
 
-/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama.</summary>
-public readonly record struct ShortcutEntry(ShortcutId Id, IReadOnlyList<string> Gestures, string Description);
+/// <summary>[design v1.19.0 §2.10] About'un Shortcuts sekmesindeki caps grubu. Sıra ve başlık metni
+/// <see cref="ShortcutCatalog.GroupOrder"/>/<see cref="ShortcutCatalog.GroupTitle"/>'dadır.</summary>
+public enum ShortcutGroup
+{
+    /// <summary>Koşu komutları — Build, Rebuild.</summary>
+    Build,
+    /// <summary>Uygulama geneli — filtre, dialoglar, katman kapatma, tepsi.</summary>
+    Application,
+}
+
+/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama + ait olduğu grup.</summary>
+public readonly record struct ShortcutEntry(
+    ShortcutId Id, IReadOnlyList<string> Gestures, string Description, ShortcutGroup Group);
 
 /// <summary>
 /// [About] Kullanıcıya gösterilen kısayol metinlerinin TEK kaynağı — About diyaloğunun tablosu, Build
@@ -56,27 +67,38 @@ public static class ShortcutCatalog
     public static IReadOnlyList<ShortcutEntry> All { get; } =
     [
         new(ShortcutId.Build, GesturesFor(WindowIntent.F5StateBranch),
-            "Build — or Stop while a run is in flight"),
+            "Build — or Stop while a run is in flight", ShortcutGroup.Build),
         new(ShortcutId.Rebuild, GesturesFor(WindowIntent.Rebuild),
-            "Rebuild — all projects, cache ignored"),
+            "Rebuild — all projects, cache ignored", ShortcutGroup.Build),
         new(ShortcutId.FocusFilter, GesturesFor(WindowIntent.FocusFilter),
-            "Focus the project filter"),
+            "Focus the project filter", ShortcutGroup.Application),
         // Bu cümle AYNI ZAMANDA title bar'daki info butonunun tooltip'idir (MainWindow.xaml) — iki yerde
         // yazılmaz.
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
-            "About — version, shortcuts and diagnostics"),
+            "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
         // [design v1.13.0/v1.13.1 §2.1/§2.11 · D4/T8] Bu cümle AYNI ZAMANDA sparkle butonunun (görülmemiş
         // sürüm yokken) tooltip'idir — MainWindow kendi cümlesini kurmaz, buradan okur (About'un deseni
         // birebir budur). Görülmemiş sürüm varken tooltip AYRI bir cümleye döner ("What's new in <sürüm>");
         // o cümle sürüm numarası taşıdığı için burada TANIMLANMAZ (kopya YASAK'ın öbür ucu: sabit olmayan
         // metin sabit bir katalog girdisinde YAŞAMAZ).
         new(ShortcutId.WhatsNew, GesturesFor(WindowIntent.ShowNotes),
-            "What's new — release notes"),
+            "What's new — release notes", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
-            "Close the topmost open layer: dialog → popover/menu → selection"),
+            "Close the topmost open layer: dialog → popover/menu → selection", ShortcutGroup.Application),
         new(ShortcutId.RestoreFromTray, [HotkeyBinding.DefaultGesture],
-            "Global — bring the window back from the tray"),
+            "Global — bring the window back from the tray", ShortcutGroup.Application),
     ];
+
+    /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası.</summary>
+    public static IReadOnlyList<ShortcutGroup> GroupOrder { get; } = [ShortcutGroup.Build, ShortcutGroup.Application];
+
+    /// <summary>[design v1.19.0 §2.10] Grubun başlığı — caps olarak çizilir (<c>TrackedTextBlock</c> büyütür).</summary>
+    public static string GroupTitle(ShortcutGroup group) => group switch
+    {
+        ShortcutGroup.Build => "Build",
+        ShortcutGroup.Application => "Application",
+        _ => throw new ArgumentOutOfRangeException(nameof(group), group, null),
+    };
 
     /// <summary>Tek kayıt. Eksik ya da ikiz bir kimlik burada fırlatır (sessizce yanlış satır üretmez).</summary>
     public static ShortcutEntry Get(ShortcutId id) => All.Single(e => e.Id == id);

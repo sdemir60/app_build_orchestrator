@@ -689,8 +689,9 @@
     padding 1, gap 1 (:311-317). Seçenek (:332-352): padding '0 10px', radius-xs, text-xs/500;
     seçili surface-overlay + text-primary, seçili değil saydam + text-dim.
 
-    Varsayılan boy DS `size="sm"`dir (h=22 → dış 24): uygulamada Segment TEK yerde ve sm olarak kullanılır
-    (BuildApp.jsx:1585 `<DS.Segment size="sm" …>`), brief'in pinlediği ölçü de 24'tür.
+    Varsayılan boy DS `size="sm"`dir (h=22 → dış 24): action bar'ın Debug/Release seçicisi sm'dir
+    (BuildApp.jsx:1585 `<DS.Segment size="sm" …>`), brief'in pinlediği ölçü de 24'tür. [design v1.19.0 §2.10]
+    About'un sekme anahtarı DS'in `md` boyudur (h=24 → dış 26): Ds.Segment.Md yalnız yüksekliği değiştirir.
 
     TİP: ItemsControl + RadioButton — kaynak `role="radiogroup"` / `role="radio"` kullanır (:302, :332).
   -->
@@ -719,6 +720,10 @@
         </ControlTemplate>
       </Setter.Value>
     </Setter>
+  </Style>
+
+  <Style x:Key="Ds.Segment.Md" TargetType="ItemsControl" BasedOn="{StaticResource Ds.Segment}">
+    <Setter Property="Height" Value="26" />
   </Style>
 
   <Style x:Key="Ds.Segment.Item" TargetType="RadioButton" BasedOn="{StaticResource Ds.Button.Base}">
@@ -992,35 +997,154 @@
 
   <!-- =================================== SETTINGS DIALOG CHROME =================================== -->
   <!--
-    [K5 · design v1.14.0 §9] Settings.xaml'ın LAYERS ve EXTERNAL PROJECTS bölümleri BİREBİR aynı kart/boş-durum/
-    ayraç/caps-başlık görünümünü paylaşır (§9: "Kart yapısı katmanlarla birebir aynı"). Bu STİLLER genel bir DS
-    bileşeni DEĞİLDİR (yalnız Settings diyaloğunun iç düzenine ait) ama uygulamanın TEK kontrol-görünüm kaynağı
-    Controls.xaml olduğundan (dosya başı yorumu) buraya, açıkça "Ds.Settings.*" adlarıyla ayrı bir blokta
-    eklenir — iki bölümden KULLANILIR, iki kopya YAZILMAZ (CLAUDE.md "kopya YASAK"). Değerlerin ÇOĞU ÖNCEDEN
-    SettingsDialog.xaml'da inline yazılıydı (LAYERS'ın tek tüketicisiydi) ve buraya TAŞINDI; TEK istisna
-    ayracın margin'i — orada 18/18 olarak kayıtlıydı, prototipten (18/16) sessiz bir sapmaydı ve bu tur
-    düzeltildi (bkz. aşağıdaki not).
+    [K5 · design v1.14.0 §9 → v1.19.0 §2.9] Settings diyaloğunun iç düzeni. Bu STİLLER genel bir DS bileşeni
+    DEĞİLDİR (yalnız Settings'e ait) ama uygulamanın TEK kontrol-görünüm kaynağı Controls.xaml olduğundan
+    (dosya başı yorumu) buraya, açıkça "Ds.Settings.*" adlarıyla ayrı bir blokta durur. Layers ve External
+    projects sayfaları kartı, kartın grip'ini ve sil düğmesini, boş-durum kutusunu ve "+ Add" düğmesini BİREBİR
+    paylaşır — ölçüler burada bir kez yazılır, iki sayfada tekrarlanmaz (CLAUDE.md "kopya YASAK").
+
+    [design v1.19.0] Tek kolonlu gövdenin bölüm ayracı (Ds.Settings.SectionDivider, 18/16) kalktı: bölümler artık
+    sol raydan seçilen ayrı sayfalardır.
   -->
 
-  <!-- Bölüm ayracı — 1px border-subtle, üstte 18 altta 16 boşluk (BuildApp.jsx:1833
-       `margin: '18px 0 16px'`, birebir). [review fix — Bulgu 2] ÖNCEKİ turda bu değer sessizce 18/18'e
-       yuvarlanmıştı ("kod kararı" diye kayıtlıydı, ama gerekçesiz ve doküman/kod uyuşmazlığı raporlanmamıştı —
-       CLAUDE.md ihlali) — ruling: prototip kazanır, KURAL budur (sapma notu değil). -->
-  <Style x:Key="Ds.Settings.SectionDivider" TargetType="Border">
-    <Setter Property="Height" Value="1" />
-    <Setter Property="Margin" Value="0,18,0,16" />
-    <Setter Property="Background" Value="{DynamicResource Brush.BorderSubtle}" />
+  <!-- [design v1.19.0 §2.9 · prototip RailItem] Bölüm rayının satırı: 30px, padding 0 8, radius-sm, 13px/500.
+       Pasif text-dim + saydam; hover (yalnız pasifte) surface-raised; AKTİF surface-overlay + text-primary (amber
+       yok — accent statüye ayrılmıştır). Zemin/renk geçişi DsTransition'ın Duration.Fast'idir. Satırlar arası 2px.
+       RadioButton: bölümler karşılıklı dışlayıcıdır ve klavyeyle gezilir; UIA adı string Content'ten gelir.
+       Sağdaki sayaç Tag'den okunur (mono 11px, tabular) ve YALNIZ >0 iken görünür; aktif satırda text-secondary,
+       pasifte text-faint. -->
+  <Style x:Key="Ds.Settings.RailItem" TargetType="RadioButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="30" />
+    <Setter Property="Margin" Value="0,0,0,2" />
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Sm}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="Transparent" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextDim}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}"
+                  CornerRadius="{Binding Path=(controls:DsChrome.CornerRadius), RelativeSource={RelativeSource TemplatedParent}}"
+                  SnapsToDevicePixels="True">
+            <DockPanel>
+              <TextBlock x:Name="Count" DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center"
+                         Text="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}"
+                         FontFamily="{x:Static controls:AppFonts.Mono}"
+                         FontSize="{DynamicResource FontSize.2xs}"
+                         FontWeight="{DynamicResource FontWeight.Body}"
+                         Typography.NumeralAlignment="Tabular"
+                         Foreground="{DynamicResource Brush.TextFaint}" />
+              <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="False" />
+            </DockPanel>
+          </Border>
+          <ControlTemplate.Triggers>
+            <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="{x:Null}">
+              <Setter TargetName="Count" Property="Visibility" Value="Collapsed" />
+            </DataTrigger>
+            <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="0">
+              <Setter TargetName="Count" Property="Visibility" Value="Collapsed" />
+            </DataTrigger>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="Count" Property="Foreground" Value="{DynamicResource Brush.TextSecondary}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <MultiTrigger>
+        <MultiTrigger.Conditions>
+          <Condition Property="IsMouseOver" Value="True" />
+          <Condition Property="IsChecked" Value="False" />
+        </MultiTrigger.Conditions>
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+      </MultiTrigger>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+      </Trigger>
+    </Style.Triggers>
   </Style>
 
-  <!-- Caps bölüm/kolon başlığı (WORKSPACE/LAYERS/EXTERNAL PROJECTS + LAYER NAME/PATTERN/PROJECT PATH/SOURCE
-       kolon başlıkları hepsi AYNI font kimliğini paylaşır) — Margin/Text/hizalama ÇAĞIRANDA kalır (o kısımlar
-       gerçekten farklı: bölüm başlığının altı 6px, kolon başlığının konumu Grid içinde). -->
+  <!-- [design v1.19.0] Nötr başlık tipografisi — 14px/600 text-primary (tasarımın "15px"i prototipte text-md'dir).
+       Dialog başlıkları (What's new, Settings), Settings sayfa başlıkları ve ilk açılış daveti AYNI kimliği paylaşır;
+       yerleşim (Margin/hizalama) ÇAĞIRANDA kalır. -->
+  <Style x:Key="Ds.Heading.Md" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Md}" />
+    <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Heading}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+  </Style>
+
+  <!-- [design v1.19.0] Nötr sarılan açıklama metni — 12px text-dim, leading-snug (16.2), sarılır. Settings sayfa
+       açıklaması ve ilk açılış davetinin alt başlığı AYNI kimliği paylaşır; Margin/MaxWidth/hizalama ÇAĞIRANDA. -->
+  <Style x:Key="Ds.Text.Description" TargetType="TextBlock">
+    <Setter Property="TextWrapping" Value="Wrap" />
+    <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
+    <Setter Property="LineHeight" Value="{DynamicResource LineHeight.Snug12}" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık
+       açıklama (Ds.Text.Description, en çok 520px), altı 18px. Açıklama bir TextBlock'tur — Layers'ınki mono bir Run
+       taşır. İki stil de sayfa başının kimliğidir (testler sayfa başlığını bu stille bulur). -->
+  <Style x:Key="Ds.Settings.PaneTitle" TargetType="TextBlock" BasedOn="{StaticResource Ds.Heading.Md}" />
+  <Style x:Key="Ds.Settings.PaneDescription" TargetType="TextBlock" BasedOn="{StaticResource Ds.Text.Description}">
+    <Setter Property="Margin" Value="0,5,0,18" />
+    <Setter Property="MaxWidth" Value="520" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+  </Style>
+
+  <!-- Caps etiket/kolon başlığı (REPOSITORY ROOT, LAYER NAME/PATTERN hepsi AYNI font kimliğini paylaşır) —
+       Margin/Text/hizalama ÇAĞIRANDA kalır (o kısımlar gerçekten farklı). -->
   <Style x:Key="Ds.Settings.CapsHeading" TargetType="TextBlock">
     <Setter Property="FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.2xs}" />
     <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Emphasis}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
   </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip `caps`] General sayfasının grup başlığı (STARTUP · BUILD · NOTIFICATIONS):
+       kolon başlığıyla AYNI font kimliği, tek farkı text-dim (kolon başlıkları text-faint'tir, prototip `colCap`). -->
+  <Style x:Key="Ds.Settings.GroupHeading" TargetType="TextBlock" BasedOn="{StaticResource Ds.Settings.CapsHeading}">
+    <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip ToggleRow] Standart ayar satırı — General'ın TÜM satırları bu tek şablonla
+       çizilir (veri: GeneralSettingRowViewModel). Yatay, üstten hizalı; padding 13 0; satırlar arası 1px
+       border-subtle (grubun ilk satırında YOK). Solda ad 13px/500 text-primary + 3px altında açıklama 12px text-dim
+       snug, en çok 430; sağda 20px arayla Ds.Switch (üstten 1). UIA adı SwitchName (etiket; pull'da mevcut ad).
+       Bağımlı satır (IsEnabled=False): switch DS'in kendi pasif opaklığına söner, metin sütunu AYNI değeri switch'ten
+       okur — opaklık iki yerde yazılmaz ve switch iki kez sönmez; layout değişmez. -->
+  <Style x:Key="Ds.Settings.ToggleRow" TargetType="Border">
+    <Setter Property="Padding" Value="0,13" />
+    <Setter Property="BorderThickness" Value="0,1,0,0" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderSubtle}" />
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding IsFirstInGroup}" Value="True">
+        <Setter Property="BorderThickness" Value="0" />
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+  <DataTemplate x:Key="Ds.Settings.ToggleRowTemplate">
+    <Border Style="{DynamicResource Ds.Settings.ToggleRow}" IsEnabled="{Binding IsEnabled}">
+      <DockPanel>
+        <CheckBox x:Name="Switch" DockPanel.Dock="Right" Margin="20,1,0,0" VerticalAlignment="Top"
+                  Style="{DynamicResource Ds.Switch}"
+                  AutomationProperties.Name="{Binding SwitchName}"
+                  IsChecked="{Binding IsOn, Mode=TwoWay}" />
+        <StackPanel Opacity="{Binding Opacity, ElementName=Switch}">
+          <TextBlock Text="{Binding Label}" FontSize="{DynamicResource FontSize.Sm}"
+                     FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextPrimary}" />
+          <TextBlock Text="{Binding Description}" Margin="0,3,0,0" MaxWidth="430" HorizontalAlignment="Left"
+                     TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight"
+                     LineHeight="{DynamicResource LineHeight.Snug12}"
+                     FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </DataTemplate>
 
   <!-- Kart kabuğu (katman VE harici proje kartı) — 36px, 1px border, radius-md; sürüklenirken surface-raised +
        border-strong (IsDragging, IDragReorderItem'ın İKİ türevi de taşır: LayerRowViewModel + ExternalRowViewModel). -->
@@ -1040,6 +1164,75 @@
     </Style.Triggers>
   </Style>
 
+  <!-- Kartın solundaki grip — 20px, Mouse.Capture tabanlı sürükle tutamacı (DragReorderBehavior; OLE DragDrop
+       YASAK). İki kartta da AYNI şablon; kart DockPanel'inde sola yaslanır. -->
+  <Style x:Key="Ds.Settings.CardGrip" TargetType="ContentControl">
+    <Setter Property="DockPanel.Dock" Value="Left" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="IsTabStop" Value="False" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ContentControl">
+          <Border Width="20" Background="Transparent" Cursor="SizeAll"
+                  controls:DragReorderBehavior.IsDragHandle="True">
+            <Border.ToolTip>
+              <ToolTip controls:AppTooltip.Side="Top">Drag to reorder</ToolTip>
+            </Border.ToolTip>
+            <Viewbox Width="16" Height="16">
+              <Canvas Width="24" Height="24">
+                <Path Data="{DynamicResource Icon.Grip}" Fill="{DynamicResource Brush.TextFaint}" />
+              </Canvas>
+            </Viewbox>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Kartın sağındaki sil düğmesi — Ds.IconButton (sm) + 14px çöp kutusu. Tooltip ve UIA adı kartın işini söyler
+       ("Delete layer" / "Remove external project"), bu yüzden ÇAĞIRANDA kalır. -->
+  <Style x:Key="Ds.Settings.CardRemove" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
+    <Setter Property="DockPanel.Dock" Value="Right" />
+    <Setter Property="ContentTemplate">
+      <Setter.Value>
+        <DataTemplate>
+          <Viewbox Width="14" Height="14">
+            <Canvas Width="24" Height="24">
+              <Path Data="{DynamicResource Icon.Trash}"
+                    StrokeThickness="{DynamicResource Icon.Trash.StrokeThickness}"
+                    Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            </Canvas>
+          </Viewbox>
+        </DataTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Listenin altındaki "+ Add …" — ghost sm, üstü 10; solu −10 ghost'un kendi 10px iç boşluğunu iptal eder
+       (etiketin ikonu kart kenarıyla hizalanır). Etiket string Content'tir (UIA adı da ondan doğar). -->
+  <Style x:Key="Ds.Settings.AddRow" TargetType="Button" BasedOn="{StaticResource Ds.Button.Ghost.Sm}">
+    <Setter Property="HorizontalAlignment" Value="Left" />
+    <Setter Property="Margin" Value="-10,10,0,0" />
+    <Setter Property="ContentTemplate">
+      <Setter.Value>
+        <DataTemplate>
+          <StackPanel Orientation="Horizontal">
+            <Viewbox Width="13" Height="13" Margin="0,0,6,0">
+              <Canvas Width="24" Height="24">
+                <Path Data="{DynamicResource Icon.Plus}"
+                      StrokeThickness="{DynamicResource Icon.Plus.StrokeThickness}"
+                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+              </Canvas>
+            </Viewbox>
+            <TextBlock Text="{Binding}" VerticalAlignment="Center" />
+          </StackPanel>
+        </DataTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
   <!-- Boş-durum kesikli kutusu — dış Grid (visibility trigger'ı ÇAĞIRANDA kalır: Layers.Count / Externals.Count
        farklı yollar bağlar) BU İKİ stili paylaşır. -->
   <Style x:Key="Ds.Settings.EmptyStateRectangle" TargetType="Rectangle">
@@ -1055,6 +1248,20 @@
     <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- ========================================= TAG ========================================= -->
+  <!--
+    [design v1.19.0] Nötr etiket kutusu: surface zemin + 1px border-strong + radius-xs. What's new başlığındaki ve
+    About kimliğindeki sürüm çipi ile What's new'in INSTALLED çipi AYNI kutuyu paylaşır; yükseklik, padding ve
+    içerik (punto, font) her kullanımda ÇAĞIRANDADIR — o kısımlar gerçekten farklı.
+    TİP: Border — düz bir kutu; etkileşimli Ds.Chip (ToggleButton) ile karıştırılmaz.
+  -->
+  <Style x:Key="Ds.Tag" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Xs}" />
   </Style>
 
   <!-- ========================================= KBD ========================================= -->
@@ -1142,8 +1349,60 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Radius.Lg}" />
     <Setter Property="Effect" Value="{DynamicResource Effect.OverlayShadow}" />
+  </Style>
+
+  <!--
+    [design v1.19.0 · prototip DialogShell] Üç modalın ORTAK kabuğu — davranış Controls/ModalDialog.cs'te,
+    görünüm burada. Full-bleed scrim (odak kapsamı + Cycle gezinme: Tab dialog dışına kaçmaz) ortasında
+    Ds.Dialog çerçevesi; içinde head · tabs (opsiyonel) · gövde (kalan alan) · footer (opsiyonel) dikey dizilimi.
+    Çerçevenin MaxWidth/MaxHeight'ı (host − 48) ve içeriğin yuvarlak köşe clip'i kod-tarafıdır (ModalDialog).
+    Footer şeridi padding 12px 18px + üstte 1px border-subtle; footer yoksa şerit hiç çizilmez. Prototipin
+    `gap: 8`'i WPF panelinde yoktur — footer içeriğinin kendi aralıklarıdır.
+
+    Dialog tipografisi (font-sans + text-primary) çerçevede DEĞİL kontrolün KENDİSİNDE durur: yuva içerikleri
+    (head/tabs/gövde/footer) mantıksal olarak ModalDialog'a bağlıdır ve WPF değer mirası mantıksal ebeveyni
+    izler — çerçevedeki bir TextElement ayarı onlara ulaşmaz (ölçüldü: başlık Segoe UI çiziliyordu,
+    DialogShellTests.Slot_content_inherits_the_dialog_typography). Ds.Dialog'un tek tüketicisi bu şablondur;
+    ayarlar oradan buraya TAŞINDI (kopya değil).
+  -->
+  <Style x:Key="Ds.ModalDialog" TargetType="controls:ModalDialog">
     <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
     <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:ModalDialog">
+          <Grid x:Name="PART_Scrim" Background="{DynamicResource Brush.Scrim}"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                FocusManager.IsFocusScope="True">
+            <Border x:Name="PART_Frame" Style="{DynamicResource Ds.Dialog}"
+                    Width="{TemplateBinding DialogWidth}" Height="{TemplateBinding DialogHeight}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ContentPresenter Grid.Row="0" Content="{TemplateBinding Head}" />
+                <ContentPresenter Grid.Row="1" Content="{TemplateBinding Tabs}" />
+                <ContentPresenter Grid.Row="2" Content="{TemplateBinding Content}" />
+                <Border x:Name="FooterStrip" Grid.Row="3" Padding="18,12" BorderThickness="0,1,0,0"
+                        BorderBrush="{DynamicResource Brush.BorderSubtle}">
+                  <ContentPresenter Content="{TemplateBinding Footer}" />
+                </Border>
+              </Grid>
+            </Border>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Footer" Value="{x:Null}">
+              <Setter TargetName="FooterStrip" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <!-- ======================================= TOOLTIP ======================================= -->
