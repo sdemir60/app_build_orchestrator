@@ -38,7 +38,7 @@
             </Canvas>
           </Viewbox>
         </Button>
-        <TextBlock Text="Settings" VerticalAlignment="Center" Style="{DynamicResource Ds.Settings.PaneTitle}" />
+        <TextBlock Text="Settings" VerticalAlignment="Center" Style="{DynamicResource Ds.Heading.Md}" />
       </DockPanel>
     </Border>
   </controls:ModalDialog.Head>

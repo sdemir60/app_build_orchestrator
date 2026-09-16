@@ -88,8 +88,7 @@
                        Foreground="{DynamicResource Brush.TextPrimary}" />
             <!-- Sürüm çipi: 19px, yatay padding 6, 1px border-strong, radius-xs, surface zemin, mono 11px. -->
             <Border x:Name="VersionChip" Height="19" Padding="6,0" Margin="9,0,0,0" VerticalAlignment="Center"
-                    BorderThickness="1" BorderBrush="{DynamicResource Brush.BorderStrong}"
-                    CornerRadius="{DynamicResource Radius.Xs}" Background="{DynamicResource Brush.Surface}">
+                    Style="{DynamicResource Ds.Tag}">
               <TextBlock Text="{x:Static services:AppIdentity.Version}" VerticalAlignment="Center"
                          FontFamily="{x:Static controls:AppFonts.Mono}"
                          FontSize="{DynamicResource FontSize.2xs}"

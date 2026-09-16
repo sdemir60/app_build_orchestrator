@@ -95,12 +95,10 @@
                         HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
               <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceTitle}"
                          HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                         FontSize="{DynamicResource FontSize.Md}" FontWeight="{DynamicResource FontWeight.Heading}"
-                         Foreground="{DynamicResource Brush.TextPrimary}" />
+                         Style="{DynamicResource Ds.Heading.Md}" />
               <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceSubtitle}" Margin="0,10,0,0"
-                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="310"
-                         LineStackingStrategy="BlockLineHeight" LineHeight="{DynamicResource LineHeight.Snug12}"
-                         FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+                         HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="310"
+                         Style="{DynamicResource Ds.Text.Description}" />
 
               <!-- Kurulum listesi: 292px kart, surface zemin + 1px border + radius-md; 30px satırlar,
                    aralarında border-subtle. Değerler mono (SetupRootValue/SetupLayersValue kod-tarafı). -->

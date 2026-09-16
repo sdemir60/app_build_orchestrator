@@ -83,25 +83,22 @@ public partial class SettingsDialog : ModalDialog
     internal ShapePath ClearIcon => ClearGlyph;
     internal bool IsClearArmed => _clearArmed;
 
-    /// <summary>[design v1.19.0 §2.9] Bölümün ray satırı — bölüm ↔ XAML eşlemesinin TEK yeri.</summary>
-    internal RadioButton RailItem(SettingsSection section) => section switch
+    /// <summary>[design v1.19.0 §2.9] Bölüm ↔ XAML eşlemesinin TEK yeri: her bölümün ray satırı ve sayfası (sayfanın
+    /// görünürlüğü XAML'de ray satırının seçimine bağlıdır).</summary>
+    private (RadioButton RailItem, FrameworkElement Page) Parts(SettingsSection section) => section switch
     {
-        SettingsSection.General => GeneralRailItem,
-        SettingsSection.Workspace => WorkspaceRailItem,
-        SettingsSection.External => ExternalRailItem,
-        SettingsSection.Layers => LayersRailItem,
+        SettingsSection.General => (GeneralRailItem, GeneralPage),
+        SettingsSection.Workspace => (WorkspaceRailItem, WorkspacePage),
+        SettingsSection.External => (ExternalRailItem, ExternalPage),
+        SettingsSection.Layers => (LayersRailItem, LayersPage),
         _ => throw new ArgumentOutOfRangeException(nameof(section)),
     };
 
-    /// <summary>Bölümün sayfası (görünürlüğü XAML'de ray satırının seçimine bağlıdır).</summary>
-    internal FrameworkElement Page(SettingsSection section) => section switch
-    {
-        SettingsSection.General => GeneralPage,
-        SettingsSection.Workspace => WorkspacePage,
-        SettingsSection.External => ExternalPage,
-        SettingsSection.Layers => LayersPage,
-        _ => throw new ArgumentOutOfRangeException(nameof(section)),
-    };
+    /// <summary>Bölümün ray satırı.</summary>
+    internal RadioButton RailItem(SettingsSection section) => Parts(section).RailItem;
+
+    /// <summary>Bölümün sayfası.</summary>
+    internal FrameworkElement Page(SettingsSection section) => Parts(section).Page;
 
     /// <summary>Bölümü seçer — raydaki tıklamanın yaptığının aynısı.</summary>
     internal void ShowSection(SettingsSection section) => RailItem(section).IsChecked = true;

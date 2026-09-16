@@ -11,8 +11,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [K5 · design v1.14.0 §9] Resources/Controls.xaml SELECT bölümü (<c>Ds.Select</c>) — DS'in <c>Select</c>
 /// bileşeninin WPF portu (_ds_bundle.js:779-834 Select.jsx + :714-728 inputBase, Select paylaşır). Uygulamada
-/// bir ComboBox stili yoktu; ilk (ve bugün tek) tüketici Settings'in harici proje kartındaki Source (Git/TFVC)
-/// seçimidir (bkz. <c>SettingsDialogFocusTests.External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select</c>).
+/// bir ComboBox stili yoktu; ilk tüketicisi Settings'in harici proje kartındaki Source (Git/TFVC) seçimiydi — o seçim
+/// TFVC ile kalktı, bugün uygulamada tüketicisi yoktur (bkz. <c>SettingsDialogFocusTests.External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_no_source_select</c>).
 ///
 /// <para><c>ScrollBarStyleTests</c>'in desenini izler: ADLANDIRILMIŞ (implicit değil) bir stil olduğu için
 /// kontrol GERÇEKTEN kurulur (host'un <c>FindResource</c>'ından okunup atanır, sonra <c>DsResources.Realize</c>

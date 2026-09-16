@@ -77,6 +77,17 @@ public class ModalDialog : UserControl
         }
     }
 
+    /// <summary>[test yüzeyi] <c>Ds.Dialog</c> çerçevesi (<c>PART_Frame</c>) — <see cref="Scrim"/>'in ikizi; testler
+    /// çerçeveye görsel ağaçta kendi yollarını kurmaz, hep buradan ulaşır.</summary>
+    internal Border Frame
+    {
+        get
+        {
+            ApplyTemplate();
+            return _frame ?? throw new InvalidOperationException("Ds.ModalDialog template is not applied.");
+        }
+    }
+
     public override void OnApplyTemplate()
     {
         base.OnApplyTemplate();

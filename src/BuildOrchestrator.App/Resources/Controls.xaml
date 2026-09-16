@@ -1067,23 +1067,33 @@
     </Style.Triggers>
   </Style>
 
-  <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık 14px/600 text-primary (tasarımın "15px"i
-       prototipte text-md'dir) + 5px altında TEK satırlık açıklama (12px text-dim, leading-snug, en çok 520px,
-       sarılır), altı 18px. Açıklama bir TextBlock'tur — Layers'ınki mono bir Run taşır. -->
-  <Style x:Key="Ds.Settings.PaneTitle" TargetType="TextBlock">
+  <!-- [design v1.19.0] Nötr başlık tipografisi — 14px/600 text-primary (tasarımın "15px"i prototipte text-md'dir).
+       Dialog başlıkları (What's new, Settings), Settings sayfa başlıkları ve ilk açılış daveti AYNI kimliği paylaşır;
+       yerleşim (Margin/hizalama) ÇAĞIRANDA kalır. -->
+  <Style x:Key="Ds.Heading.Md" TargetType="TextBlock">
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Md}" />
     <Setter Property="FontWeight" Value="{DynamicResource FontWeight.Heading}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextPrimary}" />
   </Style>
-  <Style x:Key="Ds.Settings.PaneDescription" TargetType="TextBlock">
-    <Setter Property="Margin" Value="0,5,0,18" />
-    <Setter Property="MaxWidth" Value="520" />
-    <Setter Property="HorizontalAlignment" Value="Left" />
+
+  <!-- [design v1.19.0] Nötr sarılan açıklama metni — 12px text-dim, leading-snug (16.2), sarılır. Settings sayfa
+       açıklaması ve ilk açılış davetinin alt başlığı AYNI kimliği paylaşır; Margin/MaxWidth/hizalama ÇAĞIRANDA. -->
+  <Style x:Key="Ds.Text.Description" TargetType="TextBlock">
     <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="LineStackingStrategy" Value="BlockLineHeight" />
     <Setter Property="LineHeight" Value="{DynamicResource LineHeight.Snug12}" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık
+       açıklama (Ds.Text.Description, en çok 520px), altı 18px. Açıklama bir TextBlock'tur — Layers'ınki mono bir Run
+       taşır. İki stil de sayfa başının kimliğidir (testler sayfa başlığını bu stille bulur). -->
+  <Style x:Key="Ds.Settings.PaneTitle" TargetType="TextBlock" BasedOn="{StaticResource Ds.Heading.Md}" />
+  <Style x:Key="Ds.Settings.PaneDescription" TargetType="TextBlock" BasedOn="{StaticResource Ds.Text.Description}">
+    <Setter Property="Margin" Value="0,5,0,18" />
+    <Setter Property="MaxWidth" Value="520" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
   </Style>
 
   <!-- Caps etiket/kolon başlığı (REPOSITORY ROOT, LAYER NAME/PATTERN hepsi AYNI font kimliğini paylaşır) —
@@ -1238,6 +1248,20 @@
     <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- ========================================= TAG ========================================= -->
+  <!--
+    [design v1.19.0] Nötr etiket kutusu: surface zemin + 1px border-strong + radius-xs. What's new başlığındaki ve
+    About kimliğindeki sürüm çipi ile What's new'in INSTALLED çipi AYNI kutuyu paylaşır; yükseklik, padding ve
+    içerik (punto, font) her kullanımda ÇAĞIRANDADIR — o kısımlar gerçekten farklı.
+    TİP: Border — düz bir kutu; etkileşimli Ds.Chip (ToggleButton) ile karıştırılmaz.
+  -->
+  <Style x:Key="Ds.Tag" TargetType="Border">
+    <Setter Property="Background" Value="{DynamicResource Brush.Surface}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Radius.Xs}" />
   </Style>
 
   <!-- ========================================= KBD ========================================= -->

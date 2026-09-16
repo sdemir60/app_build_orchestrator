@@ -186,7 +186,7 @@ public partial class NotesDialog : ModalDialog
     }
 
     /// <summary>[v1.19.0 §2.11] Nötr <c>INSTALLED</c> çipi, sol kolonda tarihin altında: 16px yüksek, yatay padding
-    /// 5px, <c>surface</c> zemin + 1px <c>border-strong</c>, <c>radius-xs</c>, 9.5px caps <c>text-dim</c> metin,
+    /// 5px, <c>Ds.Tag</c> kutusu (<c>surface</c> zemin + 1px <c>border-strong</c>, <c>radius-xs</c>), 9.5px caps <c>text-dim</c> metin,
     /// sola yaslı (içeriğe sıkı). <see cref="TrackedTextBlock"/>'un KENDİ DP'leri doğrudan sürülür —
     /// TextBlock'un Foreground/FontSize'ı burada ETKİSİZDİR (ayrı bir DependencyProperty ailesi).
     ///
@@ -199,13 +199,11 @@ public partial class NotesDialog : ModalDialog
         {
             Height = 16,
             Padding = new Thickness(5, 0, 5, 0),
-            BorderThickness = new Thickness(1),
             Margin = new Thickness(0, 8, 0, 0), // [prototip gap 6 + marginTop 2] tarihin altında
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        chip.SetResourceReference(Border.BackgroundProperty, "Brush.Surface");
-        chip.SetResourceReference(Border.BorderBrushProperty, "Brush.BorderStrong");
-        chip.SetResourceReference(Border.CornerRadiusProperty, "Radius.Xs");
+        // Kutu (zemin + çerçeve + köşe) sürüm çipleriyle ortak Ds.Tag'tir; yükseklik/padding/metin burada.
+        chip.SetResourceReference(StyleProperty, "Ds.Tag");
 
         var label = new TrackedTextBlock
         {

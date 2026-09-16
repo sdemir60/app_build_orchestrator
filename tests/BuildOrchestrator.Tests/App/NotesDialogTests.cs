@@ -18,9 +18,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class NotesDialogTests
 {
-    private static Border Shell(BuildOrchestrator.App.Views.NotesDialog dialog) =>
-        (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-
     private static List<string> VisibleTexts(FrameworkElement dialog) =>
         [.. DsResources.Descendants(dialog).OfType<TextBlock>().Select(t => t.Text)];
 
@@ -49,10 +46,10 @@ public class NotesDialogTests
         using (scope)
         {
             Assert.Equal(Visibility.Visible, dialog.Visibility);
-            Assert.Equal(720.0, Shell(dialog).Width);
-            Assert.Equal(600.0, Shell(dialog).Height);
-            Assert.Equal(720.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
-            Assert.Equal(600.0, Shell(dialog).ActualHeight);
+            Assert.Equal(720.0, dialog.Frame.Width);
+            Assert.Equal(600.0, dialog.Frame.Height);
+            Assert.Equal(720.0, dialog.Frame.ActualWidth); // realize zorunlu — literal okumak yetmez
+            Assert.Equal(600.0, dialog.Frame.ActualHeight);
         }
     }
 
@@ -94,7 +91,7 @@ public class NotesDialogTests
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         var (dialog, scope) = NotesDialogHost.OpenRealized();
         using (scope)
-            Assert.IsType<TranslateTransform>(Shell(dialog).RenderTransform);
+            Assert.IsType<TranslateTransform>(dialog.Frame.RenderTransform);
     }
 
     [StaFact]
@@ -104,8 +101,8 @@ public class NotesDialogTests
         var (dialog, scope) = NotesDialogHost.OpenRealized();
         using (scope)
         {
-            Assert.Equal(1.0, Shell(dialog).Opacity);
-            Assert.Equal(Transform.Identity, Shell(dialog).RenderTransform);
+            Assert.Equal(1.0, dialog.Frame.Opacity);
+            Assert.Equal(Transform.Identity, dialog.Frame.RenderTransform);
         }
     }
 
@@ -150,6 +147,7 @@ public class NotesDialogTests
             var subtitle = DsResources.Descendants(dialog).OfType<TextBlock>()
                 .Single(t => t.Text == "Release notes for Build Orchestrator.");
             Assert.Equal(3.0, subtitle.Margin.Top);
+            Assert.Same(dialog.FindResource("Ds.Heading.Md"), title.Style); // başlık kimliği ortak stildir (kopya YASAK)
 
             var row = DsResources.Ancestors(title).OfType<Border>().First(b => b.BorderThickness == new Thickness(0, 0, 0, 1));
             Assert.Equal(new Thickness(18, 20, 18, 16), row.Padding);
@@ -177,6 +175,7 @@ public class NotesDialogTests
                 .Single(b => b.Height == 20.0);
             var text = (TextBlock)chip.Child;
 
+            Assert.Same(dialog.FindResource("Ds.Tag"), chip.Style); // kutu ortak stildir (kopya YASAK)
             Assert.Equal(20.0, chip.ActualHeight);
             Assert.Equal(new Thickness(7, 0, 7, 0), chip.Padding);
             Assert.Equal(new Thickness(1), chip.BorderThickness);
@@ -230,7 +229,7 @@ public class NotesDialogTests
             var close = DsResources.Descendants(dialog).OfType<Button>().Single(b => Equals(b.Content, "Close"));
             var footer = DsResources.Ancestors(close).OfType<Border>().First(b => b.BorderThickness == new Thickness(0, 1, 0, 0));
 
-            var frame = Shell(dialog);
+            var frame = dialog.Frame;
             double inner = frame.ActualHeight - frame.BorderThickness.Top - frame.BorderThickness.Bottom;
             Assert.Equal(inner - head.ActualHeight - footer.ActualHeight, scroller.ActualHeight, precision: 3);
         }
@@ -308,6 +307,7 @@ public class NotesDialogTests
                 .Single(t => t.Text.Equals("INSTALLED", StringComparison.Ordinal));
             var chip = (Border)VisualTreeHelper.GetParent(chipLabel);
 
+            Assert.Same(dialog.FindResource("Ds.Tag"), chip.Style); // kutu sürüm çipleriyle ortak stildir (kopya YASAK)
             Assert.Equal(16.0, chip.Height);
             Assert.Equal(16.0, chip.ActualHeight);
             Assert.Equal(new Thickness(5, 0, 5, 0), chip.Padding);
@@ -425,7 +425,9 @@ public class NotesDialogTests
     /// <summary>[v1.19.0 §2.11] Sol kolon STICKY'dir: gövde kayarken bloğun üstüne yapışır (CSS
     /// <c>position: sticky; top: 0</c>). WPF'te sticky yoktur — karar saf <see cref="StickyColumn.Offset"/>'tedir
     /// (StickyColumnTests), burada GERÇEK gövdenin <c>ScrollChanged</c>'inin sol kolona o kararı yazdığı
-    /// pinlenir.</summary>
+    /// pinlenir. Beklenen değer yalnız <see cref="StickyColumn.Offset"/>'ten türetilirse test uygulamanın aynasıdır;
+    /// bu yüzden MUTLAK sonuç da ölçülür: ilk bloğun kolonu gövdenin 22px iç üst boşluğunun altına yapışır (viewport'a
+    /// göre Y = 22) ve henüz yukarı kaymamış sonraki bir bloğun kolonu hiç kaymaz.</summary>
     [StaFact]
     public void Scrolling_the_body_moves_the_left_column_by_the_sticky_offset()
     {
@@ -450,6 +452,12 @@ public class NotesDialogTests
             Assert.True(expected > 0, $"senaryo sticky'i tetiklemiyor: {expected}");
             var shift = Assert.IsType<TranslateTransform>(left.RenderTransform);
             Assert.Equal(expected, shift.Y, precision: 3);
+
+            // Mutlak: kolon viewport'un üstünden 22px aşağıda (liste kenar boşluğu) durur, bloğuyla birlikte kaymaz.
+            Assert.Equal(22.0, left.TranslatePoint(new Point(0, 0), scroller).Y, precision: 3);
+            var later = Column(BlockGrid(dialog.WhatsNewBlocks[2]), 0);
+            Assert.True(TopIn(later, scroller) > 22, "sonraki blok senaryoda zaten yukarı kaymış");
+            Assert.Equal(0.0, Assert.IsType<TranslateTransform>(later.RenderTransform).Y);
         }
     }
 

@@ -21,8 +21,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class DialogShellTests
 {
-    private static Border Frame(Grid scrim) => (Border)VisualTreeHelper.GetChild(scrim, 0);
-
     // ---------------------------------------------------------------- saf kelepçe
 
     /// <summary>Prototipin <c>maxHeight: calc(100% - 48px)</c>'i: tasarım ölçüsü host'a sığıyorsa aynen kalır,
@@ -54,13 +52,13 @@ public class DialogShellTests
     }
 
     /// <summary>Footer şeridi kabuğundur: padding <c>12px 18px</c>, üstte 1px <c>border-subtle</c>.</summary>
-    private static void AssertShellFooter(FrameworkElement dialog, Grid scrim, Button footerButton)
+    private static void AssertShellFooter(ModalDialog dialog, Button footerButton)
     {
         var strip = DsResources.Ancestors(footerButton).OfType<Border>()
             .First(b => b.BorderThickness == new Thickness(0, 1, 0, 0));
         Assert.Equal(new Thickness(18, 12, 18, 12), strip.Padding);
         Assert.Equal(DsResources.TokenColor(dialog, "Brush.BorderSubtle"), DsResources.ColorOf(strip.BorderBrush));
-        Assert.True(DsResources.IsSelfOrDescendantOf(strip, Frame(scrim)));
+        Assert.True(DsResources.IsSelfOrDescendantOf(strip, dialog.Frame));
     }
 
     private static Button ButtonWithContent(FrameworkElement root, string content) =>
@@ -72,11 +70,11 @@ public class DialogShellTests
         var (dialog, scope) = NotesDialogHost.OpenRealized();
         using (scope)
         {
-            var frame = Frame(dialog.Scrim);
+            var frame = dialog.Frame;
             Assert.Equal(720.0, frame.ActualWidth);
             Assert.Equal(600.0, frame.ActualHeight);
             AssertRoundedClip(frame);
-            AssertShellFooter(dialog, dialog.Scrim, ButtonWithContent(dialog, "Close"));
+            AssertShellFooter(dialog, ButtonWithContent(dialog, "Close"));
         }
     }
 
@@ -88,10 +86,10 @@ public class DialogShellTests
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
-            var frame = Frame(dialog.Scrim);
+            var frame = dialog.Frame;
             Assert.Equal(620.0, frame.ActualWidth);
             AssertRoundedClip(frame);
-            AssertShellFooter(dialog, dialog.Scrim, ButtonWithContent(dialog, "Close"));
+            AssertShellFooter(dialog, ButtonWithContent(dialog, "Close"));
         }
     }
 
@@ -103,11 +101,11 @@ public class DialogShellTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
-            var frame = Frame(dialog.Scrim);
+            var frame = dialog.Frame;
             Assert.Equal(880.0, frame.ActualWidth);
             Assert.Equal(576.0, frame.ActualHeight);
             AssertRoundedClip(frame);
-            AssertShellFooter(dialog, dialog.Scrim, ButtonWithContent(dialog, "Cancel"));
+            AssertShellFooter(dialog, ButtonWithContent(dialog, "Cancel"));
         }
     }
 
@@ -128,11 +126,11 @@ public class DialogShellTests
             window.Height = 500 + chrome;
             dialog.UpdateLayout();
             Assert.Equal(500.0, dialog.ActualHeight, precision: 3);
-            Assert.Equal(452.0, Frame(dialog.Scrim).ActualHeight, precision: 3);
+            Assert.Equal(452.0, dialog.Frame.ActualHeight, precision: 3);
 
             window.Height = 900 + chrome;
             dialog.UpdateLayout();
-            Assert.Equal(600.0, Frame(dialog.Scrim).ActualHeight, precision: 3);
+            Assert.Equal(600.0, dialog.Frame.ActualHeight, precision: 3);
         }
     }
 
@@ -168,13 +166,13 @@ public class DialogShellTests
 
     /// <summary>Kabuğun davranışı üç dialogda AYNIDIR: dialog içine basış scrim'e ULAŞMAZ (handled, açık
     /// kalır), scrim'e basış kapatır, Esc kapatır ve handled döner (MainWindow'un güvenlik ağına sızmaz).</summary>
-    private static void AssertShellDismissal(FrameworkElement dialog, Grid scrim, Action reopen)
+    private static void AssertShellDismissal(ModalDialog dialog, Action reopen)
     {
-        var inside = MouseInput.PressLeft((UIElement)Frame(scrim).Child);
+        var inside = MouseInput.PressLeft((UIElement)dialog.Frame.Child);
         Assert.True(inside.Handled, "dialog içi basış scrim'e ulaştı");
         Assert.Equal(Visibility.Visible, dialog.Visibility);
 
-        MouseInput.PressLeft(scrim);
+        MouseInput.PressLeft(dialog.Scrim);
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
 
         reopen();
@@ -182,7 +180,7 @@ public class DialogShellTests
         Assert.Equal(Visibility.Visible, dialog.Visibility);
         var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(dialog)!, 0, Key.Escape)
             { RoutedEvent = Keyboard.KeyDownEvent };
-        ((UIElement)Frame(scrim).Child).RaiseEvent(esc);
+        ((UIElement)dialog.Frame.Child).RaiseEvent(esc);
         Assert.True(esc.Handled, "Esc handled dönmedi");
         Assert.Equal(Visibility.Collapsed, dialog.Visibility);
     }
@@ -192,7 +190,7 @@ public class DialogShellTests
     {
         var (dialog, scope) = NotesDialogHost.OpenRealized();
         using (scope)
-            AssertShellDismissal(dialog, dialog.Scrim, dialog.Open);
+            AssertShellDismissal(dialog, dialog.Open);
     }
 
     [StaFact]
@@ -200,7 +198,7 @@ public class DialogShellTests
     {
         var (dialog, run, scope) = AboutDialogHost.OpenRealized();
         using (scope)
-            AssertShellDismissal(dialog, dialog.Scrim,
+            AssertShellDismissal(dialog,
                 () => dialog.Open(run, true, () => Task.FromResult(AboutDialogHost.FakeMsBuild)));
     }
 
@@ -209,7 +207,7 @@ public class DialogShellTests
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
-            AssertShellDismissal(dialog, dialog.Scrim, () => dialog.Open(run, store, () => null));
+            AssertShellDismissal(dialog, () => dialog.Open(run, store, () => null));
     }
 
     /// <summary>Klavye odağı scrim'in GÖRSEL alt ağacındaki bir kontroldedir (dialogun kendisinde değil).
@@ -254,7 +252,7 @@ public class DialogShellTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
-            var rise = Assert.IsType<TranslateTransform>(Frame(dialog.Scrim).RenderTransform);
+            var rise = Assert.IsType<TranslateTransform>(dialog.Frame.RenderTransform);
             Assert.True(rise.HasAnimatedProperties, "yükselme transform'u takıldı ama animasyon kurulmadı");
         }
     }
@@ -266,9 +264,9 @@ public class DialogShellTests
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using (scope)
         {
-            Assert.Equal(1.0, Frame(dialog.Scrim).Opacity);
-            Assert.Equal(Transform.Identity, Frame(dialog.Scrim).RenderTransform);
-            Assert.False(Frame(dialog.Scrim).HasAnimatedProperties);
+            Assert.Equal(1.0, dialog.Frame.Opacity);
+            Assert.Equal(Transform.Identity, dialog.Frame.RenderTransform);
+            Assert.False(dialog.Frame.HasAnimatedProperties);
         }
     }
 

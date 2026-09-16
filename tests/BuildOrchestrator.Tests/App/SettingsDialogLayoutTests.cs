@@ -24,8 +24,6 @@ public class SettingsDialogLayoutTests
     private static readonly SettingsSection[] Sections =
         [SettingsSection.General, SettingsSection.Workspace, SettingsSection.External, SettingsSection.Layers];
 
-    private static Border Frame(SettingsDialog dialog) => (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-
     private static void Click(ButtonBase button) => button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 
     private static TextBlock RailCount(RadioButton item)
@@ -36,7 +34,18 @@ public class SettingsDialogLayoutTests
 
     // ---------------------------------------------------------------- kabuk
 
-    /// <summary>880×576 SABİT; bölüm değişince dialog zıplamaz (yükseklik içerikten doğmaz).</summary>
+    /// <summary>[A13/T3b · b2 → design v1.19.0 §2.9] Settings kabuğu 880×576 SABİT; bölüm değişince dialog zıplamaz
+    /// (yükseklik içerikten doğmaz). <c>DesignTokenScaleTests</c> içinde geçen 620 AYRI bir kalemdir
+    /// (<c>Size.WindowMinHeight</c>) — karıştırılmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ İDDİA: 620px — üç dialog AYNI kalıbı paylaşıyordu;
+    /// sonra 760px (büyüme yönüne göre ölçü, "büyüme sürerse sol bir bölüm listesi eklenir").</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: 760px genişlik, yükseklik içerikten doğar ve gövde
+    /// 300–460px arasında pencerenin %56'sını izlerdi (<c>SettingsBodyHeight</c> + dört gövde-yüksekliği testi).
+    /// v1.19.0 o öngörülen sol bölüm listesini ekledi: dialog 880×576 SABİT, gövde kalan alanı doldurur ve kendi
+    /// içinde kayar; tek dış sınır kabuğun host − 48 kelepçesidir (<c>DialogShellTests</c>). Pencereye bağlı gövde
+    /// hesabı kalktığı için o dört test gerekçesiyle SİLİNDİ. Aynı ölçüyü tek bölümde pinleyen ikiz test
+    /// (<c>SettingsDialogFocusTests.Settings_dialog_shell_is_880_by_576</c>) kopya olduğu için bu teste katıldı.</para></summary>
     [StaFact]
     public void The_dialog_is_880_by_576_and_keeps_that_size_on_every_section()
     {
@@ -48,8 +57,8 @@ public class SettingsDialogLayoutTests
         {
             dialog.ShowSection(section);
             dialog.UpdateLayout();
-            Assert.Equal(880.0, Frame(dialog).ActualWidth);
-            Assert.Equal(576.0, Frame(dialog).ActualHeight);
+            Assert.Equal(880.0, dialog.Frame.ActualWidth);
+            Assert.Equal(576.0, dialog.Frame.ActualHeight);
         }
     }
 
@@ -67,6 +76,7 @@ public class SettingsDialogLayoutTests
         Assert.Equal(DsResources.TokenColor(dialog, "Brush.BorderSubtle"), DsResources.ColorOf(head.BorderBrush));
 
         var title = DsResources.Descendants(head).OfType<TextBlock>().Single(t => t.Text == "Settings");
+        Assert.Same(dialog.FindResource("Ds.Heading.Md"), title.Style); // başlık kimliği ortak stildir (kopya YASAK)
         Assert.Equal(14.0, title.FontSize);
         Assert.Equal(FontWeights.SemiBold, title.FontWeight);
         Assert.Equal(DsResources.TokenColor(dialog, "Brush.TextPrimary"), DsResources.ColorOf(title.Foreground));
@@ -243,6 +253,9 @@ public class SettingsDialogLayoutTests
         };
         var titleStyle = dialog.FindResource("Ds.Settings.PaneTitle");
         var descriptionStyle = dialog.FindResource("Ds.Settings.PaneDescription");
+        // Sayfa başı kimliği ortak nötr stillerin üstüne kurulur (kopya YASAK): dialog başlıkları ve ilk açılış daveti de onları kullanır.
+        Assert.Same(dialog.FindResource("Ds.Heading.Md"), ((Style)titleStyle).BasedOn);
+        Assert.Same(dialog.FindResource("Ds.Text.Description"), ((Style)descriptionStyle).BasedOn);
 
         foreach (var section in Sections)
         {

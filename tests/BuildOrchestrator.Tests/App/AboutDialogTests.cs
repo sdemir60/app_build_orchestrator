@@ -28,9 +28,6 @@ public class AboutDialogTests
     // Environment hücresinin ~440px'lik görünür genişliğini KESİNLİKLE taşırır.
     private static readonly string OverflowingRootPath = @"D:\" + new string('a', 200) + @"\repo";
 
-    private static Border Shell(BuildOrchestrator.App.Views.AboutDialog dialog) =>
-        (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-
     private static IReadOnlyList<RadioButton> Tabs(FrameworkElement dialog) =>
         [.. DsResources.Descendants(dialog).OfType<RadioButton>()];
 
@@ -106,9 +103,9 @@ public class AboutDialogTests
         using (scope)
         {
             Assert.Equal(Visibility.Visible, dialog.Visibility);
-            Assert.Equal(620.0, Shell(dialog).Width);
-            Assert.Equal(620.0, Shell(dialog).ActualWidth); // realize zorunlu — literal okumak yetmez
-            Assert.True(double.IsNaN(Shell(dialog).Height), "About'un yüksekliği içerikten doğar");
+            Assert.Equal(620.0, dialog.Frame.Width);
+            Assert.Equal(620.0, dialog.Frame.ActualWidth); // realize zorunlu — literal okumak yetmez
+            Assert.True(double.IsNaN(dialog.Frame.Height), "About'un yüksekliği içerikten doğar");
         }
     }
 
@@ -156,7 +153,7 @@ public class AboutDialogTests
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         var (dialog, _run, scope) = AboutDialogHost.OpenRealized();
         using (scope)
-            Assert.IsType<TranslateTransform>(Shell(dialog).RenderTransform);
+            Assert.IsType<TranslateTransform>(dialog.Frame.RenderTransform);
     }
 
     /// <summary>Reduced-motion: hiç animasyon KURULMAZ, diyalog son duruma snap eder (motion sözleşmesi).</summary>
@@ -167,8 +164,8 @@ public class AboutDialogTests
         var (dialog, _run, scope) = AboutDialogHost.OpenRealized();
         using (scope)
         {
-            Assert.Equal(1.0, Shell(dialog).Opacity);
-            Assert.Equal(Transform.Identity, Shell(dialog).RenderTransform);
+            Assert.Equal(1.0, dialog.Frame.Opacity);
+            Assert.Equal(Transform.Identity, dialog.Frame.RenderTransform);
         }
     }
 
@@ -209,6 +206,7 @@ public class AboutDialogTests
             Assert.Contains(AppIdentity.Tagline, headTexts);
 
             var chip = dialog.VersionChip;
+            Assert.Same(dialog.FindResource("Ds.Tag"), chip.Style); // kutu What's new çipleriyle ortak stildir (kopya YASAK)
             Assert.Equal(19.0, chip.ActualHeight);
             Assert.Equal(new Thickness(6, 0, 6, 0), chip.Padding);
             Assert.Equal(new Thickness(1), chip.BorderThickness);
@@ -317,7 +315,7 @@ public class AboutDialogTests
             Assert.Equal(new Thickness(0, 0, 0, 1), band.BorderThickness);
             Assert.Equal(DsResources.TokenColor(dialog, "Brush.BorderSubtle"), DsResources.ColorOf(band.BorderBrush));
 
-            var frame = Shell(dialog);
+            var frame = dialog.Frame;
             Assert.Equal(frame.ActualWidth - frame.BorderThickness.Left - frame.BorderThickness.Right,
                 band.ActualWidth, precision: 3);
 
@@ -363,7 +361,7 @@ public class AboutDialogTests
             {
                 Select(dialog, i);
                 Assert.Equal(284.0, dialog.Body.ActualHeight);
-                heights.Add(Shell(dialog).ActualHeight);
+                heights.Add(dialog.Frame.ActualHeight);
             }
             Assert.All(heights, h => Assert.True(h > 0, "diyalog hiç yerleşmedi"));
             Assert.Single(heights.Distinct());

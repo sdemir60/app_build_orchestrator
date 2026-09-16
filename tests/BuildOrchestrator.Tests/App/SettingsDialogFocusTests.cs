@@ -103,33 +103,6 @@ public class SettingsDialogFocusTests
 
     // ================================================================ [A13/T3b] ölçü/geometri (b2/b3)
 
-    /// <summary>[A13/T3b · b2 → design v1.19.0 §2.9] Settings kabuğu 880×576 SABİT.
-    /// <c>DesignTokenScaleTests.cs:141</c> içinde geçen 620 AYRI bir kalemdir (<c>Size.WindowMinHeight</c>) —
-    /// karıştırılmaz (brief notu).
-    ///
-    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1]</b> ESKİ İDDİA: 620px — üç dialog AYNI kalıbı paylaşıyordu;
-    /// sonra 760px (büyüme yönüne göre ölçü, "büyüme sürerse sol bir bölüm listesi eklenir").</para>
-    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: 760px genişlik, yükseklik içerikten doğar ve gövde
-    /// 300–460px arasında pencerenin %56'sını izlerdi (<c>SettingsBodyHeight</c> + dört gövde-yüksekliği testi).
-    /// v1.19.0 o öngörülen sol bölüm listesini ekledi: dialog 880×576 SABİT, gövde kalan alanı doldurur ve kendi
-    /// içinde kayar; tek dış sınır kabuğun host − 48 kelepçesidir (<c>DialogShellTests</c>). Pencereye bağlı gövde
-    /// hesabı kalktığı için o dört test gerekçesiyle SİLİNDİ; yerine "bölüm değişince boy değişmez" gelir
-    /// (<see cref="SettingsDialogLayoutTests.The_dialog_is_880_by_576_and_keeps_that_size_on_every_section"/>).</para></summary>
-    [StaFact]
-    public void Settings_dialog_shell_is_880_by_576()
-    {
-        // [fix-1 · B6/C9] Kurulum + EngineHost sahipliği tek yerde (SettingsDialogHost).
-        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
-        using (scope)
-        {
-            var shell = (Border)VisualTreeHelper.GetChild(dialog.Scrim, 0);
-            Assert.Equal(880.0, shell.Width);
-            Assert.Equal(576.0, shell.Height);
-            Assert.Equal(880.0, shell.ActualWidth); // realize zorunlu — literal okumak yetmez (kural 5)
-            Assert.Equal(576.0, shell.ActualHeight);
-        }
-    }
-
     /// <summary>[task-D6/T12] Prototipin <c>padding-right:10px / margin-right:-10px</c> hilesinin WPF karşılığı:
     /// scrollbar sütunu HER ZAMAN ayrılır (<c>Auto</c> yerine <c>Visible</c>) — böylece bar gerektiğinde
     /// belirmesi/kaybolması içerik genişliğini OYNATMAZ. DS'in <c>IsEnabled=False</c> tetikleyicisi (kaydıracak
@@ -221,10 +194,12 @@ public class SettingsDialogFocusTests
     }
 
     /// <summary>[K5 · design v1.14.0 §9] Harici proje kartı — katman kartıyla BİREBİR aynı 36px + 6px boşluk
-    /// geometrisi ve AYNI grip mekanizması (<see cref="DragReorderBehavior.IsDragHandle"/>), + Source seçiminin
-    /// BİREBİR 96px genişliği (brief: "96px sabit").</summary>
+    /// geometrisi ve AYNI grip mekanizması (<see cref="DragReorderBehavior.IsDragHandle"/>); kartta Source seçimi
+    /// YOKTUR (aşağıdaki DEĞİŞEN KURAL notu).
+    /// <para><b>[DEĞİŞEN KURAL]</b> Test adı eskiden <c>..._a_grip_and_a_96px_source_select</c>'ti; o seçim TFVC ile
+    /// kalktığından ad bugünkü iddiayı (seçimin YOKLUĞUNU) söyler.</para></summary>
     [StaFact]
-    public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_a_96px_source_select()
+    public void External_cards_are_36px_tall_with_a_6px_gap_a_grip_and_no_source_select()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.ExternalProjects =
             [new ExternalProject(@"C:\a"), new ExternalProject(@"C:\b")]);

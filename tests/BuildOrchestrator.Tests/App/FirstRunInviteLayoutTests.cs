@@ -35,6 +35,7 @@ public class FirstRunInviteLayoutTests
 
         Assert.Equal((double)shell.FindResource("FontSize.Md"), title.FontSize);
         Assert.Equal((FontWeight)shell.FindResource("FontWeight.Heading"), title.FontWeight);
+        Assert.Same(shell.FindResource("Ds.Heading.Md"), title.Style); // dialog başlıklarıyla ortak stil (kopya YASAK)
         GC.KeepAlive(shell);
     }
 
@@ -48,6 +49,7 @@ public class FirstRunInviteLayoutTests
         Assert.Equal(DsResources.ColorOf((Brush)shell.FindResource("Brush.TextDim")), DsResources.ColorOf(description.Foreground));
         Assert.Equal(310d, description.MaxWidth);
         Assert.Equal((double)shell.FindResource("LineHeight.Snug12"), description.LineHeight);
+        Assert.Same(shell.FindResource("Ds.Text.Description"), description.Style); // Settings sayfa açıklamasıyla ortak stil
         GC.KeepAlive(shell);
     }
 

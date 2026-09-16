@@ -23,18 +23,14 @@
     <Border Padding="18,20,18,16" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource Brush.BorderSubtle}">
       <DockPanel>
         <Border DockPanel.Dock="Right" Height="20" Padding="7,0" Margin="12,0,0,0" VerticalAlignment="Center"
-                BorderThickness="1" BorderBrush="{DynamicResource Brush.BorderStrong}"
-                CornerRadius="{DynamicResource Radius.Xs}" Background="{DynamicResource Brush.Surface}">
+                Style="{DynamicResource Ds.Tag}">
           <TextBlock Text="{x:Static services:AppIdentity.Version}" VerticalAlignment="Center"
                      FontFamily="{x:Static controls:AppFonts.Mono}"
                      FontSize="{DynamicResource FontSize.Xs}"
                      Foreground="{DynamicResource Brush.TextSecondary}" />
         </Border>
         <StackPanel VerticalAlignment="Center">
-          <TextBlock Text="What's new"
-                     FontSize="{DynamicResource FontSize.Md}"
-                     FontWeight="{DynamicResource FontWeight.Heading}"
-                     Foreground="{DynamicResource Brush.TextPrimary}" />
+          <TextBlock Text="What's new" Style="{DynamicResource Ds.Heading.Md}" />
           <TextBlock Text="Release notes for Build Orchestrator." Margin="0,3,0,0"
                      FontSize="{DynamicResource FontSize.Xs}"
                      Foreground="{DynamicResource Brush.TextDim}" />
