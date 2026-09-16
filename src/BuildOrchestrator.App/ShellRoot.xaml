@@ -92,18 +92,19 @@
                  LİSTESİ koydu (Repository root → Not set · Layers → N defined/Optional), çünkü başlamak için
                  gereken ayar sayısı arttı. v1.10.0 ikinci bir düğme ekledi: `Import settings…`. -->
             <StackPanel x:Name="PART_ListInvite" Visibility="Collapsed"
-                        HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="292" Margin="24">
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
               <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceTitle}"
                          HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                         FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Emphasis}"
+                         FontSize="{DynamicResource FontSize.Md}" FontWeight="{DynamicResource FontWeight.Heading}"
                          Foreground="{DynamicResource Brush.TextPrimary}" />
-              <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceSubtitle}" Margin="0,8,0,0"
-                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
-                         FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+              <TextBlock Text="{x:Static vm:InteractionText.ConfigureWorkspaceSubtitle}" Margin="0,10,0,0"
+                         HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="310"
+                         LineStackingStrategy="BlockLineHeight" LineHeight="{DynamicResource LineHeight.Snug12}"
+                         FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
 
               <!-- Kurulum listesi: 292px kart, surface zemin + 1px border + radius-md; 30px satırlar,
                    aralarında border-subtle. Değerler mono (SetupRootValue/SetupLayersValue kod-tarafı). -->
-              <Border Margin="0,14,0,0" Padding="0" CornerRadius="{DynamicResource Radius.Md}"
+              <Border Width="292" Margin="0,14,0,0" Padding="0" CornerRadius="{DynamicResource Radius.Md}"
                       Background="{DynamicResource Brush.Surface}"
                       BorderBrush="{DynamicResource Brush.Border}" BorderThickness="1">
                 <StackPanel>
@@ -111,11 +112,11 @@
                     <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center"
                                Text="{x:Static vm:InteractionText.SetupRepositoryRootLabel}"
                                FontSize="{DynamicResource FontSize.Xs}"
-                               Foreground="{DynamicResource Brush.TextDim}" />
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
                     <TextBlock x:Name="PART_SetupRootValue" HorizontalAlignment="Right" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                FontFamily="{x:Static controls:AppFonts.Mono}"
-                               FontSize="{DynamicResource FontSize.Xs}"
+                               FontSize="{DynamicResource FontSize.2xs}"
                                Foreground="{DynamicResource Brush.TextSecondary}" />
                   </DockPanel>
                   <Border Height="1" Background="{DynamicResource Brush.BorderSubtle}" />
@@ -123,17 +124,17 @@
                     <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center"
                                Text="{x:Static vm:InteractionText.SetupLayersLabel}"
                                FontSize="{DynamicResource FontSize.Xs}"
-                               Foreground="{DynamicResource Brush.TextDim}" />
+                               Foreground="{DynamicResource Brush.TextSecondary}" />
                     <TextBlock x:Name="PART_SetupLayersValue" HorizontalAlignment="Right" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                FontFamily="{x:Static controls:AppFonts.Mono}"
-                               FontSize="{DynamicResource FontSize.Xs}"
+                               FontSize="{DynamicResource FontSize.2xs}"
                                Foreground="{DynamicResource Brush.TextFaint}" />
                   </DockPanel>
                 </StackPanel>
               </Border>
 
-              <StackPanel Orientation="Horizontal" Margin="0,14,0,0" HorizontalAlignment="Center">
+              <StackPanel Orientation="Horizontal" Margin="0,16,0,0" HorizontalAlignment="Center">
                 <Button x:Name="PART_OpenSettings" Style="{DynamicResource Ds.Button.Primary.Md}"
                         AutomationProperties.Name="{x:Static vm:InteractionText.OpenSettingsButton}">
                   <StackPanel Orientation="Horizontal">
@@ -165,7 +166,7 @@
                 </Button>
               </StackPanel>
 
-              <TextBlock Text="{x:Static vm:InteractionText.ImportSettingsNote}" Margin="0,8,0,0"
+              <TextBlock Text="{x:Static vm:InteractionText.ImportSettingsNote}" Margin="0,12,0,0"
                          HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                          FontSize="{DynamicResource FontSize.2xs}"
                          Foreground="{DynamicResource Brush.TextFaint}" />
