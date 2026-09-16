@@ -169,13 +169,19 @@ public class DecisionLabelTests
     /// <c>Stale=false</c>, ".claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md" §"Hedef davranış"),
     /// ve tooltip kök adlarını taşır.
     ///
-    /// <para><b>[DEĞİŞEN KURAL — Task 4 review, M3]</b> Eski iddia tooltip'in "Built against a FAILED
+    /// <para><b>[DEĞİŞEN KURAL — Task 4 review, M3]</b> İlk iddia tooltip'in "Built against a FAILED
     /// dependency (…)" dediğiydi. Yanlıştı: kayıtlı kökler her zaman başarısız OLMAYABİLİR — tek proje
     /// koşusunun bıraktığı bayat (derlenmemiş ama dirty/döngü üyesi) bir bağımlılık da <c>DepIssueRoots</c>'a
     /// girer (bkz. <c>ProjectRunScope</c>'un "bayat bağımlılık" mekanizması). Metin artık <c>RowWarning</c>'in
     /// üçgen tooltip'iyle AYNI nötr kelimeyi kullanır ("Dependency issue: ", tek kaynak
-    /// <c>RowWarning.DepIssuePrefix</c>) — "rebuilds when…" sözü (Task 3'ün <c>ConditionalRebuild.Decide</c>
-    /// kuralı: kök düzelince derlenir) DEĞİŞMEDİ.</para>
+    /// <c>RowWarning.DepIssuePrefix</c>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı, seçenek D]</b> Ara sürüm "rebuilds when it builds
+    /// successfully" diyordu. Bu da tam doğru değildi: "it builds" bir bağımlılığın YENİDEN DERLENMESİNİ ima
+    /// eder, oysa <c>ConditionalRebuild.Decide</c> kökü İKİ yoldan serbest bırakır — bu koşuda başarıyla
+    /// derlendiğinde YA DA hiç derlenmeden yalnız defterdeki son sonucu başarı OLDUĞUNDA (kaynak değişmeden
+    /// düzelme, §8.3). Nihai söz "rebuilds once that dependency is healthy again" — "sağlıklı" ikisini de
+    /// doğru kapsar, "derlenince" yalnız birincisini iddia ederdi.</para>
     /// </summary>
     [Fact]
     public void A_project_that_this_run_genuinely_waits_on_reads_affected_up_to_date()
@@ -186,7 +192,7 @@ public class DecisionLabelTests
         Assert.Equal("affected", decision.Word);
         Assert.Equal("up to date · 2h", decision.Tail);
         Assert.False(decision.Stale);
-        Assert.Equal("Dependency issue: Up — rebuilds when it builds successfully", decision.Title);
+        Assert.Equal("Dependency issue: Up — rebuilds once that dependency is healthy again", decision.Title);
     }
 
     /// <summary>Yaş bilinmiyorsa (eski kayıt) kuyruk uydurma bir sayı taşımaz — <c>UpToDate</c>'in kuralıyla AYNI.</summary>
@@ -198,7 +204,7 @@ public class DecisionLabelTests
     /// <summary>Birden çok kök virgülle, ortak önek kısaltılarak (uyarı üçgeninin diliyle AYNI, kopya YASAK).</summary>
     [Fact]
     public void Multiple_roots_are_comma_joined_and_short_named()
-        => Assert.Equal("Dependency issue: A, Zeta — rebuilds when it builds successfully",
+        => Assert.Equal("Dependency issue: A, Zeta — rebuilds once that dependency is healthy again",
             For(true, WillBuildReason.WaitingForDependency, conditional: true,
                 roots: ["OSYS.A", "OSYS.Zeta"], prefix: "OSYS.").Title);
 
@@ -206,7 +212,7 @@ public class DecisionLabelTests
     /// gereği pratikte olmaz) parantez BOŞ basılmaz; cümle köksüz de doğru okunur.</summary>
     [Fact]
     public void An_empty_root_list_does_not_print_empty_parentheses()
-        => Assert.Equal("Rebuilds when its dependency builds successfully",
+        => Assert.Equal("Rebuilds once that dependency is healthy again",
             For(true, WillBuildReason.WaitingForDependency, conditional: true, roots: []).Title);
 
     /// <summary>

@@ -110,17 +110,21 @@ public static class DecisionLabel
             {
                 string? waitAge = AgeFormat.Age(lastBuiltAt, now);
                 string tail = waitAge is null ? "up to date" : $"up to date · {waitAge}";
-                // [Task 4 review — M3] "failed" İDDİA EDİLMEZ: kayıtlı kökler her zaman BAŞARISIZ olmayabilir
-                // — tek proje koşusunun bıraktığı bayat (derlenmemiş, ama dirty/döngü üyesi) bir bağımlılık da
-                // kök olarak kaydedilir (ConditionalRebuild.AppliesTo'nun beslediği DepIssueRoots, bkz.
-                // ProjectRunScope). Metin RowWarning'in AYNI kelimesini kullanır (kopya YASAK: tek kaynak
-                // RowWarning.DepIssuePrefix), boş kök listesi (uydurma varsayımla asla olmamalı, ama savunmacı)
-                // parantezsiz bir cümleye düşer.
+                // [Task 4 — kullanıcı kararı, seçenek D] "failed" İDDİA EDİLMEZ: kayıtlı kökler her zaman
+                // BAŞARISIZ olmayabilir — tek proje koşusunun bıraktığı bayat (derlenmemiş, ama dirty/döngü
+                // üyesi) bir bağımlılık da kök olarak kaydedilir (ConditionalRebuild.AppliesTo'nun beslediği
+                // DepIssueRoots, bkz. ProjectRunScope). "Rebuilds ONCE THAT DEPENDENCY IS HEALTHY AGAIN" da bu
+                // yüzden — söz "yeniden derlenince" değil "kök SAĞLIKLI olunca"dır: ConditionalRebuild.Decide
+                // kökü ya bu koşuda başarıyla derlendiğinde ya da HİÇ derlenmeden yalnız defterdeki son sonucu
+                // başarı OLDUĞUNDA serbest bırakır — "sağlıklı" ikisini de doğru kapsar, "rebuilds" yalnız
+                // birincisini iddia ederdi. Metin RowWarning'in AYNI kelimesini kullanır (kopya YASAK: tek
+                // kaynak RowWarning.DepIssuePrefix); boş kök listesi (uydurma varsayımla asla olmamalı, ama
+                // savunmacı) parantezsiz bir cümleye düşer.
                 string title = dependencyRoots is { Count: > 0 }
                     ? $"{RowWarning.DepIssuePrefix}"
                         + string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)))
-                        + " — rebuilds when it builds successfully"
-                    : "Rebuilds when its dependency builds successfully";
+                        + " — rebuilds once that dependency is healthy again"
+                    : "Rebuilds once that dependency is healthy again";
                 return new("affected", tail, title, Stale: false);
             }
 

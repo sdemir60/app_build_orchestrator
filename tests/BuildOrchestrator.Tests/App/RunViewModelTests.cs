@@ -1690,7 +1690,7 @@ public class RunViewModelTests
     /// [Task 4 review round 1+2 — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA
     /// koşullu SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı
     /// gerekçe — üye grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez;
-    /// "rebuilds when it builds successfully" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
+    /// "rebuilds once that dependency is healthy again" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
     ///
     /// <para><b>[DEĞİŞEN KURAL — round 2]</b> Round 1'in iddiası satırın <c>UpToDate</c>'e (Task 4 öncesi
     /// davranış) döndüğüydü. Eksikti: grup YAKINSADIYSA (<c>CycleUnsettled=false</c>) defter GERÇEKTEN not+kök
