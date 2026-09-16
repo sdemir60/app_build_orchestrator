@@ -635,6 +635,10 @@
     SAPMA (kayıtlı): kapalı başparmak CSS `neutral-300` degiskenitür (colors.css:7 = #a9a9b0); Tokens.xaml nötr
     rampanın yalnız uçlarını taşır ve BU tonun oradaki adı `Brush.TextSecondary`dir (colors.css:22 AYNI hex).
     Yeni token eklemek B1 kapsamıdır → aynı değeri taşıyan mevcut anahtar kullanıldı.
+
+    SAPMA (kayıtlı): ray yarıçapı `Radius.Full` (999) DEĞİL, rayın yarı yüksekliği (8). CSS taşan yarıçapı x ve y
+    için BİRLİKTE küçültüp kapsül çizer; WPF Border 999'u yatayda 14'e, dikeyde 8'e AYRI kırpar ve rayı ELİPS
+    yapar, başparmak da elipsten taşar. 8 = CSS'in bu 28×16 rayda fiilen çizdiği yarıçaptır.
   -->
   <Style x:Key="Ds.Switch" TargetType="CheckBox">
     <Setter Property="FocusVisualStyle" Value="{DynamicResource Ds.FocusVisual}" />
@@ -648,16 +652,20 @@
         <ControlTemplate TargetType="CheckBox">
           <StackPanel Orientation="Horizontal">
             <Border x:Name="Track" Width="28" Height="16" Padding="1" BorderThickness="1"
-                    CornerRadius="{DynamicResource Radius.Full}" VerticalAlignment="Center"
+                    CornerRadius="8" VerticalAlignment="Center"
                     controls:DsTransition.AnimatedBackground="{DynamicResource Brush.SurfaceOverlay}"
                     controls:DsTransition.AnimatedBorderBrush="{DynamicResource Brush.BorderStrong}">
               <Ellipse x:Name="Thumb" Width="12" Height="12" HorizontalAlignment="Left"
                        controls:DsTransition.AnimatedBackground="{DynamicResource Brush.TextSecondary}"
                        controls:DsTransition.AnimatedTranslateX="0" />
             </Border>
-            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+            <ContentPresenter x:Name="Label" Margin="8,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
           </StackPanel>
           <ControlTemplate.Triggers>
+            <!-- :843 `gap: 8` yalnız etiket VARKEN boşluk üretir; etiketsiz switch ray kadar yer kaplar. -->
+            <Trigger Property="HasContent" Value="False">
+              <Setter TargetName="Label" Property="Margin" Value="0" />
+            </Trigger>
             <Trigger Property="IsChecked" Value="True">
               <Setter TargetName="Track" Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.Amber}" />
               <Setter TargetName="Track" Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Amber}" />

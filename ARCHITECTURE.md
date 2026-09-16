@@ -3239,7 +3239,9 @@ position.
 fail `#ee5a52`, building = the amber family, skipped `#6a6a73`, cycle `#df6f2b`, queued `#7c7c84`.
 
 **Spacing** is a 4 px grid (4/8/12/16/20/24/32/40/48/64). **Radius** is restrained: chip 3, control 4,
-card/panel 6, overlay 8, pill 999, **console 0**. **Elevation** exists only on floating overlays — two shadow
+card/panel 6, overlay 8, pill 999, **console 0**. The pill value is CSS-only: a WPF `Border` clips an oversized
+radius horizontally and vertically on its own, so 999 draws an ellipse — WPF capsules (the switch track, the
+scrollbar pill) use half their height instead. **Elevation** exists only on floating overlays — two shadow
 tokens, nothing else; panels and cards are flat with a 1 px border.
 
 Fixed heights: title bar 40, ribbon 32, progress 2, action bar 42, panel header 28, row 36 (compact 30), layer
