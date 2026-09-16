@@ -258,6 +258,22 @@ public class RibbonTextTests
         Assert.Equal("succeeded", line.Glyph);
     }
 
+    /// <summary>[final review — C1 guard] All-clean dalı <c>c.Failed &gt; 0</c> kontrolünden ÖNCE geliyordu:
+    /// "hiçbir şey kirli değil" diye açılan ama içinde bir hata biten koşu, koşulsuz YEŞİL "Everything up to
+    /// date — … nothing to build" raporluyordu. Hata her özetin üstündedir — satırın asla yutamayacağı tek
+    /// olgudur, önizleme ne demiş olursa olsun (koşunun derlemeye karar verip patlattığı koşullu bir proje tam
+    /// olarak bu hâldir: önizlemesinde KESİN bir will-build kalemi yoktur).</summary>
+    [Fact]
+    public void Done_allClean_line_never_reports_success_when_the_run_has_a_failure()
+    {
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: true, Counters(succeeded: 0, failed: 1),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 4200, etaMs: null, checkDurMs: 4200, warnings: 0);
+        // Süre bu dalda DurationFormat.Elapsed'tir (all-clean dalının fmtDur'u DEĞİL) — 4200ms ⇒ "4s".
+        Assert.Equal("Completed — 1 failed · 0 succeeded · 0 skipped · 4s", line.Text);
+        Assert.Equal("Brush.StatusFailText", line.BrushKey);
+        Assert.Equal("failed", line.Glyph);
+    }
+
     [Fact]
     public void Done_with_failures_line_lists_failed_succeeded_dep_skipped_warnings_and_elapsed()
     {

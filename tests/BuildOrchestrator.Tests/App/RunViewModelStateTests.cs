@@ -735,6 +735,55 @@ public class RunViewModelStateTests
         Assert.False(vm.AllClean);
     }
 
+    /// <summary>
+    /// [final review — C1] Önizlemesi YALNIZ koşullu bir proje taşıyan koşu "her şey güncel" diye
+    /// RAPORLANAMAZ. Koşullu proje <c>WillBuild=true</c> kalır ve motor sırası geldiğinde onu GERÇEKTEN
+    /// dispatch eder (<c>ConditionalRebuild.Decide</c> → <c>Build</c>: kök bu koşuda düzeldi, defterde zaten
+    /// başarılı ya da projeden düştü) — yani MSBuild derlerken şerit "▸ Checking — scanning for changes…"
+    /// diyordu, bitişte yeşil "Everything up to date — … nothing to build" yazıyordu ve konsol koşuyu
+    /// "Build started — 0 projects" diye açıyordu.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 4'ün yan etkisi]</b> Task 4 <c>_willBuildIds</c>'i "KESİN derlenecekler"e
+    /// daralttı (koşullu hariç, bkz. üstteki test) ama <c>AllClean</c> onu hâlâ "hiçbir şey kirli değil" diye
+    /// okuyordu. İki soru ayrıldı: payda/kuyruk/dalga KESİN kümedir (değişmedi), <c>AllClean</c> ise
+    /// ÖNİZLEMENİN gördüğü kirliliğin (<c>WillBuild==true</c>, koşullu DAHİL) yokluğudur.</para>
+    /// </summary>
+    [Fact]
+    public void A_run_whose_preview_is_entirely_conditional_is_never_reported_as_all_clean()
+    {
+        const string d = @"C:\p\d.csproj";
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        { RootPath = @"D:\repo" };
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(d, "D", 0)], [], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(d, "D", true, Reason: WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Up"]),
+        ]));
+
+        Assert.False(vm.AllClean);          // önizleme KİRLİ bir proje gördü
+        Assert.Equal(0, vm.WillBuildCount); // ...ama sabit payda hâlâ yalnız KESİN kümedir (Task 4, değişmedi)
+        // Konsolun açılış satırı koşunun PLANINI söyler — "0 projects" derken bir proje derleniyordu.
+        Assert.Equal("Build started — 1 projects, parallelism 4",
+            vm.StreamEvents.Single(s => s.Text.StartsWith("Build started", StringComparison.Ordinal)).Text);
+
+        // Motor koşullu projeyi GERÇEKTEN dispatch etti (kök artık sağlıklı): şerit "Checking…" DEMEZ.
+        vm.OnEvent(new ProjectStartedEvent("r1", d, "D"));
+        Assert.StartsWith("▸ Building ", vm.RibbonLine.Text, StringComparison.Ordinal);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", d, 1200));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0,
+            Queued: 0, DurationMs: 1200));
+
+        Assert.Equal(AppPhase.Done, vm.Phase);
+        // Bitiş satırı koşunun GERÇEKTEN yaptığını sayar — "Everything up to date … nothing to build" DEĞİL.
+        Assert.Equal("Completed — 1 succeeded · 0 skipped · 1s", vm.RibbonLine.Text);
+        // İlerleme de all-clean dalını (Done ⇒ %100 "hiçbir şey yapılmadı") bırakır: çubuğun ölçtüğü şey
+        // KESİN kümedir ve o küme boştur (payda dalı, wb==0 ⇒ 0).
+        Assert.Equal(0.0, RibbonText.Progress(vm.Phase, vm.AllClean, vm.Counters,
+            vm.WillBuildCount, vm.FinishedOfWillBuild, vm.Counters.Total));
+    }
+
     [Fact] // [A5-review fold] Engine Sync ORTASINDA ölürse faz Syncing'de asılı kalamaz + _syncInFlight serbest.
     public async Task Engine_death_mid_sync_leaves_the_syncing_phase_and_releases_the_sync_flag()
     {

@@ -790,6 +790,37 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[final review — I2] Etiketi besleyen olgular <c>WillBuild</c>/<c>WillBuildReason</c> ile
+    /// BİTMEZ: <c>Conditional</c> ve <c>DependencyRoots</c> da <see cref="DecisionLabel.For"/>'a girer. Satırın
+    /// property-changed anahtarında bu iki ad YOKTU ve <c>[ObservableProperty]</c> yalnız DEĞİŞİMDE bildirim
+    /// yayar; önizleme üçlüyü sırayla (WillBuild → Reason → Conditional) yazdığı için WillBuild ve gerekçe AYNI
+    /// kalıp yalnız <c>Conditional</c> dönen bir önizleme (Resolve cycles'ta kapsam dışı koşullu satır, ya da
+    /// satırdan tetiklenen tek proje koşusu) etiketi HİÇ tazelemiyordu — satır koşu boyunca bayat soluk
+    /// "affected · up to date · 2h" gösteriyordu.</summary>
+    [StaFact]
+    public void Flipping_only_the_conditional_flag_repaints_the_decision_label()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        {
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.WaitingForDependency,
+            OwnFilesChanged = false,
+            LastBuiltAt = DateTimeOffset.Now.AddHours(-2),
+            Conditional = true,
+            DependencyRoots = ["OSYS.Up"],
+        };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal("affected · up to date · 2h", row.DecisionText.Text); // koşullu: söz tutulur, soluk
+        var waiting = row.DecisionText.Inlines.OfType<Run>().First().Foreground;
+
+        vm.Conditional = false; // bu koşu ZORLUYOR (satırdan Build / Rebuild / SCC üyesi) — söz yok
+        row.UpdateLayout();
+
+        Assert.Equal("affected", row.DecisionText.Text);
+        Assert.NotEqual(waiting, row.DecisionText.Inlines.OfType<Run>().First().Foreground); // bekleyen iş: belirgin
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Etiket satırın olgularıyla birlikte TAZELENİR: motorun ikinci bir önizlemesi (ör. Sync'ten
     /// sonra gelen koşu önizlemesi) satırı yerinde değiştirir.</summary>
     [StaFact]

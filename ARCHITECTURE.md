@@ -441,8 +441,9 @@ Three of these carry the whole model:
   populated before anything starts. Each item also carries the reason (§7.4), and for a project waiting on a
   failed dependency the display names of its recorded roots — the row's tooltip prints them, the App never
   composes them. `conditional` marks a project **this run** evaluates only when its turn comes (§8.3): it may
-  still compile, so `willBuild` stays `true`, but it is not part of the queue. The flag is a run fact — a Sync
-  preview, a `Rebuild`, a row's target and a cycle-group member never carry it.
+  still compile, so `willBuild` stays `true`, but it is not part of the queue. A `Rebuild`, a row's target and a
+  cycle-group member never carry it — those compile unconditionally. Sync's own preview does carry it, computed
+  the same way, because Sync answers what a plain `Build` would decide (§10.2).
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
   semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate

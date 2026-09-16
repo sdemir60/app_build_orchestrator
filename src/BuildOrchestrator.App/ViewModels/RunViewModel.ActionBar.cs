@@ -347,7 +347,7 @@ public sealed partial class RunViewModel
         string.Format(CultureInfo.InvariantCulture, "Repository root → {0} — Sync required", path);
 
     /// <summary>[D7] Plan yüzeyini yeni bir taban için "hollow"a sıfırlar: satırlar (durum Pending, will
-    /// bilinmiyor, süre/dep temizli), <see cref="RunViewModel._willBuildIds"/> kümesi ve ondan türeyen şerit
+    /// bilinmiyor, süre/dep temizli), önizleme kümeleri (<c>ClearPreviewSets</c>) ve onlardan türeyen şerit
     /// yüzeyi (<c>wb</c>/<c>fin</c>/<c>allClean</c>).
     ///
     /// <para><b>Liste BOŞALTILMAZ, kararları boşaltılır.</b> Satırların varlığı topolojidendir ve bu reset'i
@@ -368,7 +368,7 @@ public sealed partial class RunViewModel
             row.DepIssues = null;
             row.DurationMs = 0;
         }
-        _willBuildIds.Clear();  // küme ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
+        ClearPreviewSets();     // kümeler ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
         RefreshRunSurface();    // sayaç/görünür-liste + willBuild yüzeyi
     }
 
@@ -396,7 +396,7 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(HasCycles));
         OnPropertyChanged(nameof(HasTopology));
         Phase = AppPhase.Boot;
-        _willBuildIds.Clear();
+        ClearPreviewSets();
         TopologyChanged?.Invoke(this, EventArgs.Empty);
         RefreshRunSurface();
     }

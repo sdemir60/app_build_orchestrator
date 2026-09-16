@@ -66,6 +66,12 @@ public static class ConsoleEmptyState
             SkipReasons.InDependencyCycle => InCycleText,
             SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
             SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
+            // [final review — I1] Koşullu proje sırası geldi ve kökleri hâlâ hatalıydı: sayfanın açılma
+            // nedeni TAM OLARAK "hangi bağımlılık" sorusudur, genel "Skipped in this run." onu yutuyordu.
+            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) ve satırın kendi etiketiyle AYNI kaynaktan
+            // gelir (kopya YASAK). Kapı motorun gerekçesiyle satırın bayrağını birlikte arar: bayrak bir
+            // şekilde düşmüşse (zorlanmış kapsam) aşağıdaki genel dal doğru cümleyi zaten söyler.
+            SkipReasons.DependencyStillFailing when row.Conditional => WaitingForDependencyReason(row, now),
             _ => "Skipped in this run.",
         },
         // Bunlar SAVUNMACIdır: derlenen bir proje her zaman log yazar. Log yine de yoksa (disk hatası, run

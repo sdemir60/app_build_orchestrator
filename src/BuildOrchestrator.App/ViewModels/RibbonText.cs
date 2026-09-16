@@ -64,7 +64,10 @@ public static class RibbonText
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
     /// <param name="hasWorkspace">Repo seçili mi (prototip <c>workspace</c>).</param>
-    /// <param name="allClean">Bu koşuda derlenecek proje YOK (her şey güncel) — prototip <c>eng.allClean</c>.</param>
+    /// <param name="allClean">Önizleme KİRLİ tek bir proje bile görmedi (koşullu olanlar DAHİL — bkz.
+    /// <see cref="RunViewModel.AllClean"/>), yani ortada derlenecek bir iş yok — prototip <c>eng.allClean</c>.
+    /// <paramref name="willBuild"/> ile AYNI ŞEY DEĞİLDİR: o yalnız KESİN derlenecekleri sayar, dolayısıyla
+    /// <c>willBuild==0</c> iken bile koşu koşullu bir proje derliyor olabilir.</param>
     /// <param name="c">Durum sayaçları (failed/succeeded/skipped/dep-affected/building/queued).</param>
     /// <param name="willBuild">Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</param>
     /// <param name="finishedOfWillBuild">willBuild kümesinden tamamlanan sayısı (prototip <c>fin</c>).</param>
@@ -198,7 +201,12 @@ public static class RibbonText
                 // bilerek açık bırakıldı). Bu dal RunCounters'ı HİÇ okumadan sabit metin döndürüyordu — "Completed — … skipped …"
                 // dalından bile daha güçlü bir false-green (döngünün VAR OLMADIĞINI ima eder). AYNI StuckCyclesSuffix
                 // (kopya YASAK) burada da eklenir; StuckCycles==0 iken ek boş kalır, metin BYTE-FOR-BYTE aynı kalır.
-                if (allClean)
+                // [final review — C1 guard] Kapıda <c>c.Failed == 0</c> da vardır ve sırası şudur: HATA her
+                // özetin üstündedir. Dal eskiden sayaçlara bakmadan önce geldiği için, "hiçbir şey kirli değil"
+                // diye açılan ama içinde bir proje patlayan bir koşu (koşullu bir projeyi derleyip patlatan run
+                // tam olarak budur — önizlemesinde KESİN bir will-build kalemi yoktur) koşulsuz YEŞİL
+                // raporlanıyordu. Hata varsa aşağıdaki "Completed — N failed …" dalı konuşur.
+                if (allClean && c.Failed == 0)
                     return new RibbonLine(
                         string.Format(CultureInfo.InvariantCulture,
                             "Everything up to date — {0} projects checked in {1}, nothing to build{2}",

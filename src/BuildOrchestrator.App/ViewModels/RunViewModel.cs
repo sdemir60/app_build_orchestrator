@@ -437,6 +437,25 @@ public sealed partial class RunViewModel : ObservableObject
     // oldu.)
     private readonly HashSet<string> _willBuildIds = new(StringComparer.OrdinalIgnoreCase);
 
+    // [final review — C1] Önizlemenin KİRLİ gördüğü her proje (WillBuild==true), KOŞULLU olanlar DAHİL —
+    // _willBuildIds'in üst kümesi. İki soru Task 4'ten beri ayrıdır ve ayrı kaynak isterler: "bu koşuda KESİN
+    // ne derlenecek" (payda/kuyruk/dalga → _willBuildIds, koşullu HARİÇ) ile "ortada derlenecek bir şey var mı"
+    // (AllClean → bu küme). İkisi tek kümeden okunduğunda, dirty kümesi tamamen koşullu olan bir koşu "her şey
+    // güncel" raporluyordu: koşullu proje WillBuild=true kalır ve motor sırası geldiğinde kökü sağlıklıysa onu
+    // GERÇEKTEN derler (ConditionalRebuild.Decide) — yani MSBuild derlerken şerit "Checking…", bitişte yeşil
+    // "Everything up to date" diyordu. Küme _willBuildIds ile AYNI noktalarda (ClearPreviewSets) tazelenir.
+    private readonly HashSet<string> _dirtyIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Önizlemeden türeyen İKİ kümeyi birlikte tazeler — ayrı ayrı temizlenebilselerdi biri bayat
+    /// kalır ve <see cref="AllClean"/> ile <see cref="WillBuildCount"/> sessizce ayrışırdı. Dört çağıranı da
+    /// "eldeki plan artık geçerli değil" demenin bir biçimidir: yeni run, yeni Sync, branch/repo değişimi
+    /// (<c>ResetRowsToHollow</c>) ve Clean (<c>ClearPlanSurface</c>).</summary>
+    private void ClearPreviewSets()
+    {
+        _willBuildIds.Clear();
+        _dirtyIds.Clear();
+    }
+
     /// <summary>
     /// Bir <c>BuildPreviewEvent</c> uygulandı — plan kanalı (<see cref="ProjectRowViewModel.WillBuild"/>)
     /// tazelendi.
@@ -491,8 +510,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>null</c>. <see cref="EtaText"/> (string) ayrı kalır (başka tüketiciler için); şerit numeric <c>EtaMs</c>'i kullanır.</summary>
     [ObservableProperty] private long? _etaMs;
 
-    /// <summary>[D2/T38] Bu koşuda derlenecek proje YOK (SABİT willBuild kümesi boş) — şerit faz-metni ve progress
-    /// kolu bunu okur (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.</summary>
+    /// <summary>[D2/T38] Önizleme KİRLİ tek bir proje bile görmedi — şerit faz-metni ve progress kolu bunu okur
+    /// (prototip <c>eng.allClean</c>). Bkz. <see cref="RecomputeWillBuildSurface"/>.
+    /// <para><b>[final review — C1 · DEĞİŞEN KURAL]</b> Kaynak <see cref="WillBuildCount"/> (KESİN küme) DEĞİL
+    /// <see cref="_dirtyIds"/>'tir: koşullu bir proje kesin kümeye girmez ama motor sırası geldiğinde kökü
+    /// sağlıklıysa onu derler, yani "kesin küme boş" ile "yapacak iş yok" AYNI SORU DEĞİLDİR. Eski hâlde dirty
+    /// kümesi tamamen koşullu olan bir koşu derlerken "Checking…", biterken yeşil "Everything up to date"
+    /// diyordu.</para></summary>
     [ObservableProperty] private bool _allClean = true;
 
     /// <summary>[D2/T38] Derlenecek (willBuild) proje sayısı — koşu boyunca SABİT (prototip <c>wb</c>).</summary>
@@ -1469,12 +1493,15 @@ public sealed partial class RunViewModel : ObservableObject
         OnPropertyChanged(nameof(VisibleProjects));
     }
 
-    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) <see cref="_willBuildIds"/>'ten türetir —
-    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).</summary>
+    /// <summary>[D2/T38] Şeridin SABİT willBuild yüzeyini (wb/fin/allClean) önizleme kümelerinden türetir —
+    /// canlı satır bayraklarından DEĞİL (succeeded olunca WillBuild false'a döner; küme donduğu için wb sabit kalır).
+    /// <para>[final review — C1] <c>wb</c>/<c>fin</c> KESİN kümeden (<see cref="_willBuildIds"/>), <c>allClean</c>
+    /// ise önizlemenin gördüğü TÜM kirlilikten (<see cref="_dirtyIds"/>, koşullu dahil) gelir — bkz. o alanın
+    /// yorumu.</para></summary>
     private void RecomputeWillBuildSurface()
     {
         WillBuildCount = _willBuildIds.Count;
-        AllClean = _willBuildIds.Count == 0;
+        AllClean = _dirtyIds.Count == 0;
         int fin = 0;
         foreach (var row in Projects)
             if (_willBuildIds.Contains(row.Id) &&
@@ -1668,7 +1695,7 @@ public sealed partial class RunViewModel : ObservableObject
         // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
         // runStarted→buildPreview boşluğu Rebuild'de yeniden açılır.
         if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false, clearMarks: false);
-        _willBuildIds.Clear(); // [D2] SABİT willBuild kümesi bu run için taze — hemen ardından BuildPreviewEvent doldurur
+        ClearPreviewSets(); // [D2] önizleme kümeleri bu run için taze — hemen ardından BuildPreviewEvent doldurur
         _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
@@ -1696,6 +1723,7 @@ public sealed partial class RunViewModel : ObservableObject
             // [Task 4 — carried item 1] Koşullu proje (WaitingForDependency, bu koşu gerçekten bekletiyor)
             // KESİN derlenecekler kümesine GİRMEZ: köküyle birlikte atlanabilir. Paydaş TEK yerden okur —
             // InRunQueueFor'un Build/Rebuild dalıyla AYNI bayrak (kopya YASAK).
+            if (item.WillBuild == true) _dirtyIds.Add(item.ProjectId); // [final review — C1] "ortada iş var mı" kümesi
             if (item.WillBuild == true && !item.Conditional) _willBuildIds.Add(item.ProjectId); // [D2] SABİT willBuild kümesini doldur
             // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
             // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).

@@ -142,8 +142,13 @@ public sealed partial class RunViewModel
 
             case BuildPreviewEvent:
                 // [D3 §2] Ertelenen run-start satırını burada yay — OnBuildPreview (OnEvent'te BUNDAN ÖNCE) hem
-                // _willBuildIds'i doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
+                // önizleme kümelerini doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
                 // TEMİZLE ki re-emit edilen bir BuildPreview çift satır yaymasın.
+                // [final review — C1 · DEĞİŞEN KURAL] Açılış satırının sayısı KESİN kümeden (_willBuildIds)
+                // DEĞİL, koşunun PLANINDAN (_dirtyIds — koşullu projeler dahil) gelir: kesin küme Task 4'ten beri
+                // koşulluyu dışlıyor ve dirty kümesi tamamen koşullu olan bir koşu konsolu "Build started — 0
+                // projects" diye açıyordu — hemen ardından o projeyi derlerken. Satır koşunun ne kadar iş
+                // DEĞERLENDİRECEĞİNİ söyler; kaçının kesin olduğunu şerit zaten ayrı sayar.
                 if (_pendingRunStartMode is { } mode)
                 {
                     int parallelism = _runParallelism ?? Parallelism;
@@ -153,12 +158,12 @@ public sealed partial class RunViewModel
                         // için hem gramer hem anlam olarak yanlıştı (paralellik onu tarif etmez).
                         _ when RunTargetId is { } targetId => StreamText.SingleProjectStarted(mode, ResolveName(targetId)),
                         // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
-                        // üyeleri sıralı derlenir. Kırılım will-build ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
+                        // üyeleri sıralı derlenir. Kırılım dirty ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
                         // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.
                         RunMode.Cycles => StreamText.CyclesStarted(
-                            members: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) == true),
-                            prerequisites: _willBuildIds.Count(id => _cycleGroups?.IsMember(id) != true)),
-                        _ => StreamText.BuildStarted(_willBuildIds.Count, parallelism),
+                            members: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) == true),
+                            prerequisites: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) != true)),
+                        _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;
                 }

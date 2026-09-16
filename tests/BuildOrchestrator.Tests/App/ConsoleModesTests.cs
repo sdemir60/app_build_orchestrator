@@ -282,6 +282,27 @@ public class ConsoleModesTests
                 currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
     }
 
+    /// <summary>[final review — I1] Motor projeyi GERÇEKTEN koşullu olduğu için atladıysa
+    /// (<see cref="SkipReasons.DependencyStillFailing"/>) sayfa, kullanıcının o sayfayı açmasının TEK nedenini
+    /// söyler: hangi bağımlılık. Gerekçe, bekleyen satırınkiyle (yukarıdaki test) ve satırın kendi etiketiyle
+    /// AYNI cümledir — kopya YASAK, tek kaynak <see cref="DecisionLabel"/>. Eskiden bu dal switch'te YOKTU ve
+    /// sayfa genel "Skipped in this run." diyordu.</summary>
+    [Fact]
+    public void A_row_skipped_because_its_dependency_is_still_failing_names_that_dependency()
+    {
+        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
+        Assert.Equal(
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
+                "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
+                skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
+                willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
+                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+    }
+
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,

@@ -293,6 +293,14 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.LastBuiltAt):
             case nameof(ProjectRowViewModel.OwnFilesChanged):
             case nameof(ProjectRowViewModel.WillBuildReason):
+            // [final review — I2] Etiketin girdileri burada BİTER: Conditional ve DependencyRoots da
+            // DecisionLabel.For'a girer (koşullu satır "affected · up to date · 2h" der, zorlanan satır düz
+            // "affected"). [ObservableProperty] yalnız DEĞİŞİMDE bildirir ve önizleme üçlüyü sırayla yazar
+            // (WillBuild → Reason → Conditional), yani ilk ikisi AYNI kalıp yalnız Conditional dönen bir
+            // önizlemenin (kapsam dışı koşullu satır, satırdan tetiklenen tek proje koşusu) tek bildirimi
+            // bunlardır — listede olmadıkları için etiket koşu boyunca bayat kalıyordu.
+            case nameof(ProjectRowViewModel.Conditional):
+            case nameof(ProjectRowViewModel.DependencyRoots):
                 ApplyDecision();
                 break;
         }
