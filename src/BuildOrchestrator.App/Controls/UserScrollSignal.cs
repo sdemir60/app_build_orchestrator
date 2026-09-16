@@ -5,9 +5,10 @@ using System.Windows.Input;
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// "Kullanıcı GERÇEKTEN kaydırdı" sinyalinin TEK kablajı — konsol ve event stream AYNI jestleri dinler
-/// (kopya YASAK, CLAUDE.md). Sinyal geometriden ÇIKARILMAZ, ham girdiden gelir; tüketicisi
-/// <see cref="BottomAnchorBehavior.NotifyUserScroll"/>'dur.
+/// "Kullanıcı GERÇEKTEN kaydırdı" sinyalinin TEK kablajı — proje listesi, konsol ve event stream AYNI jestleri
+/// dinler (kopya YASAK, CLAUDE.md). Sinyal geometriden ÇIKARILMAZ, ham girdiden gelir; tüketicileri konsol ve
+/// stream'de <see cref="BottomAnchorBehavior.NotifyUserScroll"/>, listede <c>StickyLayerList.OnUserScroll</c>'dur
+/// (frontier follow'u duraklatır).
 ///
 /// <para><b>Kaydırma çubuğu neden ayrı bir kanal:</b> tekerlek olayı yalnız tekerleği görür. Kullanıcı çubuğun
 /// başlığını sürüklediğinde ya da oluğa tıkladığında hiç tekerlek olayı doğmaz — panel "kimse dokunmadı"

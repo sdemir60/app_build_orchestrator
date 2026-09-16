@@ -1909,9 +1909,10 @@ rows," which the list's keyboard model does not allow. The stuck overlay copy is
 a header is clickable at all — most clicks land there, since it is the one users actually see. Because it sits beside
 the `ScrollViewer` rather than above it in the visual tree, a wheel notch over a stacked header would otherwise never
 reach the list *and* would skip the bookkeeping every other user-scroll already gets (cancelling an in-flight smooth
-scroll, pausing follow-mode, resetting the idle-resume window) — one handler folds both into a single `OnUserWheel`,
-called from the header band's forwarded wheel exactly as from the `ScrollViewer`'s own, so scrolling over the stack
-behaves identically to scrolling anywhere else in the list.
+scroll, pausing follow-mode, resetting the idle-resume window). The band's wheel is therefore re-raised on the
+`ScrollViewer` so it actually scrolls; the bookkeeping needs no forwarding of its own, because the list wires that
+signal at its own root (§13.4), which is an ancestor of both the overlay and the `ScrollViewer` — so scrolling over
+the stack behaves identically to scrolling anywhere else in the list.
 
 The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
 the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
@@ -1951,11 +1952,15 @@ Selecting a row stops it, and clearing the selection resumes it. Filtering the l
 filter the user is inspecting a subset, and the frontier may not even be in it — and clearing the filter
 resumes it. Neither gate is permanent.
 
-Scrolling the list with the wheel also stops it — the user's scroll always wins — but that pause is not
+Scrolling the list also stops it — the user's scroll always wins. What counts as scrolling is the raw input and
+not the movement: a wheel notch, a drag of the scrollbar thumb or a click in its trough, a navigation key. All
+three arrive through the one signal every scrolling panel here shares (§13.4), which is why dragging the bar pauses
+follow exactly as the wheel does; reading the movement instead would be unable to tell the user's drag from
+follow's own animation. That pause is not
 permanent either: it lifts as soon as the user can be considered to be watching again, by either of two routes. Bringing the list back to the
 **frontier row** (within 48 px of the viewport) resumes it, which reads the intent directly. Leaving the list
 untouched for three seconds also resumes it, which closes a pause the user has simply forgotten about; every
-wheel notch restarts that window, so follow cannot cut in while scrolling is still going on. Returning to the
+further scroll restarts that window, so follow cannot cut in while scrolling is still going on. Returning to the
 **bottom** of the list resumes it too, the same 48 px threshold the console and the stream use for their bottom
 anchor — kept for symmetry, though for this panel the bottom is rarely where the action is.
 
@@ -2468,7 +2473,7 @@ WPF provides neither smooth scrolling nor horizontal wheel input, so the scrolli
 |---|---|
 | `ScrollAnimator` | attached DP animating `VerticalOffset`; a wheel event cancels the animation |
 | `BottomAnchorBehavior` | bottom-stick with a 48 px release threshold and a jumping window; drives the `⌄ latest` pill |
-| `UserScrollSignal` | the raw "the user scrolled" input: wheel, scrollbar, navigation keys |
+| `UserScrollSignal` | the raw "the user scrolled" input: wheel, scrollbar, navigation keys — wired at the root of all three scrolling panels |
 | `FollowScrollController` | frontier following (550 ms cadence, 54 px dead-band) |
 | `ScrollArbiter` | the referee |
 | `HorizontalWheelScroll` | horizontal wheel / touchpad input, which WPF never delivers |

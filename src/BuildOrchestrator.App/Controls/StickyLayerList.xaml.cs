@@ -61,21 +61,24 @@ public partial class StickyLayerList : UserControl
         // [E4 fix] AYNI ScrollChanged'de frontier follow "near-bottom'a dönüş → takip sürsün" resume tetiği çalışır
         // (Console/Stream'in BottomAnchor.IsStuck→Arbiter.Resume simetriği — tek asimetrik panel frontier'di).
         Scroll.ScrollChanged += (_, _) => { UpdateOverlay(Scroll.VerticalOffset); ResumeFrontierIfNearBottom(); };
-        // [T59 · review round 1 I-1] Kullanıcı tekerleği çevirdiği anda uçuştaki follow/seçim-scroll animasyonu
-        // iptal olur (feasibility §3.3 — WPF'te wheel'in animasyonu otomatik iptal etmesi YOK, tarayıcının
+        // [T59 · review round 1 I-1] Kullanıcı listeyi kaydırdığı anda uçuştaki follow/seçim-scroll animasyonu
+        // iptal olur (feasibility §3.3 — WPF'te girdinin animasyonu otomatik iptal etmesi YOK, tarayıcının
         // aksine) + suppress bayrağı damgalanır + merkezi arbiter'a haber verilir (bölgesel suppress — yalnız bu
         // panel duraklar, konsol/stream akmaya devam. Arbiter null ise izole test, no-op) + boşta-geri-açılma
-        // penceresi (FrontierIdleResumeMs) sıfırlanır. ÜÇ olay kaynağı bu TEK metodu (OnUserWheel) çağırır:
-        // Scroll'un kendi tekerleği, VE overlay'e (yığılmış başlık bandı) düşen tekerlek (ForwardWheelToScroll) —
-        // ikisi de "kullanıcı listeyi kaydırdı" AYNI olayıdır, iki ayrı yarım-kablo YASAK (kopya + I-1 review).
-        Scroll.PreviewMouseWheel += (_, _) => OnUserWheel();
+        // penceresi (FrontierIdleResumeMs) sıfırlanır.
+        // Sinyalin ÜÇ girdi kanalı (tekerlek · kaydırma çubuğu · gezinme tuşları) konsol ve event stream ile
+        // AYNI kablodan gelir: UserScrollSignal. Kök (this) hem Scroll'u hem Overlay'i kapsadığı için tünelleyen
+        // tekerlek ikisinde de burada yakalanır; çubuk olayı (ScrollBar.ScrollEvent) Scroll'un şablonundan
+        // baloncuklanarak ulaşır. Yarım kablo YASAK: yalnız tekerleği dinlemek, çubuğu sürükleyen kullanıcıyı
+        // takip eden listenin geri çekmesi demekti (bkz. UserScrollSignal doc'u, FrontierFollowPauseChannelsTests).
+        UserScrollSignal.Wire(this, OnUserScroll);
         // [v1.17.0 §2.4] Overlay artık hit-test'e AÇIK (başlıklar tıklanabilir) — bu, imlecin yığılmış başlık
         // bandındayken tekerlek olayının Scroll'a hiç ULAŞMAMASI riskini doğurur (Overlay, ScrollViewer'ın
         // KARDEŞİDİR, ATASI DEĞİL — routed event orada durur, aşağı Scroll'a bubble ETMEZ). ForwardWheelToScroll
-        // hem OnUserWheel'i (yukarıdaki paragraf) çağırır hem de olayı Scroll'un KENDİ (bubbling) MouseWheel'ine
-        // yeniden yükseltir (standart WPF telafisi — ScrollViewer'ın sınıf handler'ı bunu normal biçimde işler).
-        // [I-1] Scroll'un PreviewMouseWheel'i (tunnel) BURADAN yeniden YÜKSELTİLMEZ — yalnız bubbling MouseWheel
-        // yükseltilir, bu yüzden Scroll'un kendi PreviewMouseWheel aboneliği iki kez ateşlenmez.
+        // olayı Scroll'un KENDİ (bubbling) MouseWheel'ine yeniden yükseltir (standart WPF telafisi —
+        // ScrollViewer'ın sınıf handler'ı bunu normal biçimde işler). Muhasebe orada TEKRARLANMAZ: kökteki
+        // UserScrollSignal kablosu (yukarıdaki paragraf) Overlay'in de atasıdır, tünel ona ÖNCE uğramıştır.
+        // Yeniden yükseltilen olay bubbling'dir, tünel DEĞİL — kökteki kablo ikinci kez ateşlenmez.
         Overlay.PreviewMouseWheel += ForwardWheelToScroll;
         // [E4/T48 · E3 fold] Flow container üretimi (ItemContainerGenerator) TAMAMLANINCA + bir SetGroups reveal'i
         // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
@@ -343,41 +346,44 @@ public partial class StickyLayerList : UserControl
     // ---------------------------------------------------------------- [v1.17.0 §2.4] katman başlığı = gezinme kontrolü
 
     /// <summary>
-    /// [review round 1 · I-1] "Kullanıcı listeyi kaydırdı" olayının TEK kaynağı — <see cref="Scroll"/>'un kendi
-    /// tekerleği VE <see cref="ForwardWheelToScroll"/> (overlay'in yığılmış başlık bandına düşen tekerlek) İKİSİ
-    /// DE burayı çağırır. Üç şeyi birlikte yapar: uçuştaki follow/seçim-scroll animasyonunu iptal eder + per-target
-    /// suppress bayrağını kaldırır (<see cref="ScrollAnimator.CancelForUser"/> — eskiden yalnız
-    /// <see cref="ScrollAnimator.EnableUserCancellation"/> ile Scroll'un KENDİ tekerleğine kablıydı, overlay
-    /// tekerleği bunu hiç görmüyordu), boşta-geri-açılma damgasını (<see cref="_lastUserScrollAtMs"/>) tazeler,
-    /// ve merkezi arbiter'a bölgesel suppress bildirir (<see cref="Arbiter"/>, null ise izole test no-op).
+    /// "Kullanıcı listeyi kaydırdı" olayının TEK tüketicisi — üç girdi kanalını da (tekerlek, kaydırma çubuğu,
+    /// gezinme tuşları) <see cref="UserScrollSignal"/> kökten buraya bağlar. Üç şeyi birlikte yapar: uçuştaki
+    /// follow/seçim-scroll animasyonunu iptal eder + per-target suppress bayrağını kaldırır
+    /// (<see cref="ScrollAnimator.CancelForUser"/>), boşta-geri-açılma damgasını
+    /// (<see cref="_lastUserScrollAtMs"/>) tazeler, ve merkezi arbiter'a bölgesel suppress bildirir
+    /// (<see cref="Arbiter"/>, null ise izole test no-op).
     ///
-    /// <para><b>Ölçülen kusur (review round 1 · I-1):</b> overlay hit-test'e açılmadan ÖNCE (bu task'ın kendisi)
-    /// yığılmış başlık bandı üstünde tekerlek çevirmek Overlay'in <c>IsHitTestVisible=False</c> olması sayesinde
-    /// hep Scroll'a ULAŞIYORDU (hit-test o bandı atlıyordu) — bu üç bookkeeping de dolaylı yoldan çalışıyordu.
-    /// Overlay hit-test'e açılınca (bu task) <see cref="ForwardWheelToScroll"/> yalnız asıl KAYDIRMAYI (bubbling
-    /// <c>MouseWheel</c>) Scroll'a yeniden yükseltiyordu — bu ÜÇ bookkeeping'i ATLAYARAK: koşarken yığılmış
-    /// başlık üstünde tekerlek çevirmek follow-mode'u DURAKLATMIYOR, uçuştaki bir smooth scroll'u İPTAL ETMİYOR,
-    /// boşta-geri-açılma penceresini SIFIRLAMIYORDU. Fix: tek metot, iki çağıran.</para>
+    /// <para><b>Ölçülen kusur — çubuk kanalı:</b> sinyal yalnız tekerlekten alınıyordu. Kaydırma çubuğunun
+    /// başlığını sürüklemek ya da oluğa tıklamak hiç tekerlek olayı doğurmadığı için liste "kimse dokunmadı"
+    /// sanıp derlenen satırı takip etmeye devam ediyor, kullanıcıyı sürüklediği yerden geri çekiyordu; panel
+    /// ancak çubuk bırakılıp takip throttle'ı oturunca sakinleşiyordu. Konsol ve event stream aynı kusuru
+    /// <see cref="UserScrollSignal"/> ile çözmüştü — liste o kablonun dışında kalmıştı.</para>
+    ///
+    /// <para><b>Ölçülen kusur — overlay tekerleği (review round 1 · I-1):</b> overlay hit-test'e açılınca
+    /// (v1.17.0 §2.4) yığılmış başlık bandı üstündeki tekerlek Scroll'a hiç uğramaz oldu ve
+    /// <see cref="ForwardWheelToScroll"/> yalnız asıl KAYDIRMAYI yeniden yükseltiyordu — bu üç bookkeeping'i
+    /// ATLAYARAK. Kablo kökte (this) olduğu için o bant da artık aynı tünelden geçer.</para>
     /// </summary>
-    private void OnUserWheel()
+    private void OnUserScroll()
     {
         ScrollAnimator.CancelForUser(Scroll);
         _lastUserScrollAtMs = NowMs();
         Arbiter?.NotifyUserScroll(ScrollPanel.Frontier);
     }
 
-    /// <summary>Overlay'e düşen bir tekerlek olayını (a) <see cref="OnUserWheel"/> ile bookkeeping'e sokar, (b)
-    /// asıl kaydırmayı Scroll'un KENDİ (bubbling) <c>MouseWheel</c>'ine yeniden yükseltir. Overlay, ScrollViewer'ın
-    /// görsel ATASI DEĞİL KARDEŞİDİR — routed event doğal olarak Overlay'in kendi ebeveynine (Grid) bubble eder,
-    /// Scroll'a hiç uğramaz. <c>RaiseEvent</c> Scroll'un sınıf handler'ını (ScrollViewer'ın kendi
-    /// <c>OnMouseWheel</c>'i) normal yoldan tetikler — üçüncü parti bir kütüphane olmadan nested-scroll telafisi
-    /// için standart WPF deseni. <b>[I-1]</b> Scroll'un <c>PreviewMouseWheel</c>'i (tunnel) BURADAN yeniden
-    /// YÜKSELTİLMEZ — yalnız bubbling <c>MouseWheel</c> yükseltilir, aksi halde Scroll'un kendi
-    /// <c>PreviewMouseWheel</c> aboneliği (ki zaten <see cref="OnUserWheel"/>'i çağırır) İKİNCİ KEZ ateşlenirdi.</summary>
+    /// <summary>Overlay'e düşen bir tekerlek olayının asıl KAYDIRMASINI Scroll'un KENDİ (bubbling)
+    /// <c>MouseWheel</c>'ine yeniden yükseltir. Overlay, ScrollViewer'ın görsel ATASI DEĞİL KARDEŞİDİR — routed
+    /// event doğal olarak Overlay'in kendi ebeveynine (Grid) bubble eder, Scroll'a hiç uğramaz. <c>RaiseEvent</c>
+    /// Scroll'un sınıf handler'ını (ScrollViewer'ın kendi <c>OnMouseWheel</c>'i) normal yoldan tetikler — üçüncü
+    /// parti bir kütüphane olmadan nested-scroll telafisi için standart WPF deseni.
+    ///
+    /// <para>Bookkeeping BURADA DEĞİL: <see cref="OnUserScroll"/> kökten (this) tünelleyen
+    /// <c>PreviewMouseWheel</c> ile ZATEN çağrılmıştır — kök, Overlay'in de atasıdır ve tünel ona ÖNCE uğrar.
+    /// Burada ikinci kez çağırmak aynı muhasebenin kopyası olurdu. Yeniden yükseltilen olay bubbling
+    /// <c>MouseWheel</c>'dir, tünel DEĞİL; dolayısıyla kökteki kablo ikinci kez ateşlenmez.</para></summary>
     private void ForwardWheelToScroll(object sender, MouseWheelEventArgs e)
     {
         if (e.Handled) return;
-        OnUserWheel();
         Scroll.RaiseEvent(new MouseWheelEventArgs(e.MouseDevice, e.Timestamp, e.Delta)
         {
             RoutedEvent = Mouse.MouseWheelEvent,
