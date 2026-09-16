@@ -251,6 +251,40 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// Ray KAPSÜLDÜR (yarım daire uçlu), elips DEĞİL. _ds_bundle.js:886 `border-radius: var(--radius-full)` CSS'te
+    /// taşan yarıçapı x ve y için BİRLİKTE küçültür → 28×16 rayda yarıçap 8. WPF <c>Border</c> ise 999'u yatayda
+    /// 14'e, dikeyde 8'e AYRI AYRI kırpar ve uçlar elips olur; başparmak da elipsin kenarından taşar (kullanıcı
+    /// gördü, 8× büyütülmüş çizimle doğrulandı). Yarıçap rayın yarı yüksekliği olmalıdır.
+    /// </summary>
+    [StaFact]
+    public void Switch_track_is_a_capsule_not_an_ellipse()
+    {
+        var host = DsResources.NewHost();
+        var toggle = new CheckBox { Content = "worktree", Style = (Style)host.FindResource("Ds.Switch") };
+        var window = DsResources.Realize(host, toggle);
+
+        var track = (Border)toggle.Template.FindName("Track", toggle);
+        Assert.Equal(new CornerRadius(track.ActualHeight / 2), track.CornerRadius);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Etiketsiz switch (Ayarlar → PULL BEFORE BUILD, BuildApp.jsx:1903) yalnız ray kadar yer kaplar. Kaynakta
+    /// etiket ile ray arası `gap: 8`dir (:843) ve CSS gap tek çocukta boşluk üretmez; şablondaki 8px margin ise
+    /// içerik yokken de kalıyor ve switch'in sağına görünmez bir 8px ekliyordu.
+    /// </summary>
+    [StaFact]
+    public void Switch_without_a_label_is_as_wide_as_its_track()
+    {
+        var host = DsResources.NewHost();
+        var toggle = new CheckBox { Style = (Style)host.FindResource("Ds.Switch"), HorizontalAlignment = HorizontalAlignment.Left };
+        var window = DsResources.Realize(host, toggle);
+
+        Assert.Equal(28.0, toggle.ActualWidth);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Input_renders_a_watermark_and_a_prefix_slot_and_turns_red_when_invalid()
     {
