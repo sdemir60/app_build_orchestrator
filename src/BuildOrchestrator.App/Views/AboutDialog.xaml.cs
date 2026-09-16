@@ -23,7 +23,8 @@ internal readonly record struct NoticeRow(string DisplayName, string Version, st
 
 /// <summary>
 /// [About] İkinci modal diyalog: ürün kimliği + klavye kısayolları + ortam/tanı + üçüncü-taraf lisansları.
-/// Kabuk <see cref="SettingsDialog"/> ile AYNIdır (scrim, 620px Ds.Dialog, odak tuzağı, Esc/scrim ile kapanma).
+/// Kabuk (scrim, çerçeve, odak tuzağı, Esc/scrim ile kapanma, giriş) üç dialogun ORTAK kabuğudur:
+/// <see cref="Controls.ModalDialog"/>.
 ///
 /// <para><b>İnce view:</b> gösterilen her şey saf tiplerden gelir — <see cref="AppIdentity"/>,
 /// <see cref="ShortcutCatalog"/>, <see cref="DiagnosticsReport"/>, <see cref="ThirdPartyNotices"/>. Burada
@@ -33,7 +34,7 @@ internal readonly record struct NoticeRow(string DisplayName, string Version, st
 /// tetiklememelidir. Çözüm Environment sekmesi İLK kez seçildiğinde başlar; sonucu diyalog ömrü boyunca
 /// cache'lenir.</para>
 /// </summary>
-public partial class AboutDialog : UserControl
+public partial class AboutDialog : Controls.ModalDialog
 {
     // Görünür etiket ve UIA adı AYNI sabitten (kopya YASAK) — bkz. AccessibilityNames.CopyDiagnostics.
     private const string CopyLabel = AccessibilityNames.CopyDiagnostics;
@@ -126,19 +127,9 @@ public partial class AboutDialog : UserControl
         // artık (o dialog kendi butonundan/Ctrl+F1'den açılır).
         ShortcutsTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
-        Visibility = Visibility.Visible;
-        // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı. Visibility'den SONRA: animasyon görünür bir öğe
-        // üzerinde kurulur (reduced-motion'da PlayDialog son duruma SNAP eder).
-        Controls.PopIn.PlayDialog(DialogShell);
-        Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bir şey bulamazsa bile odak burada kalır)
-        Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+        // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı, odak dialogun içine — ortak kabuk (ModalDialog).
+        ShowDialog();
     }
-
-    private void Close() => Visibility = Visibility.Collapsed;
-
-    /// <summary>Esc zincirinin dialog katmanı için dışarıdan kapatma (MainWindow güvenlik ağı — odak dialog
-    /// dışındayken). Dialog odaklıyken Esc'i <see cref="OnKeyDown"/> yakalar (handled).</summary>
-    public void CloseDialog() => Close();
 
     // ---------------------------------------------------------------- tanı
 
@@ -289,15 +280,6 @@ public partial class AboutDialog : UserControl
 
     // ---------------------------------------------------------------- kapatma
 
-    private void OnClose(object sender, RoutedEventArgs e) => Close();
-
-    // Scrim tıklaması kapatır; diyaloğun kendi içine tıklama scrim'e ULAŞMAZ.
-    private void OnScrimClick(object sender, MouseButtonEventArgs e) => Close();
-    private void OnDialogClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        if (e.Key == Key.Escape) { Close(); e.Handled = true; }
-    }
+    // Scrim tıklaması ve Esc ortak kabuktadır (ModalDialog).
+    private void OnClose(object sender, RoutedEventArgs e) => CloseDialog();
 }

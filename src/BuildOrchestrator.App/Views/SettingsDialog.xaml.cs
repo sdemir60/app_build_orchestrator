@@ -1,7 +1,6 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Shapes;
 using ShapePath = System.Windows.Shapes.Path;
 using System.Windows.Threading;
@@ -22,7 +21,7 @@ namespace BuildOrchestrator.App.Views;
 /// değiştirir: Save'e kadar hiçbir şey uygulanmaz ve onay dialogu yoktur — Clear'ın "onayı" iki aşamalı
 /// düğmenin kendisidir.</para>
 /// </summary>
-public partial class SettingsDialog : UserControl
+public partial class SettingsDialog : ModalDialog
 {
     /// <summary>[§2.9] Footer geri bildiriminin ve Clear'ın iki-aşamalı penceresinin süresi.</summary>
     internal const double FeedbackMs = 2400;
@@ -94,12 +93,14 @@ public partial class SettingsDialog : UserControl
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();
-        Visibility = Visibility.Visible;
-        Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bulamazsa bile odak burada kalır)
-        // [D7 re-review][Fix1] Odağı UserControl'ün KENDİSİNDEN diyaloğun İÇİNE taşı (ilk input tercih edilir) —
-        // Scrim bir FocusManager.IsFocusScope olduğundan bu arama diyalog alt-ağacıyla SINIRLIdır.
-        Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
         TrackHostWindowSize();
+        // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, odağı diyaloğun İÇİNE taşıma (ilk
+        // input tercih edilir) ve giriş ModalDialog'dadır.
+        //
+        // [DEĞİŞEN KURAL — design v1.19.0] ESKİ: Settings giriş animasyonu OYNATMAZDI (yalnız About ve What's
+        // new oynatırdı); prototipin ortak DialogShell'i ds-dialog-in'i üçüne de takar — Settings de 180ms fade
+        // + 6px yükselir (DialogShellTests.Settings_now_plays_the_dialog_entrance).
+        ShowDialog();
     }
 
     /// <summary>[design v1.14.0 §2.9 · ruling task-D6] Gövdenin (<see cref="Body"/>) üst yükseklik sınırını
@@ -136,15 +137,9 @@ public partial class SettingsDialog : UserControl
         OnImport(this, new RoutedEventArgs());
     }
 
-    private void Close()
-    {
-        ResetFeedback();
-        Visibility = Visibility.Collapsed;
-    }
-
-    /// <summary>[E5/T46] Esc zincirinin dialog katmanı için dışarıdan kapatma (MainWindow güvenlik ağı — odak
-    /// dialog dışındayken). Dialog odaklıyken Esc'i zaten <see cref="OnKeyDown"/> yakalar (handled).</summary>
-    public void CloseDialog() => Close();
+    /// <summary>Her kapanış yolu (Cancel, Save, scrim, Esc, MainWindow'un Esc güvenlik ağı) geri bildirimi ve
+    /// Clear'ın kurulu durumunu sıfırlar — taslak zaten bir kopyadır ve atılır.</summary>
+    protected override void OnDialogClosing() => ResetFeedback();
 
     /// <summary>[design v1.8.0 §2.9] First run'da (henüz workspace yok) kaydetmek AYNI ZAMANDA kurulumdur —
     /// düğme bunu söyler: <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
@@ -267,19 +262,10 @@ public partial class SettingsDialog : UserControl
     {
         if (_draft is null || _run is null || _store is null || !_draft.CanSave) return;
         var (draft, run, store) = (_draft, _run, _store);
-        Close();
+        CloseDialog();
         await draft.CommitAsync(run, store);
     }
 
-    private void OnCancel(object sender, RoutedEventArgs e) => Close(); // taslak (kopya) atılır
-
-    // Scrim tıklaması kapatır (Cancel); diyaloğun kendi içine tıklama scrim'e ULAŞMAZ.
-    private void OnScrimClick(object sender, MouseButtonEventArgs e) => Close();
-    private void OnDialogClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
-
-    protected override void OnKeyDown(KeyEventArgs e)
-    {
-        base.OnKeyDown(e);
-        if (e.Key == Key.Escape) { Close(); e.Handled = true; } // BuildApp.jsx:1312
-    }
+    // Taslak (kopya) atılır. Scrim tıklaması ve Esc (BuildApp.jsx:1312) aynı Cancel anlamıyla ortak kabuktadır.
+    private void OnCancel(object sender, RoutedEventArgs e) => CloseDialog();
 }

@@ -1142,8 +1142,60 @@
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Radius.Lg}" />
     <Setter Property="Effect" Value="{DynamicResource Effect.OverlayShadow}" />
+  </Style>
+
+  <!--
+    [design v1.19.0 · prototip DialogShell] Üç modalın ORTAK kabuğu — davranış Controls/ModalDialog.cs'te,
+    görünüm burada. Full-bleed scrim (odak kapsamı + Cycle gezinme: Tab dialog dışına kaçmaz) ortasında
+    Ds.Dialog çerçevesi; içinde head · tabs (opsiyonel) · gövde (kalan alan) · footer (opsiyonel) dikey dizilimi.
+    Çerçevenin MaxWidth/MaxHeight'ı (host − 48) ve içeriğin yuvarlak köşe clip'i kod-tarafıdır (ModalDialog).
+    Footer şeridi padding 12px 18px + üstte 1px border-subtle; footer yoksa şerit hiç çizilmez. Prototipin
+    `gap: 8`'i WPF panelinde yoktur — footer içeriğinin kendi aralıklarıdır.
+
+    Dialog tipografisi (font-sans + text-primary) çerçevede DEĞİL kontrolün KENDİSİNDE durur: yuva içerikleri
+    (head/tabs/gövde/footer) mantıksal olarak ModalDialog'a bağlıdır ve WPF değer mirası mantıksal ebeveyni
+    izler — çerçevedeki bir TextElement ayarı onlara ulaşmaz (ölçüldü: başlık Segoe UI çiziliyordu,
+    DialogShellTests.Slot_content_inherits_the_dialog_typography). Ds.Dialog'un tek tüketicisi bu şablondur;
+    ayarlar oradan buraya TAŞINDI (kopya değil).
+  -->
+  <Style x:Key="Ds.ModalDialog" TargetType="controls:ModalDialog">
     <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
     <Setter Property="TextElement.Foreground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="controls:ModalDialog">
+          <Grid x:Name="PART_Scrim" Background="{DynamicResource Brush.Scrim}"
+                KeyboardNavigation.TabNavigation="Cycle"
+                KeyboardNavigation.ControlTabNavigation="Cycle"
+                FocusManager.IsFocusScope="True">
+            <Border x:Name="PART_Frame" Style="{DynamicResource Ds.Dialog}"
+                    Width="{TemplateBinding DialogWidth}" Height="{TemplateBinding DialogHeight}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <ContentPresenter Grid.Row="0" Content="{TemplateBinding Head}" />
+                <ContentPresenter Grid.Row="1" Content="{TemplateBinding Tabs}" />
+                <ContentPresenter Grid.Row="2" Content="{TemplateBinding Content}" />
+                <Border x:Name="FooterStrip" Grid.Row="3" Padding="18,12" BorderThickness="0,1,0,0"
+                        BorderBrush="{DynamicResource Brush.BorderSubtle}">
+                  <ContentPresenter Content="{TemplateBinding Footer}" />
+                </Border>
+              </Grid>
+            </Border>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Footer" Value="{x:Null}">
+              <Setter TargetName="FooterStrip" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
 
   <!-- ======================================= TOOLTIP ======================================= -->

@@ -2272,6 +2272,24 @@ listeners each rebuilding on every notification the cost is quadratic in the num
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
 selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
 
+**The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
+`Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
+centred on it (`surface-raised`, a `border-strong` hairline, radius 8, the overlay shadow), and inside that frame
+a vertical stack of head, an optional tab strip, a body that takes the remaining height, and an optional footer
+strip padded 12 px × 18 px under a `border-subtle` hairline. The frame's content is clipped to the frame's inner
+rounded corner — a plain rectangular clip would let a coloured rail or footer paint over the corner. The frame
+takes a design width and, optionally, a fixed height, and both are capped at the host's size minus 48 px — the
+host being the dialog's own area, which the scrim stretches over the whole window — and re-capped whenever the
+window is resized; the arithmetic lives in one pure function (`DialogSize`). The shell's behaviour is shared the
+same way: a scrim press closes the dialog while a press inside the frame never reaches the scrim, Esc closes it
+and is marked handled, the scrim is a cyclic focus scope so Tab cannot escape to the window behind, and opening
+lays the dialog out before moving keyboard focus to its first control — before layout, focus navigation finds
+nothing and focus would stay on the dialog itself. Every modal enters with a 180 ms fade and a 6 px rise, the
+duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
+typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
+is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
+re-implements any of this; a source guard keeps it that way.
+
 The Settings dialog is 760 px wide and carries three sections. **WORKSPACE** comes first: a mono repository-root
 input with a *Browse…* button beside it. The root is the one setting the tool cannot run without, so *Save*
 stays disabled while it is empty. Then a hairline, then **EXTERNAL PROJECTS**, then another hairline, then the
@@ -2395,10 +2413,8 @@ replaces the list outright, because the key's presence is itself a decision. The
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
 carried the key at all.
 
-The About dialog is the second modal and reuses that shell: the same full-bleed scrim, the same `Ds.Dialog`
-border, the same focus trap, the same Esc-and-scrim dismissal. It adds an entrance the Settings dialog does
-not have — a 180 ms fade with a 6 px rise, the duration read from the `Duration.Base` token, snapping to the
-end state under reduced motion. Its width, though, no longer follows Settings': the two used to share one
+The About dialog is the second modal on the shared shell; its identity block fills the head and the tab switch
+sits in the shell's tab strip. Its width, though, no longer follows Settings': the two used to share one
 620 px figure, but a dialog's width is now chosen for the direction it grows in rather than for what it holds
 today, and About is a static reference — version, shortcuts, environment, third-party notices — that only ever
 grows *taller*, as the third-party list lengthens, which argues for the narrowest figure of the three. It grew
@@ -2436,21 +2452,31 @@ whether or not it has anything to scroll, so a row that merely sits there would 
 most of the tab's surface. Nothing is lost by not seeing the whole path at a glance — *Copy diagnostics*
 already puts the full text one click away.
 
-**What's new is the third modal, reusing the same shell once more** — the same scrim, the same `Ds.Dialog`
-border and focus trap, the same 180 ms/6 px entrance — but 620 px wide and without About's identity block or
-tab switch: the dialog has exactly one job. A two-line header carries the title and a one-line description on
-the left and, right-aligned, the installed version under a small caps label; the version block sits 3 px
-higher than a plain baseline match would give it, because a mono line at `line-height: 1` sits low against a
-sans line next to it. The body is a **fixed** 400 px — not a minimum — for the same reason About's content
-area is fixed: an *Earlier versions* button that unfolds the whole history must not push the dialog past the
-screen, so the list scrolls inside its own box instead. Versions are listed newest first: a mono number, a
-neutral `INSTALLED` chip on the running one (a bordered pill, not the quiet unbordered `CURRENT` label an
-earlier pass tried), a right-aligned date, and the notes grouped into category **blocks** (a 6 px coloured
-swatch and a caps heading, the items plain underneath). The categories are fixed in order — Added, Changed,
-Fixed, Performance, Removed — and an empty one is not drawn. The three newest versions are open; the rest fold
-under an *Earlier versions (N)* button aligned flush with the content column (its own left padding cancelled
-by a negative margin), and the fold returns on the next open. The footer carries only *Close* — *Copy
-diagnostics* stays on About, where the rest of the diagnostics live.
+**What's new is the third modal on the shared shell**, and the one with the fixed size: 720 × 600 px, without
+About's identity block or tab switch — the dialog has exactly one job. The head row (padded 20 px top, 18 px
+sides, 16 px bottom, over a `border-subtle` hairline) carries the title with a one-line description 3 px below
+it on the left, and on the right a single mono version chip — 20 px tall, `surface` fill, a `border-strong`
+hairline, the installed version in 12 px `text-secondary`. Because the dialog's height is fixed, the body simply
+takes what the head and footer leave and scrolls inside itself, so an *Earlier versions* button that unfolds
+the whole history never pushes the dialog past the window; the scrolling list is inset 22 px top, 18 px sides and
+24 px bottom.
+
+Each version is a **two-column block**: an 84 px identity column, a 26 px gap, and the notes. The identity column
+stacks the mono version number, the date 6 px below it in 11 px `text-faint`, and — on the running version — a
+16 px neutral `INSTALLED` chip (a bordered pill on `surface` with 9.5 px caps, not the quiet unbordered
+`CURRENT` label an earlier pass tried), so every date sits in the same column instead of trailing off at the
+far edge. That column is **sticky**: as the body scrolls, it follows the top of its block and stops at the
+block's bottom. WPF has no sticky positioning, so the decision is one pure function —
+`clamp(scrollTop − blockTop, 0, blockHeight − columnHeight)` (`StickyColumn`) — written into the column's
+translate transform on every scroll change. The notes column holds category **blocks** 15 px apart (a 6 px
+coloured swatch and a caps heading, the items 7 px below it and indented 13 px), with items 10 px apart at a
+1.62 line height and wrapping at 500 px. The categories are fixed in order — Added, Changed, Fixed,
+Performance, Removed — and an empty one is not drawn. Versions are separated by 22 px, a `border-subtle`
+hairline and another 22 px. The three newest versions are open; the rest fold under an *Earlier versions (N)*
+button with a down chevron, placed in the notes column of the same two-column grid below its own hairline and
+aligned flush with the note text (its own left padding cancelled by a negative margin); the fold returns on
+the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
+diagnostics live.
 
 This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
 dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
@@ -4213,8 +4239,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog, layer/external-project drag-reorder, scrollable-body height clamp | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs`, `SettingsBodyHeight.cs` |
+| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity, shortcuts, environment, notices) | `App/Views/AboutDialog.xaml(.cs)` |
-| What's new dialog (own shell, release-note list, installed-version chip) | `App/Views/NotesDialog.xaml(.cs)` |
+| What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
 | Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |

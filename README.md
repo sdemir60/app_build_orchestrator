@@ -413,12 +413,13 @@ Environment tab is opened rather than when the screen appears.
 
 ### What's new
 
-A dedicated 620 px dialog, opened from its own title-bar button — a four-point star between the gear and
+A dedicated 720 × 600 px dialog, opened from its own title-bar button — a four-point star between the gear and
 `i` — or with `Ctrl+F1` (a toggle: pressing it again closes the dialog). It carries no identity block and no
-tabs; the body is release notes only, newest version first, grouped into Added / Changed / Fixed /
-Performance / Removed. The three newest versions are open and the rest fold under an *Earlier versions*
-button; the running version's line carries a small, neutral `INSTALLED` chip next to its number. There is no
-pop-up on launch.
+tabs; the header shows the installed version in a small mono chip, and the body is release notes only, newest
+version first. Each version keeps its number, date and — on the running version — a neutral `INSTALLED` chip
+in a left column that stays in view while its notes scroll; the notes sit on the right, grouped into Added /
+Changed / Fixed / Performance / Removed. The three newest versions are open and the rest fold under an
+*Earlier versions* button. There is no pop-up on launch.
 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new

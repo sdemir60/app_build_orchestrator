@@ -1,40 +1,56 @@
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
+using System.Windows.Media;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [design v1.13.0/v1.13.1 §2.11 · D4/T9] What's new — sürüm notlarının kendi diyalogu. About'un dördüncü
-/// sekmesiydi (design v1.9.0); v1.13.0 bunu About'tan ÇIKARDI, kendi title bar butonu (sparkle) ve kendi
-/// kısayolu (Ctrl+F1) verdi. Kabuk <see cref="AboutDialog"/>/<see cref="SettingsDialog"/> ile AYNIdır (scrim,
-/// Ds.Dialog, odak tuzağı, Esc/scrim ile kapanma) — farkı kimlik bloğu ve sekme TAŞIMAMASI: dialogun tek işi
-/// var.
+/// [design v1.13.0/v1.19.0 §2.11 · D4/T9] What's new — sürüm notlarının kendi diyalogu. About'un dördüncü
+/// sekmesiydi (design v1.9.0); v1.13.0 bunu About'tan ÇIKARDI, kendi title bar butonu (title bar'daki notes
+/// butonu) ve kendi kısayolu (Ctrl+F1) verdi. Kabuk (scrim, Ds.Dialog, odak tuzağı, Esc/scrim ile kapanma,
+/// giriş) üç dialogun ORTAK kabuğudur: <see cref="ModalDialog"/>.
 ///
-/// <para><b>Liste kurma kodu About'tan TAŞINDI, KOPYALANMADI</b> (kopya YASAK, CLAUDE.md): aşağıdaki
-/// <see cref="BuildWhatsNew"/>/<see cref="BuildVersionBlock"/>/<see cref="BuildCategory"/> eskiden
-/// <c>AboutDialog.xaml.cs</c>'te yaşıyordu. Liste KURALLARI v1.9.0'dan DEĞİŞMEDİ; yalnız iki şey değişti
-/// (v1.13.1): <c>CURRENT</c> metni nötr <c>INSTALLED</c> çipine döndü (bkz. <see cref="BuildInstalledChip"/>),
-/// <c>Earlier versions</c> butonu içerik koluna hizalandı (XAML'de negatif sol margin — kod tarafında bir şey
-/// değişmedi).</para>
+/// <para><b>[v1.19.0] Sürüm bloğu 2 kolonlu grid'dir</b> (84px + 26px aralık + kalan): solda sürüm kimliği
+/// (numara · tarih · kuruluysa <c>INSTALLED</c> çipi) STICKY durur, sağda kategori blokları okunur ölçüde
+/// (satır yüksekliği 1.62, maddeler arası 10px, en çok 500px) sarılır. Son 3 açık kuralı, katlama,
+/// <see cref="ReleaseNotes"/> veri kaynağı ve kategori renk/sırası DEĞİŞMEDİ.</para>
 /// </summary>
-public partial class NotesDialog : UserControl
+public partial class NotesDialog : ModalDialog
 {
-    /// <summary>[§2.11] Bu diyalogdaki caps etiketlerin ölçüsü: başlıktaki <c>INSTALLED VERSION</c> ve
-    /// <see cref="BuildInstalledChip"/>'in <c>INSTALLED</c> metni AYNI sayıyı kullanır. DS ölçeğinde 10px
-    /// adımı YOKTUR (§1.2: 11 · 12 · 13 · 14 · 16 · 20) — tasarım kaynağı da burada ham bir sayı verir, yani
-    /// bu component-specific bir ölçüdür ve ARCHITECTURE §14.1 gereği onu çizen kontrolde ADLANDIRILMIŞ tek
-    /// bir sabit olarak durur (iki çıplak literal DEĞİL).</summary>
-    public const double CapsLabelPx = 10;
+    /// <summary>[v1.19.0 §2.11] <c>INSTALLED</c> çipinin caps ölçüsü. DS ölçeğinde 9.5px adımı YOKTUR (§1.2) —
+    /// tasarım kaynağı burada ham bir sayı verir, yani bu component-specific bir ölçüdür ve ARCHITECTURE §14.1
+    /// gereği onu çizen kontrolde ADLANDIRILMIŞ tek bir sabit olarak durur.</summary>
+    public const double InstalledChipCapsPx = 9.5;
 
-    public NotesDialog() => InitializeComponent();
+    /// <summary>[v1.19.0 §2.11] Madde metninin satır yüksekliği ORANI (CSS <c>line-height: 1.62</c>). WPF mutlak
+    /// DIP ister; oran çizim anında <c>FontSize.Sm</c> token'ının çözülmüş değeriyle çarpılır (13 × 1.62 = 21.06)
+    /// — punto token'da değişirse satır yüksekliği onu izler.</summary>
+    public const double NoteLineHeightRatio = 1.62;
 
-    /// <summary>[design v1.13.0 §2.11] Diyalog GÖRÜLDÜ — title bar'daki sparkle butonunun okunmadı noktası
-    /// söner. Kablo MainWindow'da kurulur (kalıcı duruma yazma orada; diyalog yalnız olguyu bildirir) —
-    /// About'un eski <c>NotesSeen</c> deseniyle AYNI, yalnız artık tetikleyici bir SEKME değil DİYALOĞUN
-    /// KENDİSİ: <see cref="Open"/> çağrıldığı anda ateşlenir (prototipte <c>onSeen</c>, <c>open</c> olduğu
-    /// anda — BuildApp.jsx:1557).</summary>
+    /// <summary>[v1.19.0 §2.11] Madde metninin ölçü sınırı (CSS <c>maxWidth: 500</c>).</summary>
+    public const double NoteMaxWidth = 500;
+
+    /// <summary>Sürüm bloğunun (ve katlı kısmın) grid kolonları: kimlik kolonu · kolon aralığı · kalan.</summary>
+    private const double IdentityColumnPx = 84;
+    private const double ColumnGapPx = 26;
+
+    /// <summary>Sürümler arası: 22px boşluk + 1px ayraç + 22px.</summary>
+    private const double VersionGapPx = 22;
+
+    // Her sürüm bloğunun grid'i ve yapışan sol kolonu — ScrollChanged'de sticky ofseti yazmak için.
+    private readonly List<(Grid Grid, FrameworkElement Column)> _stickyColumns = [];
+
+    public NotesDialog()
+    {
+        InitializeComponent();
+        AddBlockColumns(EarlierVersionsGrid);
+    }
+
+    /// <summary>[design v1.13.0 §2.11] Diyalog GÖRÜLDÜ — title bar'daki notes butonunun okunmadı noktası
+    /// söner. Kablo MainWindow'da kurulur (kalıcı duruma yazma orada; diyalog yalnız olguyu bildirir):
+    /// <see cref="Open"/> çağrıldığı anda ateşlenir (prototipte <c>onSeen</c>, <c>open</c> olduğu anda).</summary>
     public event Action? NotesSeen;
 
     /// <summary>[test yüzeyi] Çizilmiş sürüm blokları.</summary>
@@ -43,29 +59,25 @@ public partial class NotesDialog : UserControl
     /// <summary>[test yüzeyi] Katlı kısmın bloğu (ayraç + buton) — görünürlük butona değil BUNA yazılır.</summary>
     internal FrameworkElement EarlierVersionsFold => EarlierVersionsBlock;
 
+    /// <summary>[test seam] Çizilecek sürüm listesi — üretimde HER ZAMAN <see cref="ReleaseNotes.All"/>. Testler
+    /// sürümler arası ayracı, katlı kısmı ve sticky kaymayı ölçmek için çok sürümlü sentetik bir liste verir
+    /// (gerçek listede tek sürüm olabilir; o durumda bu yüzeylerin hiçbiri çizilmez).</summary>
+    internal IReadOnlyList<ReleaseEntry> Releases { get; set; } = ReleaseNotes.All;
+
     /// <summary>Diyaloğu açar: listeyi <c>showAll:false</c> ile kurar (katlama HER açılışta 3'e döner — geri
-    /// katlama düğmesi YOKTUR, About'un eski davranışıyla AYNI), 180ms fade + 6px yukarı ile gösterir ve
-    /// AÇILDIĞI ANDA görüldü işaretlenir.</summary>
+    /// katlama düğmesi YOKTUR), gövdeyi başa sarar, kabuğun girişiyle gösterir ve AÇILDIĞI ANDA görüldü
+    /// işaretlenir.</summary>
     public void Open()
     {
         BuildWhatsNew(showAll: false);
-        Visibility = Visibility.Visible;
-        // [design-v1.2.1/v1.13.0 §2.10/§2.11] 180ms fade + 6px yukarı — About'la AYNI giriş (Controls.PopIn
-        // paylaşılır, kopya YASAK).
-        Controls.PopIn.PlayDialog(DialogShell);
-        Focus(); // Esc HER durumda yakalanabilsin (MoveFocus altta bir şey bulamazsa bile odak burada kalır)
-        Scrim.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
+        Body.ScrollToVerticalOffset(0);
+        ShowDialog();
         NotesSeen?.Invoke();
     }
 
-    private void Close() => Visibility = Visibility.Collapsed;
+    private void OnClose(object sender, RoutedEventArgs e) => CloseDialog();
 
-    /// <summary>Esc zincirinin dialog katmanı için dışarıdan kapatma (MainWindow güvenlik ağı — odak dialog
-    /// dışındayken). Dialog odaklıyken Esc'i <see cref="OnKeyDown"/> yakalar (handled) — About'unkiyle
-    /// AYNI desen.</summary>
-    public void CloseDialog() => Close();
-
-    // ---------------------------------------------------------------- [design v1.9.0 §2.10, taşındı] liste
+    // ---------------------------------------------------------------- liste
 
     private void OnShowEarlierVersions(object sender, RoutedEventArgs e) => BuildWhatsNew(showAll: true);
 
@@ -77,100 +89,148 @@ public partial class NotesDialog : UserControl
     private void BuildWhatsNew(bool showAll)
     {
         WhatsNewRows.Children.Clear(); // minik, non-virtualized liste (BuildMenu deseni)
-        var all = ReleaseNotes.All;
+        _stickyColumns.Clear();
+        var all = Releases;
         int shown = showAll ? all.Count : Math.Min(ReleaseNotes.OpenByDefault, all.Count);
         for (int i = 0; i < shown; i++) WhatsNewRows.Children.Add(BuildVersionBlock(all[i], first: i == 0));
 
         int hidden = all.Count - shown;
-        EarlierVersionsButton.Content = ReleaseNotes.EarlierVersionsLabel(hidden);
+        EarlierVersionsLabel.Text = ReleaseNotes.EarlierVersionsLabel(hidden);
         // Ayraç + buton tek blok olarak katlanır: buton gizliyken üstündeki hairline de çizilmez.
         EarlierVersionsBlock.Visibility = hidden > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>[§2.11] Bir sürüm bloğu: mono numara + (kuruluysa) nötr <c>INSTALLED</c> çipi + sağa yaslı
-    /// tarih; altında kategori BLOKLARI. Sürümler arasında 14px boşluk + 1px ayraç.
+    /// <summary>Sürüm bloğu ile katlı kısmın PAYLAŞTIĞI kolon düzeni (84 · 26 · kalan) — tek tanım yeri; katlı
+    /// kısmın XAML grid'i de kolonlarını buradan alır (kurucu).</summary>
+    private static Grid AddBlockColumns(Grid grid)
+    {
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(IdentityColumnPx) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(ColumnGapPx) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        return grid;
+    }
+
+    /// <summary>
+    /// [v1.19.0 §2.11] Bir sürüm bloğu: 2 kolonlu grid. Sürümler arasında 22px + 1px <c>border-subtle</c> + 22px
+    /// (ilk sürümün üstünde ayraç yok).
     ///
-    /// <para><b>[DEĞİŞEN KURAL — design v1.13.1 §2.11]</b> ESKİ İDDİA (design v1.1.0/v1.9.0, About'un
-    /// dördüncü sekmesindeyken): güncel sürümde sessiz bir <c>CURRENT</c> metni dururdu (zemin/çerçeve yok,
-    /// yalnız text-faint). Amber rozet VE çerçevesiz caps metin ikisi de denendi; ölçüm sonrası nötr bir ÇİP
-    /// seçildi (bkz. <see cref="BuildInstalledChip"/>) ve etiket <c>CURRENT</c>'tan <c>INSTALLED</c>'a döndü —
-    /// başlık satırındaki "INSTALLED VERSION" bloğuyla AYNI sözcüğü kullanır.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0 §2.11]</b> ESKİ DÜZEN (v1.13.1): başlık satırı bir DockPanel'di
+    /// (solda numara + çip, SAĞA YASLI tarih), kategoriler altında tam genişlikte; sürümler arası 14 + 1 + 14.
+    /// Tarihler scrollbar'ın dibinde dağınık duruyordu — artık her sürümde aynı sol kolondadır.</para>
+    /// </summary>
     private FrameworkElement BuildVersionBlock(ReleaseEntry entry, bool first)
     {
-        var block = new StackPanel { Margin = new Thickness(0, first ? 0 : 14, 0, 0) };
-        if (!first)
+        var block = new Border
         {
-            var divider = new Border { Height = 1, Margin = new Thickness(0, 0, 0, 14) };
-            divider.SetResourceReference(Border.BackgroundProperty, "Brush.BorderSubtle");
-            block.Children.Insert(0, divider);
-        }
+            Margin = new Thickness(0, first ? 0 : VersionGapPx, 0, 0),
+            BorderThickness = new Thickness(0, first ? 0 : 1, 0, 0),
+            Padding = new Thickness(0, first ? 0 : VersionGapPx, 0, 0),
+        };
+        block.SetResourceReference(Border.BorderBrushProperty, "Brush.BorderSubtle");
 
-        var header = new DockPanel();
-        var date = new TextBlock { Text = entry.Date, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
-        date.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-        date.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
-        DockPanel.SetDock(date, Dock.Right);
-        header.Children.Add(date);
+        var grid = AddBlockColumns(new Grid());
+        var identity = BuildIdentityColumn(entry);
+        grid.Children.Add(identity);
 
-        var version = new TextBlock { Text = entry.Version, VerticalAlignment = VerticalAlignment.Center, FontFamily = Controls.AppFonts.Mono };
-        version.SetResourceReference(FontSizeProperty, "FontSize.Sm");
-        version.SetResourceReference(FontWeightProperty, "FontWeight.Emphasis");
-        version.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
-        header.Children.Add(version);
-
-        if (string.Equals(entry.Version, AppIdentity.Version, StringComparison.Ordinal))
-            header.Children.Add(BuildInstalledChip());
-        block.Children.Add(header);
-
+        var notes = new StackPanel();
+        Grid.SetColumn(notes, 2);
         // [§2.11] Kategori BLOK başlığıdır (satır başına ikon/sigil YOK); boş kategori hiç çizilmez.
         foreach (var kind in ReleaseNotes.KindOrder)
         {
             var items = entry.Notes.Where(n => n.Kind == kind).ToList();
             if (items.Count == 0) continue;
-            block.Children.Add(BuildCategory(kind, items));
+            notes.Children.Add(BuildCategory(kind, items, first: notes.Children.Count == 0));
         }
+        grid.Children.Add(notes);
+
+        block.Child = grid;
+        _stickyColumns.Add((grid, identity));
         return block;
     }
 
-    /// <summary>[§2.11 · v1.13.1] Nötr <c>INSTALLED</c> çipi — <see cref="BuildVersionBlock"/>'un CURRENT
-    /// metninin yerini alan tek yeni parça: 17px yüksek, yatay padding 6px, <c>surface-raised</c> zemin + 1px
-    /// <c>border-strong</c>, <c>radius-xs</c>, caps <c>text-dim</c> metin. Ölçüsü başlık satırındaki caps
-    /// etiketle PAYLAŞILIR — tek tanım yeri <see cref="CapsLabelPx"/>. <see cref="Controls.TrackedTextBlock"/>'un
-    /// KENDİ DP'leri doğrudan (SetResourceReference'ın hedef DP'si AÇIKÇA nitelenerek) sürülür — TextBlock'un
-    /// Foreground/FontSize'ı burada ETKİSİZDİR (ayrı bir DependencyProperty ailesi).</summary>
+    /// <summary>[v1.19.0 §2.11] Sol (sticky) kolon: mono 13px/500 sürüm (line-height 1) · 6px · mono 11px
+    /// <c>text-faint</c> tarih (line-height 1) · kurulu sürümde 6+2px sonra <c>INSTALLED</c> çipi. Kolonun
+    /// kendi üst boşluğu 1px (prototipte <c>paddingTop: 1</c>).</summary>
+    private FrameworkElement BuildIdentityColumn(ReleaseEntry entry)
+    {
+        var column = new StackPanel
+        {
+            VerticalAlignment = VerticalAlignment.Top, // CSS alignSelf: start — sticky kayması kolonun KENDİ boyuyla ölçülür
+            RenderTransform = new TranslateTransform(),
+        };
+        Grid.SetColumn(column, 0);
+
+        var version = MonoLine(entry.Version, "FontSize.Sm", "Brush.TextPrimary");
+        version.Margin = new Thickness(0, 1, 0, 0);
+        version.SetResourceReference(FontWeightProperty, "FontWeight.Emphasis");
+        column.Children.Add(version);
+
+        var date = MonoLine(entry.Date, "FontSize.2xs", "Brush.TextFaint");
+        date.Margin = new Thickness(0, 6, 0, 0);
+        column.Children.Add(date);
+
+        if (string.Equals(entry.Version, AppIdentity.Version, StringComparison.Ordinal))
+            column.Children.Add(BuildInstalledChip());
+        return column;
+    }
+
+    /// <summary>Mono, <c>line-height: 1</c> bir satır — satır kutusu tam punto kadar (token'dan çözülür).</summary>
+    private TextBlock MonoLine(string text, string fontSizeKey, string brushKey)
+    {
+        var line = new TextBlock
+        {
+            Text = text,
+            FontFamily = AppFonts.Mono,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        line.SetResourceReference(FontSizeProperty, fontSizeKey);
+        line.SetResourceReference(TextBlock.ForegroundProperty, brushKey);
+        line.LineHeight = (double)FindResource(fontSizeKey);
+        return line;
+    }
+
+    /// <summary>[v1.19.0 §2.11] Nötr <c>INSTALLED</c> çipi, sol kolonda tarihin altında: 16px yüksek, yatay padding
+    /// 5px, <c>surface</c> zemin + 1px <c>border-strong</c>, <c>radius-xs</c>, 9.5px caps <c>text-dim</c> metin,
+    /// sola yaslı (içeriğe sıkı). <see cref="TrackedTextBlock"/>'un KENDİ DP'leri doğrudan sürülür —
+    /// TextBlock'un Foreground/FontSize'ı burada ETKİSİZDİR (ayrı bir DependencyProperty ailesi).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ ÇİP (v1.13.1): sürüm numarasının sağında, 17px yüksek,
+    /// padding 6px, <c>surface-raised</c> zemin, 10px caps (başlıktaki <c>INSTALLED VERSION</c> ile paylaşılan
+    /// <c>CapsLabelPx</c>). Başlık etiketi kalktığı için paylaşılan sabit de kalktı.</para></summary>
     private static FrameworkElement BuildInstalledChip()
     {
         var chip = new Border
         {
-            Height = 17,
-            Padding = new Thickness(6, 0, 6, 0),
+            Height = 16,
+            Padding = new Thickness(5, 0, 5, 0),
             BorderThickness = new Thickness(1),
-            Margin = new Thickness(8, 0, 0, 0), // [prototip gap:8] sürüm numarasıyla arasındaki boşluk
-            VerticalAlignment = VerticalAlignment.Center,
-            // Çip başlık satırının SON çocuğudur ve DockPanel son çocuğu kalan genişliğe YAYAR (LastChildFill);
-            // içeriğe sıkı kalması için sola yaslanır — aksi halde numaradan tarihe kadar uzanan kocaman bir
-            // kutu çiziliyordu (ölçüldü, render). Prototipte boşluğu esnek ayraç doldurur, çip `gap: 8`'de durur.
+            Margin = new Thickness(0, 8, 0, 0), // [prototip gap 6 + marginTop 2] tarihin altında
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        chip.SetResourceReference(Border.BackgroundProperty, "Brush.SurfaceRaised");
+        chip.SetResourceReference(Border.BackgroundProperty, "Brush.Surface");
         chip.SetResourceReference(Border.BorderBrushProperty, "Brush.BorderStrong");
         chip.SetResourceReference(Border.CornerRadiusProperty, "Radius.Xs");
 
-        var label = new Controls.TrackedTextBlock
+        var label = new TrackedTextBlock
         {
             Text = "INSTALLED",
-            FontSize = CapsLabelPx,
+            FontSize = InstalledChipCapsPx,
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
-        label.SetResourceReference(Controls.TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
+        label.SetResourceReference(TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
+        label.SetResourceReference(TrackedTextBlock.FontWeightProperty, "FontWeight.Emphasis");
         chip.Child = label;
         return chip;
     }
 
-    private FrameworkElement BuildCategory(NoteKind kind, IReadOnlyList<ReleaseNote> items)
+    /// <summary>[v1.19.0 §2.11] Kategori bloğu (sağ kolon): 6px kare + 7px + caps <c>text-dim</c> başlık; başlık
+    /// altında 7px; maddeler 13px içeriden, aralarında 10px, 13px <c>text-secondary</c>, satır yüksekliği 1.62,
+    /// en çok 500px genişlikte sarılır. Kategori blokları arası 15px.</summary>
+    private FrameworkElement BuildCategory(NoteKind kind, IReadOnlyList<ReleaseNote> items, bool first)
     {
-        var group = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var group = new StackPanel { Margin = new Thickness(0, first ? 0 : 15, 0, 0) };
 
         var heading = new StackPanel { Orientation = Orientation.Horizontal };
         var swatch = new System.Windows.Shapes.Rectangle
@@ -184,47 +244,55 @@ public partial class NotesDialog : UserControl
         swatch.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, ReleaseNotes.SwatchBrushKey(kind));
         heading.Children.Add(swatch);
 
-        var label = new Controls.TrackedTextBlock
+        var label = new TrackedTextBlock
         {
             Text = ReleaseNotes.Label(kind),
             Margin = new Thickness(7, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
         };
         // Hedef DP'ler AÇIKÇA nitelenir (BuildInstalledChip ile AYNI kural): TrackedTextBlock kendi
-        // Foreground/FontSize DP'lerini kaydeder, TextBlock/Control ailesindekiler burada ETKİSİZDİR ve
-        // etiket sessizce ctor varsayılanına (Brush.TextFaint) düşerdi.
-        label.SetResourceReference(Controls.TrackedTextBlock.FontSizeProperty, "FontSize.2xs");
-        label.SetResourceReference(Controls.TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
+        // Foreground/FontSize DP'lerini kaydeder, TextBlock/Control ailesindekiler burada ETKİSİZDİR.
+        label.SetResourceReference(TrackedTextBlock.FontSizeProperty, "FontSize.2xs");
+        label.SetResourceReference(TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
         heading.Children.Add(label);
         group.Children.Add(heading);
 
+        var list = new StackPanel { Margin = new Thickness(13, 7, 0, 0) };
+        double lineHeight = (double)FindResource("FontSize.Sm") * NoteLineHeightRatio;
         foreach (var note in items)
         {
             var text = new TextBlock
             {
                 Text = note.Text,
-                Margin = new Thickness(13, 4, 0, 0),
+                Margin = new Thickness(0, list.Children.Count == 0 ? 0 : 10, 0, 0),
+                MaxWidth = NoteMaxWidth,
+                HorizontalAlignment = HorizontalAlignment.Left,
                 TextWrapping = TextWrapping.Wrap,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                LineHeight = lineHeight,
             };
             text.SetResourceReference(FontSizeProperty, "FontSize.Sm");
             text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
-            text.SetResourceReference(TextBlock.LineHeightProperty, "LineHeight.Snug13"); // 13px gövde → snug
-            group.Children.Add(text);
+            list.Children.Add(text);
         }
+        group.Children.Add(list);
         return group;
     }
 
-    // ---------------------------------------------------------------- kapatma
+    // ---------------------------------------------------------------- sticky sol kolon
 
-    private void OnClose(object sender, RoutedEventArgs e) => Close();
-
-    // Scrim tıklaması kapatır; diyaloğun kendi içine tıklama scrim'e ULAŞMAZ.
-    private void OnScrimClick(object sender, MouseButtonEventArgs e) => Close();
-    private void OnDialogClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
-
-    protected override void OnKeyDown(KeyEventArgs e)
+    /// <summary>[v1.19.0 §2.11] CSS <c>position: sticky; top: 0</c>: gövde her kaydığında (ve liste yeniden
+    /// yerleştiğinde — <c>ExtentHeight</c> değişimi de <c>ScrollChanged</c> doğurur) her bloğun sol kolonu
+    /// <see cref="StickyColumn.Offset"/> kadar aşağı itilir. Blok konumu kayan listenin KENDİ koordinatında
+    /// okunur (liste kenar boşluğu hariç) — kolon böylece gövdenin 22px iç üst boşluğunun altına yapışır,
+    /// CSS'in scroll kutusu padding'ine saygı duyan sticky kutusuyla aynı.</summary>
+    private void OnBodyScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        base.OnKeyDown(e);
-        if (e.Key == Key.Escape) { Close(); e.Handled = true; }
+        foreach (var (grid, column) in _stickyColumns)
+        {
+            if (!grid.IsVisible || column.RenderTransform is not TranslateTransform shift) continue;
+            double blockTop = grid.TranslatePoint(new Point(0, 0), BodyList).Y;
+            shift.Y = StickyColumn.Offset(Body.VerticalOffset, blockTop, grid.ActualHeight, column.ActualHeight);
+        }
     }
 }

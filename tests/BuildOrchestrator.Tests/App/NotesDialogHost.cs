@@ -12,6 +12,25 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal static class NotesDialogHost
 {
+    /// <summary>Çok sürümlü sentetik liste — en yenisi KURULU sürümdür (<c>AppIdentity.Version</c>), her sürümde
+    /// iki kategori ve kategori başına birden çok, sarılacak kadar uzun madde vardır. Sürümler arası ayraç,
+    /// katlı kısım ve sticky kayma ancak birden çok sürümle ölçülebilir; gerçek <c>ReleaseNotes.All</c> tek
+    /// sürüm taşıyabilir.</summary>
+    public static IReadOnlyList<BuildOrchestrator.App.Services.ReleaseEntry> SyntheticReleases(int count) =>
+    [
+        .. Enumerable.Range(0, count).Select(i => new BuildOrchestrator.App.Services.ReleaseEntry(
+            i == 0 ? BuildOrchestrator.App.Services.AppIdentity.Version : $"0.{count - i}.0",
+            $"2026-01-{i + 1:00}",
+            [
+                .. Enumerable.Range(0, 4).Select(n => new BuildOrchestrator.App.Services.ReleaseNote(
+                    BuildOrchestrator.App.Services.NoteKind.Added,
+                    $"Synthetic added note {n} of version {i}, long enough to wrap across the measured column of the dialog body.")),
+                .. Enumerable.Range(0, 3).Select(n => new BuildOrchestrator.App.Services.ReleaseNote(
+                    BuildOrchestrator.App.Services.NoteKind.Fixed,
+                    $"Synthetic fixed note {n} of version {i}.")),
+            ])),
+    ];
+
     /// <param name="configure">Realize edildikten ama <c>Open()</c> ÇAĞRILMADAN önce çalışır — ör.
     /// <see cref="NotesDialog.NotesSeen"/>'e Open() tetiklenmeden ÖNCE abone olmak için (AboutDialogHost'un
     /// <c>configure</c> parametresiyle AYNI desen).</param>
@@ -31,8 +50,9 @@ internal static class NotesDialogHost
             root.Children.Add(dialog);
             content = root;
         }
-        // AboutDialogHost'taki AYNI gerekçe: varsayılan 400×200'de 620px'lik modal dikeyde kırpılır ve
-        // ActualHeight/ActualWidth içerik ne olursa olsun aynı doymuş değeri döner.
+        // AboutDialogHost'taki AYNI gerekçe: varsayılan 400×200'de 720×600'lük modal kırpılır ve
+        // ActualHeight/ActualWidth içerik ne olursa olsun aynı doymuş değeri döner. 800×700 dialogu kabuğun
+        // host − 48 kelepçesine TAKILMADAN sığdırır (istemci alanı çerçeve payı kadar küçüktür, ölçüldü: ~786×686).
         var window = DsResources.Realize(host, content, width: 800, height: 700);
 
         configure?.Invoke(dialog);
