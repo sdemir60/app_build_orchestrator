@@ -16,7 +16,7 @@ public sealed record ExternalRoot(ExternalProject Project, string Name, string S
 /// </summary>
 /// <param name="Scan">Birleşik tarama — ana kök ve tüm harici kökler, tekilleştirilmiş ve sıralı.</param>
 /// <param name="ExternalProjectIds">YALNIZ harici köklerden gelen projelerin id kümesi. İki iş yapar: düğüme
-/// basılan rozet ve "bu proje harici mi" sorusunun tek cevabı (obj izolasyonu kapısı).
+/// basılan rozet ve "bu proje harici mi" sorusunun tek cevabı (build-state'e yazılan commit/branch kararı).
 /// <para>Bir KÜMEdir, harita değil: kartın taşıdığı tek şey bir yoldur, dolayısıyla id başına saklanacak bir
 /// DEĞER yoktur — sorulan tek soru "bu proje harici mi".</para></param>
 /// <param name="Roots">Çözülen kökler — build anındaki ff-only güncelleme bunları gezer.</param>

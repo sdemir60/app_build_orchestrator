@@ -85,6 +85,21 @@ public sealed class SourceHashCache
         }
     }
 
+    /// <summary>
+    /// [test seam] Dosyanın GERÇEK boyut+mtime'ıyla ama verilen <paramref name="hash"/> ile bir kayıt yazar ve
+    /// önbelleği diske işler. Önbellek boyut+mtime eşleşince dosyayı açmadığı için sonraki okuma bu özeti
+    /// döner — kabul koşusu bir kaynağın "düzenlenmiş" hâlini gerçek dosyaya dokunmadan böyle simüle eder.
+    /// Disk biçimi yalnız bu sınıfta tanımlı kalsın diye testler kaydı buradan yazar (kopya YASAK).
+    /// </summary>
+    internal void Seed(string path, string hash)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(hash);
+        var info = new FileInfo(path);
+        _entries[path] = new Entry(info.Length, info.LastWriteTimeUtc.Ticks, hash);
+        Flush();
+    }
+
     /// <summary>Bu yolun özeti önbellekte GEÇERLİ mi — okumadan, yalnız stat ile.</summary>
     public bool IsCached(string path)
     {

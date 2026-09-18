@@ -103,6 +103,26 @@ public sealed class SourceHashCacheTests : IDisposable
         Assert.True(reloaded.IsCached(old));
     }
 
+    /// <summary>
+    /// [test seam] <c>Seed</c> bir dosya için dosyanın GERÇEK boyut+mtime'ıyla sahte bir özet yazar ve diske
+    /// işler: diskten yeniden yüklenen önbellek o dosyayı AÇMADAN tohumlanan özeti döner. Kabul koşusu bir
+    /// kaynağın düzenlenmiş hâlini gerçek dosyaya dokunmadan böyle simüle eder; disk biçimi yalnız
+    /// <see cref="SourceHashCache"/>'te tanımlı kalır.
+    /// </summary>
+    [Fact]
+    public void a_seeded_hash_is_persisted_and_returned_without_reading_the_file()
+    {
+        string path = WriteFile("a.cs", "class A {}", DateTime.UtcNow.AddHours(-1));
+        string real = new SourceHashCache(Path.Combine(_dir, "other.json")).HashOf(path)!;
+
+        new SourceHashCache(CachePath).Seed(path, "SIMULATED-EDIT");
+        var reloaded = new SourceHashCache(CachePath);
+
+        Assert.True(reloaded.IsCached(path));
+        Assert.Equal("SIMULATED-EDIT", reloaded.HashOf(path));
+        Assert.NotEqual(real, reloaded.HashOf(path));
+    }
+
     [Fact]
     public void a_corrupt_cache_file_is_treated_as_empty()
     {

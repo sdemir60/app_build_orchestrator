@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
-using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
@@ -166,18 +165,13 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // izole özet önbelleğine, dosyanın GERÇEK boyut+mtime'ıyla ama FARKLI bir özetle bir kayıt tohumlanır.
         // Önbellek boyut+mtime eşleşince dosyayı AÇMAZ (SourceHashCache.HashOf), yani binder o dosyanın içeriğini
         // "değişmiş" okur. İmzanın yol terimi değişmez, içerik terimi değişir — "o dosya düzenlenmiş"
-        // senaryosunun birebir aynısı, tek fark gerçek dosyanın okunmaması. Tohum önbelleğin disk biçimine
-        // bağlıdır: biçim değişirse önbellek boş yüklenir, hedef "değişmemiş" okunur ve aşağıdaki
-        // "hedef WillBuild=true" iddiası KIRMIZI verir — sessizce yeşile düşmez.
+        // senaryosunun birebir aynısı, tek fark gerçek dosyanın okunmaması. Kayıt önbelleğin kendi test
+        // seam'iyle (SourceHashCache.Seed) yazılır — disk biçimi yalnız o sınıfta tanımlıdır.
         string targetFile = Path.GetFullPath(evaluatedById[targetNode!.Id].CompileFiles[0]);
-        var targetInfo = new FileInfo(targetFile);
         string cacheRoot = Directory.CreateTempSubdirectory("bo-it3-hash-").FullName;
-        string hashCachePath = Path.Combine(cacheRoot, SourceHashCache.FileName);
-        File.WriteAllText(hashCachePath, JsonSerializer.Serialize(new Dictionary<string, object>
-        {
-            [targetFile] = new { targetInfo.Length, MtimeTicks = targetInfo.LastWriteTimeUtc.Ticks, Hash = "SIMULATED-EDIT" },
-        }));
-        var binder = new IncrementalRunBinder(plan, evaluatedById, OsysRoot, new SourceHashCache(hashCachePath));
+        var hashes = new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName));
+        hashes.Seed(targetFile, "SIMULATED-EDIT");
+        var binder = new IncrementalRunBinder(plan, evaluatedById, OsysRoot, hashes);
         var (dirtyPlan, _) = binder.Bind(stateAfterRun1, buildCycles: false, DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 

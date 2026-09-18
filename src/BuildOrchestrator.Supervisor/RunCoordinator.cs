@@ -1033,8 +1033,8 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>[design v1.14.0 §9] Bu proje ana repo DIŞINDAKİ bir çalışma alanı kökünden mi geldi —
-    /// topolojiden okunur (rozet <see cref="ProjectNode.IsExternal"/>), ayrı bir liste tutulmaz. İki yerde
-    /// karar verir: obj izolasyonu ve build-state'e yazılan commit/branch.</summary>
+    /// topolojiden okunur (rozet <see cref="ProjectNode.IsExternal"/>), ayrı bir liste tutulmaz. Tek bir
+    /// karar verir: build-state'e yazılan commit/branch.</summary>
     private static bool IsExternal(RunContext run, string projectId) =>
         run.NodeById.GetValueOrDefault(projectId)?.IsExternal == true;
 
