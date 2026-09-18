@@ -144,6 +144,26 @@ public class OperationPipelineTests
     }
 
     /// <summary>
+    /// [spec 2026-09-18 §6.2 · §1-13] Sync düğmesi listeyi ve grafı tıklamada BOŞALTMAZ: yapı aynıysa satırlar
+    /// yerinde tazelenir, boşaltma yalnız yapısal imza değişince (reveal) ve Clean/Optimize tıklamasında olur.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski kural (kullanıcı kararı 2026-09-12): Sync de
+    /// Clean gibi tıklama anında <c>ClearPlanSurface</c> çağırırdı — liste ve graf boşalır, topoloji gelince
+    /// yeniden dolardı. Değişme gerekçesi: kendiliğinden Sync'ler (commit, pencereye dönüş) sıklaştı ve her biri
+    /// listeyi sarsıyordu; yapı aynıyken boşaltmak hiçbir bilgi taşımıyor.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_sync_click_keeps_the_list_and_the_graph()
+    {
+        var vm = AfterOneCompletedRun();
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Equal(["A", "B", "C"], vm.Projects.Select(r => r.Name));
+        Assert.Equal(3, vm.Topology.Count);
+        Assert.True(vm.HasTopology);
+    }
+
+    /// <summary>
     /// [§9-4 · §2.2] İşlem pill'i (<see cref="RunViewModel.CurrentOperation"/>) nötrlemeden SONRA yazılır.
     ///
     /// <para>Etiketin değişmesi, kabuğun grafa "yeni bir işlem başladı, statüleri yeniden oku" dediği

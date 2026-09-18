@@ -1155,49 +1155,56 @@ public sealed partial class RunViewModel : ObservableObject
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
 
-    /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, kendinden önce hiçbir
-    /// hazırlık notu YAZMAYAN saf Sync. <see cref="SyncCoreAsync"/>'i <c>clearBuffers:true</c> ile çağırır.</summary>
+    /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
+    /// açan Sync (<see cref="SyncMode.Manual"/>).</summary>
     [RelayCommand(CanExecute = nameof(CanSync))]
-    private Task SyncAsync() => SyncCoreAsync(clearBuffers: true);
+    private Task SyncAsync() => SyncCoreAsync(SyncMode.Manual);
 
     /// <summary>
-    /// Sync'in ortak gövdesi — üç girişi vardır: bu sınıftaki <see cref="SyncAsync"/> (Sync düğmesi),
-    /// <see cref="ApplySettingsAsync"/> (Settings → Save) ve <see cref="ChangeRepositoryAsync"/> (Choose Folder).
+    /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
+    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save / kök değişimi
+    /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; kendiliğinden Sync
+    /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un
+    /// özetindedir (spec 2026-09-18 §6.2).
     ///
-    /// <para><b><paramref name="clearBuffers"/>:</b> Sync düğmesi <c>true</c> geçer — [design v1.13.2 §9]
-    /// BeginRunAsync(clearBuffers:true) ile AYNI kural, AYNI iki metot (kopya YASAK): konsol + event stream
-    /// TIKLAMA ANINDA temizlenir, pill'in kendisiyle aynı gerekçe, motorun cevabı beklenmez. Diğer iki çağıran
-    /// <c>false</c> geçer: ikisi de bu Sync'ten HEMEN ÖNCE KENDİ hazırlık notunu yazar (<c>"Layer definitions
-    /// updated — N layers"</c>, <c>"Repository root → … — Sync required"</c>) ve o not "bu işlemin İLK satırı"dır
-    /// — bir önceki İŞLEMİN tortusu değildir, ikinci bir clear onu da silerdi
-    /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>
-    /// bu notun HALA orada olduğunu pinler).</para>
+    /// <para><b>Temizlik:</b> Manual ve BranchChange konsolu + event stream'i temizler — [design v1.13.2 §9]
+    /// BeginRunAsync(clearBuffers:true) ile AYNI iki metot (kopya YASAK), TIKLAMA ANINDA. Appended temizlemez:
+    /// çağıranlar bu Sync'ten HEMEN ÖNCE KENDİ notunu yazar (<c>"Layer definitions updated — N layers"</c>,
+    /// <c>"Repository root → … — Sync required"</c>) ya da önceki işlemin transkripti (pull, Clean, açılışın
+    /// boot satırı) görünür kalmalıdır
+    /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>).
+    /// BranchChange'te yeni bölümün ilk satırları <paramref name="sectionLines"/>'tır ("temizlik önce, not
+    /// sonra"): çağıran (checkout) onları yazmaz, burada temizlikten SONRA yazılır.</para>
     ///
-    /// <para><b>Plan yüzeyi ise bayraktan BAĞIMSIZ, her Sync'te düşer</b> — bkz. aşağıdaki
-    /// <see cref="ClearPlanSurface"/> çağrısı. <paramref name="clearBuffers"/> yalnız konsol ve event
-    /// stream'in sorusudur (o ikisinde "bu işlemin ilk satırı kimin" diye bir sahiplik vardır); listenin ve
-    /// grafın böyle bir sahibi yoktur: her Sync topolojiyi baştan hesaplar, dolayısıyla ekranda duran plan
-    /// hangi yoldan gelinirse gelinsin o an geçersizdir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Plan yüzeyi (liste + graf) artık Sync'te BOŞALMAZ
+    /// (eskiden her Sync tıklamada <see cref="ClearPlanSurface"/> çağırırdı — kullanıcı kararı 2026-09-12). Yapı
+    /// aynıysa topoloji satırları yerinde uzlaştırır; yapısal imza değişirse reveal oynar
+    /// (<see cref="OnWorkspaceTopology"/>). Boşaltma yalnız Clean/Optimize tıklamasında ve gerçek bir kök
+    /// değişiminde kalır (<see cref="SyncAfterRootChangeAsync"/>).</para>
     /// </summary>
-    private async Task SyncCoreAsync(bool clearBuffers)
+    /// <param name="mode">Konsol ilişkisi, fetch ve pill kararı.</param>
+    /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
+    /// <param name="sectionLines">Yalnız <see cref="SyncMode.BranchChange"/>: temizlikten sonra yazılan ilk satırlar.</param>
+    private async Task SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
+        IReadOnlyList<string>? sectionLines = null)
     {
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
         // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
         // gönderim ne olursa olsun (senkron başarısız dahil) ekran zaten burada sıfırlanmış olur; bir sonraki
         // syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz (bkz. ClearConsoleForNewOperation).
-        if (clearBuffers)
+        if (mode is SyncMode.Manual or SyncMode.BranchChange)
         {
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
-        // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır — Clean'in birebir simetriği
-        // (bkz. CleanAsync). Gerekçe aynı: ekranda duran plan bu işlemin sonucuyla değişecek, farklı bir anda
-        // düşerse tek işlem iki sarsıntı gibi görünür (konsol anında boşalıp liste bayat kalıyordu). Geri
-        // getiren şey Sync'in kendi yayınladığı topolojidir (OnWorkspaceTopology).
-        ClearPlanSurface();
-        SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
+        foreach (string line in sectionLines ?? []) AppendRunLine(line);
+        BeginSyncMode(mode, silentReason);
+        if (mode != SyncMode.Silent)
+        {
+            SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+            CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
+        }
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -1208,7 +1215,8 @@ public sealed partial class RunViewModel : ObservableObject
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
+                Fetch: mode is SyncMode.Manual or SyncMode.Appended), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
@@ -1233,7 +1241,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// [clean] Bakım kutusundaki <b>Clean</b>: aktif workspace'in keşfedilen projelerinin <c>bin</c>/<c>obj</c>
     /// klasörlerini ve o workspace'e ait build-state kayıtlarını siler. <b>Onay dialogu YOKTUR</b> — iş
     /// tıklar tıklamaz başlar; geri alınamayan tek şey zaten yeniden üretilebilen derleme çıktısıdır.
-    /// <para><see cref="SyncCoreAsync"/>'in (<c>clearBuffers:true</c>) simetriğidir ve AYNI sırayı izler: konsol +
+    /// <para><see cref="SyncCoreAsync"/>'in (<see cref="SyncMode.Manual"/>) simetriğidir ve AYNI sırayı izler: konsol +
     /// event stream TIKLAMA ANINDA temizlenir ([design v1.13.2 §9] "her işlemde temizlenir" — BeginRunAsync ve
     /// Sync ile AYNI iki metot, kopya YASAK), temizlik SEÇİMDEN ÖNCE gelir (kırpışma gerekçesi orada), seçim
     /// temizlenir, filtre KORUNUR, işlem pill'i yazılır, kapı GÖNDERİMDEN ÖNCE kapanır (istek penceresi), tek
@@ -1714,7 +1722,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ErrorEvent e: OnError(e); break;
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
-            case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            case SyncProgressEvent e: OnSyncProgress(e); break; // [spec §6.2] sessiz kip transkripti gizler
             // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
             // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
             // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.
@@ -2310,13 +2318,27 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[D1 review · C5] Motor hazır: konsolun boot satırında sürüm gösterilir (design-v1 §2.5 anlatı
     /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
     /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.
-    /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para></summary>
+    /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para>
+    /// <para>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motorun İLK hazır oluşunda, bir workspace varsa, fetch'li
+    /// bir Sync başlar (<see cref="SyncMode.Appended"/>: boot satırları kalır, transkript altına akar). Yalnız ilk
+    /// kez: motorun yeniden başlatılması (<see cref="RestartEngineAsync"/>) dünyayı değiştirmez, ekranın planı
+    /// hâlâ geçerlidir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.2]</b> Eskiden açılış "seed-but-idle"dı (kayıtlı repo bilinir
+    /// ama Sync kullanıcıya kalır — <c>MainWindow</c> kök seed'i). Seed'in kendisi hâlâ komut göndermez
+    /// (<c>RunViewModelStateTests.Seeding_the_root_path_directly_lands_in_boot_without_starting_a_sync</c>);
+    /// açılışın Sync'i motor hazır olunca buradan gider.</para></summary>
     public void OnEngineReady(string engineVersion, int pid)
     {
         EngineVersion = engineVersion;
         EnginePid = pid;
         AppendRunLine($"Engine ready — v{engineVersion}");
+        if (_engineWasReady) return;
+        _engineWasReady = true;
+        if (HasWorkspace && CanSync()) _ = SyncCoreAsync(SyncMode.Appended);
     }
+
+    /// <summary>Motor bu oturumda en az bir kez hazır oldu mu — açılış Sync'i yalnız ilk hazır oluşta gider.</summary>
+    private bool _engineWasReady;
 
     // ---------------------------------------------------------------- konsol/log
 
@@ -2360,9 +2382,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// (run dokümanı + tüm proje logları) TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir.
     /// <see cref="ClearStreamForNewOperation"/>'ın konsol eşi; ikisi birlikte "her işlemde temizlenir" kuralını
     /// oluşturur. <see cref="BeginRunAsync"/> (Build/Rebuild/Cycles) VE <see cref="SyncCoreAsync"/> (Sync)
-    /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/>'in
-    /// üç çağıranından ikisi (<see cref="ApplySettingsAsync"/>, <see cref="ChangeRepositoryAsync"/>) bu metodu
-    /// hiç ÇAĞIRMAZ — nüans (kendi hazırlık notlarını korumak için) <see cref="SyncCoreAsync"/>'in kendi XML
+    /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/> bu metodu
+    /// yalnız bölüm açan kiplerde (<see cref="SyncMode.Manual"/>, <see cref="SyncMode.BranchChange"/>) çağırır —
+    /// nüans (Appended/Silent'ın geçmişi korumak için atlaması) <see cref="SyncCoreAsync"/>'in kendi XML
     /// doc'undadır.
     /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu gövde önceden yalnız <see cref="BeginRunAsync"/>'in İÇİNDE,
     /// adsız bir <c>if (clearBuffers) lock (_gate) { … }</c> bloğuydu; Sync bu bloğa hiç uğramadığından

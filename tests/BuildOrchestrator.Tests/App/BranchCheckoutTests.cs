@@ -184,7 +184,8 @@ public class BranchCheckoutTests
         Assert.DoesNotContain("previous operation line", lines);
         Assert.Equal(PlanProgressLines.StashedBeforeSwitch(StashMessage), lines[0]);
         Assert.Equal(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), lines[1]);
-        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        // [spec 2026-09-18 §6.2] Branch değişiminin Sync'i ağa çıkmaz (SyncMode.BranchChange).
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
 
         // Zincirlenen Sync'in transkripti switch satırının ALTINA akar — ikinci bir temizlik yok.
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));

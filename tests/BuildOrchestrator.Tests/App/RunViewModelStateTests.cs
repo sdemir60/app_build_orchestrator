@@ -347,21 +347,20 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [kullanıcı kararı 2026-09-12] <b>Sync de plan yüzeyini TIKLAMA ANINDA boşaltır</b> — Clean'in birebir
-    /// simetriği (<c>CleanCommandTests.Clean_empties_the_project_list_and_the_graph_at_click</c>).
+    /// [spec 2026-09-18 §1-13 · §6.2] <b>Sync düğmesi plan yüzeyine tıklamada DOKUNMAZ:</b> graf yeniden
+    /// kurulmaz (<see cref="RunViewModel.TopologyChanged"/> yok), plan (will-build) durur, faz Boot'a düşmez.
+    /// Satırlar yapı aynıysa motorun topolojisiyle yerinde tazelenir
+    /// (<c>OperationPipelineTests.A_sync_click_keeps_the_list_and_the_graph</c> listeyi pinler).
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Sync eskiden yalnız konsolu ve event stream'i tıklamada temizliyordu; liste
-    /// ve graf ekranda ESKİ topolojiyle duruyor, ancak motorun cevabı gelince yenileniyordu. Kullanıcının
-    /// gördüğü şey tek bir işlemin iki ayrı sarsıntısıydı: konsol anında boşalıyor, liste bir süre bayat
-    /// kalıyor, sonra yerine yenisi geliyordu. Clean'in kuralı buraya da taşındı — aynı karede her şey boşalır,
-    /// Sync'in yayınladığı topoloji hepsini birden geri getirir.</para>
-    ///
-    /// <para>Bedeli Clean'inkiyle AYNI ve bilerek kabul edildi: gönderim düşerse liste boş kalır (burada motor
-    /// hiç başlatılmamıştır, yani gönderim SENKRON düşer) — geri getiren şey bir sonraki Sync'tir. Panel yanlış
-    /// konuşmaz: faz <see cref="AppPhase.Boot"/>'a döner ve davet hiçbir şey söylemez.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
+    /// <c>Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does</c> — kullanıcı kararı 2026-09-12:
+    /// Sync de Clean gibi tıklamada liste + grafı boşaltır, faz Boot'a döner, topoloji hepsini geri getirir.
+    /// Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her Sync'te listenin
+    /// boşalıp dolması yapı aynıyken hiçbir bilgi taşımadan ekranı sarsıyordu. Boşaltma Clean/Optimize
+    /// tıklamasında ve gerçek bir kök değişiminde kaldı.</para>
     /// </summary>
     [Fact]
-    public async Task Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does()
+    public async Task A_sync_click_leaves_the_plan_surface_alone()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -375,15 +374,15 @@ public class RunViewModelStateTests
         int topologyChanges = 0;
         vm.TopologyChanged += (_, _) => topologyChanges++;
 
+        var phaseBefore = vm.Phase;
+
         await vm.SyncCommand.ExecuteAsync(null);
 
-        Assert.Empty(vm.Projects);
-        Assert.False(vm.HasTopology);   // graf da boşalır — kabuk TopologyChanged ile yeniden kurar
-        Assert.Equal(1, topologyChanges);
-        Assert.Equal(0, vm.WillBuildCount);
-        Assert.Equal(AppPhase.Boot, vm.Phase);
-        Assert.Equal(ListInviteState.None,
-            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+        Assert.Single(vm.Projects);
+        Assert.True(vm.HasTopology);
+        Assert.Equal(0, topologyChanges);   // graf yeniden kurulmadı
+        Assert.Equal(1, vm.WillBuildCount); // plan durur — motorun önizlemesi gelince tazelenir
+        Assert.Equal(phaseBefore, vm.Phase);
     }
 
     [Fact]

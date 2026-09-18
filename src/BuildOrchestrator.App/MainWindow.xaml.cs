@@ -153,9 +153,9 @@ public partial class MainWindow : Window
         // [D6 fold — C2] İş akışı tercihlerini kalıcı durumdan SEED et; sonra değişimlerini persist et. Seed ÖNCE,
         // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
         // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
-        // [D7 M3] Son repo'yu SEED et — açılışta hatırlanır ama SEED-BUT-IDLE: DOĞRUDAN RootPath set'i yalnız
-        // OnRootPathChanged'i (Empty→Boot) sürer, otomatik Sync YOKtur (ChangeRepositoryAsync DEĞİL — o SyncAsync
-        // tetikler). Repo bilinir, kullanıcı hazır olunca Sync/Build'e basar. İlk-koşuda (kayıtlı repo yok →
+        // [D7 M3] Son repo'yu SEED et — DOĞRUDAN RootPath set'i yalnız OnRootPathChanged'i (Empty→Boot) sürer,
+        // komut göndermez (ChangeRepositoryAsync DEĞİL). [spec 2026-09-18 §6.2] Açılışın Sync'i motor İLK kez
+        // hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır. İlk-koşuda (kayıtlı repo yok →
         // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;

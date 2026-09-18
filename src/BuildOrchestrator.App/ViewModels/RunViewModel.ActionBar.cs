@@ -227,12 +227,12 @@ public sealed partial class RunViewModel
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");
             return;
         }
-        ApplyRepositoryRoot(repositoryRoot);
+        bool rootChanged = ApplyRepositoryRoot(repositoryRoot);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
-        // [D3/T5 · design v1.13.2] clearBuffers:false — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten
-        // HEMEN ÖNCE KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); ikinci bir clear onu da silerdi.
-        await SyncCoreAsync(clearBuffers: false);
+        // [D3/T5 · design v1.13.2] Appended — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE
+        // KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); bir temizlik onu da silerdi.
+        await SyncAfterRootChangeAsync(rootChanged);
     }
 
     /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
@@ -243,10 +243,20 @@ public sealed partial class RunViewModel
     {
         if (IsMidRunLocked) return;
         if (!ApplyRepositoryRoot(path)) return;
-        // [D3/T5 · design v1.13.2] clearBuffers:false — ilk kurulumda not YOK (konsol zaten boş), sonraki bir
-        // kök değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; ikinci bir clear onu
-        // da silerdi (bkz. SyncCoreAsync XML doc'u).
-        await SyncCoreAsync(clearBuffers: false);
+        // [D3/T5 · design v1.13.2] Appended — ilk kurulumda not YOK (konsol zaten boş), sonraki bir kök
+        // değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; bir temizlik onu da silerdi.
+        await SyncAfterRootChangeAsync(rootChanged: true);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Settings Save ve Choose Folder'ın Sync'i (<see cref="SyncMode.Appended"/>).
+    /// Kök GERÇEKTEN değiştiyse plan yüzeyi önce boşaltılır (<see cref="ClearPlanSurface"/>): Sync artık listeyi
+    /// kendisi boşaltmaz ve eski reponun (kararsız) satırları yeni reponun topolojisi gelene dek ekranda kalırdı.
+    /// Boşaltma Sync gönderilirken yapılır — Sync gitmezse (motor erişilemez) satırlar kararları düşmüş hâlde kalır
+    /// (<see cref="ResetRowsToHollow"/>), çünkü onları geri getirecek bir topoloji gelmeyecektir.</summary>
+    private Task SyncAfterRootChangeAsync(bool rootChanged)
+    {
+        if (rootChanged) ClearPlanSurface();
+        return SyncCoreAsync(SyncMode.Appended);
     }
 
     /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
@@ -312,9 +322,10 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [clean · kullanıcı kararı 2026-09-12] Plan yüzeyini TAMAMEN boşaltır: satırlar, topoloji (yani graf),
-    /// döngü haritası ve will-build kümesi. Tek çağıranı Clean'in tıklama anıdır — çıktılar siliniyor,
-    /// dolayısıyla ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor. Liste yeniden Sync'in
-    /// yayınladığı topolojiyle dolar.
+    /// döngü haritası ve will-build kümesi. Çağıranlar Clean ve Optimize'ın tıklama anı (çıktılar siliniyor/
+    /// onarılıyor, ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor) ve Sync'e giden gerçek bir
+    /// kök değişimidir (<see cref="SyncAfterRootChangeAsync"/>). Sync'in kendisi boşaltmaz (spec 2026-09-18 §1-13).
+    /// Liste yeniden Sync'in yayınladığı topolojiyle — imza unutulduğu için reveal'le — dolar.
     ///
     /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
     /// (<c>ListInvite.Resolve</c>) boş listeyi <c>Idle</c> fazında "klasörde proje yok" diye okur ve bu YANLIŞ
@@ -335,6 +346,9 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(HasTopology));
         Phase = AppPhase.Boot;
         ClearPreviewSets();
+        // [spec 2026-09-18 §6.2] İmza da unutulur: boşalan liste, zincirlenen Sync AYNI yapıyı getirse de
+        // reveal'le dolmalıdır (OnWorkspaceTopology yalnız imza değişince ateşler).
+        _lastTopologySignature = null;
         TopologyChanged?.Invoke(this, EventArgs.Empty);
         RefreshRunSurface();
     }

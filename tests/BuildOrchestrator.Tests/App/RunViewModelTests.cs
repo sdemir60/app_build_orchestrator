@@ -2340,4 +2340,194 @@ public class RunViewModelTests
         // Konsol dokümanına da düşer (run dokümanı aktifken)
         Assert.Contains("git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.2] Sync kipleri
+    //
+    // Harness: başlatılmamış EngineHost — gönderim SENKRON düşer ve "[error] failed to send …" satırı konsola
+    // yazılır (meşru: gerçek bir gönderim hatasıdır). Gönderilen komut DebugOnCommandSent ile gözlenir, motorun
+    // cevabı vm.OnEvent(...) ile verilir. D8: sleep/poll yok.
+
+    private const string A = @"C:\p\a.csproj";
+    private const string B = @"C:\p\b.csproj";
+
+    /// <summary>İki satırlı, Sync'lenmiş bir workspace: A güncel, B derlenecek; akışta ilk Sync'in satırı, konsolda
+    /// önceki bir işlemin satırı durur.</summary>
+    private static RunViewModel SyncedTwoRowVm()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        ReplySync(vm, upToDateB: false);
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        return vm;
+    }
+
+    /// <summary>Motorun bir Sync'e verdiği cevap: başlangıç, transkript, topoloji, önizleme, tamamlanma.</summary>
+    private static void ReplySync(RunViewModel vm, bool upToDateB, params SyncProgressEvent[] transcript)
+    {
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        foreach (var line in transcript) vm.OnEvent(line);
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(A, "A", 0), Node(B, "B", 1)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(B, "B", !upToDateB, Reason: upToDateB ? WillBuildReason.UpToDate : WillBuildReason.SignatureChanged,
+                OwnFilesChanged: !upToDateB),
+        ]));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, ToBuildCount: upToDateB ? 0 : 1,
+            UpToDateCount: upToDateB ? 2 : 1, HeadSha: "1111111111111111111111111111111111111111", ActiveBranch: "main"));
+    }
+
+    /// <summary>Commit'in sessiz Sync'i konsolu ve olay akışını KORUR, fetch yapmaz, kalıcı işlem pill'i yazmaz,
+    /// seçimi düşürmez; bitince akışa tek satır düşer: <c>synced after commit</c> — hiçbir şey değişmemiş olsa da.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_the_console_and_stream_and_adds_one_line()
+    {
+        var vm = SyncedTwoRowVm();
+        vm.SelectProject(A);
+        int streamBefore = vm.StreamEvents.Count;
+        Assert.True(streamBefore > 0, "ön-koşul: akışta önceki Sync'in satırı yok — vakum");
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+
+        var cmd = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.False(cmd.Fetch);
+        Assert.Null(vm.CurrentOperation);
+        Assert.Equal(A, vm.SelectedProjectId);
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal(A, vm.SelectedProjectId);
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
+        Assert.Equal(StreamText.SyncedAfterCommit, vm.StreamEvents[^1].Text);
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Sessiz Sync'in transkripti (dim/info/cmd) konsola yazılmaz; uyarı ve hata satırları yazılır —
+    /// sessizlik kötü haberi gizlemez.</summary>
+    [Fact]
+    public async Task A_silent_sync_shows_warnings_but_not_the_transcript()
+    {
+        var vm = SyncedTwoRowVm();
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+
+        ReplySync(vm, upToDateB: false,
+            new SyncProgressEvent("HEAD 1111111 · up to date with origin/main", "info"),
+            new SyncProgressEvent("Scanning 1 solutions", "dim"),
+            new SyncProgressEvent("warning: 2 projects produce a.dll", "warn"),
+            new SyncProgressEvent("error: something broke", "error"));
+
+        string console = vm.GetRunDocumentText();
+        Assert.DoesNotContain("HEAD 1111111", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("Scanning 1 solutions", console, StringComparison.Ordinal);
+        Assert.Contains("warning: 2 projects produce a.dll", console, StringComparison.Ordinal);
+        Assert.Contains("error: something broke", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>Pencereye dönüşün sessiz Sync'i hiçbir kararı değiştirmediyse akışa HİÇBİR şey yazmaz.</summary>
+    [Fact]
+    public async Task A_silent_sync_with_no_changes_writes_nothing_on_activation()
+    {
+        var vm = SyncedTwoRowVm();
+        int streamBefore = vm.StreamEvents.Count;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+    }
+
+    /// <summary>Pencereye dönüşün sessiz Sync'i kararı değişen satırları sayar: B derlenecekken güncel oldu.</summary>
+    [Fact]
+    public async Task A_silent_sync_that_changes_a_decision_names_how_many_projects_changed()
+    {
+        var vm = SyncedTwoRowVm();
+        int streamBefore = vm.StreamEvents.Count;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
+        ReplySync(vm, upToDateB: true);
+
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
+        Assert.Equal(StreamText.SyncedProjectsChanged(1), vm.StreamEvents[^1].Text);
+    }
+
+    /// <summary>Sessiz Sync kapı kapalıyken (başka bir Sync uçuşta) hiçbir şey göndermez.</summary>
+    [Fact]
+    public async Task A_silent_sync_does_not_start_while_another_sync_is_in_flight()
+    {
+        var vm = SyncedTwoRowVm();
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.False(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+        Assert.Empty(sent);
+    }
+
+    /// <summary>Sync düğmesi (Manual) yeni bir bölüm açar: konsol ve akış temizlenir, fetch yapılır, pill yazılır.</summary>
+    [Fact]
+    public async Task The_sync_button_still_clears_the_console()
+    {
+        var vm = SyncedTwoRowVm();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.DoesNotContain("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Empty(vm.StreamEvents);
+        Assert.Equal(OperationLabel.Sync, vm.CurrentOperation);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motorun İLK hazır oluşu, bir workspace varken, fetch'li bir
+    /// Sync başlatır ve boot satırları kalır (transkript altına eklenir). Motorun yeniden hazır oluşu (restart)
+    /// Sync başlatmaz; workspace yoksa da gidecek bir kök yoktur.</summary>
+    [Fact]
+    public async Task The_first_engine_ready_syncs_with_the_transcript_and_a_restart_does_not()
+    {
+        var noRepo = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var noRepoSent = new List<IpcCommand>();
+        noRepo.DebugOnCommandSent = noRepoSent.Add;
+        noRepo.OnEngineReady("1.0.0", 42);
+        Assert.Empty(noRepoSent);
+
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEngineReady("1.0.0", 42);
+        await Task.Yield();
+
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.Contains("Engine ready — v1.0.0", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0)); // ilk Sync bitti, kapı açık
+        vm.OnEngineReady("1.0.0", 43);
+        await Task.Yield();
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Tamamlanan Sync branch değerini checkout edilmiş branch'e hizalar ve son
+    /// Sync'in HEAD'ini + zamanını kaydeder (çift Sync kontrolünün kaynağı).</summary>
+    [Fact]
+    public void A_completed_sync_aligns_the_branch_and_records_the_head()
+    {
+        long now = 1000;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            RootPath = @"D:\repo",
+        };
+
+        now = 5000;
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", ""));
+        vm.OnEvent(new SyncCompletedEvent("feature/x", "sha1234", false, 0, 0,
+            HeadSha: "2222222222222222222222222222222222222222", ActiveBranch: "feature/x"));
+
+        Assert.Equal("feature/x", vm.Branch);
+        Assert.Equal(("feature/x", "2222222222222222222222222222222222222222"), vm.LastSyncHead);
+        Assert.Equal(5000, vm.LastSyncCompletedAtMs);
+    }
 }

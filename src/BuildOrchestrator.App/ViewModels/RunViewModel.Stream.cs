@@ -85,8 +85,9 @@ public sealed partial class RunViewModel
     /// yalnız faz metnini/pill'i güncelliyordu, tamponlara dokunmuyordu. Tasarım v1.13.2 "her işlemde
     /// temizlenir" kuralını Sync'i de kapsayacak netleştirdi; Sync düğmesi artık <see cref="SyncCoreAsync"/>
     /// üzerinden BeginRunAsync ile AYNI iki metodu (bunu ve konsol eşi <see cref="ClearConsoleForNewOperation"/>'ı)
-    /// TIKLAMA ANINDA çağırır (Settings/Choose-Folder türevi Sync'ler kendi hazırlık notlarını korumak için bu
-    /// ikisini atlar — bkz. <see cref="SyncCoreAsync"/> XML doc'u).</para>
+    /// TIKLAMA ANINDA çağırır; yalnız bölüm açan kipler (<see cref="SyncMode.Manual"/>,
+    /// <see cref="SyncMode.BranchChange"/>) temizler — Appended/Silent bu ikisini atlar (bkz.
+    /// <see cref="SyncCoreAsync"/> XML doc'u).</para>
     /// <para>Silme <c>RemoveAt</c> ile sondan yapılır: <c>Clear()</c> bir <c>Reset</c> bildirimidir ve koşan
     /// satır animasyonlarını yıkar (A13.2 — koleksiyon reset'i YASAK).</para></summary>
     private void ClearStreamForNewOperation()
@@ -241,8 +242,10 @@ public sealed partial class RunViewModel
                 }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs));
                 break;
 
-            case SyncCompletedEvent e:
-                PushStream(StreamKind.Sync, null, StreamText.Sync(e.ToBuildCount, e.UpToDateCount));
+            // [spec 2026-09-18 §6.2] Satır kipe göre OnSyncCompleted'ta seçildi (sessiz Sync'te tek satır ya da hiç).
+            case SyncCompletedEvent:
+                if (_syncStreamLine is { } syncLine) PushStream(StreamKind.Sync, null, syncLine);
+                _syncStreamLine = null;
                 break;
 
             // [clean] Clean stream'e TEK satır düşer (ilerleme konsolda akar). Ton Sync'inkiyle aynıdır:

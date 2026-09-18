@@ -145,12 +145,9 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/> ile App'e taşınır.
 /// </para>
 /// </summary>
-/// <param name="Branch">Fetch edilecek ref (<c>git fetch origin &lt;Branch&gt;</c>) ve
-/// <see cref="SyncCompletedEvent.TargetSha"/>'in kaynağı.
-/// <b>[A5/T69 bilinen seam] Analizi SEÇMEZ:</b> tarama ve will-build pass'i her zaman AKTİF çalışma ağacı
-/// üzerinde (in-place) koşar — K1 gereği hiçbir branch checkout EDİLMEZ. Aktif branch'ten farklı bir ad
-/// verilirse fetch ve <c>TargetSha</c> o branch'i gösterir ama topoloji/önizleme/sayaçlar hâlâ AKTİF ağacı
-/// tarif eder. Seam'i kapatmak branch seçimini UI'a bağlayan task'ın (D6) işidir.</param>
+/// <param name="Branch">[spec 2026-09-18 §6.5] YALNIZ detached HEAD'de kullanılan yedek ad. Sync fetch'i, mesafeyi
+/// ve analizi her zaman çalışma ağacının CHECKOUT EDİLMİŞ branch'ine göre yapar — K1 gereği hiçbir branch
+/// checkout EDİLMEZ. Boş ad geçerlidir (açılış Sync'i envanterden önce gider).</param>
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
 /// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
 /// ters-katman uyarılarını taşır.</param>
@@ -161,9 +158,13 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
+/// <param name="Fetch">[spec 2026-09-18 §6.2] <c>false</c> ⇒ ağa çıkılmaz: fetch satırı yazılmaz, <c>N behind</c>
+/// son bilinen uzak uca (<c>refs/remotes/origin/&lt;aktif branch&gt;</c>) göre yerelde hesaplanır. Kendiliğinden
+/// Sync'ler (commit, pencereye dönüş) ve branch değişiminin Sync'i böyle gider. Varsayılan <c>true</c>: alanı hiç
+/// yazmayan eski NDJSON satırları bugünkü gibi fetch eder.</param>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
-    IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
+    IReadOnlyList<ExternalProject>? ExternalProjects = null, bool Fetch = true) : IpcCommand;
 
 /// <summary>
 /// [clean] Aktif workspace'in derleme çıktısını sıfırla. <b>Siler:</b> <paramref name="RootPath"/> altında
@@ -321,22 +322,27 @@ public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 public sealed record PlanProgressEvent(string Line) : IpcEvent;
 /// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
 /// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
-/// <remarks>[A5/T69 bilinen seam] Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/
-/// <paramref name="ToBuildCount"/>/<paramref name="UpToDateCount"/>) AKTİF çalışma ağacına karşı hesaplanır —
-/// <paramref name="Branch"/> farklı bir branch adlandırsa bile (bkz. <see cref="SyncWorkspaceCommand.Branch"/>).
-/// <paramref name="TargetSha"/> ise fetch edilen ref'i taşır; ikisi FARKLI commit'leri tarif edebilir.</remarks>
+/// <remarks>Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/<paramref name="ToBuildCount"/>/
+/// <paramref name="UpToDateCount"/>) çalışma ağacına karşı hesaplanır. <paramref name="Branch"/> ölçülen branch'tir
+/// (checkout edilmiş branch; detached HEAD'de komuttaki yedek ad), <paramref name="TargetSha"/> onun uzak ucu.</remarks>
 /// <param name="ChangedCount">[A5/T69] DOĞRUDAN değişen (kendi imza terimi bayatlamış) proje sayısı — will-build
 /// pass'inin <c>DependentMode.Fast</c> (cascade YOK) sonucudur. <paramref name="ToBuildCount"/>'tan TÜRETİLEMEZ:
 /// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>
 /// <param name="ToBuildCount">[A5/T69] Will-build kümesinin boyutu (<c>DependentMode.Safe</c> — dirty + transitive dependent).</param>
 /// <param name="UpToDateCount">[A5/T69] Güncel (<c>WillBuild=false</c>) proje sayısı — Build'de pre-skip edilecekler.</param>
 /// <param name="Behind">[v1.16.0] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
-/// alt bardaki <c>N behind</c> chip'i bunu okur. <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu ya da
-/// seçili branch aktif branch değil): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
+/// alt bardaki <c>N behind</c> chip'i bunu okur. Fetch'siz Sync'te son bilinen uzak uca göre hesaplanır.
+/// <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu, uzak ref yok ya da detached HEAD): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
 /// satırları alansız çözülür.</param>
+/// <param name="HeadSha">[spec 2026-09-18 §6.1] Sync'in ölçtüğü YEREL HEAD commit'i (<c>null</c> ⇒ commit'siz repo).
+/// App bunu <see cref="ActiveBranch"/> ile birlikte "son Sync'in HEAD'i" olarak saklar — çift Sync kontrolünün
+/// kaynağı.</param>
+/// <param name="ActiveBranch">[spec 2026-09-18 §1-7] Sync anında checkout edilmiş branch (<c>null</c> ⇒ detached
+/// HEAD). App'in <c>Branch</c> değeri Sync biter bitmez buradan hizalanır.</param>
 public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
     int ProjectCount, int CycleCount,
-    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0, int? Behind = null) : IpcEvent;
+    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0, int? Behind = null,
+    string? HeadSha = null, string? ActiveBranch = null) : IpcEvent;
 /// <summary>
 /// [v1.16.0] <see cref="PullRepositoryCommand"/>'ın sonucu. Gerekçe satırları zaten <see
 /// cref="SyncProgressEvent"/> olarak akmıştır; bu event yalnız "ilerledi mi" sorusunu cevaplar.
