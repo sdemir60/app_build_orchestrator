@@ -1675,7 +1675,7 @@ public class RunViewModelTests
         Assert.Equal("affected", beforeSync.Word);
         Assert.False(beforeSync.Stale);
 
-        // Run biter, sonra bir Sync koşar — NeutralizeRows(fresh:true) State'i Pending'e döndürür (IsRunning
+        // Run biter, sonra bir Sync koşar — NeutralizeRows() State'i Pending'e döndürür (IsRunning
         // false olmalı), Sync'in kendi önizlemesi disk hâlini (değişmemiş) aynen yansıtır.
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
@@ -1800,9 +1800,9 @@ public class RunViewModelTests
     }
 
     /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
-    /// <para>[R-M4] Fixture motorun GERÇEK biçimini taşır (<c>"exit N"</c>, <c>RunCoordinator.ReasonFor</c>):
-    /// yalnız derleyici hatası kanıttır. Eski fixture uydurma bir metin (<c>"CS0103"</c>) veriyordu — motor
-    /// böyle bir reason üretmez; kanıtsız hatanın (timeout/stopped) ayrı yolu RunViewModelStateTests'te.</para></summary>
+    /// <para>[R-M4b] Fixture motorun GERÇEK olayını taşır: <c>"exit N"</c> (<c>RunCoordinator.ReasonFor</c>) ve
+    /// motorun kanıt kararı (<c>Evidence: true</c> — defter yazımıyla aynı kapı). Eski fixture uydurma bir metin
+    /// (<c>"CS0103"</c>) veriyordu ve kanıt bayrağı yoktu; kanıtsız hatanın yolu RunViewModelStateTests'te.</para></summary>
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()
     {
@@ -1813,7 +1813,7 @@ public class RunViewModelTests
             [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
 
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
-        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "exit 1", null));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "exit 1", null, Evidence: true));
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);

@@ -192,6 +192,22 @@ public class IpcMessagesTests
         Assert.Equal(["dep C broken", "dep D broken"], backWithIssues.DepIssues);
     }
 
+    /// <summary>[R-M4b] <c>Evidence</c> IPC sınırını geçer; alansız eski bir satır KANITSIZ (false) okunur —
+    /// eski bir motorun hatası satırı kırmızıya boyamaz.</summary>
+    [Fact]
+    public void ProjectFailedEvent_carries_the_engines_evidence_verdict_and_old_lines_read_as_no_evidence()
+    {
+        var ev = new ProjectFailedEvent("r1", "b", 900, "exit 1", Evidence: true);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"evidence\":true", json, StringComparison.Ordinal);
+        Assert.True(Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Evidence);
+
+        var legacy = Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectFailed","runId":"r1","projectId":"b","durationMs":900,"reason":"exit 1"}""",
+            IpcJson.Options));
+        Assert.False(legacy.Evidence);
+    }
+
     // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
     // satırına çevirir; burada yalnız NDJSON round-trip'i ve ayırt edicisi pinlenir.
     [Fact]

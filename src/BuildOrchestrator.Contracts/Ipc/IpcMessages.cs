@@ -281,8 +281,14 @@ public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNum
 public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
     IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
+/// <param name="Evidence">[spec 2026-09-18 §1-14 · R-M4b] Bu hata KANIT mı — motor defterine kanıtlı hata
+/// (<c>FailedSignature</c>) yazdıysa <c>true</c>. Kararı YALNIZ motor verir, defter yazımıyla AYNI kapıdan
+/// (<c>RunCoordinator.FailureEvidenceSignature</c>: arkasında durulabilir sonuç + derleyici hatası + imza); App
+/// <see cref="Reason"/> metnini yeniden sınıflandırmaz — yakınsamayan bir SCC'nin <c>exit N</c> ile biten üyesi
+/// metinden kanıt gibi görünür ama defter onu kanıt saymaz. Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış
+/// NDJSON satırları kanıtsız (gri) okunur.</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
-    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool Evidence = false) : IpcEvent;
 /// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
 /// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
 /// <see cref="SkipReasons.CycleNonConvergent"/> seed'i). <b>Ayrı bir tipli alandır, Reason metninden

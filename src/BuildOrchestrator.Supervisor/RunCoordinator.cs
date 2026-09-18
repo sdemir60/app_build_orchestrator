@@ -1263,6 +1263,11 @@ public sealed class RunCoordinator(
     {
         string name = NameOf(run, projectId);
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
+        // [R-M4b · spec 2026-09-18 §1-14] Kanıt kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
+        // olay (ProjectFailedEvent.Evidence) ve defter yazımı (InvalidateBuildStateOnFailure). İkisi ayrı
+        // hesaplansaydı satır ile bir sonraki Sync ayrışabilirdi — App metni yeniden sınıflandırmaz.
+        bool invalidates = result != BuildResult.Succeeded || !trustedResult;
+        string? evidenceSignature = invalidates ? FailureEvidenceSignature(run, projectId, failReason, trustedResult) : null;
         try
         {
             if (result == BuildResult.Succeeded)
@@ -1293,7 +1298,8 @@ public sealed class RunCoordinator(
             {
                 string reason = failReason!;
                 MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
-                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent));
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent,
+                    Evidence: evidenceSignature is not null));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "{0}: failed — {1}{2}", name, reason,
                     failLogTail ?? string.Format(CultureInfo.InvariantCulture, " ({0}ms)", durationMs)));
             }
@@ -1310,7 +1316,7 @@ public sealed class RunCoordinator(
             // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin yeşil üyesi) buradan geçer.
             // [spec 2026-09-18 §1-14] reason ve trustedResult birlikte TAŞINIR: invalidate artık nedene göre
             // yazar (kanıtlı derleyici hatası ⇔ imza+zaman; kanıtsız ⇔ yalnız LastResult/LastRunAt).
-            if (result != BuildResult.Succeeded || !trustedResult) InvalidateBuildStateOnFailure(run, projectId, failReason, trustedResult);
+            if (invalidates) InvalidateBuildStateOnFailure(run, projectId, evidenceSignature);
         }
     }
 
@@ -1860,17 +1866,15 @@ public sealed class RunCoordinator(
     /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
     /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
     /// <para>
-    /// <b>Yazım nedene göre AYRIŞIR.</b> <paramref name="reason"/> ile <paramref name="trustedResult"/> birlikte
-    /// KANITI belirler: <see cref="Core.State.FailureClassification.IsCompilerFailure"/> derleyicinin kendi
-    /// sıfır-dışı çıkışını (<c>"exit N"</c>) ayırt eder, ama yalnız <paramref name="trustedResult"/> true iken —
-    /// yakınsamayan bir SCC'nin (§8.8) "yeşil" üyesi de bu metottan geçer ve reason <c>null</c> olabilir, o
-    /// kanıt SAYILMAZ. <b>Kanıtlıysa</b> (derleyici hatası + arkasında durulabilir sonuç): <see
+    /// <b>Yazım nedene göre AYRIŞIR.</b> Kanıt kararı bu metodun DIŞINDA, TEK yerde verilir
+    /// (<see cref="FailureEvidenceSignature"/>: arkasında durulabilir sonuç + derleyici hatası + bilinen imza) ve
+    /// buraya imza olarak gelir — AYNI değer App'e giden <see cref="ProjectFailedEvent.Evidence"/>'ı da belirler,
+    /// böylece satır ile bir sonraki Sync ayrışamaz. Yakınsamayan bir SCC'nin (§8.8) "yeşil" üyesi de bu metottan
+    /// geçer; o kanıt SAYILMAZ. <b>Kanıtlıysa</b>: <see
     /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
     /// yazılır — kayıt yoksa <c>BuiltSignature: null</c> ile AÇILIR (hiç derlenmemiş bir proje ilk kez patladığında
-    /// da kanıt kaybolmasın diye). İmza yoksa (<c>run.Incremental</c> null ya da proje <c>SignatureById</c>'de
-    /// yok — testlerdeki basit planner, ya da hollow) imzasız kanıt YAZILMAZ (<see cref="WillBuildEvaluator"/>'ın
-    /// <c>LastFailed</c>'i imza eşitliğine bakar): <see cref="PersistBuildStateOnSuccess"/>'in erken-dönüş
-    /// deseniyle (~:1818-1820) AYNI çizgide, kanıtsız davranışa düşülür. <b>Kanıtsızsa</b> (timeout, stopped,
+    /// da kanıt kaybolmasın diye). İmzasız kanıt YOKTUR (<see cref="WillBuildEvaluator"/>'ın <c>LastFailed</c>'i
+    /// imza eşitliğine bakar) — imza bilinmiyorsa kapı zaten kanıtsız der. <b>Kanıtsızsa</b> (timeout, stopped,
     /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
     /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
     /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil) ve kayıt yoksa hiçbir şey
@@ -1893,22 +1897,16 @@ public sealed class RunCoordinator(
     /// içinde "run'ı öldürmez" sözü ancak KOŞULSUZ olabilir; bu yüzden filtre daraltılmaz.
     /// </para>
     /// </summary>
-    /// <param name="reason">Başarısızlık gerekçesi (<c>"exit N"</c>/<c>"timeout"</c>/<c>"stopped"</c>/<c>"invoke
-    /// error: …"</c>); yakınsamayan bir SCC'nin yeşil üyesinde <c>null</c> olabilir (result Succeeded'tır).</param>
-    /// <param name="trustedResult">Sonucun ARKASINDA DURULABİLİR mi (bkz. <see cref="ReportProjectResult"/>) —
-    /// yakınsamayan bir SCC'de <c>false</c>, tekil projede daima <c>true</c>. Kanıt kapısının İKİNCİ yarısı.</param>
-    private void InvalidateBuildStateOnFailure(RunContext run, string projectId, string? reason, bool trustedResult)
+    /// <param name="evidenceSignature">Kanıt kapısının cevabı (<see cref="FailureEvidenceSignature"/>) — kanıtlıysa
+    /// hata anındaki imza, değilse <c>null</c>. Kapı burada YENİDEN hesaplanmaz: aynı değer App'e giden olayı da
+    /// belirler (<see cref="ProjectFailedEvent.Evidence"/>).</param>
+    private void InvalidateBuildStateOnFailure(RunContext run, string projectId, string? evidenceSignature)
     {
         if (run.StateStore is null) return;
         try
         {
-            bool evidence = trustedResult && FailureClassification.IsCompilerFailure(reason);
-            string? signature = null;
-            if (evidence)
-            {
-                if (run.Incremental is { } inc && inc.SignatureById.TryGetValue(projectId, out var sig)) signature = sig;
-                else evidence = false; // imzasız kanıt YASAK — kanıtsız yola düş
-            }
+            bool evidence = evidenceSignature is not null;
+            string? signature = evidenceSignature;
 
             run.StateStore.Load().TryGetValue(projectId, out var existing);
             if (!evidence && existing is null) return; // kanıtsız + kayıt yok ⇒ hiçbir şey açılmaz
@@ -1926,6 +1924,24 @@ public sealed class RunCoordinator(
         catch (Exception ex)
         { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-14 · R-M4b] <b>Kanıt kapısının TEK yeri.</b> Bir başarısızlık, (1) sonucun arkasında
+    /// durulabiliyorsa (<paramref name="trustedResult"/> — yakınsamayan bir SCC'de değil), (2) nedeni derleyicinin
+    /// kendi sıfır-dışı çıkışıysa (<see cref="FailureClassification.IsCompilerFailure"/> — timeout, stopped,
+    /// invoke error değil) ve (3) planlamadaki imzası biliniyorsa (<c>run.Incremental.SignatureById</c> — imzasız
+    /// kanıt YASAK, <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c>'i imza eşitliğine bakar)
+    /// ve (4) yazılacak bir defter varsa KANITTIR. Dönen imza kanıtın kendisidir; <c>null</c> = kanıt yok.
+    /// Hem defter yazımı hem App'e giden olay BUNU okur, ikisi ayrışamaz.
+    /// </summary>
+    private static string? FailureEvidenceSignature(RunContext run, string projectId, string? reason, bool trustedResult) =>
+        run.StateStore is not null
+        && trustedResult
+        && FailureClassification.IsCompilerFailure(reason)
+        && run.Incremental is { } inc
+        && inc.SignatureById.TryGetValue(projectId, out var signature)
+            ? signature
+            : null;
 
     private string ReasonFor(MsBuildInvokeResult invoke)
     {

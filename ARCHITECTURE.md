@@ -922,8 +922,9 @@ hidden:
   roots merged).
 - The project's log opens with a warning line naming the root, distinguishing a direct dependency failure from
   an inherited one.
-- The row and the graph node carry a filled red triangle in a **fixed 14 px slot** that exists on every row, so
-  alignment never shifts.
+- The row carries an amber warning triangle in a **fixed 14 px slot** that exists on every row, so alignment
+  never shifts. It is never red — red means the project itself failed — and the graph draws no triangle at all:
+  the node's only warning proxy is the amber cube of a cycle member (§14.3).
 - The action bar's `⚠ N` chip counts it, together with cycle membership, and filters the list to `warn`.
 - The event stream reads `built — dependency issue (2.4s)`, and the completion line reports
   `N dependency-affected`.
@@ -1130,6 +1131,13 @@ past success has since invalidated rather than writing one; it opens no record w
 placeholder failure for a project the ledger has never heard of would answer nothing. Either way only
 `LastResult` and the run timestamp change beyond that — the built signature, commit, branch and duration stay
 exactly as a past success left them.
+
+The verdict is taken once, in one gate (`FailureEvidenceSignature`: a trusted result, a compiler exit, a
+known planning signature and a ledger to write to), and the same answer goes two ways: into the ledger and onto
+the `projectFailed` event as `evidence`. The application paints the row from that flag and never re-reads
+the reason text — a non-converged group's member that fails with `exit N` looks like evidence from its text
+alone, but it is not, and the row would otherwise turn red only for the next Sync to turn it grey. An event
+without the field (an older engine) reads as no evidence.
 
 **Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the third icon of the maintenance box. While
 such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n/m · elapsed` with the amber
@@ -1861,10 +1869,12 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 **empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
 
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
-compiler failure reads `failed · retry`. A failure that is not evidence — a timeout, a stop, an invoke error —
-reads `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will
-say; the classification is the engine's own (`FailureClassification`), not a second reading of the reason text.
-It does not wait for the engine's next preview, which may not arrive until the next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
+failure the engine counts as evidence reads `failed · retry`. A failure that is not evidence — a timeout, a stop,
+an invoke error, or a compiler failure inside a cycle group that did not converge — reads `never built` at once,
+because that is what the ledger records for it (§7.5) and what the next Sync will say. The verdict travels with
+the failure event (`Evidence`) and is decided by the same gate that writes the ledger; the application never
+re-reads the reason text. It does not wait for the engine's next preview, which may not arrive until the next
+Sync. A success that still carries a dependency issue is the one exception: it does **not** read
 `up to date` — its dependency was still broken when it built, so a plain project's row reads `affected · up to
 date · just now` instead, taken straight from that success's own event, and it drops out of the run's definite
 queue (next paragraph) rather than being counted done.
@@ -3411,18 +3421,25 @@ the waiting is the triangle's to say), `stale` (plain grey) for a changed, never
 project, and `failed` (red) for `LastFailed`, which the engine reports only when the ledger can prove the
 failure (§7.5). Over it lies the **run**: `marked`
 (this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
-apart so the run can still say "just built") and `failed`. Red is evidence and nothing else: a compiler
-failure (`exit N`) writes `LastFailed` into the standing, while a failure the engine does not count as evidence
-— a timeout, a stop, an invoke error — writes `NeverBuilt`, and over that stale standing the run's `failed` gives
-way to the grey. The classification is Core's `FailureClassification`, the same helper the Supervisor uses when
-it writes the ledger, so the row and the next Sync never disagree. Being skipped is not a colour — a skipped
+apart so the run can still say "just built") and `failed`. Red is evidence and nothing else, and on a state
+surface it comes only from the standing: a failure the engine counts as evidence writes `LastFailed` into the
+standing, while one it does not — a timeout, a stop, an invoke error, a compiler failure inside a cycle group
+that did not converge — writes `NeverBuilt`, and over that stale standing the run's `failed` gives way to the
+grey (only a row with no decision at all keeps the run's red, since the result is then the one thing known).
+The verdict is the engine's: one gate in the Supervisor — a trusted result, a compiler failure
+(`FailureClassification`) and a known signature — decides it once, writes the ledger with it and sends it on
+the failure event (`Evidence`), so the row and the next Sync never disagree. The run-story surfaces still say
+`failed` for every failure. Being skipped is not a colour — a skipped
 project falls back to its standing, although the run story (the ribbon's `N skipped`, the console's *nothing to
 compile in this run*) keeps counting it until the next operation begins. A result is written into the standing
 as the project finishes (the next preview confirms it) and stays there until a later run changes it, so colour
 is cumulative rather than the story of the last operation alone. Switching the configuration moves the
-standing ahead of the next preview as well: the configuration is part of every signature, so each row that has
-a record drops to `stale` at once (`SignatureChanged`, as the next preview will say) and a never-built row stays
-`never built`. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
+standing ahead of the next preview as well: the configuration is part of every signature, so every decided row
+drops to `stale` at once, with the reason the next preview will give — `SignatureChanged` when the project has
+ever built successfully, `never built` when it has not (for a row that last failed, the built commit the
+preview carries is the trace of a past success) — while a row with no decision stays unknown. The change also
+neutralises the previous run's fields, so a row that just succeeded does not keep the run's green, and a
+finished run's summary gives way to the new plan (`Ready — N to build`). `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
 amber the marking wave lit must not go out when the run begins. The mapping lives in one place
 (`VisualStatuses.For`) and every surface reads it; the run-story surfaces map the engine's status on their own
 through `VisualStatuses.OfRun`, which is the only mapping that still yields `skipped`.

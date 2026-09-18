@@ -66,7 +66,11 @@ public class VisualStatusTests
         Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: false));
         Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: true));
         Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Failed, marked: false));
-        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Current, marked: true));
+        // Kural doğrudan: durum yüzeyinde kırmızı YALNIZ çıktı durumundan gelir. Karar hiç yoksa (Unknown)
+        // koşunun sonucu tek bilgidir ve kırmızı kalır.
+        Assert.Equal(VisualStatus.Current, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Current, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Unknown, marked: false));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.OfRun(GraphStatus.Failed)); // run-story yüzeyleri Failed der
     }
 
     /// <summary>[design v1.20.0 §1.4] — yalnız run-story'dedir: durum yüzeyleri onu hiçbir girdide almaz.</summary>

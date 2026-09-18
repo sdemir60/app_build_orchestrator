@@ -52,7 +52,7 @@ public class OperationPipelineTests
         vm.OnEvent(new ProjectStartedEvent("r1", "a", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", "a", 1200));
         vm.OnEvent(new ProjectStartedEvent("r1", "b", "B"));
-        vm.OnEvent(new ProjectFailedEvent("r1", "b", 900, "exit 1", ["A"])); // derleyici hatası = kanıt (R-M4)
+        vm.OnEvent(new ProjectFailedEvent("r1", "b", 900, "exit 1", ["A"], Evidence: true)); // motor: kanıt (R-M4b)
         vm.OnEvent(new ProjectSkippedEvent("r1", "c", SkipReasons.UpToDate));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 1, 0, 2100));
         return vm;

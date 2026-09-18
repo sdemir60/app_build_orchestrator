@@ -442,7 +442,16 @@ public class CycleRoundsTests
             // (kanıtsız kırmızı YASAK).
             Assert.Null(a.FailedSignature);
             Assert.Null(a.FailedAt);
-            Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            var b = store.Load()[Id("B")];
+            Assert.Equal(BuildResult.Failed, b.LastResult);
+            // [R-M4b] B derleyici hatasıyla ("exit 1") patladı ama grup yakınsamadı: sonuç arkasında durulabilir
+            // DEĞİL — defter kanıt yazmaz VE olay da kanıt demez (aynı kapı). Metinden sınıflandıran bir App
+            // burada kırmızı boyardı, bir sonraki Sync griye çevirirdi.
+            Assert.Null(b.FailedSignature);
+            var bFailed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.Equal(Id("B"), bFailed.ProjectId);
+            Assert.StartsWith("exit ", bFailed.Reason, StringComparison.Ordinal);
+            Assert.False(bFailed.Evidence);
             // Kontrol: A kullanıcıya yine Succeeded raporlanır — invalidasyon SONUCU maskelemez.
             Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
         }

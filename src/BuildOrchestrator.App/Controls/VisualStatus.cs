@@ -50,14 +50,17 @@ public static class VisualStatuses
     /// <para>Sıra ÖNEMLİ: motor bu proje hakkında bir şey söylediyse (queued/building/sonuç) o kazanır.
     /// <b>Atlanmak bir renk değildir</b>: <c>Skipped</c> çıktı durumuna düşer. Motor bir şey söylemediyse
     /// (discovered) önce işaretlilik, sonra çıktı durumu okunur. Sonuç <see cref="VisualStatus.Skipped"/>
-    /// ASLA değildir.</para></summary>
+    /// ASLA değildir.</para>
+    /// <para><b>İstisna — <c>Failed</c> (R-M4b · design v1.20.0 §5 "bozuk (kanıtlı)"):</b> durum yüzeyinde
+    /// kırmızı YALNIZ çıktı durumundan gelir. Koşu kanıtlı hatayı çıktı durumuna zaten yazar
+    /// (<c>LastFailed</c> → <see cref="StandingStatus.Failed"/>); kanıt olmayan hata (timeout · Stop · invoke
+    /// hatası · yakınsamayan SCC üyesi) bayat bırakır ve satır o griyi gösterir. Karar hiç yoksa
+    /// (<see cref="StandingStatus.Unknown"/>) koşunun sonucu tek bilgidir ve kırmızı kalır. Run-story yüzeyleri
+    /// (<see cref="OfRun"/>) bundan etkilenmez: orada <c>Failed</c> her zaman Failed'dır.</para></summary>
     public static VisualStatus For(GraphStatus status, StandingStatus standing, bool marked) => status switch
     {
         GraphStatus.Skipped => Of(standing),
-        // [R-M4 · design v1.20.0 §5 "bozuk (kanıtlı)"] Kırmızı KANITTIR: kanıtlı hata çıktı durumunu zaten
-        // Failed'a yazar (LastFailed). Kanıt olmayan hata (timeout · Stop · invoke hatası) satırı bayat bırakır
-        // ve satır o griyi gösterir — "timeout/Stop kanıt sayılmaz, kırmızıya çevirmez".
-        GraphStatus.Failed when standing == StandingStatus.Stale => VisualStatus.Stale,
+        GraphStatus.Failed => standing is StandingStatus.Unknown ? VisualStatus.Failed : Of(standing),
         GraphStatus.Discovered or GraphStatus.Cycle => marked ? VisualStatus.Marked : Of(standing),
         _ => OfRun(status),
     };

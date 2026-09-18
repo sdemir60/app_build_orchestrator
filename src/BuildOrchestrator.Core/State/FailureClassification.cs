@@ -8,8 +8,10 @@ namespace BuildOrchestrator.Core.State;
 ///
 /// <para>Sınıflandırıcı Core'da durur (Supervisor'a özel değil): <c>RunCoordinator.ReasonFor</c> "exit {kod}"
 /// biçimini BURADAKİ <see cref="ExitPrefix"/>'ten üretir — aynı literal iki yerde tanımlanmaz (kopya YASAK,
-/// CLAUDE.md). App da ileride run sonunda satırı boyarken (kanıt → kırmızı; timeout/stopped/invoke error →
-/// gri) aynı ayrımı bu sınıftan okuyacak.</para>
+/// CLAUDE.md). Bu sınıflandırma kanıt kapısının YALNIZ bir parçasıdır: kapının tamamı (arkasında durulabilir
+/// sonuç + bu sınıflandırma + bilinen imza) Supervisor'daki <c>RunCoordinator.FailureEvidenceSignature</c>'dadır
+/// ve kararı hem deftere hem App'e giden olaya (<c>ProjectFailedEvent.Evidence</c>) yazar. App bu sınıfı
+/// OKUMAZ — reason metnini yeniden sınıflandırmak, yakınsamayan bir SCC üyesinde defterle ayrışırdı.</para>
 /// </summary>
 public static class FailureClassification
 {

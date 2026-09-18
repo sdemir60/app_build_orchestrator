@@ -1475,6 +1475,8 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Failed, a.LastResult);
             Assert.Equal("sig", a.FailedSignature);
             Assert.NotNull(a.FailedAt);
+            // [R-M4b] Olay defterle AYNI kapıdan kanıt der — App metni yeniden sınıflandırmaz.
+            Assert.True(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -1539,6 +1541,7 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Failed, a.LastResult);
             Assert.Null(a.FailedSignature); // kanıtsız — eski kanıt DÜŞER
             Assert.Null(a.FailedAt);
+            Assert.False(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence); // [R-M4b] olay da kanıtsız
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

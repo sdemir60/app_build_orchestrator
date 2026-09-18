@@ -595,9 +595,9 @@ public sealed partial class RunViewModel
                     IsRunLocked = IsMidRunLocked, // [tek proje] kilit + hedef aynı itme deseninden
                     IsRunTarget = string.Equals(node.Id, RunTargetId, StringComparison.OrdinalIgnoreCase),
                     // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
+                    IsExternal = node.IsExternal,
                     // [design v1.20.0 §2.3] Yeni doğan satırın kararı YOKTUR — başlangıç modu bundan gelir;
                     // çıktı durumu hemen ardından gelen önizlemeyle yazılır (ayrı bir bayrak taşınmaz).
-                    IsExternal = node.IsExternal,
                 });
             else
             {

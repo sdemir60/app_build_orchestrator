@@ -1270,7 +1270,7 @@ public class RunViewModelStateTests
         vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
         vm.OnEvent(new ProjectStartedEvent("r1", P("B"), "B"));
-        vm.OnEvent(new ProjectFailedEvent("r1", P("B"), 900, "exit 1"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("B"), 900, "exit 1", Evidence: true));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1800));
 
         await vm.BuildCommand.ExecuteAsync(null); // ikinci işlemin tıklama anı — nötrleme
@@ -1365,7 +1365,8 @@ public class RunViewModelStateTests
         var vm = T5Vm();
         SyncWith(vm,
             Item("Up", false, WillBuildReason.UpToDate),
-            Item("Bad", true, WillBuildReason.LastFailed),
+            // Kaydında bir başarı olan kanıtlı hata (BuiltCommit dolu) — hiç başarısı olmayanı alttaki test sınar.
+            new BuildPreviewItem(P("Bad"), "Bad", true, BuiltCommit: "abc1234", Reason: WillBuildReason.LastFailed),
             Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]),
             Item("New", true, WillBuildReason.NeverBuilt));
 
@@ -1378,6 +1379,58 @@ public class RunViewModelStateTests
         Assert.False(RowOf(vm, "W").Conditional);   // imza değişti: artık kesin derlenir
         Assert.False(RowOf(vm, "W").HasDepIssue);   // not imza değişince karar terimi değil
         Assert.Equal(WillBuildReason.NeverBuilt, RowOf(vm, "New").WillBuildReason);
+    }
+
+    /// <summary>[R-Config] Configuration değişimi koşu alanlarını da siler (nötrleme — aynı metot): az önce
+    /// başarıyla biten satır koşunun yeşilinde KALMAZ, herkes gibi yeni bayat durumuna iner; kararı olmayan
+    /// satır kararsız (bilinmiyor) kalır. Koşu hikâyesi de biter: şerit bitmiş koşunun özetini (artık sıfır
+    /// sayaçlarla) okumaz, "Ready" satırına döner.</summary>
+    [Fact]
+    public void Switching_configuration_after_a_run_drops_the_run_overlay_too()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("U", false, WillBuildReason.UpToDate),
+            Item("Unk", null, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("U", false, WillBuildReason.UpToDate)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("U"), SkipReasons.UpToDate));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 900));
+        Assert.Equal(VisualStatus.Succeeded, RowOf(vm, "A").VisualStatus); // ön-koşul
+
+        vm.SetConfiguration("Release");
+
+        Assert.All(vm.Projects, r => Assert.Equal(ProjectRowState.Pending, r.State));
+        Assert.Equal(VisualStatus.Stale, RowOf(vm, "A").VisualStatus);
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "A").WillBuildReason);
+        Assert.Equal(VisualStatus.Stale, RowOf(vm, "U").VisualStatus);
+        Assert.Equal(VisualStatus.Unknown, RowOf(vm, "Unk").VisualStatus); // karar yok → bilinmiyor
+        Assert.Null(RowOf(vm, "Unk").WillBuildReason);
+        Assert.Equal(0, vm.Counters.Succeeded);                            // koşu alanları silindi
+        Assert.Equal(AppPhase.Idle, vm.Phase);                             // bitmiş koşunun özeti kalkar
+        Assert.Equal("▸ Ready — 3 to build · 0 up to date", vm.RibbonLine.Text);
+    }
+
+    /// <summary>[R-Config · M6] <see cref="WillBuildReason.LastFailed"/> bir satır configuration değişince motorun
+    /// bir sonraki önizlemesinin diyeceğini der: kaydında bir BAŞARI varsa (<c>BuiltSignature</c> dolu)
+    /// <c>SignatureChanged</c>, hiç başarı yoksa <c>NeverBuilt</c> (<c>WillBuildEvaluator</c>). App
+    /// <c>BuiltSignature</c>'ı görmez; başarı izi olarak önizlemenin <c>BuiltCommit</c>'i (satırda
+    /// <c>CurrentSha</c>) okunur — defterde onu yalnız başarı yazar. <c>LastBuiltAt</c> ayırıcı OLAMAZ: son koşu
+    /// başarısızsa her LastFailed satırında null'dır (<c>BuildStateStore.LastBuiltAtOf</c>).</summary>
+    [Fact]
+    public void A_failed_row_drops_to_never_built_only_when_it_never_succeeded()
+    {
+        var vm = T5Vm();
+        SyncWith(vm,
+            new BuildPreviewItem(P("Once"), "Once", true, BuiltCommit: "abc1234", Reason: WillBuildReason.LastFailed),
+            new BuildPreviewItem(P("Never"), "Never", true, Reason: WillBuildReason.LastFailed));
+
+        vm.SetConfiguration("Release");
+
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "Once").WillBuildReason);
+        Assert.Equal(WillBuildReason.NeverBuilt, RowOf(vm, "Never").WillBuildReason);
     }
 
     /// <summary>[R-M3 · spec 2026-09-18 §1-18] <c>LocalEdits</c> yalnız koşu DIŞINDAKİ bir önizlemeden
@@ -1406,10 +1459,13 @@ public class RunViewModelStateTests
         Assert.True(RowOf(vm, "B").LocalEdits);  // false → true
     }
 
-    /// <summary>[R-M4 · spec 2026-09-18 §1-14 · design v1.20.0 §5] Koşudaki hata, motorun deftere yazdığı
-    /// AYNI sınıflandırmayla boyanır (<c>FailureClassification.IsCompilerFailure</c>): derleyici hatası kanıttır
-    /// (kırmızı, <c>failed · just now</c>); timeout/stop/invoke hatası kanıt değildir (hemen gri,
-    /// <c>never built</c>). Başarı hata zamanını düşürür; Sync'in getirdiği hata zamanı satıra taşınır.</summary>
+    /// <summary>[R-M4b · spec 2026-09-18 §1-14 · design v1.20.0 §5] Koşudaki hata, MOTORUN kanıt kararıyla
+    /// boyanır (<see cref="ProjectFailedEvent.Evidence"/> — defter yazımıyla aynı kapı): kanıt kırmızıdır
+    /// (<c>failed · just now</c>); kanıt olmayan hata hemen gridir (<c>never built</c>) — timeout, stop, invoke
+    /// hatası VE yakınsamayan bir SCC'nin <c>exit N</c> ile biten üyesi (metin kanıt gibi görünür, defter kanıt
+    /// saymaz). Başarı hata zamanını düşürür; Sync'in getirdiği hata zamanı satıra taşınır.
+    /// <para><b>[DEĞİŞEN KURAL — R-M4b]</b> İlk hâl App'te <c>Reason</c> metnini sınıflandırıyordu; SCC üyesinde
+    /// satır ile bir sonraki Sync ayrışıyordu (review I1).</para></summary>
     [Fact]
     public void A_run_failure_is_painted_by_the_same_evidence_rule_the_ledger_uses()
     {
@@ -1419,16 +1475,20 @@ public class RunViewModelStateTests
             Item("Exit", true, WillBuildReason.SignatureChanged),
             Item("Slow", true, WillBuildReason.SignatureChanged),
             Item("Stop", true, WillBuildReason.SignatureChanged),
+            Item("Invoke", true, WillBuildReason.SignatureChanged),
+            Item("Cyc", true, WillBuildReason.SignatureChanged),
             Item("Fixed", true, WillBuildReason.LastFailed, failedAt: earlier));
         Assert.Equal(earlier, RowOf(vm, "Fixed").FailedAt); // Sync'in hata zamanı satırda
 
         var before = DateTimeOffset.Now;
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug", 0));
-        foreach (var n in new[] { "Exit", "Slow", "Stop", "Fixed" })
+        foreach (var n in new[] { "Exit", "Slow", "Stop", "Invoke", "Cyc", "Fixed" })
             vm.OnEvent(new ProjectStartedEvent("r1", P(n), n));
-        vm.OnEvent(new ProjectFailedEvent("r1", P("Exit"), 900, "exit 1"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Exit"), 900, "exit 1", Evidence: true));
         vm.OnEvent(new ProjectFailedEvent("r1", P("Slow"), 900, "timeout"));
         vm.OnEvent(new ProjectFailedEvent("r1", P("Stop"), 900, "stopped"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Invoke"), 900, "invoke error: file not found"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Cyc"), 900, "exit 1", Evidence: false)); // yakınsamayan SCC
         vm.OnEvent(new ProjectSucceededEvent("r1", P("Fixed"), 900));
 
         var exit = RowOf(vm, "Exit");
@@ -1436,7 +1496,7 @@ public class RunViewModelStateTests
         Assert.NotNull(exit.FailedAt);
         Assert.True(exit.FailedAt >= before);
         Assert.Equal(VisualStatus.Failed, exit.VisualStatus);
-        foreach (var n in new[] { "Slow", "Stop" })
+        foreach (var n in new[] { "Slow", "Stop", "Invoke", "Cyc" })
         {
             var row = RowOf(vm, n);
             Assert.Equal(ProjectRowState.Failed, row.State);            // koşu hikâyesi: bu koşuda patladı
@@ -1445,7 +1505,7 @@ public class RunViewModelStateTests
             Assert.Equal(VisualStatus.Stale, row.VisualStatus);         // ama kanıt değil: gri
         }
         Assert.Null(RowOf(vm, "Fixed").FailedAt);
-        Assert.Equal(3, vm.Counters.Failed);                             // şerit/konsol koşu hikâyesi değişmez
+        Assert.Equal(5, vm.Counters.Failed);                             // şerit/konsol koşu hikâyesi değişmez
     }
 
     /// <summary>[R-D144] İki soru ayrıdır: DURUM yüzeyleri (⚠ chip'i, <c>warn</c> filtresi) defter üçgenini
