@@ -162,15 +162,15 @@ the running instance first — tray icon → Exit).
    drop one of the roots that contributes it.
 
    **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
-   will be built, red when its last build failed with a compiler error. In a cycle member the graph node's cube is always amber.
-   Before the first Sync nothing is known, so every row sits in the start mode — a four-arc ring in place of
-   the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build is readable from
-   the **decision label** at the right end of each row: `modified` (its own files changed, `modified · local`
-   when one of them is also dirty in `git status`), `affected` (only a dependency changed), `never built`,
-   `failed · 2h` (failed at this source — the tail is how long ago), or `up to date · 2h` — the tail being how
-   long ago it was last built successfully. A project that built successfully against a dependency that was
-   failing, and has not changed since, reads the same `up to date` — a later Build leaves it alone until that
-   dependency is healthy again, and the warning triangle's tooltip names which one.
+   will be built, red when its last build failed with a compiler error. In a cycle member the graph node's cube
+   is always amber. Before the first Sync nothing is known, so every row sits in the start mode — a four-arc
+   ring in place of the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build
+   is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
+   `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed),
+   `never built`, `failed · 2h` (failed at this source — the tail is how long ago), or `up to date · 2h` — the
+   tail being how long ago it was last built successfully. A project that built successfully against a
+   dependency that was failing, and has not changed since, reads the same `up to date` — a later Build leaves it
+   alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 
    The Sync line in the console also says where you stand against the remote:
    `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next
@@ -324,7 +324,9 @@ build icons — green, red, the spinner — and carry a single amber warning tri
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
-answers "why was this one not built?". A member the run actually compiled wears its result colour alone.
+answers "why was this one not built?". A member the run actually compiled wears its result colour alone —
+except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
+because nothing it produced is kept.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
