@@ -746,6 +746,31 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.20.0 §1.4 · §2.4-5] <b>Satır glyph'i çıktı durumunu çizer; — tire satırda YOKTUR.</b>
+    /// Güncel bir proje atlandığında glyph ✓ ve şerit yeşil kalır; kararı sonradan değişen satırın rengi de
+    /// ANINDA değişir (Sync renk verir).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §1.4]</b> Eski hâl: glyph koşu statüsünü (<c>GraphStatus</c>)
+    /// çizerdi — atlanan satır — tire ve gri gösterirdi. Değişme gerekçesi: atlanmak bir durum değildir; tire
+    /// yalnız run-story yüzeylerinde (event stream, konsol başlığı) yaşar.</para></summary>
+    [StaFact]
+    public void A_skipped_row_draws_its_standing_glyph_and_follows_a_new_decision()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
+        { WillBuild = false, WillBuildReason = WillBuildReason.UpToDate };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(VisualStatus.Current, row.Glyph.Status);
+        Assert.Same(row.FindResource("Brush.StatusSuccess"), row.Stripe.Fill);
+
+        vm.WillBuild = true;                                  // yeni karar: derlenecek
+        vm.WillBuildReason = WillBuildReason.SignatureChanged;
+        row.UpdateLayout();
+
+        Assert.Equal(VisualStatus.Stale, row.Glyph.Status);
+        Assert.Same(row.FindResource("Brush.StatusSkippedBorder"), row.Stripe.Fill);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
     /// [design v1.16.0 §2.4 · Task 4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
     ///

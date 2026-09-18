@@ -37,10 +37,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// taşınır (tıpkı <see cref="SolutionName"/> gibi). Cycle üyeleri motor tarafından pre-skip edilir.
     /// <para>[design v1.12.0] Bayrak <see cref="Status"/>'u EZMEZ (v1.11.0 o ezmeyi kaldırdı): statü yalnız
     /// "bu koşuda ne oldu"yu söyler. Üyelik iki yerde görünür — listede tek amber uyarı üçgeni, grafta
-    /// <see cref="Controls.VisualStatus.Cycle"/>'ın amber küpü.</para></summary>
+    /// amber küp (design v1.20.0 §2.3: üyede HER durumda; <see cref="VisualStatus"/>'u değiştirmez,
+    /// <see cref="GraphBinder"/> düğüme ayrı taşır).</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
-    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _inCycle;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Bir run uçuşta mı (<see cref="RunViewModel.IsRunning"/> ||
@@ -124,12 +124,21 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
+    [NotifyPropertyChangedFor(nameof(Standing))]
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool? _willBuild;
 
     /// <summary><see cref="WillBuild"/>'in GEREKÇESİ — will-build noktasının tooltip'i bunu söyler.
     /// <see cref="BuildPreviewEvent"/> ile gelir; bilinmiyorsa null (yüzey jenerik metne düşer).</summary>
-    [ObservableProperty] private WillBuildReason? _willBuildReason;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Standing))]
+    [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    private WillBuildReason? _willBuildReason;
+
+    /// <summary>[design v1.20.0 §2.3] Çıktının durumu — görsel durumun taban katmanı. Önizleme kararından
+    /// (<see cref="WillBuild"/> + <see cref="WillBuildReason"/>) TEK eşleme yerinde türetilir
+    /// (<see cref="Controls.StandingStatuses.From"/>); karar yoksa <see cref="Controls.StandingStatus.Unknown"/>.</summary>
+    public Controls.StandingStatus Standing => Controls.StandingStatuses.From(WillBuild, WillBuildReason);
 
     /// <summary>[Task 4 · koşullu yeniden derleme] Bu KOŞU bu satırı GERÇEKTEN koşullu mu değerlendiriyor —
     /// <see cref="BuildPreviewItem.Conditional"/>'dan AYNEN (<see cref="RunViewModel.OnBuildPreview"/>). <c>true</c>
@@ -273,12 +282,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         _ => Controls.GraphStatus.Discovered,
     };
 
-    /// <summary>[design v1.11.0 §3.1 · §9-3] <b>Başlangıç modu.</b> Sync ve uygulama açılışı hiçbir şeyi
-    /// renklendirmez: hangi işlemin geleceği belli olmadığı için plan gösterilmez. Satırda kesikli sol şerit +
-    /// kesikli nokta, grafta kesikli node border'ı. Bayrak, bir işlem BAŞLADIĞINDA düşer (motorun
-    /// <c>_neutralize</c>'ına karşılık gelir) ve bir sonraki Sync'te geri gelir.</summary>
+    /// <summary>[design v1.11.0 §3.1 · §9-3] Sync ile açılan, bir işlem BAŞLADIĞINDA düşen bayrak (motorun
+    /// <c>_neutralize</c>'ına karşılık gelir).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Bayrak eskiden başlangıç modunu sürerdi (Sync hiçbir
+    /// şeyi renklendirmezdi). Artık görsel durumu ETKİLEMEZ: başlangıç modu yalnız kararın olmadığı
+    /// <see cref="Controls.StandingStatus.Unknown"/>'dır, Sync sonrası satır çıktı durumunun rengindedir.</para></summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _fresh;
 
     /// <summary>[design v1.11.0 §9-4] Bu satır YÜRÜYEN işlemin kapsamında mı — açılış koreografisinin
@@ -288,12 +297,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _marked;
 
-    /// <summary>[design v1.11.0 §9-2] Satırın TEK görsel durumu — şerit, nokta, ad vurgusu ve graf node'u
-    /// hepsi bunu okur. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.</summary>
-    /// <para>[design v1.12.0] Döngü ÜYELİĞİ de eşlemeye akar: motorun bu koşuda bu proje hakkında bir şey
-    /// söylemediği (ya da "atladım" dediği) durumda node gri kalır ama içindeki küp AMBER olur — satırdaki
-    /// uyarı üçgeninin grafik vekili.</para>
-    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Fresh, Marked, InCycle);
+    /// <summary>[design v1.20.0 §2.3] Satırın TEK görsel durumu — şerit, nokta, glyph, ad vurgusu ve graf
+    /// node'u hepsi bunu okur: çıktı durumu (<see cref="Standing"/>) + koşu bindirmesi (<see cref="Status"/>) +
+    /// işaretlilik. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski girdiler <c>Fresh</c> (başlangıç modu) ve
+    /// <see cref="InCycle"/> (amber küp) idi. Başlangıç modu artık kararın yokluğudur (<see cref="Standing"/>),
+    /// döngü küpü ise durumdan bağımsızdır ve düğüme ayrı taşınır.</para></summary>
+    public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Standing, Marked);
 
     /// <summary>[design v1.13.2 §9-4 · §2.4 · §3.2] Açılış koreografisinin satıra düşen payı: hedef opaklık +
     /// o opaklığa giden geçişin süresi. <b>Değer koreografi boyunca <see cref="RowFade.None"/>'da SABİTTİR</b>

@@ -29,7 +29,7 @@ public class QuietGraphNodeTests
         new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
         new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
         new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Queued, VisualStatus.Queued),
-        new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+        new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Unknown),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -177,13 +177,13 @@ public class QuietGraphNodeTests
         Assert.True(fresh.StrokeDashArray.IsFrozen);
         Assert.Empty(view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
 
-        // İkinci bir fresh düğüm AYNI örneği paylaşır; `discovered` ise KESİKLİ DEĞİLDİR.
+        // İkinci bir başlangıç modu düğümü AYNI örneği paylaşır; `stale` (düz gri) ise KESİKLİ DEĞİLDİR.
         view.UpdateStatuses(
         [
-            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Unknown),
             new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
-            new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Discovered),
-            new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Stale),
+            new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Unknown),
         ]);
         Assert.Same(fresh.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
         Assert.Empty(view.NodeVisuals["OSYS.Api"].Square.StrokeDashArray);

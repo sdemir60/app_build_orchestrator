@@ -257,6 +257,11 @@ public partial class ProjectRow : UserControl
                 // çakmaz — satır node'la senkron yanmalıdır. Diğer tüm yollarda renk anında oturur.
                 ApplyStatusVisuals(lighting: true);
                 break;
+            // [design v1.20.0 §2.3] Görsel durumun taban katmanı: önizleme kararı (WillBuild/Reason)
+            // değişince satırın rengi de değişir — Sync artık renk verir. Renk ANINDA oturur (dalga değil).
+            case nameof(ProjectRowViewModel.Standing):
+                ApplyStatusVisuals();
+                break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
                 ApplyDecision();      // ...ve `failed` satırının uzun gerekçesini de o seçer
@@ -333,9 +338,11 @@ public partial class ProjectRow : UserControl
     private void ApplyStatusVisuals(bool lighting = false)
     {
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
+        var visual = _vm?.VisualStatus ?? VisualStatus.Unknown;
 
-        PART_Glyph.Status = status;
+        // [design v1.20.0 §2.4-5] Glyph görsel durumu çizer (çıktı durumu + koşu): atlanan satır — değil,
+        // kendi durumunun glyph'ini gösterir (güncel ✓, bozuk ✗, derlenecek kesikli daire).
+        PART_Glyph.Status = visual;
         // [design v1.11.0 §2.4-5] Glyph TOOLTIP TAŞIMAZ; ekran okuyucunun duyacağı statü metni UIA adına
         // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK).
         System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(status));
@@ -398,7 +405,7 @@ public partial class ProjectRow : UserControl
     /// </summary>
     private void SetStripeFill(bool lighting = false)
     {
-        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
+        var visual = _vm?.VisualStatus ?? VisualStatus.Unknown;
         string key = VisualStatuses.StripeBrushKey(visual);
         // Renk geçişinin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
         Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,

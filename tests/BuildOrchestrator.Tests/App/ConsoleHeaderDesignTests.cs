@@ -96,7 +96,7 @@ public class ConsoleHeaderDesignTests
     {
         var (header, window, _) = Realize(h => ShowProjectLog(h, state: ProjectRowState.Started));
 
-        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
         Assert.Equal(13.0, header.StatusGlyphIcon.Size);
         var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
         Assert.Equal(Visibility.Visible, spinner.Visibility);
@@ -108,7 +108,7 @@ public class ConsoleHeaderDesignTests
     {
         var (header, window, _) = Realize(h => ShowProjectLog(h, state: ProjectRowState.Succeeded));
 
-        Assert.Equal(GraphStatus.Succeeded, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Succeeded, header.StatusGlyphIcon.Status);
         var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
         Assert.Equal(Visibility.Collapsed, spinner.Visibility);
         GC.KeepAlive(window);

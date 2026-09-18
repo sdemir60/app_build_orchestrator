@@ -933,7 +933,8 @@ public partial class GraphView : UserControl
         var state = visual.Model.Visual;
         string border = VisualStatuses.NodeBorderBrushKey(state);
         string background = VisualStatuses.NodeBackgroundBrushKey(state);
-        string iconColor = VisualStatuses.NodeCoreBrushKey(state);
+        // [design v1.20.0 §2.3] Döngü üyesinde küp HER durumda amber — üyelik durumdan bağımsız bir parametredir.
+        string iconColor = VisualStatuses.NodeCoreBrushKey(state, visual.Model.InCycle);
         bool dashed = VisualStatuses.IsStartMode(state);
 
         // [§2.3 · §1.3] Renk geçişi YALNIZ işaretleme dalgası oynarken açıktır — kapsam amber'a 200ms'de

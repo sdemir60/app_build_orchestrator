@@ -19,6 +19,12 @@ namespace BuildOrchestrator.Tests.App;
 /// <para>Beslemenin kendisi (önizleme → graf) hâlâ ölçülüyor: kusur bir zamanlar tam oradaydı (graf yalnız
 /// topoloji değişiminde kurulup bir daha haber almıyordu) ve şimdi işlem başlangıcının grafa ulaştığı
 /// pinleniyor.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> v1.11.0 iddiası ("önizleme grafta HİÇBİR renk üretmez,
+/// küp bir işlem başlayana kadar nötr kalır; başlangıç modu işlem başlayınca düşer") da değişti. Gerekçe
+/// (kullanıcı ölçümü): Sync sonrası neyin güncel olduğu renkten okunmuyordu. Yeni iddia: önizleme kararı her
+/// node'u kendi çıktı durumuyla boyar (güncel yeşil, derlenecek düz gri) ve başlangıç modu KARAR geldiğinde
+/// düşer; işlemin başlaması onu düşürmez.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class GraphWillBuildFeedTests
@@ -30,29 +36,35 @@ public class GraphWillBuildFeedTests
     private static System.Windows.Media.Color CoreColour(MainWindow window, string name) =>
         DsResources.ColorOf(VisualOf(window, name).Icon.Stroke);
 
+    /// <summary>[DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski ad/iddia:
+    /// <c>A_build_preview_after_sync_leaves_every_cube_neutral_because_sync_shows_no_plan</c> — plan bilinse
+    /// bile renk yok, ikisi de başlangıç modunun nötr küpünü taşır. Yeni iddia: Sync kararı renk verir.</summary>
     [StaFact]
-    public void A_build_preview_after_sync_leaves_every_cube_neutral_because_sync_shows_no_plan()
+    public void A_build_preview_after_sync_paints_every_node_with_its_standing()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
         var content = MainWindowHost.Realize(window);
 
         vm.OnEvent(new BuildPreviewEvent([
-            new BuildPreviewItem(MainWindowHost.IdOf("Dirty"), "Dirty", true),
-            new BuildPreviewItem(MainWindowHost.IdOf("Clean"), "Clean", false),
+            new BuildPreviewItem(MainWindowHost.IdOf("Dirty"), "Dirty", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(MainWindowHost.IdOf("Clean"), "Clean", false, Reason: WillBuildReason.UpToDate),
         ]));
         content.UpdateLayout();
 
-        // Plan bilinse bile RENK yok: ikisi de başlangıç modunun nötr küpünü taşır.
-        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Dirty"));
-        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Clean"));
-        Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // kesikli = fresh
+        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Dirty"));      // derlenecek: gri
+        Assert.Equal(DsResources.TokenColor(window, "Brush.StatusSuccessText"), CoreColour(window, "Clean")); // güncel: yeşil
+        Assert.Empty(VisualOf(window, "Dirty").Square.StrokeDashArray); // karar var: başlangıç modu DEĞİL
     }
 
-    /// <summary>Bir işlem başlayınca başlangıç modu DÜŞER ve bu graf'a ULAŞIR: kesikli çerçeve düze döner.
-    /// Besleme kusuru (graf haber almıyor) tam burada ölçülür.</summary>
+    /// <summary>Karar gelince başlangıç modu DÜŞER ve bu graf'a ULAŞIR: kesikli çerçeve düze döner. Besleme
+    /// kusuru (graf haber almıyor) tam burada ölçülür.
+    /// <para>[DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski ad/iddia:
+    /// <c>Starting_an_operation_drops_the_fresh_mode_and_the_graph_hears_about_it</c> — başlangıç modu bir
+    /// İŞLEM başlayınca düşer. Yeni iddia: başlangıç modu kararın yokluğudur; işlemin başlaması (runStarted)
+    /// onu düşürmez, önizleme kararı düşürür.</para></summary>
     [StaFact]
-    public void Starting_an_operation_drops_the_fresh_mode_and_the_graph_hears_about_it()
+    public void A_decision_drops_the_start_mode_and_the_graph_hears_about_it()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
@@ -60,6 +72,12 @@ public class GraphWillBuildFeedTests
         Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // ön-koşul
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        content.UpdateLayout();
+        Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // işlem başladı ama karar yok
+
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(MainWindowHost.IdOf("Dirty"), "Dirty", true, Reason: WillBuildReason.NeverBuilt),
+        ]));
         content.UpdateLayout();
 
         DispatcherPump.PumpUntil(
@@ -102,6 +120,10 @@ public class GraphWillBuildFeedTests
 
         var a = vm.Projects.Single(p => p.Id == idA);
         var b = vm.Projects.Single(p => p.Id == idB);
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski iddia: bayat komşu nötr gri (VisualStatus.Discovered) kalır.
+        // Discovered kalktı; komşu artık kendi çıktı durumunu taşır — iddia "koşu onun rengine DOKUNMAZ"dır.
+        var bBefore = b.VisualStatus;
+        Assert.NotEqual(VisualStatus.Marked, bBefore);
 
         // Dalganın çıktısı burada SİMÜLE edilir: A işaretlendi (koreografinin zamanlamasını test etmiyoruz,
         // yalnız MainWindow'un runStarted/BuildPreviewApplied wiring'ini).
@@ -116,7 +138,7 @@ public class GraphWillBuildFeedTests
         Assert.True(a.Marked);
         Assert.True(a.VisualStatus is VisualStatus.Marked or VisualStatus.Queued); // amber — hangi kanaldan olursa olsun
         // Bayat komşu (B) hiçbir an amber OLMAMALI (kök neden A).
-        Assert.Equal(VisualStatus.Discovered, b.VisualStatus);
+        Assert.Equal(bBefore, b.VisualStatus);
 
         // Motorun planı tek düğüme kesilir: önizleme YALNIZ hedefi taşır — devir burada olur.
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(idA, "A", true)]));
@@ -124,7 +146,7 @@ public class GraphWillBuildFeedTests
         Assert.False(a.Marked); // işaret artık gereksiz — InRunQueue statü kanalını devraldı
         Assert.Equal(GraphStatus.Queued, a.Status);
         Assert.Equal(VisualStatus.Queued, a.VisualStatus); // hâlâ amber — kesintisiz devir
-        Assert.Equal(VisualStatus.Discovered, b.VisualStatus);
+        Assert.Equal(bBefore, b.VisualStatus);
     }
 
     /// <summary>[Task 1 review fix — I-1, Rebuild dalı] AYNI süreklilik Rebuild'de de geçerlidir —

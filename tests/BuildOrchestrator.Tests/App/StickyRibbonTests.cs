@@ -404,7 +404,7 @@ public class StickyRibbonTests
         Assert.Same(ribbon.FindResource("Brush.BorderStrong"), ribbon.OpPill.BorderBrush);
         Assert.Equal(Visibility.Collapsed, ribbon.OpSpinner.Visibility);
         Assert.Equal(Visibility.Visible, ribbon.OpGlyph.Visibility);      // sonuç glyph'i pill'in içinde
-        Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Succeeded, ribbon.OpGlyph.Status);
+        Assert.Equal(BuildOrchestrator.App.Controls.VisualStatus.Succeeded, ribbon.OpGlyph.Status);
         GC.KeepAlive(window);
     }
 

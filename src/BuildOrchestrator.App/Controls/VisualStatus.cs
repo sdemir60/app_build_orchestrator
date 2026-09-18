@@ -1,69 +1,83 @@
-﻿namespace BuildOrchestrator.App.Controls;
+namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [design v1.11.0 §9-2 · §2.3 · §2.4] <b>Görsel durum = tek statü kanalı.</b> Satırın sol şeridi, adın
-/// solundaki nokta, statü glyph'i, graf node'unun border'ı ve içindeki küp AYNI durumdan beslenir; ayrı bir
-/// "plan" (will-build) ya da "cycle" kanalı YOKTUR.
+/// [design v1.20.0 §2.3 · §2.4 · §5] <b>Görsel durum = tek statü kanalı: çıktının durumu + koşu
+/// bindirmesi.</b> Satırın sol şeridi, adın solundaki nokta, statü glyph'i ve graf node'unun border'ı AYNI
+/// durumdan beslenir; ayrı bir "plan" (will-build) ya da "cycle" renk kanalı YOKTUR. Taban katman projenin
+/// çıktı durumudur (<see cref="StandingStatus"/>); koşu (kuyruk, derleme, sonuç) ve işaretleme dalgası onun
+/// üstüne biner.
 ///
-/// <para><b>[DEĞİŞEN KURAL — v1.7.0'dan]</b> Önceki model ÜÇ ortogonal kanal taşıyordu: A "bu koşuda ne oldu"
-/// (statü), B "sıradaki Build buna dokunacak mı" (amber/gri nokta + node çekirdeği), C "kodda döngü var mı"
-/// (turuncu). Ölçülen bedel: aynı yüzeyde üç anlam yarışıyordu ve turuncu ile amber yan yana ayırt
-/// edilemiyordu. v1.11.0 ilkesi: <b>renk yalnız son işlemin hikâyesini anlatır.</b> B kanalı satırın çift SHA
-/// metnine (<c>a3f81c2 → b7e91d4</c>), C kanalı tek amber uyarı üçgenine indi.</para>
+/// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> v1.11.0 ilkesi "renk yalnız son işlemin hikâyesini
+/// anlatır" idi: Sync hiçbir şeyi renklendirmez (<c>Fresh</c>), bir işlem başlayınca kapsam dışı her satır
+/// nötr griye (<c>Discovered</c>) düşerdi. Ölçülen bedel (kullanıcı): Sync sonrası neyin güncel olduğu
+/// renkten okunmuyordu, toplam görünmüyordu. Yeni ilke: renk çıktının KÜMÜLATİF durumudur — sonuç bir sonraki
+/// koşuya kadar durumda yazılı kalır. <c>Fresh</c> → <see cref="Unknown"/> (yalnız Sync yokken),
+/// <c>Discovered</c> kalktı (yerini çıktı durumu aldı), <c>Cycle</c>/<c>CycleSkipped</c> kalktı (döngü küpü
+/// artık durumdan bağımsız bir parametredir, bkz. <see cref="VisualStatuses.NodeCoreBrushKey"/>).</para>
 /// </summary>
 public enum VisualStatus
 {
-    /// <summary>Başlangıç modu — Sync sonrası ve uygulama açılışı. Hiçbir şey renklendirilmez: hangi işlemin
-    /// geleceği belli değildir, bu yüzden plan da gösterilmez. Kesikli şerit + kesikli nokta + kesikli node
-    /// border.</summary>
-    Fresh,
-    /// <summary>Nötr gri — bir işlem başladı (<c>_neutralize</c>) ama bu proje o işlemin kapsamında değil.</summary>
-    Discovered,
-    /// <summary>[design v1.12.0 §2.3] <b>Bu işlemde derlenmeyen döngü üyesi:</b> node gri, içindeki küp AMBER.
-    /// Satırdaki amber uyarı üçgeninin grafik vekilidir — işlemin nötr anında yanar, koşuda ve finalde durur,
-    /// bir sonraki Sync'te (başlangıç modu) ya da üyeyi gerçekten derleyen bir işlemde düşer.
-    /// <para>Liste tarafında karşılığı yoktur: satırın şeridi ve noktası <see cref="Discovered"/> ile AYNI
-    /// nötr gridir (döngü orada zaten tek üçgenle anlatılır).</para></summary>
-    Cycle,
-    /// <summary>[design v1.12.0 §2.3] Atlanmış döngü üyesi: çerçeve/zemin <see cref="Skipped"/>'ın, küp yine
-    /// AMBER.</summary>
-    CycleSkipped,
+    /// <summary>Bilinmiyor — başlangıç modu; karar yok (hiç Sync yapılmadı). Kesikli node border, satırda
+    /// 4 yaylı halka nokta.</summary>
+    Unknown,
+    /// <summary>Güncel — yeşil.</summary>
+    Current,
+    /// <summary>Derlenecek — nötr gri (bugünkü düz gri; başlangıç modu DEĞİL).</summary>
+    Stale,
+    /// <summary>Kırmızı — kanıtlı bozuk çıktı ile koşunun <c>failed</c> sonucu AYNI üyedir (aynı fırçalar).</summary>
+    Failed,
     /// <summary>Bu işlemin KAPSAMI — açılış koreografisinin dalgasında amber'a yanan küme (§9-4).</summary>
     Marked,
     Queued,
     Building,
+    /// <summary>Koşu içinde "az önce derlendi" — <see cref="Current"/> ile aynı fırçalar, ayrı tutulur.</summary>
     Succeeded,
-    Failed,
+    /// <summary>[design v1.20.0 §1.4 · §5] <b>YALNIZ run-story yüzeyleri</b> için: "bu koşu onu derlemedi"
+    /// (event stream'in atlama satırı, konsol başlığının koşu sonucu). Durum yüzeyleri (satır, node, sayaç)
+    /// bunu HİÇ almaz — <see cref="VisualStatuses.For"/> atlanan projeyi kendi çıktı durumuna düşürür.</summary>
     Skipped,
 }
 
 /// <summary>
-/// [design v1.11.0 §9-2] Görsel durumun TEK eşleme yeri: hangi durum hangi token'ı boyar. Satır (<c>ProjectRow</c>)
-/// ve graf (<c>GraphView</c>) AYNI tablodan okur — iki yüzey kendi eşlemesini yazsaydı sessizce ayrışırlardı
-/// (kopya YASAK, CLAUDE.md).
+/// [design v1.11.0 §9-2 · v1.20.0 §2.3] Görsel durumun TEK eşleme yeri: hangi durum hangi token'ı boyar. Satır
+/// (<c>ProjectRow</c>) ve graf (<c>GraphView</c>) AYNI tablodan okur — iki yüzey kendi eşlemesini yazsaydı
+/// sessizce ayrışırlardı (kopya YASAK, CLAUDE.md).
 /// </summary>
 public static class VisualStatuses
 {
-    /// <summary>Statü + başlangıç modu + işaretlilik → görsel durum (prototip <c>vstate()</c>, BuildApp.jsx:293).
-    /// <para>Sıra ÖNEMLİ: motor bu proje hakkında bir şey söylediyse (queued/building/sonuç) o kazanır;
-    /// söylemediyse (discovered) önce işaretlilik, sonra başlangıç modu okunur.</para></summary>
-    /// <param name="inCycle">[design v1.12.0] Proje kalıcı bir bağımlılık döngüsünün üyesi mi. Bu bir STATÜ
-    /// DEĞİLDİR (yapısal bir özelliktir) ve statüyü asla ezmez: yalnız motorun bu proje hakkında bir şey
-    /// SÖYLEMEDİĞİ (ya da "atladım" dediği) durumda görünür — orada da renk değil, tek başına KÜP amber olur.</param>
-    public static VisualStatus For(GraphStatus status, bool fresh, bool marked, bool inCycle = false) => status switch
+    /// <summary>[design v1.20.0 §2.3] DURUM yüzeyleri (satır, node) için: koşu statüsü + çıktı durumu +
+    /// işaretlilik → görsel durum.
+    /// <para>Sıra ÖNEMLİ: motor bu proje hakkında bir şey söylediyse (queued/building/sonuç) o kazanır.
+    /// <b>Atlanmak bir renk değildir</b>: <c>Skipped</c> çıktı durumuna düşer. Motor bir şey söylemediyse
+    /// (discovered) önce işaretlilik, sonra çıktı durumu okunur. Sonuç <see cref="VisualStatus.Skipped"/>
+    /// ASLA değildir.</para></summary>
+    public static VisualStatus For(GraphStatus status, StandingStatus standing, bool marked) => status switch
+    {
+        GraphStatus.Skipped => Of(standing),
+        GraphStatus.Discovered or GraphStatus.Cycle => marked ? VisualStatus.Marked : Of(standing),
+        _ => OfRun(status),
+    };
+
+    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyleri (konsol başlığının koşu sonucu) için koşu statüsü →
+    /// görsel durum — <see cref="GraphStatus"/>'tan <see cref="VisualStatus"/>'a TEK eşleme yeri (kopya
+    /// YASAK; <see cref="For"/> da koşu dallarını buradan okur). Burada <c>Skipped</c> kendisidir (—);
+    /// motorun hakkında konuşmadığı proje <see cref="VisualStatus.Unknown"/>'dır.</summary>
+    public static VisualStatus OfRun(GraphStatus status) => status switch
     {
         GraphStatus.Queued => VisualStatus.Queued,
         GraphStatus.Building => VisualStatus.Building,
         GraphStatus.Succeeded => VisualStatus.Succeeded,
         GraphStatus.Failed => VisualStatus.Failed,
-        // Atlanmış üye: "derlenmedi" bilgisi çerçevede, "çünkü döngüde" bilgisi küpte.
-        GraphStatus.Skipped => inCycle ? VisualStatus.CycleSkipped : VisualStatus.Skipped,
-        // Sıra ÖNEMLİ: dalga (marked) her şeyi ezer — kapsamdaki bir üye TAM amberdir, "gri node + amber küp"
-        // değil. Başlangıç modu döngü üyeliğini de ezer: Sync hiçbir şeyi renklendirmez (§2.3).
-        _ => marked ? VisualStatus.Marked
-            : fresh ? VisualStatus.Fresh
-            : inCycle ? VisualStatus.Cycle
-            : VisualStatus.Discovered,
+        GraphStatus.Skipped => VisualStatus.Skipped,
+        _ => VisualStatus.Unknown,
+    };
+
+    private static VisualStatus Of(StandingStatus standing) => standing switch
+    {
+        StandingStatus.Current => VisualStatus.Current,
+        StandingStatus.Stale => VisualStatus.Stale,
+        StandingStatus.Failed => VisualStatus.Failed,
+        _ => VisualStatus.Unknown,
     };
 
     /// <summary>Satırın sol şeridi VE adın solundaki nokta (ikisi AYNI rengi taşır — §2.4-2).
@@ -73,10 +87,10 @@ public static class VisualStatuses
     public static string StripeBrushKey(VisualStatus state) => state switch
     {
         VisualStatus.Marked or VisualStatus.Queued or VisualStatus.Building => "Brush.Amber",
-        VisualStatus.Succeeded => "Brush.StatusSuccess",
+        VisualStatus.Current or VisualStatus.Succeeded => "Brush.StatusSuccess",
         VisualStatus.Failed => "Brush.StatusFail",
-        // fresh · discovered · skipped · cycle · cycskip AYNI gri. Döngü üyeliği LİSTEDE renk taşımaz:
-        // orada tek amber uyarı üçgeni konuşur (§2.4), amber küp yalnız grafın dilidir.
+        // unknown · stale AYNI gri. Döngü üyeliği LİSTEDE renk taşımaz: orada tek amber uyarı üçgeni
+        // konuşur (§2.4), amber küp yalnız grafın dilidir.
         _ => "Brush.StatusSkippedBorder",
     };
 
@@ -84,47 +98,45 @@ public static class VisualStatuses
     public static string NodeBorderBrushKey(VisualStatus state) => state switch
     {
         VisualStatus.Marked or VisualStatus.Queued or VisualStatus.Building => "Brush.Amber",
-        VisualStatus.Succeeded => "Brush.StatusSuccess",
+        VisualStatus.Current or VisualStatus.Succeeded => "Brush.StatusSuccess",
         VisualStatus.Failed => "Brush.StatusFail",
-        VisualStatus.Skipped or VisualStatus.CycleSkipped => "Brush.StatusSkippedBorder",
-        _ => "Brush.BorderStrong", // fresh · discovered · cycle
+        _ => "Brush.BorderStrong", // unknown · stale
     };
 
     /// <summary>Graf node'unun zemini (prototip <c>GTONE[].bg</c>).</summary>
     public static string NodeBackgroundBrushKey(VisualStatus state) => state switch
     {
         VisualStatus.Marked or VisualStatus.Queued or VisualStatus.Building => "Brush.AmberSoft",
-        VisualStatus.Succeeded => "Brush.StatusSuccessSoft",
+        VisualStatus.Current or VisualStatus.Succeeded => "Brush.StatusSuccessSoft",
         VisualStatus.Failed => "Brush.StatusFailSoft",
-        VisualStatus.Skipped or VisualStatus.CycleSkipped => "Brush.StatusSkippedSoft",
-        _ => "Brush.SurfaceRaised", // fresh · discovered · cycle
+        _ => "Brush.SurfaceRaised", // unknown · stale
     };
 
-    /// <summary>Graf node'unun İÇİNDEKİ küp (prototip <c>GCORE</c>) — border ile AYNI durumdan beslenir; ayrı
-    /// bir plan/cycle KANALI yoktur.
-    /// <para><b>[design v1.12.0] TEK istisna:</b> bu işlemde derlenmeyen döngü üyesinde küp AMBER, çerçeve
-    /// grisini korur (<see cref="VisualStatus.Cycle"/> / <see cref="VisualStatus.CycleSkipped"/>). Bu, geri
-    /// gelen bir renk kanalı değildir: kullanılan ton satırdaki uyarı üçgeninin kendi amberidir ve başka
-    /// hiçbir durumda çerçeve ile küp ayrışmaz.</para></summary>
-    public static string NodeCoreBrushKey(VisualStatus state) => state switch
+    /// <summary>Graf node'unun İÇİNDEKİ küp (prototip <c>GCORE</c>) — border ile AYNI durumdan beslenir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Döngü üyesinde küp <b>her durumda</b> AMBER'dır:
+    /// çerçeve kendi durumunu (bilinmiyor/derlenecek/derleniyor/sonuç) taşır, küp döngü üyeliğini sürekli
+    /// işaretler. Eski kural (v1.12.0): amber küp yalnız "bu işlemde derlenmeyen" üyede yanardı
+    /// (<c>Cycle</c>/<c>CycleSkipped</c> durumları), başlangıç modu ve üyeyi gerçekten derleyen işlem onu
+    /// söndürürdü. Değişme gerekçesi: üyelik yapısaldır, bir koşunun sonucu değildir — Sync de, Resolve ile
+    /// derleme de onu değiştirmez; küp satırdaki uyarı üçgeninin grafik vekilidir.</para></summary>
+    public static string NodeCoreBrushKey(VisualStatus state, bool inCycle) => inCycle ? "Brush.AmberText" : state switch
     {
-        VisualStatus.Marked or VisualStatus.Queued or VisualStatus.Building
-            or VisualStatus.Cycle or VisualStatus.CycleSkipped => "Brush.AmberText",
-        VisualStatus.Succeeded => "Brush.StatusSuccessText",
+        VisualStatus.Marked or VisualStatus.Queued or VisualStatus.Building => "Brush.AmberText",
+        VisualStatus.Current or VisualStatus.Succeeded => "Brush.StatusSuccessText",
         VisualStatus.Failed => "Brush.StatusFailText",
-        VisualStatus.Skipped => "Brush.StatusSkippedText",
-        _ => "Brush.TextFaint", // fresh · discovered
+        _ => "Brush.TextFaint", // unknown · stale
     };
 
-    /// <summary>Bu durum <b>başlangıç modu</b> mu — Sync sonrası ve açılış hâli. Üç yüzey onu farklı çizer:
+    /// <summary>Bu durum <b>başlangıç modu</b> mu — karar yok, hiç Sync yapılmadı. Üç yüzey onu farklı çizer:
     /// graf node'unun çerçevesi KESİKLİDİR, satırın şeridi DÜZ VE TAM OPAKTIR (v1.13.2) ve statü noktası
     /// dolu daire yerine dört yaylı bir HALKA gösterir (<see cref="StartMode"/>).
     /// <para><b>[DEĞİŞEN KURAL — v1.12.0]</b> Yüklem eskiden <c>IsDashed</c> adındaydı ve üç yüzeyin de
     /// kesikli çizildiğini söylüyordu. Kesiklilik artık YALNIZ node'da kaldı (satırda tırtık yapıyordu), bu
     /// yüzden yüklem taşıdığı bilgiyle adlandırıldı: "başlangıç modu mu", "kesikli mi" değil.</para>
-    /// <para><c>discovered</c> başlangıç modu DEĞİLDİR — o, bir işlemin başladığını ama bu projenin kapsamda
-    /// olmadığını söyler ve düz, tam opak gridir.</para></summary>
-    public static bool IsStartMode(VisualStatus state) => state == VisualStatus.Fresh;
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3 · §5]</b> Başlangıç modu eskiden Sync sonrası da
+    /// sürüyordu (Sync hiçbir şeyi renklendirmezdi). Artık yalnız <see cref="VisualStatus.Unknown"/>'dır —
+    /// Sync sonrası her satır kendi çıktı durumundadır; <c>stale</c> düz, tam opak gridir.</para></summary>
+    public static bool IsStartMode(VisualStatus state) => state == VisualStatus.Unknown;
 
     /// <summary>[§2.4-3] Adın vurgusu: bu işlemde İŞİ OLAN satır <c>text-primary</c>, geri kalanı
     /// <c>text-secondary</c> (prototip <c>emph</c>, BuildApp.jsx:636).</summary>

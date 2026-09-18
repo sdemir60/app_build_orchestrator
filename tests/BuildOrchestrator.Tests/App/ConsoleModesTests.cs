@@ -53,7 +53,7 @@ public class ConsoleModesTests
         Assert.Equal(Visibility.Visible, header.ProjectLogGroup.Visibility);
         Assert.Equal("OSYS.Sales.Core", header.ProjectNameText.Text);
         Assert.Equal("Failed", header.StatusNameText.Text);
-        Assert.Equal(GraphStatus.Failed, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Failed, header.StatusGlyphIcon.Status);
         Assert.Equal(Visibility.Visible, header.DepIssueBadge.Visibility);
         Assert.Equal("Dependency issue: Sales.Data, Sales.Contracts — last successful output referenced",
             header.DepIssueTooltip.Content);
@@ -74,7 +74,7 @@ public class ConsoleModesTests
         Assert.Equal(Visibility.Collapsed, header.DepIssueBadge.Visibility);
         Assert.Equal(Visibility.Visible, header.CycleBadge.Visibility);
         Assert.Equal(RowWarning.InCycle, header.CycleTooltip.Content);
-        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
+        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status); // Started → Building
     }
 
     [StaFact]

@@ -37,18 +37,26 @@ public class GraphPlanCoreTests
     private static Color Token(GraphView view, string key) =>
         ((SolidColorBrush)view.FindResource(key)).Color;
 
-    /// <summary>Sync'ten sonra HİÇBİR ŞEY renklenmez: herkes başlangıç modundadır (kesikli çerçeve, nötr küp).
-    /// Eski iddia "derlenecek amber, güncel gri" idi — o plan kanalı kalktı.</summary>
+    /// <summary>[design v1.20.0 §2.3] Sync'ten sonra her node kendi çıktı durumundadır: güncel yeşil, derlenecek
+    /// düz gri; kesikli çerçeve yalnız kararı olmayan (hiç Sync görmemiş) node'dadır.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski ad/iddia:
+    /// <c>After_sync_nothing_is_coloured_because_everyone_is_in_the_fresh_start_mode</c> — Sync'ten sonra HİÇBİR
+    /// ŞEY renklenmez, herkes kesikli başlangıç modundadır. Değişme gerekçesi (kullanıcı ölçümü): Sync sonrası
+    /// neyin güncel olduğu renkten okunmuyordu. Yeni kural: Sync renk verir.</para></summary>
     [StaFact]
-    public void After_sync_nothing_is_coloured_because_everyone_is_in_the_fresh_start_mode()
+    public void After_sync_every_node_wears_its_standing()
     {
         var view = Realized(
-            new("dirty", "dirty", 0, GraphStatus.Discovered, VisualStatus.Fresh),
-            new("clean", "clean", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+            new("dirty", "dirty", 0, GraphStatus.Discovered, VisualStatus.Stale),
+            new("clean", "clean", 0, GraphStatus.Discovered, VisualStatus.Current),
+            new("never", "never", 0, GraphStatus.Discovered, VisualStatus.Unknown));
 
         Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "dirty"));
-        Assert.Equal(Token(view, "Brush.TextFaint"), CoreColour(view, "clean"));
-        Assert.NotEmpty(view.NodeVisuals["dirty"].Square.StrokeDashArray); // başlangıç modu KESİKLİ
+        Assert.Equal(Token(view, "Brush.BorderStrong"), BorderColour(view, "dirty"));
+        Assert.Empty(view.NodeVisuals["dirty"].Square.StrokeDashArray);    // derlenecek DÜZ gri
+        Assert.Equal(Token(view, "Brush.StatusSuccessText"), CoreColour(view, "clean"));
+        Assert.Equal(Token(view, "Brush.StatusSuccess"), BorderColour(view, "clean"));
+        Assert.NotEmpty(view.NodeVisuals["never"].Square.StrokeDashArray); // karar yok: başlangıç modu KESİKLİ
     }
 
     /// <summary>Çekirdek ve çerçeve HER durumda aynı aileden boyanır — "tek statü kanalı" iddiasının kendisi.</summary>
@@ -58,12 +66,16 @@ public class GraphPlanCoreTests
     [InlineData(VisualStatus.Building, "Brush.Amber", "Brush.AmberText")]
     [InlineData(VisualStatus.Succeeded, "Brush.StatusSuccess", "Brush.StatusSuccessText")]
     [InlineData(VisualStatus.Failed, "Brush.StatusFail", "Brush.StatusFailText")]
-    [InlineData(VisualStatus.Skipped, "Brush.StatusSkippedBorder", "Brush.StatusSkippedText")]
-    [InlineData(VisualStatus.Discovered, "Brush.BorderStrong", "Brush.TextFaint")]
+    // [DEĞİŞEN KURAL — design v1.20.0 §2.3 · §1.4] Eski satırlar: Skipped → StatusSkippedBorder/Text ve
+    // Discovered → BorderStrong/TextFaint. Değişme gerekçesi: atlanmak artık bir node rengi değildir (— yalnız
+    // run-story'de; node kendi çıktı durumunu taşır) ve Discovered'ın yerini çıktı durumu aldı. Yeni satırlar:
+    // güncel (yeşil) ve derlenecek (bugünkü nötr gri).
+    [InlineData(VisualStatus.Current, "Brush.StatusSuccess", "Brush.StatusSuccessText")]
+    [InlineData(VisualStatus.Stale, "Brush.BorderStrong", "Brush.TextFaint")]
     public void The_border_and_the_core_are_painted_from_one_channel(
         VisualStatus state, string borderKey, string coreKey)
     {
-        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Unknown));
 
         view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, state)]);
 
@@ -71,15 +83,18 @@ public class GraphPlanCoreTests
         Assert.Equal(Token(view, coreKey), CoreColour(view, "n"));
     }
 
-    /// <summary>[design v1.11.0 §2.3] Kesikli çerçeve YALNIZ başlangıç modundadır; <c>discovered</c> DÜZ gridir
-    /// ("bir işlem başladı ama bu proje kapsamda değil").</summary>
+    /// <summary>[design v1.20.0 §2.3] Kesikli çerçeve YALNIZ başlangıç modundadır (karar yok); derlenecek
+    /// (<c>stale</c>) DÜZ gridir.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski ad: <c>Only_the_fresh_start_mode_is_dashed</c>;
+    /// düz gri <c>discovered</c> ("işlem başladı, kapsam dışı") idi. <c>Discovered</c> kalktı, düz gri artık
+    /// <c>stale</c>'dir; iddianın kendisi (yalnız başlangıç modu kesikli) aynıdır.</para></summary>
     [StaFact]
-    public void Only_the_fresh_start_mode_is_dashed()
+    public void Only_the_unknown_start_mode_is_dashed()
     {
-        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Unknown));
         Assert.NotEmpty(view.NodeVisuals["n"].Square.StrokeDashArray);
 
-        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, VisualStatus.Discovered)]);
+        view.UpdateStatuses([new("n", "n", 0, GraphStatus.Discovered, VisualStatus.Stale)]);
         DispatcherPump.PumpUntil(
             () => view.NodeVisuals["n"].Square.StrokeDashArray.Count == 0, TimeSpan.FromSeconds(3));
 
@@ -97,7 +112,7 @@ public class GraphPlanCoreTests
     [StaFact]
     public void Entering_a_run_dims_before_it_repaints()
     {
-        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Fresh));
+        var view = Realized(new GraphNode("n", "n", 0, GraphStatus.Discovered, VisualStatus.Unknown));
         var dashedAtRest = view.NodeVisuals["n"].Square.StrokeDashArray;
 
         view.RunPhase = GraphRunPhase.Running;                                              // basış

@@ -123,10 +123,13 @@ public partial class ConsoleHeader : UserControl
     /// sınıfı silindi.</para></summary>
     private void ApplyStatus(ProjectRowViewModel row)
     {
-        StatusGlyphIcon.Status = row.Status;
+        // [design v1.20.0 §1.4] Başlık bir RUN-STORY yüzeyidir: koşu sonucunu gösterir (atlanan proje — ile).
+        // Koşu statüsü → görsel durum eşlemesi TEK yerdedir (VisualStatuses.OfRun) — burada kurulmaz.
+        var glyph = VisualStatuses.OfRun(row.Status);
+        StatusGlyphIcon.Status = glyph;
 
         StatusNameText.Text = StatusGlyph.LabelFor(row.Status);
-        StatusNameText.SetResourceReference(ForegroundProperty, StatusGlyph.BrushKeyFor(row.Status));
+        StatusNameText.SetResourceReference(ForegroundProperty, StatusGlyph.BrushKeyFor(glyph));
 
         var depIssues = row.DepIssues;
         bool hasDepIssue = depIssues is { Count: > 0 };

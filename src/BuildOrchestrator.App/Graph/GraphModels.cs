@@ -36,8 +36,14 @@ namespace BuildOrchestrator.App.Graph;
 /// seçim, hover, filtre ve işaretleme kümelerinin tamamı bunu anahtarlar.</param>
 /// <param name="Name">Görünen ad (<c>AssemblyName</c>) — BENZERSİZ DEĞİLDİR, yalnız etiket olarak kullanılır.</param>
 /// <param name="Visual">Tek renk kanalı — <see cref="VisualStatuses"/> tablosuyla boyanır.</param>
+/// <param name="InCycle">[design v1.20.0 §2.3] Düğüm kalıcı bir bağımlılık döngüsünün üyesi mi. Bir RENK
+/// KANALI değildir: yalnız küpü boyar (<see cref="VisualStatuses.NodeCoreBrushKey"/>) — üyede küp her durumda
+/// amber'dır, çerçeve ve zemin <see cref="Visual"/>'ı taşır. Satırdaki uyarı üçgeninin grafik vekilidir.
+/// <para><b>[DEĞİŞEN KURAL]</b> v1.12.0'da üyelik görsel duruma gömülüydü (<c>Cycle</c>/<c>CycleSkipped</c>)
+/// ve yalnız "bu işlemde derlenmeyen" üyede görünürdü; v1.20.0'da küp durumdan bağımsızdır, bu yüzden alan
+/// kayda geri döndü.</para></param>
 public sealed record GraphNode(string Id, string Name, int Layer, GraphStatus Status,
-    VisualStatus Visual = VisualStatus.Discovered)
+    VisualStatus Visual = VisualStatus.Unknown, bool InCycle = false)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
     /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i

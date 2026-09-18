@@ -375,9 +375,9 @@ public partial class ActionBarTests
         Assert.IsType<Ellipse>(buildingIcon.Children[0]);
         Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
 
-        Assert.Equal(GraphStatus.Succeeded, Assert.IsType<StatusGlyph>(ChipIcon(bar.SucceededChip)).Status);
-        Assert.Equal(GraphStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
-        Assert.Equal(GraphStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
+        Assert.Equal(VisualStatus.Succeeded, Assert.IsType<StatusGlyph>(ChipIcon(bar.SucceededChip)).Status);
+        Assert.Equal(VisualStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
+        Assert.Equal(VisualStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
 
         var warnCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.WarnChip)).Child);
         var warnPath = Assert.IsType<System.Windows.Shapes.Path>(warnCanvas.Children[0]);

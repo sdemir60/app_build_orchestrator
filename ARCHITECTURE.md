@@ -1896,7 +1896,7 @@ glides back to the fitted view and the console returns to the run log; the openi
 that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
 console (`build requested — X (single project)`) and in the stream's opening line. Colour follows the same cut:
 the engine's own preview for this run names only the target, so only the target's row turns queued-amber —
-every other row, however dirty a stale Sync left it, reads plain grey for the run's whole life (§14.3). While
+every other row, however dirty a stale Sync left it, keeps its standing colour for the run's whole life (§14.3). While
 the run is in flight the target row's play button turns into a red **Stop** that stays visible without hover and
 drives the same stop command as the action bar; every other row's play button is disabled and its tooltip says
 why (`Build in progress — wait or stop it first`), and the menu's *Build* and *Rebuild* go the same way. *Clean*
@@ -2116,8 +2116,8 @@ carried by the button's enabled state and its tooltip.
 
 *Resolve cycles* drives the row list and the graph too, and its own scope (§8.1: members plus their transitive
 upstream) splits the plan-coloured rows in two. The queue colour — the amber a row wears while it waits its
-turn — lights only the cycle members: a stale upstream dependency this run also pulls in and compiles reads
-plain grey until its own `projectStarted` arrives, exactly the "queued reads only the running operation's own
+turn — lights only the cycle members: a stale upstream dependency this run also pulls in and compiles keeps
+its standing colour until its own `projectStarted` arrives, exactly the "queued reads only the running operation's own
 plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row genuinely outside
 the scope never turns colour at all, and it never turns `Skipped` either: the engine's own pre-skip for it
 (`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
@@ -2897,20 +2897,22 @@ either: the same collision makes the DLL ambiguous in the producer map, which dr
 
 A node is a square of `pitch × 0.6`, clamped to 8–24 px, with a 4 px radius, a 1.5 px border and a Lucide `box` glyph at 52 % of
 its edge; nodes in the **start mode** get a dashed frame, drawn as a `Rectangle` because a WPF `Border` cannot
-be dashed. `discovered` is plain grey — the dash belongs to the start mode alone, so "nothing has happened
-yet" and "something is happening but not to this project" stay distinguishable.
+be dashed. A project that is `stale` (to build) is plain grey — the dash belongs to the start mode alone, so
+"nothing is known yet" and "known, and waiting to be built" stay distinguishable.
 Under the status square sits an opaque base in the panel's own colour: the status fill is only 12 % alpha, so
 without it a selection edge passing behind a node would show straight through it.
 
-**One colour channel.** The node's border, its fill and the cube inside it are all painted from the same
-visual status (§14.3) — there is no separate "plan" core. The single exception is a cycle member the current
-operation does not build: its frame stays grey and the **cube turns amber**, the graphical proxy of the list
-row's warning triangle. Earlier versions carried membership here as its own colour, first as an orange square
-and then as a persistent corner badge; both were part of a three-channel model — result, plan, structure — that
-put three meanings on the same 8–24 px surface and made amber and orange compete. The rule that replaced them
-still holds, because the cube borrows the warning's amber rather than opening a channel of its own:
-**colour tells the story of the last operation, and nothing else.** Without it a finished run could not answer
-"why was this one not built?" from the graph at all.
+**One colour channel.** The node's border and its fill are painted from the same visual status as the list
+row (§14.3) — the state of the project's output, with the running operation laid over it — and there is no
+separate "plan" core. The cube inside follows the frame, with a single exception: in a **cycle member the cube
+is always amber**, whatever the frame says — unknown, to build, building, a result. Membership is structural,
+not the outcome of a run: a Sync does not end it, and neither does Resolve cycles compiling the member, so the
+cube does not either; it is the graphical proxy of the list row's warning triangle. It reaches the node as its
+own field (`GraphNode.InCycle`) rather than as a status, because it never changes what the frame reports.
+Earlier versions carried membership here as its own colour, first as an orange square and then as a persistent
+corner badge; both were part of a three-channel model — result, plan, structure — that put three meanings on
+the same 8–24 px surface and made amber and orange compete. The cube borrows the warning's amber rather than
+opening a channel of its own, so the frame still tells one story: the state of the output.
 
 The node's cell is deliberately **larger than the node** — by whichever overhangs further, the selection ring
 or the bead orbit. WPF clips a child to its arrange slot, and everything that reaches outside the square lives
@@ -3379,20 +3381,36 @@ meets 4.5:1.
 
 | Status | Glyph | Text |
 |---|---|---|
-| Discovered | dashed circle | Discovered |
+| Unknown · to build · marked | dashed circle | Discovered |
+| Up to date | ✓ in a ring | Discovered |
 | Queued | clock | Queued |
 | Building | rotating dashed ring | Building |
 | Succeeded | ✓ in a ring | Succeeded |
-| Failed | ✗ in a ring | Failed |
-| Skipped | — in a ring | Skipped |
+| Failed (a run result, or proven by the ledger) | ✗ in a ring | Failed |
+| Skipped — run-story surfaces only | — in a ring | Skipped |
+
+The glyph is drawn from the visual status; the text — the glyph's screen-reader name and the console
+header's status word — names what the engine last said about the project in this run (`GraphStatus`), which
+is why an up-to-date row the run has not touched reads `Discovered`. The `—` is a run-story mark: it appears on
+the event stream's skip line and in the console header's run result, never on a list row, a graph node or a
+counter — a skipped project keeps the colour and glyph of its standing.
 
 **One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
-therefore tells exactly one story: *what the last operation did*. The states are `fresh` (the start mode),
-`discovered` (plain neutral grey), `marked` (this operation's scope), `queued`, `building`, the three results,
-and the two cycle states below. `queued` is amber, not grey: being in the queue is not a result, it is the
-scope of the operation that is running, and the amber the marking wave lit must not go out when the run
-begins.
+therefore tells exactly one story: *the state of the project's output*. It is built in two layers. The base is
+the **standing** (`StandingStatus`), read from the preview's decision alone — `unknown` when there is no
+decision, `current` (green) for `UpToDate` and for a project waiting on a dependency (its own output is sound;
+the waiting is the triangle's to say), `stale` (plain grey) for a changed, never-built or dependency-tainted
+project, and `failed` (red) for `LastFailed`, which the engine reports only when the ledger can prove the
+failure (§7.5). Over it lies the **run**: `marked`
+(this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
+apart so the run can still say "just built") and `failed`. Being skipped is not a colour — a skipped project
+falls back to its standing. A result is written into the standing as the project finishes (the next preview
+confirms it) and stays there until a later run changes it, so colour is cumulative rather than the story of
+the last operation alone. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
+amber the marking wave lit must not go out when the run begins. The mapping lives in one place
+(`VisualStatuses.For`) and every surface reads it; the run-story surfaces map the engine's status on their own
+through `VisualStatuses.OfRun`, which is the only mapping that still yields `skipped`.
 
 **Queued reads only the running operation's own plan.** A row is not amber merely because it is dirty
 (`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
@@ -3400,8 +3418,8 @@ which run is in flight. The queue flag is cleared in exactly two places — at t
 run's own preview has had a chance to say anything, and when the run ends — and in between it is written only by
 that run's own preview, never re-derived from the standing `WillBuild`. The distinction matters exactly when the
 two disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview names only
-that project, and every other row — however dirty a stale Sync left it — is never handed the flag and stays
-plain grey for the run's whole life. Between the run starting and that preview arriving, the marking wave (above)
+that project, and every other row — however dirty a stale Sync left it — is never handed the flag and keeps
+its standing colour for the run's whole life. Between the run starting and that preview arriving, the marking wave (above)
 carries the target's amber on its own — the two channels hand off without the colour going out.
 
 A project this run only evaluates conditionally (§8.3) is dirty (`WillBuild=true`) but is not handed the queue
@@ -3410,22 +3428,20 @@ the start of the run would be a promise the run might not keep. The engine's own
 (`Conditional`); the row, the marking wave and the run's fixed progress denominator all read that one flag,
 never re-derive it.
 
-**The one exception: a cycle member the operation does not build.** Its node keeps the grey frame but the cube
-inside turns **amber** (`cycle`, or `cycleSkipped` when the run skipped it) — the graphical proxy of the row's
-amber warning triangle. Nowhere else do the frame and the cube part company. The cube lights at the operation's
-neutral moment, stays through the run and the finale, and drops at the next Sync or when an operation actually
-builds the member: a member that Resolve cycles compiles wears its result colour alone. Membership never
-reaches the list's colour: there the stripe and the dot stay neutral grey, because the triangle already says
-it. This is not the orange channel returning — the tone is the warning's own amber.
+**The one exception: a cycle member's cube.** In a cycle member the cube inside the node is **always amber** —
+the graphical proxy of the row's amber warning triangle — while the frame carries the member's own state like
+any other node. Nowhere else do the frame and the cube part company. Membership is not a status (it is passed to
+the node separately and never changes the frame), so neither a Sync nor Resolve cycles compiling the member puts
+the cube out. Membership never reaches the list's colour: there the stripe and the dot follow the standing like
+every other row, because the triangle already says it. This is not the orange channel returning — the tone is
+the warning's own amber.
 
-**The start mode.** Sync and application startup colour **nothing**. Which operation is coming is not yet
-known, so no plan is shown: every row draws a plain grey stripe at full opacity and a **four-arc ring** in
-place of the filled dot, the glyph is a dashed circle, and every graph node carries a dashed border. What is
-stale is still readable without colour, from the **decision label** in the row's right slot — `modified`,
-`affected`, `never built`, `failed · retry`, `up to date · 2h`, `affected · up to date · just now` for a
-project waiting on a failed dependency (§13.2). The mode drops the moment
-an operation begins — the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing
-shifts — and returns with the next Sync; closing and reopening the application always lands back in it. The
+**The start mode** is the `unknown` standing: a row that has no decision yet — the application has started but
+no Sync has run. Nothing is known, so nothing is coloured: the row draws a plain grey stripe at full opacity and
+a **four-arc ring** in place of the filled dot, the glyph is a dashed circle, and the graph node carries a dashed
+border. The mode drops the moment a decision arrives — a Sync's preview colours every row with its standing —
+and the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing shifts. Starting an
+operation does not drop it; a decision does. The
 stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
 before one existed; that read as the list looking washed-out right after a Sync rather than simply waiting,
 so both now match the full opacity of every other row, and the cross-fade survives only because the ring
@@ -3596,14 +3612,14 @@ are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in 
 (`MarkingChoreography`, `EndFinale`).
 
 The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. It
-begins by **neutralising**: the console and the event stream are cleared, and every row drops to plain neutral
-grey — status, duration and dependency warning reset, the start mode dropped. The plan survives (the scope is
-read from it) and so does everything structural: cycle membership, the decision label, the layer. Nothing of the
-previous run is on screen when the wave starts, which is what makes "colour tells the story of the last
-operation" true from the first frame. Rebuild neutralises in place rather than emptying the list — clearing it
+begins by **neutralising**: the console and the event stream are cleared, and every row drops the previous
+run's overlay — status, duration and dependency warning reset — and shows its standing colour. The plan survives
+(the scope is read from it, and the standing is read from it) and so does everything structural: cycle
+membership, the decision label, the layer. No result of the previous run is on screen as a run result when the
+wave starts; what that run achieved remains only as the standing it wrote. Rebuild neutralises in place rather than emptying the list — clearing it
 would destroy the very rows the wave is marking.
 
-Then a neutral moment of 440 ms, in which even the scope is still plain grey; then the **wave**, in which the scope
+Then a neutral moment of 440 ms, in which even the scope still wears its standing colour; then the **wave**, in which the scope
 lights amber one project at a time in *random* order (110 ms per node, the chain capped at 1.1 s, so 36
 projects take no longer than four); then a moment with the plan standing on screen; then the **overlapping
 farewell** — every graph node outside the scope starts fading to 0.18 over 1120 ms, and 560 ms later the scope
@@ -4331,7 +4347,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
-| Visual status (the single colour channel) and its token table | `App/Controls/VisualStatus.cs` |
+| Visual status (the single colour channel) and its token table; the standing it is built on | `App/Controls/VisualStatus.cs`, `App/Controls/StandingStatus.cs` |
 | Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |

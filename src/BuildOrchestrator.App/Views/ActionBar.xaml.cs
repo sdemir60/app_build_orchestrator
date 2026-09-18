@@ -248,15 +248,15 @@ public partial class ActionBar : UserControl
         _buildingChip = AddCounterChip(_ => BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
 
-        _succeededChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _succeededChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _succeededValue, AccessibilityNames.FilterSucceeded);
         _succeededChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Succeeded);
 
-        _failedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _failedChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _failedValue, AccessibilityNames.FilterFailed);
         _failedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Failed);
 
-        _skippedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+        _skippedChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
             out _skippedValue, AccessibilityNames.FilterSkipped);
         _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
 

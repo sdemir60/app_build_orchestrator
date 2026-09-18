@@ -10,7 +10,7 @@ namespace BuildOrchestrator.App.Controls;
 /// şeridiyle <b>AYNI</b> rengi taşır.
 ///
 /// <para><b>Tek eleman, iki yüz:</b> aynı yerde üst üste duran bir HALKA ve bir DOLU DAİRE vardır; aralarında
-/// yalnız opaklık değişir. Başlangıç modunda (<see cref="VisualStatus.Fresh"/>) halka görünür, bir işlem
+/// yalnız opaklık değişir. Başlangıç modunda (<see cref="VisualStatus.Unknown"/>) halka görünür, bir işlem
 /// başlayınca <see cref="StartMode.CrossFadeMs"/>'de çapraz-sönümle dolu daireye geçilir. Boyut ve konum
 /// sabittir — hiza kaymaz, titreme olmaz.</para>
 ///
@@ -42,7 +42,8 @@ public class StatusDot : Control
     /// <summary>Satırın TEK görsel durumu (<see cref="VisualStatuses"/>) — renk ve başlangıç modu ondan gelir.</summary>
     public static readonly DependencyProperty StateProperty = DependencyProperty.Register(
         nameof(State), typeof(VisualStatus), typeof(StatusDot),
-        new PropertyMetadata(VisualStatus.Discovered, (d, _) => ((StatusDot)d).ApplyState()));
+        // Varsayılan düz gri (derlenecek) — başlangıç modu satırın kararından gelir, varsayılandan değil.
+        new PropertyMetadata(VisualStatus.Stale, (d, _) => ((StatusDot)d).ApplyState()));
 
     public VisualStatus State
     {
@@ -91,7 +92,7 @@ public class StatusDot : Control
         _ring = GetTemplateChild(RingPart) as Ellipse;
         // Halkanın nötr grisi: şablondan DEĞİL buradan bağlanır (gerekçe Controls.xaml'de — şablon içindeki
         // DynamicResource token fırçasını DONDURUR ve onu paylaşan her yüzeyin geçiş yolunu değiştirir).
-        _ring?.SetResourceReference(Shape.StrokeProperty, VisualStatuses.StripeBrushKey(VisualStatus.Fresh));
+        _ring?.SetResourceReference(Shape.StrokeProperty, VisualStatuses.StripeBrushKey(VisualStatus.Unknown));
         _wasStartMode = null; // ilk çizim ANINDA oturur
         ApplyState();
     }

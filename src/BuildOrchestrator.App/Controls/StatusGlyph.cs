@@ -8,13 +8,18 @@ namespace BuildOrchestrator.App.Controls;
 /// <summary>
 /// [T60] DS <c>StatusGlyph</c> (_ds_bundle.js:1446-1531). Statü RENK + GLYPH + METİN üçlüsüyle birlikte
 /// taşınır (colorblind-safe, README §1.1) — bu kontrol ilk ikisini çizer, metni (etiket) çağıran verir.
-/// Gövde ince bir HALKA + içine 1.5px'lik bir işarettir; <c>discovered</c> aynı halkanın KESİKLİSİ,
-/// <c>building</c> ise AYNI halkanın dönen hâlidir (bkz. <see cref="BuildingSpinner"/>), <c>cycle</c> halkasız
-/// bir uyarı üçgenidir.
+/// Gövde ince bir HALKA + içine 1.5px'lik bir işarettir; bilinmiyor/derlenecek/işaretli aynı halkanın
+/// KESİKLİSİ, <c>building</c> ise AYNI halkanın dönen hâlidir (bkz. <see cref="BuildingSpinner"/>).
 ///
-/// <para><b>Statü kümesi:</b> <see cref="GraphStatus"/> YENİDEN KULLANILIR — DS <c>STATUS_META</c>'nın
-/// birebir aynı yedi değeri T63'te zaten tanımlanmıştı; ikinci bir enum kopya olurdu (CLAUDE.md). Tipin adı
-/// grafa özgü görünse de içeriği DS'in genel statü kümesidir.</para>
+/// <para><b>Statü kümesi:</b> <see cref="VisualStatus"/> YENİDEN KULLANILIR — satır ve node'un tek renk
+/// kanalıdır; ikinci bir enum kopya olurdu (CLAUDE.md).</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §1.4 · §2.4-5]</b> Kontrol eskiden <see cref="GraphStatus"/>
+/// (koşu statüsü) alıyordu; satırda atlanan proje <c>—</c> tire gösterirdi ve <c>cycle</c> halkasız bir
+/// uyarı üçgeniydi (hiçbir üretici yazmıyordu). Değişme gerekçesi: renk artık çıktının kümülatif durumudur —
+/// glyph de onu çizer (güncel ✓, bozuk ✗, derlenecek kesikli daire). <c>—</c> yalnız run-story
+/// yüzeylerinde (event stream'in atlama satırı, konsol başlığının koşu sonucu) <see cref="VisualStatus.Skipped"/>
+/// ile çizilir; satır/node/sayaç onu hiç almaz.</para>
 ///
 /// <para>Geometriler kodda parse EDİLMEZ, <c>Icons.xaml</c>'den çözülür (IconGeometryTests bunu pinler);
 /// renkler Tokens.xaml'den.</para>
@@ -39,12 +44,12 @@ public class StatusGlyph : Control
             typeof(StatusGlyph), new FrameworkPropertyMetadata(typeof(StatusGlyph)));
 
     public static readonly DependencyProperty StatusProperty = DependencyProperty.Register(
-        nameof(Status), typeof(GraphStatus), typeof(StatusGlyph),
-        new PropertyMetadata(GraphStatus.Discovered, (d, _) => ((StatusGlyph)d).ApplyStatus()));
+        nameof(Status), typeof(VisualStatus), typeof(StatusGlyph),
+        new PropertyMetadata(VisualStatus.Unknown, (d, _) => ((StatusGlyph)d).ApplyStatus()));
 
-    public GraphStatus Status
+    public VisualStatus Status
     {
-        get => (GraphStatus)GetValue(StatusProperty);
+        get => (VisualStatus)GetValue(StatusProperty);
         set => SetValue(StatusProperty, value);
     }
 
@@ -78,15 +83,14 @@ public class StatusGlyph : Control
     }
 
     /// <summary>DS <c>STATUS_META</c> (_ds_bundle.js:1402-1433) — statünün metin/glyph rengi.
-    /// <c>discovered</c> için <c>text-faint</c>, <c>building</c> için amber ailesidir.</summary>
-    internal static string BrushKeyFor(GraphStatus status) => status switch
+    /// Bilinmiyor/derlenecek/işaretli için <c>text-faint</c>, <c>building</c> için amber ailesidir.</summary>
+    internal static string BrushKeyFor(VisualStatus status) => status switch
     {
-        GraphStatus.Queued => "Brush.StatusQueuedText",
-        GraphStatus.Building => "Brush.AmberText",
-        GraphStatus.Succeeded => "Brush.StatusSuccessText",
-        GraphStatus.Failed => "Brush.StatusFailText",
-        GraphStatus.Skipped => "Brush.StatusSkippedText",
-        GraphStatus.Cycle => "Brush.StatusCycleText",
+        VisualStatus.Queued => "Brush.StatusQueuedText",
+        VisualStatus.Building => "Brush.AmberText",
+        VisualStatus.Current or VisualStatus.Succeeded => "Brush.StatusSuccessText",
+        VisualStatus.Failed => "Brush.StatusFailText",
+        VisualStatus.Skipped => "Brush.StatusSkippedText", // yalnız run-story yüzeyleri
         _ => "Brush.TextFaint",
     };
 
@@ -96,7 +100,9 @@ public class StatusGlyph : Control
     ///
     /// <para>Eşleme <c>ProjectRow</c>'un private <c>StatusLabel</c>'ıydı; graf düğümünün ekran-okuyucu adı
     /// (<see cref="AccessibilityNames.GraphNode"/>) ikinci tüketici olunca buraya alındı — ikinci bir kopya
-    /// YASAK (CLAUDE.md). Davranış değişmedi.</para></summary>
+    /// YASAK (CLAUDE.md). Davranış değişmedi.</para>
+    /// <para>Metin KOŞU statüsünü (<see cref="GraphStatus"/>) söyler — ekran okuyucu ve konsol başlığı
+    /// motorun bu proje hakkındaki son sözünü okur; çizim tabloları ise <see cref="VisualStatus"/> alır.</para></summary>
     internal static string LabelFor(GraphStatus status) => status switch
     {
         GraphStatus.Queued => "Queued",
@@ -109,15 +115,18 @@ public class StatusGlyph : Control
     };
 
     /// <summary>Halkanın içine düşen işaret (_ds_bundle.js:1459-1478 <c>inner()</c>); <c>null</c> = işaret yok.</summary>
-    internal static string? InnerIconKeyFor(GraphStatus status) => status switch
+    internal static string? InnerIconKeyFor(VisualStatus status) => status switch
     {
-        GraphStatus.Succeeded => "Icon.StatusCheck",
-        GraphStatus.Failed => "Icon.StatusCross",
-        GraphStatus.Skipped => "Icon.StatusDash",
-        GraphStatus.Queued => "Icon.StatusClock",
-        GraphStatus.Cycle => "Icon.StatusCycle",
-        _ => null,
+        VisualStatus.Current or VisualStatus.Succeeded => "Icon.StatusCheck",
+        VisualStatus.Failed => "Icon.StatusCross",
+        VisualStatus.Skipped => "Icon.StatusDash", // yalnız run-story yüzeyleri
+        VisualStatus.Queued => "Icon.StatusClock",
+        _ => null, // unknown · stale · marked: kesikli halka, işaret yok
     };
+
+    /// <summary>Kesikli halka mı (DS <c>discovered</c> çizimi): bilinmiyor, derlenecek ve işaretli.</summary>
+    internal static bool IsDashedRing(VisualStatus status)
+        => status is VisualStatus.Unknown or VisualStatus.Stale or VisualStatus.Marked;
 
     private void ApplyStatus()
     {
@@ -126,18 +135,18 @@ public class StatusGlyph : Control
         string brushKey = BrushKeyFor(Status);
         SetResourceReference(ForegroundProperty, brushKey);
 
-        bool building = Status == GraphStatus.Building;
-        // cycle: halkasız (kendi üçgeni gövdedir); building: halka yerine dönen yay.
-        bool hasRing = !building && Status != GraphStatus.Cycle;
+        bool building = Status == VisualStatus.Building;
+        // building: halka yerine dönen yay.
+        bool hasRing = !building;
 
         _spinner.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
         _ring.Visibility = hasRing ? Visibility.Visible : Visibility.Collapsed;
         if (hasRing)
         {
             IconPaint.Apply(_ring, this, "Icon.StatusRing", brushKey);
-            // discovered = AYNI halkanın kesiklisi (_ds_bundle.js:1515-1518): dash + opaklık .9;
+            // discovered çizimi = AYNI halkanın kesiklisi (_ds_bundle.js:1515-1518): dash + opaklık .9;
             // diğerlerinde düz halka, opaklık .6 (_ds_bundle.js:1452).
-            bool discovered = Status == GraphStatus.Discovered;
+            bool discovered = IsDashedRing(Status);
             // Desen ve opaklık, halkanın DÖNEN hâliyle (BuildingSpinner) PAYLAŞILIR — aynı halkanın iki
             // hâli iki ayrı sayı tablosu taşıyamaz (kopya YASAK, CLAUDE.md).
             _ring.StrokeDashArray = discovered

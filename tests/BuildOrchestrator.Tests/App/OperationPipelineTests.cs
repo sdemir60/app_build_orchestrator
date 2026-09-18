@@ -16,6 +16,12 @@ namespace BuildOrchestrator.Tests.App;
 /// <para>Buradaki iddiaların ortak ilkesi tasarımın kendi cümlesidir: <b>renk yalnız SON işlemin hikâyesini
 /// anlatır.</b> Bir işlem başladığı anda ekranda önceki koşudan kalma hiçbir renk olamaz, ve kapsamın amber'a
 /// yanması yalnız işaretleme dalgasının işidir.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> O ilke değişti: renk artık çıktının KÜMÜLATİF
+/// durumudur ve sonuç bir sonraki koşuya kadar durumda yazılı kalır. Nötrlemenin sildiği şey KOŞU
+/// bindirmesidir (statü, süre, uyarılar); satırın rengi çıktı durumundan (önizleme kararı) gelir ve
+/// nötrleme ona dokunmaz. Aşağıdaki "herkes düz nötr gri" iddiaları bu yüzden "koşu izi kalmaz, satır
+/// kendi çıktı durumundadır" olarak yeniden yazıldı. Dalganın amberi değişmedi.</para>
 /// </summary>
 public class OperationPipelineTests
 {
@@ -65,24 +71,33 @@ public class OperationPipelineTests
     /// hâlâ önceki koşunun yeşili ve kırmızısı varsa) "renk yalnız son işlemin hikâyesini anlatır" ilkesi
     /// daha ilk karede bozulur.</para>
     /// </summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski ad/iddia:
+    /// <c>A_new_operation_wipes_every_trace_of_the_previous_run</c> — nötrlemeden sonra herkes düz nötr gri
+    /// (<c>Discovered</c>). Değişme gerekçesi: renk kümülatiftir. Yeni iddia: koşu bindirmesi silinir (statü
+    /// <c>Discovered</c>, süre, uyarı), satır kendi çıktı durumunda kalır — az önce yeşil biten A güncel, kanıtlı
+    /// hatayla biten B kırmızı, kararı olmayan C bilinmiyor.</para>
     [Fact]
-    public async Task A_new_operation_wipes_every_trace_of_the_previous_run()
+    public async Task A_new_operation_wipes_the_run_overlay_but_keeps_the_standing()
     {
         var vm = AfterOneCompletedRun();
-        Assert.Equal(VisualStatus.Succeeded, Row(vm, "a").VisualStatus); // ön-koşul: renkler GERÇEKTEN orada
+        Assert.Equal(VisualStatus.Succeeded, Row(vm, "a").VisualStatus); // ön-koşul: koşu renkleri GERÇEKTEN orada
         Assert.Equal(VisualStatus.Failed, Row(vm, "b").VisualStatus);
-        Assert.Equal(VisualStatus.Skipped, Row(vm, "c").VisualStatus);
+        Assert.Equal(GraphStatus.Skipped, Row(vm, "c").Status);           // atlanan: rengi çıktı durumundan
+        Assert.Equal(VisualStatus.Unknown, Row(vm, "c").VisualStatus);
 
         await vm.BuildCommand.ExecuteAsync(null);
 
         foreach (var row in vm.Projects)
         {
             Assert.Equal(ProjectRowState.Pending, row.State);
+            Assert.Equal(GraphStatus.Discovered, row.Status); // koşu bindirmesi yok
             Assert.Equal(0, row.DurationMs);
             Assert.Null(row.DepIssues);
-            Assert.False(row.Fresh);   // başlangıç modu da düşer — artık bir işlem yürüyor
-            Assert.Equal(VisualStatus.Discovered, row.VisualStatus);
+            Assert.False(row.Fresh);
         }
+        Assert.Equal(VisualStatus.Current, Row(vm, "a").VisualStatus);
+        Assert.Equal(VisualStatus.Failed, Row(vm, "b").VisualStatus);
+        Assert.Equal(VisualStatus.Unknown, Row(vm, "c").VisualStatus);
     }
 
     /// <summary>
@@ -110,8 +125,12 @@ public class OperationPipelineTests
     /// başlangıç moduna DÖNDÜRÜR (kesikli), bir işlemin nötrlemesi ise başlangıç modunu DÜŞÜRÜR.
     /// İki yol aynı sıfırlamayı paylaşır, yalnız bu bayrakta ayrışır.
     /// </summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski iddia: Sync'in nötrlemesi herkesi başlangıç
+    /// moduna (<c>VisualStatus.Fresh</c>) indirir. Değişme gerekçesi: Sync artık renk verir; başlangıç modu
+    /// yalnız kararın yokluğudur. Yeni iddia: bayrak yine yazılır ama görsel durum çıktı durumudur — kararı
+    /// olan satır (A güncel, B kırmızı) renkli, kararı olmayan (C) başlangıç modunda.</para>
     [Fact]
-    public void A_sync_neutralizes_too_but_lands_in_fresh_mode_instead()
+    public void A_sync_neutralizes_too_and_every_row_lands_on_its_standing()
     {
         var vm = AfterOneCompletedRun();
 
@@ -121,10 +140,11 @@ public class OperationPipelineTests
         foreach (var row in vm.Projects)
         {
             Assert.Equal(ProjectRowState.Pending, row.State);
-
             Assert.True(row.Fresh);
-            Assert.Equal(VisualStatus.Fresh, row.VisualStatus);
         }
+        Assert.Equal(VisualStatus.Current, Row(vm, "a").VisualStatus);
+        Assert.Equal(VisualStatus.Failed, Row(vm, "b").VisualStatus);
+        Assert.Equal(VisualStatus.Unknown, Row(vm, "c").VisualStatus);
     }
 
     /// <summary>
@@ -138,18 +158,21 @@ public class OperationPipelineTests
     [Fact]
     public async Task The_operation_label_is_written_only_after_the_rows_are_neutral()
     {
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski iddia: sinyal anında her satırın GÖRSEL durumu Discovered
+        // (düz gri). Discovered kalktı ve renk artık çıktı durumudur; "nötr" = koşu bindirmesi yok, yani her
+        // satırın koşu statüsü Discovered. Ölçülen şey (sinyal nötrlemeden SONRA) aynıdır.
         var vm = AfterOneCompletedRun();
-        List<VisualStatus>? atSignal = null;
+        List<GraphStatus>? atSignal = null;
         vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(RunViewModel.CurrentOperation))
-                atSignal = [.. vm.Projects.Select(r => r.VisualStatus)];
+                atSignal = [.. vm.Projects.Select(r => r.Status)];
         };
 
         await vm.RebuildCommand.ExecuteAsync(null); // etiket BUILD → REBUILD: sinyal gerçekten çıkar
 
         Assert.NotNull(atSignal);
-        Assert.All(atSignal, v => Assert.Equal(VisualStatus.Discovered, v));
+        Assert.All(atSignal, s => Assert.Equal(GraphStatus.Discovered, s));
     }
 
     /// <summary>
@@ -291,7 +314,9 @@ public class OperationPipelineTests
 
         vm.IsStarting = true;  // koşu İSTENDİ — motor henüz cevap vermedi (planlama penceresi)
         Assert.Equal(GraphStatus.Discovered, row.Status);
-        Assert.Equal(VisualStatus.Discovered, row.VisualStatus);
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski: VisualStatus.Discovered (düz gri). Discovered kalktı; satır
+        // kendi çıktı durumundadır — önizleme gerekçe taşımadığı için karar yok (Unknown, gri). Amber DEĞİL.
+        Assert.Equal(VisualStatus.Unknown, row.VisualStatus);
 
         row.Marked = true;     // ...dalga bu satıra geldi
         Assert.Equal(VisualStatus.Marked, row.VisualStatus);
