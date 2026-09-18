@@ -241,7 +241,10 @@ public partial class ActionBarTests
             // karşılığı varken GÖRÜNÜR — sırada yeri sabittir, görünürlüğü koşulludur.
             // [DEĞİŞEN KURAL] Eskiden burada İKİ istisnai chip vardı (turuncu ⚠ cycle + kırmızı ▲ dep);
             // v1.11.0 turuncuyu UI'dan çıkardı ve ikisini tek amber chip'te birleştirdi.
-            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.SucceededChip, bar.FailedChip, bar.SkippedChip, bar.WarnChip },
+            // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski sıra Σ · building · succeeded · failed · skipped · ⚠ idi.
+            // Chip'ler artık DURUMU sayar: Σ · building · ✓ up to date · ○ to build · ✗ failed · ⚠ — "atlanmak" bir
+            // durum değildir ve — chip'i kalktı.
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.CurrentChip, bar.StaleChip, bar.FailedChip, bar.WarnChip },
             chipOrder);
         GC.KeepAlive(window);
     }
@@ -334,6 +337,24 @@ public partial class ActionBarTests
     /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
     private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
 
+    /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
+    /// <see cref="RunCounters.Stale"/> · <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped
+    /// kovalarını DEĞİL (onlar şeridin koşu özetidir).</summary>
+    [StaFact]
+    public void The_state_chips_show_the_state_buckets_not_the_run_table()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        vm.Counters = new RunCounters(Total: 20, Building: 1, Queued: 0, Succeeded: 2, Failed: 3, Skipped: 9,
+            DepAffected: 0, StuckCycles: 0, Current: 11, Stale: 5, Broken: 4);
+
+        Assert.Equal("11", ChipValue(bar.CurrentChip).Text);
+        Assert.Equal("5", ChipValue(bar.StaleChip).Text);
+        Assert.Equal("4", ChipValue(bar.FailedChip).Text);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[A13/T4 · n6 · fix-1 · B3/C3] design-v1 README:48 "DAİMA tabular rakam" — sayaç chip değeri
     /// (<c>ActionBar.xaml.cs:258 CounterValue</c>) mono taşıyan altı üretim yerinden biridir. Envanter/kapsam
     /// kararı XML doc'u: <see cref="ProjectRowTests.The_project_row_sha_and_duration_columns_are_tabular"/>.</summary>
@@ -375,9 +396,15 @@ public partial class ActionBarTests
         Assert.IsType<Ellipse>(buildingIcon.Children[0]);
         Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
 
-        Assert.Equal(GraphStatus.Succeeded, Assert.IsType<StatusGlyph>(ChipIcon(bar.SucceededChip)).Status);
-        Assert.Equal(GraphStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
-        Assert.Equal(GraphStatus.Skipped, Assert.IsType<StatusGlyph>(ChipIcon(bar.SkippedChip)).Status);
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4] Eski glyph'ler Succeeded ✓ · Failed ✗ · Skipped — idi.
+        // Chip'ler artık durum yüzeyidir: güncel ✓, derlenecek kesikli daire ○, bozuk ✗. — yalnız run-story
+        // yüzeylerinin glyph'idir; sayaç onu hiç almaz.
+        Assert.Equal(VisualStatus.Current, Assert.IsType<StatusGlyph>(ChipIcon(bar.CurrentChip)).Status);
+        Assert.Equal(VisualStatus.Stale, Assert.IsType<StatusGlyph>(ChipIcon(bar.StaleChip)).Status);
+        Assert.Equal(VisualStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
+        var counterStrip = (Panel)bar.SigmaChip.Parent;
+        Assert.DoesNotContain(counterStrip.Children.OfType<ToggleButton>().Select(ChipIcon).OfType<StatusGlyph>(),
+            g => g.Status == VisualStatus.Skipped);
 
         var warnCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.WarnChip)).Child);
         var warnPath = Assert.IsType<System.Windows.Shapes.Path>(warnCanvas.Children[0]);
@@ -573,9 +600,12 @@ public partial class ActionBarTests
         Click(bar.FailedChip);                                  // aynı chip'e ikinci tık → kümeden çıkar
         Assert.Empty(vm.ActiveFilters);
 
-        Click(bar.SucceededChip);
+        Click(bar.CurrentChip);
         Click(bar.FailedChip);                                  // farklı chip → EKLENİR (devralmaz)
-        Assert.Equal([ProjectFilter.Failed, ProjectFilter.Succeeded], vm.ActiveFilters.Order());
+        Assert.Equal([ProjectFilter.Current, ProjectFilter.Failed], vm.ActiveFilters.Order());
+        Click(bar.FailedChip);
+        Click(bar.StaleChip);
+        Assert.Equal([ProjectFilter.Current, ProjectFilter.Stale], vm.ActiveFilters.Order());
 
         Click(bar.SigmaChip);                                   // Σ HER ZAMAN hepsini temizler
         Assert.Empty(vm.ActiveFilters);

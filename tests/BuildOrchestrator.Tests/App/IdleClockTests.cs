@@ -30,7 +30,7 @@ public class IdleClockTests
     /// </summary>
     private static (BuildingSpinner Spinner, Window Window) RealizeSpinningGlyph(out StatusGlyph glyph)
     {
-        glyph = new StatusGlyph { Status = GraphStatus.Building };
+        glyph = new StatusGlyph { Status = VisualStatus.Building };
         var window = DsResources.Realize(DsResources.NewHost(), glyph);
         var spinner = DsResources.Descendants(glyph).OfType<BuildingSpinner>().Single();
         return (spinner, window);

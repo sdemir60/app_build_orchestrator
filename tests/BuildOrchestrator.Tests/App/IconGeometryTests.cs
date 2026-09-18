@@ -29,7 +29,7 @@ public class IconGeometryTests
         "Icon.CaptionMinimize", "Icon.CaptionMaximize", "Icon.CaptionRestore", "Icon.CaptionClose",
         // [T60] DS kontrol kütüphanesinin ihtiyaç duyduğu çizimler (StatusGlyph gövdesi + chevron)
         "Icon.StatusRing", "Icon.StatusCheck", "Icon.StatusCross", "Icon.StatusDash", "Icon.StatusClock",
-        "Icon.StatusCycle", "Icon.Chevron",
+        "Icon.Chevron",
         // [A13/T2 · 2.3] Chip'in `onRemove` göstergesi (_ds_bundle.js:206-220) — ham `✕` karakteri yerine çizim.
         "Icon.ChipRemove",
         // [design v1.7.0 §2.7-2] Action bar'ın bakım kutusunun üç ikonu (design-v1.7.0 prototype/app/

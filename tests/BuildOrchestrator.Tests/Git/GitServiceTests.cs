@@ -133,6 +133,32 @@ public class GitServiceTests
         Assert.Contains(result.Value!, p => p.Contains("a.txt", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// [final review M5] Türkçe karakterli yollar DEŞİFRE edilir. git varsayılan <c>core.quotepath=true</c> ile
+    /// ASCII dışı baytları tırnaklı sekizlik kaçışlarla yazar (<c>"src/\304\260l.cs"</c>); o metin diskteki
+    /// hiçbir yolla eşleşmez ve dosyası değişen proje <c>local</c> işaretini hiç almazdı. Ayar repoda AÇIKÇA
+    /// true yapılır — makinenin global git ayarı testi sessizce yeşile boyayamasın. Değiştirilmiş (takipli),
+    /// takipsiz ve yeniden adlandırılmış (yeni ad) yolun üçü de düz metin döner.
+    /// </summary>
+    [Fact]
+    public async Task GetDirtyPathsAsync_decodes_non_ascii_paths()
+    {
+        using var repo = new GitTestRepo();
+        GitTestRepo.RunGitAt(repo.RootPath, "config", "core.quotepath", "true");
+        repo.WriteFile("src/Işık.cs", "v1");
+        repo.WriteFile("src/Eski.cs", "v1");
+        repo.CommitAll("c1");
+        repo.WriteFile("src/Işık.cs", "v2");                               // takipli, değişti
+        repo.WriteFile("src/Çağrı Öğesi.cs", "yeni");                      // takipsiz, boşluklu
+        GitTestRepo.RunGitAt(repo.RootPath, "mv", "src/Eski.cs", "src/Güncel.cs"); // staged rename
+
+        var result = await new GitService(Runner, repo.RootPath).GetDirtyPathsAsync();
+
+        Assert.True(result.Success);
+        Assert.Equal(["src/Güncel.cs", "src/Işık.cs", "src/Çağrı Öğesi.cs"],
+            result.Value!.Order(StringComparer.Ordinal));
+    }
+
     [Fact]
     public async Task GetDirtyPathsAsync_returns_empty_on_clean_repo()
     {

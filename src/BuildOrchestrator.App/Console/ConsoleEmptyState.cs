@@ -16,7 +16,7 @@ namespace BuildOrchestrator.App.Console;
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
 /// <para><b>Metin İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
-/// (<see cref="Controls.StatusGlyph.LabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
+/// (<see cref="Controls.StatusGlyph.RunLabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
 /// (son başarıyla derlendiği commit, ya da hiç derlenmediği). Derlenmekte olan bir projenin tek satırı vardır:
 /// orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///
@@ -46,7 +46,7 @@ public static class ConsoleEmptyState
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
         var at = now ?? DateTimeOffset.Now;
-        string reason = Reason(row, at);
+        string reason = Reason(row);
         return RepeatsReason(row) ? [reason] : [reason, Evidence(row, at)];
     }
 
@@ -57,7 +57,7 @@ public static class ConsoleEmptyState
         && row.WillBuildReason == WillBuildReason.NeverBuilt;
 
     /// <summary>İlk satır: bu proje NEDEN bu durumda.</summary>
-    private static string Reason(ProjectRowViewModel row, DateTimeOffset now) => row.State switch
+    private static string Reason(ProjectRowViewModel row) => row.State switch
     {
         // Motor bu koşuda bu projeyi atladı ve gerekçesini SÖYLEDİ (SkipReasons — tek doğruluk kaynağı).
         ProjectRowState.Skipped => row.SkipReason switch
@@ -66,23 +66,28 @@ public static class ConsoleEmptyState
             SkipReasons.InDependencyCycle => InCycleText,
             SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
             SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
-            // [final review — I1] Koşullu proje sırası geldi ve kökleri hâlâ hatalıydı: sayfanın açılma
+            // [final review — I1] Motor bu satırı GERÇEKTEN koşullu değerlendirdiği için atladı: sayfanın açılma
             // nedeni TAM OLARAK "hangi bağımlılık" sorusudur, genel "Skipped in this run." onu yutuyordu.
-            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) ve satırın kendi etiketiyle AYNI kaynaktan
-            // gelir (kopya YASAK). Kapı motorun gerekçesiyle satırın bayrağını birlikte arar: bayrak bir
-            // şekilde düşmüşse (zorlanmış kapsam) aşağıdaki genel dal doğru cümleyi zaten söyler.
-            SkipReasons.DependencyStillFailing when row.Conditional => WaitingForDependencyReason(row, now),
+            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) AYNI kaynaktan gelir (kopya YASAK).
+            // [Task 6 review round 1 — DÜZELTME] `row.Conditional` guard'ı KALDIRILDI: bu SkipReason'ı motor
+            // yalnız `ConditionalRebuild.AppliesTo`nun (Core) o proje için TRUE dediği projeler için üretir —
+            // Supervisor tarafında `TrySkipWhileDependencyStillFails` sadece `run.ConditionalIds` içindeki
+            // projeler için çağrılır (`RunCoordinator.cs`), ve o küme AYNI `AppliesTo` çağrısından gelir — App'in
+            // bu run'ın kendi önizlemesinden yazdığı `row.Conditional`'ın kaynağıyla BİREBİR aynı yer. Yani bu
+            // dal her tetiklendiğinde `row.Conditional` zaten `true`'dur; guard hiçbir zaman farklı bir cevap
+            // vermiyordu, yalnız Pending dalıyla tutarsız görünüyordu.
+            SkipReasons.DependencyStillFailing => WaitingForDependencyReason(row),
             _ => "Skipped in this run.",
         },
         // Bunlar SAVUNMACIdır: derlenen bir proje her zaman log yazar. Log yine de yoksa (disk hatası, run
         // dizini silindi) sayfa boş kalmaz — ne olduğu söylenir.
         ProjectRowState.Succeeded => "Built in this run — its log is no longer on disk.",
         ProjectRowState.Failed => "Failed in this run — its log is no longer on disk.",
-        _ => Pending(row, now),
+        _ => Pending(row),
     };
 
     /// <summary>Henüz bu koşuda konuşulmamış satır: elde plan vardır (will-build üç durumlu).</summary>
-    private static string Pending(ProjectRowViewModel row, DateTimeOffset now)
+    private static string Pending(ProjectRowViewModel row)
     {
         // [Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e TAŞIMAZ
         // (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ama SkipReason'ı yine de taşır, tam da bu yüzden.
@@ -108,26 +113,35 @@ public static class ConsoleEmptyState
         return row.WillBuildReason switch
         {
             WillBuildReason.NeverBuilt => $"{head} — this tool has never built it.",
-            WillBuildReason.LastFailed => $"{head} — its last build failed.",
+            WillBuildReason.LastFailed => $"{head} — it failed at this source.",
             WillBuildReason.DepIssue => $"{head} — its last success was linked against a failed dependency.",
             WillBuildReason.SignatureChanged => $"{head} — the signature changed since the last successful build.",
-            // [Task 5 review round 1 — M-10] Bu koşu GERÇEKTEN koşullu bekletiyorsa (row.Conditional) "Will
-            // build"/"Queued" YALANDIR — proje kökü hâlâ hatalıysa bu koşu onu atlayabilir. Metin satırın kendi
-            // etiketiyle AYNI kaynaktan gelir (DecisionLabel.For'un Title'ı, RowWarning.DepIssuePrefix köküyle) —
-            // kopya YASAK: sayfa ve satır aynı cümleyi söyler. Conditional=false ise (satırdan Build, Rebuild,
-            // SCC üyesi) söz zorlanmıştır ve aşağıdaki genel dala düşer.
-            WillBuildReason.WaitingForDependency when row.Conditional => WaitingForDependencyReason(row, now),
+            // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eskiden bu dal yalnız row.Conditional iken (motor bu
+            // koşuyu GERÇEKTEN bekletirken) devreye girerdi; Conditional=false (zorlanmış kapsam) genel "Will
+            // build in this run." dalına düşerdi. DecisionLabel artık conditional'ı hiç okumadığı için (bkz. o
+            // dosyanın sınıf özeti) burada da aynı ayrımı korumanın gerekçesi kalmadı: WaitingForDependency bir
+            // disk olgusudur, kapsamın zorlayıp zorlamadığından bağımsız aynı cümleyi söyler. Metin artık
+            // DecisionLabel'in Title'ından DEĞİL, RowWarning.WaitingForDependencyText'ten gelir (tek kaynak,
+            // kopya YASAK — bu, uyarı üçgeninin TOOLTIP'i ile AYNI değildir, bkz. WaitingForDependencyReason'ın
+            // kendi özeti).
+            WillBuildReason.WaitingForDependency => WaitingForDependencyReason(row),
             _ => $"{head} in this run.",
         };
     }
 
-    /// <summary>[Task 5 review round 1 — M-10] <see cref="DecisionLabel.For"/>'un ürettiği tooltip metniyle
-    /// (kelimesi kelimesine) AYNI cümle — tek doğruluk kaynağı orada, burada yalnız çağrılır.</summary>
-    private static string WaitingForDependencyReason(ProjectRowViewModel row, DateTimeOffset now)
+    /// <summary>[Task 6 — design v1.20.0 §2.4] Bu satırın hem <c>Pending</c> hem <c>Skipped</c> dalı için TEK
+    /// kaynak: <see cref="RowWarning.WaitingForDependencyText"/>, burada yalnız çağrılır ve konsol
+    /// cümlelerinin ortak kuralı gereği sonuna nokta eklenir.
+    ///
+    /// <para><b>[Task 6 review round 1 — DÜZELTME]</b> Bu cümle uyarı üçgeninin tooltip'iyle (<see
+    /// cref="RowWarning.For"/>) AYNI DEĞİLDİR — üçgen daraltılmış slot için kısaltır (<c>Dependency issue:
+    /// Sales.Core +2</c>); bu metin tüm kökleri virgülle yazıp bekleme kuyruğunu ekler. Paylaştıkları TEK şey
+    /// kök adlandırma dili (<see cref="RowWarning.DepIssuePrefix"/> + kısaltma) — ayrıntı
+    /// <see cref="RowWarning.WaitingForDependencyText"/>'in kendi özetinde.</para></summary>
+    private static string WaitingForDependencyReason(ProjectRowViewModel row)
     {
-        string title = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
-            now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix).Title;
-        return title.EndsWith('.') ? title : title + ".";
+        string text = RowWarning.WaitingForDependencyText(row.DependencyRoots, row.NamePrefix);
+        return text.EndsWith('.') ? text : text + ".";
     }
 
     /// <summary>

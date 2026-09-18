@@ -71,20 +71,29 @@ public class FrontierFollowIntentTests(ITestOutputHelper output)
         GC.KeepAlive(window);
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7]</b> Test eskiden <c>building</c> filtresini açıyordu: o
+    /// filtre kuyruğu da kapsadığı için süzülmüş liste koşunun tamamı kadar UZUN kalıyordu ve "filtre açıkken liste
+    /// kaymaz" iddiası anlamlıydı. <c>building</c> artık yalnız ŞU AN derleneni listeler (tek satır) — listenin
+    /// kayacak yeri kalmaz ve filtreyle küçülen içerik ofseti kendisi kıstırır, bu da takip sanılır. Niyet aynı
+    /// kaldı; UZUN ve frontier satırını İÇEREN bir süzülmüş küme için satırlara karar verilir ve
+    /// <c>building</c> + <c>current</c> birlikte açılır (kapı kaldırılınca test KIRMIZI verir — ölçüldü).</summary>
     [StaFact]
     public void An_active_filter_stops_the_list_from_following_the_frontier()
     {
         using var temp = new TempDir();
         var (window, vm, list, nodes) = RunningWithFrontier(temp, frontierIndex: 20);
+        vm.OnEvent(new BuildPreviewEvent(
+            [.. nodes.Select(n => new BuildPreviewItem(n.Id, n.Name, false, Reason: WillBuildReason.UpToDate))]));
 
-        vm.ToggleFilter("building");             // kullanıcı listeyi süzdü — "şu an şuna bakıyorum"
+        vm.ToggleFilter(ProjectFilter.Building); // kullanıcı listeyi süzdü — "şu an şuna bakıyorum"
+        vm.ToggleFilter(ProjectFilter.Current);  // (frontier satırı building'de, gerisi güncel)
         bool followed = FollowsTo(vm, list, nodes, 20, 45);
 
         output.WriteLine($"[niyet] filtre açıkken takip: {followed}");
         Assert.False(followed, "filtre açıkken liste frontier'i takip etti — filtre niyeti ezildi.");
 
         // Filtre kalkınca takip geri gelmeli.
-        vm.ToggleFilter("building");
+        vm.ToggleFilter(null);
         Assert.True(FollowsTo(vm, list, nodes, 45, 55), "filtre kalktı ama takip geri gelmedi.");
         GC.KeepAlive(window);
     }

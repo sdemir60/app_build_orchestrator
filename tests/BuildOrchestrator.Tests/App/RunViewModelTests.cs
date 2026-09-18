@@ -1,5 +1,6 @@
 ﻿using System.Collections.Specialized;
 using System.IO;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -253,9 +254,13 @@ public class RunViewModelTests
     // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
     // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
     // (SkipReasons.OutOfCycleScope) State'e hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered
-    // kalır, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ — [review fix I-1] SkipReason'ı YİNE DE
+    // kalır, atlandı sayacı onu SAYMAZ — [review fix I-1] SkipReason'ı YİNE DE
     // taşır (ConsoleEmptyStateTests bunun neden gerekli olduğunu ayrıca pinler). Kapsam içi GERÇEK bir "up to
     // date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Burada ayrıca "atlandı filtresi kapsam dışını listelemez, kapsam içi
+    // gerçek skip'i listeler" pinleniyordu; atlandı filtresi (chip'iyle birlikte) kalktı — chip'ler artık durum
+    // filtreleridir ve satırı koşu statüsüyle değil gösterdiği durumla listeler (ProjectFilterTests). Koşu
+    // tablosunun "N skipped"i (şerit) aşağıda pinlenmeye devam eder.
     [Fact]
     public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
     {
@@ -331,11 +336,7 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 1, 0, 200));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status); // run sonunda da Discovered
-
-        // Atlandı filtresi kapsam dışını listelemez; kapsam içi gerçek skip'i listeler.
-        var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
-        Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
-        Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+        Assert.Equal(1, vm.Counters.Skipped); // run sonunda da yalnız kapsam içi skip
     }
 
     // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası
@@ -1650,12 +1651,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review — C1] Bu koşuda dep-issue'lu biten bir satırın etiketi bir SONRAKİ Sync'te AYNI kalmalı:
-    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu. Sync'in kendi önizlemesi ARTIK
-    /// <c>Conditional</c>'ı da taşıdığı için (bkz. <c>SyncWorkspaceServiceTests.
-    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c> — DEĞİŞEN KURAL)
-    /// satır Sync'ten sonra da soluk "affected · up to date · just now" der; eski kural (Sync'in önizlemesi hep
-    /// <c>Conditional=false</c> gönderirdi) etiketi belirgin "affected"e düşürürdü — kullanıcı hiçbir şey
-    /// yapmadığı hâlde ekranın "değişti" görünmesi.
+    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected · up to date ·
+    /// just now" dediğiydi (Task 4'ün <c>conditional</c> ayrımı: motor bu koşuyu gerçekten bekletiyorsa yuva
+    /// kökleri tooltip'inde tekrarlardı). O ayrım <see cref="DecisionLabel"/>'den TAMAMEN kalktı:
+    /// <see cref="WillBuildReason.WaitingForDependency"/> artık <see cref="WillBuildReason.UpToDate"/> ile
+    /// BİREBİR okunur — satır düz "up to date" der, hangi kökün beklendiğini yalnız uyarı üçgeni söyler. Testin
+    /// ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ, yalnız beklenen sözcük değişti.</para>
     /// </summary>
     [Fact]
     public async Task A_dep_issue_wait_label_survives_a_sync_without_flipping()
@@ -1670,12 +1673,12 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        Assert.Equal("affected", beforeSync.Word);
+        Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
 
-        // Run biter, sonra bir Sync koşar — NeutralizeRows(fresh:true) State'i Pending'e döndürür (IsRunning
+        // Run biter, sonra bir Sync koşar — NeutralizeRows() State'i Pending'e döndürür (IsRunning
         // false olmalı), Sync'in kendi önizlemesi disk hâlini (değişmemiş) aynen yansıtır.
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
@@ -1723,8 +1726,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review round 2 — I1] Bir sonraki Sync (post-round-2) bu üye için AYNEN bu üçlüyü üretir — etiket
-    /// TİTREMEMELİ. Bilinçli olarak eski (round 1) <c>UpToDate</c> tahminiyle de çalıştırılıp KIRMIZI gösterildi
-    /// (bkz. yorum satırı), sonra doğru değere geri alındı.
+    /// TİTREMEMELİ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected"/soluk-değil
+    /// (<c>Stale=true</c>) dediğiydi: <c>Conditional=false</c> (üye tek başına asla koşullu değil, grup
+    /// mekanizmasına tabi) olduğu için eski <c>DecisionLabel</c> genel default dalına düşüyordu.
+    /// <c>DecisionLabel</c> artık <c>Conditional</c>'ı hiç okumuyor (bkz. sınıf özeti) — reason
+    /// <see cref="WillBuildReason.WaitingForDependency"/> olduğu sürece kapsamın zorlayıp zorlamadığından
+    /// bağımsız düz "up to date" yazar. Testin ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ.</para>
     /// </summary>
     [Fact]
     public async Task A_converged_cycle_member_wait_label_survives_a_sync_without_flipping()
@@ -1738,12 +1747,12 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        // Reason bir disk olgusudur ve Conditional=false olduğu için DecisionLabel default'a düşer — sıradan
-        // affected/modified, "waiting" sözü VERİLMEZ (üye tek başına asla koşullu değil).
-        Assert.Equal("affected", beforeSync.Word);
-        Assert.True(beforeSync.Stale);
+        // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
+        // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
+        Assert.Equal("up to date", beforeSync.Word);
+        Assert.False(beforeSync.Stale);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
@@ -1757,13 +1766,18 @@ public class RunViewModelTests
     }
 
     /// <summary>
-    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi de (<c>CycleUnsettled=true</c> — arkasında
-    /// durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) aynı kuralın altındadır: canlı geçiş
-    /// onu koşullu SANMAZ. <c>CycleUnsettled</c> zaten yalnız döngü üyeleri için doğru olabildiğinden bu, (i)'in
-    /// aynı korumasının farklı bir teline dokunduğunu doğrular.
+    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi (<c>CycleUnsettled=true</c>, <c>Trusted=false</c> —
+    /// arkasında durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) canlı geçişte koşullu SANILMAZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eski iddia: satır <c>UpToDate</c> okur ("defter bu
+    /// başarıdan hiçbir şey öğrenmedi, bugünkü olguya dön"). Yanlıştı: motor aynı anda defterine
+    /// <c>LastResult=Failed</c>, <c>FailedSignature=null</c> yazar (<c>InvalidateBuildStateOnFailure</c>) ve bir
+    /// sonraki Sync'in <c>WillBuildEvaluator</c>'ı bunu <c>NeverBuilt</c> okur — satır canlıda yeşil ✓
+    /// ("Up to date", ✓ sayacında), Sync'ten sonra gri ○ idi. Karar artık motorundur ve olayla gelir
+    /// (<c>ProjectSucceededEvent.Trusted</c>); satır Sync'in diyeceğini şimdiden der: gri, "To build".</para>
     /// </summary>
     [Fact]
-    public async Task An_unsettled_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    public async Task An_untrusted_cycle_member_success_reads_never_built_like_the_next_sync()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1771,12 +1785,42 @@ public class RunViewModelTests
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
 
-        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true, Trusted: false));
 
         var row = Assert.Single(vm.Projects);
         Assert.False(row.Conditional);
-        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
         Assert.Null(row.DependencyRoots);
+        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; kapsam dışı üye ⇒ WillBuild=false.
+        Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
+        Assert.False(row.WillBuild);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);                  // gri, yeşil ✓ DEĞİL
+        Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));  // ekran okuyucu da aynı şeyi duyar
+        Assert.Equal((0, 1), (vm.Counters.Current, vm.Counters.Stale));    // ✓ değil ○ sayılır
+        Assert.Equal(1, vm.Counters.Succeeded);                              // koşunun tablosu yine "başarılı" der
+
+        // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme — satır titremez.
+        var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.NeverBuilt)]));
+        Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
+    }
+
+    /// <summary>[final review I1] Kontrol grubu: güvenilir (varsayılan) bir döngü üyesi başarısı yeşil kalır.</summary>
+    [Fact]
+    public async Task A_trusted_cycle_member_success_stays_green()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Equal("Up to date", StatusGlyph.LabelFor(row.VisualStatus));
+        Assert.Equal((1, 0), (vm.Counters.Current, vm.Counters.Stale));
     }
 
     /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>
@@ -1799,7 +1843,10 @@ public class RunViewModelTests
         Assert.Null(row.DependencyRoots);
     }
 
-    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
+    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
+    /// <para>[R-M4b] Fixture motorun GERÇEK olayını taşır: <c>"exit N"</c> (<c>RunCoordinator.ReasonFor</c>) ve
+    /// motorun kanıt kararı (<c>Evidence: true</c> — defter yazımıyla aynı kapı). Eski fixture uydurma bir metin
+    /// (<c>"CS0103"</c>) veriyordu ve kanıt bayrağı yoktu; kanıtsız hatanın yolu RunViewModelStateTests'te.</para></summary>
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()
     {
@@ -1810,7 +1857,7 @@ public class RunViewModelTests
             [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
 
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
-        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "CS0103", null));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "exit 1", null, Evidence: true));
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);

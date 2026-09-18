@@ -77,8 +77,12 @@ public static class WillBuildEvaluator
         if (currentSignature is null) return (outOfScope ? false : null, null);
 
         var reason =
-            state?.BuiltSignature is null ? WillBuildReason.NeverBuilt
-            : state.LastResult != BuildResult.Succeeded ? WillBuildReason.LastFailed
+            state?.FailedSignature is { } failedSignature
+                && string.Equals(failedSignature, currentSignature, StringComparison.Ordinal)
+                ? WillBuildReason.LastFailed                      // KANITLI kırmızı: hata anındaki imza bugünküyle aynı
+            : state?.BuiltSignature is null
+                || (state.LastResult != BuildResult.Succeeded && state.FailedSignature is null)
+                ? WillBuildReason.NeverBuilt                      // hiç başarı yok, ya da kanıtsız/kesilmiş deneme
             : !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
                 ? WillBuildReason.SignatureChanged                // kendi değişikliği kesin derletir — not ne olursa olsun
             : state.DepIssue                                      // bayat bağımlılığa link'li (yukarıdaki nota bak)

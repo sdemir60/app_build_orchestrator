@@ -270,7 +270,7 @@ public partial class StickyRibbon : UserControl
             PART_OpText.SetResourceReference(TextBlock.ForegroundProperty, live ? "Brush.AmberText" : "Brush.TextDim");
 
             PART_OpSpinner.Visibility = live ? Visibility.Visible : Visibility.Collapsed;
-            bool showResult = !live && status is { } s2 && s2 != GraphStatus.Building;
+            bool showResult = !live && status is { } s2 && s2 != VisualStatus.Building;
             if (showResult) PART_OpGlyph.Status = status!.Value;
             PART_OpGlyph.Visibility = showResult ? Visibility.Visible : Visibility.Collapsed;
         }
@@ -289,13 +289,13 @@ public partial class StickyRibbon : UserControl
         }
     }
 
-    private static GraphStatus? GlyphStatus(string glyph) => glyph switch
+    private static VisualStatus? GlyphStatus(string glyph) => glyph switch
     {
-        "succeeded" => GraphStatus.Succeeded,
-        "failed" => GraphStatus.Failed,
+        "succeeded" => VisualStatus.Succeeded,
+        "failed" => VisualStatus.Failed,
         // [design v1.7.0 §3.7] Resolve cycles koşusunun amber spinner'ı — StatusGlyph'in KENDİ building
         // çizimidir (dönen kesikli halka, §5), ayrı bir spinner nesnesi kurulmaz.
-        "building" => GraphStatus.Building,
+        "building" => VisualStatus.Building,
         _ => null,
     };
 
@@ -479,7 +479,7 @@ public partial class StickyRibbon : UserControl
         foreach (var row in failed.Take(MaxFailedChips))
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal };
-            content.Children.Add(new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
+            content.Children.Add(new StatusGlyph { Status = VisualStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
             content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var chip = MakeChip(content, brushKey: null);
             if (chipStrip.Children.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4 — ilk chip HARİÇ

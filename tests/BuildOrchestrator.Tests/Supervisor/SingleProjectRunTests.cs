@@ -206,6 +206,39 @@ public class SingleProjectRunTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    /// <summary>
+    /// [final review M2] Patlayan bir <b>Clean</b> kaynak hakkında hiçbir şey söylemez: <c>msbuild /t:Clean</c>
+    /// derleyiciyi hiç çağırmaz, sıfır-dışı çıkışı (kilitli bir dosya, erişim hatası) "bu kaynak derlenmiyor"
+    /// KANITI değildir. Kanıt kapısı yalnız derleyen hedeflere (Build/Rebuild) açıktır; defter kanıt yazmaz, olay
+    /// da kanıt demez — satır "bu kaynakta patladı" kırmızısına boyanmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_failed_clean_is_not_evidence_that_the_source_is_broken()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Target"), "sig", "headsha", BuildResult.Succeeded));
+            var plan = new RunPlan(new BuildPlan([Node("Target")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: RunCoordinatorTests.Incremental("Target"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Scoped("Target", RunMode.Clean), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var failed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.StartsWith("exit ", failed.Reason, StringComparison.Ordinal); // metin kanıt gibi görünür…
+            Assert.False(failed.Evidence);                                     // …ama hedef derlemiyordu
+            var target = store.Load()[Id("Target")];
+            Assert.Equal(BuildResult.Failed, target.LastResult); // çıktı artık güvenilmez (yarım silinmiş olabilir)
+            Assert.Null(target.FailedSignature);
+            Assert.Null(target.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     /// <summary>Planda olmayan bir hedef (bayat topoloji: proje silinmiş/taşınmış) koşuyu HİÇ başlatmaz —
     /// mevcut planlama-hatası kanalı (<c>planFailed</c>) kullanılır, App onu zaten tanır.</summary>
     [Fact]

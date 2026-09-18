@@ -107,6 +107,18 @@ public sealed class BuildStateStore
         && found.LastResult == BuildResult.Succeeded ? found.LastRunAt : null;
 
     /// <summary>
+    /// [spec 2026-09-18 §1-14] Bir projenin KANITLI son hatasının zamanı — satırın <c>failed · 2h</c>
+    /// etiketindeki göreli yaş bunu okur. Kayıt yoksa ya da <see cref="BuildState.FailedSignature"/> boşsa
+    /// (hiç hata yaşanmamış temiz kayıt, ya da kanıtsız/kesilmiş bir deneme — bkz. <see
+    /// cref="BuildOrchestrator.Core.Planning.WillBuildEvaluator"/>) <c>null</c>: gösterilecek bir hata yaşı yoktur. <see
+    /// cref="LastBuiltAtOf"/> ile AYNI desen — tek arama yeri, "imzalı kanıt var mı" sorusunu ikinci kez
+    /// yazmaz.
+    /// </summary>
+    public static DateTimeOffset? FailedAtOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
+        state is not null && state.TryGetValue(projectId, out var found)
+        && found.FailedSignature is not null ? found.FailedAt : null;
+
+    /// <summary>
     /// [Task 7] Bir SCC üyesinin, PLANLANAN (şu anki) bileşik imzada DAHA ÖNCE turlarla yakınsAMADIĞI hafızası —
     /// <see cref="BuildState.NonConvergentSignature"/>'ın TEK okuyucusu. Plan aşaması (RunCoordinator) ve
     /// (ileride) Sync/önizleme yolu aynı aramayı iki kez YAZMAZ — <see cref="BuiltCommitOf"/> ile aynı desen.

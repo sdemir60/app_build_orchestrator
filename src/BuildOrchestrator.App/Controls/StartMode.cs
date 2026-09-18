@@ -1,7 +1,7 @@
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [design v1.13.2 §1.1 · §2.4] <b>Başlangıç modunun (<see cref="VisualStatus.Fresh"/>) liste satırındaki
+/// [design v1.13.2 §1.1 · §2.4] <b>Başlangıç modunun (<see cref="VisualStatus.Unknown"/>) liste satırındaki
 /// çizim sabitleri</b> — TEK yer. Şeridin opaklığı ve noktanın halkası aynı kuralın iki yüzüdür ve
 /// birbirinden ayrı değişemezler (kopya YASAK, CLAUDE.md).
 ///

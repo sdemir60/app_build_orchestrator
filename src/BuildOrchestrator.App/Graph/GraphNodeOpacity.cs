@@ -83,7 +83,7 @@ public static class GraphNodeOpacity
     /// liste satırındaki will-build noktasında, şerit sayacında ve konsolda vardır.</para>
     /// </summary>
     public static bool IsSettled(GraphStatus status) => status
-        is GraphStatus.Succeeded or GraphStatus.Failed or GraphStatus.Cycle;
+        is GraphStatus.Succeeded or GraphStatus.Failed;
 
     /// <summary>
     /// Bir düğümün NİHAİ opaklığı. Sıra prototiple birebirdir (BuildApp.jsx:421-429).

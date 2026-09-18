@@ -917,9 +917,10 @@ public partial class GraphView : UserControl
 
         // [A13/T5] Ekran-okuyucu adı: kare/ikon görselleri ekran okuyucuya HİÇBİR ŞEY söylemez. Ad düğüm
         // BAŞINA anlamlıdır (tam proje adı + statü) ve statü görselleriyle AYNI yerde sürülür — statü
-        // değişince ad da tazelenir, bayat kalmaz.
+        // değişince ad da tazelenir, bayat kalmaz. [design v1.20.0 §2.7] Ad düğümün GÖSTERDİĞİ durumu söyler
+        // (Visual — çerçeve/zeminle aynı kanal), koşu statüsünü değil.
         AutomationProperties.SetName(
-            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
+            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Visual)));
 
         // [design v1.11.0 §2.3 "Renk kuralı"] TEK statü kanalı: node border'ı, zemini ve içindeki küp AYNI
         // görsel durumdan boyanır. Eşleme tablosu VisualStatuses'tedir — liste satırı da AYNI tablodan okur;
@@ -927,13 +928,15 @@ public partial class GraphView : UserControl
         //
         // [DEĞİŞEN KURAL] Burada eskiden İKİ eşleme vardı: kenar/zemin statüden, ÇEKİRDEK ise ayrı bir
         // plan/cycle kanalından (döngü üyesi → turuncu; aksi halde amber "derlenecek" / gri "güncel").
-        // v1.11.0 o kanalları kaldırdı — renk yalnız son işlemin hikâyesini anlatır. Kesikli çerçeve de artık
-        // YALNIZ başlangıç modundadır (fresh); `discovered` DÜZ gridir ve "bir işlem başladı ama bu proje
-        // kapsamda değil" der.
+        // v1.11.0 o kanalları kaldırdı. [DEĞİŞEN KURAL — design v1.20.0 §2.3] Renk artık çıktının KÜMÜLATİF
+        // durumudur (güncel yeşil · derlenecek gri · kanıtlı bozuk kırmızı), koşu onun üstüne biner. Kesikli
+        // çerçeve YALNIZ bilinmiyor durumundadır — kararın yokluğu (hiç Sync yok ya da karar düşürüldü);
+        // derlenecek (stale) düğüm DÜZ gridir.
         var state = visual.Model.Visual;
         string border = VisualStatuses.NodeBorderBrushKey(state);
         string background = VisualStatuses.NodeBackgroundBrushKey(state);
-        string iconColor = VisualStatuses.NodeCoreBrushKey(state);
+        // [design v1.20.0 §2.3] Döngü üyesinde küp HER durumda amber — üyelik durumdan bağımsız bir parametredir.
+        string iconColor = VisualStatuses.NodeCoreBrushKey(state, visual.Model.InCycle);
         bool dashed = VisualStatuses.IsStartMode(state);
 
         // [§2.3 · §1.3] Renk geçişi YALNIZ işaretleme dalgası oynarken açıktır — kapsam amber'a 200ms'de

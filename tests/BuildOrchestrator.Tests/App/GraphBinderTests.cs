@@ -136,13 +136,15 @@ public class GraphBinderTests
         var nodes = GraphBinder.Nodes(topology, RowsFor(topology));
         Assert.Equal(GraphStatus.Discovered, nodes.Single(n => n.Name == "X").Status);
 
-        // [DEĞİŞEN KURAL — design v1.12.0 §2.3] Eski iddia: "üyelik grafın RENK kanalına HİÇ girmez" — üye ve
-        // üye olmayan düğüm AYNI görsel durumu taşırdı. Değişme gerekçesi: v1.11.0 döngüyü yalnız liste
-        // satırındaki üçgenle anlatıyordu ve bitmiş bir koşu incelenirken grafta "bu neden derlenmedi"
-        // okunmuyordu. Yeni kural: bu işlemde derlenmeyen üyede node GRİ kalır ama içindeki küp AMBER olur
-        // (VisualStatus.Cycle) — turuncu kanal geri gelmez, kullanılan ton uyarı üçgeninin kendi amberidir.
-        Assert.Equal(VisualStatus.Cycle, nodes.Single(n => n.Name == "X").Visual);
-        Assert.Equal(VisualStatus.Discovered, nodes.Single(n => n.Name == "Y").Visual);
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski iddia (v1.12.0): bu işlemde derlenmeyen üye kendi görsel
+        // durumunu taşır (VisualStatus.Cycle: gri node + amber küp), üye olmayan Discovered'dır. Değişme
+        // gerekçesi: küp artık HER durumda amber'dır, yani üyelik durumdan bağımsız bir parametredir. Yeni
+        // kural: üye ve üye olmayan düğüm AYNI görsel durumu (karar yok → Unknown) taşır; üyelik düğümün kendi
+        // InCycle alanındadır ve yalnız küpü boyar.
+        Assert.Equal(VisualStatus.Unknown, nodes.Single(n => n.Name == "X").Visual);
+        Assert.Equal(VisualStatus.Unknown, nodes.Single(n => n.Name == "Y").Visual);
+        Assert.True(nodes.Single(n => n.Name == "X").InCycle);
+        Assert.False(nodes.Single(n => n.Name == "Y").InCycle);
     }
 
     // [quiet · SİLİNDİ] `Nodes_source_the_dep_badge_from_row_HasDepIssue` — v1.3.0 §2.3 "Kaldırılanlar" graf
@@ -159,25 +161,34 @@ public class GraphBinderTests
     /// node border'ı ve içindeki küp AYNI görsel durumdan boyanır, plan bilgisi satırın çift SHA metnine,
     /// döngü üyeliği liste satırındaki tek amber üçgene indi. Dördü bu tek teste indi.</para>
     ///
-    /// <para>Görsel durumun kendisi satırdan gelir (statü + başlangıç modu + işaretlilik); satır YOKSA
-    /// başlangıç modu varsayılır — Sync'ten sonraki temiz hâl budur.</para>
+    /// <para>Görsel durumun kendisi satırdan gelir (koşu statüsü + çıktı durumu + işaretlilik); satır YOKSA
+    /// karar da yoktur ve durum <see cref="VisualStatus.Unknown"/>'dır.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski ad/iddia:
+    /// <c>Nodes_carry_the_rows_single_visual_status_and_default_to_the_fresh_start_mode</c> — Sync sonrası satır
+    /// başlangıç modundadır (<c>Fresh</c>), satırsız düğüm de <c>Fresh</c>. Değişme gerekçesi: Sync artık renk
+    /// verir; başlangıç modu yalnız kararın yokluğudur. Yeni kural: kararlı satır kendi çıktı durumunu taşır,
+    /// satırsız düğüm <c>Unknown</c>'dır.</para>
     /// </summary>
     [Fact]
-    public void Nodes_carry_the_rows_single_visual_status_and_default_to_the_fresh_start_mode()
+    public void Nodes_carry_the_rows_single_visual_status_and_default_to_unknown()
     {
-        var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]) };
+        var topology = new[] { Node("X", [], inCycle: true), Node("Y", ["X"]), Node("Z", ["Y"]) };
         var rows = RowsFor(topology);
-        rows[Id("X")].Fresh = true;                 // Sync sonrası başlangıç modu
+        rows[Id("X")].WillBuild = false;            // Sync kararı: güncel
+        rows[Id("X")].WillBuildReason = WillBuildReason.UpToDate;
         rows[Id("Y")].Marked = true;                // işlem kapsamı — dalgada amber'a yanar
 
         var nodes = GraphBinder.Nodes(topology, rows);
 
-        Assert.Equal(VisualStatus.Fresh, nodes.Single(n => n.Name == "X").Visual);
+        Assert.Equal(VisualStatus.Current, nodes.Single(n => n.Name == "X").Visual);
         Assert.Equal(VisualStatus.Marked, nodes.Single(n => n.Name == "Y").Visual);
+        Assert.Equal(VisualStatus.Unknown, nodes.Single(n => n.Name == "Z").Visual); // karar yok
 
-        // Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) başlangıç modu.
+        // Satır yoksa (topoloji düğümünün henüz satırı yok — savunmacı) durum bilinmez; üyelik topolojiden.
         var orphan = GraphBinder.Nodes(topology, new Dictionary<string, ProjectRowViewModel>(StringComparer.OrdinalIgnoreCase));
-        Assert.All(orphan, n => Assert.Equal(VisualStatus.Fresh, n.Visual));
+        Assert.All(orphan, n => Assert.Equal(VisualStatus.Unknown, n.Visual));
+        Assert.True(orphan.Single(n => n.Name == "X").InCycle);
     }
 
     [Fact]

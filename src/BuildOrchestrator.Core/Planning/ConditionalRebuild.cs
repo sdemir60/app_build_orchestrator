@@ -46,45 +46,6 @@ public static class ConditionalRebuild
         && node.WillBuildReason == WillBuildReason.WaitingForDependency;
 
     /// <summary>
-    /// [Task 4 review round 2 — I1] App'in CANLI geçişi sorar: bu proje BU KOŞUDA az önce bitti (<paramref
-    /// name="depIssues"/> doluysa dep-issue'lu) — satır, motorun bir sonraki önizlemesini (bir Sync'e kadar
-    /// gelmeyebilir) beklemeden şimdiden NE göstermeli? Cevap o önizlemenin (<c>WillBuildEvaluator</c> +
-    /// <see cref="AppliesTo"/>) AYNEN kendisidir — App kendi kopyasını TÜRETMEZ, burayı sorar. Üçü BİRLİKTE
-    /// döner çünkü üçü de AYNI kayıttan (bu başarının deftere ne yazacağından) türer ve ayrı ayrı sorulursa
-    /// sessizce ayrışabilirler.
-    ///
-    /// <para><b>Dep-issue yoksa ya da sonucun arkasında durulamıyorsa (<paramref name="cycleUnsettled"/> —
-    /// yakınsamayan bir grubun tavana dayanmış üyesi, <c>RunCoordinator.ReportProjectResult</c>'ın
-    /// <c>trustedResult=false</c> ile PERSIST ETMEDİĞİ hâl):</b> defter bu başarıdan HİÇBİR ŞEY öğrenmedi,
-    /// satır bugünkü <c>UpToDate</c> olgusuna döner (Task 4 öncesi davranış — burada iyileştirilecek yeni bir
-    /// bilgi yok, çünkü hiçbir şey persist edilmedi).</para>
-    ///
-    /// <para><b>Dep-issue'lu, döngü üyesi DEĞİL (tekil proje, sonuç GÜVENİLİR):</b> <see cref="AppliesTo"/>'nun
-    /// koşulları sağlanır — <c>WaitingForDependency</c>, <c>WillBuild=true</c> (hâlâ dirty), <c>Conditional=true</c>
-    /// (bu koşu onu bireysel olarak gater).</para>
-    ///
-    /// <para><b>Dep-issue'lu, döngü üyesi, sonuç GÜVENİLİR (yakınsamış grup):</b> Defter GERÇEKTEN NOT+KÖK
-    /// yazar, ama bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi <c>buildCycles:false</c> ile
-    /// değerlendirir — <c>outOfScope=true</c> ⇒ <c>WillBuild=false</c> ZORLANIR, gerekçe YİNE DE hesaplanır
-    /// (<c>DepIssue=true</c> + kökler ⇒ <c>WaitingForDependency</c>, "etiket bir disk olgusudur" kuralı).
-    /// <see cref="AppliesTo"/> de <c>WillBuild==true</c> gerektirdiğinden <c>Conditional=false</c> kalır — üye
-    /// TEK BAŞINA hiçbir zaman koşullu değildir (grubuyla derlenir). <b>[DEĞİŞEN KURAL — round 2]</b> Önceki
-    /// sürüm burada da <c>UpToDate</c> döndürüyordu (yalnız "yanlış söz vermeyi" durdurmuştu, ama etiketi bir
-    /// sonraki Sync'te FLİP EDEN yeni bir yanlış üretiyordu: canlı soluk <c>up to date · just now</c>, Sync
-    /// sonrası belirgin <c>affected</c>) — artık motorun bir sonraki önizlemesiyle BİREBİR AYNI üçlüyü döner,
-    /// etiket titremez.</para>
-    /// </summary>
-    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterSuccess(
-        bool inCycle, bool cycleUnsettled, IReadOnlyList<string>? depIssues)
-    {
-        if (cycleUnsettled || depIssues is not { Count: > 0 })
-            return (false, WillBuildReason.UpToDate, false);
-        return inCycle
-            ? (false, WillBuildReason.WaitingForDependency, false)
-            : (true, WillBuildReason.WaitingForDependency, true);
-    }
-
-    /// <summary>
     /// Koşullu projenin sırası geldiğinde kararı: köklerden EN AZ BİRİ başarılıysa (bu koşuda başarıyla
     /// derlendi, ya da bu koşuda derlenmedi ama defterdeki son sonucu başarı) derlenir; hepsi hâlâ hatalıysa
     /// (bu koşuda patladı, ya da derlenmedi ve defterdeki son sonucu hata) atlanır.

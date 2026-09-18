@@ -161,14 +161,16 @@ the running instance first — tray icon → Exit).
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
    drop one of the roots that contributes it.
 
-   **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
-   in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
-   node draws a dashed border. What is stale is still readable, from the **decision label** at the right end of
-   each row: `modified` (its own files changed), `affected` (only a dependency changed), `never built`,
-   `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. A
-   project that built successfully against a dependency that was failing, and has not changed since, reads
-   `affected · up to date · <age>` instead: a later Build leaves it alone until that dependency is healthy
-   again, and its native tooltip names which one. Colour arrives when you press something.
+   **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
+   will be built, red when its last build failed with a compiler error. In a cycle member the graph node's cube
+   is always amber. Before the first Sync nothing is known, so every row sits in the start mode — a four-arc
+   ring in place of the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build
+   is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
+   `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed),
+   `never built`, `failed · 2h` (failed at this source — the tail is how long ago), or `up to date · 2h` — the
+   tail being how long ago it was last built successfully. A project that built successfully against a
+   dependency that was failing, and has not changed since, reads the same `up to date` — a later Build leaves it
+   alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 
    The Sync line in the console also says where you stand against the remote:
    `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next
@@ -253,9 +255,12 @@ the running instance first — tray icon → Exit).
 glyph and the graph node all carry the same status, so there is nothing to cross-reference. A single amber
 triangle in the fixed slot on the right means something is off with this project's dependencies — a cycle, or
 a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
-project log. The counter chips in the bottom bar are filters and they **combine**: press the tick and the
-cross together to see what this run built, and type in the filter box (`Ctrl+F`) to narrow that further. Each
-active chip lights in its own colour, and the chip in the PROJECTS header lists what is on.
+project log. The counter chips in the bottom bar count state — `✓` up to date, `○` to build, `✗` failed, plus
+what is building right now — and each is a filter; they **combine**: press the tick and the circle together to
+see everything that is green or grey, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
+project is not a state of its own: it keeps its colour and is counted under the chip it shows, while the run's
+*N skipped* stays in the ribbon's summary. Each active chip lights in its own colour, and the chip in the
+PROJECTS header lists what is on.
 
 **Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build and Rebuild for
 that one project — and right-clicking the row opens the same menu. A run started this way compiles that
@@ -319,7 +324,9 @@ build icons — green, red, the spinner — and carry a single amber warning tri
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
-answers "why was this one not built?". A member the run actually compiled wears its result colour alone.
+answers "why was this one not built?". A member the run actually compiled wears its result colour alone —
+except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
+because nothing it produced is kept.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the

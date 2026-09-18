@@ -21,15 +21,15 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class QuietGraphNodeTests
 {
-    // [design v1.11.0 §2.3] Düğüm artık TEK renk kanalı taşır: statünün YANINDA görsel durum da verilir
-    // (üretimde ikisini GraphBinder birlikte kurar). "OSYS.Legacy" BAŞLANGIÇ MODUNDADIR (fresh) — kesikli
-    // çerçevenin tek sahibi odur.
+    // [design v1.20.0 §2.3] Düğüm TEK renk kanalı taşır: statünün YANINDA görsel durum da verilir (üretimde
+    // ikisini GraphBinder birlikte kurar). "OSYS.Legacy" BAŞLANGIÇ MODUNDADIR (unknown — henüz Sync yok) —
+    // kesikli çerçevenin tek sahibi odur.
     private static IReadOnlyList<GraphNode> Nodes() =>
     [
         new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Succeeded, VisualStatus.Succeeded),
         new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
         new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Queued, VisualStatus.Queued),
-        new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+        new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Unknown),
     ];
 
     private static IReadOnlyList<GraphEdge> Edges() =>
@@ -163,29 +163,28 @@ public class QuietGraphNodeTests
 
     /// <summary>Başlangıç modundaki düğüm kesikli çerçeve taşır — WPF <c>Border</c> dash desteklemediği için
     /// <see cref="Rectangle"/>. Kesikli koleksiyon TEK, DONMUŞ ve PAYLAŞIMLIDIR (tick başına allocation yok).
-    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.3]</b> Eski iddia "DISCOVERED düğüm kesiklidir" idi. Kesikli
-    /// çizim artık YALNIZ başlangıç moduna (<c>fresh</c>) aittir; <c>discovered</c> DÜZ gridir ve "bir işlem
-    /// başladı ama bu proje kapsamda değil" der. İki durum aynı görünseydi Sync sonrası ile işlem-ortası ayırt
-    /// edilemezdi.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.3 · v1.20.0 §2.3]</b> Eski iddia "DISCOVERED düğüm kesiklidir"
+    /// idi. Kesikli çizim YALNIZ başlangıç moduna (<c>unknown</c>: karar yok, henüz Sync yapılmadı) aittir;
+    /// kararı olan her düğüm kendi çıktı durumunu DÜZ çerçeveyle çizer — <c>stale</c> düz gridir.</para></summary>
     [StaFact]
-    public void A_fresh_node_gets_a_dashed_frame_from_one_shared_frozen_collection()
+    public void A_start_mode_node_gets_a_dashed_frame_from_one_shared_frozen_collection()
     {
         var view = Built(new Size(640, 400));
 
-        var fresh = view.NodeVisuals["OSYS.Legacy"].Square;
-        Assert.NotEmpty(fresh.StrokeDashArray);
-        Assert.True(fresh.StrokeDashArray.IsFrozen);
+        var startMode = view.NodeVisuals["OSYS.Legacy"].Square;
+        Assert.NotEmpty(startMode.StrokeDashArray);
+        Assert.True(startMode.StrokeDashArray.IsFrozen);
         Assert.Empty(view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
 
-        // İkinci bir fresh düğüm AYNI örneği paylaşır; `discovered` ise KESİKLİ DEĞİLDİR.
+        // İkinci bir başlangıç modu düğümü AYNI örneği paylaşır; `stale` (düz gri) ise KESİKLİ DEĞİLDİR.
         view.UpdateStatuses(
         [
-            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Discovered, VisualStatus.Unknown),
             new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Failed, VisualStatus.Failed),
-            new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Discovered),
-            new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Fresh),
+            new("OSYS.Api", "OSYS.Api", 2, GraphStatus.Discovered, VisualStatus.Stale),
+            new("OSYS.Legacy", "OSYS.Legacy", 2, GraphStatus.Discovered, VisualStatus.Unknown),
         ]);
-        Assert.Same(fresh.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
+        Assert.Same(startMode.StrokeDashArray, view.NodeVisuals["OSYS.Base"].Square.StrokeDashArray);
         Assert.Empty(view.NodeVisuals["OSYS.Api"].Square.StrokeDashArray);
     }
 

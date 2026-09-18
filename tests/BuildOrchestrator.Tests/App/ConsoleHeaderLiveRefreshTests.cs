@@ -49,7 +49,7 @@ public class ConsoleHeaderLiveRefreshTests
         var (row, header) = SelectViaHeaderWiring(window, vm, idA);
 
         // ön-koşul: statü "Building" (spinner dönüyor).
-        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
         var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
         Assert.Equal(Visibility.Visible, spinner.Visibility);
 
@@ -57,7 +57,7 @@ public class ConsoleHeaderLiveRefreshTests
         // State'i değişir (satırdaki gerçek geçiş yolu — RunViewModel.OnProjectDone).
         row.State = ProjectRowState.Succeeded;
 
-        Assert.Equal(GraphStatus.Succeeded, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Succeeded, header.StatusGlyphIcon.Status);
         Assert.Equal("Succeeded", header.StatusNameText.Text);
         Assert.Equal(Visibility.Collapsed, spinner.Visibility); // aynı kontrol örneği — artık dönmüyor
         GC.KeepAlive(window);
@@ -86,13 +86,13 @@ public class ConsoleHeaderLiveRefreshTests
 
         var (row, header) = SelectViaHeaderWiring(window, vm, idA);
 
-        Assert.Equal(GraphStatus.Queued, header.StatusGlyphIcon.Status); // satırla AYNI
+        Assert.Equal(VisualStatus.Queued, header.StatusGlyphIcon.Status); // satırla AYNI
         Assert.Equal("Queued", header.StatusNameText.Text); // yazı da satırla AYNI — State hâlâ Started'dır
 
         row.CycleWaiting = false; // sıra bu üyeye geçti — seçim DEĞİŞMEZ
         Assert.True(row.IsCompiling);
 
-        Assert.Equal(GraphStatus.Building, header.StatusGlyphIcon.Status);
+        Assert.Equal(VisualStatus.Building, header.StatusGlyphIcon.Status);
         Assert.Equal("Building", header.StatusNameText.Text);
         var spinner = Assert.Single(DsResources.Descendants(header.StatusGlyphIcon).OfType<BuildingSpinner>());
         Assert.Equal(Visibility.Visible, spinner.Visibility);

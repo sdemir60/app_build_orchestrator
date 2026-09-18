@@ -81,11 +81,15 @@ public class ProjectFilterChipTests
 
     /// <summary>Etiketler <see cref="ProjectFilter.Label"/>'dan gelir.
     /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-4]</b> <c>dep</c> ve <c>cycle</c> chip'leri TEK bir
-    /// <c>warn</c> chip'inde birleşti ("Warnings"); eski <c>Dependency issues</c> etiketi artık YOKTUR.</para></summary>
+    /// <c>warn</c> chip'inde birleşti ("Warnings"); eski <c>Dependency issues</c> etiketi artık YOKTUR.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7]</b> Eski satırlar <c>succeeded</c> → "Succeeded" ve
+    /// <c>skipped</c> → "Skipped" idi; chip'ler artık durum filtreleridir ("Up to date" · "To build" · "Failed") ve
+    /// atlandı chip'i kalktı.</para></summary>
     [StaTheory]
     [InlineData(ProjectFilter.Building, "Building")]
-    [InlineData(ProjectFilter.Succeeded, "Succeeded")]
-    [InlineData(ProjectFilter.Skipped, "Skipped")]
+    [InlineData(ProjectFilter.Current, "Up to date")]
+    [InlineData(ProjectFilter.Stale, "To build")]
+    [InlineData(ProjectFilter.Failed, "Failed")]
     [InlineData(ProjectFilter.Warn, "Warnings")]
     public void The_chip_label_comes_from_the_existing_filter_label_table(string filter, string label)
     {
@@ -107,9 +111,9 @@ public class ProjectFilterChipTests
         var (window, vm) = NewShell(temp);
 
         vm.ToggleFilter(ProjectFilter.Failed);
-        vm.ToggleFilter(ProjectFilter.Succeeded);
+        vm.ToggleFilter(ProjectFilter.Current);
 
-        Assert.Equal("Succeeded + Failed", TextOf(Assert.Single(HeaderChips(window))));
+        Assert.Equal("Up to date + Failed", TextOf(Assert.Single(HeaderChips(window))));
         GC.KeepAlive(window);
     }
 
@@ -229,7 +233,7 @@ public class ProjectFilterChipTests
         Assert.Empty(vm.ActiveFilters);              // tıklama filtreyi GERÇEKTEN kaldırdı
         Assert.Empty(HeaderChips(window));
 
-        vm.ToggleFilter(ProjectFilter.Succeeded); // chip yeniden göründüğünde HÂLÂ amber olmalı
+        vm.ToggleFilter(ProjectFilter.Current); // chip yeniden göründüğünde HÂLÂ amber olmalı
         var again = Assert.Single(HeaderChips(window));
         again.UpdateLayout();
 

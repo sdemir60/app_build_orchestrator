@@ -929,7 +929,12 @@ public sealed class RunCoordinator(
                 LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id),
                 Conditional: conditionalIds.Contains(n.Id),
                 DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
-                    builtCommits?.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))]));
+                    builtCommits?.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
+                // [Task 3] FailedAt AYNI yardımcıdan (BuildStateStore.FailedAtOf) taşınır — Sync ve run yolu
+                // aynı aramayı iki kez YAZMAZ (BuiltCommit/LastBuiltAt ile aynı desen). LocalEdits burada
+                // TAŞINMAZ (default false): o Sync'in "o anki çalışma ağacı" işaretidir, bir koşunun kendi
+                // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
+                FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
@@ -1258,8 +1263,17 @@ public sealed class RunCoordinator(
     {
         string name = NameOf(run, projectId);
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
+        // [R-M4b · spec 2026-09-18 §1-14] Defterin kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
+        // olay (ProjectFailedEvent.Evidence · ProjectSucceededEvent.Trusted) ve defter yazımı
+        // (InvalidateBuildStateOnFailure). İkisi ayrı hesaplansaydı satır ile bir sonraki Sync ayrışabilirdi —
+        // App metni yeniden sınıflandırmaz, başarının güvenilir olup olmadığını da tahmin etmez.
+        bool invalidates = result != BuildResult.Succeeded || !trustedResult;
+        string? evidenceSignature = null;
         try
         {
+            // [final review O4] Kanıt kapısı da Complete garantisinin İÇİNDEDİR: fırlasa bile scheduler askıda
+            // kalmaz (finally yine TAM BİR KEZ Complete eder).
+            if (invalidates) evidenceSignature = FailureEvidenceSignature(run, projectId, failReason, trustedResult);
             if (result == BuildResult.Succeeded)
             {
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
@@ -1280,7 +1294,10 @@ public sealed class RunCoordinator(
                 else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs,
                         depIssueRoots: depIssuesForEvent is null ? null : depIssues.RootIds);
-                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
+                // [final review I1] Trusted = defter bu başarıyı başarı olarak tuttu mu (invalidates'in tersi);
+                // tutmadıysa App satırı, bir sonraki Sync'in okuyacağı "kanıtsız hata" hâliyle çizer.
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent,
+                    cycleUnsettled, Trusted: !invalidates));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: succeeded ({1}ms)", name, durationMs));
             }
@@ -1288,7 +1305,8 @@ public sealed class RunCoordinator(
             {
                 string reason = failReason!;
                 MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
-                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent));
+                run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent,
+                    Evidence: evidenceSignature is not null));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "{0}: failed — {1}{2}", name, reason,
                     failLogTail ?? string.Format(CultureInfo.InvariantCulture, " ({0}ms)", durationMs)));
             }
@@ -1303,7 +1321,9 @@ public sealed class RunCoordinator(
             // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
             // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
             // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin yeşil üyesi) buradan geçer.
-            if (result != BuildResult.Succeeded || !trustedResult) InvalidateBuildStateOnFailure(run, projectId);
+            // [spec 2026-09-18 §1-14] reason ve trustedResult birlikte TAŞINIR: invalidate artık nedene göre
+            // yazar (kanıtlı derleyici hatası ⇔ imza+zaman; kanıtsız ⇔ yalnız LastResult/LastRunAt).
+            if (invalidates) InvalidateBuildStateOnFailure(run, projectId, evidenceSignature);
         }
     }
 
@@ -1848,26 +1868,36 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [A2 fix-1] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i GEÇERSİZLEŞTİRİR:
-    /// <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
-    /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
-    /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
+    /// [A2 fix-1][spec 2026-09-18 §1-14] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i
+    /// GEÇERSİZLEŞTİRİR: <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
+    /// bir sonraki Build'de bu projeyi AYNI kaynakla "up to date" sayıp pre-skip EDEMEZ — kanıtsızsa
+    /// <c>NeverBuilt</c>, kanıt bugünkü imzadaysa <c>LastFailed</c> okur. Tek istisna kaynağın geri alınmasıdır
+    /// (spec §5.3): kanıt başka bir imzaya aitse ve kaynak son BAŞARILI imzaya (<c>BuiltSignature</c>) döndüyse
+    /// karar <c>UpToDate</c>'tir — o imzanın son bilinen sonucu başarıdır. Yani "<c>LastResult != Succeeded</c>
+    /// ⇒ derlenir" genel bir kural DEĞİLDİR. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek
+    /// yeri burasıdır.
     /// <para>
-    /// <b>Neden HER başarısızlık türü:</b> stopped/timeout/invoke-error de "bilinen iyi" DEĞİLDİR — yarıda
-    /// kesilmiş bir derleme torn/eksik çıktı bırakabilir. Güvenli yön invalidasyondur; bedeli "gereksiz bir kez
-    /// daha derlemek", diğer yönün bedeli "sessizce bozuk çıktıyı güncel sanmak".
+    /// <b>Yazım nedene göre AYRIŞIR.</b> Kanıt kararı bu metodun DIŞINDA, TEK yerde verilir
+    /// (<see cref="FailureEvidenceSignature"/>: arkasında durulabilir sonuç + derleyici hatası + bilinen imza) ve
+    /// buraya imza olarak gelir — AYNI değer App'e giden <see cref="ProjectFailedEvent.Evidence"/>'ı da belirler,
+    /// böylece satır ile bir sonraki Sync ayrışamaz. Yakınsamayan bir SCC'nin (§8.8) "yeşil" üyesi de bu metottan
+    /// geçer; o kanıt SAYILMAZ. <b>Kanıtlıysa</b>: <see
+    /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
+    /// yazılır — kayıt yoksa <c>BuiltSignature: null</c> ile AÇILIR (hiç derlenmemiş bir proje ilk kez patladığında
+    /// da kanıt kaybolmasın diye). İmzasız kanıt YOKTUR (<see cref="WillBuildEvaluator"/>'ın <c>LastFailed</c>'i
+    /// imza eşitliğine bakar) — imza bilinmiyorsa kapı zaten kanıtsız der. <b>Kanıtsızsa</b> (timeout, stopped,
+    /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
+    /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
+    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil) ve kayıt yoksa hiçbir şey
+    /// AÇILMAZ: kanıtsız bir başarısızlık için placeholder kayıt yazmak store'u şişirmekten başka iş yapmaz.
     /// </para>
     /// <para>
-    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni): <see
-    /// cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
+    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni) her iki yolda da geçerlidir:
+    /// <see cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
     /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
     /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
     /// dirty olurdu; (2) <c>LastDurationMs</c> ETA tahminini besler, bir başarısızlığın (çoğu zaman erken patlayan)
-    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır. Yalnız <c>LastResult</c>/<c>LastRunAt</c> güncellenir.
-    /// </para>
-    /// <para>
-    /// Kayıt YOKSA hiçbir şey yazılmaz: "kayıt yok" ile "imzası olmayan kayıt" tüm tüketiciler için AYNI anlama
-    /// gelir (WillBuild=true) — boş satır eklemek store'u şişirmekten başka bir şey yapmaz.
+    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır.
     /// </para>
     /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// <para>
@@ -1878,17 +1908,56 @@ public sealed class RunCoordinator(
     /// içinde "run'ı öldürmez" sözü ancak KOŞULSUZ olabilir; bu yüzden filtre daraltılmaz.
     /// </para>
     /// </summary>
-    private void InvalidateBuildStateOnFailure(RunContext run, string projectId)
+    /// <param name="evidenceSignature">Kanıt kapısının cevabı (<see cref="FailureEvidenceSignature"/>) — kanıtlıysa
+    /// hata anındaki imza, değilse <c>null</c>. Kapı burada YENİDEN hesaplanmaz: aynı değer App'e giden olayı da
+    /// belirler (<see cref="ProjectFailedEvent.Evidence"/>).</param>
+    private void InvalidateBuildStateOnFailure(RunContext run, string projectId, string? evidenceSignature)
     {
         if (run.StateStore is null) return;
         try
         {
-            if (!run.StateStore.Load().TryGetValue(projectId, out var existing)) return; // geçersizleştirilecek kayıt yok
-            run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
+            bool evidence = evidenceSignature is not null;
+            string? signature = evidenceSignature;
+
+            run.StateStore.Load().TryGetValue(projectId, out var existing);
+            if (!evidence && existing is null) return; // kanıtsız + kayıt yok ⇒ hiçbir şey açılmaz
+
+            var now = DateTimeOffset.UtcNow;
+            var baseline = existing ?? new BuildState(projectId, BuiltSignature: null);
+            run.StateStore.Upsert(baseline with
+            {
+                LastResult = BuildResult.Failed,
+                LastRunAt = now,
+                FailedSignature = evidence ? signature : null,
+                FailedAt = evidence ? now : null,
+            });
         }
         catch (Exception ex)
         { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
     }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-14 · R-M4b] <b>Kanıt kapısının TEK yeri.</b> Bir başarısızlık, (1) sonucun arkasında
+    /// durulabiliyorsa (<paramref name="trustedResult"/> — yakınsamayan bir SCC'de değil), (2) nedeni derleyicinin
+    /// kendi sıfır-dışı çıkışıysa (<see cref="FailureClassification.IsCompilerFailure"/> — timeout, stopped,
+    /// invoke error değil) ve (3) planlamadaki imzası biliniyorsa (<c>run.Incremental.SignatureById</c> — imzasız
+    /// kanıt YASAK, <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c>'i imza eşitliğine bakar)
+    /// ve (4) yazılacak bir defter varsa ve (5) koşunun hedefi DERLİYORSA (Build/Rebuild) KANITTIR. Dönen imza
+    /// kanıtın kendisidir; <c>null</c> = kanıt yok. Hem defter yazımı hem App'e giden olay BUNU okur, ikisi
+    /// ayrışamaz.
+    /// <para>(5)'in gerekçesi: <c>msbuild /t:Clean</c> derleyiciyi hiç çağırmaz; sıfır-dışı çıkışı (kilitli
+    /// dosya, erişim hatası) kaynağın derlenmediğini söylemez. Patlayan bir Clean kanıtsızdır — çıktı yarım
+    /// silinmiş olabileceği için defter yine geçersizleşir, ama satır "bu kaynakta patladı" kırmızısı almaz.</para>
+    /// </summary>
+    private static string? FailureEvidenceSignature(RunContext run, string projectId, string? reason, bool trustedResult) =>
+        run.StateStore is not null
+        && (run.MsBuildTarget is MsBuildTarget.Build or MsBuildTarget.Rebuild)
+        && trustedResult
+        && FailureClassification.IsCompilerFailure(reason)
+        && run.Incremental is { } inc
+        && inc.SignatureById.TryGetValue(projectId, out var signature)
+            ? signature
+            : null;
 
     private string ReasonFor(MsBuildInvokeResult invoke)
     {
@@ -1900,7 +1969,9 @@ public sealed class RunCoordinator(
         }
         if (invoke.TimedOut) return "timeout";
         if (invoke.Killed) return "stopped";
-        return string.Format(CultureInfo.InvariantCulture, "exit {0}", invoke.ExitCode);
+        // [spec 2026-09-18 §1-14] Önek TEK kaynaktan: FailureClassification.IsCompilerFailure aynı sabiti okur —
+        // literal iki yerde tanımlanmaz (kopya YASAK, CLAUDE.md).
+        return string.Format(CultureInfo.InvariantCulture, "{0}{1}", FailureClassification.ExitPrefix, invoke.ExitCode);
     }
 
     // [I2-K2/S2] Legacy restore sinyali: csproj'un YANINDA packages.config. bin/OutDir'e BAKILMAZ [§4].

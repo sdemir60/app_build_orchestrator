@@ -1,0 +1,189 @@
+using BuildOrchestrator.App.Controls;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [design v1.20.0 §2.3 · §5] <b>Görsel durum = çıktının durumu + koşu bindirmesi.</b> Satır ve node aynı
+/// eşlemeden (<see cref="VisualStatuses.For"/>) beslenir: koşu bir şey söylediyse o kazanır, atlanmak bir renk
+/// değildir (çıktı durumuna düşer), işaretleme dalgası her durumu ezer. Döngü küpü durumdan bağımsızdır.
+/// </summary>
+public class VisualStatusTests
+{
+    public static TheoryData<StandingStatus, VisualStatus> StandingVisuals => new()
+    {
+        { StandingStatus.Unknown, VisualStatus.Unknown },
+        { StandingStatus.Current, VisualStatus.Current },
+        { StandingStatus.Stale, VisualStatus.Stale },
+        { StandingStatus.Failed, VisualStatus.Failed },
+    };
+
+    /// <summary>Atlanan proje kendi çıktı durumunu taşır: güncelse yeşil kalır, — glyph'i/grisi yoktur.</summary>
+    [Theory]
+    [MemberData(nameof(StandingVisuals))]
+    public void Skipped_falls_to_the_standing_colour(StandingStatus standing, VisualStatus expected)
+        => Assert.Equal(expected, VisualStatuses.For(GraphStatus.Skipped, standing, marked: false));
+
+    /// <summary>Motorun hakkında konuşmadığı proje çıktı durumunu gösterir; işaretliyse dalganın amberini.</summary>
+    [Theory]
+    [MemberData(nameof(StandingVisuals))]
+    public void Discovered_shows_the_standing_colour_unless_marked(StandingStatus standing, VisualStatus expected)
+    {
+        Assert.Equal(expected, VisualStatuses.For(GraphStatus.Discovered, standing, marked: false));
+        Assert.Equal(VisualStatus.Marked, VisualStatuses.For(GraphStatus.Discovered, standing, marked: true));
+    }
+
+    /// <summary>Dalga her çıktı durumunu ezer — kırmızı ya da yeşil bir kapsam üyesi de TAM amberdir.</summary>
+    [Theory]
+    [InlineData(StandingStatus.Unknown)]
+    [InlineData(StandingStatus.Current)]
+    [InlineData(StandingStatus.Stale)]
+    [InlineData(StandingStatus.Failed)]
+    public void Marked_wins_over_every_standing(StandingStatus standing)
+        => Assert.Equal(VisualStatus.Marked, VisualStatuses.For(GraphStatus.Discovered, standing, marked: true));
+
+    /// <summary>Koşu bir şey söylediyse (kuyruk, derleme, sonuç) çıktı durumunu ve işaretliliği ezer.
+    /// <para><b>[DEĞİŞEN KURAL — R-M4 · design v1.20.0 §5]</b> Eski iddia: <c>Failed</c> da her çıktı durumunu
+    /// ezer (Stale üstünde de kırmızı). Değişme gerekçesi: kırmızı KANITTIR — timeout/Stop kanıt sayılmaz ve
+    /// satırı kırmızıya çevirmez; kanıtsız hata bayat (Stale) çıktı durumunu bırakır ve satır onu gösterir
+    /// (<see cref="A_failure_that_is_not_evidence_reads_as_its_stale_standing"/>). Kanıtlı hatanın çıktı
+    /// durumu zaten Failed'dır; Stale DIŞINDAKİ her durumda <c>Failed</c> hâlâ ezer.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> Eski iddia: <c>Succeeded</c> de Stale üstünde ezer (yeşil).
+    /// Değişme gerekçesi: temizlenen (Clean) ya da motorun arkasında durmadığı (yakınsamayan SCC) bir başarı
+    /// "derlenecek" çıktı bırakır — satır "never built" yazarken yeşil ✓ gösteriyor, ✓ sayılıyor, "Up to date"
+    /// duyuruluyordu. Başarı artık Failed ile aynı biçimde çıktı durumuna düşer
+    /// (<see cref="Succeeded_falls_to_a_stale_or_failed_standing"/>).</para></summary>
+    [Theory]
+    [InlineData(GraphStatus.Queued, VisualStatus.Queued)]
+    [InlineData(GraphStatus.Building, VisualStatus.Building)]
+    public void The_run_overlays_the_standing(GraphStatus status, VisualStatus expected)
+    {
+        Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Current, marked: false));
+        Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Stale, marked: true));
+    }
+
+    /// <summary>[final review I2] Durum yüzeyinde başarı, çıktı durumu yeşilse (ya da karar hiç yoksa) koşunun
+    /// <see cref="VisualStatus.Succeeded"/>'ıdır — vurgulu ad ve yeşil ✓ korunur; çıktı bayat ya da bozuksa
+    /// (Clean · güvenilmez başarı) o durumu gösterir. Run-story yüzeyleri (<see cref="VisualStatuses.OfRun"/>)
+    /// bundan etkilenmez.</summary>
+    [Fact]
+    public void Succeeded_falls_to_a_stale_or_failed_standing()
+    {
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Current, marked: false));
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Unknown, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Stale, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Stale, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Failed, marked: false));
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.OfRun(GraphStatus.Succeeded)); // run-story "Succeeded" der
+    }
+
+    /// <summary>[R-M4 · design v1.20.0 §5 "bozuk (kanıtlı)"] Kanıt olmayan bir koşu hatası (timeout, Stop,
+    /// invoke hatası) satırı kırmızıya ÇEVİRMEZ: satır bayat çıktı durumunu (gri) gösterir. Kanıtlı hata
+    /// çıktı durumunu zaten <see cref="StandingStatus.Failed"/>'a yazar ve kırmızıdır.</summary>
+    [Fact]
+    public void A_failure_that_is_not_evidence_reads_as_its_stale_standing()
+    {
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Failed, marked: false));
+        // Kural doğrudan: durum yüzeyinde kırmızı YALNIZ çıktı durumundan gelir. Karar hiç yoksa (Unknown)
+        // koşunun sonucu tek bilgidir ve kırmızı kalır.
+        Assert.Equal(VisualStatus.Current, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Current, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Unknown, marked: false));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.OfRun(GraphStatus.Failed)); // run-story yüzeyleri Failed der
+    }
+
+    /// <summary>[design v1.20.0 §1.4] — yalnız run-story'dedir: durum yüzeyleri onu hiçbir girdide almaz.</summary>
+    [Fact]
+    public void A_state_surface_never_receives_the_skipped_dash()
+    {
+        foreach (var status in Enum.GetValues<GraphStatus>())
+            foreach (var standing in Enum.GetValues<StandingStatus>())
+                foreach (bool marked in new[] { false, true })
+                    Assert.NotEqual(VisualStatus.Skipped, VisualStatuses.For(status, standing, marked));
+
+        Assert.Equal(VisualStatus.Skipped, VisualStatuses.OfRun(GraphStatus.Skipped)); // run-story'de durur
+    }
+
+    [Fact]
+    public void Only_unknown_is_the_start_mode()
+    {
+        foreach (var state in Enum.GetValues<VisualStatus>())
+            Assert.Equal(state == VisualStatus.Unknown, VisualStatuses.IsStartMode(state));
+    }
+
+    /// <summary>Kümülatif renk: güncel ve az önce derlenmiş AYNI yeşil; derlenecek bugünkü nötr gri.</summary>
+    [Fact]
+    public void Current_is_the_success_colour_and_stale_is_the_neutral_grey()
+    {
+        foreach (var state in new[] { VisualStatus.Current, VisualStatus.Succeeded })
+        {
+            Assert.Equal("Brush.StatusSuccess", VisualStatuses.StripeBrushKey(state));
+            Assert.Equal("Brush.StatusSuccess", VisualStatuses.NodeBorderBrushKey(state));
+            Assert.Equal("Brush.StatusSuccessSoft", VisualStatuses.NodeBackgroundBrushKey(state));
+            Assert.Equal("Brush.StatusSuccessText", VisualStatuses.NodeCoreBrushKey(state, inCycle: false));
+        }
+        Assert.Equal("Brush.StatusSkippedBorder", VisualStatuses.StripeBrushKey(VisualStatus.Stale));
+        Assert.Equal("Brush.BorderStrong", VisualStatuses.NodeBorderBrushKey(VisualStatus.Stale));
+        Assert.Equal("Brush.SurfaceRaised", VisualStatuses.NodeBackgroundBrushKey(VisualStatus.Stale));
+        Assert.Equal("Brush.TextFaint", VisualStatuses.NodeCoreBrushKey(VisualStatus.Stale, inCycle: false));
+    }
+
+    /// <summary>[design v1.20.0 §2.3] Döngü üyesinde küp HER durumda amber — çerçeve kendi durumunu taşır.</summary>
+    [Theory]
+    [InlineData(VisualStatus.Unknown)]
+    [InlineData(VisualStatus.Current)]
+    [InlineData(VisualStatus.Stale)]
+    [InlineData(VisualStatus.Failed)]
+    [InlineData(VisualStatus.Succeeded)]
+    [InlineData(VisualStatus.Queued)]
+    [InlineData(VisualStatus.Building)]
+    public void The_cube_is_amber_for_every_cycle_member_state(VisualStatus state)
+        => Assert.Equal("Brush.AmberText", VisualStatuses.NodeCoreBrushKey(state, inCycle: true));
+
+    /// <summary>[design v1.20.0 §1.4 · §2.4-5] Satır glyph'i durumu çizer: güncel ✓, bozuk ✗, derlenecek /
+    /// bilinmiyor / işaretli kesikli daire. — yalnız run-story'nin Skipped'ındadır.</summary>
+    [Fact]
+    public void The_status_glyph_draws_the_standing()
+    {
+        Assert.Equal("Icon.StatusCheck", StatusGlyph.InnerIconKeyFor(VisualStatus.Current));
+        Assert.Equal("Icon.StatusCross", StatusGlyph.InnerIconKeyFor(VisualStatus.Failed));
+        foreach (var dashed in new[] { VisualStatus.Unknown, VisualStatus.Stale, VisualStatus.Marked })
+        {
+            Assert.Null(StatusGlyph.InnerIconKeyFor(dashed));
+            Assert.True(StatusGlyph.IsDashedRing(dashed));
+        }
+        Assert.False(StatusGlyph.IsDashedRing(VisualStatus.Current));
+        Assert.Equal("Brush.StatusSuccessText", StatusGlyph.BrushKeyFor(VisualStatus.Current));
+
+        foreach (var state in Enum.GetValues<VisualStatus>())
+            Assert.Equal(state == VisualStatus.Skipped, StatusGlyph.InnerIconKeyFor(state) == "Icon.StatusDash");
+    }
+
+    /// <summary>[design v1.20.0 §2.7] DURUM yüzeylerinin (satır glyph'i, graf düğümü) ekran-okuyucu sözcüğü
+    /// GÖSTERİLENİ söyler ve filtre chip'iyle AYNI sözcüğü kullanır: yeşil (güncel ya da bu koşuda derlenmiş)
+    /// "Up to date", gri "To build", kırmızı "Failed"; koşu bindirmesi "Queued"/"Building"; dalga
+    /// "Marked to build"; karar yoksa "Not synced". Tek eşleme, tek metin kaynağı.</summary>
+    [Theory]
+    [InlineData(VisualStatus.Unknown, "Not synced")]
+    [InlineData(VisualStatus.Current, "Up to date")]
+    [InlineData(VisualStatus.Succeeded, "Up to date")]
+    [InlineData(VisualStatus.Stale, "To build")]
+    [InlineData(VisualStatus.Failed, "Failed")]
+    [InlineData(VisualStatus.Marked, "Marked to build")]
+    [InlineData(VisualStatus.Queued, "Queued")]
+    [InlineData(VisualStatus.Building, "Building")]
+    public void A_state_surface_announces_what_it_shows(VisualStatus shown, string label)
+        => Assert.Equal(label, StatusGlyph.LabelFor(shown));
+
+    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyi (konsol başlığı) koşunun sonucunu söyler — "Skipped" ve
+    /// "Succeeded" burada kalır; ortak sözcükler (Queued · Building · Failed) durum tablosuyla AYNI kaynaktandır.</summary>
+    [Theory]
+    [InlineData(GraphStatus.Queued, "Queued")]
+    [InlineData(GraphStatus.Building, "Building")]
+    [InlineData(GraphStatus.Succeeded, "Succeeded")]
+    [InlineData(GraphStatus.Failed, "Failed")]
+    [InlineData(GraphStatus.Skipped, "Skipped")]
+    [InlineData(GraphStatus.Discovered, "Discovered")]
+    public void A_run_story_surface_names_the_runs_result(GraphStatus status, string label)
+        => Assert.Equal(label, StatusGlyph.RunLabelFor(status));
+}

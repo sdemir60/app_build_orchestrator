@@ -596,9 +596,8 @@ public sealed partial class RunViewModel
                     IsRunTarget = string.Equals(node.Id, RunTargetId, StringComparison.OrdinalIgnoreCase),
                     // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
                     IsExternal = node.IsExternal,
-                    // [design v1.11.0 §3.1] Yeni doğan satır BAŞLANGIÇ MODUNDADIR: bir koşu ortasında gelen
-                    // topoloji hariç (orada koşan işlem zaten renk yazıyor).
-                    Fresh = !IsRunning,
+                    // [design v1.20.0 §2.3] Yeni doğan satırın kararı YOKTUR — başlangıç modu bundan gelir;
+                    // çıktı durumu hemen ardından gelen önizlemeyle yazılır (ayrı bir bayrak taşınmaz).
                 });
             else
             {
@@ -608,12 +607,11 @@ public sealed partial class RunViewModel
             }
         }
 
-        // Sync = yeni taban: önceki run'ın sonuçları artık geçmiştir. Sıfırlama bir İŞLEMİN nötrlemesiyle
-        // AYNIdir (bkz. NeutralizeRows) — ayrıştıkları tek nokta inilen zemindir.
-        // [design v1.11.0 §3.1 · §9-3] BAŞLANGIÇ MODU: Sync ve açılış hiçbir şeyi RENKLENDİRMEZ — hangi
-        // işlemin geleceği belli değildir, bu yüzden plan da gösterilmez. Satır kesikli griye, graf node'u
-        // kesikli çerçeveye döner; neyin bayat olduğu çift SHA metninden okunur.
-        if (!IsRunning) NeutralizeRows(fresh: true);
+        // Sync = yeni taban: önceki run'ın KOŞU alanları artık geçmiştir. Sıfırlama bir İŞLEMİN nötrlemesiyle
+        // AYNI metottur (bkz. NeutralizeRows) ve yalnız koşu alanlarını siler.
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eskiden Sync herkesi başlangıç moduna indirirdi (hiçbir şey
+        // renklenmezdi). Artık satır kendi çıktı durumunda kalır ve önizleme onu tazeler — Sync renk verir.
+        if (!IsRunning) NeutralizeRows();
 
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;

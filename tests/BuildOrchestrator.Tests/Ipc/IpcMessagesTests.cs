@@ -192,6 +192,37 @@ public class IpcMessagesTests
         Assert.Equal(["dep C broken", "dep D broken"], backWithIssues.DepIssues);
     }
 
+    /// <summary>[R-M4b] <c>Evidence</c> IPC sınırını geçer; alansız eski bir satır KANITSIZ (false) okunur —
+    /// eski bir motorun hatası satırı kırmızıya boyamaz.</summary>
+    [Fact]
+    public void ProjectFailedEvent_carries_the_engines_evidence_verdict_and_old_lines_read_as_no_evidence()
+    {
+        var ev = new ProjectFailedEvent("r1", "b", 900, "exit 1", Evidence: true);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"evidence\":true", json, StringComparison.Ordinal);
+        Assert.True(Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Evidence);
+
+        var legacy = Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectFailed","runId":"r1","projectId":"b","durationMs":900,"reason":"exit 1"}""",
+            IpcJson.Options));
+        Assert.False(legacy.Evidence);
+    }
+
+    /// <summary>[final review I1] <c>Trusted</c> IPC sınırını geçer; alansız eski bir satır GÜVENİLİR başarı
+    /// (true) okunur — eski bir motorun başarısı bugünkü anlamını korur.</summary>
+    [Fact]
+    public void ProjectSucceededEvent_carries_the_engines_trust_verdict_and_old_lines_read_as_trusted()
+    {
+        var ev = new ProjectSucceededEvent("r1", "a", 900, Trusted: false);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"trusted\":false", json, StringComparison.Ordinal);
+        Assert.False(Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Trusted);
+
+        var legacy = Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectSucceeded","runId":"r1","projectId":"a","durationMs":900}""", IpcJson.Options));
+        Assert.True(legacy.Trusted);
+    }
+
     // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
     // satırına çevirir; burada yalnız NDJSON round-trip'i ve ayırt edicisi pinlenir.
     [Fact]
@@ -399,6 +430,43 @@ public class IpcMessagesTests
             IpcJson.Options));
         Assert.False(Assert.Single(legacy.Items).Conditional);
         Assert.Null(legacy.Items[0].DependencyRoots);
+    }
+
+    /// <summary>
+    /// [Task 3] <c>FailedAt</c>/<c>LocalEdits</c> IPC sınırını geçer: (a) kanıtlı hata anı TAM gider, kanıtsız
+    /// satırda alan HİÇ yazılmaz (DefaultIgnoreCondition.WhenWritingNull); (b) <c>LocalEdits</c> her zaman
+    /// yazılır (bool, default <c>false</c> — <c>Conditional</c> ile aynı desen, JSON'da hep görünür).
+    /// Alansız eski bir NDJSON satırı (W1 öncesi kalıp) da hâlâ çözülür — ikisi de varsayılana düşer.
+    /// </summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_failure_time_and_local_edits_flag_across_the_wire()
+    {
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, FailedAt: failedAt, LocalEdits: true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true), // kanıtsız/hiç patlamamış → alan yok, LocalEdits=false
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains("\"failedAt\"", json, StringComparison.Ordinal);
+        Assert.Equal(1, json.Split("\"failedAt\"").Length - 1); // B için alan hiç yazılmadı
+        Assert.Contains("\"localEdits\":true", json, StringComparison.Ordinal);
+        Assert.Contains("\"localEdits\":false", json, StringComparison.Ordinal); // her iki satır da yazar
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(failedAt, back.Items[0].FailedAt);
+        Assert.True(back.Items[0].LocalEdits);
+        Assert.Null(back.Items[1].FailedAt);
+        Assert.False(back.Items[1].LocalEdits);
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":true}]}""",
+            IpcJson.Options));
+        var legacyItem = Assert.Single(legacy.Items);
+        Assert.Null(legacyItem.FailedAt);
+        Assert.False(legacyItem.LocalEdits);
     }
 
     [Fact]

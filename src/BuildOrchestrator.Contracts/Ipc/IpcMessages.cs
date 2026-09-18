@@ -278,11 +278,23 @@ public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNum
 /// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
 /// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
 /// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+/// <param name="Trusted">Motor bu başarının ARKASINDA duruyor mu — defterine başarı olarak yazdı mı. Kararı
+/// YALNIZ motor verir, defter yazımıyla AYNI yerden (<c>RunCoordinator.ReportProjectResult</c>'ın
+/// <c>invalidates</c>'i): yakınsamayan (tavana dayanan ya da ilerlemeyen) bir SCC'nin yeşil üyesi <c>false</c>
+/// taşır (yarıda kesilen grup üyelerini zaten Failed raporlar) ve defterde "kanıtsız hata" olarak durur — App
+/// satırı yeşil değil gri çizer, bir sonraki Sync'le ayrışmaz. Varsayılan <c>true</c>: bu alandan ÖNCE yazılmış NDJSON satırları bugünkü
+/// anlamıyla (güvenilir başarı) okunur.</param>
 public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
-    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false, bool Trusted = true) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
+/// <param name="Evidence">[spec 2026-09-18 §1-14 · R-M4b] Bu hata KANIT mı — motor defterine kanıtlı hata
+/// (<c>FailedSignature</c>) yazdıysa <c>true</c>. Kararı YALNIZ motor verir, defter yazımıyla AYNI kapıdan
+/// (<c>RunCoordinator.FailureEvidenceSignature</c>: arkasında durulabilir sonuç + derleyici hatası + imza); App
+/// <see cref="Reason"/> metnini yeniden sınıflandırmaz — yakınsamayan bir SCC'nin <c>exit N</c> ile biten üyesi
+/// metinden kanıt gibi görünür ama defter onu kanıt saymaz. Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış
+/// NDJSON satırları kanıtsız (gri) okunur.</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
-    IReadOnlyList<string>? DepIssues = null) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool Evidence = false) : IpcEvent;
 /// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
 /// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
 /// <see cref="SkipReasons.CycleNonConvergent"/> seed'i). <b>Ayrı bir tipli alandır, Reason metninden
@@ -464,9 +476,17 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// <param name="DependencyRoots">Gerekçe <see cref="WillBuildReason.WaitingForDependency"/> iken defterdeki kök
 /// bağımlılıkların GÖRÜNEN adları (ad sıralı) — satır etiketinin tooltip'i bunları yazar; App metni kendisi
 /// üretmez. Diğer gerekçelerde <c>null</c> (JSON'a yazılmaz).</param>
+/// <param name="FailedAt">[spec 2026-09-18 §1-14] <see cref="BuildOrchestrator.Core.State.BuildStateStore.FailedAtOf"/>'un
+/// taşıdığı değer — <c>failed · 2h</c> etiketindeki göreli yaşın kaynağı. Kanıtsız hatada ya da hiç hata
+/// yaşanmamışsa <c>null</c>. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="LocalEdits">Sync anında projenin girdi kümesinde <c>git status --porcelain</c>'e göre işlenmemiş
+/// yerel değişiklik var mı — Sync bunu <see cref="BuildOrchestrator.Core.Workspace.LocalEdits.ProjectsWithLocalEdits"/>
+/// ile doldurur. Koşu önizlemesi (Supervisor) bu alanı TAŞIMAZ, her zaman <c>false</c> gönderir: etiket Sync'ten
+/// gelen değeri korur. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
     WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null,
-    bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null)
+    bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null,
+    DateTimeOffset? FailedAt = null, bool LocalEdits = false)
 {
     // Liste alanı: derleyicinin record eşitliği referansa düşer (JSON round-trip farklı örnek üretir) — ProjectNode
     // ile aynı gerekçe, kök adları sıralı içerikle karşılaştırılır.
@@ -482,7 +502,9 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         && Conditional == other.Conditional
         && (DependencyRoots is null
             ? other.DependencyRoots is null
-            : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots));
+            : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots))
+        && FailedAt == other.FailedAt
+        && LocalEdits == other.LocalEdits;
 
     public override int GetHashCode()
     {
@@ -496,6 +518,8 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         hash.Add(LastBuiltAt);
         hash.Add(Conditional);
         foreach (string root in DependencyRoots ?? []) hash.Add(root);
+        hash.Add(FailedAt);
+        hash.Add(LocalEdits);
         return hash.ToHashCode();
     }
 }

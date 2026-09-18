@@ -29,15 +29,22 @@ namespace BuildOrchestrator.App.Graph;
 /// ikisi birlikte çekirdeği boyardı, turuncu amber'i eziyordu). v1.11.0 ikisini de kaldırdı; iki alan da bu
 /// kayıttan SÖKÜLDÜ çünkü grafta okuyucuları kalmadı.</para>
 ///
-/// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ve ekran-okuyucu adı ondan gelir —
-/// ikisi de bir RENK sorusu değildir.</para>
+/// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ondan gelir — bir RENK sorusu
+/// değildir. Ekran-okuyucu adı ise düğümün GÖSTERDİĞİ durumu söyler ve <see cref="Visual"/>'dan okunur
+/// (design v1.20.0 §2.7).</para>
 /// </summary>
 /// <param name="Id">Düğümün KİMLİĞİ — proje Id'si (tam csproj yolu). Yerleşim, slot haritası, kenarlar,
 /// seçim, hover, filtre ve işaretleme kümelerinin tamamı bunu anahtarlar.</param>
 /// <param name="Name">Görünen ad (<c>AssemblyName</c>) — BENZERSİZ DEĞİLDİR, yalnız etiket olarak kullanılır.</param>
 /// <param name="Visual">Tek renk kanalı — <see cref="VisualStatuses"/> tablosuyla boyanır.</param>
+/// <param name="InCycle">[design v1.20.0 §2.3] Düğüm kalıcı bir bağımlılık döngüsünün üyesi mi. Bir RENK
+/// KANALI değildir: yalnız küpü boyar (<see cref="VisualStatuses.NodeCoreBrushKey"/>) — üyede küp her durumda
+/// amber'dır, çerçeve ve zemin <see cref="Visual"/>'ı taşır. Satırdaki uyarı üçgeninin grafik vekilidir.
+/// <para><b>[DEĞİŞEN KURAL]</b> v1.12.0'da üyelik görsel duruma gömülüydü (<c>Cycle</c>/<c>CycleSkipped</c>)
+/// ve yalnız "bu işlemde derlenmeyen" üyede görünürdü; v1.20.0'da küp durumdan bağımsızdır, bu yüzden alan
+/// kayda geri döndü.</para></param>
 public sealed record GraphNode(string Id, string Name, int Layer, GraphStatus Status,
-    VisualStatus Visual = VisualStatus.Discovered)
+    VisualStatus Visual = VisualStatus.Unknown, bool InCycle = false)
 {
     /// <summary>[D5] Ortak öneği atılmış kısa ad. Grafın kendisi ARTIK kullanmaz (§2.3: node üstü etiket
     /// yok) ama proje adını dar bir yerde gösteren diğer yüzeyler kullanır: liste kartının dep-tooltip'i

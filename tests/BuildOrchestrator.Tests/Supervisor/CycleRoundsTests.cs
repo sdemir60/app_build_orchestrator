@@ -416,6 +416,10 @@ public class CycleRoundsTests
             var store = new BuildStateStore(cacheRoot);
             SeedGreen(store, "A");   // "dün" ikisi de yeşildi, "old" imzasıyla kaydedildi
             SeedGreen(store, "B");
+            // [spec 2026-09-18 §1-14/Task 2] A'ya ÖNCEDEN kanıtlı bir hata yazılmış olsun (başka bir eski
+            // koşudan kalma): bu koşuda A yeşil görünse BİLE grup yakınsamadığı için trustedResult=false —
+            // eski kanıt da bugünkü koşudan kanıt DEVRALAMAZ, düşürülmeli.
+            store.Upsert(store.Load()[Id("A")] with { FailedSignature = "stale", FailedAt = DateTimeOffset.UtcNow.AddDays(-1) });
             var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
@@ -431,9 +435,29 @@ public class CycleRoundsTests
             var a = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yeşil görünen üye bile GEÇERSİZLEŞTİRİLİR
             Assert.Equal("old", a.BuiltSignature);            // taze imza ("sig") YAZILMADI ⇒ persist YOK
-            Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            // [spec 2026-09-18 §1-14/Task 2] A_green_member_of_an_unconverged_group_records_no_failed_signature:
+            // A'nın sonucu Succeeded'tir (trustedResult=false yüzünden invalidate edilir) — reason zaten null,
+            // ama KANIT KAPISININ İKİNCİ yarısı (trustedResult) burada asıl testtir: grup yakınsamadığı için A
+            // KANITLI sayılmaz — önceden yazılmış "stale" kanıt da BU koşudan devralınamaz, düşürülmeli
+            // (kanıtsız kırmızı YASAK).
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
+            var b = store.Load()[Id("B")];
+            Assert.Equal(BuildResult.Failed, b.LastResult);
+            // [R-M4b] B derleyici hatasıyla ("exit 1") patladı ama grup yakınsamadı: sonuç arkasında durulabilir
+            // DEĞİL — defter kanıt yazmaz VE olay da kanıt demez (aynı kapı). Metinden sınıflandıran bir App
+            // burada kırmızı boyardı, bir sonraki Sync griye çevirirdi.
+            Assert.Null(b.FailedSignature);
+            var bFailed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.Equal(Id("B"), bFailed.ProjectId);
+            Assert.StartsWith("exit ", bFailed.Reason, StringComparison.Ordinal);
+            Assert.False(bFailed.Evidence);
             // Kontrol: A kullanıcıya yine Succeeded raporlanır — invalidasyon SONUCU maskelemez.
-            Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
+            var aSucceeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.Equal(Id("A"), aSucceeded.ProjectId);
+            // [final review I1] ...ama olay defterle AYNI kararı taşır: motor bu başarının arkasında DURMUYOR
+            // (defter "kanıtsız hata" yazdı) — App satırı yeşil bıraksaydı bir sonraki Sync onu griye çevirirdi.
+            Assert.False(aSucceeded.Trusted);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -470,6 +494,8 @@ public class CycleRoundsTests
             }
             // Yakınsama tavana dayanmak DEĞİLDİR: "oturmamış döngü" bayrağı taşınmaz.
             Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.CycleUnsettled));
+            // [final review I1] Kontrol grubu: yakınsayan grubun başarısı GÜVENİLİRDİR (defter imzayı yazdı).
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -714,6 +740,9 @@ public class CycleRoundsTests
             var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], succeeded.Select(e => e.ProjectId));
             Assert.All(succeeded, e => Assert.True(e.CycleUnsettled));
+            // [final review I1] Tavan da yakınsama DEĞİLDİR: olay "güvenilmez başarı" der — aşağıdaki
+            // invalidate ile AYNI karar.
+            Assert.All(succeeded, e => Assert.False(e.Trusted));
             // Dep-issue listesine SAHTE isim enjekte EDİLMEZ: o liste "hangi bağımlılık patladı" sorusunun
             // cevabıdır — ikinci bir anlam yüklenirse ▲ N sayacı ile filtre chip'i yanlış sayar.
             Assert.All(succeeded, e => Assert.Null(e.DepIssues));

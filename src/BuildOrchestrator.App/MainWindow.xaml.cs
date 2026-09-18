@@ -199,9 +199,12 @@ public partial class MainWindow : Window
         // bir işaret zaten kalmaz.
         _vm.BuildPreviewApplied += (_, _) =>
         {
-            PushGraphStatuses();
+            // Graf itişi RowDecisionsChanged'dedir (hemen önce, AYNI sırayla yayılır) — burada tekrar edilmez.
             if (_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
         };
+        // [design v1.20.0 §2.3 · Task 4 review I-1] Satırların karar girdisi (standing) toplu değişti —
+        // önizleme ya da branch/repo değişiminin hollow reset'i. Grafın renk girdisini öğrendiği TEK sinyal.
+        _vm.RowDecisionsChanged += (_, _) => PushGraphStatuses();
         RefreshProjectGroups();
         RebuildGraph();
 
@@ -609,7 +612,7 @@ public partial class MainWindow : Window
     /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
     /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
     /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
-    /// (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
+    /// (Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
     /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
     private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -800,10 +803,9 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
-            // [design v1.11.0 §3.1 · §9-3] Başlangıç modu grafın da RENK kanalıdır (kesikli node çerçevesi) ve
-            // bir işlem başlarken düşer. Bu geçiş <c>Counters</c>'ı DEĞİŞTİRMEZ (statüler aynı kalır), yani
-            // yukarıdaki kapı onu KAÇIRIRDI. İşlem etiketi, başlangıç modunun düştüğü ANIN gözlemlenebilir
-            // sinyalidir (BeginRunAsync ikisini birlikte yazar).
+            // [design v1.20.0 §2.3] İşlem etiketi, yeni bir işlemin satırları nötrlediği ANIN gözlemlenebilir
+            // sinyalidir (BeginRunAsync onu nötrlemeden SONRA yazar). Yukarıdaki kapı tek başına yetmez:
+            // RunCounters yalnız sayıları taşır ve sayılar aynı kalırken düğümlerin görsel durumu değişebilir.
             case nameof(RunViewModel.CurrentOperation):
                 PushGraphStatuses();
                 break;
@@ -814,7 +816,7 @@ public partial class MainWindow : Window
                 //
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
                 // hiç açılmadı). İşaret o zaman HEMEN silinir — aksi halde başlamayan bir işlemin amber kapsamı
-                // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                // ekranda kalıcı asılı kalır ve düğümler çıktı durumu yerine var olmayan bir işlemin kapsamını gösterir.
                 // Koşu SONA ERDİĞİNDE de (IsRunning true'dan false'a düşerken, Stop/engine ölümü/tamamlanma —
                 // hepsi IsRunning'i false yapar) aynı dal işaretin silinmesini garanti eder.
                 //

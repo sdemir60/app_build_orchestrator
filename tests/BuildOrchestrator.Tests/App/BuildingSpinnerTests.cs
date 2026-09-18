@@ -98,7 +98,7 @@ public class BuildingSpinnerTests
         using var _ = MotionScope.Enable(motion); // açık sinyal: "hiç animasyon yok" boş bir yeşil olmasın
 
         var host = DsResources.NewHost();
-        var glyph = new StatusGlyph { Status = GraphStatus.Building };
+        var glyph = new StatusGlyph { Status = VisualStatus.Building };
         var window = DsResources.Realize(host, glyph);
 
         var spinner = DsResources.Descendants(glyph).OfType<BuildingSpinner>().Single();

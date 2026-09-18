@@ -57,10 +57,84 @@ public class WillBuildTests
             inCycle: true, currentSignature: null, state: null, buildCycles: true));
     }
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: "LastResult=Failed ⇒ gerekçe LastFailed" (bu test
+    /// yalnız <c>WillBuild==true</c>'yu doğruluyordu ve kural değiştikten SONRA da yeşil kaldı, çünkü
+    /// <c>NeverBuilt</c> de <c>WillBuild=true</c> üretir — testin kendisi ayrımı görmüyordu). Yeni kural:
+    /// kırmızı artık yalnız KANITLIYSA üretilir (hata anındaki imza = <c>FailedSignature</c>, bugünküyle eşit);
+    /// burada kayıt bir hata SONUCU taşıyor ama hangi imzada patladığını (<c>FailedSignature</c>) bilmiyor — kanıt
+    /// yok, gerekçe <c>NeverBuilt</c>'tir, <c>LastFailed</c> DEĞİL. <c>WillBuild</c> iki gerekçede de <c>true</c>:
+    /// proje yine derlenecektir, değişen yalnız KULLANICIYA gösterilen renk/etiket.
+    /// </summary>
     [Fact]
     public void true_when_last_result_failed_even_if_signature_matches()
-        => Assert.True(WillBuildEvaluator.Evaluate(false,
-            "sig1", new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed), buildCycles: false));
+    {
+        var state = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed);
+        Assert.True(WillBuildEvaluator.Evaluate(false, "sig1", state, buildCycles: false));
+        Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", state));
+    }
+
+    /// <summary>Kanıt: hata anındaki imza (<c>FailedSignature</c>) bugünkü imzayla eşleşince gerekçe
+    /// <c>LastFailed</c>'dir — spec §1-14 "kanıtlı kırmızı". <c>BuiltSignature</c> farklı bir (eski, başarılı)
+    /// imza taşıyabilir; kırmızı kararı yalnız hata imzasının kanıtına bakar.</summary>
+    [Fact]
+    public void Failed_at_the_current_signature_reads_LastFailed()
+    {
+        var state = new BuildState("A", BuiltSignature: "sig0", LastResult: BuildResult.Failed,
+            FailedSignature: "sig1");
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.LastFailed, reason);
+        Assert.True(willBuild);
+    }
+
+    /// <summary>Hata imzası dolu ama BUGÜNKÜYLE eşleşmiyor — kanıt bayat, kırmızı ÜRETİLMEZ; karar sıradaki
+    /// kurala (imza/BuiltSignature) düşer. İki kontrol grubu: (a) güncel bir başarı varsa UpToDate, (b) hiç
+    /// başarı yoksa (BuiltSignature null) NeverBuilt.</summary>
+    [Fact]
+    public void Failed_at_another_signature_falls_through_to_the_signature_rule()
+    {
+        var upToDate = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Succeeded,
+            FailedSignature: "sig0");
+        Assert.Equal(WillBuildReason.UpToDate, ReasonOf("sig1", upToDate));
+
+        var neverBuilt = new BuildState("A", BuiltSignature: null, FailedSignature: "sig0");
+        Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", neverBuilt));
+    }
+
+    /// <summary>[final review M1 · spec §5.3] Kaynağı geri alınan hata: sig1'de başarı, sig0'da KANITLI hata,
+    /// kaynak sig1'e geri döndü. Motorun gerçekten yazdığı kayıt budur (<c>InvalidateBuildStateOnFailure</c>
+    /// partial merge: <c>BuiltSignature</c> korunur, <c>LastResult=Failed</c> + <c>FailedSignature=sig0</c>).
+    /// Kanıt bugünkü imzaya ait değil; bugünkü imzanın son bilinen sonucu başarıdır ⇒ <c>UpToDate</c> ve
+    /// pre-skip (<c>WillBuild=false</c>). "<c>LastResult != Succeeded</c> ⇒ derlenir" genel bir kural DEĞİLDİR.</summary>
+    [Fact]
+    public void Content_reverted_to_the_last_successful_signature_after_a_failure_reads_UpToDate()
+    {
+        var state = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: "sig0", FailedAt: DateTimeOffset.UtcNow);
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.UpToDate, reason);
+        Assert.False(willBuild);
+    }
+
+    /// <summary>Kesilmiş deneme (ortam hatası, kill, timeout — Task 2'nin YAZMADIĞI durumlar): sonuç başarısız
+    /// ama <c>FailedSignature</c> boş, yani hangi imzada patladığı kanıtlanmamış. Gerekçe <c>NeverBuilt</c>'tir
+    /// (gri), <c>LastFailed</c> DEĞİL — kanıtsız kırmızı gösterilmez. <c>WillBuild</c> yine <c>true</c>: proje
+    /// derlenecek listesinde kalır.</summary>
+    [Fact]
+    public void An_interrupted_attempt_without_evidence_reads_NeverBuilt()
+    {
+        var state = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: null);
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.NeverBuilt, reason);
+        Assert.True(willBuild);
+    }
 
     [Fact]
     public void false_when_in_cycle_even_if_signature_null()
@@ -142,10 +216,18 @@ public class WillBuildTests
     public void reason_is_never_built_when_there_is_no_record()
         => Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", null));
 
+    /// <summary>
+    /// [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: "son koşu başarısız (LastResult != Succeeded) ⇒
+    /// gerekçe LastFailed" — kayıt hangi imzada patladığını taşımasa BİLE. Ölçüldü: bu, ortam hatası (kilit,
+    /// disk, kill) yüzünden yarıda kalmış ya da eski bir hata kaydı taşıyan bir projeyi de kanıtsızca kırmızı
+    /// gösteriyordu. Yeni kural kontrol grubunu KANITLI hâle getirir (<c>FailedSignature</c> bugünkü imzayla
+    /// eşleşir) ve aynı iddiayı ("son koşu başarısız ⇒ LastFailed") artık doğru koşulda pinler; kanıtsız hâl
+    /// artık <see cref="An_interrupted_attempt_without_evidence_reads_NeverBuilt"/>'in konusudur.
+    /// </summary>
     [Fact]
     public void reason_is_last_failed_when_the_previous_run_did_not_succeed()
         => Assert.Equal(WillBuildReason.LastFailed,
-            ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Failed)));
+            ReasonOf("sig1", new BuildState("A", "sig1", LastResult: BuildResult.Failed, FailedSignature: "sig1")));
 
     /// <summary>Senaryo 4: kök listesi olmayan (bu alandan önce yazılmış) kayıt bugünkü gerekçeyi taşır.</summary>
     [Fact]

@@ -78,6 +78,25 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §1-14] <see cref="BuildState.FailedSignature"/> bu alandan ÖNCE yazılmış bir kayıtta
+    /// yoktur; elle yazılmış eski-biçim JSON (serializer'ın BUGÜNKÜ çıktısından değil, alan eklenmeden önceki
+    /// biçimin birebir kopyasından) <c>null</c>'a çözülmeli — <see cref="Dep_issue_roots_round_trip_and_a_record_written_before_the_field_still_loads"/>
+    /// ile aynı desen (o test <c>DepIssueRoots</c> için, bu <c>FailedSignature</c>/<c>FailedAt</c> için).
+    /// </summary>
+    [Fact]
+    public void A_record_written_before_the_failed_signature_existed_loads_with_it_empty()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":1,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.FailedSignature);
+        Assert.Null(old.FailedAt);
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {
@@ -183,6 +202,32 @@ public class BuildStateStoreTests : IDisposable
         Assert.Null(lc.LastBranch);
         Assert.Null(lc.LastDurationMs);
         Assert.Null(lc.NonConvergentSignature); // [Task 7]
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-14] <see cref="BuildStateStore.FailedAtOf"/>: <c>failed · 2h</c> etiketinin yaşı
+    /// yalnız hata KANITLIYSA (<c>FailedSignature</c> dolu) okunur — <see cref="BuildStateStore.LastBuiltAtOf"/>
+    /// ile aynı desen, tek arama yeri. Kayıt yoksa, ya da <c>FailedSignature</c> boşsa (kanıtsız/kesilmiş
+    /// deneme ya da hiç hata yaşanmamış temiz kayıt), <c>null</c> döner.
+    /// </summary>
+    [Fact]
+    public void FailedAtOf_answers_only_while_the_failure_is_evidence()
+    {
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var store = new BuildStateStore(_root);
+        store.Upsert(new BuildState("Proven", "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: "sig1", FailedAt: failedAt));
+        store.Upsert(new BuildState("Unproven", "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: null, FailedAt: null));
+        store.Upsert(new BuildState("Clean", "sig1", LastResult: BuildResult.Succeeded));
+
+        var map = store.Load();
+
+        Assert.Equal(failedAt, BuildStateStore.FailedAtOf(map, "Proven"));
+        Assert.Null(BuildStateStore.FailedAtOf(map, "Unproven"));
+        Assert.Null(BuildStateStore.FailedAtOf(map, "Clean"));
+        Assert.Null(BuildStateStore.FailedAtOf(map, "NoSuchProject"));
+        Assert.Null(BuildStateStore.FailedAtOf(null, "Proven"));
     }
 
     [Fact] // var olan projectId'nin Upsert'i o kaydı değiştirir, diğerleri dokunulmaz kalır
