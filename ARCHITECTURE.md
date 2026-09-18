@@ -3438,8 +3438,10 @@ standing ahead of the next preview as well: the configuration is part of every s
 drops to `stale` at once, with the reason the next preview will give — `SignatureChanged` when the project has
 ever built successfully, `never built` when it has not (for a row that last failed, the built commit the
 preview carries is the trace of a past success) — while a row with no decision stays unknown. The change also
-neutralises the previous run's fields, so a row that just succeeded does not keep the run's green, and a
-finished run's summary gives way to the new plan (`Ready — N to build`). `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
+neutralises the previous run's fields, so a row that just succeeded does not keep the run's green, and it
+closes the previous run's story: a finished run's summary and a stopped run's `Stopped — n/m · k not built`
+both give way to the new plan (`Ready — N to build`). A stopped run's plan belongs to the old configuration,
+so there is nothing under the new one it could be resumed as; the next *Build* starts from the new plan. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
 amber the marking wave lit must not go out when the run begins. The mapping lives in one place
 (`VisualStatuses.For`) and every surface reads it; the run-story surfaces map the engine's status on their own
 through `VisualStatuses.OfRun`, which is the only mapping that still yields `skipped`.

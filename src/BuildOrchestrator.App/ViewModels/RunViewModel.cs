@@ -1508,9 +1508,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// çıkar: satır artık kesin derlenir (<c>Conditional=false</c>) ve üçgen düşer. Eskiden yalnız
     /// <c>WillBuild=true</c> yazılıyordu — güncel satır yeşil kalırken konsol "all projects will rebuild" diyordu.</para>
     /// <para>[R-Config] Koşu alanları da silinir (<see cref="NeutralizeRows"/> — aynı metot): az önce başarıyla
-    /// biten satır koşunun yeşilinde kalmaz, herkes gibi yeni bayat durumuna iner. Bitmiş koşunun özeti de
-    /// artık bir şey anlatmaz (sayaçları silindi), bu yüzden <c>Done</c> fazı <c>Idle</c>'a döner ve şerit
-    /// yeni planı ("N to build") okur; önizleme kümeleri satırların yeni kararından yeniden kurulur.</para></summary>
+    /// biten satır koşunun yeşilinde kalmaz, herkes gibi yeni bayat durumuna iner. Bitmiş ya da durdurulmuş
+    /// koşunun özeti de artık bir şey anlatmaz (sayaçları silindi; durdurulan koşunun planı ESKİ configuration'a
+    /// aittir, yeni configuration altında sürdürülemez), bu yüzden <c>Done</c> ve <c>Stopped</c> fazları
+    /// <c>Idle</c>'a döner ve şerit yeni planı ("N to build") okur; önizleme kümeleri satırların yeni kararından
+    /// yeniden kurulur.</para></summary>
     public void SetConfiguration(string value)
     {
         if (IsMidRunLocked || value == Configuration) return;
@@ -1529,7 +1531,7 @@ public sealed partial class RunViewModel : ObservableObject
             }
             NotePreviewDecision(row.Id, row.WillBuild, row.Conditional);
         }
-        if (Phase == AppPhase.Done) Phase = AppPhase.Idle;
+        if (Phase is AppPhase.Done or AppPhase.Stopped) Phase = AppPhase.Idle; // koşunun hikâyesi kapandı
         RefreshRunSurface();        // sayaçlar/şerit nötrlenmiş listeden ve yeni plandan yeniden türer
         RaiseRowDecisionsChanged(); // graf da aynı anda griye iner
         AppendRunLine($"Configuration → {value} — all projects will rebuild");
@@ -1542,8 +1544,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="WillBuildReason.LastFailed"/> satırı iki tarafa da düşebilir ve orada başarı izi olarak
     /// önizlemenin <c>BuiltCommit</c>'i okunur (<paramref name="builtCommit"/>; defterde onu yalnız başarı yazar).
     /// <c>LastBuiltAt</c> ayırıcı DEĞİLDİR: son koşu başarısızsa her LastFailed satırında null'dır
-    /// (<c>BuildStateStore.LastBuiltAtOf</c>). Kalan belirsizlik: commit'siz (git dışı) bir başarının ardından
-    /// patlayan proje <c>never built</c> okunur; bir sonraki Sync düzeltir.</summary>
+    /// (<c>BuildStateStore.LastBuiltAtOf</c>).
+    /// <para><b>Bilinen ve KABUL EDİLEN boşluk (M6, kullanıcı kararı):</b> commit'i kaydedilmemiş bir başarının
+    /// (git dışı bir kök ya da revizyonu okunamayan harici proje) ardından patlayan proje burada
+    /// <c>never built</c> okunur, motor ise <c>SignatureChanged</c> diyecektir; ikisi de gridir, yalnız etiket
+    /// farklıdır ve bir sonraki Sync düzeltir. Kesin ayırıcı (<c>BuiltSignature</c> var mı) önizlemede
+    /// taşınmıyor; onu taşımak için sözleşme değişikliği bilerek yapılmadı.</para></summary>
     internal static WillBuildReason ReasonAfterConfigurationChange(WillBuildReason reason, string? builtCommit) =>
         reason == WillBuildReason.LastFailed && builtCommit is null ? WillBuildReason.NeverBuilt
         : reason == WillBuildReason.NeverBuilt ? WillBuildReason.NeverBuilt

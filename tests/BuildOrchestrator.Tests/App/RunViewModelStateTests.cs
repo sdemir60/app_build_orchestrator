@@ -1413,6 +1413,30 @@ public class RunViewModelStateTests
         Assert.Equal("▸ Ready — 3 to build · 0 up to date", vm.RibbonLine.Text);
     }
 
+    /// <summary>[R-Config · fix round 2] Configuration değişimi DURDURULMUŞ bir koşunun hikâyesini de kapatır:
+    /// durdurulan koşunun planı eski configuration'a aittir, yeni configuration altında onu sürdürmenin anlamı
+    /// yoktur. Faz <c>Stopped</c>'dan <c>Idle</c>'a döner (Done ile AYNI yol) ve şerit artık
+    /// "▸ Stopped — 0/N · N not built" değil yeni planı okur.</summary>
+    [Fact]
+    public void Switching_configuration_after_a_stopped_run_closes_its_story()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("B", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("B", true, WillBuildReason.SignatureChanged)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Assert.Equal(AppPhase.Stopped, vm.Phase); // ön-koşul
+        Assert.StartsWith("▸ Stopped", vm.RibbonLine.Text, StringComparison.Ordinal);
+
+        vm.SetConfiguration("Release");
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+        Assert.Equal("▸ Ready — 2 to build · 0 up to date", vm.RibbonLine.Text);
+    }
+
     /// <summary>[R-Config · M6] <see cref="WillBuildReason.LastFailed"/> bir satır configuration değişince motorun
     /// bir sonraki önizlemesinin diyeceğini der: kaydında bir BAŞARI varsa (<c>BuiltSignature</c> dolu)
     /// <c>SignatureChanged</c>, hiç başarı yoksa <c>NeverBuilt</c> (<c>WillBuildEvaluator</c>). App
