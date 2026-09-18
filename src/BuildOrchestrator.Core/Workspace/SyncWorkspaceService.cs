@@ -55,9 +55,12 @@ public sealed class SyncWorkspaceService(
     /// Conditional yazılmaz" idi; ölçülen kusur: önizleme her zaman <c>false</c> gönderdiği için Sync'ten hemen
     /// sonra tıklanan bir Build'de dalga bir an koşullu projeyi de yakıyor, motorun kendi önizlemesi gelince
     /// (gerçek <c>Conditional=true</c>) satır griye düşüyordu — hem renk hem etiket bir kare titriyordu.</param>
+    /// <param name="LocalEditsIds">[Task 3] <see cref="Workspace.LocalEdits.ProjectsWithLocalEdits"/>'in
+    /// döndürdüğü küme — Sync anında girdi kümesinde işlenmemiş yerel değişikliği olan projeler. Git sorgusu
+    /// başarısızsa (repo yok, hata) ya da pass hiç koşmadıysa (hollow) boş küme: hiçbir proje işaretlenmez.</param>
     private readonly record struct WillBuildOutcome(
         BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known,
-        IReadOnlySet<string> ConditionalIds);
+        IReadOnlySet<string> ConditionalIds, IReadOnlySet<string> LocalEditsIds);
 
     private static readonly IReadOnlySet<string> EmptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -149,7 +152,12 @@ public sealed class SyncWorkspaceService(
         // yarısı). Pass'in İÇİNDE kalsaydı hollow/hata dallarında (pass hiç koşmaz) elde state olmazdı ve
         // "durumu bilinmeyen ama daha önce derlenmiş" satır sha'sını kaybederdi. SALT-OKUR: yalnız Load.
         var state = stateStore.Load();
-        var outcome = ComputeWillBuild(cmd, plan, scan, state, emit);
+        // [Task 3] LocalEdits kararının kaynağı: SALT-OKUR `git status --porcelain` (K1 — hiçbir mutasyon
+        // komutu yok). Sorgu başarısızsa (repo yok, hata) hata YUTULUR — Sync'i öldürmez, yalnız hiçbir
+        // proje işaretlenmez (aşağıdaki LocalEdits.ProjectsWithLocalEdits boş listede zaten boş küme döner).
+        var dirtyPathsResult = await git.GetDirtyPathsAsync(ct);
+        IReadOnlyList<string> dirtyPaths = dirtyPathsResult.Success ? dirtyPathsResult.Value! : [];
+        var outcome = ComputeWillBuild(cmd, plan, scan, state, dirtyPaths, emit);
 
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
@@ -175,7 +183,9 @@ public sealed class SyncWorkspaceService(
                     LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id),
                     Conditional: outcome.ConditionalIds.Contains(n.Id),
                     DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
-                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))
+                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
+                    FailedAt: BuildStateStore.FailedAtOf(state, n.Id),
+                    LocalEdits: outcome.LocalEditsIds.Contains(n.Id)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -224,8 +234,12 @@ public sealed class SyncWorkspaceService(
     /// </summary>
     /// <param name="state">[W1] Çağıranın okuduğu build-state map'i — burada AYRICA <c>Load()</c> ÇAĞRILMAZ
     /// (aynı Sync'te iki disk okuması olurdu; bkz. <see cref="RunAsync"/>).</param>
+    /// <param name="dirtyPaths">[Task 3] Çağıranın AYRICA (async) okuduğu <c>git status --porcelain</c> sonucu
+    /// — kök-göreli yollar. Burada AYRICA sorgulanmaz (binder'ın girdi kümesiyle TEK yerde, <see
+    /// cref="Workspace.LocalEdits.ProjectsWithLocalEdits"/>'te kesiştirilir).</param>
     private WillBuildOutcome ComputeWillBuild(SyncWorkspaceCommand cmd, BuildPlan plan,
-        ScanResult scan, IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit)
+        ScanResult scan, IReadOnlyDictionary<string, BuildState> state, IReadOnlyList<string> dirtyPaths,
+        Action<IpcEvent> emit)
     {
         try
         {
@@ -274,6 +288,14 @@ public sealed class SyncWorkspaceService(
                 .Where(n => ConditionalRebuild.AppliesTo(n, RunMode.Build, scopedRun: false, cycleGroupMember: false))
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // [Task 3] LocalEdits: girdi kümesi zaten binder'da toplu (Prefill öncesi) hazırlandı — burada
+            // yeniden diske inilmez, yalnız proje başına InputsOf ile o kümeye erişilir. Hesap TEK yerde
+            // (LocalEdits.ProjectsWithLocalEdits) — kopya YASAK.
+            var inputsById = plan.Nodes.ToDictionary(
+                n => n.Id, n => binder.InputsOf(n.Id), StringComparer.OrdinalIgnoreCase);
+            var localEditsIds = LocalEdits.ProjectsWithLocalEdits(dirtyPaths, inputsById, cmd.RootPath);
+
             return new WillBuildOutcome(
                 Plan: safePlan,
                 OwnChanged: ownChanged,
@@ -281,14 +303,16 @@ public sealed class SyncWorkspaceService(
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true,
-                ConditionalIds: conditionalIds);
+                ConditionalIds: conditionalIds,
+                LocalEditsIds: localEditsIds);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Tanı KULLANICIYA gider (Core'un konsola doğrudan yazması gerekmez — [D4] zaten stdout'u yalnız
             // NDJSON'a ayırır): pass atlandığında will-dot'lar sessizce hollow kalacağı için sebebin görünmesi şart.
             emit(Warn($"warning: change detection was skipped — project states stay unknown ({ex.Message})"));
-            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false, ConditionalIds: EmptySet);
+            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false, ConditionalIds: EmptySet,
+                LocalEditsIds: EmptySet);
         }
     }
 

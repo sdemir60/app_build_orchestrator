@@ -401,6 +401,43 @@ public class IpcMessagesTests
         Assert.Null(legacy.Items[0].DependencyRoots);
     }
 
+    /// <summary>
+    /// [Task 3] <c>FailedAt</c>/<c>LocalEdits</c> IPC sınırını geçer: (a) kanıtlı hata anı TAM gider, kanıtsız
+    /// satırda alan HİÇ yazılmaz (DefaultIgnoreCondition.WhenWritingNull); (b) <c>LocalEdits</c> her zaman
+    /// yazılır (bool, default <c>false</c> — <c>Conditional</c> ile aynı desen, JSON'da hep görünür).
+    /// Alansız eski bir NDJSON satırı (W1 öncesi kalıp) da hâlâ çözülür — ikisi de varsayılana düşer.
+    /// </summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_failure_time_and_local_edits_flag_across_the_wire()
+    {
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, FailedAt: failedAt, LocalEdits: true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true), // kanıtsız/hiç patlamamış → alan yok, LocalEdits=false
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains("\"failedAt\"", json, StringComparison.Ordinal);
+        Assert.Equal(1, json.Split("\"failedAt\"").Length - 1); // B için alan hiç yazılmadı
+        Assert.Contains("\"localEdits\":true", json, StringComparison.Ordinal);
+        Assert.Contains("\"localEdits\":false", json, StringComparison.Ordinal); // her iki satır da yazar
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(failedAt, back.Items[0].FailedAt);
+        Assert.True(back.Items[0].LocalEdits);
+        Assert.Null(back.Items[1].FailedAt);
+        Assert.False(back.Items[1].LocalEdits);
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":true}]}""",
+            IpcJson.Options));
+        var legacyItem = Assert.Single(legacy.Items);
+        Assert.Null(legacyItem.FailedAt);
+        Assert.False(legacyItem.LocalEdits);
+    }
+
     [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {

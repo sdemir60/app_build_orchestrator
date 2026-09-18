@@ -464,9 +464,17 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// <param name="DependencyRoots">Gerekçe <see cref="WillBuildReason.WaitingForDependency"/> iken defterdeki kök
 /// bağımlılıkların GÖRÜNEN adları (ad sıralı) — satır etiketinin tooltip'i bunları yazar; App metni kendisi
 /// üretmez. Diğer gerekçelerde <c>null</c> (JSON'a yazılmaz).</param>
+/// <param name="FailedAt">[spec 2026-09-18 §1-14] <see cref="BuildOrchestrator.Core.State.BuildStateStore.FailedAtOf"/>'un
+/// taşıdığı değer — <c>failed · 2h</c> etiketindeki göreli yaşın kaynağı. Kanıtsız hatada ya da hiç hata
+/// yaşanmamışsa <c>null</c>. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="LocalEdits">Sync anında projenin girdi kümesinde <c>git status --porcelain</c>'e göre işlenmemiş
+/// yerel değişiklik var mı — Sync bunu <see cref="BuildOrchestrator.Core.Workspace.LocalEdits.ProjectsWithLocalEdits"/>
+/// ile doldurur. Koşu önizlemesi (Supervisor) bu alanı TAŞIMAZ, her zaman <c>false</c> gönderir: etiket Sync'ten
+/// gelen değeri korur. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
     WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null,
-    bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null)
+    bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null,
+    DateTimeOffset? FailedAt = null, bool LocalEdits = false)
 {
     // Liste alanı: derleyicinin record eşitliği referansa düşer (JSON round-trip farklı örnek üretir) — ProjectNode
     // ile aynı gerekçe, kök adları sıralı içerikle karşılaştırılır.
@@ -482,7 +490,9 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         && Conditional == other.Conditional
         && (DependencyRoots is null
             ? other.DependencyRoots is null
-            : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots));
+            : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots))
+        && FailedAt == other.FailedAt
+        && LocalEdits == other.LocalEdits;
 
     public override int GetHashCode()
     {
@@ -496,6 +506,8 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         hash.Add(LastBuiltAt);
         hash.Add(Conditional);
         foreach (string root in DependencyRoots ?? []) hash.Add(root);
+        hash.Add(FailedAt);
+        hash.Add(LocalEdits);
         return hash.ToHashCode();
     }
 }

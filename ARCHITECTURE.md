@@ -443,7 +443,12 @@ Three of these carry the whole model:
   composes them. `conditional` marks a project **this run** evaluates only when its turn comes (§8.3): it may
   still compile, so `willBuild` stays `true`, but it is not part of the queue. A `Rebuild`, a row's target and a
   cycle-group member never carry it — those compile unconditionally. Sync's own preview does carry it, computed
-  the same way, because Sync answers what a plain `Build` would decide (§10.2).
+  the same way, because Sync answers what a plain `Build` would decide (§10.2). Each item also carries
+  `failedAt` — the same evidence-based failure moment §7.5 stores, read through the one lookup both a Sync's
+  preview and a run's own preview share — and `localEdits`, which is `true` only on **Sync's** preview, for a
+  project whose input set overlaps a path `git status --porcelain` reports dirty (§10.2). A run's own preview
+  never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
+  and a run does not repeat that read.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
   semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
@@ -1400,6 +1405,18 @@ pass — offline still produces a complete, usable Sync.
 working tree, because K1 forbids checking anything out. If the selected branch differs from the active one, the
 fetch and the target SHA refer to that branch while the topology, the preview and the counters still describe
 the active tree. The code reports only what it actually computed.
+
+Sync also asks git one more, purely read-only question: `git status --porcelain` on the repository root — never
+`-uall`, so a new untracked folder comes back as a single directory line rather than one line per file inside it.
+The paths it reports are intersected, project by project, against each project's own input set (the same set the
+signature is built from) to produce the preview's `localEdits` flag — `true` for a project with an uncommitted
+change of its own, computed by `LocalEdits.ProjectsWithLocalEdits` so the intersection is written once and Sync
+only calls it. A directory line marks every input beneath it, because that is the only file-level detail
+`--porcelain` gives for an untracked folder. If the query itself fails — no repository, a git error — the
+failure is swallowed the same way an unreachable remote is: no project is marked, rather than guessing every
+project dirty. A project from an external root (§10.6) never carries the flag in this phase; its inputs live
+under a different working copy that this query never sees, and extending the read to every external root's own
+`status --porcelain` is left for later.
 
 ### 10.3 Branch and worktree model
 

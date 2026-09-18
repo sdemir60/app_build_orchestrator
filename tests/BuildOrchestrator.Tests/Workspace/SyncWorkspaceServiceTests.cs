@@ -420,6 +420,93 @@ public class SyncWorkspaceServiceTests
         Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil
     }
 
+    /// <summary>
+    /// [Task 3] Önizlemenin <c>FailedAt</c> alanı <see cref="BuildStateStore.FailedAtOf"/>'un AYNI defterden
+    /// okuduğu değeri taşır — <c>BuiltCommit</c>/<c>LastBuiltAt</c> ile aynı desen (W1). A kendi ANINDAki
+    /// imzasında patlıyor (kaynağı bu Sync'e kadar değişmedi) yani <c>FailedSignature</c> bugünkü imzayla
+    /// AYNI kalır ve kanıt geçerli olur; B hiç patlamadı, <c>FailedAt</c> null kalmalı.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_carries_the_failure_time_from_the_ledger()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string idA = Path.Combine(cloneRoot, "src", "A", "A.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        store.Upsert(primed[idA] with
+        {
+            LastResult = BuildResult.Failed,
+            FailedSignature = primed[idA].BuiltSignature,
+            FailedAt = failedAt,
+        });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.Equal(failedAt, a.FailedAt);
+        Assert.Null(b.FailedAt); // hiç patlamamış → uydurulmaz
+    }
+
+    /// <summary>
+    /// [Task 3] <c>LocalEdits</c>: sahte git bir tek dirty yol raporlar (<c>src/A/A.cs</c>, A'nın girdi kümesinde)
+    /// — yalnız A'nın kartı <c>LocalEdits=true</c> gelmeli, B ETKİLENMEMELİ (karşılaştırma proje BAZINDA,
+    /// binder'ın girdi kümesiyle kesişimle yapılır).
+    /// </summary>
+    [Fact]
+    public async Task A_dirty_file_marks_only_the_project_that_owns_it()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var runner = new PorcelainStubProcessRunner(" M src/A/A.cs\n");
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), runner)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.True(a.LocalEdits);
+        Assert.False(b.LocalEdits);
+    }
+
+    /// <summary>
+    /// [Task 3] <c>git status --porcelain</c> hata verirse (repo bozuk/erişim yok) sorgu YUTULUR ve HİÇBİR
+    /// proje işaretlenmez — belirsiz bir sinyal "temiz" olarak gösterilmez ama "kesin dirty" de UYDURULMAZ.
+    /// </summary>
+    [Fact]
+    public async Task A_failing_dirty_query_marks_nothing()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var runner = new PorcelainStubProcessRunner(stdout: null, exitCode: 128);
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), runner)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.False(i.LocalEdits));
+    }
+
     // ---------------------------------------------------------------- 2) offline degrade
 
     [Fact]
@@ -543,6 +630,22 @@ public class SyncWorkspaceServiceTests
         public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
         {
             lock (_gate) Calls.Add(spec.Arguments);
+            return await _inner.RunAsync(spec, ct);
+        }
+    }
+
+    /// <summary>[Task 3] Yalnız <c>git status --porcelain</c> çağrısını sahteler (LocalEdits testleri için
+    /// deterministik dirty-path çıktısı ya da başarısızlık) — geri kalan HER git çağrısı gerçek <see
+    /// cref="ProcessRunner"/>'a geçer (fetch/rev-parse/symbolic-ref gerçek repo'ya karşı çalışmaya devam eder).</summary>
+    private sealed class PorcelainStubProcessRunner(string? stdout, int exitCode = 0) : IProcessRunner
+    {
+        private readonly ProcessRunner _inner = new();
+
+        public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
+        {
+            if (spec.Arguments.Contains("status") && spec.Arguments.Contains("--porcelain"))
+                return new ProcessResult(exitCode, stdout ?? "", exitCode == 0 ? "" : "fake porcelain failure",
+                    TimeSpan.Zero, TimedOut: false);
             return await _inner.RunAsync(spec, ct);
         }
     }

@@ -1303,6 +1303,35 @@ public class RunCoordinatorTests
         Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.Null(i.BuiltCommit));
     }
 
+    /// <summary>
+    /// [Task 3] Koşu önizlemesi <c>FailedAt</c>'ı AYNI yardımcıdan (<see cref="BuildStateStore.FailedAtOf"/>)
+    /// taşır — <c>BuiltCommit</c> ile aynı desen (W1): Sync'in doldurup run'ın boş bırakması, run başlar
+    /// başlamaz kartın hata yaşını sıfırlardı. Kanıtsız kayıt (<c>FailedSignature</c> boş, kayıt yok) null kalır.
+    /// </summary>
+    [Fact]
+    public async Task The_run_start_preview_carries_each_projects_failure_time_from_the_state_store()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Known"), "sig", FailedSignature: "sig", FailedAt: failedAt));
+
+            var plan = PlanOf(Node("Known"), Node("Fresh"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+            Assert.Equal(failedAt, Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Known").FailedAt);
+            Assert.Null(Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Fresh").FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     [Fact]
     public async Task Build_mode_pre_skips_up_to_date_nodes_without_invoking_msbuild_and_persists_the_built_ones()
     {

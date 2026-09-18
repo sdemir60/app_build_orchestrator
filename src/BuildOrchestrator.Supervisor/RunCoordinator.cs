@@ -929,7 +929,12 @@ public sealed class RunCoordinator(
                 LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id),
                 Conditional: conditionalIds.Contains(n.Id),
                 DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
-                    builtCommits?.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))]));
+                    builtCommits?.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
+                // [Task 3] FailedAt AYNI yardımcıdan (BuildStateStore.FailedAtOf) taşınır — Sync ve run yolu
+                // aynı aramayı iki kez YAZMAZ (BuiltCommit/LastBuiltAt ile aynı desen). LocalEdits burada
+                // TAŞINMAZ (default false): o Sync'in "o anki çalışma ağacı" işaretidir, bir koşunun kendi
+                // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
+                FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
