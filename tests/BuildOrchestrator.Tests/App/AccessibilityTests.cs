@@ -45,6 +45,9 @@ public class AccessibilityTests
 
         Assert.Equal(AccessibilityNames.FilterAll, AutomationProperties.GetName(bar.SigmaChip));
         Assert.Equal(AccessibilityNames.FilterBuilding, AutomationProperties.GetName(bar.BuildingChip));
+        // [DEĞİŞEN KURAL — final review O3] Eski ad "Building now — filter" idi: öbür durum chip'leri sözcüğünü
+        // StatusGlyph.LabelFor'dan alırken bu bir literal'di. Artık aynı kaynaktan — satırın "Building" duyurusu.
+        Assert.Equal("Building — filter", AutomationProperties.GetName(bar.BuildingChip));
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski adlar "Succeeded — filter" ve "Skipped — filter" idi; chip'ler
         // artık durum filtreleridir ve adları filtre etiketinin sözcüğünü taşır.
         Assert.Equal("Up to date — filter", AutomationProperties.GetName(bar.CurrentChip));

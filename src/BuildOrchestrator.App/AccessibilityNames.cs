@@ -14,7 +14,9 @@ public static class AccessibilityNames
 {
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
     public const string FilterAll = "All projects — clear filters";
-    public const string FilterBuilding = "Building now — filter";
+    /// <summary>Derleniyor chip'i — sözcük DURUM chip'leriyle aynı kaynaktan (<see cref="StateFilter"/>), satırın
+    /// koşu bindirmesi "Building" duyurusuyla ve filtre etiketiyle AYNI.</summary>
+    public static readonly string FilterBuilding = StateFilter(Controls.VisualStatus.Building);
     /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ DURUM chip'leri. Sözcük, filtre etiketi ve satırın ekran-okuyucu
     /// adıyla AYNI kaynaktandır (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>).
     /// <b>[DEĞİŞEN KURAL]</b> Eskiden koşu sonucu chip'leri vardı: <c>FilterSucceeded</c> ("Succeeded — filter") ve
