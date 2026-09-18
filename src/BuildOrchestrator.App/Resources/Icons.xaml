@@ -256,8 +256,6 @@
     <PathGeometry x:Key="Icon.StatusDash" Figures="M5.1 8h5.8" />
     <!-- _ds_bundle.js:1474 queued — saat ibresi <path d="M8 4.8v3.4l2.1 1.3"/> -->
     <PathGeometry x:Key="Icon.StatusClock" Figures="M8 4.8v3.4l2.1 1.3" />
-    <!-- _ds_bundle.js:1509-1513 cycle — uyarı üçgeni + ünlem (üç path) -->
-    <PathGeometry x:Key="Icon.StatusCycle" Figures="M8 2.7 14.4 13.2H1.6Z M8 6.6v3 M8 11.4h.01" />
     <!-- _ds_bundle.js:143 Chip chevron — <path d="M4.5 6.5 8 10l3.5-3.5"/> (Select'in ok'u da AYNI, :831) -->
     <PathGeometry x:Key="Icon.Chevron" Figures="M4.5 6.5 8 10l3.5-3.5" />
 
@@ -386,7 +384,6 @@
     <sys:Double x:Key="Icon.StatusCross.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusDash.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusClock.StrokeThickness">1.5</sys:Double>
-    <sys:Double x:Key="Icon.StatusCycle.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.Spinner.StrokeThickness">1.5</sys:Double>
 
     <!-- strokeWidth="1.1" (BuildApp.jsx:70, :71, :72) -->
