@@ -456,7 +456,7 @@ public class AboutDialogTests
 
     /// <summary>
     /// [design v1.19.0 §2.10] İki caps grup: <b>RUNTIME</b> (Engine PID · .NET runtime · OS) ve <b>PATHS</b>
-    /// (MSBuild · Repository root · State file · Logs · Worktree pool); her satırın etiketi ve değeri görünür.
+    /// (MSBuild · Repository root · State file · Logs); her satırın etiketi ve değeri görünür.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: sekme tek düz listeydi ve <c>App version</c> /
     /// <c>Engine version</c> satırlarıyla başlardı. Sürümler About sekmesine taşındı (tekrar yok) — yoklukları

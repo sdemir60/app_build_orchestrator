@@ -159,9 +159,7 @@ public partial class MainWindow : Window
         // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
-        if (saved.Branch is { } br) _vm.Branch = br;
-        _vm.UseWorktree = saved.UseWorktree;
-        _vm.WorktreeName = saved.WorktreeName;
+        // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
         // [D7] Kalıcı katman tanımlarını seed et (D7 bu alanın ilk yazıcısı — diskte bugüne dek hep boş). Boşsa
         // LayerPatterns null kalır (motor Count==0'ı "katman yok" olarak ele alır); Settings Save bunu doldurur.
@@ -1036,7 +1034,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/Branch/UseWorktree/WorktreeName/PerfMode)
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1046,17 +1044,11 @@ public partial class MainWindow : Window
         {
             case nameof(RunViewModel.RootPath):
             case nameof(RunViewModel.Configuration):
-            case nameof(RunViewModel.Branch):
-            case nameof(RunViewModel.UseWorktree):
-            case nameof(RunViewModel.WorktreeName):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
-                s.Branch = _vm.Branch;
-                s.UseWorktree = _vm.UseWorktree;
-                s.WorktreeName = _vm.WorktreeName;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
                 _uiState.Save(s);

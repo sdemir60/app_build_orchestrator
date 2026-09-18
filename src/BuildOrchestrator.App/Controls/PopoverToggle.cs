@@ -16,8 +16,8 @@ namespace BuildOrchestrator.App.Controls;
 /// işaretler: popover kapanır ve AYNI jestte tekrar açılır. Yani jestin iki yarısı birbirini iptal eder ve
 /// kullanıcı hiç kapatamaz.</para>
 ///
-/// <para><b>Kapı burada, tek yerde.</b> Uygulamada beş popover aynı deseni kullanır (branch · worktree ·
-/// Build chevron'u · satır ⋯ menüsü · VS seçici); her biri kendi kapısını yazsaydı beş kopya olurdu
+/// <para><b>Kapı burada, tek yerde.</b> Uygulamada dört popover aynı deseni kullanır (branch ·
+/// Build chevron'u · satır ⋯ menüsü · VS seçici); her biri kendi kapısını yazsaydı dört kopya olurdu
 /// (kopya YASAK, CLAUDE.md). Kapı iki katmanlıdır ve katmanlar BİRBİRİNİ DIŞLAR
 /// (<see cref="GestureGuard.Consume"/> damgayı tüketir):</para>
 /// <list type="number">

@@ -546,7 +546,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     public ObservableCollection<ProjectRowViewModel> Projects { get; } = [];
 
-    // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / worktree / topoloji yüzeyi AYRI partial dosyada:
+    // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / topoloji yüzeyi AYRI partial dosyada:
     // RunViewModel.Workspace.cs (faz, hedef commit, envanter, topoloji uzlaştırma).
 
     [ObservableProperty]
@@ -635,7 +635,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
+    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/config kilidi bundan türetilir
     [NotifyPropertyChangedFor(nameof(IsResolvingCycles))] // bakım kutusunun Resolve spinner'ı: koşu bitince iner
     private bool _isRunning;
 
@@ -788,14 +788,9 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VisibleProjects))]
     private string _projectQuery = "";
 
-    /// <summary>[C2] Sync/build hedefi branch. Koşarken UI'da kilitli (<see cref="IsMidRunLocked"/>).</summary>
+    /// <summary>[spec 2026-09-18 §1-7] Çalışma ağacında checkout edilmiş branch — bir tercih değil, okunan bir
+    /// GERÇEK. Tek yazıcısı branch envanteridir (<see cref="OnBranchList"/>); detached HEAD'de son değer durur.</summary>
     [ObservableProperty] private string _branch = "";
-
-    /// <summary>[C2] true ⇒ derleme ayrı bir git worktree üzerinde. Koşarken UI'da kilitli.</summary>
-    [ObservableProperty] private bool _useWorktree;
-
-    /// <summary>[C2] <see cref="UseWorktree"/>=true iken worktree adı; null ⇒ Supervisor varsayılan ad türetir.</summary>
-    [ObservableProperty] private string? _worktreeName;
 
     // [Fix wave 1, C2 review Finding 2] PerfMode/Parallelism alan başlatıcılarının TEK ortak kaynağı (derleme
     // zamanı sabiti — alan başlatma SIRASINDAN bağımsız, yukarıdaki Parallelism başlatıcısından da güvenle
@@ -834,7 +829,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// kontrolü doğrudan buna bağlanabilir.</para></summary>
     [ObservableProperty] private bool _updateExternals = true;
 
-    /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
+    /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
 
@@ -866,7 +861,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Cycles) — tek yerde toplanır:
     /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
-    /// workspace hedefiyle (branch/worktree/layer patterns — Supervisor tarafı A1-A4'te bağlı) gönder.
+    /// workspace hedefiyle (kök/configuration/layer patterns) gönder.
     /// <para>[Fix wave 1(It-3), Finding 1] <paramref name="clearBuffers"/>=true iken önceki run'ın
     /// <c>_liveLines/_projectText/_runText</c> tortusu temizlenir: aksi halde İKİNCİ run'da kart tıklamasında
     /// dikiş filtresi (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve
@@ -913,7 +908,7 @@ public sealed partial class RunViewModel : ObservableObject
         // getirir, temizlik onu hemen silerdi (görünür bir kırpışma). SyncCoreAsync aynı sırayı izler.
         ClearSelectionAndFilter();
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
-        // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
+        // bir not düşer. Motor runStarted'a kadar (taze segmentte: tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
         // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
         var previousPhase = Phase;
@@ -1215,12 +1210,6 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
         await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
-        // [T2 fix-1 · I-G] Worktree envanteri de BURADAN istenir — branch'in birebir simetriği ve AYNI
-        // gerekçelerle. Gönderilmediği sürece <see cref="Worktrees"/> boş kalıyordu; sonucu yalnız boş bir
-        // popover listesi değil, ÜRETİLEN AD'ın kendisiydi: AutoWorktreeName "aynı slug önekiyle başlayan
-        // mevcut worktree sayısı"nı hep 0 sayıp her seferinde `-1` son ekini veriyor, yani var olan bir
-        // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
-        await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
     // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
@@ -1334,7 +1323,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// runCompleted gelmeyeceği için aksi halde <c>Stopping</c>'te sonsuza dek asılı kalırdı. Bu,
     /// <see cref="BeginRunAsync"/>'in "gönderim başarısız → IsStarting geri açılır" kapısının ikizidir.</para>
     /// <para><see cref="IsRunning"/>/<see cref="IsStarting"/>'e DOKUNULMAZ: motor hâlâ koşuyor, dolayısıyla
-    /// <see cref="IsMidRunLocked"/> sürer (branch/worktree/configuration kilidi kalkmaz, split-button geri
+    /// <see cref="IsMidRunLocked"/> sürer (branch/configuration kilidi kalkmaz, split-button geri
     /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
     /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
     /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
@@ -1618,7 +1607,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2 testleri] YALNIZ testler ayarlar (bkz. <see cref="DebugAfterStitchLockExited"/> deseni):
     /// bir komut gönderilmeden hemen ÖNCE senkron tetiklenir; gönderilen <see cref="StartRunCommand"/>'ın
-    /// workspace argümanlarını (Mode/Branch/UseWorktree/WorktreeName/LayerPatterns) gerçek Supervisor'a
+    /// workspace argümanlarını (Mode/RootPath/Configuration/LayerPatterns) gerçek Supervisor'a
     /// ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
     internal Action<IpcCommand>? DebugOnCommandSent;
 
@@ -1735,7 +1724,6 @@ public sealed partial class RunViewModel : ObservableObject
             case OptimizeCompletedEvent: _ = OnOptimizeCompletedAsync(); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
-            case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;
         }
 
         // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten

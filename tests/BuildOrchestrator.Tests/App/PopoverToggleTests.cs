@@ -102,19 +102,6 @@ public class PopoverToggleTests
     }
 
     [StaFact]
-    public void Clicking_the_worktree_chip_while_its_popover_is_open_closes_it_instead_of_reopening()
-    {
-        var vm = NewVm();
-        var (bar, window) = RealizeBar(vm);
-
-        ClickTriggerWhilePopupIsOpen(bar.WorktreeChip, bar.WorktreePopup);
-
-        Assert.False(bar.WorktreePopup.IsOpen, "worktree popover'ı aynı tıkta yeniden açıldı");
-        Assert.False(bar.WorktreeChip.IsChecked);
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
     public void Clicking_the_build_chevron_while_its_menu_is_open_closes_it_instead_of_reopening()
     {
         var vm = NewVm();

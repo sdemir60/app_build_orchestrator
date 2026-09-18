@@ -25,8 +25,6 @@ public static class IpcJson
 [JsonDerivedType(typeof(CleanWorkspaceCommand), "cleanWorkspace")]
 [JsonDerivedType(typeof(OptimizeWorkspaceCommand), "optimizeWorkspace")]
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
-[JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
-[JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
 [JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
 [JsonDerivedType(typeof(PullRepositoryCommand), "pullRepository")]
 public abstract record IpcCommand;
@@ -209,17 +207,6 @@ public sealed record OptimizeWorkspaceCommand(
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 
-/// <summary>[A5/T69] Worktree havuzunun envanterini iste (yanıt: <see cref="WorktreeListEvent"/>). SALT-OKUR.
-/// [spec 2026-09-18 §1-1] Motor worktree modunu bıraktı ve bu komutu artık tanımaz
-/// (<c>error(unknownCommand)</c>); tip App'teki son kullanıcısıyla birlikte kalkar.</summary>
-public sealed record ListWorktreesCommand(string RootPath) : IpcCommand;
-
-/// <summary>[A5/T69] Havuzdaki tek bir worktree'yi sil; ardından güncel envanter (<see cref="WorktreeListEvent"/>)
-/// yayınlanır. <paramref name="Name"/> havuz kökü altındaki DİZİN ADIDIR (yol değil).
-/// [spec 2026-09-18 §1-1] Motor bu komutu artık tanımaz (<c>error(unknownCommand)</c>); tip App'teki son
-/// kullanıcısıyla birlikte kalkar.</summary>
-public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCommand;
-
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(EngineReadyEvent), "engineReady")]
 [JsonDerivedType(typeof(PongEvent), "pong")]
@@ -248,7 +235,6 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
-[JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
 [JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
 [JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
@@ -415,10 +401,6 @@ public sealed record WorkspaceTopologyEvent(
     IReadOnlyList<IReadOnlyList<string>> Cycles,
     IReadOnlyList<SolutionRef> Solutions,
     IReadOnlyList<string> LayerWarnings) : IpcEvent;
-
-/// <summary>[A5/T69] Worktree havuzunun envanteri — <see cref="ListWorktreesCommand"/>/<see
-/// cref="DeleteWorktreeCommand"/> yanıtı.</summary>
-public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcEvent;
 
 /// <summary>
 /// [cycle rounds] Bir SCC'nin (dairesel bağımlılık grubunun) yeni bir turu başladı. Grup TEK bir derleme

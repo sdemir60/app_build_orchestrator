@@ -20,7 +20,7 @@ namespace BuildOrchestrator.App.Views;
 ///
 /// <para><b>Enable kuralları:</b> repo yokken (<see cref="RunViewModel.HasWorkspace"/>=false) Sync/Build + TÜM chip'ler
 /// disabled (README §3.1; prototipin canlı sayaç chip'leri gözden kaçmadır). Koşarken (<see cref="RunViewModel.IsMidRunLocked"/>)
-/// branch/worktree/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Build split-button ayrıca
+/// branch/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Build split-button ayrıca
 /// Syncing'de disabled (BuildApp.jsx:1594).</para>
 ///
 /// <para><b>Motion:</b> popover/menü pop-in'i <see cref="PopIn"/> (kod-tarafı, AnimationsEnabled taze). Chip renk
@@ -50,7 +50,7 @@ public partial class ActionBar : UserControl
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
     private Path _warnTriangle = null!;
-    private TextBlock _branchValue = null!, _worktreeValue = null!, _perfValue = null!;
+    private TextBlock _branchValue = null!, _perfValue = null!;
 
     public ActionBar()
     {
@@ -64,15 +64,12 @@ public partial class ActionBar : UserControl
         PART_BranchPopover.BranchPicked += () => PART_BranchChip.IsChecked = false; // seçince popover kapanır
         // [E5/T46] Esc popover içinde → kapat + odağı tetikleyici chip'e döndür (return-to-trigger).
         PART_BranchPopover.CloseRequested += () => { PART_BranchChip.IsChecked = false; PART_BranchChip.Focus(); };
-        PART_WorktreePopover.CloseRequested += () => { PART_WorktreeChip.IsChecked = false; PART_WorktreeChip.Focus(); };
         PART_BuildMenu.ItemInvoked += () => PART_Split.IsMenuOpen = false;
         // Açık bir popover'ın chip'ine basmak onu KAPATIR (BuildApp.jsx:2399/:2404 `set…(!…)`); WPF'in
         // StaysOpen=False capture yolu tek başına bırakılırsa aynı jest onu yeniden açardı. Kapı tek yerde.
         PopoverToggle.Bind(PART_BranchChip, PART_BranchPopup);
-        PopoverToggle.Bind(PART_WorktreeChip, PART_WorktreePopup);
         // perf momentary; [T20-b] chip artık koşan run'a setPerfMode gönderdiği için VM tarafı async —
-        // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli
-        // (WorktreePopover'ın `_ = _vm.DeleteWorktreeAsync(...)` deseniyle aynı).
+        // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli.
         PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
@@ -93,7 +90,6 @@ public partial class ActionBar : UserControl
     internal ToggleButton WarnChip => _warnChip;
     internal ToggleButton BranchChip => PART_BranchChip;
     internal Button BehindChip => PART_BehindChip;
-    internal ToggleButton WorktreeChip => PART_WorktreeChip;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
     /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
@@ -104,29 +100,25 @@ public partial class ActionBar : UserControl
     internal SplitButton Split => PART_Split;
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
     internal BranchPopover BranchPopoverControl => PART_BranchPopover;
-    internal WorktreePopover WorktreePopoverControl => PART_WorktreePopover;
-    /// <summary>[A13/T4 · m6] Branch/worktree popover kabuklarının <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
-    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml:27,:40 VerticalOffset="-8"</c>).</summary>
+    /// <summary>[A13/T4 · m6] Branch popover kabuğunun <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
+    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml VerticalOffset="-8"</c>).</summary>
     internal Popup BranchPopup => PART_BranchPopup;
-    internal Popup WorktreePopup => PART_WorktreePopup;
 
     // ---------------------------------------------------------------- [E5/T46] Esc zinciri: popover katmanı
-    /// <summary>Açık bir branch/worktree popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
-    /// BuildApp.jsx:1313 <c>branchPop || wtPop || buildMenu</c>).</summary>
+    /// <summary>Açık bir branch popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
+    /// BuildApp.jsx:1313 <c>branchPop || buildMenu</c>).</summary>
     public bool AnyPopoverOpen =>
-        PART_BranchChip.IsChecked == true || PART_WorktreeChip.IsChecked == true || PART_Split.IsMenuOpen;
+        PART_BranchChip.IsChecked == true || PART_Split.IsMenuOpen;
 
-    /// <summary>Açık tüm popover/menüleri kapatır (BuildApp.jsx:1313 <c>setBranchPop(false); setWtPop(false);
-    /// setBuildMenu(false)</c>). Chip'lerin IsChecked'ı popup'ların IsOpen'ına iki-yönlü bağlı → false yapmak kapatır.
+    /// <summary>Açık tüm popover/menüleri kapatır (BuildApp.jsx:1313 <c>setBranchPop(false);
+    /// setBuildMenu(false)</c>). Chip'in IsChecked'ı popup'ın IsOpen'ına iki-yönlü bağlı → false yapmak kapatır.
     /// [E5/T47] Kapanınca odak TETİKLEYİCİYE döner (açık olan chip / build split-button'a).</summary>
     public void CloseAllPopovers()
     {
         Control? trigger = PART_BranchChip.IsChecked == true ? PART_BranchChip
-            : PART_WorktreeChip.IsChecked == true ? PART_WorktreeChip
             : PART_Split.IsMenuOpen ? PART_Split
             : null;
         PART_BranchChip.IsChecked = false;
-        PART_WorktreeChip.IsChecked = false;
         PART_Split.IsMenuOpen = false;
         trigger?.Focus();
     }
@@ -136,7 +128,7 @@ public partial class ActionBar : UserControl
     {
         if (_built) { RefreshAll(); return; }
         BuildCounterChips();
-        BuildBranchWorktreeChips();
+        BuildBranchChips();
         BuildPerfChip();
         BuildButtons();
         _built = true;
@@ -149,33 +141,21 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.Branches.CollectionChanged -= OnBranchesChanged;
-            _vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
-        PART_WorktreePopover.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
         if (_vm is not null)
         {
             _vm.PropertyChanged += OnVmPropertyChanged;
             _vm.Branches.CollectionChanged += OnBranchesChanged;
-            _vm.Worktrees.CollectionChanged += OnWorktreesChanged;
         }
         RefreshAll();
     }
 
     private void OnBranchesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => RefreshBranchWorktree();
-
-    /// <summary>[T2 fix-3 · round-3 bulgu 1] <c>EffectiveWorktreeName</c>'in auto-ad dalı (<c>AutoWorktreeName</c>)
-    /// mevcut worktree SAYISINI sayar (<see cref="RunViewModel.Worktrees"/>'ten) — envanter I-G ile canlı
-    /// doldurulduğundan (<c>ListWorktreesCommand</c>) gösterilen ad envanter gelince değişebilir
-    /// (<c>main-1</c> → <c>main-2</c>). <see cref="OnBranchesChanged"/> ile BİREBİR aynı desen: bu abonelik
-    /// olmadan chip bayat adı göstermeye devam ediyordu (title bar ve <c>WorktreePopover</c> zaten
-    /// dinliyordu — üç yüzey iki farklı ad söylüyordu).</summary>
-    private void OnWorktreesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => RefreshBranchWorktree();
+        => RefreshBranch();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -202,10 +182,8 @@ public partial class ActionBar : UserControl
                 RefreshSyncBusy();
                 break;
             case nameof(RunViewModel.Branch):
-            case nameof(RunViewModel.UseWorktree):
-            case nameof(RunViewModel.WorktreeName):
-                RefreshBranchWorktree();
-                RefreshBehindChip();   // [v1.16.0] chip branch'e bağlıdır (tooltip + worktree modu)
+                RefreshBranch();
+                RefreshBehindChip();   // [v1.16.0] chip'in tooltip'i branch adını söyler
                 break;
             case nameof(RunViewModel.Behind):
             case nameof(RunViewModel.CanShowBehind):
@@ -225,7 +203,7 @@ public partial class ActionBar : UserControl
         if (!_built) return;
         RefreshChips();
         RefreshWorkspaceLabel();
-        RefreshBranchWorktree();
+        RefreshBranch();
         RefreshPerf();
         RefreshConfig();
         RefreshBuildArea();
@@ -372,14 +350,12 @@ public partial class ActionBar : UserControl
             on ? ProjectFilter.ActiveBrushKey(filter) : "Brush.TextPrimary");
     }
 
-    // ---------------------------------------------------------------- branch / worktree / perf chip'leri
-    private void BuildBranchWorktreeChips()
+    // ---------------------------------------------------------------- branch / behind / perf chip'leri
+    private void BuildBranchChips()
     {
         _branchValue = LabelChipContent(PART_BranchChip, "Icon.Branch", "branch", chevron: true);
         BuildBehindChip();
-        _worktreeValue = LabelChipContent(PART_WorktreeChip, "Icon.Tree", "worktree", chevron: true);
         AutomationProperties.SetName(PART_BranchChip, AccessibilityNames.BranchChip);
-        AutomationProperties.SetName(PART_WorktreeChip, AccessibilityNames.WorktreeChip);
     }
 
     /// <summary>
@@ -407,7 +383,7 @@ public partial class ActionBar : UserControl
 
     /// <summary>
     /// Chip'in görünürlüğü, sayısı ve tooltip'i. <b>Görünme kuralı motorun olgusudur:</b> sayı biliniyor
-    /// (fetch başarılı), sıfırdan büyük ve aktif branch seçili. Çevrimdışıyken sayı bilinmez ⇒ chip HİÇ
+    /// (fetch başarılı) ve sıfırdan büyük. Çevrimdışıyken sayı bilinmez ⇒ chip HİÇ
     /// çizilmez — uydurma bir sayı göstermektense susmak doğrudur.
     /// </summary>
     private void RefreshBehindChip()
@@ -481,14 +457,10 @@ public partial class ActionBar : UserControl
         PART_Workspace.Visibility = name.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private void RefreshBranchWorktree()
+    private void RefreshBranch()
     {
         if (!_built) return;
         _branchValue.Text = _vm?.Branch ?? "";
-        // [T2 fix-1 · C1] ETKİN değer (forced || kullanıcı toggle'ı) — ham UseWorktree DEĞİL. Aksi halde
-        // zorunlu worktree ile derlenirken chip "off" gösteriyordu.
-        bool on = _vm?.EffectiveUseWorktree ?? false;
-        _worktreeValue.Text = on ? (_vm?.EffectiveWorktreeName ?? "") : "off";
     }
 
     private void RefreshPerf()
@@ -617,9 +589,8 @@ public partial class ActionBar : UserControl
         foreach (var chip in new[] { _sigmaChip, _buildingChip, _currentChip, _staleChip, _failedChip, _warnChip })
             chip.IsEnabled = hasWs;
 
-        // T12: koşarken branch/worktree/Debug|Release görünür şekilde disabled; perf CANLI.
+        // T12: koşarken branch/Debug|Release görünür şekilde disabled; perf CANLI.
         PART_BranchChip.IsEnabled = hasWs && !midRun;
-        PART_WorktreeChip.IsEnabled = hasWs && !midRun;
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.

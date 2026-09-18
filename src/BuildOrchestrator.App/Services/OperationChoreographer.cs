@@ -18,7 +18,7 @@ namespace BuildOrchestrator.App.Services;
 /// (<c>_mark(scope, () =&gt; startRun())</c>): [v1.18.0] vedanın son opaklıkları (0.18 çevre / 0.13 kapsam —
 /// kapsam artık DOĞRUDAN koşu seviyesinde) doğrudan koşu opaklıklarına (1 / 0.13 / 0.2) geçer, arada "geri
 /// gelme" yoktur. Burada komut koreografi BİTİNCE gönderilir
-/// (<c>RunViewModel.BeginRunAsync</c>'in kapısı) ve motor planlamaya (worktree → tarama → graf → incremental)
+/// (<c>RunViewModel.BeginRunAsync</c>'in kapısı) ve motor planlamaya (tarama → graf → incremental)
 /// saniyeler harcayabilir; bu pencerede ekran koreografinin <b>son adımında TUTULUR</b> (<see cref="Settle"/>) —
 /// <c>runStarted</c> gelince kabuk koşu fazını grafa iter ve ardından <see cref="Cancel"/> ile adımı düşürür,
 /// yani settle → running tek geçiştir.

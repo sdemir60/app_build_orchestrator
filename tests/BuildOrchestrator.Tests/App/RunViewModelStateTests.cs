@@ -11,7 +11,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync vs Build/Retry
-/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/worktree/
+/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
 /// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
@@ -514,7 +514,7 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- T12 kilit / T43 configuration
 
     [Fact]
-    public async Task Branch_worktree_and_configuration_are_locked_while_running_but_perf_stays_live()
+    public async Task Branch_and_configuration_are_locked_while_running_but_perf_stays_live()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
@@ -525,7 +525,7 @@ public class RunViewModelStateTests
         };
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         Assert.True(vm.IsRunning);
-        Assert.True(vm.IsMidRunLocked); // branch/worktree/configuration kontrolleri KİLİTLİ
+        Assert.True(vm.IsMidRunLocked); // branch/configuration kontrolleri KİLİTLİ
 
         vm.SetConfiguration("Release"); // koşarken kilitli → no-op
         Assert.Equal("Debug", vm.Configuration);
@@ -1546,16 +1546,21 @@ public class RunViewModelStateTests
         Assert.True(ProjectFilter.Matches(RowOf(vm, "W"), null, new HashSet<string> { ProjectFilter.Warn }));
     }
 
-    /// <summary>[design v1.20.0 §5] Karar düşünce (branch değişimi) defter notu da düşer: bilinmiyor
-    /// modundaki satır üçgen taşımaz — not, düşürülen kararın parçasıdır.</summary>
+    /// <summary>[design v1.20.0 §5] Karar düşünce (repo değişimi) defter notu da düşer: bilinmiyor
+    /// modundaki satır üçgen taşımaz — not, düşürülen kararın parçasıdır.
+    /// <para>[spec 2026-09-18 §1-1/8] Tetik eskiden aktif olmayan bir branch'in seçimiydi; o seçim artık
+    /// kararları düşürmez (checkout gelene dek hiçbir şey yapmaz). Kararları satırları KORUYARAK düşüren tek yol
+    /// Settings'ten repo değişimidir ve ardından gelen Sync'in listeyi boşaltmadığı durum motorun erişilemez
+    /// olduğu durumdur — iddia aynı, tetik o.</para></summary>
     [Fact]
-    public void Dropping_the_decisions_drops_the_ledger_triangle_too()
+    public async Task Dropping_the_decisions_drops_the_ledger_triangle_too()
     {
         var vm = T5Vm();
         SyncWith(vm, Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]));
         Assert.True(RowOf(vm, "W").HasDepIssue); // ön-koşul
+        vm.OnEngineUnavailable(@"D:\missing\BuildOrchestrator.Supervisor.exe"); // Sync gitmez, liste kalır
 
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        await vm.ApplySettingsAsync([], @"D:\other-repo", []);
 
         Assert.Equal(VisualStatus.Unknown, RowOf(vm, "W").VisualStatus);
         Assert.False(RowOf(vm, "W").HasDepIssue);

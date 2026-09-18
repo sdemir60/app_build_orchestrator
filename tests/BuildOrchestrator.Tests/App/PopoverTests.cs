@@ -27,34 +27,33 @@ public class PopoverTests
     /// Popover gövdesi kabuğunun İÇ ALANINA sığar — genişliği iki yerde birden tanımlanmaz.
     ///
     /// <para><b>ÖLÇÜLDÜ:</b> kabuk (<c>Ds.Popover</c>) 272px, 1px kenar + 8px dolgu ile iç alanı 254'tür; gövde
-    /// ise kendi <c>Width</c>'ini 256 diye yeniden yazıyordu (kenar payı unutulmuş — worktree'de 300'e karşı
-    /// 284 ile aynı hata). WPF taşan gövdeye bir yerleşim kırpması uygular: arama kutusunun SAĞ kenarı ve
-    /// satırların sağdaki sha'ları kesiliyordu.</para>
+    /// ise kendi <c>Width</c>'ini 256 diye yeniden yazıyordu (kenar payı unutulmuş). WPF taşan gövdeye bir
+    /// yerleşim kırpması uygular: arama kutusunun SAĞ kenarı ve satırların sağdaki sha'ları kesiliyordu.</para>
     ///
     /// <para>Doğru kaynak kabuktur: gövde genişliğini kabuktan ALIR (kopya YASAK, CLAUDE.md).</para>
+    ///
+    /// <para>[spec 2026-09-18 §1-1] Eskiden iki popover sayılırdı (branch + worktree); worktree popover'ı
+    /// kalktığı için test tek kabuğu sürer (ad: <c>Both_popover_bodies_fit_the_width_their_shell_gives_them</c>).</para>
     /// </summary>
     [StaFact]
-    public void Both_popover_bodies_fit_the_width_their_shell_gives_them()
+    public void The_branch_popover_body_fits_the_width_its_shell_gives_it()
     {
         var host = DsResources.NewHost();
         var bar = new ActionBar();
         var window = DsResources.Realize(host, bar, 1200, 200);
 
-        foreach (string name in new[] { "PART_BranchPopup", "PART_WorktreePopup" })
-        {
-            var popup = (System.Windows.Controls.Primitives.Popup)bar.FindName(name)!;
-            popup.IsOpen = true;
-            var shell = (Border)popup.Child;
-            shell.UpdateLayout();
+        var popup = bar.BranchPopup;
+        popup.IsOpen = true;
+        var shell = (Border)popup.Child;
+        shell.UpdateLayout();
 
-            double inner = shell.ActualWidth - shell.Padding.Left - shell.Padding.Right
-                           - shell.BorderThickness.Left - shell.BorderThickness.Right;
-            var body = DsResources.Descendants(shell).OfType<StackPanel>().First();
+        double inner = shell.ActualWidth - shell.Padding.Left - shell.Padding.Right
+                       - shell.BorderThickness.Left - shell.BorderThickness.Right;
+        var body = DsResources.Descendants(shell).OfType<StackPanel>().First();
 
-            Assert.True(body.ActualWidth <= inner,
-                $"{name}: kabuk {shell.ActualWidth}px, iç alanı {inner}px — gövde {body.ActualWidth}px ile taşıyor.");
-            popup.IsOpen = false;
-        }
+        Assert.True(body.ActualWidth <= inner,
+            $"kabuk {shell.ActualWidth}px, iç alanı {inner}px — gövde {body.ActualWidth}px ile taşıyor.");
+        popup.IsOpen = false;
 
         GC.KeepAlive(window);
     }
@@ -109,7 +108,10 @@ public class PopoverTests
     // ---------------------------------------------------------------- [A13/T3a · a4] kopya metinleri (BİREBİR)
 
     /// <summary>[A13/T3a · a4] design-v1 §2.8: caps başlık <c>SWITCH BRANCH</c>, alt not (BİREBİR) ve boş-eşleşme
-    /// metninin CURLY tırnakları (<c>“…”</c>, BuildApp.jsx:846 — düz <c>"…"</c> DEĞİL).</summary>
+    /// metninin CURLY tırnakları (<c>“…”</c>, BuildApp.jsx:846 — düz <c>"…"</c> DEĞİL).
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1/8 · design v1.21.0 §2.8]</b> Eski alt not "Picking a
+    /// non-active branch requires a worktree; the active branch stays untouched." idi. Worktree kalktı; branch
+    /// değiştirmek artık çalışma ağacında gerçek bir checkout'tur ve not bunu söyler.</para></summary>
     [StaFact]
     public void Branch_popover_pins_the_caps_caption_footnote_and_curly_quoted_empty_state()
     {
@@ -121,7 +123,7 @@ public class PopoverTests
 
         var texts = DsResources.RealizedObjects(popover).OfType<TextBlock>().Select(t => t.Text).ToList();
         Assert.Contains("SWITCH BRANCH", texts);
-        Assert.Contains("Picking a non-active branch requires a worktree; the active branch stays untouched.", texts);
+        Assert.Contains("Switching checks the branch out in your working tree.", texts);
 
         popover.IsOpen = true;
         popover.SearchBox.Text = "zzz";
@@ -129,53 +131,15 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [A13/T3a · a1] Worktree popover kopya metinleri
-
-    /// <summary>[A13/T3a · a1] design-v1 §2.8 üç durum açıklaması + source satırının iki varyantı — BİREBİR
-    /// (WorktreePopover.xaml.cs Refresh()). forced → on → source hiçbiri süitte pinli DEĞİLDİ.</summary>
-    [StaFact]
-    public void Worktree_popover_pins_the_three_state_descriptions_and_both_source_line_variants()
-    {
-        var vm = NewVm();
-        vm.Branch = "main";
-        var host = DsResources.NewHost();
-        var popover = new WorktreePopover { DataContext = vm };
-        var window = DsResources.Realize(host, popover);
-        popover.IsOpen = true;
-
-        // off: UseWorktree=false, forced=false (hiç branch envanteri yok → IsWorktreeForced=false).
-        Assert.Equal("Off: in-place build — local changes included.", popover.PART_Desc.Text);
-        Assert.Equal("working directory — local changes included", popover.PART_Source.Text);
-
-        // on: UseWorktree=true, forced=false.
-        vm.UseWorktree = true;
-        Assert.Equal("The committed HEAD builds in a separate worktree; local changes excluded.", popover.PART_Desc.Text);
-        Assert.Equal($"committed HEAD (main) → {vm.EffectiveWorktreeName}", popover.PART_Source.Text);
-
-        // forced: aktif-olmayan bir branch seçildi (K3) → worktree ZORUNLU.
-        vm.OnEvent(new BranchListEvent([
-            new BranchRef("main", "aaaaaaaaaaaa", true, false),
-            new BranchRef("release/x", "bbbbbbbbbbbb", false, true),
-        ]));
-        vm.SelectBranch(new BranchRef("release/x", "bbbbbbbbbbbb", false, true));
-        Assert.True(vm.IsWorktreeForced);
-        Assert.Equal(
-            "Different branch selected — worktree required. The committed HEAD is built; active branch and local changes stay untouched.",
-            popover.PART_Desc.Text);
-
-        GC.KeepAlive(window);
-    }
-
-    // ---------------------------------------------------------------- [W2 pin] iki popover'ın ORTAK iskeleti
+    // ---------------------------------------------------------------- [W2 pin] popover'ın ORTAK iskeleti
 
     /// <summary>
-    /// [W2 pin] Açılış davranışı İKİ popover'da da AYNI olmalı: (a) 140ms pop-in OYNAR — reduced-motion'da
+    /// [W2 pin] Açılış davranışı (PopoverBase'ten gelen): (a) 140ms pop-in OYNAR — reduced-motion'da
     /// (headless <c>App.Motion</c> null) son duruma SNAP eder, yani opaklık 1'e çekilir; (b) odak İÇERİ taşınır
     /// (<c>Dispatcher.BeginInvoke(Input)</c>). Fold sırasında bu iki adımdan biri düşerse test kırılır.
     /// </summary>
     [StaTheory]
     [InlineData(typeof(BranchPopover))]
-    [InlineData(typeof(WorktreePopover))]
     public void Opening_a_popover_plays_the_pop_in_and_moves_focus_inside(Type popoverType)
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // reduced yolu: pop-in SNAP eder (vacuous PASS koruması)
@@ -193,11 +157,10 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[W2 pin] Esc İKİ popover'da da <c>CloseRequested</c>'i yayar ve olayı YUTAR (ayrı HWND → pencere
+    /// <summary>[W2 pin] Esc popover'da <c>CloseRequested</c>'i yayar ve olayı YUTAR (ayrı HWND → pencere
     /// Esc zinciri buraya ulaşmaz; popover kendisi yakalamalı).</summary>
     [StaTheory]
     [InlineData(typeof(BranchPopover))]
-    [InlineData(typeof(WorktreePopover))]
     public void Escape_inside_a_popover_requests_close_and_is_handled(Type popoverType)
     {
         var host = DsResources.NewHost();
@@ -282,7 +245,6 @@ public class PopoverTests
         switch (popover)
         {
             case BranchPopover b: b.IsOpen = value; break;
-            case WorktreePopover w: w.IsOpen = value; break;
             default: throw new ArgumentOutOfRangeException(nameof(popover));
         }
     }
@@ -292,7 +254,6 @@ public class PopoverTests
         switch (popover)
         {
             case BranchPopover b: b.CloseRequested += handler; break;
-            case WorktreePopover w: w.CloseRequested += handler; break;
             default: throw new ArgumentOutOfRangeException(nameof(popover));
         }
     }
@@ -343,9 +304,10 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[W2 · REALIZE TESTİ] <see cref="BranchPopover"/> AÇIKKEN realize + layout — <see cref="WorktreePopover"/>
-    /// kardeşiyle (aşağıda) AYNI gerekçe: sınıf tabanının değişmesi XAML kökünün taban tipini değiştirir ve headless
-    /// suite XAML runtime çözümlemesini görmez (commit <c>c6e9a21</c> dersi: 1198 test yeşil, uygulama açılmıyor).</summary>
+    /// <summary>[W2 · REALIZE TESTİ] <see cref="BranchPopover"/> AÇIKKEN realize + layout: sınıf tabanının değişmesi
+    /// XAML kökünün taban tipini değiştirir ve headless suite XAML runtime çözümlemesini görmez (commit
+    /// <c>c6e9a21</c> dersi: 1198 test yeşil, uygulama açılmıyor). Popup çocuğu parse zamanı kurulur ama
+    /// measure/arrange ancak IsOpen=true'da çalışır — ShellRoot realize testi bu yolu görmez.</summary>
     [StaFact]
     public void The_branch_popover_realizes_and_lays_out_while_open()
     {
@@ -362,27 +324,7 @@ public class PopoverTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>
-    /// [D6/T40] <see cref="WorktreePopover"/> AÇIKKEN gerçekten realize olabilmeli. ShellRoot'un launch-fatal'ı
-    /// (Double token → GridLength, commit c6e9a21) ActionBar'ın inline Popup içeriğinde tekrarlasaydı LAUNCH
-    /// değil CLICK-fatal olurdu: Popup çocuğu parse zamanı kurulur ama measure/arrange ancak IsOpen=true'da
-    /// çalışır — yani ShellRoot realize testi bu yolu görmez. Bu test o yolu kapatır: throw = kırmızı.
-    /// </summary>
-    [StaFact]
-    public void The_worktree_popover_realizes_and_lays_out_while_open()
-    {
-        var host = DsResources.NewHost();
-        var popover = new WorktreePopover { DataContext = NewVm() };
-        var window = DsResources.Realize(host, popover);
-
-        popover.IsOpen = true;
-        popover.UpdateLayout(); // açıkken measure/arrange — token/şablon uyuşmazlığı burada patlar
-
-        Assert.True(popover.ActualWidth > 0);
-        GC.KeepAlive(window);
-    }
-
-    // [A13/T3 fix-1 · B7] b1 ("ActionBar popover kabukları 272/300px") ARTIK ActionBarTests'te: kalem
-    // ActionBar'ın KENDİ kabuğuna aittir (ActionBar.xaml), bu dosya ise BranchPopover/WorktreePopover
-    // kontrollerinindir; test burada dururken ActionBarTests.Realize'ı inline kopyalıyordu.
+    // [A13/T3 fix-1 · B7] b1 ("ActionBar popover kabuğu 272px") ARTIK ActionBarTests'te: kalem ActionBar'ın
+    // KENDİ kabuğuna aittir (ActionBar.xaml), bu dosya ise BranchPopover kontrolünündür; test burada dururken
+    // ActionBarTests.Realize'ı inline kopyalıyordu.
 }

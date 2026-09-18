@@ -21,7 +21,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [E5/T47] Ekran-okuyucu (AutomationProperties.Name) kapsamı + klavye odak yönetimi. İkon-yalnız kontroller
-/// (sayaç chip'leri, branch/worktree/perf chip'leri, sync/stop) İngilizce UIA-adı taşır (tek kaynak
+/// (sayaç chip'leri, branch/perf chip'leri, sync/stop) İngilizce UIA-adı taşır (tek kaynak
 /// <see cref="AccessibilityNames"/>); proje kartı adını, ayraçlar işlevini duyurur; şerit faz metni bir
 /// assertive live region'dır; popover açılınca odak içeri; filtre Ctrl+F ile odaklanır, içindeki Esc yalnız
 /// temizler+blur eder.
@@ -57,7 +57,6 @@ public class AccessibilityTests
         // artık bekleyen bağımlılık notunu da sayar ve tasarımın tooltip'ini taşır.
         Assert.Equal("In a dependency cycle or waiting on a dependency — filter", AutomationProperties.GetName(bar.WarnChip));
         Assert.Equal(AccessibilityNames.BranchChip, AutomationProperties.GetName(bar.BranchChip));
-        Assert.Equal(AccessibilityNames.WorktreeChip, AutomationProperties.GetName(bar.WorktreeChip));
         Assert.Equal(AccessibilityNames.PerfChip, AutomationProperties.GetName(bar.PerfChip));
         Assert.Equal(AccessibilityNames.SyncButton, AutomationProperties.GetName(bar.SyncButton));
         Assert.Equal(AccessibilityNames.StopButton, AutomationProperties.GetName(bar.StopButton));
@@ -211,26 +210,6 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.RepositoryRootInput, byWatermark[@"D:\src\myapp"]);
     }
 
-    /// <summary>[A13/T5 · n5] Worktree hedef listesindeki çöp kutusu ikon-yalnızdır ve satır başına BİR tane
-    /// vardır → ad HANGİ worktree'nin silineceğini söyler (tooltip kısa kalır, ikisi de tek kaynaktan).
-    /// Hedef satırları yalnız switch AÇIKKEN kurulur — üretim yolu izlenir.</summary>
-    [StaFact]
-    public void The_worktree_delete_button_names_the_worktree_it_removes()
-    {
-        var vm = NewVm();
-        vm.Worktrees.Add(new Worktree("main-1", @"D:\wt\main-1", "main", false, null));
-        var host = DsResources.NewHost();
-        var popover = new WorktreePopover { DataContext = vm };
-        var window = DsResources.Realize(host, popover);
-
-        vm.UseWorktree = true; // → Refresh → BuildTargetRows (auto satırı + "main-1" satırı)
-
-        var trash = Assert.Single(DsResources.RealizedObjects(popover.PART_TargetRows).OfType<Button>());
-        Assert.Equal(AccessibilityNames.DeleteWorktreeNamed("main-1"), AutomationProperties.GetName(trash));
-        Assert.Equal(AccessibilityNames.DeleteWorktree, trash.ToolTip);
-        GC.KeepAlive(window);
-    }
-
     // ------------------------------------------------------------------ live region
     [StaFact]
     public void The_ribbon_phase_text_is_an_assertive_live_region()
@@ -372,7 +351,7 @@ public class AccessibilityTests
     ///     <c>UserControlAutomationPeer</c>'dır (ÖLÇÜLDÜ — adı ekran okuyucuya gerçekten ulaşır)</item>
     /// </list>
     /// <b>Bilinçli olarak KAPSAM DIŞI:</b> peer'ı OLMAYAN tıklanabilir <c>Border</c>/<c>Panel</c> satırlar (branch
-    /// listesi, build menüsü, worktree hedef satırı, event stream satırı, VS chooser satırı). Onlar UIA ağacında
+    /// listesi, build menüsü, event stream satırı, VS chooser satırı). Onlar UIA ağacında
     /// zaten kendi öğeleri olarak görünmez — ad vermek TEK BAŞINA yetmez (graf düğümünde ölçülen durumun aynısı,
     /// bkz. <see cref="GraphNodeBody"/>) ve düzeltmeleri T5 kapsamı dışıdır.
     /// </summary>
@@ -419,8 +398,9 @@ public class AccessibilityTests
     ///     başlığı, üç pill, title bar, Settings diyaloğu. <b>ActionBar alt-ağacı HARİÇ</b> — ActionBar adlarını
     ///     <c>Loaded</c>'da kurar, bu fixture ise pencereyi ASLA <c>Show</c> etmez (motor doğmasın diye); o yüzden
     ///     ActionBar aşağıda KENDİ kökünde, gerçekten realize edilerek taranır.</item>
-    ///   <item><b>ActionBar</b>: sayaç chip'leri, sync/stop, split-button, Debug|Release, branch/worktree
-    ///     popover'ları (worktree switch AÇIK → hedef satırı + çöp kutusu da dahil).</item>
+    ///   <item><b>ActionBar</b>: sayaç chip'leri, sync/stop, split-button, Debug|Release, branch popover'ı.
+    ///     ([spec 2026-09-18 §1-1] worktree popover'ının hedef satırı + çöp kutusu da taranırdı (n5); popover
+    ///     kalktı.)</item>
     ///   <item><b>Settings diyaloğu</b> (bir katmanla): katman satırının ad/desen input'ları + footer.</item>
     /// </list></para>
     /// </summary>
@@ -437,11 +417,9 @@ public class AccessibilityTests
         var actionBarSubtree = DsResources.RealizedObjects(shellObjects.OfType<ActionBar>().Single());
 
         var vm = NewVm();
-        vm.Worktrees.Add(new Worktree("main-1", @"D:\wt\main-1", "main", false, null));
         var barHost = DsResources.NewHost();
         var bar = new ActionBar { DataContext = vm };
         var barWindow = DsResources.Realize(barHost, bar);
-        vm.UseWorktree = true; // → worktree popover'ında hedef satırı + çöp kutusu GERÇEKTEN kurulur
 
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
             run => run.LayerPatterns = [new LayerPattern(0, "^A", "Alpha")]);
@@ -477,7 +455,7 @@ public class AccessibilityTests
             $"Ekran okuyucuya adsız {offenders.Count} etkileşimli yüzey:{Environment.NewLine}" +
             string.Join(Environment.NewLine, offenders));
 
-        // Tarama VAKUM DEĞİL: hem toplam sayı hem de T5'in beş yüzeyinin her biri gerçekten tarandı — aksi halde
+        // Tarama VAKUM DEĞİL: hem toplam sayı hem de T5'in yüzeylerinin her biri gerçekten tarandı — aksi halde
         // "hepsi adlı" iddiası boş/eksik bir kümede de doğru çıkardı.
         Assert.True(scanned >= MinimumScannedSurfaces, $"Yalnız {scanned} yüzey tarandı — ağaç kurulmamış olabilir.");
         foreach (string expected in new[]
@@ -491,7 +469,6 @@ public class AccessibilityTests
                      AccessibilityNames.LayerPattern,
                      AccessibilityNames.CloseSettings,                        // design v1.19.0 başlık satırı
                      "Layers",                                                // design v1.19.0 bölüm rayı
-                     AccessibilityNames.DeleteWorktreeNamed("main-1"),        // n5
                      "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
                  })
             Assert.Contains(expected, names);

@@ -54,6 +54,30 @@ public sealed class NoWorktreeSurfaceTests
         Assert.Null(typeof(StartRunCommand).GetProperty(property, BindingFlags.Public | BindingFlags.Instance));
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §1-1] Sözleşme yüzeyinde worktree yoktur: ne bir tip (<c>Worktree</c> modeli,
+    /// <c>ListWorktreesCommand</c>, <c>DeleteWorktreeCommand</c>, <c>WorktreeListEvent</c>) ne de bir
+    /// <c>IpcCommand</c>/<c>IpcEvent</c> ayırt edicisi. Motor bu komutları artık tanımıyordu; tel üzerinde
+    /// kalmaları, karşılığı olmayan bir sözleşme vaat ediyordu.
+    /// </summary>
+    [Fact]
+    public void The_contracts_carry_no_worktree_type_or_discriminator()
+    {
+        var types = typeof(IpcCommand).Assembly.GetTypes()
+            .Where(t => t.Name.Contains("Worktree", StringComparison.OrdinalIgnoreCase))
+            .Select(t => t.FullName)
+            .ToList();
+        var discriminators = new[] { typeof(IpcCommand), typeof(IpcEvent) }
+            .SelectMany(t => t.GetCustomAttributes<System.Text.Json.Serialization.JsonDerivedTypeAttribute>())
+            .Where(a => a.DerivedType.Name.Contains("Worktree", StringComparison.OrdinalIgnoreCase)
+                     || (a.TypeDiscriminator as string ?? "").Contains("worktree", StringComparison.OrdinalIgnoreCase))
+            .Select(a => a.TypeDiscriminator?.ToString())
+            .ToList();
+
+        Assert.True(types.Count == 0, "Contracts'ta worktree tipi var:\n  " + string.Join("\n  ", types));
+        Assert.True(discriminators.Count == 0, "IPC'de worktree ayırt edicisi var:\n  " + string.Join("\n  ", discriminators));
+    }
+
     [Fact]
     public void The_rule_recognises_a_worktree_verb_that_sneaks_back()
     {

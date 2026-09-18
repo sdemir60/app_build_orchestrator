@@ -86,12 +86,16 @@ public class GraphWillBuildFeedTests
         Assert.Empty(VisualOf(window, "Dirty").Square.StrokeDashArray);
     }
 
-    /// <summary>[design v1.20.0 §2.3 · Task 4 review I-1] <b>Branch değişimi kararları düşürür ve graf bunu
-    /// listeyle AYNI ANDA duyar</b>: her node kesikli başlangıç moduna döner. Ölçülen kusur: satır anında
-    /// başlangıç moduna düşüyordu ama graf yalnız sayaç/işlem/önizleme sinyallerinde besleniyordu — sayaçlar
-    /// değişmediği için eski yeşil/gri/kırmızı grafta kalıyordu.</summary>
+    /// <summary>[design v1.20.0 §2.3 · Task 4 review I-1] <b>Kararları düşüren bir değişim graf'a listeyle AYNI
+    /// ANDA ulaşır</b>: her node kesikli başlangıç moduna döner. Ölçülen kusur: satır anında başlangıç moduna
+    /// düşüyordu ama graf yalnız sayaç/işlem/önizleme sinyallerinde besleniyordu — sayaçlar değişmediği için eski
+    /// yeşil/gri/kırmızı grafta kalıyordu.
+    /// <para>[spec 2026-09-18 §1-1/8] Tetik eskiden aktif olmayan bir branch'in seçimiydi (ad:
+    /// <c>A_branch_change_drops_every_node_back_to_the_dashed_start_mode</c>); o seçim artık kararları düşürmez.
+    /// Kararları satırları KORUYARAK düşüren tek yol Settings'ten repo değişimidir ve ardından gelen Sync'in
+    /// listeyi boşaltmadığı durum motorun erişilemez olduğu durumdur — iddia aynı, tetik o.</para></summary>
     [StaFact]
-    public void A_branch_change_drops_every_node_back_to_the_dashed_start_mode()
+    public void A_repository_change_drops_every_node_back_to_the_dashed_start_mode()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
@@ -103,7 +107,9 @@ public class GraphWillBuildFeedTests
         content.UpdateLayout();
         Assert.Equal(DsResources.TokenColor(window, "Brush.StatusSuccessText"), CoreColour(window, "Clean")); // ön-koşul
 
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false)); // aktif OLMAYAN branch
+        vm.OnEngineUnavailable(System.IO.Path.Combine(dir.Path, "missing.exe")); // Sync gitmez, liste kalır
+        // Motor erişilemezken Save'in yolu senkron biter (await edilen bir gönderim yok).
+        _ = vm.ApplySettingsAsync([], System.IO.Path.Combine(dir.Path, "other-repo"), []);
         content.UpdateLayout();
 
         Assert.All(vm.Projects, r => Assert.Equal(VisualStatus.Unknown, r.VisualStatus)); // liste düştü

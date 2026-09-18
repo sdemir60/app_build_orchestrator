@@ -10,7 +10,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [A5/T69 · Fix wave 1 — Finding 6] <see cref="RunViewModel"/>'in <b>workspace yüzeyi</b>: Sync fazı, hedef
-/// commit, branch/worktree envanteri ve topoloji. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA
+/// commit, branch envanteri ve topoloji. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA
 /// yüzeyini taşır ve bu iki sorumluluk aynı dosyada birbirine karışıyordu (sonraki UI task'ları bu yüzeye
 /// sayaç/filtre/seçim ekleyecek). <b>Davranış değişikliği YOKTUR</b> — kod aynen taşınmıştır; tek istisna
 /// bu dosyada açıkça işaretlenen Finding 2 ayrımıdır.
@@ -84,8 +84,8 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [design v1.16.0 §2.7-6a] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
-    /// alt bardaki <c>N behind</c> chip'inin sayısı. <c>null</c> ⇒ MESAFE BİLİNMİYOR (fetch degrade oldu ya da
-    /// aktif olmayan bir branch seçili): chip çizilmez, uydurma sayı gösterilmez.
+    /// alt bardaki <c>N behind</c> chip'inin sayısı. <c>null</c> ⇒ MESAFE BİLİNMİYOR (fetch degrade oldu): chip
+    /// çizilmez, uydurma sayı gösterilmez.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanShowBehind))]
@@ -93,10 +93,10 @@ public sealed partial class RunViewModel
     private int? _behind;
 
     /// <summary>
-    /// Chip GÖRÜNÜR mü: geride ve mesafe biliniyor <b>ve</b> aktif branch seçili. Worktree modunda chip YOK —
-    /// derleme worktree'den yapılıyor, ana ağacı ilerletmenin o koşuya bir etkisi olmazdı.
+    /// Chip GÖRÜNÜR mü: mesafe biliniyor ve sıfırdan büyük. [spec 2026-09-18 §6.5] Koşu her zaman çalışma
+    /// ağacında derlendiği için chip, ağaç geride olduğu HER an görünür.
     /// </summary>
-    public bool CanShowBehind => Behind is > 0 && !IsWorktreeForced;
+    public bool CanShowBehind => Behind is > 0;
 
     /// <summary>[Fix wave 1 — Finding 2] <c>syncStarted</c> geldi ama <c>syncCompleted</c> (ya da Sync'i bitiren
     /// bir hata) HENÜZ gelmedi. Bir run-bitiren hata kodunun KAYNAĞINI ayırt etmek için gerekir — bkz.
@@ -179,9 +179,6 @@ public sealed partial class RunViewModel
     /// <summary>Branch envanteri. <see cref="SnapshotCollection{T}"/>: yayın başına EN ÇOK bir bildirim, içerik
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
     public SnapshotCollection<BranchRef> Branches { get; } = [];
-
-    /// <summary>Worktree envanteri — <see cref="Branches"/> ile birebir aynı yayın sözleşmesi.</summary>
-    public SnapshotCollection<Worktree> Worktrees { get; } = [];
 
     /// <summary>Son <c>workspaceTopology</c>'nin düğümleri (build-order) — bağımlılık, katman ve solution
     /// bilgisinin TEK kaynağı; graf paneli (D5) ve katman gruplaması (D1) bunu okur.</summary>
@@ -686,58 +683,29 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>
-    /// [A13/T2 · 2.2] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/> HENÜZ BOŞSA aktif
-    /// branch'e SEED edilir.
+    /// [A13/T2 · 2.2 · spec 2026-09-18 §1-7] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/>
+    /// checkout edilmiş branch'e eşitlenir — <c>Branch = ActiveBranchName ?? Branch</c>.
     ///
-    /// <para><b>Neden seed gerekli:</b> <see cref="Branch"/> boş başlar ve ona yazan yalnız iki yol vardır —
-    /// kullanıcının popover seçimi (<see cref="SelectBranch"/>) ve diskteki UiState seed'i. <c>syncCompleted</c>
-    /// yazmaz ve zaten bir ECHO'dur (App ne gönderdiyse o döner). Dolayısıyla ilk kurulumda branch chip'i
-    /// SONSUZA DEK boş kalıyordu.</para>
+    /// <para><b>Değer bir tercih değil, okunan bir gerçektir.</b> Araç yalnız çalışma ağacında derler; kullanıcı
+    /// terminalde <c>git checkout</c> yaparsa bir sonraki envanter değeri kendiliğinden hizaya sokar.
+    /// <b>Aktif branch yoksa</b> (detached HEAD / boş envanter) son bilinen değer durur: uydurma değer YOK.</para>
     ///
-    /// <para><b>Neden YALNIZ boşken:</b> seed bir varsayılan doldurmadır, bir kullanıcı kararı DEĞİL. Kullanıcı
-    /// aktif-olmayan bir branch seçtiyse (ya da UiState'ten öyle geldiyse), her Sync'in envanteri onu aktif
-    /// branch'e geri çekerdi — seçim kaybolur, worktree zorlaması sessizce düşerdi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-7/8]</b> Eskiden kullanıcının popover'dan yaptığı AÇIK seçim
+    /// korunurdu (worktree'de derlenecek bir niyet olarak); worktree kalktığı için o dal da kalktı.</para>
     ///
-    /// <para><b>Aktif branch yoksa</b> (detached HEAD / boş envanter) hiçbir şey yazılmaz: uydurma değer YOK.</para>
+    /// <para><c>origin/HEAD</c> listeye ALINMAZ (<see cref="IsRemoteHead"/>): bir branch değil, uzak deponun
+    /// varsayılan branch'ine işaret eden sembolik bir ref'tir ve checkout hedefi olarak sunulmamalıdır.</para>
     /// </summary>
     private void OnBranchList(BranchListEvent e)
     {
-        Branches.ReplaceAll(e.Branches);
-        ReconcileBranchWithInventory();
-        // [T2 fix-1 · C1/I-G] Aktif branch DEĞİŞMİŞ olabilir (kullanıcı terminalde `git checkout` yaptı) →
-        // IsWorktreeForced/EffectiveUseWorktree TÜRETİLMİŞ değerleri de değişmiştir ama kendi bildirimlerini
-        // yayınlamazlar. Bağlı görünümler (açık bir WorktreePopover, ActionBar chip'i) tazelensin diye
-        // AÇIKÇA duyurulur.
+        Branches.ReplaceAll([.. e.Branches.Where(b => !IsRemoteHead(b))]);
+        // Türetilmiş değerin kendi bildirimi yok — bağlı görünümler tazelensin diye AÇIKÇA duyurulur.
         OnPropertyChanged(nameof(ActiveBranchName));
-        OnPropertyChanged(nameof(IsWorktreeForced));
-        OnPropertyChanged(nameof(EffectiveUseWorktree));
-        NotifyBehindChip();   // [v1.16.0] chip worktree modunda çizilmez — o karar da buradan tazelenir
+        Branch = ActiveBranchName ?? Branch;
     }
 
-    /// <summary>
-    /// [T2 fix-1 · C1] Envanter geldi: <see cref="Branch"/>'i gerçekle uzlaştırır.
-    ///
-    /// <para><b>Kullanıcının AÇIK seçimi korunur</b> — o bir niyettir, bir varsayılan değil. TEK istisna:
-    /// seçilen branch envanterde ARTIK YOKSA (silinmiş/yeniden adlandırılmış) seçim düşürülür ve değer aktif
-    /// branch'e döner; aksi halde uygulama var olmayan bir branch'i hedeflemeye çalışır ve build zorunlu
-    /// worktree yolunda "no commit could be resolved" ile ölürdü.</para>
-    ///
-    /// <para><b>Açık olmayan her değer TAZELENİR</b> (boş olsun, diskteki bayat <c>UiState</c> seed'i olsun,
-    /// önceki bir envanter seed'i olsun) → aktif branch. C1'in tam olarak kapattığı yol budur: kullanıcı
-    /// terminalde branch değiştirince bir sonraki Sync uygulamayı kendiliğinden hizaya sokar.</para>
-    /// </summary>
-    private void ReconcileBranchWithInventory()
-    {
-        if (ActiveBranchName is not { } active) return; // detached HEAD / boş envanter → uydurma değer YOK
-
-        if (_branchChosenByUser)
-        {
-            bool stillExists = Branches.Any(b => string.Equals(b.Name, Branch, StringComparison.Ordinal));
-            if (stillExists) return;    // açık seçim GEÇERLİ → dokunma
-            _branchChosenByUser = false; // seçilen branch yok olmuş → seçim düşer, aşağıda aktife dönülür
-        }
-
-        Branch = active;
-    }
+    /// <summary>Uzak deponun sembolik <c>HEAD</c> ref'i mi (<c>origin/HEAD</c>) — branch listesinde sunulmaz.</summary>
+    private static bool IsRemoteHead(BranchRef branch) =>
+        branch.IsRemoteTracking && branch.Name.EndsWith("/HEAD", StringComparison.Ordinal);
 
 }

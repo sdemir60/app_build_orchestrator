@@ -881,7 +881,7 @@ public class RunViewModelTests
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
     /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
     /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
-    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/worktree/configuration
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration
     /// açılmamalı ve split-button geri gelmemeli.</summary>
     [Fact]
     public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
@@ -1870,7 +1870,7 @@ public class RunViewModelTests
     /// hedefi ata ağaçtan ÇEKSEYDİ satır onu null'ken okur ve bir daha tazelenmezdi. Satırda artık hedef sha
     /// YOK — sağ yuvada kararın kendisi duruyor ve hedef commit motorda kalıyor (konsol satırı + pull).
     /// Yerini alan iddia, aynı olay sırası sorusunun YENİ hâlidir: <c>syncCompleted</c>'ın taşıdığı MESAFE
-    /// (<c>Behind</c>) alt bardaki chip'e ulaşmalı ve worktree modunda chip ÇİZİLMEMELİDİR.
+    /// (<c>Behind</c>) alt bardaki chip'e ulaşmalı.
     /// </summary>
     [Fact]
     public async Task Sync_completed_carries_the_distance_from_the_remote_to_the_action_bar()
@@ -1893,23 +1893,6 @@ public class RunViewModelTests
         // Çevrimdışı: mesafe BİLİNMEZ → chip yine yok (uydurma sayı gösterilmez).
         vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: true, 1, 0));
         Assert.Null(vm.Behind);
-        Assert.False(vm.CanShowBehind);
-    }
-
-    /// <summary>Worktree modunda (aktif olmayan branch seçili) chip HİÇ çizilmez: derleme worktree'den
-    /// yapılıyor, ana ağacı ilerletmenin o koşuya etkisi olmazdı.</summary>
-    [Fact]
-    public async Task The_behind_chip_stays_hidden_while_another_branch_is_selected()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
-        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
-        Assert.True(vm.CanShowBehind);
-
-        vm.SelectBranch(new BranchRef("feature/x", "bbb", IsActive: false, IsRemoteTracking: false));
-
-        Assert.True(vm.IsWorktreeForced);
         Assert.False(vm.CanShowBehind);
     }
 
@@ -2039,7 +2022,7 @@ public class RunViewModelTests
         Assert.Equal("· almost done", vm.EtaText);
     }
 
-    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree / topoloji
+    // ---------------------------------------------------------------- [A5/T69] sync / branch / topoloji
 
     private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
         IReadOnlyList<string>? deps = null, string? layerName = null) =>
@@ -2322,17 +2305,6 @@ public class RunViewModelTests
         // İkinci liste ÖNCEKİNİ değiştirir, üstüne eklemez
         vm.OnEvent(new BranchListEvent([new BranchRef("feature-x", "def5678", false, false)]));
         Assert.Equal(["feature-x"], vm.Branches.Select(b => b.Name));
-    }
-
-    [Fact]
-    public async Task Worktree_list_event_fills_worktrees()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-
-        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"C:\pool\main-1", true, 4096)]));
-
-        Assert.Equal("main-1", Assert.Single(vm.Worktrees).Name);
     }
 
     // [D8] Gerçek 50ms beklenmez — tick tamamen kontrol edilir (ConsoleBatcherTests deseni).

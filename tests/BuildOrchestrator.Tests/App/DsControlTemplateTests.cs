@@ -231,7 +231,7 @@ public class DsControlTemplateTests
         var style = (Style)host.FindResource("Ds.Switch");
         Assert.Equal(typeof(CheckBox), style.TargetType);
 
-        var toggle = new CheckBox { Content = "worktree", Style = style };
+        var toggle = new CheckBox { Content = "stash", Style = style };
         var window = DsResources.Realize(host, toggle);
 
         var track = (Border)toggle.Template.FindName("Track", toggle);
@@ -261,7 +261,7 @@ public class DsControlTemplateTests
     public void Switch_track_is_a_capsule_not_an_ellipse()
     {
         var host = DsResources.NewHost();
-        var toggle = new CheckBox { Content = "worktree", Style = (Style)host.FindResource("Ds.Switch") };
+        var toggle = new CheckBox { Content = "stash", Style = (Style)host.FindResource("Ds.Switch") };
         var window = DsResources.Realize(host, toggle);
 
         var track = (Border)toggle.Template.FindName("Track", toggle);

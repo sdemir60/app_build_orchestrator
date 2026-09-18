@@ -544,22 +544,18 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
-    // ---------------------------------------------------------------- [A5/T69] Sync / branch / worktree / topoloji
+    // ---------------------------------------------------------------- [A5/T69] Sync / branch / topoloji
 
-    // App'in branch seçici, worktree havuzu ve "worktree sil" akışlarını besleyen üç komut: hepsi RootPath
-    // taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR — kök her komutta gelir).
+    // App'in branch seçicisini besleyen komut RootPath taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR —
+    // kök her komutta gelir). [spec 2026-09-18 §1-1] Worktree havuzunun iki komutu da burada round-trip
+    // edilirdi (ad: ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators); komutlar kalktı.
     [Fact]
-    public void ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators()
+    public void ListBranches_roundtrips_with_discriminator()
     {
-        IpcCommand[] commands = [new ListBranchesCommand(@"D:\repo"), new ListWorktreesCommand(@"D:\repo"),
-            new DeleteWorktreeCommand(@"D:\repo", "main-1")];
-        string[] expectedDiscriminators = ["\"type\":\"listBranches\"", "\"type\":\"listWorktrees\"", "\"type\":\"deleteWorktree\""];
-        for (int i = 0; i < commands.Length; i++)
-        {
-            string json = JsonSerializer.Serialize(commands[i], IpcJson.Options);
-            Assert.Contains(expectedDiscriminators[i], json);
-            Assert.Equal(commands[i], JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
-        }
+        IpcCommand command = new ListBranchesCommand(@"D:\repo");
+        string json = JsonSerializer.Serialize(command, IpcJson.Options);
+        Assert.Contains("\"type\":\"listBranches\"", json);
+        Assert.Equal(command, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
     }
 
     // [A5/T69] Graf paneli (D5), katman gruplaması (D1) ve Open-in-VS (E1) için gereken TÜM veri tek event'te
@@ -592,19 +588,6 @@ public class IpcMessagesTests
         Assert.Equal([@"C:\p\a.csproj"], back.Nodes[1].Dependencies);
         Assert.Equal("UiLayer", back.Nodes[1].LayerName);
         Assert.Equal(@"C:\p\Osys.sln", back.Solutions[0].Path);
-    }
-
-    [Fact]
-    public void WorktreeList_roundtrips_with_discriminator()
-    {
-        var ev = new WorktreeListEvent([
-            new Worktree("main-1", "main", @"C:\pool\main-1", true, 1234),
-            new Worktree("feature-x-1", "feature/x", @"C:\pool\feature-x-1", false, null),
-        ]);
-        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
-        Assert.Contains("\"type\":\"worktreeList\"", json);
-        var back = Assert.IsType<WorktreeListEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
-        Assert.Equal(ev.Worktrees, back.Worktrees);
     }
 
     // [A5/T69] Sync de katman pattern'lerini taşır (StartRunCommand ile aynı gerekçe): topoloji event'indeki

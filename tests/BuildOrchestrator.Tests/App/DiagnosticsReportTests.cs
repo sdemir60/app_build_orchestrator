@@ -26,8 +26,7 @@ public class DiagnosticsReportTests
         MsBuild: @"C:\VS\MSBuild.exe (v17.9.8)",
         RepositoryRoot: @"D:\repo",
         StateFile: @"C:\state\ui-state.json",
-        LogsRoot: @"C:\state\logs",
-        WorktreePool: @"C:\state\worktrees");
+        LogsRoot: @"C:\state\logs");
 
     private static IEnumerable<DiagnosticsLine> AllLines(DiagnosticsSnapshot s) =>
         s.Identity.Concat(s.Runtime).Concat(s.Paths);
@@ -50,14 +49,21 @@ public class DiagnosticsReportTests
         Assert.Equal(["4242", ".NET 10.0.0", "Microsoft Windows 10.0.26200"], s.Runtime.Select(l => l.Value));
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> PATHS grubu: MSBuild · Repository root · State file · Logs.
+    /// <para><b>Eski iddia</b> (<c>The_paths_group_is_msbuild_repository_state_logs_and_worktree_pool</c>):
+    /// grup beşinci satır olarak <c>Worktree pool</c>'u taşırdı. <b>Değişme gerekçesi:</b> worktree modu kalktı;
+    /// araç havuzu artık ne kurar ne kullanır — kullanılmayan bir yolu tanı raporunda göstermek, destek
+    /// talebinde yanıltıcı bir ipucu olurdu.</para>
+    /// </summary>
     [Fact]
-    public void The_paths_group_is_msbuild_repository_state_logs_and_worktree_pool()
+    public void The_paths_group_is_msbuild_repository_state_and_logs()
     {
         var s = DiagnosticsReport.Compose(Full());
 
-        Assert.Equal(["MSBuild", "Repository root", "State file", "Logs", "Worktree pool"], s.Paths.Select(l => l.Label));
+        Assert.Equal(["MSBuild", "Repository root", "State file", "Logs"], s.Paths.Select(l => l.Label));
         Assert.Equal(
-            [@"C:\VS\MSBuild.exe (v17.9.8)", @"D:\repo", @"C:\state\ui-state.json", @"C:\state\logs", @"C:\state\worktrees"],
+            [@"C:\VS\MSBuild.exe (v17.9.8)", @"D:\repo", @"C:\state\ui-state.json", @"C:\state\logs"],
             s.Paths.Select(l => l.Value));
     }
 

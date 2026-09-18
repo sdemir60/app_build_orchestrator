@@ -5,7 +5,7 @@ using System.Windows.Media.Animation;
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [D6] design-v1 <c>.bo-pop-in</c> giriş animasyonu (BuildApp.jsx:21/:33) — branch/worktree popover'ları ve Build
+/// [D6] design-v1 <c>.bo-pop-in</c> giriş animasyonu (BuildApp.jsx:21/:33) — branch popover'ı ve Build
 /// menüsü ORTAK kullanır (kopya YASAK, CLAUDE.md): <c>opacity 0→1</c> + <c>translateY(4px)→0</c> + <c>scale(.985)→1</c>,
 /// 140ms, <c>ease-out</c>. KAPANIŞ animasyonu YOKtur (popover anında gizlenir).
 ///

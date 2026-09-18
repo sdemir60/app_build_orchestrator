@@ -137,7 +137,7 @@ public class ActionBarHoverTests
     /// <summary>[hover tablosu satır 1] "N behind" (<c>Ds.Bar.Chip.Action</c>) ve Sync (<c>Ds.Bar.Button.
     /// Secondary.Sm</c>) — IsChecked'i OLMAYAN kontroller — hover'da neutral-700 zemin + neutral-500 kenar +
     /// text-primary metin/ikon BİRLİKTE değişir. İkisi de AYNI üç setter'ı taşıdığı için TEK yardımcıyla
-    /// doğrulanır (kopya YASAK). Σ/sayaç/branch/worktree/perf'in stili (<c>Ds.Bar.Chip</c>) AYRI test edilir
+    /// doğrulanır (kopya YASAK). Σ/sayaç/branch/perf'in stili (<c>Ds.Bar.Chip</c>) AYRI test edilir
     /// (aşağıda) — onun nötr tetikleyicisi ÜÇÜNCÜ bir koşul (IsChecked=False) taşır (fix round 1 · I-1).</summary>
     [StaFact]
     public void Chip_action_and_secondary_button_bar_styles_resolve_the_same_neutral_hover_surface()
@@ -159,7 +159,7 @@ public class ActionBarHoverTests
         }
     }
 
-    /// <summary>[hover tablosu satır 1] <c>Ds.Bar.Chip</c> (Σ/sayaç çipleri, branch/worktree/perf) — AYNI üç
+    /// <summary>[hover tablosu satır 1] <c>Ds.Bar.Chip</c> (Σ/sayaç çipleri, branch/perf) — AYNI üç
     /// setter, ama nötr tetikleyici ÜÇÜNCÜ bir koşul taşır: <c>IsChecked=False</c> (fix round 1 · I-1 — bkz.
     /// <see cref="A_checked_and_hovered_chip_resolves_its_foreground_to_amber_text_not_text_primary"/>).</summary>
     [StaFact]
@@ -221,7 +221,7 @@ public class ActionBarHoverTests
 
     // ---------------------------------------------------------------- açık/aktif kontrol: amber-soft-hover + amber kenar
 
-    /// <summary>[hover tablosu satır 2] Açık/aktif kontrol (IsChecked filtre çipi, açık branch/worktree popover
+    /// <summary>[hover tablosu satır 2] Açık/aktif kontrol (IsChecked filtre çipi, açık branch popover
     /// chip'i) hover'da amber-soft-hover zemin + amber kenar alır; METİN <c>amber-text</c> SABİT kalır —
     /// tetikleyici Foreground'u hiç YAZMAZ.</summary>
     [StaFact]
@@ -469,7 +469,6 @@ public class ActionBarHoverTests
 
         Assert.Same(bar.FindResource("Ds.Bar.Chip"), bar.SigmaChip.Style);
         Assert.Same(bar.FindResource("Ds.Bar.Chip"), bar.BranchChip.Style);
-        Assert.Same(bar.FindResource("Ds.Bar.Chip"), bar.WorktreeChip.Style);
         Assert.Same(bar.FindResource("Ds.Bar.Chip"), bar.PerfChip.Style);
         Assert.Same(bar.FindResource("Ds.Bar.Chip.Action"), bar.BehindChip.Style);
         Assert.Same(bar.FindResource("Ds.Bar.Button.Secondary.Sm"), bar.SyncButton.Style);

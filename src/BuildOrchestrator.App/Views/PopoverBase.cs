@@ -8,7 +8,7 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [W2/It-5] <see cref="BranchPopover"/> ve <see cref="WorktreePopover"/>'ın ORTAK iskeleti — TEK yer. İki popover
+/// [W2/It-5] <see cref="BranchPopover"/>'ın taban iskeleti — TEK yer. Eskiden iki popover (branch + worktree)
 /// aşağıdaki dört parçayı gövde olarak birebir aynı yazıyordu:
 /// <list type="number">
 ///   <item><see cref="IsOpen"/> DP'si (iki-yönlü; ActionBar <c>Popup.IsOpen</c>'a bağlar) + açılış davranışı:
@@ -19,8 +19,7 @@ namespace BuildOrchestrator.App.Views;
 ///   <item><c>Loaded</c>'da ilk tazeleme.</item>
 /// </list>
 ///
-/// <para><b>Popover'a ÖZEL davranışlar türevde kalır</b> (Branch: kapanışta sorgu sıfırlama · Worktree: hover'da
-/// çöp kutusu, forced/disabled switch, üçüncü kolon). Odak hedefi ve tazeleme türevin sorumluluğudur
+/// <para><b>Popover'a ÖZEL davranışlar türevde kalır</b> (Branch: kapanışta sorgu sıfırlama). Odak hedefi ve tazeleme türevin sorumluluğudur
 /// (<see cref="InitialFocusTarget"/>, <see cref="RefreshContent"/>).</para>
 ///
 /// <para><b>Kapsam dışı:</b> <see cref="BuildMenu"/> — onun <see cref="IsOpen"/> DP'si ve Esc'i YOKtur, pop-in'ini
@@ -69,7 +68,7 @@ public abstract class PopoverBase : UserControl
     /// <summary>Popover gövdesini VM'den yeniden kurar — açılışta, <c>Loaded</c>'da ve VM takasında çağrılır.</summary>
     protected abstract void RefreshContent();
 
-    /// <summary>Açılışta odağın taşınacağı İLK etkileşimli öğe (Branch: arama kutusu · Worktree: switch).</summary>
+    /// <summary>Açılışta odağın taşınacağı İLK etkileşimli öğe (Branch: arama kutusu).</summary>
     protected abstract UIElement InitialFocusTarget { get; }
 
     /// <summary>VM takasında yeni VM'in olaylarına abone ol.</summary>
