@@ -1843,11 +1843,11 @@ from itself, a Rebuild, an SCC member), and a cycle member all read the identica
 **The word is a fact; the tail is the age of the evidence behind it, never a promise.** A failed row's tail is
 how long ago that failure happened, read the same way as `up to date`'s tail — and its tooltip names who will
 retry it: *Build* ordinarily, or *Resolve cycles* for a cycle member, because a plain Build never compiles a
-dependency cycle. Design v1.16.0's own table fixed `failed · retry` as one unit and read the tail itself as a
-promise ("the next Build will try this again") — a promise a cycle member cannot keep, since a plain Build
-never compiles one: measured on a real workspace, 15 of 18 `failed` rows were cycle members for whom that
-promise would never come. Design v1.20.0 later dropped the pairing too, for the same reason. The word does not
-change with scope either way — `failed` states what happened, the tooltip states who acts on it.
+dependency cycle. The tail is never paired with a fixed retry verb such as `failed · retry`, because that would
+read as a promise ("the next Build will try this again") that a cycle member cannot keep — a plain Build never
+compiles one, and on a real workspace most `failed` rows were cycle members for whom that promise would never
+come. The word does not change with scope either way — `failed` states what happened, the tooltip states who
+acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
@@ -3470,8 +3470,9 @@ preview carries is the trace of a past success) — while a row with no decision
 neutralises the previous run's fields, so a row that just succeeded does not keep the run's green, and it
 closes the previous run's story: a finished run's summary and a stopped run's `Stopped — n/m · k not built`
 both give way to the new plan (`Ready — N to build`). A stopped run's plan belongs to the old configuration,
-so there is nothing under the new one it could be resumed as; the next *Build* starts from the new plan. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
-amber the marking wave lit must not go out when the run begins. The mapping lives in one place
+so there is nothing under the new one it could be resumed as; the next *Build* starts from the new plan.
+`queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is
+running, and the amber the marking wave lit must not go out when the run begins. The mapping lives in one place
 (`VisualStatuses.For`) and every surface reads it; the run-story surfaces map the engine's status on their own
 through `VisualStatuses.OfRun`, which is the only mapping that still yields `skipped`.
 
@@ -4292,6 +4293,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
 | Input collection, path terms and the two binding passes | `Core/Incremental/IncrementalRunBinder.cs` |
 | Will-build tri-state decision and its reason | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 | Worktree → main-root identity rebase | `Core/Planning/ProjectIdentityRebase.cs` |
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
@@ -4310,6 +4312,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
+| Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 
