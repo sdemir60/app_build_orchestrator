@@ -64,16 +64,20 @@ public class CycleCubeTests
     /// <summary>[DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski ad/iddia:
     /// <c>A_member_that_is_actually_built_shows_only_its_result</c> — üye GERÇEKTEN derlendiğinde (Resolve
     /// cycles) amber küp YOKTUR, sonuç rengi tek başına konuşur. Değişme gerekçesi: Resolve ile derlense de proje
-    /// döngüde kalır. Yeni kural: çerçeve koşuyu/sonucu, küp amber'ı taşır.</summary>
+    /// döngüde kalır. Yeni kural: çerçeve koşuyu/sonucu, küp amber'ı taşır.
+    /// <para>[R-M4] Kırmızı çerçeve KANITLI hatanındır: koşu kanıtlı hatayı çıktı durumuna da yazar
+    /// (<see cref="StandingStatus.Failed"/>), bu yüzden Failed satırı o durumla sınanır — kanıtsız hata
+    /// (bayat durum) gri kalır, bkz. <c>VisualStatusTests.A_failure_that_is_not_evidence_reads_as_its_stale_standing</c>.
+    /// Eski fixture dört satırı da <c>Stale</c> ile sınıyordu.</para></summary>
     [Theory]
-    [InlineData(GraphStatus.Queued, VisualStatus.Queued, "Brush.Amber")]
-    [InlineData(GraphStatus.Building, VisualStatus.Building, "Brush.Amber")]
-    [InlineData(GraphStatus.Succeeded, VisualStatus.Succeeded, "Brush.StatusSuccess")]
-    [InlineData(GraphStatus.Failed, VisualStatus.Failed, "Brush.StatusFail")]
+    [InlineData(GraphStatus.Queued, StandingStatus.Stale, VisualStatus.Queued, "Brush.Amber")]
+    [InlineData(GraphStatus.Building, StandingStatus.Stale, VisualStatus.Building, "Brush.Amber")]
+    [InlineData(GraphStatus.Succeeded, StandingStatus.Stale, VisualStatus.Succeeded, "Brush.StatusSuccess")]
+    [InlineData(GraphStatus.Failed, StandingStatus.Failed, VisualStatus.Failed, "Brush.StatusFail")]
     public void A_member_that_is_actually_built_keeps_the_amber_cube_and_frames_its_result(
-        GraphStatus status, VisualStatus visual, string frame)
+        GraphStatus status, StandingStatus standing, VisualStatus visual, string frame)
     {
-        Assert.Equal(visual, VisualStatuses.For(status, StandingStatus.Stale, marked: false));
+        Assert.Equal(visual, VisualStatuses.For(status, standing, marked: false));
         Assert.Equal("Brush.AmberText", VisualStatuses.NodeCoreBrushKey(visual, inCycle: true));
         Assert.Equal(frame, VisualStatuses.NodeBorderBrushKey(visual));
     }

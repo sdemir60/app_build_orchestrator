@@ -54,6 +54,10 @@ public static class VisualStatuses
     public static VisualStatus For(GraphStatus status, StandingStatus standing, bool marked) => status switch
     {
         GraphStatus.Skipped => Of(standing),
+        // [R-M4 · design v1.20.0 §5 "bozuk (kanıtlı)"] Kırmızı KANITTIR: kanıtlı hata çıktı durumunu zaten
+        // Failed'a yazar (LastFailed). Kanıt olmayan hata (timeout · Stop · invoke hatası) satırı bayat bırakır
+        // ve satır o griyi gösterir — "timeout/Stop kanıt sayılmaz, kırmızıya çevirmez".
+        GraphStatus.Failed when standing == StandingStatus.Stale => VisualStatus.Stale,
         GraphStatus.Discovered or GraphStatus.Cycle => marked ? VisualStatus.Marked : Of(standing),
         _ => OfRun(status),
     };

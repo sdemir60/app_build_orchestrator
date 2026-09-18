@@ -9,7 +9,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// (bkz. <see cref="RunViewModel.OnProjectSkipped"/>) ve bu sayacı şişirirdi — o iki yüzey bunun yerine run'ın
 /// KENDİ SABİT willBuild-kalan sayısını okur. Sayacın kendisi DEĞİŞMEDİ: genel "kaç Pending satır var" sorusuna
 /// hâlâ doğru cevap verir, yalnız bu iki tüketici artık ayrı (zaten kapsamlı) bir kaynağa geçti.
-/// <c>DepAffected</c> yalnız <b>succeeded</b> +
+/// <c>DepAffected</c> BU KOŞUNUN dep-issue listesini taşıyan satırları sayar (<see
+/// cref="ProjectRowViewModel.HasRunDepIssue"/> — R-D144: defterdeki bekleyen bağımlılık notu bu özete
+/// GİRMEZ, o ⚠ chip'inin/<c>warn</c> filtresinin kümülatif sorusudur). Tarihsel not: prototipte yalnız <b>succeeded</b> +
 /// dep-issue taşıyan satırları sayar (build-data.js:524-528) — filtre chip'i "dep" (statüden bağımsız,
 /// bkz. <see cref="ProjectFilter"/>) ile bilerek FARKLIDIR: özet "kaç proje başarıyla derlendi ama yine de
 /// bir bağımlılık uyarısı taşıyor" sorusunu yanıtlar. <c>StuckCycles</c> [cycle rounds/Task 8] yakınsamayan
@@ -38,7 +40,9 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
         foreach (var r in rows)
         {
             total++;
-            if (r.HasDepIssue) dep++;        // [v1.5.1] statüden BAĞIMSIZ
+            // [R-D144] Şeridin koşu özeti "(N dependency-affected)" BU koşunun listesini sayar (koşu hikâyesi);
+            // ⚠ chip'i (warn) ise defter notunu da taşıyan kümülatif üçgeni (HasDepIssue) — iki soru ayrıdır.
+            if (r.HasRunDepIssue) dep++;     // [v1.5.1] statüden BAĞIMSIZ
             if (r.InCycle) cycle++;          // [v1.7.0 §5] kalıcı üyelik
             // [design v1.11.0 §2.7-4] ⚠ chip'inin değeri: döngü ∪ dep-issue — ikisinin BİRLEŞİMİ, toplamı DEĞİL
             // (bir satır ikisini birden taşıyabilir ve tek üçgen gösterir).

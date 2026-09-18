@@ -927,9 +927,10 @@ public partial class GraphView : UserControl
         //
         // [DEĞİŞEN KURAL] Burada eskiden İKİ eşleme vardı: kenar/zemin statüden, ÇEKİRDEK ise ayrı bir
         // plan/cycle kanalından (döngü üyesi → turuncu; aksi halde amber "derlenecek" / gri "güncel").
-        // v1.11.0 o kanalları kaldırdı — renk yalnız son işlemin hikâyesini anlatır. Kesikli çerçeve de artık
-        // YALNIZ başlangıç modundadır (fresh); `discovered` DÜZ gridir ve "bir işlem başladı ama bu proje
-        // kapsamda değil" der.
+        // v1.11.0 o kanalları kaldırdı. [DEĞİŞEN KURAL — design v1.20.0 §2.3] Renk artık çıktının KÜMÜLATİF
+        // durumudur (güncel yeşil · derlenecek gri · kanıtlı bozuk kırmızı), koşu onun üstüne biner. Kesikli
+        // çerçeve YALNIZ bilinmiyor durumundadır — kararın yokluğu (hiç Sync yok ya da karar düşürüldü);
+        // derlenecek (stale) düğüm DÜZ gridir.
         var state = visual.Model.Visual;
         string border = VisualStatuses.NodeBorderBrushKey(state);
         string background = VisualStatuses.NodeBackgroundBrushKey(state);

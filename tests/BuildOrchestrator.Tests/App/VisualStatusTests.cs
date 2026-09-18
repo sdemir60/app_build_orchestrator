@@ -41,16 +41,32 @@ public class VisualStatusTests
     public void Marked_wins_over_every_standing(StandingStatus standing)
         => Assert.Equal(VisualStatus.Marked, VisualStatuses.For(GraphStatus.Discovered, standing, marked: true));
 
-    /// <summary>Koşu bir şey söylediyse (kuyruk, derleme, sonuç) çıktı durumunu ve işaretliliği ezer.</summary>
+    /// <summary>Koşu bir şey söylediyse (kuyruk, derleme, sonuç) çıktı durumunu ve işaretliliği ezer.
+    /// <para><b>[DEĞİŞEN KURAL — R-M4 · design v1.20.0 §5]</b> Eski iddia: <c>Failed</c> da her çıktı durumunu
+    /// ezer (Stale üstünde de kırmızı). Değişme gerekçesi: kırmızı KANITTIR — timeout/Stop kanıt sayılmaz ve
+    /// satırı kırmızıya çevirmez; kanıtsız hata bayat (Stale) çıktı durumunu bırakır ve satır onu gösterir
+    /// (<see cref="A_failure_that_is_not_evidence_reads_as_its_stale_standing"/>). Kanıtlı hatanın çıktı
+    /// durumu zaten Failed'dır; Stale DIŞINDAKİ her durumda <c>Failed</c> hâlâ ezer.</para></summary>
     [Theory]
     [InlineData(GraphStatus.Queued, VisualStatus.Queued)]
     [InlineData(GraphStatus.Building, VisualStatus.Building)]
     [InlineData(GraphStatus.Succeeded, VisualStatus.Succeeded)]
-    [InlineData(GraphStatus.Failed, VisualStatus.Failed)]
     public void The_run_overlays_the_standing(GraphStatus status, VisualStatus expected)
     {
         Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Current, marked: false));
         Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Stale, marked: true));
+    }
+
+    /// <summary>[R-M4 · design v1.20.0 §5 "bozuk (kanıtlı)"] Kanıt olmayan bir koşu hatası (timeout, Stop,
+    /// invoke hatası) satırı kırmızıya ÇEVİRMEZ: satır bayat çıktı durumunu (gri) gösterir. Kanıtlı hata
+    /// çıktı durumunu zaten <see cref="StandingStatus.Failed"/>'a yazar ve kırmızıdır.</summary>
+    [Fact]
+    public void A_failure_that_is_not_evidence_reads_as_its_stale_standing()
+    {
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Stale, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Failed, marked: false));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Failed, StandingStatus.Current, marked: true));
     }
 
     /// <summary>[design v1.20.0 §1.4] — yalnız run-story'dedir: durum yüzeyleri onu hiçbir girdide almaz.</summary>

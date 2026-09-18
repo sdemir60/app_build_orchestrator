@@ -146,7 +146,7 @@ public class ProjectRowTests
     [StaFact]
     public void The_status_dot_follows_the_stripe_colour_and_carries_no_tooltip()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, Fresh = true };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true };
         var (row, window, host) = Realize(vm);
 
         Assert.Null(row.Dot.ToolTip);
@@ -157,8 +157,7 @@ public class ProjectRowTests
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Dot.Ring.Stroke));
         Assert.NotEmpty(row.Dot.Ring.StrokeDashArray);
 
-        // İşlem başladı (başlangıç modu düştü) ve satır kapsamda: nokta AMBER — şeridin ta kendisi.
-        vm.Fresh = false;
+        // Satır kapsamda (dalga yaktı): nokta AMBER — şeridin ta kendisi.
         vm.Marked = true;
         row.UpdateLayout();
         var dot = row.Dot.Fill;
@@ -644,15 +643,17 @@ public class ProjectRowTests
     [StaFact]
     public void The_fresh_start_mode_draws_the_stripe_fully_opaque()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { Fresh = true };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending); // karar yok → başlangıç modu
         var (row, window, host) = Realize(vm);
 
         Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);   // kesikli desen YOK (v1.12.0)
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
         Assert.Equal(1.0, row.Stripe.Opacity);                                  // v1.13.2: silik değil, TAM opak
 
-        // İşlem başlayınca (fresh düşünce) opaklık zaten 1'di — değişmez, rengi de değişmez.
-        vm.Fresh = false;
+        // Karar gelince (derlenecek → düz gri; design v1.20.0 §2.3) opaklık zaten 1'di — değişmez, rengi de
+        // değişmez: bilinmiyor ile derlenecek AYNI gridir.
+        vm.WillBuild = true;
+        vm.WillBuildReason = WillBuildReason.SignatureChanged;
         row.UpdateLayout();
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
         Assert.Equal(1.0, row.Stripe.Opacity);
@@ -697,6 +698,29 @@ public class ProjectRowTests
 
 
 
+
+    /// <summary>[spec 2026-09-18 §1-15 · design v1.20.0 §2.4-6] Üçgen kümülatiftir: koşu listesi boşken
+    /// defterdeki bekleyen bağımlılık notunun kökleri gösterilir (tooltip koşunun diliyle AYNI); not düşünce
+    /// üçgen de düşer. Kök seçimi VM'dedir (<see cref="ProjectRowViewModel.WarningRoots"/>) — kart yalnız okur.</summary>
+    [StaFact]
+    public void The_ledger_note_shows_the_triangle_without_a_run_list()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility); // ön-koşul
+
+        vm.WillBuild = true;
+        vm.DependencyRoots = ["OSYS.Sales.Core"];
+        vm.WillBuildReason = WillBuildReason.WaitingForDependency;
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal("Dependency issue: Sales.Core", row.DepTooltip);
+
+        vm.WillBuildReason = WillBuildReason.UpToDate; // not düştü (kök sağlıklı)
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        GC.KeepAlive(window);
+    }
 
     /// <summary>[review fix Minor] Dep-slot'ta gösterilecek hiçbir sinyal kalmayınca <c>PART_DepTip.Content</c>
     /// DEFANSİF olarak temizlenir — slot bugün sıfır yükseklikte çöktüğü için zararsız, ama slot'un layout'u

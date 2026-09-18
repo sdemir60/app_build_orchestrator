@@ -141,10 +141,12 @@ public class GraphWillBuildFeedTests
         string idB = MainWindowHost.IdOf("B");
 
         // Sync'ten kalma: ikisi de dirty. B, gelecek tek-proje koşusunun önizlemesine hiç girmeyecek "bayat" komşu.
+        // [T4 review ledger (b)] Gerekçeli önizleme: "renk değişmez" iddiası gerçek bir çıktı durumunda
+        // (derlenecek → gri) sınanır; gerekçesiz karar Unknown→Unknown'dan başka bir şey ölçemezdi.
         vm.OnEvent(new BuildPreviewEvent(
         [
-            new BuildPreviewItem(idA, "A", true),
-            new BuildPreviewItem(idB, "B", true),
+            new BuildPreviewItem(idA, "A", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(idB, "B", true, Reason: WillBuildReason.SignatureChanged),
         ]));
 
         var a = vm.Projects.Single(p => p.Id == idA);
@@ -152,7 +154,7 @@ public class GraphWillBuildFeedTests
         // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski iddia: bayat komşu nötr gri (VisualStatus.Discovered) kalır.
         // Discovered kalktı; komşu artık kendi çıktı durumunu taşır — iddia "koşu onun rengine DOKUNMAZ"dır.
         var bBefore = b.VisualStatus;
-        Assert.NotEqual(VisualStatus.Marked, bBefore);
+        Assert.Equal(VisualStatus.Stale, bBefore);
 
         // Dalganın çıktısı burada SİMÜLE edilir: A işaretlendi (koreografinin zamanlamasını test etmiyoruz,
         // yalnız MainWindow'un runStarted/BuildPreviewApplied wiring'ini).
@@ -170,7 +172,7 @@ public class GraphWillBuildFeedTests
         Assert.Equal(bBefore, b.VisualStatus);
 
         // Motorun planı tek düğüme kesilir: önizleme YALNIZ hedefi taşır — devir burada olur.
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(idA, "A", true)]));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(idA, "A", true, Reason: WillBuildReason.SignatureChanged)]));
 
         Assert.False(a.Marked); // işaret artık gereksiz — InRunQueue statü kanalını devraldı
         Assert.Equal(GraphStatus.Queued, a.Status);

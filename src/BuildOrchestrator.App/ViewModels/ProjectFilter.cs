@@ -41,7 +41,8 @@ public static class ProjectFilter
 
     private static bool MatchesOne(ProjectRowViewModel row, string filter)
     {
-        // [design v1.11.0 §2.7-4] warn = döngü üyeliği ∪ dependency issue — TEK birleşik uyarı kanalı.
+        // [design v1.11.0 §2.7-4] warn = döngü üyeliği ∪ dependency issue — TEK birleşik uyarı kanalı. Dependency issue
+        // kümülatiftir (R-D144 · spec 2026-09-18 §1-15): bu koşunun listesi ∪ defterdeki bekleyen bağımlılık notu.
         if (filter == Warn) return row.InCycle || row.HasDepIssue;
         if (filter == Building) return row.State is ProjectRowState.Started or ProjectRowState.Pending; // queued dahil
         return string.Equals(StatusKey(row.State), filter, StringComparison.Ordinal); // succeeded/failed/skipped

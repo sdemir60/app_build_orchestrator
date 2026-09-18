@@ -365,6 +365,11 @@ public sealed partial class RunViewModel
         {
             row.State = ProjectRowState.Pending;
             row.WillBuild = null;
+            // [spec 2026-09-18 §1-15] Karar düşünce defter notu da düşer: üçgen artık gerekçeden de okunur
+            // (ProjectRowViewModel.WarningRoots) ve bilinmiyor modundaki bir satır bekleyen bir bağımlılık
+            // iddia edemez. Gerekçe + kökler kararla birlikte gider.
+            row.WillBuildReason = null;
+            row.DependencyRoots = null;
             row.DepIssues = null;
             row.DurationMs = 0;
         }

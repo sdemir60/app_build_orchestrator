@@ -1799,7 +1799,10 @@ public class RunViewModelTests
         Assert.Null(row.DependencyRoots);
     }
 
-    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
+    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
+    /// <para>[R-M4] Fixture motorun GERÇEK biçimini taşır (<c>"exit N"</c>, <c>RunCoordinator.ReasonFor</c>):
+    /// yalnız derleyici hatası kanıttır. Eski fixture uydurma bir metin (<c>"CS0103"</c>) veriyordu — motor
+    /// böyle bir reason üretmez; kanıtsız hatanın (timeout/stopped) ayrı yolu RunViewModelStateTests'te.</para></summary>
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()
     {
@@ -1810,7 +1813,7 @@ public class RunViewModelTests
             [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
 
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
-        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "CS0103", null));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "exit 1", null));
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);

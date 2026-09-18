@@ -12,6 +12,7 @@ using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Scheduling;
+using BuildOrchestrator.Core.State;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 // [T20-b] VM'in KENDİ `PerfMode` string property'si, Core'daki aynı adlı enum'u basit-ad çözümlemesinde gölgeler
@@ -133,6 +134,8 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Standing))]
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
+    [NotifyPropertyChangedFor(nameof(WarningRoots))] // defter notu üçgeni (spec 2026-09-18 §1-15)
+    [NotifyPropertyChangedFor(nameof(HasDepIssue))]
     private WillBuildReason? _willBuildReason;
 
     /// <summary>[design v1.20.0 §2.3] Çıktının durumu — görsel durumun taban katmanı. Önizleme kararından
@@ -153,8 +156,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[Task 4 · koşullu yeniden derleme] <see cref="WillBuildReason.WaitingForDependency"/> iken
     /// defterdeki kök bağımlılıkların GÖRÜNEN adları — <see cref="ViewModels.DecisionLabel"/>'in tooltip'i
-    /// bunları yazar (<see cref="BuildPreviewItem.DependencyRoots"/>'tan AYNEN). Diğer gerekçelerde null.</summary>
-    [ObservableProperty] private IReadOnlyList<string>? _dependencyRoots;
+    /// bunları yazar (<see cref="BuildPreviewItem.DependencyRoots"/>'tan AYNEN). Diğer gerekçelerde null.
+    /// Koşu listesi boşken uyarı üçgeninin kökleri de bunlardır (<see cref="WarningRoots"/>).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WarningRoots))]
+    [NotifyPropertyChangedFor(nameof(HasDepIssue))]
+    private IReadOnlyList<string>? _dependencyRoots;
 
     /// <summary>[Task 1 — kök neden A] Bu satır ŞU AN KOŞAN run'ın KENDİ kuyruğunda mı — <see cref="Status"/>'un
     /// <c>Queued</c> dalı bunu okur, <see cref="WillBuild"/>'i DEĞİL. YALNIZ bu koşunun
@@ -180,15 +187,48 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VisualStatus))]
     private bool _inRunQueue;
 
-    /// <summary>[Task 17] Bu proje için tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
+    /// <summary>[Task 17] BU KOŞUDA tespit edilen dependency-uyarısı kök adları (ör. "B", "C") — boşsa/hiç
     /// gelmediyse null. <see cref="ProjectSucceededEvent.DepIssues"/>/<see cref="ProjectFailedEvent.DepIssues"/>'tan
-    /// doğrudan taşınır.</summary>
+    /// doğrudan taşınır. Bir koşu alanıdır: nötrleme onu siler (defter notu <see cref="WarningRoots"/>'ta
+    /// yaşamaya devam eder).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasRunDepIssue))]
+    [NotifyPropertyChangedFor(nameof(WarningRoots))]
     [NotifyPropertyChangedFor(nameof(HasDepIssue))]
     private IReadOnlyList<string>? _depIssues;
 
-    /// <summary>[Task 17] ▲ sinyali: <see cref="DepIssues"/> boş değilse true.</summary>
-    public bool HasDepIssue => DepIssues is { Count: > 0 };
+    /// <summary>[R-D144] Koşu hikâyesinin sorusu: BU koşu bu satırda bir bağımlılık sorunu gördü mü. Yalnız
+    /// şeridin koşu özeti ("(N dependency-affected)", <see cref="RunCounters.DepAffected"/>) bunu okur.</summary>
+    public bool HasRunDepIssue => DepIssues is { Count: > 0 };
+
+    /// <summary>[design v1.20.0 §2.4-6 · spec 2026-09-18 §1-15] Uyarı üçgeninin KÖK adları — TEK kaynak (satır
+    /// tooltip'i <see cref="RowWarning.For"/>'a bunu verir, sayaç/filtre <see cref="HasDepIssue"/> üzerinden
+    /// bunu sayar). Bu koşunun listesi varsa o (en taze kanıt); yoksa defterdeki bağımlılık notunun kökleri
+    /// (<see cref="WillBuildReason.WaitingForDependency"/> iken <see cref="DependencyRoots"/>). Üçgen bu yüzden
+    /// KÜMÜLATİFTİR: bir sonraki koşunun nötrlemesi koşu listesini siler, defter notu durdukça üçgen kalır.</summary>
+    public IReadOnlyList<string>? WarningRoots =>
+        HasRunDepIssue ? DepIssues
+        : WillBuildReason == Contracts.Model.WillBuildReason.WaitingForDependency ? DependencyRoots
+        : null;
+
+    /// <summary>[Task 17 · spec 2026-09-18 §1-15] ▲ sinyali — DURUM yüzeyleri (⚠ chip'i, <c>warn</c> filtresi)
+    /// bunu okur: <see cref="WarningRoots"/> boş değilse true.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-15]</b> Eski tanım yalnız bu koşunun
+    /// <see cref="DepIssues"/>'ıydı: bir sonraki işlemin nötrlemesi üçgeni silerdi, defterde duran "hatalı
+    /// bağımlılığa karşı derlendi" notu ise Sync'ten sonra hiç görünmezdi. Üçgen artık defter notunu da
+    /// taşır; koşu özetinin sorusu <see cref="HasRunDepIssue"/>'ya ayrıldı (R-D144).</para></summary>
+    public bool HasDepIssue => WarningRoots is { Count: > 0 };
+
+    /// <summary>[spec 2026-09-18 §1-14] Kanıtlı son hatanın zamanı — <c>failed · 2h</c> etiketinin yaşı.
+    /// Kaynak önizlemedir (<see cref="BuildPreviewItem.FailedAt"/>, <c>BuildStateStore.FailedAtOf</c>); koşu
+    /// içinde kanıtlı hata onu ŞİMDİ'ye, başarı ve kanıtsız hata <c>null</c>'a çeker
+    /// (<see cref="RunViewModel.OnProjectDone"/>). Çıktı durumunun parçasıdır: nötrleme dokunmaz.</summary>
+    [ObservableProperty] private DateTimeOffset? _failedAt;
+
+    /// <summary>[spec 2026-09-18 §4 <c>local</c>] Projenin girdilerinden en az biri <c>git status</c>'ta kirli
+    /// mi. YALNIZ koşu dışındaki önizlemeden yazılır (Sync; koşu önizlemesi alanı hep <c>false</c> gönderir —
+    /// bkz. <see cref="RunViewModel.OnBuildPreview"/>). Nötrleme dokunmaz.</summary>
+    [ObservableProperty] private bool _localEdits;
 
     /// <summary>Motor bu projeyi bu koşunda ATLADIYSA gerekçesi (<see cref="SkipReasons"/> — tek doğruluk
     /// kaynağı); atlanmadıysa null. <b>Neden satırda tutuluyor:</b> proje sayfası logu olmayan bir projede "neden
@@ -282,14 +322,6 @@ public sealed partial class ProjectRowViewModel : ObservableObject
         _ => Controls.GraphStatus.Discovered,
     };
 
-    /// <summary>[design v1.11.0 §3.1 · §9-3] Sync ile açılan, bir işlem BAŞLADIĞINDA düşen bayrak (motorun
-    /// <c>_neutralize</c>'ına karşılık gelir).
-    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Bayrak eskiden başlangıç modunu sürerdi (Sync hiçbir
-    /// şeyi renklendirmezdi). Artık görsel durumu ETKİLEMEZ: başlangıç modu yalnız kararın olmadığı
-    /// <see cref="Controls.StandingStatus.Unknown"/>'dır, Sync sonrası satır çıktı durumunun rengindedir.</para></summary>
-    [ObservableProperty]
-    private bool _fresh;
-
     /// <summary>[design v1.11.0 §9-4] Bu satır YÜRÜYEN işlemin kapsamında mı — açılış koreografisinin
     /// dalgasında amber'a yanan küme. Koşu başlayınca statü kanalı devralır (queued/building/sonuç), bu yüzden
     /// bayrak yalnız <c>discovered</c> satırlarda görünür bir fark yaratır.</summary>
@@ -302,7 +334,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// işaretlilik. Eşleme <see cref="Controls.VisualStatuses.For"/>'dadır; kart kendi tablosunu KURMAZ.
     /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski girdiler <c>Fresh</c> (başlangıç modu) ve
     /// <see cref="InCycle"/> (amber küp) idi. Başlangıç modu artık kararın yokluğudur (<see cref="Standing"/>),
-    /// döngü küpü ise durumdan bağımsızdır ve düğüme ayrı taşınır.</para></summary>
+    /// döngü küpü ise durumdan bağımsızdır ve düğüme ayrı taşınır. <c>Fresh</c> bayrağı bu yüzden tamamen
+    /// kalktı: başlangıç modunu okuyan her yüzey <see cref="Controls.VisualStatuses.IsStartMode"/>'u bu
+    /// durumdan sorar.</para></summary>
     public Controls.VisualStatus VisualStatus => Controls.VisualStatuses.For(Status, Standing, Marked);
 
     /// <summary>[design v1.13.2 §9-4 · §2.4 · §3.2] Açılış koreografisinin satıra düşen payı: hedef opaklık +
@@ -848,7 +882,7 @@ public sealed partial class RunViewModel : ObservableObject
         // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
         var target = scopeProjectId is null ? null : FindRow(scopeProjectId);
         var scope = target is null ? ScopeFor(mode) : [target];
-        NeutralizeRows(fresh: false);
+        NeutralizeRows();
         RefreshRunSurface(); // sayaclar/serit notrlenmis listeden yeniden turer
         // [design v1.11.0 §2.2] İşlem pill'i TIKLAMA ANINDA yazılır (motorun cevabı beklenmez): pill "ne
         // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
@@ -954,24 +988,25 @@ public sealed partial class RunViewModel : ObservableObject
     /// koreografi zaten koşu başlarken biter ve statü kanalı devralır).
     /// </summary>
     /// <summary>
-    /// [design v1.11.0 §9-4 <c>_neutralize</c>] <b>Önceki koşunun tüm izlerini siler.</b> Statü, süre ve
-    /// dependency uyarısı sıfırlanır, koreografi işareti düşer — herkes tek bir zemine iner. PLAN
-    /// (<see cref="ProjectRowViewModel.WillBuild"/>) ve yapısal bilgi (döngü üyeliği, SHA çifti, katman)
-    /// KORUNUR: kapsam plandan okunur, ve "neyin bayat olduğu" renk olmadan da SHA çiftinden okunmalıdır.
+    /// [design v1.11.0 §9-4 <c>_neutralize</c> · design v1.20.0 §2.3] <b>Önceki koşunun KOŞU alanlarını
+    /// siler</b> — ve yalnız onları: statü (<c>Pending</c>), süre, bu koşunun dependency listesi, döngü tur
+    /// bayrakları, atlama gerekçesi ve koreografi işareti. Satırın ÇIKTI DURUMU (önizleme kararı
+    /// <see cref="ProjectRowViewModel.WillBuild"/>/<see cref="ProjectRowViewModel.WillBuildReason"/>,
+    /// <see cref="ProjectRowViewModel.LastBuiltAt"/>, <see cref="ProjectRowViewModel.OwnFilesChanged"/>,
+    /// <see cref="ProjectRowViewModel.FailedAt"/>, <see cref="ProjectRowViewModel.LocalEdits"/>, defter notunun
+    /// kökleri) ve yapısal bilgi (döngü üyeliği, katman) DOKUNULMAZ: renk kümülatiftir ve kapsam plandan
+    /// okunur.
     ///
-    /// <para>İki çağıranı vardir (Sync ve bir İŞLEMin başlangıcı) ve YALNIZ inilen zeminde ayrışırlar — bu
-    /// yüzden sıfırlama tek yerdedir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski hâl bir <c>fresh</c> parametresi taşırdı: Sync
+    /// herkesi başlangıç moduna (<c>Fresh=true</c>, renksiz), bir işlem herkesi düz nötr griye indirirdi —
+    /// "renk yalnız son işlemin hikâyesini anlatır". Değişme gerekçesi (kullanıcı ölçümü): Sync sonrası neyin
+    /// güncel olduğu renkten okunmuyordu. Renk artık çıktının durumudur; iki çağıran (Sync ve bir İŞLEMin
+    /// başlangıcı) aynı zemine iner ve ayrıştıkları bir nokta kalmadı.</para>
     /// </summary>
-    /// <param name="fresh">
-    /// <c>true</c> → <b>başlangıç modu</b> (kesikli, renksiz): Sync'in ve açılışın zemini. Hangi işlemin
-    /// geleceği belli değildir, bu yüzden plan da gösterilmez (§3.1).
-    /// <c>false</c> → <b>düz nötr gri</b>: bir İŞLEM başladı; renk bundan sonra yalnız onun hikâyesini anlatır
-    /// ve kapsam amber'a ancak işaretleme dalgasıyla yanar.
-    /// </param>
     /// <param name="clearMarks">
     /// [Task 1 review fix — I-1] <c>true</c> (varsayılan) → işaret (<see cref="ProjectRowViewModel.Marked"/>)
     /// de düşer — <c>BeginRunAsync</c>'in tıklama anı (bir ÖNCEKİ işlemin izini siler, YENİ dalga henüz
-    /// yanmadı) ve Sync'in fresh nötrlemesi (bir işlem bile değil) için doğru olan budur.
+    /// yanmadı) ve Sync'in nötrlemesi (bir işlem bile değil) için doğru olan budur.
     /// <c>false</c> → işaret KORUNUR: <see cref="OnRunStarted"/>'ın Rebuild'e özel çağrısı için — o an, İSTEK
     /// tıklama anında zaten dalga yanmış ve satır <c>Marked=true</c> olmuş OLABİLİR (koreografi
     /// <c>BeginRunAsync</c>'te, bu çağrıdan ÖNCE oynar); burası tekrar <c>false</c> yazarsa dalganın amberi
@@ -979,7 +1014,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// gri) Rebuild'de YENİDEN açılır. İşaretin gerçek düşüş noktası <c>BuildPreviewApplied</c>'dır
     /// (<c>MainWindow</c>), moddan bağımsız.
     /// </param>
-    private void NeutralizeRows(bool fresh, bool clearMarks = true)
+    private void NeutralizeRows(bool clearMarks = true)
     {
         foreach (var row in Projects)
         {
@@ -992,11 +1027,10 @@ public sealed partial class RunViewModel : ObservableObject
             row.CycleUnsettled = false;
             row.CycleWaiting = false;
             row.SkipReason = null;
-            row.Fresh = fresh;
             if (clearMarks) row.Marked = false;
             // [Task 1 review fix — M-2] InRunQueue BİLEREK burada sıfırlanmaz: tek başlangıç noktası
             // OnRunStarted'ın kendi (moddan bağımsız, koşulsuz) döngüsüdür — üç çağıranın ikisinde
-            // (BeginRunAsync'in tıklama anı, Sync'in fresh nötrlemesi) bu run henüz runStarted'a ULAŞMAMIŞTIR
+            // (BeginRunAsync'in tıklama anı, Sync'in nötrlemesi) bu run henüz runStarted'a ULAŞMAMIŞTIR
             // ve IsRunActive zaten false'tur (Status'un Queued dalı onu okumaz), üçüncüsünde (Rebuild'in
             // runStarted'ı) OnRunStarted zaten AYNI satırları bir satır yukarıda sıfırlamıştır — burada
             // TEKRARLAMAK kopya (CLAUDE.md) olurdu. Tek bitiş noktası PropagateRunActive'dir (IsRunActive
@@ -1455,13 +1489,29 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
-    /// no-op. Workspace varsa ve faz Boot/Empty değilse: her proje dirty işaretlenir ve uyarı satırı yazılır.</summary>
+    /// no-op. Workspace varsa ve faz Boot/Empty değilse: her proje dirty işaretlenir ve uyarı satırı yazılır.
+    /// <para>[T4 review ledger (a) · design v1.20.0 §2.3] Satırın ÇIKTI DURUMU da düşer, yalnız planı değil:
+    /// configuration imzaya girer (<c>BuildSignature</c>), yani motorun bir sonraki önizlemesi kaydı olan her
+    /// projeye <see cref="WillBuildReason.SignatureChanged"/> diyecektir — satır aynı cevabı şimdiden verir
+    /// (gri). Kaydı hiç olmayan <see cref="WillBuildReason.NeverBuilt"/>, kararı olmayan satır kararsız kalır.
+    /// Defter notu (bekleyen bağımlılık) imza değişince karar terimi olmaktan çıkar: satır artık kesin
+    /// derlenir (<c>Conditional=false</c>) ve üçgen düşer. Eskiden yalnız <c>WillBuild=true</c> yazılıyordu —
+    /// güncel satır yeşil kalırken konsol "all projects will rebuild" diyordu.</para></summary>
     public void SetConfiguration(string value)
     {
         if (IsMidRunLocked || value == Configuration) return;
         Configuration = value;
         if (RootPath.Length == 0 || Phase is AppPhase.Boot or AppPhase.Empty) return;
-        foreach (var row in Projects) row.WillBuild = true; // her şey dirty
+        foreach (var row in Projects)
+        {
+            row.WillBuild = true; // her şey dirty
+            if (row.WillBuildReason is null or WillBuildReason.NeverBuilt) continue;
+            row.WillBuildReason = WillBuildReason.SignatureChanged;
+            row.Conditional = false;
+            row.DependencyRoots = null;
+        }
+        RefreshRunSurface();        // ⚠ sayacı defter notunun düşüşünü görsün
+        RaiseRowDecisionsChanged(); // graf da aynı anda griye iner
         AppendRunLine($"Configuration → {value} — all projects will rebuild");
     }
 
@@ -1636,7 +1686,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
             case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
-            case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues); break;
+            case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, failReason: e.Reason); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case CycleCompletedEvent e: OnCycleCompleted(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
@@ -1685,15 +1735,14 @@ public sealed partial class RunViewModel : ObservableObject
         // gerçekte KOŞAN işi söyler. Komut tarafındaki yazım (BeginRunAsync) yalnız gönderim penceresini
         // kapatır; ikisi aynı değeri üretir (OperationLabel.ForRunMode — tek eşleme yeri).
         CurrentOperation = OperationLabel.ForRunMode(e.Mode);
-        // [design v1.11.0 §9-4 `_neutralize`] Başlangıç modu da motorun cevabıyla düşer — pill'le AYNI
-        // gerekçe: koşuyu hangi yol başlatmış olursa olsun renk bundan sonra bu işlemin hikâyesini anlatır.
         // [Task 1 — kök neden A · review fix M-2] Kuyruğun TEK başlangıç noktası BURASIDIR — KOŞULSUZ (moddan
         // bağımsız) sıfırlanır. NeutralizeRows'un aşağıdaki (Rebuild) çağrısı InRunQueue'ya DOKUNMAZ (kopya
         // olurdu, bkz. NeutralizeRows'un yorumu): Build/Cycles'ta runStarted NeutralizeRows'suz da gelebilir
         // (bkz. bu event'in XML yorumu) ve önizleme HENÜZ gelmedi — "runStarted anında hiçbir satır kuyruk
         // değildir" değişmezi moddan bağımsız burada garanti edilir. Hemen ardından gelen BuildPreviewEvent
-        // gerçek kuyruğu doldurur.
-        foreach (var row in Projects) { row.Fresh = false; row.InRunQueue = false; }
+        // gerçek kuyruğu doldurur. (Başlangıç modu burada DÜŞÜRÜLMEZ — design v1.20.0 §2.3: o yalnız kararın
+        // yokluğudur ve önizlemenin kararıyla kalkar.)
+        foreach (var row in Projects) row.InRunQueue = false;
         IsRunning = true;
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
@@ -1719,7 +1768,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
         // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
         // runStarted→buildPreview boşluğu Rebuild'de yeniden açılır.
-        if (e.Mode == RunMode.Rebuild) NeutralizeRows(fresh: false, clearMarks: false);
+        if (e.Mode == RunMode.Rebuild) NeutralizeRows(clearMarks: false);
         ClearPreviewSets(); // [D2] önizleme kümeleri bu run için taze — hemen ardından BuildPreviewEvent doldurur
         _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
         // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
@@ -1757,6 +1806,12 @@ public sealed partial class RunViewModel : ObservableObject
             row.CurrentSha = item.BuiltCommit;
             row.LastBuiltAt = item.LastBuiltAt;              // [v1.16.0] "up to date · 2h" kuyruğu
             row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
+            row.FailedAt = item.FailedAt;                    // [spec 2026-09-18 §1-14] "failed · 2h" kuyruğu — defterden, LastBuiltAt gibi
+            // [R-M3] LocalEdits yalnız KOŞU DIŞINDAKİ önizlemeden yazılır: Sync'in (ve Clean/Optimize'ın ardından
+            // zincirlenen Sync'in) önizlemesi `git status`'u okur, koşu önizlemesi ise alanı hep false gönderir —
+            // o yazılsaydı her koşu Sync'in "local" işaretini silerdi. Ayrım olayın geldiği ANDAKİ koşu
+            // durumundandır (RunActive); `_currentRunId` bunu söylemez (yalnız motor ölümünde null'lanır).
+            if (!RunActive) row.LocalEdits = item.LocalEdits;
             if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
@@ -1864,8 +1919,10 @@ public sealed partial class RunViewModel : ObservableObject
         RefreshRunSurface();
     }
 
+    /// <param name="failReason"><see cref="ProjectFailedEvent.Reason"/> — yalnız Failed'da dolu; kanıt ayrımı
+    /// (<see cref="FailureClassification.IsCompilerFailure"/>) bundan yapılır.</param>
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
-        bool cycleUnsettled = false)
+        bool cycleUnsettled = false, string? failReason = null)
     {
         var row = FindRow(projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
@@ -1920,12 +1977,22 @@ public sealed partial class RunViewModel : ObservableObject
             // LastFailed gerekçesi kendi tooltip'ini yazar, "bekliyor" olgusu taşımaz.
             row.Conditional = false;
             row.DependencyRoots = null;
-            row.WillBuildReason = WillBuildReason.LastFailed;
+            // [R-M4 · spec 2026-09-18 §1-14] Hata, motorun deftere yazdığı AYNI sınıflandırmayla boyanır —
+            // sınıflandırıcı Core'dadır ve Supervisor'ın ReasonFor'u "exit N" önekini oradan üretir (kopya YOK):
+            // derleyicinin kendi sıfır-dışı çıkışı KANITTIR (kırmızı, "failed · just now"); timeout, Stop ve
+            // invoke hatası kanıt DEĞİLDİR — defter onları "hiç başarı yok" sayar (WillBuildEvaluator:
+            // NeverBuilt), satır da hemen griye iner.
+            // [DEĞİŞEN KURAL — design v1.20.0 §5] Eskiden her hata LastFailed yazardı; timeout'lu satır bir
+            // sonraki Sync'e kadar kırmızı durur, Sync onu griye çevirirdi — aynı proje iki farklı renk.
+            bool evidence = FailureClassification.IsCompilerFailure(failReason);
+            row.WillBuildReason = evidence ? WillBuildReason.LastFailed : WillBuildReason.NeverBuilt;
+            row.FailedAt = evidence ? DateTimeOffset.Now : null;
         }
         if (state == ProjectRowState.Succeeded)
         {
             row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
             row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
+            row.FailedAt = null; // başarı eski kanıtı düşürür (defter de FailedSignature'ı siler)
         }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla

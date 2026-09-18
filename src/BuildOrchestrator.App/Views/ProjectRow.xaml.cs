@@ -248,10 +248,10 @@ public partial class ProjectRow : UserControl
                 ApplyBreathing();
                 ApplyDuration();
                 break;
-            // [design v1.11.0 §9-2] Görsel durumun İKİ ek girdisi: başlangıç modu ve işaretlilik. Statü
-            // değişimi zaten yukarıdan geçer (VisualStatus onunla birlikte tazelenir); bu iki bayrak statüyü
-            // DEĞİŞTİRMEDEN de görünümü çevirir.
-            case nameof(ProjectRowViewModel.Fresh):
+            // [design v1.11.0 §9-2 · v1.20.0 §2.3] Görsel durumun statü dışındaki girdileri: işaretlilik (burada)
+            // ve çıktı durumu (aşağıda, Standing). Statü değişimi zaten yukarıdan geçer (VisualStatus onunla
+            // birlikte tazelenir); bu ikisi statüyü DEĞİŞTİRMEDEN de görünümü çevirir. Başlangıç modu ayrı bir
+            // girdi DEĞİLDİR — kararın yokluğudur (Standing == Unknown) ve Standing case'inden gelir.
             case nameof(ProjectRowViewModel.Marked):
                 // [design v1.11.0 §2.3] İşaretlilik = işaretleme DALGASI. Bu tek kanalda renk AKAR (200ms),
                 // çakmaz — satır node'la senkron yanmalıdır. Diğer tüm yollarda renk anında oturur.
@@ -272,8 +272,9 @@ public partial class ProjectRow : UserControl
                 // ApplyRightBlock görünürlüğü ayarlayıp ApplyDecision'ı zaten çağırır.
                 ApplyRightBlock();
                 break;
-            case nameof(ProjectRowViewModel.DepIssues):
-            case nameof(ProjectRowViewModel.HasDepIssue):
+            // [spec 2026-09-18 §1-15] Üçgenin kökleri WarningRoots'tur (koşu listesi ∪ defter notu); o hem
+            // DepIssues'tan hem gerekçe/köklerden bildirilir — gerekçe ve kökler etikete de gider (aşağıda).
+            case nameof(ProjectRowViewModel.WarningRoots):
             case nameof(ProjectRowViewModel.NamePrefix): // [D5] önek sonradan değişirse dep-tooltip'i tazele
             case nameof(ProjectRowViewModel.CycleUnsettled):   // [cycle rounds/Task 9] üçgen tooltip dalı
             case nameof(ProjectRowViewModel.CycleUnconverged): // [cycle rounds/Task 9] dep-slot rozeti
@@ -334,7 +335,7 @@ public partial class ProjectRow : UserControl
     /// nokta. Hepsi <see cref="ProjectRowViewModel.VisualStatus"/>'ten beslenir — kart kendi eşlemesini YAPMAZ
     /// (tablo <see cref="VisualStatuses"/>'tedir; graf de aynı tablodan okur).</summary>
     /// <param name="lighting">[design v1.11.0 §2.3] Renk geçişle mi otursun — yalnız işaretleme dalgası
-    /// (<see cref="ProjectRowViewModel.Marked"/>/<see cref="ProjectRowViewModel.Fresh"/> kanalı) true verir.</param>
+    /// (<see cref="ProjectRowViewModel.Marked"/> kanalı) true verir.</param>
     private void ApplyStatusVisuals(bool lighting = false)
     {
         GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
@@ -460,13 +461,17 @@ public partial class ProjectRow : UserControl
     ///
     /// <para>Satır building iken slot GİZLİDİR — dönen spinner'la yarışmaz. Statü glyph'i bundan
     /// ETKİLENMEZ: o daima gerçek statüyü gösterir.</para>
+    ///
+    /// <para>[spec 2026-09-18 §1-15] Üçgen KÜMÜLATİFTİR: kökler <see cref="ProjectRowViewModel.WarningRoots"/>'tan
+    /// gelir (bu koşunun listesi, yoksa defterdeki bekleyen bağımlılık notu) — seçim VM'dedir, burada
+    /// yalnız okunur.</para>
     /// </summary>
     private void ApplyDep()
     {
         bool building = _vm?.IsCompiling ?? false;
         string? warn = building ? null : RowWarning.For(
             _vm?.InCycle ?? false, _vm?.CycleUnsettled ?? false, _vm?.CycleUnconverged ?? false,
-            _vm?.DepIssues, _vm?.NamePrefix ?? "");
+            _vm?.WarningRoots, _vm?.NamePrefix ?? "");
 
         PART_DepIcon.Visibility = warn is null ? Visibility.Collapsed : Visibility.Visible;
         PART_DepTip.Content = warn;

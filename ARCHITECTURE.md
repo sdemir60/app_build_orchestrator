@@ -1800,7 +1800,11 @@ standing, because that line is still true.
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
 a right-aligned block (min 204 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
 Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
-warning slot, and a 46 px duration column.
+warning slot, and a 46 px duration column. The stripe, the dot and the glyph paint one value — the state of the
+project's output with the running operation laid over it (§14.3) — so after a Sync every row already wears its
+colour, and after a run each keeps the colour the run left it in. The warning slot is cumulative in the same
+way: it shows this run's dependency issue if there is one, and otherwise the ledger's note that the project was
+last built against a broken dependency, for as long as that note stands.
 
 The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
 and MSBuild, not invented terms — plus one three-part combination for a project waiting on a dependency:
@@ -1857,8 +1861,10 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 **empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
 
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
-failure reads `failed · retry`. It does not wait for the engine's next preview, which may not arrive until the
-next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
+compiler failure reads `failed · retry`. A failure that is not evidence — a timeout, a stop, an invoke error —
+reads `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will
+say; the classification is the engine's own (`FailureClassification`), not a second reading of the reason text.
+It does not wait for the engine's next preview, which may not arrive until the next Sync. A success that still carries a dependency issue is the one exception: it does **not** read
 `up to date` — its dependency was still broken when it built, so a plain project's row reads `affected · up to
 date · just now` instead, taken straight from that success's own event, and it drops out of the run's definite
 queue (next paragraph) rather than being counted done.
@@ -1871,8 +1877,9 @@ Build never compiles it and Cycles compiles it with its whole group — so its l
 next Sync. A member whose group did not converge changed nothing the ledger can act on, so its row reads
 `up to date · just now` like any other success — there is no new fact to predict ahead of Sync.
 
-**The slot is not a result column.** What a run did is carried by the stripe, the dot, the glyph and the
-duration; the slot always answers the same question — *what does this project's output need?* After a Sync that
+**The slot is not a result column.** The state of the output is carried by the stripe, the dot and the glyph,
+and what this run did by the duration and by the run-story surfaces (the ribbon, the console header, the event
+stream); the slot always answers the same question — *what does this project's output need?* After a Sync that
 answer comes from comparing the stored signature with today's; after a build it comes from what just happened
 to that project. Both are the same fact at different moments, which is why the wording does not change between
 them.
@@ -2710,7 +2717,7 @@ lines.
   (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
   `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
   does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification
-  (`Fresh`, `Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
+  (`Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
   `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
   word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
   change mid-read cannot reset the reader's clipboard feedback or replay the panel's tilt transition. The 200 ms run
@@ -3386,7 +3393,7 @@ meets 4.5:1.
 | Queued | clock | Queued |
 | Building | rotating dashed ring | Building |
 | Succeeded | ✓ in a ring | Succeeded |
-| Failed (a run result, or proven by the ledger) | ✗ in a ring | Failed |
+| Failed — a compiler failure, in this run or proven by the ledger | ✗ in a ring | Failed |
 | Skipped — run-story surfaces only | — in a ring | Skipped |
 
 The glyph is drawn from the visual status; the text — the glyph's screen-reader name and the console
@@ -3404,10 +3411,18 @@ the waiting is the triangle's to say), `stale` (plain grey) for a changed, never
 project, and `failed` (red) for `LastFailed`, which the engine reports only when the ledger can prove the
 failure (§7.5). Over it lies the **run**: `marked`
 (this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
-apart so the run can still say "just built") and `failed`. Being skipped is not a colour — a skipped project
-falls back to its standing. A result is written into the standing as the project finishes (the next preview
-confirms it) and stays there until a later run changes it, so colour is cumulative rather than the story of
-the last operation alone. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
+apart so the run can still say "just built") and `failed`. Red is evidence and nothing else: a compiler
+failure (`exit N`) writes `LastFailed` into the standing, while a failure the engine does not count as evidence
+— a timeout, a stop, an invoke error — writes `NeverBuilt`, and over that stale standing the run's `failed` gives
+way to the grey. The classification is Core's `FailureClassification`, the same helper the Supervisor uses when
+it writes the ledger, so the row and the next Sync never disagree. Being skipped is not a colour — a skipped
+project falls back to its standing, although the run story (the ribbon's `N skipped`, the console's *nothing to
+compile in this run*) keeps counting it until the next operation begins. A result is written into the standing
+as the project finishes (the next preview confirms it) and stays there until a later run changes it, so colour
+is cumulative rather than the story of the last operation alone. Switching the configuration moves the
+standing ahead of the next preview as well: the configuration is part of every signature, so each row that has
+a record drops to `stale` at once (`SignatureChanged`, as the next preview will say) and a never-built row stays
+`never built`. `queued` is amber, not grey: being in the queue is not a result, it is the scope of the operation that is running, and the
 amber the marking wave lit must not go out when the run begins. The mapping lives in one place
 (`VisualStatuses.For`) and every surface reads it; the run-story surfaces map the engine's status on their own
 through `VisualStatuses.OfRun`, which is the only mapping that still yields `skipped`.
@@ -3467,6 +3482,15 @@ project log, where there is room for it. The status glyph always shows the real 
 replaces it, and while the row is building the slot is empty so nothing competes with the spinner. A `Build`
 will not compile a cycle; *Resolve cycles* will (§8.1). The graph carries no triangle at all.
 
+The dependency triangle is **cumulative**. Its roots come from one place on the row (`WarningRoots`): this
+run's dependency list when the run produced one, otherwise the ledger's note — a project whose last success was
+built against a broken dependency (`WaitingForDependency`) carries the recorded roots from the preview, so the
+triangle is there right after a Sync, survives the next operation's neutralising, and goes only when the note
+does (the preview stops reporting it) or when the decisions are dropped with a branch or repository change.
+Two questions are kept apart on purpose: the `⚠` chip and the `warn` filter count the cumulative triangle,
+while the ribbon's run summary — `(N dependency-affected)` — counts only the projects this run found a
+dependency issue on, because it is the story of the run.
+
 A member waiting its turn inside a running group reads `Queued` (clock glyph), not `Building`. Members are
 invoked one at a time and intermediate rounds are never published (§8.8), so the whole group sits in the
 engine's `Started` state for the group's whole life while exactly one member is really compiling. Painting them
@@ -3497,7 +3521,8 @@ be trusted rather than about what the result was; the convergence verdict comes 
 regardless of how the individual member ended — a member that went green inside a group that never converged
 is still holding a stale output, and the counter reads it the same way, without a status gate. Membership is
 the weakest and loses to all of them: it asserts nothing about the output, only about the graph. Dependency
-issues come last because they are the most transient — the next run clears them.
+issues come last because they are about someone else's output: they last as long as the ledger's note, but a
+fact about the row's own cycle is always the more precise thing to say.
 
 The run summary carries the same news at run level: `(N stuck in a cycle)` beside the skipped count, on the
 completion line and on the *everything up to date* line alike. Without it a run whose only casualty is a cycle
@@ -3614,10 +3639,13 @@ are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in 
 
 The **opening** plays the same way for every operation — Build, Rebuild, Clean, a row action, Resolve. It
 begins by **neutralising**: the console and the event stream are cleared, and every row drops the previous
-run's overlay — status, duration and dependency warning reset — and shows its standing colour. The plan survives
-(the scope is read from it, and the standing is read from it) and so does everything structural: cycle
-membership, the decision label, the layer. No result of the previous run is on screen as a run result when the
-wave starts; what that run achieved remains only as the standing it wrote. Rebuild neutralises in place rather than emptying the list — clearing it
+run's fields and nothing else — status (back to pending), duration, this run's dependency list, the cycle-round
+flags, the skip reason and the marks. What describes the output is not touched: the decision and its reason
+(the scope is read from them, and so is the standing colour each row keeps showing), the last-built and
+failed-at times, the own-files and local-edits facts, the ledger's dependency note — so the warning triangle a
+note holds up stays up — and everything structural: cycle membership, the decision label, the layer. A Sync
+neutralises through the same method and lands on the same ground. No result of the previous run is on screen
+as a run result when the wave starts; what that run achieved remains only as the standing it wrote. Rebuild neutralises in place rather than emptying the list — clearing it
 would destroy the very rows the wave is marking.
 
 Then a neutral moment of 440 ms, in which even the scope still wears its standing colour; then the **wave**, in which the scope

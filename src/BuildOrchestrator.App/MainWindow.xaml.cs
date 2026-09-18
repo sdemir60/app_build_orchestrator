@@ -612,7 +612,7 @@ public partial class MainWindow : Window
     /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
     /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
     /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
-    /// (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
+    /// (Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
     /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
     private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
     {

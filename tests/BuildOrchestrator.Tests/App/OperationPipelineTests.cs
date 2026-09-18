@@ -52,7 +52,7 @@ public class OperationPipelineTests
         vm.OnEvent(new ProjectStartedEvent("r1", "a", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", "a", 1200));
         vm.OnEvent(new ProjectStartedEvent("r1", "b", "B"));
-        vm.OnEvent(new ProjectFailedEvent("r1", "b", 900, "build failed", ["A"]));
+        vm.OnEvent(new ProjectFailedEvent("r1", "b", 900, "exit 1", ["A"])); // derleyici hatası = kanıt (R-M4)
         vm.OnEvent(new ProjectSkippedEvent("r1", "c", SkipReasons.UpToDate));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 1, 0, 2100));
         return vm;
@@ -92,7 +92,6 @@ public class OperationPipelineTests
             Assert.Equal(GraphStatus.Discovered, row.Status); // koşu bindirmesi yok
             Assert.Equal(0, row.DurationMs);
             Assert.Null(row.DepIssues);
-            Assert.False(row.Fresh);
         }
         Assert.Equal(VisualStatus.Current, Row(vm, "a").VisualStatus);
         Assert.Equal(VisualStatus.Failed, Row(vm, "b").VisualStatus);
@@ -138,10 +137,7 @@ public class OperationPipelineTests
             [Node("a", "A", 0), Node("b", "B", 1), Node("c", "C", 2)], [], [], []));
 
         foreach (var row in vm.Projects)
-        {
             Assert.Equal(ProjectRowState.Pending, row.State);
-            Assert.True(row.Fresh);
-        }
         Assert.Equal(VisualStatus.Current, Row(vm, "a").VisualStatus);
         Assert.Equal(VisualStatus.Failed, Row(vm, "b").VisualStatus);
         Assert.Equal(VisualStatus.Unknown, Row(vm, "c").VisualStatus);
