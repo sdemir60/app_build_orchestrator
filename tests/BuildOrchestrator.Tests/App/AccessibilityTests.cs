@@ -50,7 +50,9 @@ public class AccessibilityTests
         Assert.Equal("Up to date — filter", AutomationProperties.GetName(bar.CurrentChip));
         Assert.Equal("To build — filter", AutomationProperties.GetName(bar.StaleChip));
         Assert.Equal("Failed — filter", AutomationProperties.GetName(bar.FailedChip));
-        Assert.Equal(AccessibilityNames.FilterWarn, AutomationProperties.GetName(bar.WarnChip));
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski ad "Warnings — dependency cycle or dependency issue" idi; ⚠
+        // artık bekleyen bağımlılık notunu da sayar ve tasarımın tooltip'ini taşır.
+        Assert.Equal("In a dependency cycle or waiting on a dependency — filter", AutomationProperties.GetName(bar.WarnChip));
         Assert.Equal(AccessibilityNames.BranchChip, AutomationProperties.GetName(bar.BranchChip));
         Assert.Equal(AccessibilityNames.WorktreeChip, AutomationProperties.GetName(bar.WorktreeChip));
         Assert.Equal(AccessibilityNames.PerfChip, AutomationProperties.GetName(bar.PerfChip));

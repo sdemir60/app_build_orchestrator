@@ -1784,7 +1784,10 @@ draw a second one.
 
 Then one mono line describing the phase, plus 20 px chips for the projects currently building (at most four,
 then `+N`), plus — only when there are failures — the failing chips on the right: the first three, and a
-`+N more` chip that applies the `failed` filter. The cluster carries **no counter text**: the same numbers are
+`+N more` chip that applies the `failed` filter. The cluster is run story and lists every failure of this
+run, but the filter it opens is the `✗` state filter: it lists the rows shown red. A failure without evidence
+(a timeout, a stop, an invocation error) leaves its output stale, so its row is grey and sits under `○`, not in
+that list. The cluster carries **no counter text**: the same numbers are
 already in the completion line, and the ribbon should not say a number twice. Glyphs are 13 px in the phase
 line and 10 px inside chips. There is no dismissible banner: a failure summary that can be dismissed is a
 failure summary that will be missed. Underneath, a 2 px progress bar,
@@ -2080,6 +2083,10 @@ grey row, `✗` every red one. The bucket is read from the row's visual status i
 so pressing a chip lists exactly as many rows as its badge says. A failure without evidence (a timeout, a stop,
 an invocation error) leaves its output stale and the row grey, so it counts under `○`, not `✗`; rows the run is
 queueing or compiling, rows lit by the marking wave and rows with no decision yet are in no state bucket.
+The counts are taken when a run event arrives, not on each step of the marking wave, so while the wave lights
+the scope the badges still show the state from before it; they catch up when the run starts. The run's own
+preview clears the marks first and counts second, so a marked row the run does not queue is counted in its own
+bucket from that moment.
 Building counts only what is compiling right now — a queued row, or a cycle member waiting its turn, is not
 building. There is no skipped chip: being skipped is not a state — a skipped row keeps its standing's colour —
 and the `—` glyph belongs to run-story surfaces only. The run's own tally (succeeded · failed · skipped ·
@@ -2087,8 +2094,8 @@ dependency-affected) stays where it is, in the ribbon's completion line.
 
 The chips **combine**. The active filter is a set: chips toggle independently and the selected ones are OR'd
 together — `✓` plus `✗` reads as "up to date or broken" — while the search box is AND'ed on top. An active chip
-lights in its own status colour (green, neutral grey, red; amber for building and warnings), and the removable chip in the PROJECTS header lists the selected set joined
-with ` + `. Pressing a filter also drops the selection: a selection locks the graph camera onto one node, a
+lights in its own status colour (green, neutral grey, red; amber for building and warnings), and the
+removable chip in the PROJECTS header lists the selected set joined with ` + `. Pressing a filter also drops the selection: a selection locks the graph camera onto one node, a
 filter says "look at this set", and the two fought each other. A filter reaches the **graph** too — nodes
 outside the visible set fade to the same 0.1 the unfocused set uses. The matching rule lives in one place
 (`ProjectFilter.Matches`): the graph is handed the list's visible names and never writes a second matcher, so
@@ -3315,8 +3322,9 @@ number, since a restated width silently drops the shell's border thickness and W
 edge of the body.
 
 Filtering is a free-text query (case-insensitive substring on the project *name* only — never the path) ANDed
-with one status chip (`building` — which includes queued — `succeeded`, `failed`, `skipped`, `dep`). The active
-filter appears as a removable chip in the panel header.
+with the selected state chips — `building` (compiling right now), `current`, `stale`, `failed`, `warn` — which
+are OR'd among themselves (§13.2, "The chips combine"). The active set appears as a removable chip in the panel
+header.
 
 ### 13.9 Keyboard
 

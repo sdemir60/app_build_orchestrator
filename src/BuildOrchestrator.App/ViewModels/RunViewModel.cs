@@ -1858,9 +1858,12 @@ public sealed partial class RunViewModel : ObservableObject
             row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — WillBuild/Reason'la AYNI guard
             row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
-        RefreshRunSurface();
         RaiseRowDecisionsChanged();                          // graf renk girdisini buradan öğrenir
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // işaretin kuyruğa devri (MainWindow)
+        // [design v1.20.0 §2.7 · Task 7 review 4] Sayaç ve görünür liste işaretin devrinden SONRA türer: durum
+        // kovası satırın gösterdiğinden okunur ve kuyruğa girmeyen işaretli satır ancak işaret silinince kendi
+        // durumunu gösterir. Önce türeseydi o satır bir sonraki olaya kadar hiçbir kovada sayılmazdı.
+        RefreshRunSurface();
     }
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.

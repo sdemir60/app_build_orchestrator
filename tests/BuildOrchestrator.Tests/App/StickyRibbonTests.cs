@@ -150,6 +150,34 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.20.0 §2.7 · Task 7 review 3] Şerit koşunun HİKÂYESİDİR: hata kümesi bu koşunun TÜM
+    /// hatalarını taşır. <c>+N more</c> ise <c>failed</c> DURUM filtresini açar ve o filtre KIRMIZI görünen satırları
+    /// listeler: kanıtsız hata (timeout · Stop · invoke hatası) çıktıyı bayat bırakır, satır gri görünür ve ○'nun
+    /// (to build) altındadır. Kural bilerek böyledir — filtre ile ✗ rozeti aynı kovayı okur.</summary>
+    [StaFact]
+    public void More_opens_the_failed_state_filter_which_lists_only_rows_shown_red()
+    {
+        var vm = NewVm();
+        var projects = Enumerable.Range(0, 5).Select(i => ($@"C:\p\fail{i}.csproj", $"Fail{i}")).ToArray();
+        StartRun(vm, projects);
+        for (int i = 0; i < projects.Length; i++)
+        {
+            var (id, name) = projects[i];
+            vm.OnEvent(new ProjectStartedEvent("r1", id, name));
+            vm.OnEvent(new ProjectFailedEvent("r1", id, 100, "exit 1", Evidence: i < 2)); // 2 kanıtlı, 3 kanıtsız
+        }
+        var (ribbon, window) = Realize(vm);
+
+        ribbon.FailureMoreChip!.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+
+        Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order());
+        Assert.Equal(5, vm.Counters.Failed);                                   // koşu tablosu: hepsi
+        Assert.Equal(2, vm.Counters.Broken);                                   // ✗: yalnız kırmızı görünenler
+        Assert.Equal(3, vm.Counters.Stale);                                    // ○: kanıtsız hatalar gri
+        Assert.Equal(["Fail0", "Fail1"], vm.VisibleProjects.Select(r => r.Name).Order());
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void A_building_chip_click_selects_that_project()
     {

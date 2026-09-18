@@ -102,7 +102,7 @@ public static class ProjectFilter
     {
         Current => "Brush.StatusSuccessText",
         Failed => "Brush.StatusFailText",
-        Stale => "Brush.StatusSkippedText",
+        Stale => "Brush.StatusSkippedText", // token adı tarihsel ("skipped"); değeri nötr gri metin — ○'nun rengi
         _ => "Brush.AmberText", // building + warn: ikisi de amber ailesindendir
     };
 }

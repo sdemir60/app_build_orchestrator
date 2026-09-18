@@ -44,7 +44,7 @@ public class ProjectFilterTests
     /// görünür ve "Building" değildir. Sırasını bekleyen döngü üyesi de Started'tadır ama Queued görünür — o da
     /// building filtresine girmez (sayaç onu da Queued'a taşır).</summary>
     [Fact]
-    public void Building_matches_only_started_rows()
+    public void Building_matches_only_the_row_compiling_now()
     {
         var queued = Row("B", ProjectRowState.Pending);
         queued.IsRunActive = true;

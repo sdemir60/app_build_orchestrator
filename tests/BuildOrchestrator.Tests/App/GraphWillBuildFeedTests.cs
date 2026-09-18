@@ -180,6 +180,43 @@ public class GraphWillBuildFeedTests
         Assert.Equal(bBefore, b.VisualStatus);
     }
 
+    /// <summary>[design v1.20.0 §2.7 · Task 7 review 4] Önizleme işaretleri siler (MainWindow, BuildPreviewApplied);
+    /// sayaçlar ve görünür liste işaret SİLİNDİKTEN SONRA türemelidir. Eskiden sayaç önizlemenin satır yazımından
+    /// hemen sonra, işaretler henüz yanarken hesaplanıyordu: kuyruğa girmeyen işaretli satır o an Marked
+    /// göründüğü için hiçbir durum kovasına girmiyordu ve bir sonraki olaya kadar ✓ · ○ · ✗'in toplamından
+    /// eksik kalıyordu.</summary>
+    [StaFact]
+    public void After_the_preview_a_marked_row_left_out_of_the_queue_is_counted_in_its_state_bucket()
+    {
+        using var dir = new TempDir();
+        var (_, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
+        string idA = MainWindowHost.IdOf("A");
+        string idB = MainWindowHost.IdOf("B");
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(idA, "A", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(idB, "B", false, Reason: WillBuildReason.UpToDate),
+        ]));
+        var a = vm.Projects.Single(p => p.Id == idA);
+        var b = vm.Projects.Single(p => p.Id == idB);
+
+        a.Marked = true; // dalga ikisini de yaktı (kapsam tüm workspace)
+        b.Marked = true;
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        // Motorun planı: A kuyrukta, B güncel — kuyruğa girmez.
+        vm.OnEvent(new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(idA, "A", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(idB, "B", false, Reason: WillBuildReason.UpToDate),
+        ]));
+
+        Assert.False(b.Marked);                              // ön-koşul: işaret silindi
+        Assert.Equal(VisualStatus.Current, b.VisualStatus);  // ...ve B yeşil görünüyor
+        var c = vm.Counters;
+        Assert.Equal(1, c.Current);                          // gösterilen = sayılan
+        Assert.Equal(1, c.Current + c.Stale + c.Broken);     // A kuyrukta (amber) → kovasız
+    }
+
     /// <summary>[Task 1 review fix — I-1, Rebuild dalı] AYNI süreklilik Rebuild'de de geçerlidir —
     /// <see cref="RunViewModel.OnRunStarted"/> yalnız Rebuild modunda EK olarak <c>NeutralizeRows</c> çağırır
     /// (Rebuild'in komut dışı bir yoldan başlama ihtimaline karşı savunma, bkz. o çağrının yorumu). O çağrı
