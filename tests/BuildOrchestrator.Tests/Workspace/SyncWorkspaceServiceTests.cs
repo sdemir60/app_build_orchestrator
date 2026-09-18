@@ -358,6 +358,29 @@ public class SyncWorkspaceServiceTests
         Assert.Equal(2, Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
     }
 
+    /// <summary>[review M2] Detached HEAD'de izlenen bir branch yoktur: fetch komuttaki yedek adla yine yapılır
+    /// ama mesafe ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir, bayat bir adla sayılan "N behind" yalan olurdu.</summary>
+    [Fact]
+    public async Task A_detached_head_fetches_the_fallback_but_reports_no_distance()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        GitTestRepo.RunGitAt(cloneRoot, "checkout", "--detach");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Null(done.Behind);
+        Assert.Null(done.ActiveBranch);
+    }
+
     /// <summary>[spec 2026-09-18 §6.2] Fetch'siz Sync (kendiliğinden Sync, branch değişimi) ağa çıkmaz: fetch
     /// satırı yok, git fetch çağrısı yok; <c>N behind</c> son bilinen uzak uca göre yerelde hesaplanır. Uzak uç,
     /// son fetch'ten SONRA bir commit daha ilerledi — o commit bilinmediği için sayılmaz (2, 3 değil).</summary>

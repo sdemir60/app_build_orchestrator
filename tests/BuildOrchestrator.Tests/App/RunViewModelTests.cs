@@ -2343,18 +2343,26 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- [spec 2026-09-18 §6.2] Sync kipleri
     //
-    // Harness: başlatılmamış EngineHost — gönderim SENKRON düşer ve "[error] failed to send …" satırı konsola
-    // yazılır (meşru: gerçek bir gönderim hatasıdır). Gönderilen komut DebugOnCommandSent ile gözlenir, motorun
-    // cevabı vm.OnEvent(...) ile verilir. D8: sleep/poll yok.
+    // Sessiz Sync testleri BAŞLATILMIŞ bir motor kullanır: gönderim BAŞARILI olmalıdır — düşen bir gönderim
+    // Sync'in kipini bırakır (bkz. A_silent_sync_whose_send_fails_leaves_no_mode_or_start_time). VM motorun
+    // EventReceived'ına bağlanmaz; motorun cevabı vm.OnEvent(...) ile verilir (Stop testlerinin deseni). D8:
+    // sleep/poll yok.
 
     private const string A = @"C:\p\a.csproj";
     private const string B = @"C:\p\b.csproj";
 
+    private static async Task<EngineHost> StartedEngineAsync()
+    {
+        var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
+        await engine.StartAsync();
+        return engine;
+    }
+
     /// <summary>İki satırlı, Sync'lenmiş bir workspace: A güncel, B derlenecek; akışta ilk Sync'in satırı, konsolda
     /// önceki bir işlemin satırı durur.</summary>
-    private static RunViewModel SyncedTwoRowVm()
+    private static RunViewModel SyncedTwoRowVm(EngineHost engine)
     {
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         ReplySync(vm, upToDateB: false);
         vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
         return vm;
@@ -2380,7 +2388,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_keeps_the_console_and_stream_and_adds_one_line()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
         vm.SelectProject(A);
         int streamBefore = vm.StreamEvents.Count;
         Assert.True(streamBefore > 0, "ön-koşul: akışta önceki Sync'in satırı yok — vakum");
@@ -2409,7 +2418,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_shows_warnings_but_not_the_transcript()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
         await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
 
         ReplySync(vm, upToDateB: false,
@@ -2429,7 +2439,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_with_no_changes_writes_nothing_on_activation()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
         int streamBefore = vm.StreamEvents.Count;
 
         await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
@@ -2442,7 +2453,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_that_changes_a_decision_names_how_many_projects_changed()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
         int streamBefore = vm.StreamEvents.Count;
 
         await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
@@ -2456,7 +2468,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_does_not_start_while_another_sync_is_in_flight()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
@@ -2465,11 +2478,96 @@ public class RunViewModelTests
         Assert.Empty(sent);
     }
 
+    /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — git
+    /// fetch…" demez), önceki işlemin pill'i canlanmaz; bitince faz olduğu yerde kalır.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_the_phase_and_the_pill_is_not_live()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+        Assert.Equal(AppPhase.Done, vm.Phase); // ön-koşul
+        string? opBefore = vm.CurrentOperation;
+        Assert.NotNull(opBefore);
+        string ribbonBefore = vm.RibbonLine.Text;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        Assert.Equal(AppPhase.Done, vm.Phase); // pill canlı değil: faz Syncing değil, koşu kilidi yok
+        Assert.False(vm.IsMidRunLocked);
+        Assert.Equal(opBefore, vm.CurrentOperation);
+        Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
+
+        ReplySync(vm, upToDateB: false);
+        Assert.Equal(AppPhase.Done, vm.Phase);
+    }
+
+    /// <summary>[review I2] Sessiz Sync kötü haberi silmez: düşen bir koşunun şeritteki "Run failed — …" metni
+    /// Sync boyunca ve sonrasında durur.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_a_failed_runs_error_on_the_ribbon()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new ErrorEvent("runFailed", "msbuild crashed"));
+        Assert.Equal("msbuild crashed", vm.RunErrorMessage); // ön-koşul
+        string ribbonBefore = vm.RibbonLine.Text;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal("msbuild crashed", vm.RunErrorMessage);
+        Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[review I1] Branch değişiminin Sync'i fetch etmez — şerit de fetch iddia etmez.</summary>
+    [Fact]
+    public async Task A_branch_change_sync_does_not_claim_a_fetch_on_the_ribbon()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
+            "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));
+
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.DoesNotContain("git fetch", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal(RibbonText.SyncingWithoutFetch, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[review M1] Gönderimi düşen bir Sync kipini bırakır (sonraki transkript satırı gizlenmez) ve
+    /// başlangıç zamanı YAZMAZ — hiçbir Sync başlamadı; başarılı gönderim yazar.</summary>
+    [Fact]
+    public async Task A_silent_sync_whose_send_fails_leaves_no_mode_or_start_time()
+    {
+        long now = 7000;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            RootPath = @"D:\repo",
+        };
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit)); // gönderim senkron düşer
+
+        Assert.Null(vm.LastSyncStartedAtMs);
+        vm.OnEvent(new SyncProgressEvent("a later transcript line", "info"));
+        Assert.Contains("a later transcript line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        await using var engine = await StartedEngineAsync();
+        var sentVm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        Assert.Equal(7000, sentVm.LastSyncStartedAtMs);
+    }
+
     /// <summary>Sync düğmesi (Manual) yeni bir bölüm açar: konsol ve akış temizlenir, fetch yapılır, pill yazılır.</summary>
     [Fact]
     public async Task The_sync_button_still_clears_the_console()
     {
-        var vm = SyncedTwoRowVm();
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 
@@ -2529,5 +2627,6 @@ public class RunViewModelTests
         Assert.Equal("feature/x", vm.Branch);
         Assert.Equal(("feature/x", "2222222222222222222222222222222222222222"), vm.LastSyncHead);
         Assert.Equal(5000, vm.LastSyncCompletedAtMs);
+        Assert.Equal(5000, vm.LastSyncAtMs); // [review M3] başlangıç hiç yazılmadıysa da tamamlanma okunur
     }
 }

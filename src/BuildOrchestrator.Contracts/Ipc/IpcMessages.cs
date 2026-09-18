@@ -145,9 +145,10 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/> ile App'e taşınır.
 /// </para>
 /// </summary>
-/// <param name="Branch">[spec 2026-09-18 §6.5] YALNIZ detached HEAD'de kullanılan yedek ad. Sync fetch'i, mesafeyi
-/// ve analizi her zaman çalışma ağacının CHECKOUT EDİLMİŞ branch'ine göre yapar — K1 gereği hiçbir branch
-/// checkout EDİLMEZ. Boş ad geçerlidir (açılış Sync'i envanterden önce gider).</param>
+/// <param name="Branch">[spec 2026-09-18 §6.5] YALNIZ detached HEAD'de kullanılan yedek ad. Sync fetch'i ve mesafeyi
+/// çalışma ağacının CHECKOUT EDİLMİŞ branch'ine göre yapar; analiz her zaman çalışma ağacınındır — K1 gereği hiçbir
+/// branch checkout EDİLMEZ. Detached HEAD'de fetch bu adla yapılır (boş değilse) ama mesafe ÖLÇÜLMEZ
+/// (<see cref="SyncCompletedEvent.Behind"/> = <c>null</c>). Boş ad geçerlidir (açılış Sync'i envanterden önce gider).</param>
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
 /// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
 /// ters-katman uyarılarını taşır.</param>

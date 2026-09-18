@@ -251,8 +251,12 @@ public sealed partial class RunViewModel
     /// <summary>[spec 2026-09-18 §6.2] Settings Save ve Choose Folder'ın Sync'i (<see cref="SyncMode.Appended"/>).
     /// Kök GERÇEKTEN değiştiyse plan yüzeyi önce boşaltılır (<see cref="ClearPlanSurface"/>): Sync artık listeyi
     /// kendisi boşaltmaz ve eski reponun (kararsız) satırları yeni reponun topolojisi gelene dek ekranda kalırdı.
-    /// Boşaltma Sync gönderilirken yapılır — Sync gitmezse (motor erişilemez) satırlar kararları düşmüş hâlde kalır
-    /// (<see cref="ResetRowsToHollow"/>), çünkü onları geri getirecek bir topoloji gelmeyecektir.</summary>
+    /// <para>İki çağıran: <see cref="ApplySettingsAsync"/> bayrağı <see cref="ApplyRepositoryRoot"/>'un sonucundan
+    /// geçer (katman-only bir Save'de <c>false</c> — yüzey boşalmaz) ve motor erişilemezken buraya hiç gelmez: o
+    /// yolda satırlar yalnız kararları düşmüş hâlde kalır (<see cref="ResetRowsToHollow"/>), çünkü onları geri
+    /// getirecek bir topoloji gelmeyecektir. <see cref="ChangeRepositoryAsync"/> yalnız kök gerçekten değiştiyse
+    /// buraya iner ve her zaman <c>true</c> geçer; motor erişilemezlik kapısı YOKTUR — gönderim düşer, yüzey boş
+    /// ve faz Boot kalır, yeni kök bir sonraki Sync'le dolar.</para></summary>
     private Task SyncAfterRootChangeAsync(bool rootChanged)
     {
         if (rootChanged) ClearPlanSurface();

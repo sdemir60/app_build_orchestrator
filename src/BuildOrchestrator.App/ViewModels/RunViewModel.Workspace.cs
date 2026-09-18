@@ -227,11 +227,17 @@ public sealed partial class RunViewModel
     private void OnSyncStarted()
     {
         _syncInFlight = true;
-        SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
-        // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
-        // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
-        RunErrorMessage = null;
-        Phase = AppPhase.Syncing;
+        // [spec 2026-09-18 §6.2 · review I1/I2] Sessiz Sync ekranda bir işlem olarak GÖRÜNMEZ: faz Syncing'e
+        // geçmez (şerit Sync ilerlemesi göstermez, önceki işlemin pill'i canlanmaz) ve kötü haber silinmez —
+        // önceki koşunun "Run failed — …" metni ve Sync hatası durur (Sync hatası başarıyla bitince kalkar).
+        if (_syncMode.IsVisible())
+        {
+            SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
+            // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
+            // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
+            RunErrorMessage = null;
+            Phase = AppPhase.Syncing;
+        }
         ClearPreviewSets(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         // [Sync guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. İkisi birden açık
         // bırakılsaydı kapıyı kapatan iki ayrı bayrak olurdu ve biri sızdığında ötekinin temizlenmesi
@@ -415,6 +421,7 @@ public sealed partial class RunViewModel
     private void ReleaseSyncRequest()
     {
         _syncRequested = false;
+        EndSyncMode(); // [review M1] hiçbir Sync başlamadı — kip sonraki satırları yanlış süzmesin
         NotifySyncGatedCommands();
     }
 
@@ -560,7 +567,8 @@ public sealed partial class RunViewModel
     /// Sync kontrolü (Task 7 — HEAD izleyicisi) bunu okur: tetik anındaki HEAD bununla aynıysa Sync atlanır.</summary>
     internal (string? Branch, string? HeadSha)? LastSyncHead { get; private set; }
 
-    /// <summary>Son Sync'in İSTENDİĞİ an (monoton ms, <see cref="_nowMs"/>) — kipten bağımsız her Sync yazar.</summary>
+    /// <summary>Son Sync isteğinin motora GİTTİĞİ an (monoton ms, <see cref="_nowMs"/>) — kipten bağımsız, yalnız
+    /// başarılı gönderimde yazılır (düşen gönderimde hiçbir Sync başlamadı).</summary>
     internal long? LastSyncStartedAtMs { get; private set; }
 
     /// <summary>Son Sync'in TAMAMLANDIĞI an (monoton ms). Pencereye dönüşün 5 s eşiği (spec §1-11) ikisinden
@@ -568,7 +576,10 @@ public sealed partial class RunViewModel
     internal long? LastSyncCompletedAtMs { get; private set; }
 
     /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
-    internal long? LastSyncAtMs => LastSyncCompletedAtMs > LastSyncStartedAtMs ? LastSyncCompletedAtMs : LastSyncStartedAtMs;
+    internal long? LastSyncAtMs =>
+        LastSyncStartedAtMs is { } started && LastSyncCompletedAtMs is { } completed
+            ? Math.Max(started, completed)
+            : LastSyncStartedAtMs ?? LastSyncCompletedAtMs;
 
     /// <summary>
     /// [spec 2026-09-18 §6.2] <b>Kendiliğinden Sync'in TEK girişi</b> — commit, pencereye dönüş ve HEAD'in branch
@@ -599,7 +610,6 @@ public sealed partial class RunViewModel
             var now = WallClock();
             _silentBaseline = (DecisionKeys(now), now);
         }
-        LastSyncStartedAtMs = _nowMs();
     }
 
     /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.</summary>
@@ -613,7 +623,7 @@ public sealed partial class RunViewModel
     /// konsola yazılır — sessizlik kötü haberi gizlemez; dim/info/cmd satırları yazılmaz.</summary>
     private void OnSyncProgress(SyncProgressEvent e)
     {
-        if (_syncMode == SyncMode.Silent && e.Level is not ("warn" or "error")) return;
+        if (!_syncMode.ShowsTranscript() && e.Level is not ("warn" or "error")) return;
         AppendRunLine(e.Line);
     }
 
@@ -646,7 +656,7 @@ public sealed partial class RunViewModel
     /// kiplerde bugünkü özet (<see cref="StreamText.Sync"/>).</summary>
     private string? SyncStreamLine(SyncCompletedEvent e)
     {
-        if (_syncMode != SyncMode.Silent) return StreamText.Sync(e.ToBuildCount, e.UpToDateCount);
+        if (_syncMode.IsVisible()) return StreamText.Sync(e.ToBuildCount, e.UpToDateCount);
         if (_silentReason == SilentSyncReason.Commit) return StreamText.SyncedAfterCommit;
         int changed = _silentBaseline is { } baseline ? CountChangedDecisions(baseline) : 0;
         return changed > 0 ? StreamText.SyncedProjectsChanged(changed) : null;
@@ -659,6 +669,7 @@ public sealed partial class RunViewModel
     /// kipe göre seçilir (<see cref="SyncStreamLine"/>).</para></summary>
     private void OnSyncCompleted(SyncCompletedEvent e)
     {
+        bool visible = _syncMode.IsVisible(); // ReleaseSyncPhase kipi bırakmadan ÖNCE okunur
         TargetSha = e.TargetSha;
         FetchDegraded = e.FetchDegraded;
         Behind = e.Behind;      // [v1.16.0] chip'in sayısı; null ⇒ mesafe bilinmiyor → chip yok
@@ -668,7 +679,9 @@ public sealed partial class RunViewModel
         _syncStreamLine = SyncStreamLine(e);
         SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir
         ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
-        Phase = AppPhase.Idle; // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil)
+        // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil). [review I2] Sessiz Sync fazı olduğu yerde
+        // bırakır (Done/Stopped özeti "Ready"ye dönmez); yalnız Boot (henüz hiç Sync'lenmemiş) Idle'a çıkar.
+        if (visible || Phase == AppPhase.Boot) Phase = AppPhase.Idle;
     }
 
     /// <summary>[C2 fold — A5 review] Uçuştaki Sync'i serbest bırakır: <see cref="_syncInFlight"/> temizlenir ve
@@ -809,7 +822,9 @@ public sealed partial class RunViewModel
         // AYNI metottur (bkz. NeutralizeRows) ve yalnız koşu alanlarını siler.
         // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eskiden Sync herkesi başlangıç moduna indirirdi (hiçbir şey
         // renklenmezdi). Artık satır kendi çıktı durumunda kalır ve önizleme onu tazeler — Sync renk verir.
-        if (!IsRunning) NeutralizeRows();
+        // [review I2] Sessiz Sync koşu bindirmesini SİLMEZ: bitmiş/düşmüş koşunun sonucu (şeridin özeti, satırların
+        // statüsü) bir sonraki işleme kadar kalır; sessiz Sync yalnız çıktı durumunu (önizleme) tazeler.
+        if (!IsRunning && _syncMode.IsVisible()) NeutralizeRows();
 
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;

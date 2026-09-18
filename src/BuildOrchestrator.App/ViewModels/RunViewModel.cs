@@ -618,7 +618,7 @@ public sealed partial class RunViewModel : ObservableObject
         WillBuildCount, FinishedOfWillBuild, Counters.Total,
         ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
-        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
+        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage, syncFetches: _syncMode.Fetches(),
         resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
@@ -1193,14 +1193,14 @@ public sealed partial class RunViewModel : ObservableObject
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
         // gönderim ne olursa olsun (senkron başarısız dahil) ekran zaten burada sıfırlanmış olur; bir sonraki
         // syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz (bkz. ClearConsoleForNewOperation).
-        if (mode is SyncMode.Manual or SyncMode.BranchChange)
+        if (mode.ClearsConsole())
         {
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
         foreach (string line in sectionLines ?? []) AppendRunLine(line);
         BeginSyncMode(mode, silentReason);
-        if (mode != SyncMode.Silent)
+        if (mode.IsVisible())
         {
             SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
             CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
@@ -1216,11 +1216,12 @@ public sealed partial class RunViewModel : ObservableObject
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
             new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
-                Fetch: mode is SyncMode.Manual or SyncMode.Appended), "sync");
+                Fetch: mode.Fetches()), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
-        if (!sent) ReleaseSyncRequest();
+        if (sent) LastSyncStartedAtMs = _nowMs(); // [review M1] yalnız motora giden istek bir Sync başlatır
+        else ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,

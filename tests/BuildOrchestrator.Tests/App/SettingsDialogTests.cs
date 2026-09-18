@@ -395,6 +395,30 @@ public class SettingsDialogTests
         Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
     }
 
+    /// <summary>[spec 2026-09-18 §1-13 · review I3] Sync artık listeyi kendisi boşaltmaz; Save'in GERÇEK kök
+    /// değişimi Sync'ten önce plan yüzeyini boşaltır (eski reponun satırları ekranda kalmaz) ve yapısal imzayı
+    /// unutturur — yeni kökün topolojisi, eskisiyle aynı yapıda olsa bile, reveal'le gelir.</summary>
+    [Fact]
+    public async Task Saving_a_new_root_empties_the_list_so_the_next_topology_reveals()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"C:\old" };
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null);
+        run.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
+        Assert.Single(run.Projects); // ön-koşul
+        int topologyChanges = 0;
+        run.TopologyChanged += (_, _) => topologyChanges++;
+
+        await run.ApplySettingsAsync([], @"D:\new\repo", []);
+
+        Assert.Empty(run.Projects);
+        Assert.False(run.HasTopology);
+        Assert.Equal(1, topologyChanges);
+
+        run.OnEvent(new WorkspaceTopologyEvent([node], [], [], [])); // aynı yapı
+        Assert.Equal(2, topologyChanges);                            // yine de reveal
+    }
+
     [Fact] // Kök HİÇ seçilmemişken Save: katmanlar kaydedilir ama gidecek bir kök yoktur → Sync GİTMEZ.
     public async Task Applying_settings_without_a_repository_root_keeps_the_layers_but_sends_no_sync()
     {

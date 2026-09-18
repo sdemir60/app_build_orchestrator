@@ -92,7 +92,8 @@ public sealed class SyncWorkspaceService(
         // derler. Komuttaki ad yalnız detached HEAD'de yedektir (orada izlenecek bir branch yoktur).
         string? activeBranch = (await git.GetCurrentBranchAsync(ct)).Value;
         string branch = activeBranch ?? cmd.Branch;
-        var (targetSha, degraded, behind) = await MeasureRemoteAsync(cmd.Fetch, branch, head.Value, emit, ct);
+        var (targetSha, degraded, behind) = await MeasureRemoteAsync(
+            cmd.Fetch, branch, measureBehind: activeBranch is not null, head.Value, emit, ct);
 
         // Hedef hiç çözülemediyse (commit'siz repo) satır BASILMAZ — yarım bir satır üretmek yerine sessiz kalınır.
         if (head.Value is not null)
@@ -204,9 +205,11 @@ public sealed class SyncWorkspaceService(
     /// yoksa hedef yerel HEAD'dir ve mesafe bilinmez — bu bir hata değildir, degrade bayrağı kurulmaz.</para>
     /// <para>Boş <paramref name="branch"/> (detached HEAD ve komutta ad yok): izlenecek uzak branch yoktur —
     /// fetch denenmez, hedef yerel HEAD, mesafe bilinmez.</para>
+    /// <para><paramref name="measureBehind"/>=false (detached HEAD): fetch yedek adla yine yapılır ama mesafe
+    /// ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir; bayat bir adla sayılan <c>N behind</c> yalan olurdu.</para>
     /// </summary>
     private async Task<(string? TargetSha, bool Degraded, int? Behind)> MeasureRemoteAsync(
-        bool fetch, string branch, string? head, Action<IpcEvent> emit, CancellationToken ct)
+        bool fetch, string branch, bool measureBehind, string? head, Action<IpcEvent> emit, CancellationToken ct)
     {
         if (branch.Length == 0) return (head, false, null);
 
@@ -231,7 +234,7 @@ public sealed class SyncWorkspaceService(
             if (targetSha is null) return (head, false, null);
         }
 
-        int? behind = targetSha is not null && head is not null
+        int? behind = measureBehind && targetSha is not null && head is not null
             ? (await git.CountBehindAsync(targetSha, ct)).Value
             : null;
         return (targetSha, false, behind);

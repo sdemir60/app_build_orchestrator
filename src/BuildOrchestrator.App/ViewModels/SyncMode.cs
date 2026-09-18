@@ -25,6 +25,25 @@ public enum SyncMode
     Silent,
 }
 
+/// <summary>[spec 2026-09-18 §6.2] <see cref="SyncMode"/> kurallarının TEK kaynağı — çağıran yerler kipi
+/// karşılaştırmaz, bu soruları sorar (kopya YASAK).</summary>
+public static class SyncModeRules
+{
+    /// <summary>Konsol + olay akışı istek anında temizlenir mi (yeni bölüm): Manual ve BranchChange.</summary>
+    public static bool ClearsConsole(this SyncMode mode) => mode is SyncMode.Manual or SyncMode.BranchChange;
+
+    /// <summary>Motor ağa çıkıp fetch eder mi: Manual ve Appended. BranchChange ve Silent son bilinen uzak uca bakar.</summary>
+    public static bool Fetches(this SyncMode mode) => mode is SyncMode.Manual or SyncMode.Appended;
+
+    /// <summary>Transkriptin dim/info/cmd satırları konsola yazılır mı (warn/error her kipte yazılır).</summary>
+    public static bool ShowsTranscript(this SyncMode mode) => mode != SyncMode.Silent;
+
+    /// <summary>Sync kendini ekranda bir İŞLEM olarak gösterir mi: kalıcı işlem pill'i, seçimin düşmesi, faz
+    /// <c>Syncing</c> (şerit + pill canlı), önceki koşunun hata metninin ve bindirmesinin silinmesi. Yalnız sessiz
+    /// kip göstermez — kendiliğinden Sync kötü haberi silmez, ekranda iz bırakmaz.</summary>
+    public static bool IsVisible(this SyncMode mode) => mode != SyncMode.Silent;
+}
+
 /// <summary>[spec 2026-09-18 §6.2] Sessiz Sync'in nedeni — bitişte olay akışına düşen TEK satırı seçer
 /// (metinler <see cref="StreamText"/>'te).</summary>
 public enum SilentSyncReason
