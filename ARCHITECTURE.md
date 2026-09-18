@@ -705,9 +705,10 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 | `false` | up to date; will be skipped |
 | `null` | no meaningful baseline yet (pre-Sync, or the signature could not be computed) |
 
-**The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
-the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's **decision
-label** — `modified`, `modified · local`, `affected`, `never built`, `failed · 2h`, or `up to date · 2h`
+**The plan has no colour of its own.** A separate amber/grey/hollow dot on the row and the core of the graph
+node for "what will this run do" would only duplicate what the row's own status already paints (§14.3). What
+the user sees of the plan is the row's **decision label** — `modified`, `modified · local`, `affected`,
+`never built`, `failed · 2h`, or `up to date · 2h`
 (§13.2) — and the scope of the marking wave when an operation actually begins. The tri-state itself is
 unchanged: it still decides what a run compiles, and it still feeds the counters.
 
@@ -1121,9 +1122,9 @@ cannot be silently dropped. The first line written is the real MSBuild command l
 is persisted with the signature computed during planning; on failure the stored state is invalidated so the
 next run does not consider the project up to date — but what gets written depends on whether the failure is
 itself evidence of a broken source, not just on the fact that it failed. Only a trusted result whose reason is
-the compiler's own non-zero exit counts: for that one case the invalidation also writes the planning signature
-and the moment into the failed-signature pair (§7.5), opening a fresh record when the project has never been
-seen before, so a first-ever compile failure is not lost. Every other case — a timeout, a stop, an invoke error,
+the compiler's own non-zero exit *and* whose planning signature is known counts: for that one case the
+invalidation also writes the planning signature and the moment into the failed-signature pair (§7.5), opening a
+fresh record when the project has never been seen before, so a first-ever compile failure is not lost. Every other case — a timeout, a stop, an invoke error,
 or a result the run does not trust at all, such as a non-converged cycle's member that came back green — is not
 proof the sources are broken, only that this attempt's output cannot be, and it clears any failed signature a
 past success has since invalidated rather than writing one; it opens no record where none exists, since a
@@ -3047,10 +3048,10 @@ released into the buffer. The caret used to be bound to that text, which is exac
 anything of its own; the two are separate channels now.
 
 **The node's core is not a channel of its own.** The glyph inside the square is painted from the same visual
-status as the border, from one table (§14.3). It used to answer a second question — "what will happen to this
-project" — in amber, grey and a permanent orange for cycle members; that channel was removed. What the older
-arrangement was protecting is still protected by the new one: `queued` is amber rather than grey, so pressing
-Build no longer drains the only colour on screen in the same frame the graph dims.
+status as the border, from one table (§14.3) — a second, separately-coloured answer to "what will happen to
+this project" (amber, grey, a permanent orange for cycle members) would only say twice what the border already
+says once. `queued` is amber rather than grey for the same single-channel reason: pressing Build must not drain
+the only colour on screen in the same frame the graph dims.
 
 **Entering a run dims before it repaints.** Outside the marking wave, colour and border changes are instant
 here (measured deviation, below), so pressing Build used to land the dashed-to-solid switch of every planned node in the same frame the
@@ -3506,11 +3507,10 @@ longer describe what will be built; the list and the graph drop back together. N
 a **four-arc ring** in place of the filled dot, the glyph is a dashed circle, and the graph node carries a dashed
 border. The mode drops the moment a decision arrives — a Sync's preview colours every row with its standing —
 and the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing shifts. Starting an
-operation does not drop it; a decision does. The
-stripe and the ring used to draw a shade fainter (half and 0.85 opacity), so a plan would not be implied
-before one existed; that read as the list looking washed-out right after a Sync rather than simply waiting,
-so both now match the full opacity of every other row, and the cross-fade survives only because the ring
-still has a real transition — from arcs to a filled circle — to make.
+operation does not drop it; a decision does. The stripe and the ring draw at the full opacity of every other
+row rather than a fainter shade (half and 0.85 opacity): a fainter start mode would imply a plan before one
+exists, and reads as the list looking washed-out right after a Sync rather than simply waiting. The cross-fade
+survives only because the ring still has a real transition — from arcs to a filled circle — to make.
 
 The row is drawn without dashes on purpose. A dashed 2 px stripe does not land on the pixel grid and an 8 px
 dashed circle renders ragged; opacity and an arc ring say the same thing cleanly. The node border stays dashed

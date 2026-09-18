@@ -85,9 +85,13 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // build-state.json GERÇEKTEN yazıldı mı (persist kanıtı — sonraki Build'in incremental olmasının önkoşulu).
         var store = new BuildStateStore(shared);
         var stateAfterRun1 = store.Load();
-        // [A2] Persist EDEN küme = "depIssue TAŞIMAYAN success"ler + KANITLI (evidence) FAILED'ler. depIssue
-        // taşıyan bir success A2'den beri taze imza persist ETMEZ (RunCoordinator.BuildProjectAsync:
-        // `if (depIssuesForEvent is null)` → PersistBuildStateOnSuccess).
+        // [A2] Persist EDEN küme = TÜM success'ler (DepIssue notlu olsun olmasın — bir success DepIssue taşısa
+        // bile PersistBuildStateOnSuccess HER ZAMAN çağrılır, not yalnız kaydın KENDİSİNE `DepIssue:
+        // depIssueRoots is not null` olarak işlenir; RunCoordinator.ReportProjectResult) + KANITLI (evidence)
+        // FAILED'ler.
+        // [DEĞİŞEN KURAL] Muafiyet listesinden depIssue taşıyanlar ÇIKTI: eskiden (A2 öncesi) "deftere HİÇ
+        // yazma" kuralı vardı; ölçüldü ki o kural defteri hiç ilerletmiyordu (24 hatanın depIssue'su 96 projeye
+        // yayıldığı bir koşuda 74 başarının sıfırı yazıldı). Beklenti artık başarı sayısının kendisidir.
         // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: "FAILED'ler BOŞ store'da geçersizleştirilecek
         // kayıt bulamadığı için satır EKLEMEZ." Artık yanlış: kanıtlı bir derleyici hatası (evidence-based red)
         // kayıt yoksa bile taze bir satır AÇAR — `FailedSignature`/`FailedAt` ile, `BuiltSignature: null`
@@ -95,20 +99,29 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // never been seen before, so a first-ever compile failure is not lost"). Yalnız KANITSIZ bir
         // başarısızlık (timeout/stopped/invoke error/yakınsamayan SCC üyesi) hâlâ eski davranışı korur: kayıt
         // yoksa hiçbir şey açılmaz.
-        // İddia ZAYIFLAMAZ: derlenen her proje için KURAL OLARAK bir satır beklenir — biri bile eksik kalırsa
-        // sayı bu alt sınırın ALTINA düşer ve test kırmızı verir. Muafiyet listesi tam OLSUN
-        // diye: bir persist-etmeme yolu daha vardır ve o da bu iddiaya girmez —
-        // PersistBuildStateOnSuccess (RunCoordinator.cs:736-738) incremental planda bu proje için İMZA YOKSA
-        // (SignatureById miss: hollow / imzası hesaplanamamış proje) satır YAZMADAN döner. Yani buradaki bir
-        // kırmızı "persist eksik" kadar "imzasız success var" da demek olabilir; teşhis için önce kanıt
-        // dosyasındaki Run 1 satırına ve build-state.json'a bakılmalı.
-        // [DEĞİŞEN KURAL] Muafiyet listesinden depIssue taşıyanlar ÇIKTI: artık HER başarı persist edilir
-        // (depIssue olanlar DepIssue notuyla). Eski formül `Succeeded − DepIssueCarriers` idi; ölçüldü ki o
-        // kural defteri hiç ilerletmiyordu (24 hatanın depIssue'su 96 projeye yayıldığı bir koşuda 74
-        // başarının sıfırı yazıldı). Beklenti artık başarı sayısının kendisidir.
+        // SONUÇ (bu değişikliğin ikinci etkisi): `stateAfterRun1.Count` (TOPLAM kayıt) artık "kaç başarı persist
+        // edildi" sorusuna CEVAP VERMEZ — kanıtlı başarısızlıklar da bu sayıyı şişirir (ör. 131 başarı + 13
+        // kanıtlı hata = 144 TOPLAM kayıt, ama başarı olarak persist edilen yalnız 131'dir). `stateAfterRun1.Count
+        // >= run1.Succeeded.Count` bu yüzden artık SESSİZCE ZAYIFLAR: kanıtlı hatalar toplamı şişirdiği için bir
+        // eksik başarı bile bu iddiayı KIRMIZI vermeden geçebilir (131 başarıdan 13'ü kaybolsa bile TOPLAM yine
+        // ≥131 kalabilir). Alt sınır bu yüzden TOPLAM değil, özellikle `LastResult == Succeeded` olan kayıt
+        // sayısını okumalıdır.
+        //
+        // İddia ZAYIFLAMAZ: derlenen her BAŞARILI proje için KURAL OLARAK bir BAŞARI kaydı beklenir — biri bile
+        // eksik kalırsa sayı bu alt sınırın ALTINA düşer ve test kırmızı verir. Muafiyet listesi tam OLSUN diye:
+        // bir persist-etmeme yolu daha vardır ve o da bu iddiaya girmez — PersistBuildStateOnSuccess
+        // (RunCoordinator.cs:736-738) incremental planda bu proje için İMZA YOKSA (SignatureById miss: hollow /
+        // imzası hesaplanamamış proje) satır YAZMADAN döner. Yani buradaki bir kırmızı "persist eksik" kadar
+        // "imzasız success var" da demek olabilir; teşhis için önce kanıt dosyasındaki Run 1 satırına ve
+        // build-state.json'a bakılmalı.
         int run1PersistExpected = run1.Succeeded.Count;
-        Assert.True(stateAfterRun1.Count >= run1PersistExpected,
-            Inv($"build-state kaydı ({stateAfterRun1.Count}) < persist etmesi beklenen ({run1PersistExpected} = başarılı) — persist eksik."));
+        int run1SuccessRecords = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded);
+        Assert.True(run1SuccessRecords >= run1PersistExpected,
+            Inv($"başarı olarak persist edilen kayıt ({run1SuccessRecords}) < persist etmesi beklenen ({run1PersistExpected} = başarılı) — persist eksik."));
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] bkz. aşağıdaki "KABUL İDDİALARI": Run 2'nin pre-skip etmesi
+        // beklenen küme burada hesaplanır ki evidence metni (aşağıda) ve o iddia AYNI sayıyı okusun (kopya
+        // YASAK, CLAUDE.md). Yalnız `stateAfterRun1`e bağlıdır, Run 2'yi beklemez.
+        int cleanRows = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded && !s.DepIssue);
 
         // ---- RUN 2: kaynak DEĞİŞMEDEN yeniden Build → önceki başarılıların HEPSİ "skipped — up to date".
         var run2 = await RunBuildAsync(logsDir, "it3-build-2", overall.Token);
@@ -214,7 +227,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine();
             sb.AppendLine("## Run 2 (Build, kaynak DEĞİŞMEDEN — incremental)");
             sb.AppendLine(Inv($"- TotalProjects: {run2.Started?.TotalProjects} · Succeeded: {run2.Completed?.Succeeded} · Failed: {run2.Completed?.Failed} · Skipped: {run2.Completed?.Skipped} · Süre: {run2.Completed?.DurationMs} ms"));
-            sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count} · Run 1'de persist edilen satır: {stateAfterRun1.Count} (EŞİT olmalı — satır yazan her proje pre-skip edilmeli)"));
+            sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count} · Run 1'de NOTSUZ BAŞARI persist edilen satır: {cleanRows} / toplam kayıt {stateAfterRun1.Count} (ilk ikisi EŞİT olmalı — bkz. KABUL İDDİALARI)"));
             sb.AppendLine(Inv($"- Run 1 başarılı ({run1Succeeded.Count}) → Run 2'de up-to-date SKIP edilmeyen: {notSkipped.Count} · bunlardan A2 ile AÇIKLANAMAYAN: {notSkippedUnexplained.Count} (0 OLMALI)"));
             sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
             sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} · bunlardan MEŞRU kümede OLMAYAN: {run2Unexplained.Count} (0 OLMALI)"));
@@ -269,8 +282,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // adayıdır — bir başarısızlık kaydı asla `BuiltSignature` taşımaz) VE `!DepIssue` (bayat bağımlılığa
         // link'li değil). Gerekçe: bir kanıtlı-kırmızı satırı "temiz satır" sayıp pre-skip beklemek, testi
         // gerçek üretim kararıyla değil eski bir varsayımla karşılaştırırdı — ölçülen sapma tam Run 1'in kanıtlı
-        // başarısızlık sayısı kadardı (18/18).
-        int cleanRows = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded && !s.DepIssue);
+        // başarısızlık sayısıyla örtüşüyordu. (`cleanRows` yukarıda, persist iddiasının hemen ardından
+        // hesaplanır — evidence metni de AYNI değişkeni okur.)
         Assert.True(run2UpToDate.Count == cleanRows,
             Inv($"'up to date' pre-skip sayısı ({run2UpToDate.Count}) ≠ Run 1'de NOTSUZ BAŞARI persist edilen satır sayısı ({cleanRows} / toplam {stateAfterRun1.Count}) — incremental çalışmıyor: notsuz başarı satırı yazan HER proje Run 2'de skip edilmeliydi."));
         // Bu bir ÜST SINIR (⊆) iddiasıdır: "Run 2 yalnız meşru kümeden derleyebilir". İfade EDEMEDİĞİ şey,
