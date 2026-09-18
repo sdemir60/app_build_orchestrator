@@ -1394,6 +1394,9 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Failed, upAfterFailure.LastResult);   // artık "bilinen iyi" DEĞİL
             Assert.Equal("sig", upAfterFailure.BuiltSignature);            // son BAŞARILI imza KORUNUR (Fast frozen-upstream)
             Assert.Equal(7, upAfterFailure.LastDurationMs);                // ETA: iyi süre (Ok=7ms) fail süresiyle (9ms) EZİLMEZ
+            // [Task 2] Exit(1) bu koşuda tek projedir (trustedResult daima true) ⇒ KANITLI hata: imza + zaman yazılır.
+            Assert.Equal("sig", upAfterFailure.FailedSignature);
+            Assert.NotNull(upAfterFailure.FailedAt);
 
             // ---- Run 3: incremental Build → Up PRE-SKIP EDİLEMEZ, GERÇEK bir MSBuild invoke'u olmalı.
             upFails = false;
@@ -1408,7 +1411,135 @@ public class RunCoordinatorTests
             Assert.Equal(Id("Solo"), skipped.ProjectId);
             // [DEĞİŞEN KURAL/Task 2] bkz. yukarıdaki not — reason artık YALIN, tek kaynak SkipReasons.
             Assert.Equal(SkipReasons.UpToDate, skipped.Reason);
-            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
+            var upAfterRecovery = store.Load()[Id("Up")];
+            Assert.Equal(BuildResult.Succeeded, upAfterRecovery.LastResult); // yeşile dönünce kayıt düzelir
+            // [Task 2] Taze başarı FailedSignature/FailedAt'i doğal olarak null'a döndürür (PersistBuildStateOnSuccess taze kayıt kurar).
+            Assert.Null(upAfterRecovery.FailedSignature);
+            Assert.Null(upAfterRecovery.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §1-14 / Task 2] hata nedene göre yazılır
+
+    /// <summary>
+    /// KANITLI kırmızı: hiç derlenmemiş bir proje derleyici hatasıyla (exit != 0) patlarsa <see
+    /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
+    /// yazılır — <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c> gerekçesi BUNA bakar.
+    /// </summary>
+    [Fact]
+    public async Task A_compiler_failure_records_the_failed_signature_and_time()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Equal("sig", a.FailedSignature);
+            Assert.NotNull(a.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Yukarıdaki testin AYRIMI: hiç build-state kaydı OLMAYAN bir proje derleyici hatasıyla patladığında da
+    /// kanıt kaybolmamalı — <see cref="InvalidateBuildStateOnFailure"/> kayıt yoksa <c>BuiltSignature: null</c>
+    /// ile YENİ bir kayıt açar (bugüne dek kanıtsız yollarda "kayıt yoksa açılmaz" olan davranıştan BİLEREK
+    /// AYRILIR, çünkü burada kanıt VAR).
+    /// </summary>
+    [Fact]
+    public async Task A_compiler_failure_opens_a_record_for_a_never_built_project()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            Assert.Empty(store.Load()); // sanity: hiç kayıt yok
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var state = store.Load();
+            var a = Assert.Contains(Id("A"), state); // kayıt AÇILDI
+            Assert.Null(a.BuiltSignature);            // hiç BAŞARIYLA derlenmedi
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Equal("sig", a.FailedSignature);
+            Assert.NotNull(a.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// KANITSIZ: timeout ortam hatasıdır, derleyicinin kendi kararı DEĞİL. <see cref="BuildState.FailedSignature"/>
+    /// yazılmaz (eskisi varsa null'a ÇEKİLİR) — <c>LastFailed</c> bunun için kanıtsız kırmızı ÜRETMEMELİDİR.
+    /// </summary>
+    [Fact]
+    public async Task A_timeout_records_no_failed_signature()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            // "dün" kanıtlı bir hatayla yeşile hiç dönmemiş kayıt: eski kanıt bu koşuda DÜŞMELİ.
+            store.Upsert(new BuildState(Id("A"), BuiltSignature: null, LastResult: BuildResult.Failed,
+                LastRunAt: DateTimeOffset.UtcNow.AddHours(-1), FailedSignature: "old-sig",
+                FailedAt: DateTimeOffset.UtcNow.AddHours(-1)));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) =>
+                Task.FromResult(new MsBuildInvokeResult(ExitCode: -1, DurationMs: 9, TimedOut: true, Killed: false)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature); // kanıtsız — eski kanıt DÜŞER
+            Assert.Null(a.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Taze bir başarı <see cref="BuildState.FailedSignature"/>/<see cref="BuildState.FailedAt"/>'i doğal olarak
+    /// null'a döndürür: <see cref="PersistBuildStateOnSuccess"/> taze bir kayıt kurar, eski alanlar taşınmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_success_clears_the_failed_signature()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), BuiltSignature: null, LastResult: BuildResult.Failed,
+                LastRunAt: DateTimeOffset.UtcNow.AddHours(-1), FailedSignature: "sig",
+                FailedAt: DateTimeOffset.UtcNow.AddHours(-1)));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Succeeded, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

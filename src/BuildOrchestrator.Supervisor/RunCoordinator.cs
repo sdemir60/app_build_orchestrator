@@ -1303,7 +1303,9 @@ public sealed class RunCoordinator(
             // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
             // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
             // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin yeşil üyesi) buradan geçer.
-            if (result != BuildResult.Succeeded || !trustedResult) InvalidateBuildStateOnFailure(run, projectId);
+            // [spec 2026-09-18 §1-14] reason ve trustedResult birlikte TAŞINIR: invalidate artık nedene göre
+            // yazar (kanıtlı derleyici hatası ⇔ imza+zaman; kanıtsız ⇔ yalnız LastResult/LastRunAt).
+            if (result != BuildResult.Succeeded || !trustedResult) InvalidateBuildStateOnFailure(run, projectId, failReason, trustedResult);
         }
     }
 
@@ -1848,26 +1850,34 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [A2 fix-1] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i GEÇERSİZLEŞTİRİR:
-    /// <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
+    /// [A2 fix-1][spec 2026-09-18 §1-14] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i
+    /// GEÇERSİZLEŞTİRİR: <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
     /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
     /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
     /// <para>
-    /// <b>Neden HER başarısızlık türü:</b> stopped/timeout/invoke-error de "bilinen iyi" DEĞİLDİR — yarıda
-    /// kesilmiş bir derleme torn/eksik çıktı bırakabilir. Güvenli yön invalidasyondur; bedeli "gereksiz bir kez
-    /// daha derlemek", diğer yönün bedeli "sessizce bozuk çıktıyı güncel sanmak".
+    /// <b>Yazım nedene göre AYRIŞIR.</b> <paramref name="reason"/> ile <paramref name="trustedResult"/> birlikte
+    /// KANITI belirler: <see cref="Core.State.FailureClassification.IsCompilerFailure"/> derleyicinin kendi
+    /// sıfır-dışı çıkışını (<c>"exit N"</c>) ayırt eder, ama yalnız <paramref name="trustedResult"/> true iken —
+    /// yakınsamayan bir SCC'nin (§8.8) "yeşil" üyesi de bu metottan geçer ve reason <c>null</c> olabilir, o
+    /// kanıt SAYILMAZ. <b>Kanıtlıysa</b> (derleyici hatası + arkasında durulabilir sonuç): <see
+    /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
+    /// yazılır — kayıt yoksa <c>BuiltSignature: null</c> ile AÇILIR (hiç derlenmemiş bir proje ilk kez patladığında
+    /// da kanıt kaybolmasın diye). İmza yoksa (<c>run.Incremental</c> null ya da proje <c>SignatureById</c>'de
+    /// yok — testlerdeki basit planner, ya da hollow) imzasız kanıt YAZILMAZ (<see cref="WillBuildEvaluator"/>'ın
+    /// <c>LastFailed</c>'i imza eşitliğine bakar): <see cref="PersistBuildStateOnSuccess"/>'in erken-dönüş
+    /// deseniyle (~:1818-1820) AYNI çizgide, kanıtsız davranışa düşülür. <b>Kanıtsızsa</b> (timeout, stopped,
+    /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
+    /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
+    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil) ve kayıt yoksa hiçbir şey
+    /// AÇILMAZ: kanıtsız bir başarısızlık için placeholder kayıt yazmak store'u şişirmekten başka iş yapmaz.
     /// </para>
     /// <para>
-    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni): <see
-    /// cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
+    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni) her iki yolda da geçerlidir:
+    /// <see cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
     /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
     /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
     /// dirty olurdu; (2) <c>LastDurationMs</c> ETA tahminini besler, bir başarısızlığın (çoğu zaman erken patlayan)
-    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır. Yalnız <c>LastResult</c>/<c>LastRunAt</c> güncellenir.
-    /// </para>
-    /// <para>
-    /// Kayıt YOKSA hiçbir şey yazılmaz: "kayıt yok" ile "imzası olmayan kayıt" tüm tüketiciler için AYNI anlama
-    /// gelir (WillBuild=true) — boş satır eklemek store'u şişirmekten başka bir şey yapmaz.
+    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır.
     /// </para>
     /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// <para>
@@ -1878,13 +1888,35 @@ public sealed class RunCoordinator(
     /// içinde "run'ı öldürmez" sözü ancak KOŞULSUZ olabilir; bu yüzden filtre daraltılmaz.
     /// </para>
     /// </summary>
-    private void InvalidateBuildStateOnFailure(RunContext run, string projectId)
+    /// <param name="reason">Başarısızlık gerekçesi (<c>"exit N"</c>/<c>"timeout"</c>/<c>"stopped"</c>/<c>"invoke
+    /// error: …"</c>); yakınsamayan bir SCC'nin yeşil üyesinde <c>null</c> olabilir (result Succeeded'tır).</param>
+    /// <param name="trustedResult">Sonucun ARKASINDA DURULABİLİR mi (bkz. <see cref="ReportProjectResult"/>) —
+    /// yakınsamayan bir SCC'de <c>false</c>, tekil projede daima <c>true</c>. Kanıt kapısının İKİNCİ yarısı.</param>
+    private void InvalidateBuildStateOnFailure(RunContext run, string projectId, string? reason, bool trustedResult)
     {
         if (run.StateStore is null) return;
         try
         {
-            if (!run.StateStore.Load().TryGetValue(projectId, out var existing)) return; // geçersizleştirilecek kayıt yok
-            run.StateStore.Upsert(existing with { LastResult = BuildResult.Failed, LastRunAt = DateTimeOffset.UtcNow });
+            bool evidence = trustedResult && FailureClassification.IsCompilerFailure(reason);
+            string? signature = null;
+            if (evidence)
+            {
+                if (run.Incremental is { } inc && inc.SignatureById.TryGetValue(projectId, out var sig)) signature = sig;
+                else evidence = false; // imzasız kanıt YASAK — kanıtsız yola düş
+            }
+
+            run.StateStore.Load().TryGetValue(projectId, out var existing);
+            if (!evidence && existing is null) return; // kanıtsız + kayıt yok ⇒ hiçbir şey açılmaz
+
+            var now = DateTimeOffset.UtcNow;
+            var baseline = existing ?? new BuildState(projectId, BuiltSignature: null);
+            run.StateStore.Upsert(baseline with
+            {
+                LastResult = BuildResult.Failed,
+                LastRunAt = now,
+                FailedSignature = evidence ? signature : null,
+                FailedAt = evidence ? now : null,
+            });
         }
         catch (Exception ex)
         { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
@@ -1900,7 +1932,9 @@ public sealed class RunCoordinator(
         }
         if (invoke.TimedOut) return "timeout";
         if (invoke.Killed) return "stopped";
-        return string.Format(CultureInfo.InvariantCulture, "exit {0}", invoke.ExitCode);
+        // [spec 2026-09-18 §1-14] Önek TEK kaynaktan: FailureClassification.IsCompilerFailure aynı sabiti okur —
+        // literal iki yerde tanımlanmaz (kopya YASAK, CLAUDE.md).
+        return string.Format(CultureInfo.InvariantCulture, "{0}{1}", FailureClassification.ExitPrefix, invoke.ExitCode);
     }
 
     // [I2-K2/S2] Legacy restore sinyali: csproj'un YANINDA packages.config. bin/OutDir'e BAKILMAZ [§4].

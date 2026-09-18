@@ -1114,7 +1114,17 @@ restore flag derived from the presence of `packages.config`, and — in worktree
 intermediate path. The project's log file is opened before and closed after the invocation, so a late line
 cannot be silently dropped. The first line written is the real MSBuild command line. On success the build state
 is persisted with the signature computed during planning; on failure the stored state is invalidated so the
-next run does not consider the project up to date.
+next run does not consider the project up to date — but what gets written depends on whether the failure is
+itself evidence of a broken source, not just on the fact that it failed. Only a trusted result whose reason is
+the compiler's own non-zero exit counts: for that one case the invalidation also writes the planning signature
+and the moment into the failed-signature pair (§7.5), opening a fresh record when the project has never been
+seen before, so a first-ever compile failure is not lost. Every other case — a timeout, a stop, an invoke error,
+or a result the run does not trust at all, such as a non-converged cycle's member that came back green — is not
+proof the sources are broken, only that this attempt's output cannot be, and it clears any failed signature a
+past success has since invalidated rather than writing one; it opens no record where none exists, since a
+placeholder failure for a project the ledger has never heard of would answer nothing. Either way only
+`LastResult` and the run timestamp change beyond that — the built signature, commit, branch and duration stay
+exactly as a past success left them.
 
 **Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the third icon of the maintenance box. While
 such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n/m · elapsed` with the amber

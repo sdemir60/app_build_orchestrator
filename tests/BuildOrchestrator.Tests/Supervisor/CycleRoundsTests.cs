@@ -416,6 +416,10 @@ public class CycleRoundsTests
             var store = new BuildStateStore(cacheRoot);
             SeedGreen(store, "A");   // "dün" ikisi de yeşildi, "old" imzasıyla kaydedildi
             SeedGreen(store, "B");
+            // [spec 2026-09-18 §1-14/Task 2] A'ya ÖNCEDEN kanıtlı bir hata yazılmış olsun (başka bir eski
+            // koşudan kalma): bu koşuda A yeşil görünse BİLE grup yakınsamadığı için trustedResult=false —
+            // eski kanıt da bugünkü koşudan kanıt DEVRALAMAZ, düşürülmeli.
+            store.Upsert(store.Load()[Id("A")] with { FailedSignature = "stale", FailedAt = DateTimeOffset.UtcNow.AddDays(-1) });
             var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
@@ -431,6 +435,13 @@ public class CycleRoundsTests
             var a = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yeşil görünen üye bile GEÇERSİZLEŞTİRİLİR
             Assert.Equal("old", a.BuiltSignature);            // taze imza ("sig") YAZILMADI ⇒ persist YOK
+            // [spec 2026-09-18 §1-14/Task 2] A_green_member_of_an_unconverged_group_records_no_failed_signature:
+            // A'nın sonucu Succeeded'tir (trustedResult=false yüzünden invalidate edilir) — reason zaten null,
+            // ama KANIT KAPISININ İKİNCİ yarısı (trustedResult) burada asıl testtir: grup yakınsamadığı için A
+            // KANITLI sayılmaz — önceden yazılmış "stale" kanıt da BU koşudan devralınamaz, düşürülmeli
+            // (kanıtsız kırmızı YASAK).
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
             Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
             // Kontrol: A kullanıcıya yine Succeeded raporlanır — invalidasyon SONUCU maskelemez.
             Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
