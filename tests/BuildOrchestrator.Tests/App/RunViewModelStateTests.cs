@@ -795,8 +795,8 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- [Sync guard] Sync'in kendisi de çift tetiklenemez
     //
     // Ölçülen kusur: Sync düğmesi, Sync sürerken basılabilir kalıyordu. İkinci basış motora ikinci bir TAM
-    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış ÜÇ komut gönderir
-    // (sync + listBranches + listWorktrees) — konsolda aynı transkript iki kez akıyor, şerit
+    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış İKİ komut gönderir
+    // (sync + listBranches) — konsolda aynı transkript iki kez akıyor, şerit
     // Syncing → Idle → Syncing yapıyordu. Kapı iki pencereyi de kapsar: tıklama→syncStarted arası
     // (_syncRequested) ve syncStarted→syncCompleted arası (_syncInFlight).
 

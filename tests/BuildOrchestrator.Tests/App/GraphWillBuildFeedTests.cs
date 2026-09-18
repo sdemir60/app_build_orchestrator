@@ -95,7 +95,7 @@ public class GraphWillBuildFeedTests
     /// Kararları satırları KORUYARAK düşüren tek yol Settings'ten repo değişimidir ve ardından gelen Sync'in
     /// listeyi boşaltmadığı durum motorun erişilemez olduğu durumdur — iddia aynı, tetik o.</para></summary>
     [StaFact]
-    public void A_repository_change_drops_every_node_back_to_the_dashed_start_mode()
+    public async Task A_repository_change_drops_every_node_back_to_the_dashed_start_mode()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
@@ -108,8 +108,7 @@ public class GraphWillBuildFeedTests
         Assert.Equal(DsResources.TokenColor(window, "Brush.StatusSuccessText"), CoreColour(window, "Clean")); // ön-koşul
 
         vm.OnEngineUnavailable(System.IO.Path.Combine(dir.Path, "missing.exe")); // Sync gitmez, liste kalır
-        // Motor erişilemezken Save'in yolu senkron biter (await edilen bir gönderim yok).
-        _ = vm.ApplySettingsAsync([], System.IO.Path.Combine(dir.Path, "other-repo"), []);
+        await vm.ApplySettingsAsync([], System.IO.Path.Combine(dir.Path, "other-repo"), []);
         content.UpdateLayout();
 
         Assert.All(vm.Projects, r => Assert.Equal(VisualStatus.Unknown, r.VisualStatus)); // liste düştü

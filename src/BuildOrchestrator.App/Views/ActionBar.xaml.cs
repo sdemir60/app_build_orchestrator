@@ -137,25 +137,15 @@ public partial class ActionBar : UserControl
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged -= OnVmPropertyChanged;
-            _vm.Branches.CollectionChanged -= OnBranchesChanged;
-        }
+        // Chip değeri yalnız vm.Branch'i okur ve o PropertyChanged yayınlar — envanter aboneliği gerekmez.
+        if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
-        if (_vm is not null)
-        {
-            _vm.PropertyChanged += OnVmPropertyChanged;
-            _vm.Branches.CollectionChanged += OnBranchesChanged;
-        }
+        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         RefreshAll();
     }
-
-    private void OnBranchesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => RefreshBranch();
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

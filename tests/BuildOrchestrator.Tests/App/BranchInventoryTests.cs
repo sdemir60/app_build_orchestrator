@@ -150,7 +150,7 @@ public class BranchInventoryTests
     /// geçerlidir.</para>
     /// </summary>
     [Fact]
-    public void A_stale_branch_from_disk_is_refreshed_to_whatever_is_actually_checked_out()
+    public void A_stale_branch_value_is_refreshed_to_whatever_is_actually_checked_out()
     {
         var vm = NewVm();
         vm.Branch = "main"; // bayat değer
@@ -193,7 +193,7 @@ public class BranchInventoryTests
     // ---------------------------------------------------------------- chip kablosu (GERÇEK ActionBar)
 
     /// <summary>ÜRETİM SIRASI (A12 dersi): bar ÖNCE realize edilir, envanter SONRA akar — kablo ActionBar'ın
-    /// <c>Branches.CollectionChanged</c> + <c>PropertyChanged(Branch)</c> aboneliklerinden geçmek ZORUNDA.</summary>
+    /// <c>PropertyChanged(Branch)</c> aboneliğinden geçmek ZORUNDA.</summary>
     [StaFact]
     public void The_arriving_inventory_really_fills_the_branch_chip()
     {

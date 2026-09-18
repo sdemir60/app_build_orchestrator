@@ -9,8 +9,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// değiştirilir ve bir yayın <b>en çok BİR</b> bildirim üretir — içerik gerçekten aynıysa <b>HİÇ</b>.
 ///
 /// <para><b>Ölçülen kusur (bu tipin var oluş sebebi):</b> envanter eskiden öğe öğe uzlaştırılıyordu (sondan
-/// N kez <c>RemoveAt</c>, sonra N kez <c>Add</c>) — yani yayın başına <b>2N bildirim</b>. Envanterin birden çok
-/// abonesi var (<c>BranchPopover</c>, <c>ActionBar</c>) ve her biri
+/// N kez <c>RemoveAt</c>, sonra N kez <c>Add</c>) — yani yayın başına <b>2N bildirim</b>. Envanterin abonesi
+/// (<c>BranchPopover</c>; ölçüm anında dört abone vardı) ve her biri
 /// bildirim başına kendi görünümünü baştan kuruyor, yani O(n) iş yapıyor. Çarpım O(n²)'dir: gerçek OSYS
 /// reposunun 475 branch'inde (<c>refs/heads</c> + <c>refs/remotes</c>) Sync başına <b>~18–36 saniye</b> UI
 /// donması ölçüldü. Üstelik <c>SyncAsync</c> her Sync'te envanteri YENİDEN ister, dolayısıyla bu bedel

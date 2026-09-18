@@ -130,10 +130,6 @@
         <PathGeometry Figures="M18 9a9 9 0 0 1-9 9" />
     </GeometryGroup>
 
-    <!-- BuildApp.jsx:46 tree -->
-    <PathGeometry x:Key="Icon.Tree"
-                  Figures="M8 3v4a2 2 0 0 0 2 2h8 M8 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h2 M8 13h6a2 2 0 0 1 2 2v6" />
-
     <!-- Lucide arrow-down-to-line — "N behind" chip'i (design v1.16.0 §2.7-6a): uzak uçtan İNECEK
          commit'ler. <path d="M12 17V3"/> <path d="m6 11 6 6 6-6"/> <path d="M19 21H5"/> -->
     <GeometryGroup x:Key="Icon.ArrowDownToLine">
@@ -331,10 +327,9 @@
     <!-- design-v1.11.0 BuildApp.jsx:83 more — `fill="currentColor" stroke="none"` (grip ile aynı aile) -->
     <sys:Double x:Key="Icon.More.StrokeThickness">0</sys:Double>
 
-    <!-- strokeWidth="2" (BuildApp.jsx:45, :46, :49, :50, :54, :56, :62, :64, :65, :66, :69) -->
+    <!-- strokeWidth="2" (BuildApp.jsx:45, :49, :50, :54, :56, :62, :64, :65, :66, :69) -->
     <sys:Double x:Key="Icon.ArrowDownToLine.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Branch.StrokeThickness">2</sys:Double>
-    <sys:Double x:Key="Icon.Tree.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Sync.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Search.StrokeThickness">2</sys:Double>
     <sys:Double x:Key="Icon.Back.StrokeThickness">2</sys:Double>
