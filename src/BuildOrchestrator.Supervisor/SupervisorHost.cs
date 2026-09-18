@@ -20,21 +20,20 @@ namespace BuildOrchestrator.Supervisor;
 /// <summary>
 /// [A5/T69] Kök-yola (<c>RootPath</c>) bağlı Core servislerinin fabrikaları. Bu tipler kök başına kurulur
 /// çünkü komutlar kökü BERABERİNDE taşır — Supervisor tek bir repo'ya sabitlenmiş değildir. Kompozisyon kökü
-/// (<see cref="Program"/>) doldurur; testler izole cache/havuz kökleriyle kendi örneğini verir.
+/// (<see cref="Program"/>) doldurur; testler izole cache kökleriyle kendi örneğini verir.
 /// </summary>
 public sealed record WorkspaceServices(
     Func<string, SyncWorkspaceService> Sync,
     Func<string, GitService> Git,
-    Func<string, WorktreeManager> Worktree,
     Func<string, CleanWorkspaceService> Clean,
     Func<string, OptimizeWorkspaceService> Optimize)
 {
     /// <summary>Üretim bağlaması: gerçek <see cref="ProcessRunner"/>, <paramref name="cacheRoot"/>'taki
-    /// evaluation-cache + build-state + source-hash, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
+    /// evaluation-cache + build-state + source-hash.</summary>
     /// <param name="msbuildInvoker">[optimize] Restore child'ı için MSBuild toolset'ini LAZY çözen fabrika —
     /// koordinatörün kullandığı memoize edilmiş çözümle AYNI kaynaktan gelir (ikinci bir vswhere araması
     /// yapılmaz). Çözüm başarısız olursa Optimize düşmez, yalnız restore adımı atlanır (K-6).</param>
-    public static WorkspaceServices Default(string cacheRoot, string poolRoot,
+    public static WorkspaceServices Default(string cacheRoot,
         Func<CancellationToken, Task<IMsBuildInvoker>> msbuildInvoker)
     {
         // Defter yolları TEK yerde kurulur: iki servis de aynı dosyaları açar, adlar ikinci kez yazılmaz.
@@ -48,7 +47,6 @@ public sealed record WorkspaceServices(
                 new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
                 new SourceHashCache(sourceHashPath)),
             root => new GitService(new ProcessRunner(), root),
-            root => new WorktreeManager(new ProcessRunner(), root, poolRoot),
             // Clean git'e hiç dokunmaz ve csproj DEĞERLENDİRMEZ: bin/obj csproj'un yanındadır.
             _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(cacheRoot)),
             // Optimize git'e hiç dokunmaz ama csproj DEĞERLENDİRİR (HintPath'ler needy tespitini besler) ve
@@ -67,7 +65,7 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false)
 {
     /// <summary>[A13/B4] Test kancalarını açan Supervisor argümanı. <b>Değer almaz</b> (varlığı yeterlidir),
-    /// bu yüzden <c>--logs</c>/<c>--worktrees</c>'in isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
+    /// bu yüzden <c>--logs</c>'un isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
     /// <para>Bayrağın adının TEK sahibi burasıdır: <see cref="Program"/> onu ayrıştırırken, testler
     /// Supervisor'ı başlatırken ve aşağıdaki reddetme metni onu adlandırırken hep BU sabiti okur.</para></summary>
     public const string DebugHooksArg = "--debug-hooks";
@@ -128,10 +126,6 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await OptimizeWorkspaceAsync(o, ct); break;
             case ListBranchesCommand b:
                 await ListBranchesAsync(b, ct); break;
-            case ListWorktreesCommand w:
-                await WriteWorktreeListAsync(w.RootPath, ct); break;
-            case DeleteWorktreeCommand d:
-                await DeleteWorktreeAsync(d, ct); break;
             case SetPerfModeCommand p:
                 await ApplyPerfModeAsync(p, ct); break;
             case PullRepositoryCommand p:
@@ -283,30 +277,6 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             .Select(b => new BranchRef(b.Name, b.Sha, b.IsActive, b.IsRemote))
             .ToList();
         await writer.WriteAsync(new BranchListEvent(branches), ct);
-    }
-
-    /// <summary>[A5/T69] Havuz envanteri → <see cref="WorktreeListEvent"/>. <c>deleteWorktree</c> de silme
-    /// sonrası BUNU yeniden yayınlar, böylece App'in listesi ek bir komut gerekmeden tazelenir.</summary>
-    private async Task WriteWorktreeListAsync(string rootPath, CancellationToken ct)
-    {
-        var result = await workspace.Worktree(rootPath).ListWorktreesAsync(ct);
-        if (!result.Success)
-        { await writer.WriteAsync(new ErrorEvent("worktreeListFailed", result.Error!), ct); return; }
-
-        var worktrees = result.Value!
-            .Select(w => new Worktree(w.Name, w.Branch ?? "", w.Path, w.IsActive, w.SizeBytes))
-            .ToList();
-        await writer.WriteAsync(new WorktreeListEvent(worktrees), ct);
-    }
-
-    private async Task DeleteWorktreeAsync(DeleteWorktreeCommand cmd, CancellationToken ct)
-    {
-        // Ad doğrulaması (path traversal) Core'da: WorktreeManager.DeleteAsync → PathSanitizer.IsSafeSegment.
-        var result = await workspace.Worktree(cmd.RootPath).DeleteAsync(cmd.Name, ct);
-        if (!result.Success)
-        { await writer.WriteAsync(new ErrorEvent("worktreeDeleteFailed", result.Error!), ct); return; }
-
-        await WriteWorktreeListAsync(cmd.RootPath, ct);
     }
 
     /// <summary>

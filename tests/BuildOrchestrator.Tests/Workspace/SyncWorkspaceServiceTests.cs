@@ -308,8 +308,8 @@ public class SyncWorkspaceServiceTests
         Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
     }
 
-    /// <summary>Başka bir branch seçiliyken mesafe ÖLÇÜLMEZ: derleme worktree'den yapılır ve ana ağacın uzak
-    /// uçla mesafesi kullanıcıya bir şey söylemez (chip de çizilmez).</summary>
+    /// <summary>Başka bir branch seçiliyken mesafe ÖLÇÜLMEZ: o branch'in uzak uçla mesafesi çalışma ağacının
+    /// HEAD'iyle ölçülemez (chip de çizilmez).</summary>
     [Fact]
     public async Task No_distance_is_reported_when_the_selected_branch_is_not_the_active_one()
     {

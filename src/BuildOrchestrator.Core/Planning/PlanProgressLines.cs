@@ -13,8 +13,8 @@ namespace BuildOrchestrator.Core.Planning;
 /// adını görürdü.</para>
 ///
 /// <para><b>Neden run tarafında da yayınlanır:</b> Build'e basıldığında motor planlamayı yeniden koşar
-/// (Sync'ten bu yana çalışma ağacı değişmiş olabilir; ayrıca worktree hazırlığı ve <c>MSBuild.exe</c>
-/// çözümü YALNIZ burada vardır). O pencere eskiden TEK SATIR bile yazmıyordu: App konsolu temizliyor,
+/// (Sync'ten bu yana çalışma ağacı değişmiş olabilir; ayrıca <c>MSBuild.exe</c> çözümü YALNIZ burada
+/// vardır). O pencere eskiden TEK SATIR bile yazmıyordu: App konsolu temizliyor,
 /// şerit önceki metinde donuyordu — tıklamanın kaydedildiğine dair hiçbir kanıt yoktu.</para>
 ///
 /// <para>Metin İngilizce (uygulama İngilizce-only). Sayılar çağıranın elindeki gerçek plandan gelir;
@@ -22,12 +22,6 @@ namespace BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class PlanProgressLines
 {
-    /// <summary>Worktree hazırlığı (git) — planlamanın İLK adımı ve tek başına saniyeler sürebilir, bu yüzden
-    /// satır işin ÖNCESİNDE yazılır. Yalnız run yolunda görülür (Sync worktree hazırlamaz).</summary>
-    /// <param name="branch">Seçili branch; boşsa (aktif branch'in worktree'si) adsız biçim kullanılır.</param>
-    public static string PreparingWorktree(string? branch)
-        => string.IsNullOrWhiteSpace(branch) ? "Preparing worktree" : $"Preparing worktree for '{branch}'";
-
     /// <summary>Tarama bitti — sayı taramanın SONUCUDUR, bu yüzden satır işin ardından yazılır.</summary>
     public static string ScanningSolutions(int solutions) => $"Scanning solutions ({solutions})";
 

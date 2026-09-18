@@ -58,7 +58,7 @@ public sealed class FastForwardUpdater
     private static readonly TimeSpan QueryTimeout = TimeSpan.FromSeconds(30);
 
     /// <summary>Fast-forward merge çalışma ağacını yeniden yazar; büyük bir harici repoda bu uzun sürebilir —
-    /// <c>WorktreeManager</c>'ın mutasyon tavanıyla aynı 5 dakika.</summary>
+    /// tavan 5 dakika.</summary>
     private static readonly TimeSpan MergeTimeout = TimeSpan.FromMinutes(5);
 
     private readonly IProcessRunner _runner;
@@ -188,8 +188,7 @@ public sealed class BranchSwitcher
     private readonly GitService _git;
 
     /// <param name="runner">Process çalıştırıcı.</param>
-    /// <param name="rootPath">Checkout uygulanacak çalışma kopyasının kökü — bugün yalnız ana repo (worktree
-    /// havuzu Task 3'te kalkar).</param>
+    /// <param name="rootPath">Checkout uygulanacak çalışma kopyasının kökü — ana repo.</param>
     /// <param name="gitExecutable">git yürütülebiliri; testler için değiştirilebilir.</param>
     public BranchSwitcher(IProcessRunner runner, string rootPath, string gitExecutable = "git")
     {

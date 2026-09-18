@@ -169,7 +169,7 @@ public class RunCoordinatorTests
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
-            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
+            BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
@@ -186,7 +186,6 @@ public class RunCoordinatorTests
                 innerJob: Job,
                 nowMs: () => Volatile.Read(ref _now),
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
-                worktreeObjRootResolver: worktreeObjRootResolver,
                 stateStore: stateStore,
                 cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
@@ -355,7 +354,7 @@ public class RunCoordinatorTests
     }
 
     /// <summary>
-    /// [planlama görünürlüğü] Taze bir segmentte planlama (worktree hazırlığı → tarama → graf → topo →
+    /// [planlama görünürlüğü] Taze bir segmentte planlama (tarama → graf → topo →
     /// incremental) <c>runStarted</c>'tan ÖNCE koşar ve 177 projelik bir workspace'te saniyeler sürer. O
     /// pencere eskiden TEK event bile üretmiyordu: App konsolu temizleyip <c>IsStarting</c>'e giriyor,
     /// şerit önceki metinde donuyordu — "Build'e bastım hiçbir şey olmadı".
@@ -558,32 +557,6 @@ public class RunCoordinatorTests
         Assert.Empty(events.OfType<RunCompletedEvent>()); // ...bu yüzden runCompleted da yok
     }
 
-    [Fact]
-    public async Task worktree_preparation_failure_on_a_different_branch_ends_the_run_as_planFailed_and_never_starts_it()
-    {
-        // [Fix wave 1 — Finding 3] Seçili branch aktif branch'ten FARKLIYSA worktree ZORUNLUDUR (K1): hazırlık
-        // başarısız olursa in-place'e DÜŞÜLEMEZ — aksi halde "X'i derle" denmişken sessizce kullanıcının kirli
-        // aktif branch'i derlenirdi. Program.PrepareAsync bunu WorktreePreparationException ile bildirir; burada
-        // kanıtlanan, koordinatörün onu MEVCUT run-bitiren hata kanalına (planFailed — App'in
-        // RunEndingErrorCodes kümesindeki kod) çevirdiği ve run'ın HİÇ başlamadığıdır.
-        const string message = "Cannot build branch 'feature-x': it is not the branch checked out in the workspace, "
-            + "so it must be built in an isolated worktree (the active branch is never checked out). "
-            + "Worktree preparation failed: fatal: 'C:/pool/feature-x-1' already exists";
-        Func<StartRunCommand, Action<string>, RunPlan> failingPlanner = (_, _) => throw new WorktreePreparationException(message);
-        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), failingPlanner);
-
-        await h.Sut.StartAsync(Start(), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
-        Assert.Equal("planFailed", err.Code); // "runFailed" (beklenmeyen iç hata) DEĞİL — kasıtlı, tanımlı red
-        Assert.Equal(message, err.Message);   // kullanıcı hangi branch'in ve NEDEN derlenmediğini görür
-        Assert.Empty(h.Events.OfType<RunStartedEvent>());   // run hiç başlamadı → yanlış branch DERLENMEDİ
-        Assert.Empty(h.Events.OfType<RunCompletedEvent>());
-    }
-
-
-
     // ---------------------------------------------------------------- 6) tek seferde tek run
 
     [Fact]
@@ -631,7 +604,7 @@ public class RunCoordinatorTests
         Assert.Equal([1, 2, 3, 4], logs.Select(l => l.LineNumber)); // komut satırı + 3 çıktı satırı, ardışık
 
         string expectedCommandLine = WindowsCommandLine.Build(FakeMsBuildExe,
-            [.. MsBuildArguments.Build(Id("A"), "Debug", baseIntermediateOutputPath: null)]);
+            [.. MsBuildArguments.Build(Id("A"), "Debug")]);
         Assert.Equal(expectedCommandLine, logs[0].Text);
 
         string[] diskLines = File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id("A")));
@@ -741,8 +714,7 @@ public class RunCoordinatorTests
         Assert.Empty(received.OfType<ProjectSkippedEvent>()); // pre-skip YOK
         Assert.Equal(["X", "Y"], received.OfType<ProjectStartedEvent>().Select(e => NameOf(e.ProjectId)).Distinct());
         // Satırlar PAYLAŞILAN kaynaktan (PlanProgressLines — Sync ile aynı) ve GERÇEK sayılarla gelir:
-        // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur. Worktree satırı YOK: komut
-        // UseWorktree=false + Branch="" taşır, yani hazırlık in-place erken-dönüşüyle hiç koşmaz.
+        // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur.
         Assert.Equal(
         [
             PlanProgressLines.ScanningSolutions(0),
@@ -797,108 +769,10 @@ public class RunCoordinatorTests
         Assert.True(a.NeedsRestore);                                  // packages.config yanında
         Assert.Equal(root, a.SolutionDir);                            // SolutionDirResolver: sln'in dizini
         Assert.Equal("Release", a.Configuration);
-        Assert.Null(a.BaseIntermediateOutputPath);                    // I2-K2: It-2'de obj izolasyonu YOK
 
         var b = Assert.Single(invoker.Requests, r => r.ProjectId == bId);
         Assert.False(b.NeedsRestore);
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
-        Assert.Null(b.BaseIntermediateOutputPath);
-    }
-
-    // ---------------------------------------------------------------- 11) worktree obj-izolasyonu (Task 10 / I2-K2)
-
-    [Fact]
-    public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
-    {
-        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) üretimde
-        // Program.cs'in planner'ında yapılır (A4) — burada koordinatörün kendi sözleşmesi izole test edilir:
-        // "worktree kökü biliniyorsa proje başına izole obj".
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
-        var plan = PlanOf(Node("A"), Node("B"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "A");
-        var b = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "B");
-        Assert.NotNull(a.BaseIntermediateOutputPath);
-        Assert.NotNull(b.BaseIntermediateOutputPath);
-        Assert.NotEqual(a.BaseIntermediateOutputPath, b.BaseIntermediateOutputPath); // farklı proje → farklı izole path
-        Assert.Equal(WorktreeObjPathResolver.Resolve(worktreeRoot, a.ProjectId), a.BaseIntermediateOutputPath); // deterministik şema
-        Assert.StartsWith(worktreeRoot, a.BaseIntermediateOutputPath!, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // resolver opsiyoneldir: yoksa in-place obj
-    {
-        var plan = PlanOf(Node("A"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker); // worktreeObjRootResolver verilmedi
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests);
-        Assert.Null(a.BaseIntermediateOutputPath); // resolver yoksa UseWorktree=true bile null'a düşer
-    }
-
-    [Fact]
-    public async Task in_place_run_ignores_a_supplied_resolver_and_stays_null() // UseWorktree=false her zaman kazanır
-    {
-        var plan = PlanOf(Node("A"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker,
-            worktreeObjRootResolver: _ => @"c:\should-not-be-used"); // UseWorktree=false olduğu için hiç ÇAĞRILMAMALI
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default); // UseWorktree varsayılan false
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests);
-        Assert.Null(a.BaseIntermediateOutputPath);
-    }
-
-    [Fact]
-    public async Task Every_run_resolves_its_own_worktree_obj_root_from_its_own_command()
-    {
-        // [A4 · DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resolver YALNIZ taze run'da çağrılır,
-        // Continue segmenti 1. segmentin kökünü MİRAS ALIR" — miras, App'in Continue'yu UseWorktree=false ile
-        // yollamasından doğan bir yarım-run riskini kapatıyordu. Continue kaldırıldı: her koşu tazedir ve
-        // kendi komutundaki bayraktan kendi kökünü çözer, dolayısıyla bir koşunun yarısı asla farklı bir obj
-        // köküne düşemez. Bu test artık bunu pinler.
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-continue-" + Guid.NewGuid().ToString("N"));
-        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
-        var resolverCalls = new List<StartRunCommand>();
-        var inFlight = Signal();
-        var release = Signal();
-        var invoker = new FakeInvoker(async (req, _, _) =>
-        {
-            if (NameOf(req.ProjectId) != "A") return Ok();
-            inFlight.TrySetResult();
-            await release.Task; // 1. segment A'da duruyorken Stop → B/C/D Queued kalır
-            return Ok();
-        });
-        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd =>
-        {
-            lock (resolverCalls) resolverCalls.Add(cmd);
-            return worktreeRoot;
-        });
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await inFlight.Task.WaitAsync(Limit);
-        h.Sut.TryRequestStop(StopKind.Graceful);
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        // İkinci koşu da worktree ister → kendi kökünü kendi çözer.
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        Assert.All(invoker.Requests,
-            r => Assert.StartsWith(worktreeRoot, r.BaseIntermediateOutputPath!, StringComparison.Ordinal));
-        Assert.Equal(2, resolverCalls.Count);                   // her koşu resolver'a kendi komutuyla gider
-        Assert.All(resolverCalls, c => Assert.True(c.UseWorktree));
     }
 
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
@@ -1023,7 +897,7 @@ public class RunCoordinatorTests
             var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
             var plan = PlanOf(node);
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-            using var h = new Harness(plan, invoker); // worktreeObjRootResolver YOK → in-place
+            using var h = new Harness(plan, invoker);
 
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -1072,13 +946,19 @@ public class RunCoordinatorTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>
+    /// Bayat-obj teşhisi incremental Build koşusunda da çalışır: her koşu projenin KENDİ (varsayılan) obj'inde
+    /// derlendiği için teşhis her koşuda anlamlıdır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "worktree koşusu, projenin varsayılan
+    /// obj'i bayat olsa bile UYARMAZ" idi (<c>worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale</c>):
+    /// worktree koşusu obj'i havuza yönlendirdiği için varsayılan obj hiç okunmuyordu. Worktree modu kalktı;
+    /// artık her koşu varsayılan obj'dedir, dolayısıyla muafiyetin konusu da kalmadı.</para>
+    /// </summary>
     [Fact]
-    public async Task worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale()
+    public async Task A_run_warns_about_a_stale_default_obj()
     {
-        // [I2-K2/Task 10] worktree run izole obj kullanır (BaseIntermediateOutputPath worktree altına yönlenir) —
-        // projenin KENDİ (default) obj'i hiç okunmaz/derlenmez, bu yüzden bayat-obj teşhisi anlamsızdır.
         string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-wt-" + Guid.NewGuid().ToString("N"));
         try
         {
             string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
@@ -1086,12 +966,12 @@ public class RunCoordinatorTests
             var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
             var plan = PlanOf(node);
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-            using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+            using var h = new Harness(plan, invoker);
 
-            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1, UseWorktree: true), default);
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Single(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1226,40 +1106,6 @@ public class RunCoordinatorTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-
-    /// <summary>
-    /// AYIRT EDİCİ — worktree koşusunda <b>App'e giden her şey ANA KÖK kimliğini taşır; yalnız MSBuild
-    /// worktree'deki dosyayı açar.</b>
-    ///
-    /// <para>Kimlik bu kod tabanında tam csproj yoludur, dolayısıyla farklı bir branch'e build alındığında
-    /// tarama worktree'de yapılır ve aynı proje bambaşka bir kimlik kazanırdı. Sonuç: önizleme worktree
-    /// id'leriyle yayılıp App'te KOPYA satırlar üretiyor, build-state kayıtları worktree yoluyla yazılıp bir
-    /// sonraki in-place Sync tarafından bulunamıyordu. Kimlik artık planlamada ana köke taşınır
-    /// (<see cref="ProjectIdentityRebase"/>) ve fiziksel yol ayrı bir haritada durur.</para>
-    /// </summary>
-    [Fact]
-    public async Task A_worktree_run_reports_main_root_identities_and_builds_the_worktree_file()
-    {
-        string mainId = Path.Combine(Path.GetTempPath(), "bo-main", "A", "A.csproj");
-        string treeId = Path.Combine(Path.GetTempPath(), "bo-tree", "A", "A.csproj");
-        var plan = new RunPlan(
-            new BuildPlan([Node("A") with { Id = mainId, ProjectPath = mainId }], Cycles: [], Configuration: "Debug"),
-            EmptyRefs(),
-            BuildPathById: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [mainId] = treeId });
-
-        string? invokedPath = null;
-        var invoker = new FakeInvoker((req, _, _) => { invokedPath = req.ProjectId; return Task.FromResult(Ok()); });
-        using var h = new Harness(plan, invoker);
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        Assert.Equal(treeId, invokedPath);                                   // derlenen dosya worktree'de
-        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectStartedEvent>()).ProjectId);
-        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
-        Assert.All(h.Events.OfType<BuildPreviewEvent>().SelectMany(e => e.Items),
-            item => Assert.Equal(mainId, item.ProjectId));                   // App worktree yolunu HİÇ görmez
-    }
 
     [Fact]
     public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()

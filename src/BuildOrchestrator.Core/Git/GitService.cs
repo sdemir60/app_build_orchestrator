@@ -62,7 +62,7 @@ public sealed record GitRepoState
 /// <summary>
 /// [T11] <see cref="IProcessRunner"/> tabanlı git wrapper: HEAD commit, current branch, dirty paths, branch
 /// listesi sorguları + edge tespiti (no-commits/detached HEAD/shallow clone) + [T69/K1] Sync'in ilk adımı
-/// olan ref-only fetch (<see cref="FetchRefOnlyAsync"/>). Worktree add (Task 9) burada YOK. Her metot
+/// olan ref-only fetch (<see cref="FetchRefOnlyAsync"/>). Her metot
 /// process spawn edip git.exe'yi çağırır; git bulunamazsa (<see cref="Win32Exception"/>) ya da beklenmeyen
 /// bir başlatma hatası olursa (<see cref="InvalidOperationException"/>, bkz. <see
 /// cref="IProcessRunner.RunAsync"/>) exception YUKARI SIZMAZ — <see cref="GitResult{T}.Fail"/> olarak döner.

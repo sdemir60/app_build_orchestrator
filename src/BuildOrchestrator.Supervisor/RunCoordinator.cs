@@ -20,13 +20,8 @@ namespace BuildOrchestrator.Supervisor;
 /// (<c>SolutionDirResolver</c> için gereklidir; <see cref="ProjectNode.SolutionNames"/> yalnız AD taşır, YOL taşımaz).
 /// Planlama TAMAMEN Core'da yapılır [D3]; koordinatör yalnız çalıştırır — bu tip iki Core çıktısını bir arada taşır.
 /// </summary>
-/// <param name="BuildPathById">[worktree] Proje KİMLİĞİ → MSBuild'e verilecek GERÇEK csproj yolu. Worktree
-/// koşusunda kimlikler ana repo köküne taşınır (<c>ProjectIdentityRebase</c>) — imza, state, event'ler ve App
-/// hep ana kökü görür; yalnız derlemenin kendisi worktree'deki dosyayı açar. In-place koşuda boş: kimlik
-/// zaten fiziksel yoldur.</param>
 public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
-    IncrementalPlan? Incremental = null,
-    IReadOnlyDictionary<string, string>? BuildPathById = null);
+    IncrementalPlan? Incremental = null);
 
 /// <summary>
 /// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
@@ -94,18 +89,6 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
 /// asla stdout'a yazılmaz.</param>
-/// <param name="worktreeObjRootResolver">
-/// [I2-K2/It-3 Task 10 · A4] <c>cmd.UseWorktree</c>=true iken bu run için kullanılacak worktree kökünü döner
-/// (null dönerse in-place gibi davranılır — obj izole EDİLMEZ). [A4] Worktree'nin GERÇEKTEN hazırlanması
-/// (<c>WorktreeManager.PrepareWorktreeAsync</c>) Program.cs'te <c>planner</c>'ın İÇİNDE yapılır; bu resolver
-/// yalnız orada çözülmüş kökü okur ve bu yüzden <b>planner'dan SONRA</b> çağrılır. YALNIZ taze (Rebuild/Build)
-/// run başında bir kez çağrılır (bkz. <c>_worktreeObjRoot</c>).
-/// Parametre isteğe bağlıdır; verilmezse (varsayılan <c>null</c>) her zaman in-place obj kullanılır.
-/// Verildiğinde, dönen kök
-/// <see cref="Core.MsBuild.WorktreeObjPathResolver.Resolve"/> ile proje-Id başına izole bir
-/// <c>BaseIntermediateOutputPath</c>'e çevrilir — obj PAYLAŞILMAZ (bayat-obj zehri, SPIKE-proven
-/// OSYS.Types.NewSales.Print vakası).
-/// </param>
 /// <param name="cpuGovernor">
 /// [T20-b/K11] Perf profilinin CPU cap + priority yarısının uygulandığı seam. Varsayılan (null) ⇒
 /// <paramref name="innerJob"/>'ın KENDİSİ — yani cap DAİMA yalnız inner job'a uygulanır (App'in outer job'ına
@@ -128,7 +111,6 @@ public sealed class RunCoordinator(
     JobObject innerJob,
     Func<long> nowMs,
     Action<string> console,
-    Func<StartRunCommand, string?>? worktreeObjRootResolver = null,
     BuildStateStore? stateStore = null,
     ICpuGovernor? cpuGovernor = null,
     Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : IDisposable
@@ -170,9 +152,6 @@ public sealed class RunCoordinator(
     private RunPlan? _plan;
     private string? _root;
     private RunLogWriter? _logs;
-    // [A4] Bu run için ÇÖZÜLMÜŞ worktree obj kökü (null ⇒ in-place); run başında BİR KEZ resolver'dan
-    // hesaplanır.
-    private string? _worktreeObjRoot;
     // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları.
     private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
     // [Task-13] projectId → Failed'a düştüğü AN ki reason "stopped" mıydı (torn-DLL guard). RunSnapshot/BuildResult
@@ -676,9 +655,6 @@ public sealed class RunCoordinator(
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         ConcurrentDictionary<string, byte> stoppedFailedIds;
-        // [I2-K2/Task 10 · A4] Bu segmentin obj kökü: taze run'da resolver'dan hesaplanır ve run state'ine
-        // yazılır, resume yolunda AYNI run'ın saklanan kökünden okunur (bkz. _worktreeObjRoot).
-        string? worktreeObjRoot;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
         // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild'de boş kalır.
@@ -692,17 +668,15 @@ public sealed class RunCoordinator(
         Dictionary<string, string> nameById;
 
         {
-            // [Fix wave 1 — Finding 3] WorktreePreparationException: planner (Program.BuildRunPlan) seçili
-            // branch AKTİF branch'ten farklıyken worktree'yi hazırlayamadı. Worktree o durumda zorunludur
-            // (K1) — in-place'e düşmek YANLIŞ branch'i derlemek olurdu, bu yüzden run HİÇ BAŞLAMAZ. Ayrı bir
-            // kanal AÇILMAZ: mevcut planlama-hatası kodu (planFailed) kullanılır — App'in RunEndingErrorCodes
-            // kümesi onu zaten tanır (mesaj kullanıcıya gösterilir, Build butonu geri açılır).
+            // Planlama hataları (I/O, harici hazırlık) ayrı bir kanal AÇMAZ: mevcut planlama-hatası kodu
+            // (planFailed) kullanılır — App'in RunEndingErrorCodes kümesi onu zaten tanır (mesaj kullanıcıya
+            // gösterilir, Build butonu geri açılır).
             // [planlama görünürlüğü] Planlayıcının adım satırları AYNI FIFO kanaldan gider: sıra korunur,
             // yani hepsi aşağıdaki runStarted'dan ÖNCE App'e ulaşır. TryWrite unbounded kanalda hiç bloklamaz —
             // planlayıcı senkron çalıştığı için bu şarttır.
             try { runPlan = planner(cmd, line => events.TryWrite(new PlanProgressEvent(line))); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
-                or WorktreePreparationException or ExternalPreparationException)
+                or ExternalPreparationException)
             { events.TryWrite(new ErrorEvent("planFailed", ex.Message)); return; }
 
             // [tek proje · design v1.11.0 §3.8] Satırdan tetiklenen koşu: plan TEK düğüme iner — bağımlılıklar
@@ -722,18 +696,11 @@ public sealed class RunCoordinator(
                 { [scope.Target.Id] = scope.StaleDependencies };
             }
 
-            // [I2-K2/Task 10 · A4] cmd.UseWorktree=false → HER ZAMAN null (in-place, VS-parity). true iken
-            // resolver YOKSA (ör. testlerin basit harness'ı) yine null'a düşer — obj izolasyonu ancak resolver
-            // GERÇEK bir worktree kökü döndürdüğünde devreye girer. Planner'dan SONRA çağrılır: Program.cs'te
-            // worktree'yi HAZIRLAYAN taraf planner'dır, resolver yalnız onun çözdüğü kökü okur.
-            worktreeObjRoot = cmd.UseWorktree ? worktreeObjRootResolver?.Invoke(cmd) : null;
-
             lock (_gate)
             {
                 _logs?.Dispose(); // terk edilmiş (artık sürdürülmeyecek) önceki run'ın writer'ı
                 _plan = runPlan;
                 _root = Canonical(cmd.RootPath);
-                _worktreeObjRoot = worktreeObjRoot;
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
                 depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
@@ -854,13 +821,10 @@ public sealed class RunCoordinator(
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
-        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi YALNIZ taze (Rebuild/Build)
-        // koşuda VE in-place (worktreeObjRoot null — izole obj YOK) projeler için tetiklenir:
-        // worktree run'ları zaten PAYLAŞILMAYAN izole obj
-        // kullanır (bayat-obj zehri worktree'de oluşamaz). onRetry ile AYNI ikili-yazım deseni: hem decision.log
+        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her taze koşuda tetiklenir:
+        // her proje kendi varsayılan obj'inde derlenir. onRetry ile AYNI ikili-yazım deseni: hem decision.log
         // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
-        if (worktreeObjRoot is null)
-            StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
+        StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
 
         int parallelism = Math.Max(1, cmd.Parallelism);
         // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
@@ -983,7 +947,6 @@ public sealed class RunCoordinator(
 
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs,
-                runPlan.BuildPathById ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 nodeById,
                 scheduler, wake, logs, events,
                 // Retry politikası Core'un [T8]; burada yalnız run'a bağlanır: onRetry hem decision.log'a hem konsola.
@@ -994,7 +957,6 @@ public sealed class RunCoordinator(
                     onRetry: message => { Decide(logs, message); console(message); },
                     cpuFloor: new CoordinatorCpuFloor(this)),
                 toolset.MsBuildExePath,
-                worktreeObjRoot,
                 depIssuesById, // [T54]
                 stoppedFailedIds, // [Task-13]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
@@ -1065,8 +1027,7 @@ public sealed class RunCoordinator(
             // ne derleyeceğini persist edilmiş BuildState'ten bulur (öldürülen/başarısız projeler geçersiz,
             // yeşil bitenler güncel).
             // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-            // [A4] _worktreeObjRoot da temizlenir: taze run onu her defasında yeniden yazar (hijyen).
-            lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; _worktreeObjRoot = null; }
+            lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; }
             logs.Dispose();
         }
     }
@@ -1701,24 +1662,13 @@ public sealed class RunCoordinator(
     private async Task<InvokeOutcome> InvokeOnceAsync(
         RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
     {
-        // [worktree] KİMLİKTEN FİZİKSEL YOLA geçilen TEK nokta burasıdır: worktree koşusunda kimlikler ana
-        // repo köküne taşınmıştır (ProjectIdentityRebase) ve derlenecek dosya başka bir dizindedir. Diğer her
-        // şey — scheduler, event'ler, önizleme, persist, decision.log, log adlandırma — kimlikle akar.
-        string buildPath = run.BuildPathById.GetValueOrDefault(projectId, projectId);
+        // Proje kimliği (tam csproj yolu) derlenen dosyanın kendisidir; proje kendi (VS-parity) obj'inde derlenir.
         var request = new MsBuildInvokeRequest(
-            ProjectId: buildPath,
+            ProjectId: projectId,
             Configuration: run.Configuration,
-            SolutionDir: SolutionDirResolver.Resolve(buildPath, run.SolutionRefs.GetValueOrDefault(projectId, [])),
+            SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
             // Clean hiçbir şey derlemez: paket restore'u onun için anlamsız bir bekleme olurdu.
-            NeedsRestore: run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(buildPath),
-            // [I2-K2/Task 10] worktree kökü verilmişse proje-Id başına izole obj; aksi halde in-place =
-            // projenin kendi (VS-parity) obj'i — bkz. RunCoordinator ctor'daki worktreeObjRootResolver doc'u.
-            // [design v1.14.0 §9] HARİCİ projeler bu izolasyonun DIŞINDADIR: izolasyon worktree havuzuna
-            // aittir ve harici çalışma kopyası orada yaşamaz — worktree'li bir koşuda bile harici proje kendi
-            // yerinde, kendi obj'iyle derlenir.
-            BaseIntermediateOutputPath: run.WorktreeObjRoot is not null && !IsExternal(run, projectId)
-                ? WorktreeObjPathResolver.Resolve(run.WorktreeObjRoot, projectId)
-                : null,
+            NeedsRestore: run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(projectId),
             Target: run.MsBuildTarget);
 
         // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır: OpenProjectLog
@@ -1804,8 +1754,7 @@ public sealed class RunCoordinator(
             yield return WindowsCommandLine.Build(msbuildExePath,
                 [.. MsBuildArguments.RestorePackagesConfig(request.ProjectId, request.SolutionDir)]);
         yield return WindowsCommandLine.Build(msbuildExePath,
-            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath,
-                request.Target)]);
+            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.Target)]);
     }
 
     /// <summary>
@@ -1999,8 +1948,6 @@ public sealed class RunCoordinator(
         string RunId,
         string Configuration,
         IReadOnlyDictionary<string, IReadOnlyList<SolutionRef>> SolutionRefs,
-        // [worktree] Kimlik → derlenecek GERÇEK csproj yolu (bkz. RunPlan.BuildPathById). Boş ⇒ kimlik = yol.
-        IReadOnlyDictionary<string, string> BuildPathById,
         IReadOnlyDictionary<string, ProjectNode> NodeById,
         ReadySetScheduler Scheduler,
         WakeSignal Wake,
@@ -2008,8 +1955,6 @@ public sealed class RunCoordinator(
         ChannelWriter<IpcEvent> Events,
         IMsBuildInvoker Invoker,
         string MsBuildExePath,
-        // [I2-K2/Task 10] worktree run + resolver'ın döndüğü kök (bkz. RunCoordinator ctor doc); null ⇒ in-place obj.
-        string? WorktreeObjRoot,
         // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
         // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
         ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,

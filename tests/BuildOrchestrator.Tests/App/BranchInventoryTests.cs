@@ -179,14 +179,17 @@ public class BranchInventoryTests
 
     /// <summary>
     /// <b>[T2 fix-1 · C1 — regresyon (a)]</b> Bayat <c>Branch</c> + farklı aktif branch senaryosunda chip
-    /// <c>"off"</c> göstermez ve komuta <c>UseWorktree=true</c> gider.
+    /// <c>"off"</c> göstermez.
     ///
     /// <para>Not: C1 fix'i bu senaryoyu KÖKÜNDEN de kapatır (bayat değer tazelenir). Bu test, zorlamanın
-    /// gerçekten oluştuğu yoldan — AÇIK seçim — aynı değişmezi sürer: <b>forced ⇒ UI ve komut worktree
-    /// gösterir</b>.</para>
+    /// gerçekten oluştuğu yoldan — AÇIK seçim — aynı değişmezi sürer: <b>forced ⇒ UI worktree gösterir</b>.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "komuta da <c>UseWorktree=true</c> +
+    /// seçili branch gider" idi. Motor artık yalnız çalışma ağacında derler ve <c>StartRunCommand</c> branch /
+    /// worktree alanı taşımaz (<c>NoWorktreeSurfaceTests</c>); iddianın komut yarısı bu yüzden düştü.</para>
     /// </summary>
     [StaFact]
-    public async Task A_forced_worktree_is_never_displayed_or_sent_as_off()
+    public void A_forced_worktree_is_never_displayed_as_off()
     {
         var vm = NewVm();
         var host = DsResources.NewHost();
@@ -200,14 +203,6 @@ public class BranchInventoryTests
         Assert.True(vm.IsWorktreeForced);
         Assert.True(vm.EffectiveUseWorktree);
         Assert.DoesNotContain("off", ChipTexts(bar));   // chip "off" DEMEZ
-
-        StartRunCommand? sent = null;
-        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
-        await vm.BuildCommand.ExecuteAsync(null);
-
-        Assert.NotNull(sent);
-        Assert.True(sent.UseWorktree);                  // motora da worktree gider
-        Assert.Equal("feature/x", sent.Branch);         // açık seçim NİYET olarak gider
         GC.KeepAlive(window);
     }
 
@@ -246,34 +241,6 @@ public class BranchInventoryTests
 
         Assert.False(vm.IsWorktreeForced);
         Assert.False(vm.EffectiveUseWorktree);
-    }
-
-    // -------------------------------------------------- C1/I4 (c): in-place Build hâlâ koşar
-
-    /// <summary>
-    /// <b>[T2 fix-1 · I4 — regresyon (c)]</b> Açık seçim YOKKEN <see cref="StartRunCommand.Branch"/> BOŞ gider.
-    ///
-    /// <para>Neden kritik: Supervisor bu alanı bir NİYET olarak okur. Dolu gelirse (a) worktree zorunlu olur
-    /// (<c>Program.cs:215-216</c>) ve (b) "aktif branch çözülemedi" (detached HEAD / bozuk git) durumu
-    /// <c>warn + in-place</c> yerine run'ı HİÇ BAŞLATMAYAN bir hataya düşer (<c>:207-208</c>). Boş gitmesi,
-    /// <c>Program.cs:183</c>'ün "toggle kapalı + branch boş ⇒ tek git çağrısı bile yapmadan in-place" dalını
-    /// korur — yani detached HEAD'de de in-place Build koşmaya devam eder.</para>
-    /// </summary>
-    [Fact]
-    public async Task Without_an_explicit_choice_the_run_command_carries_no_branch_intent()
-    {
-        var vm = NewVm();
-        vm.OnEvent(new BranchListEvent(Inventory())); // Branch görüntüleme değeri "main" olur…
-        Assert.Equal("main", vm.Branch);
-        Assert.False(vm.BranchChosenByUser);
-
-        StartRunCommand? sent = null;
-        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
-        await vm.BuildCommand.ExecuteAsync(null);
-
-        Assert.NotNull(sent);
-        Assert.Equal("", sent.Branch);      // …ama NİYET boş gider (in-place korunur)
-        Assert.False(sent.UseWorktree);
     }
 
     /// <summary>Sync ise görüntüleme değerini KULLANIR — orada branch yalnız <c>git fetch origin &lt;ref&gt;</c>'in

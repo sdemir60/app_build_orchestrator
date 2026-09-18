@@ -75,9 +75,6 @@ public enum DependentMode { Safe, Fast }
 /// §4 gereği DLL/bin timestamp'i okunmadığından defter, diskte çıktı olup olmadığını bilen tek yerdir ve
 /// kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Bugün yalnız satır menüsünden,
 /// <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
-/// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
-/// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
-/// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>
@@ -110,8 +107,10 @@ public enum DependentMode { Safe, Fast }
 /// dep-issue olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu
 /// bayat bir DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi
 /// derlenir; döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
+/// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür.</remarks>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
-    string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
+    DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
     IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
     string? ScopeProjectId = null) : IpcCommand;
@@ -210,12 +209,15 @@ public sealed record OptimizeWorkspaceCommand(
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 
-/// <summary>[A5/T69] Worktree havuzunun envanterini iste (yanıt: <see cref="WorktreeListEvent"/>). SALT-OKUR.</summary>
+/// <summary>[A5/T69] Worktree havuzunun envanterini iste (yanıt: <see cref="WorktreeListEvent"/>). SALT-OKUR.
+/// [spec 2026-09-18 §1-1] Motor worktree modunu bıraktı ve bu komutu artık tanımaz
+/// (<c>error(unknownCommand)</c>); tip App'teki son kullanıcısıyla birlikte kalkar.</summary>
 public sealed record ListWorktreesCommand(string RootPath) : IpcCommand;
 
 /// <summary>[A5/T69] Havuzdaki tek bir worktree'yi sil; ardından güncel envanter (<see cref="WorktreeListEvent"/>)
-/// yayınlanır. <paramref name="Name"/> havuz kökü altındaki DİZİN ADIDIR (yol değil) — Core tarafında
-/// <c>PathSanitizer.IsSafeSegment</c> ile doğrulanır.</summary>
+/// yayınlanır. <paramref name="Name"/> havuz kökü altındaki DİZİN ADIDIR (yol değil).
+/// [spec 2026-09-18 §1-1] Motor bu komutu artık tanımaz (<c>error(unknownCommand)</c>); tip App'teki son
+/// kullanıcısıyla birlikte kalkar.</summary>
 public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCommand;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
@@ -312,7 +314,7 @@ public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 /// <summary>[planlama görünürlüğü] Bir run'ın TAZE segmentinde, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
-/// planlama penceresinin adım satırı (worktree hazırlığı → tarama → graf → topo → incremental → MSBuild
+/// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
 /// kaynak. <c>syncProgress</c>'ten AYRI bir kanaldır: bu pencere Sync DEĞİLDİR ve App'in Sync yüzeyini
 /// (<c>_syncInFlight</c>) hiç ilgilendirmez.</summary>
@@ -451,7 +453,7 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// cref="SyncCompletedEvent.TargetSha"/>'dir. <b>Hiç derlenmemiş</b> (build-state kaydı olmayan) proje ⇒
 /// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
 /// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
-/// (bu: derleme anındaki yerel/worktree HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
+/// (bu: derleme anındaki yerel HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
 /// <param name="Reason">[gerekçe] <see cref="WillBuild"/> kararının NEDENİ — kart, will-build noktasının
 /// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
 /// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —

@@ -938,11 +938,9 @@ public sealed partial class RunViewModel : ObservableObject
         }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
-        // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
-        // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
-        // hiç başlatmıyordu).
+        // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
+            DependentMode.Safe, LayerPatterns, PerfMode,
             ExternalProjectsForWire, UpdateExternals, scopeProjectId);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {

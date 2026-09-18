@@ -2,10 +2,10 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
-using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -28,9 +28,12 @@ namespace BuildOrchestrator.Tests.Integration;
 /// <item><b>Minimal rebuild (L1→L3 dirty):</b> kurulu state üstünde TEK bir projenin kaynağı "dirty" simüle
 ///   edilir (OSYS working tree'ye DOKUNULMADAN — sentetik dirty path) → yalnız o proje + transitive dependent'ları
 ///   WillBuild=true, ilgisiz projeler skip kalır. (Gerçek OSYS grafı + gerçek committed hash'ler + gerçek state.)</item>
-/// <item><b>Branch-bounce:</b> A→B→A seçimi doğru worktree/in-place matrisi + K3 niyet satırı üretir (SALT-OKUR,
-///   git-no-op — <see cref="WorktreeManager.PlanWorktree"/>).</item>
 /// </list>
+/// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Üçüncü bir iddia vardı — "Branch-bounce: A→B→A seçimi doğru
+/// worktree/in-place matrisi + K3 niyet satırı üretir (<c>WorktreeManager.PlanWorktree</c>)". Worktree modu
+/// kalktı; o iddia yalnız worktree kararını ölçüyordu, bu yüzden düştü. Minimal-rebuild'in sentetik değişikliği
+/// de worktree'nin fiziksel-yol eşleyicisini kullanıyordu; eşleyici kalktığı için değişiklik artık özet
+/// önbelleğine tohumlanır (aşağıda).</para>
 /// <b>[K1]</b> OSYS aktif branch + HEAD koşu boyunca ASLA değişmez (assert öncesi/sonrası). Normal suite'ten
 /// HARİÇ (<c>[Trait("Category","Acceptance")]</c>). [D8] sleep-poll YOK — event-driven, sınırlı bekleme.
 /// </summary>
@@ -159,21 +162,22 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             && evaluatedById.TryGetValue(n.Id, out var ev) && ev.CompileFiles.Count > 0);
         Skip.If(targetNode is null, "dependent'ı olan + compile dosyası olan bir proje bulunamadı — minimal-rebuild atlandı.");
 
-        // Sentetik değişiklik — OSYS working tree'ye DOKUNULMADAN: hedef projenin bir kaynak dosyası, binder'ın
-        // fiziksel yol eşleyicisiyle (worktree koşularının kullandığı ÜRETİM yolu) geçici bir KOPYAYA
-        // yönlendirilir; kopyanın içeriği farklıdır. İmzanın yol terimi kimlikten (repo-göreli) geldiği için
-        // değişmez, içerik terimi değişir — yani "o dosya düzenlenmiş" senaryosunun birebir aynısı, tek fark
-        // gerçek dosyanın okunmaması.
+        // Sentetik değişiklik — OSYS working tree'ye DOKUNULMADAN: hedef projenin bir kaynak dosyası için
+        // izole özet önbelleğine, dosyanın GERÇEK boyut+mtime'ıyla ama FARKLI bir özetle bir kayıt tohumlanır.
+        // Önbellek boyut+mtime eşleşince dosyayı AÇMAZ (SourceHashCache.HashOf), yani binder o dosyanın içeriğini
+        // "değişmiş" okur. İmzanın yol terimi değişmez, içerik terimi değişir — "o dosya düzenlenmiş"
+        // senaryosunun birebir aynısı, tek fark gerçek dosyanın okunmaması. Tohum önbelleğin disk biçimine
+        // bağlıdır: biçim değişirse önbellek boş yüklenir, hedef "değişmemiş" okunur ve aşağıdaki
+        // "hedef WillBuild=true" iddiası KIRMIZI verir — sessizce yeşile düşmez.
         string targetFile = Path.GetFullPath(evaluatedById[targetNode!.Id].CompileFiles[0]);
-        string decoyDir = Directory.CreateTempSubdirectory("bo-it3-decoy-").FullName;
-        string decoyFile = Path.Combine(decoyDir, Path.GetFileName(targetFile));
-        File.WriteAllText(decoyFile, File.ReadAllText(targetFile) + Environment.NewLine + "// simulated edit");
-
+        var targetInfo = new FileInfo(targetFile);
         string cacheRoot = Directory.CreateTempSubdirectory("bo-it3-hash-").FullName;
-        var binder = new IncrementalRunBinder(
-            plan, evaluatedById, OsysRoot,
-            new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)),
-            logical => string.Equals(logical, targetFile, StringComparison.OrdinalIgnoreCase) ? decoyFile : logical);
+        string hashCachePath = Path.Combine(cacheRoot, SourceHashCache.FileName);
+        File.WriteAllText(hashCachePath, JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            [targetFile] = new { targetInfo.Length, MtimeTicks = targetInfo.LastWriteTimeUtc.Ticks, Hash = "SIMULATED-EDIT" },
+        }));
+        var binder = new IncrementalRunBinder(plan, evaluatedById, OsysRoot, new SourceHashCache(hashCachePath));
         var (dirtyPlan, _) = binder.Bind(stateAfterRun1, buildCycles: false, DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 
@@ -202,15 +206,6 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             !n.InCycle && n.Id != targetNode.Id && !transitiveDependents.Contains(n.Id)
             && dirtyById.TryGetValue(n.Id, out var wb) && wb == false).ToList();
 
-        // ---- BRANCH-BOUNCE (SALT-OKUR, git-no-op): A→B→A matrisi + K3 niyet satırı.
-        var wt = new WorktreeManager(new ProcessRunner(), OsysRoot,
-            Directory.CreateTempSubdirectory("bo-it3-wt-").FullName);
-        string branchA = string.IsNullOrEmpty(branchBefore) ? "main" : branchBefore;
-        const string branchB = "it3-feature-x";
-        var planA1 = wt.PlanWorktree(branchA, branchA, useWorktreeToggle: false, selectedSha: "aaa");
-        var planB = wt.PlanWorktree(branchA, branchB, useWorktreeToggle: false, selectedSha: "bbb");
-        var planA2 = wt.PlanWorktree(branchA, branchA, useWorktreeToggle: false, selectedSha: "aaa");
-
         // ---- [K1] sonrası — HEAD + branch DEĞİŞMEDİ.
         var (headAfter, branchAfter) = OsysRebuildAcceptanceTests.ReadOsysHeadAndBranch();
 
@@ -238,11 +233,6 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- Doğrudan (cycle-dışı) dependent: {directDependents.Count} · flip=true olmayan (İHLAL): {cascadeMisses.Count}"));
             sb.AppendLine(Inv($"- Transitive (cycle-dışı) dependent: {transNonCycle.Count} · flip=true olan: {transFlipped} ([A3] TAM cascade bekleniyor)"));
             sb.AppendLine(Inv($"- İlgisiz + skip (false) kalan proje sayısı: {unrelatedClean.Count}"));
-            sb.AppendLine();
-            sb.AppendLine("## Branch-bounce (A→B→A, git-no-op)");
-            sb.AppendLine(Inv($"- A (aktif={branchA}) toggle-off: Mode={planA1.Mode} (InPlace bekleniyor)"));
-            sb.AppendLine(Inv($"- B (farklı={branchB}): Mode={planB.Mode} (Worktree bekleniyor) · IntentLine=\"{planB.IntentLine.Replace("\n", " / ")}\""));
-            sb.AppendLine(Inv($"- A geri (toggle-off): Mode={planA2.Mode} (InPlace bekleniyor)"));
             sb.AppendLine();
             sb.AppendLine("## K1 (read-only garanti)");
             sb.AppendLine(Inv($"- HEAD önce/sonra: {headBefore} / {headAfter} · aynı: {headBefore == headAfter}"));
@@ -298,11 +288,6 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         Assert.True(transFlipped == transNonCycle.Count,                 // [A3] transitive cascade TAM (cycle'lar dahil)
             Inv($"transitive cascade eksik — cycle üzerinden yayılım kopmuş olabilir: {transFlipped}/{transNonCycle.Count}"));
         Assert.NotEmpty(unrelatedClean);                                 // ilgisiz projeler skip kaldı (over-build yok)
-
-        Assert.Equal(WorktreeMode.InPlace, planA1.Mode);                 // branch-bounce matrisi
-        Assert.Equal(WorktreeMode.Worktree, planB.Mode);
-        Assert.Equal(WorktreeMode.InPlace, planA2.Mode);
-        Assert.Contains("worktree will be used at Build", planB.IntentLine, StringComparison.Ordinal); // K3 niyet satırı
 
         Assert.Equal(headBefore, headAfter);                             // K1
         Assert.Equal(branchBefore, branchAfter);

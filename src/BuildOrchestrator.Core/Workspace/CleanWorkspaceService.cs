@@ -16,8 +16,8 @@ namespace BuildOrchestrator.Core.Workspace;
 ///
 /// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme; gerekçe
 /// <see cref="CleanWorkspaceCommand"/>'in doc'unda. Silinen küme YALNIZ keşfedilen her csproj klasörünün
-/// <c>bin</c> ve <c>obj</c>'idir: <c>packages\</c>, ortak OutDir ve worktree havuzu (kök DIŞINDADIR ve kendi
-/// LRU yaşam döngüsü vardır) DOKUNULMADAN kalır.</para>
+/// <c>bin</c> ve <c>obj</c>'idir: <c>packages\</c>, ortak OutDir ve eski worktree havuzu (kök DIŞINDADIR)
+/// DOKUNULMADAN kalır.</para>
 ///
 /// <para><b>Sıra: ÖNCE state, SONRA klasörler.</b> Ters sıra bir güvenlik açığıdır — klasörler silinip state
 /// kalsaydı, imzası hâlâ "güncel" görünen ama <c>bin</c>'i olmayan bir proje pre-skip edilir ve bayat çıktı

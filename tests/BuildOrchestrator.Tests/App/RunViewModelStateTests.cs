@@ -451,8 +451,14 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "Build komutu seçili branch'i,
+    /// <c>UseWorktree</c>'yi ve worktree adını da taşır" idi (ad: <c>..._with_branch_worktree_and_layer_patterns</c>).
+    /// Motor artık yalnız çalışma ağacında derler; <c>StartRunCommand</c> bu alanları taşımaz
+    /// (<c>NoWorktreeSurfaceTests</c>). Kalan iddia: mod, kök, configuration ve katman pattern'leri.</para>
+    /// </summary>
     [Fact]
-    public async Task Build_command_sends_RunMode_Build_with_branch_worktree_and_layer_patterns()
+    public async Task Build_command_sends_RunMode_Build_with_workspace_arguments_and_layer_patterns()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var layers = new List<LayerPattern> { new(0, "^Core", "Core") };
@@ -460,19 +466,8 @@ public class RunViewModelStateTests
         {
             RootPath = @"D:\repo",
             Configuration = "Release",
-            UseWorktree = true,
             LayerPatterns = layers,
         };
-        // [T2 fix-1 · C1/I4] Branch ARTIK doğrudan atanamaz: StartRunCommand.Branch bir NİYETtir ve yalnız
-        // kullanıcının AÇIK seçimi oraya gider (bkz. RunViewModel.RunBranchIntent). Doğrudan atama bir
-        // görüntüleme/seed değeridir ve komuta GİTMEZ — bu testin konusu komutun ALANLARININ doğru
-        // taşındığı olduğundan, branch de üretimdeki gerçek yoldan (popover seçimi) kurulur.
-        vm.OnEvent(new BranchListEvent([
-            new BranchRef("main", "aaaaaaaaaaaa", true, false),
-            new BranchRef("feature/x", "bbbbbbbccccc", false, false),
-        ]));
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
-        vm.WorktreeName = "wt-1"; // SelectBranch hedefi auto'ya (null) döndürür → seçimden SONRA verilir
         StartRunCommand? sent = null;
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
 
@@ -482,9 +477,6 @@ public class RunViewModelStateTests
         Assert.Equal(RunMode.Build, sent!.Mode);
         Assert.Equal(@"D:\repo", sent.RootPath);
         Assert.Equal("Release", sent.Configuration);
-        Assert.Equal("feature/x", sent.Branch);
-        Assert.True(sent.UseWorktree);
-        Assert.Equal("wt-1", sent.WorktreeName);
         Assert.Same(layers, sent.LayerPatterns);
     }
 

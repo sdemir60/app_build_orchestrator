@@ -27,14 +27,7 @@ public sealed class PlanProgressLinesTests
         Assert.Equal("Dependency graph — 0 cycles", PlanProgressLines.DependencyGraph(0));
         Assert.Equal("Build order resolved (177)", PlanProgressLines.BuildOrderResolved(177));
         Assert.Equal("Computing incremental state (177 projects)", PlanProgressLines.ComputingIncremental(177));
-        Assert.Equal("Preparing worktree for 'release/1.2'", PlanProgressLines.PreparingWorktree("release/1.2"));
     }
-
-    /// <summary>Branch adı yoksa (toggle açık ama seçim yok — aktif branch'in worktree'si) satır yine
-    /// anlamlıdır: hazırlık koşuyor ve kullanıcı bunu görmeli.</summary>
-    [Fact]
-    public void The_worktree_line_survives_a_missing_branch_name()
-        => Assert.Equal("Preparing worktree", PlanProgressLines.PreparingWorktree(null));
 
     /// <summary>
     /// [v1.16.0] Sync'in mesafe satırı. Uzak uçtaki commit'in KİMLİĞİ yazılmaz — kullanıcı onu pull etmedikçe

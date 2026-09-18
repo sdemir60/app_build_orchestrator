@@ -32,7 +32,7 @@ namespace BuildOrchestrator.Core.Workspace;
 /// hesaplanan şey raporlanır — önizlemenin adlandırılan branch'i tarif ettiği İMA EDİLMEZ.</para>
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
-/// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
+/// KULLANICININ REPO KÖKÜ.</param>
 /// <param name="hashes">[D1/D3] Kaynak içerik özetlerinin önbelleği — kararın tek kaynağı budur ve Build ile
 /// AYNI dosyada paylaşılır (iki yüzey aynı özetleri iki kez hesaplamaz).</param>
 public sealed class SyncWorkspaceService(
@@ -103,8 +103,8 @@ public sealed class SyncWorkspaceService(
         }
 
         // §3.1 satır 2 [v1.16.0]: yerel HEAD + uzak uçtan mesafe. Mesafe YALNIZ fetch başarılıyken ve seçili
-        // branch AKTİF branch iken hesaplanır — başka bir branch seçiliyken derleme worktree'den yapılır ve
-        // ana ağacın uzak uçla mesafesi kullanıcıya bir şey söylemez.
+        // branch AKTİF branch iken hesaplanır — başka bir branch'in uzak uçla mesafesi, çalışma ağacının
+        // HEAD'iyle ölçülemez.
         string? targetSha = fetch.TargetSha;
         string? activeBranch = (await git.GetCurrentBranchAsync(ct)).Value;
         int? behind = null;

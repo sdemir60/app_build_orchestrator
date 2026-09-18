@@ -28,9 +28,13 @@ namespace BuildOrchestrator.Tests.Externals;
 /// <c>BranchSwitcher</c>) eklenir — <c>FastForwardUpdater</c> da git mv ile aynı dosyaya taşınır. Sınıf/dosya
 /// adı değişse de kural aynı kalır: mutasyon TEK dosyada yaşar.</para>
 ///
-/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız tek yazım dosyası ve havuz worktree'lerini
-/// kuran/sıfırlayan dosya. Adet PİNLENMEZ ama dosya listesi pinlenir — yeni bir dosyaya mutasyon komutu
-/// eklemek guard'ı kırmızıya çeker.</para>
+/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız tek yazım dosyası. Adet PİNLENMEZ ama dosya listesi
+/// pinlenir — yeni bir dosyaya mutasyon komutu eklemek guard'ı kırmızıya çeker.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> İzin listesinde ikinci bir dosya vardı: havuz
+/// worktree'lerini kuran/sıfırlayan <c>Core/Git/WorktreeManager.cs</c>. Worktree modu kalktı ve dosya
+/// silindi; liste artık tek dosyadır. <c>worktree</c> fiilinin geri dönmesini <c>NoWorktreeSurfaceTests</c>
+/// ayrıca çitler.</para>
 ///
 /// <para><b>YAKALAYAMADIĞI (bilinçli sınır):</b> komut adını çalışma zamanında birleştirmek
 /// (<c>"mer" + "ge"</c>) ya da argümanları bir listeden okumak. Guard literal çağrı biçimine bakar; niyetin
@@ -61,9 +65,6 @@ public sealed class NoGitMutationOutsideTheWriterTests
         // VE branch checkout + stash push (§6.3/§6.6, BranchSwitcher). Hem harici kartlar hem (yalnız
         // kullanıcı chip'e/branch chip'ine bastığında) ana repo buradan geçer.
         @"BuildOrchestrator.Core\Git\RepositoryWriter.cs",
-        // Havuz worktree'lerini kurar ve sıfırlar; üç kapısı (havuz altında, ana kök değil, detached HEAD)
-        // ana repoya dokunmasını imkânsız kılar (§10.4). Task 3'te silinir.
-        @"BuildOrchestrator.Core\Git\WorktreeManager.cs",
     ];
 
     [Fact]

@@ -87,11 +87,8 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_roundtrip()
     {
         var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 6,
-            Branch: "feature/x", UseWorktree: true, WorktreeName: "wt-1", DependentMode: DependentMode.Fast);
+            DependentMode: DependentMode.Fast);
         string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
-        Assert.Contains("\"branch\":\"feature/x\"", json);
-        Assert.Contains("\"useWorktree\":true", json);
-        Assert.Contains("\"worktreeName\":\"wt-1\"", json);
         Assert.Contains("\"dependentMode\":\"fast\"", json); // camelCase enum
         var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
         Assert.Equal(cmd, back);
@@ -101,12 +98,31 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_default_to_safe_backward_compatible_shape()
     {
         var cmd = new StartRunCommand("r1", RunMode.Rebuild, @"D:\repo", "Debug", 6);
-        Assert.Equal("", cmd.Branch);
-        Assert.False(cmd.UseWorktree);
-        Assert.Null(cmd.WorktreeName);
         Assert.Equal(DependentMode.Safe, cmd.DependentMode);
         Assert.Null(cmd.LayerPatterns); // [A1] katman ataması varsayılan olarak KAPALI (mevcut davranış)
         Assert.Null(cmd.ScopeProjectId); // [tek proje] varsayılan: kapsam yok, tam koşu
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-1] Worktree modu kalktı ve <c>StartRunCommand</c>'ın <c>branch</c>/<c>useWorktree</c>/
+    /// <c>worktreeName</c> alanları silindi. Bu alanları taşıyan ESKİ bir NDJSON satırı (eski bir App ya da
+    /// kaydedilmiş bir komut) yine çözülür: fazla alanlar yok sayılır, kalan alanlar aynen okunur.
+    /// </summary>
+    [Fact]
+    public void An_old_start_run_line_with_worktree_fields_still_parses()
+    {
+        const string oldLine = """
+            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug",
+             "parallelism":4,"branch":"feature/x","useWorktree":true,"worktreeName":"wt-1","dependentMode":"fast"}
+            """;
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(oldLine, IpcJson.Options));
+
+        Assert.Equal("r1", back.RunId);
+        Assert.Equal(RunMode.Build, back.Mode);
+        Assert.Equal(@"D:\repo", back.RootPath);
+        Assert.Equal(4, back.Parallelism);
+        Assert.Equal(DependentMode.Fast, back.DependentMode);
     }
 
     // [tek proje · design §3.8] Satırdan tetiklenen koşu kapsamını proje KİMLİĞİYLE taşır (tam csproj yolu —

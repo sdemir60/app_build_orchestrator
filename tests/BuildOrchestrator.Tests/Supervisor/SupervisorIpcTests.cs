@@ -37,17 +37,13 @@ public static class TestPaths
     public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
-    /// <param name="worktreePoolDir">[A5/T69] Worktree havuz kökü — verilmezse üretim varsayılanı
-    /// (<c>%LOCALAPPDATA%\BuildOrchestrator\worktrees</c>). Havuza dokunan testler KENDİ temp kökünü verir;
-    /// kullanıcının gerçek havuzu ASLA hedef alınmaz (<c>--logs</c>'un cache/state için yaptığının aynısı).</param>
     /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar. Varsayılan <c>false</c> =
     /// ÜRETİM yolu: kanca kapalıdır ve komut <c>error(debugHooksDisabled)</c> ile reddedilir.</param>
-    public static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
+    public static ProcessStartInfo Psi(string? logsDir = null, bool debugHooks = false)
     {
         var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
-        if (worktreePoolDir is not null) { psi.ArgumentList.Add("--worktrees"); psi.ArgumentList.Add(worktreePoolDir); }
         if (debugHooks) psi.ArgumentList.Add(SupervisorHost.DebugHooksArg);
         return psi;
     }
@@ -70,8 +66,8 @@ public static class TestPaths
 
 public class SupervisorIpcTests
 {
-    private static ProcessStartInfo Psi(string? logsDir = null, string? worktreePoolDir = null, bool debugHooks = false)
-        => TestPaths.Psi(logsDir, worktreePoolDir, debugHooks);
+    private static ProcessStartInfo Psi(string? logsDir = null, bool debugHooks = false)
+        => TestPaths.Psi(logsDir, debugHooks);
 
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]
@@ -266,14 +262,13 @@ public class SupervisorIpcTests
             + $" — job'da gorulen tum dogumlar: {string.Join(", ", births.Select(b => $"{b.Name}({b.Pid})"))}");
     }
 
-    /// <summary>[A13/B4 · fix-1] Verilen job'da, İZOLE logs/worktree kökleriyle ve <b>bayraksız</b> (üretim
+    /// <summary>[A13/B4 · fix-1] Verilen job'da, İZOLE logs köküyle ve <b>bayraksız</b> (üretim
     /// yolu) bir Supervisor başlatır. Kullanıcının gerçek dosyalarına dokunulmaz (brief kural 4).</summary>
     private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job)
     {
         string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
         return JobProcessLauncher.Launch(job,
-            TestPaths.SupervisorCommandLine("--logs", Path.Combine(sandbox, "logs"),
-                                            "--worktrees", Path.Combine(sandbox, "worktrees")),
+            TestPaths.SupervisorCommandLine("--logs", Path.Combine(sandbox, "logs")),
             new LaunchOptions(RedirectStdio: true));
     }
 
@@ -307,14 +302,14 @@ public class SupervisorIpcTests
         await child.WaitForExitAsync(new CancellationTokenSource(5000).Token);
     }
 
-    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree
+    // ---------------------------------------------------------------- [A5/T69] sync / branch
 
-    /// <summary>İzole bir Supervisor: kendi logs/cache kökü + kendi worktree havuzu (kullanıcının gerçek dosyaları korunur).</summary>
+    /// <summary>İzole bir Supervisor: kendi logs/cache kökü (kullanıcının gerçek dosyaları korunur).</summary>
     /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar; varsayılan KAPALI = üretim yolu.</param>
     private static ProcessStartInfo IsolatedPsi(bool debugHooks = false)
     {
         string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
-        return Psi(Path.Combine(sandbox, "logs"), Path.Combine(sandbox, "worktrees"), debugHooks);
+        return Psi(Path.Combine(sandbox, "logs"), debugHooks);
     }
 
     /// <summary>Tek projelik gerçek bir git repo (bir .csproj + onu içeren bir .sln).</summary>
@@ -412,36 +407,6 @@ public class SupervisorIpcTests
         Assert.Equal(40, activeRef.Sha.Length);                       // sha GERÇEKTEN çözülmüş
         var feature = Assert.Single(list.Branches, b => b.Name == "feature-x");
         Assert.False(feature.IsActive);
-
-        await writer.WriteAsync(new ShutdownCommand());
-        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
-    }
-
-    // Havuz izole ve BOŞ: listWorktrees boş envanter döner; deleteWorktree bilinmeyen bir ad için error döner
-    // ama Supervisor AYAKTA kalır ve sonraki komutlara yanıt vermeye devam eder (per-command hata).
-    [Fact]
-    public async Task ListWorktrees_answers_with_an_inventory_and_delete_of_an_unknown_worktree_errors_without_killing_the_host()
-    {
-        using var repo = new GitTestRepo();
-        SeedWorkspace(repo);
-
-        using var p = Process.Start(IsolatedPsi())!;
-        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
-        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
-        // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
-        // process'i, yük altında 5s'de hazır olamayabiliyor), aynı dosyada tekrarlanan desen.
-        Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
-
-        await writer.WriteAsync(new ListWorktreesCommand(repo.RootPath));
-        var list = Assert.IsType<WorktreeListEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
-        Assert.Empty(list.Worktrees); // havuz izole ve boş — ANA çalışma ağacı envantere GİRMEZ
-
-        await writer.WriteAsync(new DeleteWorktreeCommand(repo.RootPath, "no-such-worktree"));
-        var err = Assert.IsType<ErrorEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(30)));
-        Assert.Equal("worktreeDeleteFailed", err.Code);
-
-        await writer.WriteAsync(new PingCommand(9)); // host hâlâ canlı
-        Assert.Equal(9, Assert.IsType<PongEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(5))).Seq);
 
         await writer.WriteAsync(new ShutdownCommand());
         await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);

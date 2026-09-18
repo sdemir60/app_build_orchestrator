@@ -5,12 +5,12 @@ namespace BuildOrchestrator.Core.Processes;
 
 /// <summary>
 /// [Review fix — Task 9] Dış komut satırı araçlarının (git, tf) çalıştırılmasının TEK kaynağı: aynı
-/// exception filtresi, aynı hata şablonu, aynı stderr fallback. Önce <c>GitService</c> ile
-/// <c>WorktreeManager</c> bunu birebir aynı iki kopya halinde taşıyordu; harici projelerle birlikte
-/// TFVC de aynı sarmalayıcıya ihtiyaç duydu ve mesajdaki araç adı parametreleşti — davranış hâlâ tek yerde.
+/// exception filtresi, aynı hata şablonu, aynı stderr fallback. Önce iki git sarmalayıcısı bunu birebir
+/// aynı iki kopya halinde taşıyordu; harici projelerle birlikte TFVC de aynı sarmalayıcıya ihtiyaç duydu ve
+/// mesajdaki araç adı parametreleşti — davranış hâlâ tek yerde.
 ///
 /// <para>Timeout çağıran tarafından verilir: salt-okur sorgular 30 sn, çalışma ağacını yeniden yazan
-/// komutlar (<c>worktree add/remove</c>, <c>merge --ff-only</c>, <c>tf vc get</c>) dakikalar sürebilir.</para>
+/// komutlar (<c>checkout</c>, <c>merge --ff-only</c>, <c>tf vc get</c>) dakikalar sürebilir.</para>
 /// </summary>
 internal static class CommandLineTool
 {

@@ -219,7 +219,7 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
             var hashes = new SourceHashCache(hashPath);
             var clock = Stopwatch.StartNew();
             var binder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
-            int collected = binder.PhysicalPaths.Count;
+            int collected = binder.InputPaths.Count;
             int read = binder.Prefill();
             binder.Bind(state, buildCycles: false, DependentMode.Safe);
             binder.Bind(state, buildCycles: false, DependentMode.Fast);

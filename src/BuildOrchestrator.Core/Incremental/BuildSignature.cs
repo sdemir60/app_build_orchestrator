@@ -33,10 +33,9 @@ using BuildOrchestrator.Contracts.Model;
 /// </para>
 ///
 /// <para>
-/// <b>In-place ve worktree AYNI imzayı üretir.</b> Eskiden worktree modunda local-diff terimi tamamen
-/// atlanıyordu (o ağaç committed hâli tarif ediyordu) — yani mod değiştirmek imzayı değiştirebiliyordu.
-/// Artık yol terimi çalışma alanı köküne göreli, içerik ise derlenen ağacın FİZİKSEL dosyasından okunur:
-/// aynı içerik iki modda da aynı imzadır (bkz. <c>IncrementalRunBinderTests</c>).
+/// <b>Aynı içerik, konumdan bağımsız olarak aynı imzadır.</b> Yol terimi çalışma alanı köküne göreli, içerik
+/// ise derlenen ağacın dosyasından okunur: reponun başka bir klonundaki aynı içerik aynı imzayı üretir (bkz.
+/// <c>IncrementalRunBinderTests</c>).
 /// </para>
 ///
 /// <para>
