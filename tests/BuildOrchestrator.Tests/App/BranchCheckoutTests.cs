@@ -100,6 +100,72 @@ public class BranchCheckoutTests
         Assert.True(vm.CanSwitchBranch); // gönderim düştü → hiçbir cevap gelmeyecek, kilit bırakılır
     }
 
+    /// <summary>Gönderim SENKRON düştüyse hiçbir cevap gelmeyecek: pill "SWITCHING BRANCH"ta asılı kalmamalı.</summary>
+    [Fact]
+    public async Task A_checkout_that_could_not_be_sent_drops_the_operation_pill()
+    {
+        var vm = NewVm();
+
+        await vm.SelectBranch(FeatureX);
+
+        Assert.Null(vm.CurrentOperation);
+    }
+
+    // ---------------------------------------------------------------- uçuştaki checkout diğer işleri kilitler
+    //
+    // Supervisor checkout boyunca komut döngüsünü bloklar; o sırada basılan bir Build yeni ağaçta başlar ve
+    // sonra checkout cevabının temizliği onun konsolunu siler, bir Pull ise yanlış branch'i ilerletir. Kapılar
+    // gönderim ANINDA (istek penceresi) ölçülür — motor başlatılmadığı için gönderim hemen düşer.
+
+    /// <summary>Uçuştaki checkout'un gönderim anındaki kapılarını ölçer. Topoloji ve "N behind" kurulur ki
+    /// Build/Pull kapıları yalnız checkout yüzünden kapanmış olsun.</summary>
+    private static async Task<Dictionary<string, bool>> GatesDuringCheckoutAsync()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null)], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, Behind: 2));
+        Assert.True(vm.BuildCommand.CanExecute(null) && vm.SyncCommand.CanExecute(null) && vm.PullRepositoryCommand.CanExecute(null));
+        var gates = new Dictionary<string, bool>();
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is not CheckoutBranchCommand) return;
+            gates["build"] = vm.BuildCommand.CanExecute(null);
+            gates["rebuild"] = vm.RebuildCommand.CanExecute(null);
+            gates["row"] = vm.BuildProjectCommand.CanExecute(@"C:\p\a.csproj");
+            gates["sync"] = vm.SyncCommand.CanExecute(null);
+            gates["pull"] = vm.PullRepositoryCommand.CanExecute(null);
+            gates["clean"] = vm.CleanCommand.CanExecute(null);
+            gates["optimize"] = vm.OptimizeCommand.CanExecute(null);
+        };
+        await vm.SelectBranch(FeatureX);
+        return gates;
+    }
+
+    [Fact]
+    public async Task Build_is_locked_while_a_checkout_is_in_flight()
+    {
+        var gates = await GatesDuringCheckoutAsync();
+        Assert.False(gates["build"]);
+        Assert.False(gates["rebuild"]);
+        Assert.False(gates["row"]);
+    }
+
+    [Fact]
+    public async Task Sync_is_locked_while_a_checkout_is_in_flight()
+        => Assert.False((await GatesDuringCheckoutAsync())["sync"]);
+
+    [Fact]
+    public async Task Pull_is_locked_while_a_checkout_is_in_flight()
+        => Assert.False((await GatesDuringCheckoutAsync())["pull"]);
+
+    [Fact]
+    public async Task Clean_and_optimize_are_locked_while_a_checkout_is_in_flight()
+    {
+        var gates = await GatesDuringCheckoutAsync();
+        Assert.False(gates["clean"]);
+        Assert.False(gates["optimize"]);
+    }
+
     // ---------------------------------------------------------------- sonuç → konsol
 
     /// <summary>Temizlik önce, not sonra: önceki işlemin satırı gider; yeni bölümün ilk iki satırı stash ve
@@ -119,7 +185,17 @@ public class BranchCheckoutTests
         Assert.Equal(PlanProgressLines.StashedBeforeSwitch(StashMessage), lines[0]);
         Assert.Equal(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), lines[1]);
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
-        Assert.Contains(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), Lines(vm)); // Sync satırları SİLMEZ
+
+        // Zincirlenen Sync'in transkripti switch satırının ALTINA akar — ikinci bir temizlik yok.
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));
+        vm.OnEvent(new SyncProgressEvent("git fetch origin feature/x", "cmd"));
+        lines = Lines(vm);
+        Assert.Equal(PlanProgressLines.StashedBeforeSwitch(StashMessage), lines[0]);
+        Assert.Equal(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), lines[1]);
+        Assert.Equal("git fetch origin feature/x", lines[^1]);
+        // Aradakiler yalnız bu harness'in başlatılmamış motorunun gönderim hataları (sync + listBranches);
+        // gerçek motorda transkript doğrudan lines[2]'dir.
+        Assert.All(lines[2..^1], l => Assert.StartsWith("[error] failed to send", l, StringComparison.Ordinal));
     }
 
     [Fact]

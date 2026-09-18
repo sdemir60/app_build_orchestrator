@@ -66,7 +66,11 @@ public sealed partial class RunViewModel
             new CheckoutBranchCommand(RootPath, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
         // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
         // chip kalıcı pasif kalırdı.
-        if (!sent) SetCheckoutBusy(false);
+        if (!sent)
+        {
+            SetCheckoutBusy(false);
+            CurrentOperation = null; // pill "SWITCHING BRANCH"ta asılı kalmasın
+        }
     }
 
     /// <summary>
@@ -77,7 +81,7 @@ public sealed partial class RunViewModel
     /// <see cref="SetCheckoutBusy"/>'den duyurulur; koşu ve motor durumunu bar kendi abonelikleriyle izler.</para>
     /// </summary>
     public bool CanSwitchBranch =>
-        HasWorkspace && !IsMidRunLocked && !SyncBusy && !CleanBusy && !OptimizeBusy && !IsEngineUnavailable && !CheckoutBusy;
+        HasWorkspace && !IsMidRunLocked && !WorkspaceBusy && !IsEngineUnavailable;
 
     /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
     /// brief 7-hane pinler.</summary>

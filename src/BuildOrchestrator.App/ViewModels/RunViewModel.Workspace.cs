@@ -443,13 +443,14 @@ public sealed partial class RunViewModel
     {
         CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
         ArmEngineWatchdog();
-        await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository");
+        // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill asılı kalmasın.
+        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository")) CurrentOperation = null;
     }
 
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
     /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).</summary>
     private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
@@ -468,6 +469,13 @@ public sealed partial class RunViewModel
     /// döngüsünü bloklar ve başlangıç olayı yayınlamaz, bu yüzden istek ve uçuş penceresi TEK bayraktır.</summary>
     public bool CheckoutBusy { get; private set; }
 
+    /// <summary>Workspace'e dokunan bir iş uçuşta mı: Sync, Clean, Optimize ya da checkout. Run/Sync/Clean/
+    /// Optimize/Pull ve branch chip kapılarının ORTAK meşguliyet sorusu — liste TEK yerde durur (kopya YASAK).
+    /// <para>[spec 2026-09-18 §6.3] Checkout da dahildir: Supervisor checkout boyunca komut döngüsünü bloklar;
+    /// o sırada basılan bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
+    /// Pull ise yanlış branch'i ilerletir.</para></summary>
+    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy;
+
     /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
     /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
     /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
@@ -477,7 +485,7 @@ public sealed partial class RunViewModel
         if (CheckoutBusy == busy) return;
         CheckoutBusy = busy;
         OnPropertyChanged(nameof(CheckoutBusy));
-        OnPropertyChanged(nameof(CanSwitchBranch));
+        NotifySyncGatedCommands(); // run/Sync/Clean/Optimize/Pull kapıları + chip (WorkspaceBusy) tek listeden
     }
 
     /// <summary>
@@ -497,9 +505,9 @@ public sealed partial class RunViewModel
     /// </summary>
     private async Task OnCheckoutCompletedAsync(CheckoutCompletedEvent e)
     {
-        SetCheckoutBusy(false);
         if (e.Status != CheckoutStatus.Switched)
         {
+            SetCheckoutBusy(false);
             CurrentOperation = null;
             if (e.Status == CheckoutStatus.Dirty) AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
             if (e.Status == CheckoutStatus.Failed && e.StashMessage is { } kept)
@@ -515,7 +523,11 @@ public sealed partial class RunViewModel
         if (e.StashMessage is { } stashed) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(stashed));
         AppendRunLine(PlanProgressLines.SwitchedBranch(e.FromBranch ?? "HEAD", e.Branch ?? "HEAD", ShortSha(e.Revision)));
         // [Task 6] Bu çağrı SyncMode.BranchChange'e dönüşür (fetch'siz, kısa transkript).
-        await SyncCoreAsync(clearBuffers: false);
+        // Kilit, Sync kapıyı DEVRALDIKTAN SONRA bırakılır (HandOverToSyncAsync'in sırası): SyncCoreAsync ilk
+        // await'inden önce `_syncRequested`'ı kurar, yani arada Build/Sync düğmeleri bir kare bile açılmaz.
+        var sync = SyncCoreAsync(clearBuffers: false);
+        SetCheckoutBusy(false);
+        await sync;
     }
 
     /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".

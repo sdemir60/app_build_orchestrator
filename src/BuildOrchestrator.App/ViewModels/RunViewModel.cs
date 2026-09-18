@@ -555,6 +555,7 @@ public sealed partial class RunViewModel : ObservableObject
     // yönetmez, tek yazıcı komuttur. Repo değişince buton hâlâ pasif görünmesin diye bildirim buradan gider.
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
 
@@ -637,6 +638,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/config kilidi bundan türetilir
     [NotifyPropertyChangedFor(nameof(IsResolvingCycles))] // bakım kutusunun Resolve spinner'ı: koşu bitince iner
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isRunning;
 
     // [Fix wave 1(It-3), Finding 3] Supervisor runStarted'dan ÖNCE planlama yapar (scan/graph/topo — 177
@@ -656,6 +658,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isStarting;
 
     /// <summary>[tek proje · design §3.8] Uçuştaki KAPSAMLI koşunun hedefi (proje kimliği); <c>null</c> = tam
@@ -683,6 +686,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
@@ -701,6 +705,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
@@ -1101,7 +1106,7 @@ public sealed partial class RunViewModel : ObservableObject
     // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
     // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
     // [clean] Clean uçuştayken de hiçbir run başlatılamaz: silme, MSBuild'in yazdığı bin/obj ile yarışırdı.
-    private bool CanRebuildOrRetry() => CanStartRun() && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    private bool CanRebuildOrRetry() => CanStartRun() && !WorkspaceBusy;
 
     // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
     // (gerekçe CanRebuildOrRetry'ın yorumundadır).
@@ -1222,7 +1227,7 @@ public sealed partial class RunViewModel : ObservableObject
     // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
     // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
     // [clean] Clean uçuştayken Sync de beklemelidir: Sync'in tam analizi tam o sırada silinen bin/obj'i okur.
-    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
 
     /// <summary>
     /// [clean] Bakım kutusundaki <b>Clean</b>: aktif workspace'in keşfedilen projelerinin <c>bin</c>/<c>obj</c>
@@ -1269,7 +1274,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// GEREKMEZ: servis kendi taramasını yapar, hiç Sync yapılmamış bir workspace'te de çalışır. Uçuştaki bir
     /// run/Sync/Clean ise onu kapatır (karşılıklı dışlama).</summary>
     private bool CanClean() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
 
     /// <summary>
     /// [optimize] Workspace doktoru: eksik NuGet paketlerini restore eder, restore'un çözemediği kırık
@@ -1310,7 +1315,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[optimize] <see cref="CanClean"/>'in birebir simetriği: repo şart, topoloji DEĞİL (servis kendi
     /// taramasını yapar). Uçuştaki bir run/Sync/Clean/Optimize kapıyı kapatır.</summary>
     private bool CanOptimize() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
 
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
@@ -1662,7 +1667,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// çıkışın TEK yolu "Restart engine"dir. Optimize'da bu daha da keskindir: onun bir iptal komutu YOKTUR,
     /// uzun bir restore dizisinden tek kaçış budur.</para>
     private bool WaitingOnEngine =>
-        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy;
+        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || WorkspaceBusy;
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>

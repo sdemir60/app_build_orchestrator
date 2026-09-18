@@ -171,10 +171,9 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.SyncBusy):
                 RefreshSyncBusy();
                 break;
-            // [spec 2026-09-18 §6.3] Branch chip'inin kapısı: meşgul yüzeyler, uçuştaki checkout ve motorun
-            // erişilemezliği koşu bildirimlerinden AYRI gelir.
+            // [spec 2026-09-18 §6.3] Branch chip'inin kapısı: VM tüm girdilerinin değişimini (koşu, repo, motor,
+            // meşgul yüzeyler, uçuştaki checkout) TEK bu bildirimle duyurur.
             case nameof(RunViewModel.CanSwitchBranch):
-            case nameof(RunViewModel.IsEngineUnavailable):
                 RefreshEnabled();
                 break;
             case nameof(RunViewModel.Branch):
