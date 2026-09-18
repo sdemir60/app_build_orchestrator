@@ -147,7 +147,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             var decision = BuildOrchestrator.App.ViewModels.DecisionLabel.For(
                 node.WillBuild, node.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, node.Id, content.GetValueOrDefault(node.Id)),
-                BuildStateStore.LastBuiltAtOf(state, node.Id), DateTimeOffset.Now);
+                BuildStateStore.LastBuiltAtOf(state, node.Id), failedAt: null, localEdits: false, DateTimeOffset.Now);
             string key = decision.IsEmpty ? "(BOŞ)" : decision.Word;
             labels[key] = labels.GetValueOrDefault(key) + 1;
         }
@@ -166,7 +166,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         foreach (var node in syncPlan.Nodes.Where(n =>
             BuildOrchestrator.App.ViewModels.DecisionLabel.For(n.WillBuild, n.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, n.Id, content.GetValueOrDefault(n.Id)),
-                BuildStateStore.LastBuiltAtOf(state, n.Id), DateTimeOffset.Now).IsEmpty).Take(10))
+                BuildStateStore.LastBuiltAtOf(state, n.Id), failedAt: null, localEdits: false, DateTimeOffset.Now).IsEmpty).Take(10))
         {
             var r = state.GetValueOrDefault(node.Id);
             output.WriteLine(Inv($"- {node.Name} · inCycle={node.InCycle} · will={node.WillBuild} · reason={node.WillBuildReason} · kayıt={(r is null ? "yok" : r.LastResult.ToString())}"));

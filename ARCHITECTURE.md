@@ -707,10 +707,9 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 
 **The plan has no colour of its own.** It used to paint an amber/grey/hollow dot on the row and the core of
 the graph node; that channel was removed (§14.3). What the user sees of the plan is the row's **decision
-label** — `modified`, `affected`, `never built`, `failed · retry`, `up to date · 2h`, or the three-part
-`affected · up to date · just now` for a project waiting on a failed dependency (§13.2) — and the
-scope of the marking wave when an operation actually begins. The tri-state itself is unchanged: it still
-decides what a run compiles, and it still feeds the counters.
+label** — `modified`, `modified · local`, `affected`, `never built`, `failed · 2h`, or `up to date · 2h`
+(§13.2) — and the scope of the marking wave when an operation actually begins. The tri-state itself is
+unchanged: it still decides what a run compiles, and it still feeds the counters.
 
 If the decision pass fails outright (an I/O or parse error) the counters are not reported at all — printing
 zeros would assert "everything is up to date", which is a different and false claim.
@@ -1806,7 +1805,7 @@ standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
-a right-aligned block (min 204 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
+a right-aligned block (min 134 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
 Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
 warning slot, and a 46 px duration column. The stripe, the dot and the glyph paint one value — the state of the
 project's output with the running operation laid over it (§14.3) — so after a Sync every row already wears its
@@ -1815,46 +1814,42 @@ way: it shows this run's dependency issue if there is one, and otherwise the led
 last built against a broken dependency, for as long as that note stands.
 
 The decision label is what a row says about its own state, in five fixed words — the shared vocabulary of git
-and MSBuild, not invented terms — plus one three-part combination for a project waiting on a dependency:
+and MSBuild, not invented terms:
 
 | Label | What the engine found |
 |---|---|
 | `modified` | its own input files changed since the last build |
+| `modified · local` | same, and at least one of its input files is also dirty in `git status` |
 | `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle |
-| `never built` | no build output on disk (a `Clean` produces this too) |
-| `failed · retry` | the last attempt failed, so it is queued again |
+| `never built` | no build output known to this tool |
+| `failed · 2h` | it failed at this source; the tail is the age of that failure |
 | `up to date · 2h` | it is current; the tail is the age of the last successful build |
-| `affected · up to date · just now` | it built successfully against a dependency that was failing, its own signature has not changed since, and this run is actually waiting on that dependency — the tail's native tooltip names the recorded root(s) |
 
-The waiting row is `affected` in every sense the word already carries — its own files are unchanged, a
-dependency is the reason — with a second tail bolted on to say *this run will not touch it either*: `up to date`
-(plus the usual age). Both tails after the word are faint, so the row reads `affected` first. This is the one
-label that exceeds what design v1.16.0 specifies (134 px, for `up to date · just now`): the three-part label is
-wider, so the slot is 204 px, wide enough to fit it without clipping — a deliberate departure from the design
-package, a user decision.
+A project waiting on a dependency (`WaitingForDependency`) reads the same `up to date` as a project whose
+signature simply matches — both are read from the same fact, that the output is current — because *which*
+dependency it is waiting on is the warning triangle's question, not the label's: the triangle's own one-line
+tooltip already names the root (`Dependency issue: Sales.Core +2`), and the project page repeats the same
+sentence (`RowWarning.WaitingForDependencyText`, the single source both read). Scope does not change the
+label's wording either — a genuinely-waiting row, a forced one (triggered straight from itself, a Rebuild, an
+SCC member), and a cycle member all read the identical `up to date`. The slot is 134 px, sized for its longest
+label, `up to date · just now`.
 
-That label is only shown when the project is **actually** gated on its dependency — `WaitingForDependency` and
-the engine's own `Conditional` flag, both true. The reason alone is not enough: a row triggered straight from
-itself, a Rebuild, or an SCC member all force the build regardless of the recorded root, so the tail's promise
-("this run leaves it alone") would be a lie there — the `Conditional` flag is what tells them apart, and it
-comes from the same source whether it arrives with a run's own preview or with Sync's (§10.2, which predicts
-what a plain Build would do). Forced scope falls back to the plain `affected`/`modified` read of the same
-underlying fact — the label still never claims more than the run will actually do (see the scope paragraph
-below).
-
-**The word is a fact; the tail can be a promise, and a promise is only made when it will be kept.** `retry`
-means "the next Build will try this again" — and a plain Build never compiles a dependency cycle, so a cycle
-member reads `failed` with no tail; its tooltip names what will retry it (*Resolve cycles*). This is a
-deliberate deviation from the design package, which fixes `failed · retry` as one unit: the design's table does
-not consider cycle members, and on a real workspace 15 of 18 `failed` rows were cycle members promising a retry
-that would never come.
+**The word is a fact; the tail is the age of the evidence behind it, never a promise.** A failed row's tail is
+how long ago that failure happened, read the same way as `up to date`'s tail — and its tooltip names who will
+retry it: *Build* ordinarily, or *Resolve cycles* for a cycle member, because a plain Build never compiles a
+dependency cycle. An earlier design fixed `failed · retry` as one unit and read the tail itself as a promise
+("the next Build will try this again"); measured on a real workspace, 15 of 18 `failed` rows were cycle members
+for whom that promise would never be kept — a plain Build does not compile them. The word does not change with
+scope either way — `failed` states what happened, the tooltip states who acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
 signature also carries upstream terms, so a project whose dependency failed would claim *its own* files
 changed. Measured on a real workspace: six projects the user had never touched read `modified` for exactly
 that reason. When the stored fingerprint is missing (an older record), the row shows the more cautious
-`affected`.
+`affected`. `modified` gains its own `local` tail when at least one of the project's input files is also dirty
+in `git status` — a fact this tool cannot see any other way, since a dirty working copy has no signature of its
+own yet.
 
 **Scope does not silence the label.** A cycle member is not compiled by a plain Build, but if its files changed
 it still reads `modified` — that is true, and the warning triangle is what says *Resolve cycles* is the thing
@@ -1869,23 +1864,25 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 **empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
 
 The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
-failure the engine counts as evidence reads `failed · retry`. A failure that is not evidence — a timeout, a stop,
-an invoke error, or a compiler failure inside a cycle group that did not converge — reads `never built` at once,
-because that is what the ledger records for it (§7.5) and what the next Sync will say. The verdict travels with
-the failure event (`Evidence`) and is decided by the same gate that writes the ledger; the application never
-re-reads the reason text. It does not wait for the engine's next preview, which may not arrive until the next
-Sync. A success that still carries a dependency issue is the one exception: it does **not** read
-`up to date` — its dependency was still broken when it built, so a plain project's row reads `affected · up to
-date · just now` instead, taken straight from that success's own event, and it drops out of the run's definite
-queue (next paragraph) rather than being counted done.
+failure the engine counts as evidence reads `failed · just now`. A failure that is not evidence — a timeout, a
+stop, an invoke error, or a compiler failure inside a cycle group that did not converge — reads `never built` at
+once, because that is what the ledger records for it (§7.5) and what the next Sync will say. The verdict travels
+with the failure event (`Evidence`) and is decided by the same gate that writes the ledger; the application
+never re-reads the reason text. It does not wait for the engine's next preview, which may not arrive until the
+next Sync. A success that still carries a dependency issue reads exactly the same `up to date · just now` as any
+other success — its own signature is genuinely current, taken straight from that success's own event — even
+though it still drops out of the run's definite queue (`Conditional`, §10.2, unaffected by any of this: the
+label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a plain
+success.
 
 A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
 converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
-Build never compiles it and Cycles compiles it with its whole group — so its live row reads plain `affected`
-(prominent, no tail), matching exactly what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
-`Conditional=false`) rather than the `up to date · just now` that would only flip back to `affected` at the
-next Sync. A member whose group did not converge changed nothing the ledger can act on, so its row reads
-`up to date · just now` like any other success — there is no new fact to predict ahead of Sync.
+Build never compiles it and Cycles compiles it with its whole group — so its live row reads `up to date · just
+now`, exactly matching what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
+`Conditional=false` — read no differently by the label than `UpToDate` would be). A member whose group did not
+converge changed nothing the ledger can act on, so its row reads the same `up to date · just now` — there is no
+new fact to predict ahead of Sync, and none of these three cases needs a different word from an ordinary
+success.
 
 **The slot is not a result column.** The state of the output is carried by the stripe, the dot and the glyph,
 and what this run did by the duration and by the run-story surfaces (the ribbon, the console header, the event

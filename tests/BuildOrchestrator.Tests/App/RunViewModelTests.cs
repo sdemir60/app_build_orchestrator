@@ -1650,12 +1650,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review — C1] Bu koşuda dep-issue'lu biten bir satırın etiketi bir SONRAKİ Sync'te AYNI kalmalı:
-    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu. Sync'in kendi önizlemesi ARTIK
-    /// <c>Conditional</c>'ı da taşıdığı için (bkz. <c>SyncWorkspaceServiceTests.
-    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c> — DEĞİŞEN KURAL)
-    /// satır Sync'ten sonra da soluk "affected · up to date · just now" der; eski kural (Sync'in önizlemesi hep
-    /// <c>Conditional=false</c> gönderirdi) etiketi belirgin "affected"e düşürürdü — kullanıcı hiçbir şey
-    /// yapmadığı hâlde ekranın "değişti" görünmesi.
+    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected · up to date ·
+    /// just now" dediğiydi (Task 4'ün <c>conditional</c> ayrımı: motor bu koşuyu gerçekten bekletiyorsa yuva
+    /// kökleri tooltip'inde tekrarlardı). O ayrım <see cref="DecisionLabel"/>'den TAMAMEN kalktı:
+    /// <see cref="WillBuildReason.WaitingForDependency"/> artık <see cref="WillBuildReason.UpToDate"/> ile
+    /// BİREBİR okunur — satır düz "up to date" der, hangi kökün beklendiğini yalnız uyarı üçgeni söyler. Testin
+    /// ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ, yalnız beklenen sözcük değişti.</para>
     /// </summary>
     [Fact]
     public async Task A_dep_issue_wait_label_survives_a_sync_without_flipping()
@@ -1670,9 +1672,9 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        Assert.Equal("affected", beforeSync.Word);
+        Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
 
         // Run biter, sonra bir Sync koşar — NeutralizeRows() State'i Pending'e döndürür (IsRunning
@@ -1723,8 +1725,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review round 2 — I1] Bir sonraki Sync (post-round-2) bu üye için AYNEN bu üçlüyü üretir — etiket
-    /// TİTREMEMELİ. Bilinçli olarak eski (round 1) <c>UpToDate</c> tahminiyle de çalıştırılıp KIRMIZI gösterildi
-    /// (bkz. yorum satırı), sonra doğru değere geri alındı.
+    /// TİTREMEMELİ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected"/soluk-değil
+    /// (<c>Stale=true</c>) dediğiydi: <c>Conditional=false</c> (üye tek başına asla koşullu değil, grup
+    /// mekanizmasına tabi) olduğu için eski <c>DecisionLabel</c> genel default dalına düşüyordu.
+    /// <c>DecisionLabel</c> artık <c>Conditional</c>'ı hiç okumuyor (bkz. sınıf özeti) — reason
+    /// <see cref="WillBuildReason.WaitingForDependency"/> olduğu sürece kapsamın zorlayıp zorlamadığından
+    /// bağımsız düz "up to date" yazar. Testin ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ.</para>
     /// </summary>
     [Fact]
     public async Task A_converged_cycle_member_wait_label_survives_a_sync_without_flipping()
@@ -1738,12 +1746,12 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        // Reason bir disk olgusudur ve Conditional=false olduğu için DecisionLabel default'a düşer — sıradan
-        // affected/modified, "waiting" sözü VERİLMEZ (üye tek başına asla koşullu değil).
-        Assert.Equal("affected", beforeSync.Word);
-        Assert.True(beforeSync.Stale);
+        // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
+        // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
+        Assert.Equal("up to date", beforeSync.Word);
+        Assert.False(beforeSync.Stale);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));

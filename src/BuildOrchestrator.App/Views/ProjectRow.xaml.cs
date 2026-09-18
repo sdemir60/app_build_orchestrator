@@ -299,14 +299,14 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.LastBuiltAt):
             case nameof(ProjectRowViewModel.OwnFilesChanged):
             case nameof(ProjectRowViewModel.WillBuildReason):
-            // [final review — I2] Etiketin girdileri burada BİTER: Conditional ve DependencyRoots da
-            // DecisionLabel.For'a girer (koşullu satır "affected · up to date · 2h" der, zorlanan satır düz
-            // "affected"). [ObservableProperty] yalnız DEĞİŞİMDE bildirir ve önizleme üçlüyü sırayla yazar
-            // (WillBuild → Reason → Conditional), yani ilk ikisi AYNI kalıp yalnız Conditional dönen bir
-            // önizlemenin (kapsam dışı koşullu satır, satırdan tetiklenen tek proje koşusu) tek bildirimi
-            // bunlardır — listede olmadıkları için etiket koşu boyunca bayat kalıyordu.
-            case nameof(ProjectRowViewModel.Conditional):
-            case nameof(ProjectRowViewModel.DependencyRoots):
+            // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Etiketin girdileri burada BİTER: FailedAt (failed
+            // kuyruğunun yaşı) ve LocalEdits (modified · local) da DecisionLabel.For'a girer. Conditional ve
+            // DependencyRoots BURADAN kalktı — etiket artık ikisini de okumuyor (WaitingForDependency, UpToDate
+            // ile birleşti; hangi kök bekleniyor sorusunu yalnız uyarı üçgeni cevaplar, bkz. ApplyDep/WarningRoots
+            // case'i aşağıda — DependencyRoots'un değişimi zaten NotifyPropertyChangedFor(WarningRoots) ile oraya
+            // düşer, burada ikinci bir dinleyiciye gerek yok).
+            case nameof(ProjectRowViewModel.FailedAt):
+            case nameof(ProjectRowViewModel.LocalEdits):
                 ApplyDecision();
                 break;
         }
@@ -494,7 +494,7 @@ public partial class ProjectRow : UserControl
         var decision = _vm is null
             ? RowDecision.None
             : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                DateTimeOffset.Now, _vm.InCycle, _vm.Conditional, _vm.DependencyRoots, _vm.NamePrefix);
+                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle, _vm.DependencyRoots, _vm.NamePrefix);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

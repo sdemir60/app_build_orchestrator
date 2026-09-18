@@ -796,14 +796,15 @@ public class ProjectRowTests
     }
 
     /// <summary>
-    /// [design v1.16.0 §2.4 · Task 4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
+    /// [design v1.16.0 §2.4 · Task 6] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
     ///
-    /// <para><b>DEĞİŞEN KURAL (iki kez).</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu; sonra
-    /// yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu). Task 4 kullanıcı onaylı
-    /// koşullu yeniden derleme etiketini ekledi: <c>affected · up to date · just now</c> üç parçalıdır ve
-    /// ondan daha UZUNDUR — o artık en uzun etiket, yuva bunu sığdıracak kadar YENİDEN ölçülüp büyütüldü (bkz.
-    /// <c>.claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md</c>, "Hedef davranış" — 134px'ten
-    /// BİLİNÇLİ sapma, kullanıcı kararı). Ölçüm iddiası KALIR, yalnız metin ve sınır büyür.</para>
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Bu yerde beş test vardı ve hepsi commit
+    /// ÇİFTİNİ pinliyordu; sonra yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu).
+    /// Task 4 kullanıcı onaylı koşullu yeniden derleme etiketini ekleyip yuvayı 204px'e büyütmüştü
+    /// (<c>affected · up to date · just now</c>, üç parçalı). O üçlü design v1.20.0 ile TAMAMEN kalktı:
+    /// <c>WaitingForDependency</c> artık <c>UpToDate</c> ile BİREBİR okunur (bkz. <see cref="DecisionLabel"/>'in
+    /// sınıf özeti) — hangi kökün beklendiğini yalnız uyarı üçgeni söyler, yuvanın etiketi asla üç parça
+    /// olmaz. Yuva 134px'e DÖNDÜ, en uzun etiket yeniden "up to date · just now".</para>
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
@@ -818,55 +819,63 @@ public class ProjectRowTests
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = true,
-            WillBuildReason = WillBuildReason.WaitingForDependency,
-            Conditional = true,
-            DependencyRoots = ["Up"],
+            WillBuild = false,
+            WillBuildReason = WillBuildReason.UpToDate,
             LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
         };
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
         row.UpdateLayout();
 
-        Assert.Equal("affected · up to date · just now", row.DecisionText.Text);
+        Assert.Equal("up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
         double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
         Assert.True(width <= slotMinWidth, $"en uzun karar etiketi {slotMinWidth}px yuvaya sığmadı: {width}px");
-
-        // Kontrol grubu: eski 134px'lik yuva bu YENİ etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
-        Assert.True(width > 134, $"etiket eski 134px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
         GC.KeepAlive(window);
     }
 
-    /// <summary>[final review — I2] Etiketi besleyen olgular <c>WillBuild</c>/<c>WillBuildReason</c> ile
-    /// BİTMEZ: <c>Conditional</c> ve <c>DependencyRoots</c> da <see cref="DecisionLabel.For"/>'a girer. Satırın
-    /// property-changed anahtarında bu iki ad YOKTU ve <c>[ObservableProperty]</c> yalnız DEĞİŞİMDE bildirim
-    /// yayar; önizleme üçlüyü sırayla (WillBuild → Reason → Conditional) yazdığı için WillBuild ve gerekçe AYNI
-    /// kalıp yalnız <c>Conditional</c> dönen bir önizleme (Resolve cycles'ta kapsam dışı koşullu satır, ya da
-    /// satırdan tetiklenen tek proje koşusu) etiketi HİÇ tazelemiyordu — satır koşu boyunca bayat soluk
-    /// "affected · up to date · 2h" gösteriyordu.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eskiden bu test <c>Conditional</c> bayrağının TEK BAŞINA
+    /// (WillBuild/Reason SABİT kalırken) etiketi tazelediğini pinliyordu. <see cref="DecisionLabel"/> artık
+    /// <c>Conditional</c>'ı hiç okumuyor (bkz. o sınıfın özeti), o senaryo ANLAMSIZLAŞTI. Yerini
+    /// <c>FailedAt</c> aldı: <see cref="DecisionLabel.For"/>'a giren YENİ bir olgu (kanıtın yaşı) ve
+    /// property-changed anahtarında (<c>ProjectRow.OnVmPropertyChanged</c>) Conditional'ınkiyle AYNI riski
+    /// taşır — WillBuild/Reason SABİT kalıp yalnız FailedAt değişen bir önizleme (kanıt tazelenir, "failed"
+    /// kalır) listede olmasaydı satır bayat kalırdı.</summary>
     [StaFact]
-    public void Flipping_only_the_conditional_flag_repaints_the_decision_label()
+    public void Flipping_only_the_failed_at_flag_repaints_the_decision_label()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
             WillBuild = true,
-            WillBuildReason = WillBuildReason.WaitingForDependency,
-            OwnFilesChanged = false,
-            LastBuiltAt = DateTimeOffset.Now.AddHours(-2),
-            Conditional = true,
-            DependencyRoots = ["OSYS.Up"],
+            WillBuildReason = WillBuildReason.LastFailed,
+            FailedAt = DateTimeOffset.Now.AddHours(-2),
         };
         var (row, window, _) = Realize(vm);
-        Assert.Equal("affected · up to date · 2h", row.DecisionText.Text); // koşullu: söz tutulur, soluk
-        var waiting = row.DecisionText.Inlines.OfType<Run>().First().Foreground;
+        Assert.Equal("failed · 2h", row.DecisionText.Text);
 
-        vm.Conditional = false; // bu koşu ZORLUYOR (satırdan Build / Rebuild / SCC üyesi) — söz yok
+        vm.FailedAt = DateTimeOffset.Now.AddDays(-3); // yalnız kanıtın yaşı değişti, gerekçe AYNI kaldı
         row.UpdateLayout();
 
-        Assert.Equal("affected", row.DecisionText.Text);
-        Assert.NotEqual(waiting, row.DecisionText.Inlines.OfType<Run>().First().Foreground); // bekleyen iş: belirgin
+        Assert.Equal("failed · 3d", row.DecisionText.Text);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 6] <c>LocalEdits</c> de <see cref="DecisionLabel.For"/>'a giren YENİ bir olgudur
+    /// (<c>modified · local</c> kuyruğu) — AYNI property-changed riski, ayrı bir test.</summary>
+    [StaFact]
+    public void Flipping_only_the_local_edits_flag_repaints_the_decision_label()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = true };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal("modified", row.DecisionText.Text);
+
+        vm.LocalEdits = true; // yalnız kirli girdi bayrağı değişti
+        row.UpdateLayout();
+
+        Assert.Equal("modified · local", row.DecisionText.Text);
         GC.KeepAlive(window);
     }
 

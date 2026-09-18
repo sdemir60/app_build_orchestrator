@@ -212,8 +212,11 @@ public class ConsoleModesTests
 
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
         // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
+        // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eski cümle "its last build failed" idi; artık satırın
+        // kendi kelimesiyle AYNI dili konuşur ("failed" — bu KAYNAKTA hata verdi), DecisionLabel'in Title'ıyla
+        // AYNI kökten (bkz. o sınıfın LastFailed dalı).
         Assert.Equal(
-            ["Will build — its last build failed.", "Last successful build: a3f81c2"],
+            ["Will build — it failed at this source.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.LastFailed, currentSha: sha), now));
 
@@ -254,11 +257,20 @@ public class ConsoleModesTests
                 skipReason: SkipReasons.OutOfCycleScope)));
     }
 
-    /// <summary>[Task 5 review round 1 — M-10] Bu koşu GERÇEKTEN koşullu bekletiyorsa (<c>Conditional</c>)
-    /// "Will build" YALANDIR — motor bu projeyi kökü hâlâ hatalıysa atlayabilir. Sayfa artık satırın kendi
-    /// etiketiyle (<see cref="DecisionLabel"/>) AYNI cümleyi söyler — kopya YASAK, tek kaynak orada.</summary>
+    /// <summary>[Task 5 review round 1 — M-10] Bu proje bir bağımlılığa karşı bekliyorsa "Will build" YALANDIR
+    /// — motor bu projeyi kökü hâlâ hatalıysa atlayabilir. Sayfa satırın uyarı üçgeniyle AYNI cümleyi söyler —
+    /// kopya YASAK, tek kaynak <see cref="RowWarning.WaitingForDependencyText"/>.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia: bu koşu GERÇEKTEN bekletiyorsa
+    /// (<c>Conditional=true</c>) bağımlılık cümlesi, ZORLUYORSA (<c>Conditional=false</c> — satırdan Build,
+    /// Rebuild, bir SCC üyesi) genel "Will build in this run." — çünkü eski cümle
+    /// <c>DecisionLabel.For</c>'un Title'ından geliyordu ve o da conditional'a bakıyordu. DecisionLabel artık
+    /// conditional'ı hiç okumuyor (bkz. o sınıfın özeti) ve bu sayfa artık ONDAN değil doğrudan
+    /// <c>RowWarning</c>'den okuyor — ayrım BURADA da kalktı: <c>WaitingForDependency</c> gerekçesi tek başına
+    /// yeter, kapsamın zorlayıp zorlamadığı sayfanın cümlesini artık ETKİLEMEZ.</para>
+    /// </summary>
     [Fact]
-    public void A_conditionally_waiting_row_states_the_dependency_it_is_waiting_on_not_will_build()
+    public void A_waiting_row_states_the_dependency_it_is_waiting_on_not_will_build()
     {
         var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
@@ -271,11 +283,10 @@ public class ConsoleModesTests
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
                 currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
 
-        // [DEĞİŞEN KURAL — YOK] Aynı gerekçe ama bu koşu ZORLUYORSA (Conditional=false — satırdan Build,
-        // Rebuild, bir SCC üyesi) söz tutulmaz: davranış DEĞİŞMEDİ, genel "Will build in this run." dalına düşer
-        // — DecisionLabel'in aynı ayrımı (bkz. o dosyanın "conditional" parametresi) burada da geçerli.
+        // Kapsam ZORLASA bile (Conditional=false) AYNI cümle — söz artık kapsamdan bağımsız bir disk olgusudur.
         Assert.Equal(
-            ["Will build in this run.", "Last successful build: 2h ago (a3f81c2)"],
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
+                "Last successful build: 2h ago (a3f81c2)"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
@@ -284,9 +295,9 @@ public class ConsoleModesTests
 
     /// <summary>[final review — I1] Motor projeyi GERÇEKTEN koşullu olduğu için atladıysa
     /// (<see cref="SkipReasons.DependencyStillFailing"/>) sayfa, kullanıcının o sayfayı açmasının TEK nedenini
-    /// söyler: hangi bağımlılık. Gerekçe, bekleyen satırınkiyle (yukarıdaki test) ve satırın kendi etiketiyle
-    /// AYNI cümledir — kopya YASAK, tek kaynak <see cref="DecisionLabel"/>. Eskiden bu dal switch'te YOKTU ve
-    /// sayfa genel "Skipped in this run." diyordu.</summary>
+    /// söyler: hangi bağımlılık. Gerekçe, bekleyen satırınkiyle (yukarıdaki test) AYNI cümledir — kopya YASAK,
+    /// tek kaynak <see cref="RowWarning.WaitingForDependencyText"/>. Eskiden bu dal switch'te YOKTU ve sayfa
+    /// genel "Skipped in this run." diyordu.</summary>
     [Fact]
     public void A_row_skipped_because_its_dependency_is_still_failing_names_that_dependency()
     {
