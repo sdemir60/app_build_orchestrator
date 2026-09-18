@@ -66,12 +66,17 @@ public static class ConsoleEmptyState
             SkipReasons.InDependencyCycle => InCycleText,
             SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
             SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
-            // [final review — I1] Koşullu proje sırası geldi ve kökleri hâlâ hatalıydı: sayfanın açılma
+            // [final review — I1] Motor bu satırı GERÇEKTEN koşullu değerlendirdiği için atladı: sayfanın açılma
             // nedeni TAM OLARAK "hangi bağımlılık" sorusudur, genel "Skipped in this run." onu yutuyordu.
-            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) ve satırın kendi etiketiyle AYNI kaynaktan
-            // gelir (kopya YASAK). Kapı motorun gerekçesiyle satırın bayrağını birlikte arar: bayrak bir
-            // şekilde düşmüşse (zorlanmış kapsam) aşağıdaki genel dal doğru cümleyi zaten söyler.
-            SkipReasons.DependencyStillFailing when row.Conditional => WaitingForDependencyReason(row),
+            // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) AYNI kaynaktan gelir (kopya YASAK).
+            // [Task 6 review round 1 — DÜZELTME] `row.Conditional` guard'ı KALDIRILDI: bu SkipReason'ı motor
+            // yalnız `ConditionalRebuild.AppliesTo`nun (Core) o proje için TRUE dediği projeler için üretir —
+            // Supervisor tarafında `TrySkipWhileDependencyStillFails` sadece `run.ConditionalIds` içindeki
+            // projeler için çağrılır (`RunCoordinator.cs`), ve o küme AYNI `AppliesTo` çağrısından gelir — App'in
+            // bu run'ın kendi önizlemesinden yazdığı `row.Conditional`'ın kaynağıyla BİREBİR aynı yer. Yani bu
+            // dal her tetiklendiğinde `row.Conditional` zaten `true`'dur; guard hiçbir zaman farklı bir cevap
+            // vermiyordu, yalnız Pending dalıyla tutarsız görünüyordu.
+            SkipReasons.DependencyStillFailing => WaitingForDependencyReason(row),
             _ => "Skipped in this run.",
         },
         // Bunlar SAVUNMACIdır: derlenen bir proje her zaman log yazar. Log yine de yoksa (disk hatası, run
@@ -116,16 +121,23 @@ public static class ConsoleEmptyState
             // build in this run." dalına düşerdi. DecisionLabel artık conditional'ı hiç okumadığı için (bkz. o
             // dosyanın sınıf özeti) burada da aynı ayrımı korumanın gerekçesi kalmadı: WaitingForDependency bir
             // disk olgusudur, kapsamın zorlayıp zorlamadığından bağımsız aynı cümleyi söyler. Metin artık
-            // DecisionLabel'in Title'ından DEĞİL, doğrudan uyarı üçgeninin kaynağından gelir (tek kaynak
-            // RowWarning.WaitingForDependencyText — kopya YASAK).
+            // DecisionLabel'in Title'ından DEĞİL, RowWarning.WaitingForDependencyText'ten gelir (tek kaynak,
+            // kopya YASAK — bu, uyarı üçgeninin TOOLTIP'i ile AYNI değildir, bkz. WaitingForDependencyReason'ın
+            // kendi özeti).
             WillBuildReason.WaitingForDependency => WaitingForDependencyReason(row),
             _ => $"{head} in this run.",
         };
     }
 
-    /// <summary>[Task 6 — design v1.20.0 §2.4] Uyarı üçgeninin "bekliyor" cümlesiyle (kelimesi kelimesine) AYNI
-    /// — tek kaynak <see cref="RowWarning.WaitingForDependencyText"/>, burada yalnız çağrılır ve konsol
-    /// cümlelerinin ortak kuralı gereği sonuna nokta eklenir.</summary>
+    /// <summary>[Task 6 — design v1.20.0 §2.4] Bu satırın hem <c>Pending</c> hem <c>Skipped</c> dalı için TEK
+    /// kaynak: <see cref="RowWarning.WaitingForDependencyText"/>, burada yalnız çağrılır ve konsol
+    /// cümlelerinin ortak kuralı gereği sonuna nokta eklenir.
+    ///
+    /// <para><b>[Task 6 review round 1 — DÜZELTME]</b> Bu cümle uyarı üçgeninin tooltip'iyle (<see
+    /// cref="RowWarning.For"/>) AYNI DEĞİLDİR — üçgen daraltılmış slot için kısaltır (<c>Dependency issue:
+    /// Sales.Core +2</c>); bu metin tüm kökleri virgülle yazıp bekleme kuyruğunu ekler. Paylaştıkları TEK şey
+    /// kök adlandırma dili (<see cref="RowWarning.DepIssuePrefix"/> + kısaltma) — ayrıntı
+    /// <see cref="RowWarning.WaitingForDependencyText"/>'in kendi özetinde.</para></summary>
     private static string WaitingForDependencyReason(ProjectRowViewModel row)
     {
         string text = RowWarning.WaitingForDependencyText(row.DependencyRoots, row.NamePrefix);

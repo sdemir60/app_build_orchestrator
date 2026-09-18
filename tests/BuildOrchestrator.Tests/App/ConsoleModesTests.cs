@@ -213,8 +213,9 @@ public class ConsoleModesTests
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
         // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
         // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eski cümle "its last build failed" idi; artık satırın
-        // kendi kelimesiyle AYNI dili konuşur ("failed" — bu KAYNAKTA hata verdi), DecisionLabel'in Title'ıyla
-        // AYNI kökten (bkz. o sınıfın LastFailed dalı).
+        // kendi kelimesiyle AYNI dili konuşur ("failed" — bu KAYNAKTA hata verdi). [Task 6 review round 1 —
+        // DÜZELTME] Bu, DecisionLabel'in Title'ıyla AYNI KAYNAKTAN gelmiyor — ikisi ayrı literal, yalnız
+        // kelime seçimi bilerek tutarlı (kopya YASAK burada UYGULANMADI, yalnız SÖZCÜK ortak).
         Assert.Equal(
             ["Will build — it failed at this source.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
@@ -258,8 +259,12 @@ public class ConsoleModesTests
     }
 
     /// <summary>[Task 5 review round 1 — M-10] Bu proje bir bağımlılığa karşı bekliyorsa "Will build" YALANDIR
-    /// — motor bu projeyi kökü hâlâ hatalıysa atlayabilir. Sayfa satırın uyarı üçgeniyle AYNI cümleyi söyler —
-    /// kopya YASAK, tek kaynak <see cref="RowWarning.WaitingForDependencyText"/>.
+    /// — motor bu projeyi kökü hâlâ hatalıysa atlayabilir. Sayfanın tek kaynağı
+    /// <see cref="RowWarning.WaitingForDependencyText"/>'tir (kopya YASAK).
+    /// <para><b>[Task 6 review round 1 — DÜZELTME]</b> Bu cümle satırın uyarı üçgeniyle (<see cref="RowWarning.For"/>)
+    /// AYNI DEĞİLDİR — üçgen daraltılmış slot için kısaltır (<c>Dependency issue: Sales.Core +2</c>), sayfa geniş
+    /// alanda tüm kökleri yazıp bekleme kuyruğunu ekler. Paylaşılan TEK şey kök adlandırma dili
+    /// (<see cref="RowWarning.DepIssuePrefix"/> + kısaltma), tam cümle DEĞİL.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia: bu koşu GERÇEKTEN bekletiyorsa
     /// (<c>Conditional=true</c>) bağımlılık cümlesi, ZORLUYORSA (<c>Conditional=false</c> — satırdan Build,
@@ -297,7 +302,15 @@ public class ConsoleModesTests
     /// (<see cref="SkipReasons.DependencyStillFailing"/>) sayfa, kullanıcının o sayfayı açmasının TEK nedenini
     /// söyler: hangi bağımlılık. Gerekçe, bekleyen satırınkiyle (yukarıdaki test) AYNI cümledir — kopya YASAK,
     /// tek kaynak <see cref="RowWarning.WaitingForDependencyText"/>. Eskiden bu dal switch'te YOKTU ve sayfa
-    /// genel "Skipped in this run." diyordu.</summary>
+    /// genel "Skipped in this run." diyordu.
+    ///
+    /// <para><b>[Task 6 review round 1]</b> <c>ConsoleEmptyState</c>'in bu dalı eskiden <c>row.Conditional</c>'a
+    /// bakan bir guard taşıyordu (Pending dalıyla TUTARSIZ — o dal Task 6'da bu bakışı bıraktı). Guard KALDIRILDI:
+    /// motor bu <c>SkipReason</c>'ı yalnız <c>ConditionalRebuild.AppliesTo</c>'nun (Core) o proje için TRUE
+    /// dediği durumlarda üretir (<c>RunCoordinator.TrySkipWhileDependencyStillFails</c>, yalnız
+    /// <c>run.ConditionalIds</c> içindeki projeler için çağrılır — AYNI <c>AppliesTo</c> çağrısı <c>row.Conditional</c>'ı
+    /// da besler), yani bu dal tetiklendiğinde <c>row.Conditional</c> zaten <c>true</c>'dur. İkinci senaryo
+    /// (<c>conditional: false</c>) bunu pinler: cümle Conditional'dan BAĞIMSIZ aynı kalır.</para></summary>
     [Fact]
     public void A_row_skipped_because_its_dependency_is_still_failing_names_that_dependency()
     {
@@ -310,6 +323,17 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
+                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+
+        // conditional:false pratikte olmaz (yukarıdaki not), ama guard KALKTIĞI için cümle YİNE de aynı —
+        // savunmacı durumda bile sessizce "Skipped in this run."a düşmez.
+        Assert.Equal(
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
+                "Last successful build: 2h ago (a3f81c2)"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
+                skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
+                willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
                 currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
     }

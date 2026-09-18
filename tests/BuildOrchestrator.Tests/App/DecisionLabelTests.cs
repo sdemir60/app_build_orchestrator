@@ -113,6 +113,25 @@ public class DecisionLabelTests
         Assert.Equal("Failed at this source — Build will retry it", decision.Title);
     }
 
+    /// <summary>[Task 6 review round 1] <c>failedAt</c> yalnız <c>LastFailed</c> gerekçesinde okunur — başka
+    /// hiçbir dal eski bir hata kanıtı taşıyor diye "failed" YAZMAZ. <c>UpToDate</c> kuyruğu her zaman
+    /// <c>lastBuiltAt</c>'in yaşıdır (satır aynı anda hem güncel hem "kanıtlı hatalı" olamaz — bunlar motorun
+    /// gerekçe alanında zaten birbirini DIŞLAR, ama etiket kendi payına düşeni doğru okumalı); <c>modified</c>'in
+    /// başlığı da kelimenin kendisini asla içermez.</summary>
+    [Fact]
+    public void FailedAt_is_read_only_for_the_last_failed_reason()
+    {
+        var upToDate = For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2), failedAt: Now.AddDays(-3));
+        Assert.Equal("up to date", upToDate.Word);
+        Assert.Equal("2h", upToDate.Tail);           // failedAt'in 3 günlük yaşı DEĞİL, lastBuiltAt'in 2 saati
+        Assert.DoesNotContain("failed", upToDate.Title, StringComparison.Ordinal);
+
+        var modified = For(true, WillBuildReason.SignatureChanged, ownChanged: true, failedAt: Now.AddDays(-3));
+        Assert.Equal("modified", modified.Word);
+        Assert.Null(modified.Tail);
+        Assert.DoesNotContain("failed", modified.Title, StringComparison.Ordinal);
+    }
+
     /// <summary>Bir döngü üyesinde bu satırı yeniden derleyecek şey düz bir Build DEĞİL, <i>Resolve
     /// cycles</i>'tır — uzun gerekçe bunu adlandırır (kelime <c>failed</c> her koşulda kalır, o bir
     /// olgudur).</summary>

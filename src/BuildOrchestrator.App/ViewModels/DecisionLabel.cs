@@ -54,8 +54,9 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 /// gerçekten bekletiyorsa (<c>conditional</c>) yuva kökleri tooltip'inde tekrarlıyordu — ama aynı bilgi zaten
 /// uyarı üçgeninin TEK SATIRLIK tooltip'inde vardı (kopya YASAK). <see cref="WillBuildReason.WaitingForDependency"/>
 /// artık <see cref="WillBuildReason.UpToDate"/> ile BİREBİR aynı okunur: proje ÇIKTI olarak güncel, hangi kökün
-/// beklendiğini yalnız üçgen (<c>RowWarning</c>) anlatır. <c>conditional</c> parametresi bu yüzden TAMAMEN
-/// kalktı — kapsamın zorlayıp zorlamadığı etiketi artık hiç etkilemez.</item>
+/// beklendiğini yalnız üçgen (<c>RowWarning.WaitingForDependencyText</c>) anlatır. <c>conditional</c>,
+/// <c>dependencyRoots</c> ve <c>namePrefix</c> parametreleri bu yüzden TAMAMEN kalktı — kapsamın zorlayıp
+/// zorlamadığı ve hangi kökün beklendiği artık etiketin işi değil.</item>
 /// </list></para>
 ///
 /// <para><b>Karar bilinmiyorsa yuva BOŞ kalır</b> — yalnız gerçekten bilinmiyorsa: Sync yapılmadı ya da motor
@@ -75,14 +76,9 @@ public static class DecisionLabel
     /// <param name="now">Şimdi (yaş hesabı için).</param>
     /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
     /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
-    /// <param name="dependencyRoots">[DEĞİŞEN KURAL — design v1.20.0 §2.4] Artık OKUNMUYOR: hangi kökün
-    /// beklendiğini anlatmak uyarı üçgeninin (<c>RowWarning.WaitingForDependencyText</c>) işi oldu — aynı bilgiyi
-    /// iki tooltip'te tekrarlamak kopyaydı. İmza yalnız geriye dönük çağıran uyumu için KORUNDU.</param>
-    /// <param name="namePrefix">Bkz. <paramref name="dependencyRoots"/> — aynı gerekçeyle artık okunmuyor.</param>
     public static RowDecision For(
         bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt,
-        DateTimeOffset? failedAt, bool localEdits, DateTimeOffset now, bool inCycle = false,
-        IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "")
+        DateTimeOffset? failedAt, bool localEdits, DateTimeOffset now, bool inCycle = false)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;

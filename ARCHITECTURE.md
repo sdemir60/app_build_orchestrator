@@ -1827,20 +1827,24 @@ and MSBuild, not invented terms:
 
 A project waiting on a dependency (`WaitingForDependency`) reads the same `up to date` as a project whose
 signature simply matches — both are read from the same fact, that the output is current — because *which*
-dependency it is waiting on is the warning triangle's question, not the label's: the triangle's own one-line
-tooltip already names the root (`Dependency issue: Sales.Core +2`), and the project page repeats the same
-sentence (`RowWarning.WaitingForDependencyText`, the single source both read). Scope does not change the
-label's wording either — a genuinely-waiting row, a forced one (triggered straight from itself, a Rebuild, an
-SCC member), and a cycle member all read the identical `up to date`. The slot is 134 px, sized for its longest
-label, `up to date · just now`.
+dependency it is waiting on is the warning triangle's question, not the label's: the label itself no longer
+carries the recorded roots at all. The triangle and the project page do not say the same sentence, though: the
+triangle's tooltip is built for a narrow slot and abbreviates (`Dependency issue: Sales.Core +2`, the first root
+plus a count), while the page has room and spells out every root, then adds the wait clause
+(`RowWarning.WaitingForDependencyText`, the page's own single source). What the two do share is only the root's
+own vocabulary — the `Dependency issue: ` prefix and the same short-name rule — not the surrounding sentence.
+Scope does not change the label's wording either — a genuinely-waiting row, a forced one (triggered straight
+from itself, a Rebuild, an SCC member), and a cycle member all read the identical `up to date`. The slot is
+134 px, sized for its longest label, `up to date · just now`.
 
 **The word is a fact; the tail is the age of the evidence behind it, never a promise.** A failed row's tail is
 how long ago that failure happened, read the same way as `up to date`'s tail — and its tooltip names who will
 retry it: *Build* ordinarily, or *Resolve cycles* for a cycle member, because a plain Build never compiles a
-dependency cycle. An earlier design fixed `failed · retry` as one unit and read the tail itself as a promise
-("the next Build will try this again"); measured on a real workspace, 15 of 18 `failed` rows were cycle members
-for whom that promise would never be kept — a plain Build does not compile them. The word does not change with
-scope either way — `failed` states what happened, the tooltip states who acts on it.
+dependency cycle. Design v1.16.0's own table fixed `failed · retry` as one unit and read the tail itself as a
+promise ("the next Build will try this again") — a promise a cycle member cannot keep, since a plain Build
+never compiles one: measured on a real workspace, 15 of 18 `failed` rows were cycle members for whom that
+promise would never come. Design v1.20.0 later dropped the pairing too, for the same reason. The word does not
+change with scope either way — `failed` states what happened, the tooltip states who acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the

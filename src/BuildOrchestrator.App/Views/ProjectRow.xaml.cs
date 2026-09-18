@@ -494,7 +494,7 @@ public partial class ProjectRow : UserControl
         var decision = _vm is null
             ? RowDecision.None
             : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle, _vm.DependencyRoots, _vm.NamePrefix);
+                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

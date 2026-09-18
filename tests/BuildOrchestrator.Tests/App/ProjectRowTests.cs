@@ -815,7 +815,7 @@ public class ProjectRowTests
     /// test kendi sabit kopyasına karşı yeşil kalırdı, kırılan gerçek yuvayı YAKALAMAZDI.</para>
     /// </summary>
     [StaFact]
-    public void The_longest_decision_label_fits_inside_the_right_block()
+    public void The_decision_slot_is_134px_wide()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
@@ -826,6 +826,12 @@ public class ProjectRowTests
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
         row.UpdateLayout();
+
+        // [Task 6 review round 1] Eski test yalnız "genişlik <= XAML'ın GERÇEK MinWidth'i" diyordu — XAML 204'te
+        // kalsaydı da YEŞİL kalırdı, 134'e küçülmeyi hiç PİNLEMİYORDU. Sayı burada da tekrarlanmaz (kopya YASAK
+        // demek "ikinci bir 134 sabiti YAZMA" demektir); XAML'ın gerçek değeri bu TEK satırda somut sayıya karşı
+        // sınanır, geri kalan assertion'lar o okunan değeri kullanır.
+        Assert.Equal(134, row.RightBlock.MinWidth);
 
         Assert.Equal("up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
