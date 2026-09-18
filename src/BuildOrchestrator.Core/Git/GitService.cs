@@ -117,10 +117,14 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return GitResult<string?>.Fail(CommandLineTool.DescribeFailure(CommandLineTool.Git, r));
     }
 
-    /// <summary>Working-tree + staged değişiklikler (`git status --porcelain`'den path listesi). Temiz repo → boş liste.</summary>
+    /// <summary>Working-tree + staged değişiklikler (`git status --porcelain -z`'den path listesi). Temiz repo → boş liste.
+    /// <para><c>-z</c> ZORUNLUDUR: onsuz git ASCII dışı baytları (<c>core.quotepath</c> varsayılanı) tırnaklı sekizlik
+    /// kaçışlarla yazar — <c>src/Işık.cs</c> <c>"src/I\305\237\304\261k.cs"</c> olur, diskteki hiçbir yolla
+    /// eşleşmez ve Türkçe adlı dosyası değişen proje <c>local</c> işaretini hiç almaz. <c>-z</c> çıktısı yolları
+    /// ham (UTF-8) ve tırnaksız verir. Salt okunur bir sorgudur.</para></summary>
     public async Task<GitResult<IReadOnlyList<string>>> GetDirtyPathsAsync(CancellationToken ct = default)
     {
-        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["status", "--porcelain"], _repoRoot, CommandTimeout, ct);
+        var outcome = await CommandLineTool.RunAsync(_runner, CommandLineTool.Git, _gitExecutable, ["status", "--porcelain", "-z"], _repoRoot, CommandTimeout, ct);
         if (!outcome.Success) return GitResult<IReadOnlyList<string>>.Fail(outcome.Error!);
 
         var r = outcome.Value!;
@@ -404,8 +408,8 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
     /// <summary>
     /// <c>git ls-tree -r HEAD</c> çıktısını (<c>&lt;mode&gt; &lt;type&gt; &lt;sha&gt;\t&lt;path&gt;</c> satırları)
     /// path → blob SHA haritasına indirger; yalnız <c>type=blob</c> (submodule/<c>commit</c> girdileri dışlanır).
-    /// Path git tarafından tırnaklanmış olabilir (özel karakterler) — <see cref="ParsePorcelainPaths"/> ile
-    /// tutarlı biçimde kırpılır.
+    /// Path git tarafından tırnaklanmış olabilir (özel karakterler); burada yalnız tırnaklar kırpılır, sekizlik
+    /// kaçışlar çözülmez (<see cref="ParsePorcelainPaths"/>'in <c>-z</c> ile kapattığı durum burada açıktır).
     /// </summary>
     private static IReadOnlyDictionary<string, string> ParseLsTreeBlobHashes(string lsTreeOutput)
     {
@@ -432,18 +436,19 @@ public sealed class GitService(IProcessRunner runner, string repoRoot, string gi
         return map;
     }
 
+    /// <summary><c>git status --porcelain -z</c> çıktısı: girdiler NUL ile ayrılır, her biri <c>"XY &lt;yol&gt;"</c>;
+    /// yollar ham ve tırnaksızdır. Yeniden adlandırma/kopya (<c>X</c> = <c>R</c>/<c>C</c>) girdisinin ARDINDAN
+    /// eski yol ayrı bir girdi olarak gelir (<c>"R  yeni\0eski\0"</c>) — yeni yol raporlanır, eskisi atlanır.</summary>
     private static IReadOnlyList<string> ParsePorcelainPaths(string porcelainOutput)
     {
         var paths = new List<string>();
-        using var reader = new StringReader(porcelainOutput);
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        string[] entries = porcelainOutput.Split('\0');
+        for (int i = 0; i < entries.Length; i++)
         {
-            if (line.Length < 4) continue; // "XY " + path'ten kısa olamaz
-            string rest = line[3..];
-            int arrow = rest.IndexOf(" -> ", StringComparison.Ordinal); // rename: "old -> new"
-            string path = arrow >= 0 ? rest[(arrow + 4)..] : rest;
-            paths.Add(path.Trim('"'));
+            string entry = entries[i];
+            if (entry.Length < 4) continue; // "XY " + path'ten kısa olamaz (sondaki boş girdi dahil)
+            paths.Add(entry[3..]);
+            if (entry[0] is 'R' or 'C') i++; // ardından gelen eski yol raporlanmaz
         }
         return paths;
     }

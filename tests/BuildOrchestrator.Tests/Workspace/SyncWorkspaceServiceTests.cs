@@ -643,9 +643,12 @@ public class SyncWorkspaceServiceTests
 
         public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
         {
+            // Fixture satırları okunur olsun diye '\n' ile yazılır; GitService '-z' ister ve git o zaman girdileri
+            // NUL ile bitirir — stub, gerçek git'in bu argümanlara vereceği biçimi üretir.
             if (spec.Arguments.Contains("status") && spec.Arguments.Contains("--porcelain"))
-                return new ProcessResult(exitCode, stdout ?? "", exitCode == 0 ? "" : "fake porcelain failure",
-                    TimeSpan.Zero, TimedOut: false);
+                return new ProcessResult(exitCode,
+                    spec.Arguments.Contains("-z") ? (stdout ?? "").Replace('\n', '\0') : stdout ?? "",
+                    exitCode == 0 ? "" : "fake porcelain failure", TimeSpan.Zero, TimedOut: false);
             return await _inner.RunAsync(spec, ct);
         }
     }
