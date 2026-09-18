@@ -236,3 +236,20 @@ public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRe
 /// <summary>Bir git worktree bilgisi (GitService.ListWorktrees). IPC yüzeyi minimal — bu DTO It-3'te yalnız
 /// GitService tarafında kullanılır; tam listWorktrees/deleteWorktree komutları It-4 UI'a ertelendi. [It-3]</summary>
 public sealed record Worktree(string Name, string Branch, string Path, bool IsActive, long? DiskSizeBytes);
+
+/// <summary>[Faz 2/Task 2] <c>BranchSwitcher.SwitchAsync</c>'in (<c>Core/Git/RepositoryWriter.cs</c>) sonucu —
+/// Task 5'in IPC üzerinden App'e taşıyacağı checkout durumu, bu yüzden Contracts'ta yaşar (Core → Contracts
+/// referansı, kopya YASAK).</summary>
+public enum CheckoutStatus
+{
+    /// <summary>Checkout başarıyla yapıldı; çalışma ağacı artık hedef branch'te.</summary>
+    Switched,
+    /// <summary>Hedef zaten aktif branch'ti — git'e hiç dokunulmadı.</summary>
+    AlreadyOn,
+    /// <summary>Commit'lenmemiş yerel değişiklik var ve stash istenmedi — hiçbir şey yapılmadı.</summary>
+    Dirty,
+    /// <summary><c>stash push</c> başarısız oldu — checkout hiç denenmedi.</summary>
+    StashFailed,
+    /// <summary>Checkout (stash başarılıysa stash SONRASI) başarısız oldu.</summary>
+    Failed,
+}

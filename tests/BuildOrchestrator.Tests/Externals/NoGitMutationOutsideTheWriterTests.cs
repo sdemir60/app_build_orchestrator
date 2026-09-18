@@ -18,10 +18,17 @@ namespace BuildOrchestrator.Tests.Externals;
 /// gerekçesi "ana repo hiçbir koşulda ilerletilmez"di. Kural bilinçli olarak güncellendi: kullanıcı alt
 /// bardaki <c>N behind</c> chip'ine bastığında ana repo da ff-only ilerletilir (yalnız aktif branch, yalnız
 /// kullanıcı tıklamasıyla, asla kendiliğinden). Bu yüzden yüzey artık VCS'e göre değil, DOSYAYA göre
-/// çitlenir — tek mutasyon dosyası <c>Core/Git/FastForwardUpdater.cs</c>'tir ve ana repo ile harici kökler
-/// aynı ilkeli oradan geçer. Guard'ın koruduğu şey değişmedi: mutasyonun ikinci bir yere sızmaması.</para>
+/// çitlenir. Guard'ın koruduğu şey değişmedi: mutasyonun ikinci bir yere sızmaması.</para>
 ///
-/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız fast-forward yüzeyi ve havuz worktree'lerini
+/// <para><b>[DEĞİŞEN KURAL — spec §6.6]</b> Eski iddia "iki dosya (fast-forward yüzeyi + havuz worktree'si),
+/// checkout/stash hiçbir yerde" idi: <c>MutatingGitVerb</c> regex'i <c>checkout</c>/<c>stash</c>'i ZATEN
+/// tanıyordu ama izin listesindeki hiçbir dosya bu fiilleri kullanmıyordu — araçtan branch değiştirme henüz
+/// yoktu. Faz 2 ile birlikte "tek ağaç ve branch" akışı checkout/stash'i gerçek bir ürün özelliği yapar
+/// (§6.3) ve bu ikisi ff-only pull'la AYNI dosyaya (<c>Core/Git/RepositoryWriter.cs</c>, sınıf adı
+/// <c>BranchSwitcher</c>) eklenir — <c>FastForwardUpdater</c> da git mv ile aynı dosyaya taşınır. Sınıf/dosya
+/// adı değişse de kural aynı kalır: mutasyon TEK dosyada yaşar.</para>
+///
+/// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız tek yazım dosyası ve havuz worktree'lerini
 /// kuran/sıfırlayan dosya. Adet PİNLENMEZ ama dosya listesi pinlenir — yeni bir dosyaya mutasyon komutu
 /// eklemek guard'ı kırmızıya çeker.</para>
 ///
@@ -29,7 +36,7 @@ namespace BuildOrchestrator.Tests.Externals;
 /// (<c>"mer" + "ge"</c>) ya da argümanları bir listeden okumak. Guard literal çağrı biçimine bakar; niyetin
 /// denetimi review'ın işidir.</para>
 /// </summary>
-public sealed class NoGitMutationOutsideExternalsTests
+public sealed class NoGitMutationOutsideTheWriterTests
 {
     /// <summary>
     /// Çalışma ağacını ya da branch ref'lerini değiştiren git fiilleri — bir <c>ArgumentList</c> literalinin
@@ -50,11 +57,12 @@ public sealed class NoGitMutationOutsideExternalsTests
     /// <summary>Mutasyonun MEŞRU olduğu yollar (src köküne göre) ve gerekçeleri.</summary>
     private static readonly IReadOnlyCollection<string> Allowed =
     [
-        // Çalışma kopyasını ilerleten tek yüzey: merge-base kararı + merge --ff-only (§10.6). Hem harici
-        // kartlar hem (yalnız kullanıcı chip'e bastığında) ana repo buradan geçer.
-        @"BuildOrchestrator.Core\Git\FastForwardUpdater.cs",
+        // Kod tabanındaki TEK mutasyon dosyası: merge-base kararı + merge --ff-only (§10.6, FastForwardUpdater)
+        // VE branch checkout + stash push (§6.3/§6.6, BranchSwitcher). Hem harici kartlar hem (yalnız
+        // kullanıcı chip'e/branch chip'ine bastığında) ana repo buradan geçer.
+        @"BuildOrchestrator.Core\Git\RepositoryWriter.cs",
         // Havuz worktree'lerini kurar ve sıfırlar; üç kapısı (havuz altında, ana kök değil, detached HEAD)
-        // ana repoya dokunmasını imkânsız kılar (§10.4).
+        // ana repoya dokunmasını imkânsız kılar (§10.4). Task 3'te silinir.
         @"BuildOrchestrator.Core\Git\WorktreeManager.cs",
     ];
 
@@ -75,8 +83,20 @@ public sealed class NoGitMutationOutsideExternalsTests
             allowedFiles: null, skipCommentLines: true);
 
         Assert.All(mergeUsers, offender =>
-            Assert.StartsWith(@"BuildOrchestrator.Core\Git\FastForwardUpdater.cs", offender, StringComparison.Ordinal));
+            Assert.StartsWith(@"BuildOrchestrator.Core\Git\RepositoryWriter.cs", offender, StringComparison.Ordinal));
         Assert.NotEmpty(mergeUsers); // tarama gerçekten bir şey gördü
+    }
+
+    [Fact]
+    public void The_writer_file_is_the_only_mutation_surface()
+    {
+        // 'checkout' da (merge gibi) tek bir dosyada yaşar — BranchSwitcher'ın eklenmesiyle birlikte.
+        var checkoutUsers = SourceGuard.ScanSrc("*.cs", new Regex("\"checkout\"", RegexOptions.Compiled),
+            allowedFiles: null, skipCommentLines: true);
+
+        Assert.All(checkoutUsers, offender =>
+            Assert.StartsWith(@"BuildOrchestrator.Core\Git\RepositoryWriter.cs", offender, StringComparison.Ordinal));
+        Assert.NotEmpty(checkoutUsers); // tarama gerçekten bir şey gördü
     }
 
     [Fact]
@@ -85,7 +105,7 @@ public sealed class NoGitMutationOutsideExternalsTests
         // Boş bir tarama guard'ı sessizce yeşil bırakırdı.
         var scanned = SourceGuard.ScannedSrcFiles("*.cs");
 
-        Assert.Contains(@"BuildOrchestrator.Core\Git\FastForwardUpdater.cs", scanned);
+        Assert.Contains(@"BuildOrchestrator.Core\Git\RepositoryWriter.cs", scanned);
         Assert.True(scanned.Count > 50, $"Beklenenden az dosya tarandı: {scanned.Count}");
     }
 
