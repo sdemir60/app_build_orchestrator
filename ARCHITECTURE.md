@@ -729,14 +729,28 @@ project the run will not compile, such as a cycle member outside a `Cycles` run.
 together with two facts: whether the project's **own** files changed (stored content fingerprint versus
 today's) and when it was last built successfully.
 
+**Last build failed is evidence-based.** `LastFailed` is returned only when the ledger's failed signature — the
+composite signature captured at the moment this project's own MSBuild invocation last exited non-zero (§7.5) —
+equals today's signature; that equality is the proof the row is red about *today's* sources, not some earlier
+ones. A last result that is not `Succeeded` but carries no failed signature — an attempt interrupted before the
+compiler could report failure cleanly, killed, timed out, or stopped by an environment error rather than a
+compile error — is not evidence, and the project reads `NeverBuilt` instead of `LastFailed`. `WillBuild` is
+`true` either way, so this changes only the label a run's preview shows, never whether the project compiles.
+
 ### 7.5 Build state
 
 `build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
 worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the **built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
 duration, a flag marking that this success was linked against a failed dependency together with the project
-ids of that dependency issue's roots (§8.3), and the signature at which this project's cycle last failed to
-converge (§8.8). The content fingerprint is stored *next to* the
+ids of that dependency issue's roots (§8.3), the signature at which this project's cycle last failed to
+converge (§8.8), and the signature at which this project's *own* MSBuild invocation last exited non-zero
+together with the moment that failure was recorded. This failed signature is the evidence §7.4's `LastFailed`
+reason checks against, and it is kept apart from the last-run timestamp because the two can drift: a project
+can sit unbuilt after a failure while an upstream change still moves its signature, so the failure's own
+timestamp — not the last-run one — is what the row's `failed · 2h` age reads. Both fields go back to `null` on
+the next success, and answer `null` for a record that predates them or whose last result never named the
+signature it broke at (an interrupted attempt, not a compile failure). The content fingerprint is stored *next to* the
 signature rather than folded into it because it answers a different question — "did this project's own files
 change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last field is deliberately *not* folded into
 the built signature: the built signature means "this was compiled successfully", and Fast mode reads it as a

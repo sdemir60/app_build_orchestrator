@@ -394,7 +394,12 @@ public class SyncWorkspaceServiceTests
         string idB = Path.Combine(cloneRoot, "src", "B", "B.csproj");
         var store = new BuildStateStore(cacheRoot);
         var primed = store.Load();
-        store.Upsert(primed[idA] with { LastResult = BuildResult.Failed });
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: LastResult=Failed TEK BAŞINA A'yı kırmızı
+        // ("LastFailed") gösterirdi, hangi imzada patladığı önemsizdi. Artık kırmızı KANITLIDIR: hata anındaki
+        // imza (FailedSignature) deftere yazılır ve bugünkü imzayla eşleşmedikçe gerekçe NeverBuilt'e düşer.
+        // A burada kendi ANINDAki (primed) imzasında patlıyor — kaynağı bu Sync'e kadar değişmedi, yani
+        // FailedSignature = primed[idA].BuiltSignature bugünkü imzayla AYNI kalır ve kanıt gerçekten geçerlidir.
+        store.Upsert(primed[idA] with { LastResult = BuildResult.Failed, FailedSignature = primed[idA].BuiltSignature });
         store.Upsert(primed[idB] with { DepIssue = true, DepIssueRoots = [idA] });
 
         var events = new List<IpcEvent>();

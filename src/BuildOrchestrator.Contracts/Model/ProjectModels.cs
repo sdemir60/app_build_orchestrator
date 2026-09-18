@@ -156,7 +156,19 @@ public sealed record BuildState(
     // (WaitingForDependency) ve koşu, köklerden biri düzelince derler (ConditionalRebuild). Alan SONA ve
     // default'lu: bu alandan önce yazılmış kayıtlar null çözülür ve kök bilinmediği için eski davranış
     // (her Build'de derlenir) sürer — güvenli yön.
-    IReadOnlyList<string>? DepIssueRoots = null)
+    IReadOnlyList<string>? DepIssueRoots = null,
+    // [spec 2026-09-18 §1-14] Bu projenin KENDİ MSBuild çağrısı exit != 0 ile bittiği andaki bileşik imza —
+    // kırmızının KANITI. Yalnız derleyici hatası bunu yazar (ortam hatası/timeout/durdurma DEĞİL, bkz. Task 2);
+    // başarıda null'a döner. WillBuildEvaluator bunu bugünkü imzayla karşılaştırır: eşitse gerekçe LastFailed
+    // (kanıtlı kırmızı), aksi hâlde (imza yok ya da farklı) hata kanıt SAYILMAZ ve karar NeverBuilt'e düşer —
+    // kanıtsız kırmızı YASAK. Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null
+    // çözülür (hiçbir eski kayıt yanlışlıkla "kanıtlı" sayılmaz).
+    string? FailedSignature = null,
+    // [spec 2026-09-18 §1-14] FailedSignature'ın YAZILDIĞI an — `failed · 2h` etiketinin yaşı buradan okunur
+    // (LastRunAt'tan AYRI: bir proje başarısızlıktan SONRA hiç derlenmeden imzası değişebilir, o durumda
+    // FailedSignature hâlâ eski hatayı anlatır ama LastRunAt onun zamanını taşımaz — bkz. BuildStateStore.
+    // FailedAtOf, LastBuiltAtOf ile aynı desen). Başarıda ya da kanıtsız hatada null.
+    DateTimeOffset? FailedAt = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -174,7 +186,9 @@ public sealed record BuildState(
         && DepIssue == other.DepIssue
         && (DepIssueRoots is null
             ? other.DepIssueRoots is null
-            : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots));
+            : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots))
+        && FailedSignature == other.FailedSignature
+        && FailedAt == other.FailedAt;
 
     public override int GetHashCode()
     {
@@ -190,6 +204,8 @@ public sealed record BuildState(
         hash.Add(BuiltContent);
         hash.Add(DepIssue);
         foreach (string root in DepIssueRoots ?? []) hash.Add(root);
+        hash.Add(FailedSignature);
+        hash.Add(FailedAt);
         return hash.ToHashCode();
     }
 }
