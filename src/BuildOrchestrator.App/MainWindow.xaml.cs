@@ -803,10 +803,9 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
-            // [design v1.11.0 §3.1 · §9-3] Başlangıç modu grafın da RENK kanalıdır (kesikli node çerçevesi) ve
-            // bir işlem başlarken düşer. Bu geçiş <c>Counters</c>'ı DEĞİŞTİRMEZ (statüler aynı kalır), yani
-            // yukarıdaki kapı onu KAÇIRIRDI. İşlem etiketi, başlangıç modunun düştüğü ANIN gözlemlenebilir
-            // sinyalidir (BeginRunAsync ikisini birlikte yazar).
+            // [design v1.20.0 §2.3] İşlem etiketi, yeni bir işlemin satırları nötrlediği ANIN gözlemlenebilir
+            // sinyalidir (BeginRunAsync onu nötrlemeden SONRA yazar). Yukarıdaki kapı tek başına yetmez:
+            // RunCounters yalnız sayıları taşır ve sayılar aynı kalırken düğümlerin görsel durumu değişebilir.
             case nameof(RunViewModel.CurrentOperation):
                 PushGraphStatuses();
                 break;
@@ -817,7 +816,7 @@ public partial class MainWindow : Window
                 //
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
                 // hiç açılmadı). İşaret o zaman HEMEN silinir — aksi halde başlamayan bir işlemin amber kapsamı
-                // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                // ekranda kalıcı asılı kalır ve düğümler çıktı durumu yerine var olmayan bir işlemin kapsamını gösterir.
                 // Koşu SONA ERDİĞİNDE de (IsRunning true'dan false'a düşerken, Stop/engine ölümü/tamamlanma —
                 // hepsi IsRunning'i false yapar) aynı dal işaretin silinmesini garanti eder.
                 //
