@@ -253,9 +253,13 @@ public class RunViewModelTests
     // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
     // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
     // (SkipReasons.OutOfCycleScope) State'e hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered
-    // kalır, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ — [review fix I-1] SkipReason'ı YİNE DE
+    // kalır, atlandı sayacı onu SAYMAZ — [review fix I-1] SkipReason'ı YİNE DE
     // taşır (ConsoleEmptyStateTests bunun neden gerekli olduğunu ayrıca pinler). Kapsam içi GERÇEK bir "up to
     // date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Burada ayrıca "atlandı filtresi kapsam dışını listelemez, kapsam içi
+    // gerçek skip'i listeler" pinleniyordu; atlandı filtresi (chip'iyle birlikte) kalktı — chip'ler artık durum
+    // filtreleridir ve satırı koşu statüsüyle değil gösterdiği durumla listeler (ProjectFilterTests). Koşu
+    // tablosunun "N skipped"i (şerit) aşağıda pinlenmeye devam eder.
     [Fact]
     public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
     {
@@ -331,11 +335,7 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 1, 0, 200));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status); // run sonunda da Discovered
-
-        // Atlandı filtresi kapsam dışını listelemez; kapsam içi gerçek skip'i listeler.
-        var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
-        Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
-        Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+        Assert.Equal(1, vm.Counters.Skipped); // run sonunda da yalnız kapsam içi skip
     }
 
     // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası

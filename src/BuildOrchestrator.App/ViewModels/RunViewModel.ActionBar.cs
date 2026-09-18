@@ -22,7 +22,7 @@ public sealed partial class RunViewModel
     /// kilitler ve konsolu o projenin loguna alır; filtre ise "bu kümeye bak" der. İkisi aynı anda açıkken
     /// kullanıcı filtrelenmiş listeye bakarken graf ilgisiz bir düğüme odaklı kalıyordu.</para>
     /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-4]</b> Chip'ler ARTIK birbirini düşürmez: küme çoklu ve
-    /// VEYA'lıdır (✓ + ✗ = "bu koşuda derlenenler"). Yeni küme her seferinde YENİ bir örnektir — yerinde
+    /// VEYA'lıdır (design v1.20.0 §2.7: durum filtreleri — ✓ + ✗ = "güncel ya da bozuk"). Yeni küme her seferinde YENİ bir örnektir — yerinde
     /// mutasyon <c>PropertyChanged</c> yaymaz ve liste bayat kalırdı.</para></summary>
     public void ToggleFilter(string? filter)
     {

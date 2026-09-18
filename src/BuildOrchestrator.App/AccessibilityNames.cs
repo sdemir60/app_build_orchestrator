@@ -15,9 +15,14 @@ public static class AccessibilityNames
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
     public const string FilterAll = "All projects — clear filters";
     public const string FilterBuilding = "Building now — filter";
-    public const string FilterSucceeded = "Succeeded — filter";
-    public const string FilterFailed = "Failed — filter";
-    public const string FilterSkipped = "Skipped — filter";
+    /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ DURUM chip'leri. Sözcük, filtre etiketi ve satırın ekran-okuyucu
+    /// adıyla AYNI kaynaktandır (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden koşu sonucu chip'leri vardı: <c>FilterSucceeded</c> ("Succeeded — filter") ve
+    /// <c>FilterSkipped</c> ("Skipped — filter"); chip'ler artık durumu sayar ve atlandı chip'i kalktı.</summary>
+    public static readonly string FilterCurrent = StateFilter(Controls.VisualStatus.Current);
+    public static readonly string FilterStale = StateFilter(Controls.VisualStatus.Stale);
+    public static readonly string FilterFailed = StateFilter(Controls.VisualStatus.Failed);
+    private static string StateFilter(Controls.VisualStatus shown) => Controls.StatusGlyph.LabelFor(shown) + " — filter";
     /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i. <b>[DEĞİŞEN KURAL]</b> Burada eskiden İKİ ad
     /// vardı — <c>FilterDep</c> ("Dependency-affected — filter") ve <c>FilterCycle</c> ("In a dependency cycle
     /// — filter"). v1.11.0 turuncuyu UI'dan çıkardı ve iki uyarıyı TEK amber üçgende birleştirdi; filtre de
@@ -205,7 +210,7 @@ public static class AccessibilityNames
     public static string DeleteWorktreeNamed(string worktreeName) => $"{DeleteWorktree} {worktreeName}";
 
     /// <summary>[A13/T5] Graf düğümü — ad DÜĞÜM BAŞINA anlamlıdır: sabit bir "graph node" metni ekran
-    /// okuyucuya hiçbir şey söylemez. Tam proje adı + statü etiketi (<see cref="Controls.StatusGlyph.LabelFor"/>,
-    /// design-v1 EN_STATUS) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
+    /// okuyucuya hiçbir şey söylemez. Tam proje adı + düğümün GÖSTERDİĞİ durumun sözcüğü
+    /// (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
     public static string GraphNode(string projectName, string statusLabel) => $"{projectName} — {statusLabel}";
 }

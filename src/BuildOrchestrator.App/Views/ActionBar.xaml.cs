@@ -44,9 +44,9 @@ public partial class ActionBar : UserControl
     private StackPanel _syncIcon = null!;
 
     // sayaç chip'leri + değer TextBlock'ları (StickyRibbon deseni — kod-tarafı kurulur, refresh'te güncellenir)
-    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _warnChip = null!;
+    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _currentChip = null!, _staleChip = null!, _failedChip = null!, _warnChip = null!;
     private TextBlock _behindValue = null!;
-    private TextBlock _sigmaValue = null!, _buildingValue = null!, _succeededValue = null!, _failedValue = null!, _skippedValue = null!, _warnValue = null!;
+    private TextBlock _sigmaValue = null!, _buildingValue = null!, _currentValue = null!, _staleValue = null!, _failedValue = null!, _warnValue = null!;
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
     private Path _warnTriangle = null!;
@@ -85,9 +85,9 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- test yüzeyi
     internal ToggleButton SigmaChip => _sigmaChip;
     internal ToggleButton BuildingChip => _buildingChip;
-    internal ToggleButton SucceededChip => _succeededChip;
+    internal ToggleButton CurrentChip => _currentChip;
+    internal ToggleButton StaleChip => _staleChip;
     internal ToggleButton FailedChip => _failedChip;
-    internal ToggleButton SkippedChip => _skippedChip;
     /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i (döngü ∪ dep-issue) — eski ⚠ cycle ve ▲ dep
     /// chip'lerinin yerini alır.</summary>
     internal ToggleButton WarnChip => _warnChip;
@@ -248,17 +248,12 @@ public partial class ActionBar : UserControl
         _buildingChip = AddCounterChip(_ => BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
 
-        _succeededChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _succeededValue, AccessibilityNames.FilterSucceeded);
-        _succeededChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Succeeded);
-
-        _failedChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _failedValue, AccessibilityNames.FilterFailed);
-        _failedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Failed);
-
-        _skippedChip = AddCounterChip(_ => new StatusGlyph { Status = VisualStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _skippedValue, AccessibilityNames.FilterSkipped);
-        _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
+        // [design v1.20.0 §2.7 · §1.4] Üç DURUM chip'i: güncel ✓ · derlenecek ○ (kesikli daire) · bozuk ✗ — satırın
+        // kendi glyph'leri. [DEĞİŞEN KURAL] Eskiden koşu sonucu chip'leriydi (succeeded ✓ · failed ✗ · skipped —);
+        // "atlanmak" bir durum değildir ve — yalnız run-story yüzeylerinin glyph'idir, bu yüzden o chip kalktı.
+        _currentChip = AddStateChip(VisualStatus.Current, out _currentValue, AccessibilityNames.FilterCurrent, ProjectFilter.Current);
+        _staleChip = AddStateChip(VisualStatus.Stale, out _staleValue, AccessibilityNames.FilterStale, ProjectFilter.Stale);
+        _failedChip = AddStateChip(VisualStatus.Failed, out _failedValue, AccessibilityNames.FilterFailed, ProjectFilter.Failed);
 
         // [design v1.11.0 §2.7-4] Son chip İSTİSNAİ durumu anlatır ve YALNIZ listede karşılığı varken görünür —
         // boş/gri hâliyle barda durması sinyali zayıflatıyordu (v1.5.2 kararı).
@@ -267,6 +262,15 @@ public partial class ActionBar : UserControl
         // iki ayrı filtre iki ayrı renk ima ediyordu. Chip artık tek ve amberdir.
         _warnChip = AddCounterChip(_ => WarnIcon(), out _warnValue, AccessibilityNames.FilterWarn);
         _warnChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Warn);
+    }
+
+    /// <summary>[design v1.20.0 §2.7] Durum chip'i: satırın glyph'i + rozet; tık o durumun filtresini açıp kapar.</summary>
+    private ToggleButton AddStateChip(VisualStatus shown, out TextBlock value, string label, string filter)
+    {
+        var chip = AddCounterChip(_ => new StatusGlyph { Status = shown, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+            out value, label);
+        chip.Click += (_, _) => _vm?.ToggleFilter(filter);
+        return chip;
     }
 
     // [E5/T47] AYNI metin hem tooltip hem UIA-adı (ikon-yalnız chip'in görsel içeriği ekran okuyucuya bir şey
@@ -336,9 +340,10 @@ public partial class ActionBar : UserControl
         var c = _vm?.Counters ?? default;
         _sigmaValue.Text = Inv(c.Total);
         _buildingValue.Text = Inv(c.Building);
-        _succeededValue.Text = Inv(c.Succeeded);
-        _failedValue.Text = Inv(c.Failed);
-        _skippedValue.Text = Inv(c.Skipped);
+        // [design v1.20.0 §2.7] DURUM kovaları — koşu tablosu (Succeeded/Failed/Skipped) şeridindir.
+        _currentValue.Text = Inv(c.Current);
+        _staleValue.Text = Inv(c.Stale);
+        _failedValue.Text = Inv(c.Broken);
         _warnValue.Text = Inv(c.Warn);
 
         // İstisnai chip: sayı 0 ise chip HİÇ YOKTUR (gri/boş hâli taşınmaz).
@@ -350,9 +355,9 @@ public partial class ActionBar : UserControl
         var f = _vm?.ActiveFilters ?? ProjectFilter.None;
         _sigmaChip.IsChecked = false; // Σ hiç aktif olmaz (her zaman temizler)
         SetChipActive(_buildingChip, _buildingValue, ProjectFilter.Building, f);
-        SetChipActive(_succeededChip, _succeededValue, ProjectFilter.Succeeded, f);
+        SetChipActive(_currentChip, _currentValue, ProjectFilter.Current, f);
+        SetChipActive(_staleChip, _staleValue, ProjectFilter.Stale, f);
         SetChipActive(_failedChip, _failedValue, ProjectFilter.Failed, f);
-        SetChipActive(_skippedChip, _skippedValue, ProjectFilter.Skipped, f);
         SetChipActive(_warnChip, _warnValue, ProjectFilter.Warn, f);
         _sigmaValue.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
     }
@@ -609,7 +614,7 @@ public partial class ActionBar : UserControl
         bool syncing = _vm?.Phase == AppPhase.Syncing;
 
         // repo yokken sayaç chip'leri de disabled (README §3.1 — prototip hatası düzeltilir).
-        foreach (var chip in new[] { _sigmaChip, _buildingChip, _succeededChip, _failedChip, _skippedChip, _warnChip })
+        foreach (var chip in new[] { _sigmaChip, _buildingChip, _currentChip, _staleChip, _failedChip, _warnChip })
             chip.IsEnabled = hasWs;
 
         // T12: koşarken branch/worktree/Debug|Release görünür şekilde disabled; perf CANLI.

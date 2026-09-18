@@ -338,15 +338,15 @@ public partial class ProjectRow : UserControl
     /// (<see cref="ProjectRowViewModel.Marked"/> kanalı) true verir.</param>
     private void ApplyStatusVisuals(bool lighting = false)
     {
-        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
         var visual = _vm?.VisualStatus ?? VisualStatus.Unknown;
 
         // [design v1.20.0 §2.4-5] Glyph görsel durumu çizer (çıktı durumu + koşu): atlanan satır — değil,
         // kendi durumunun glyph'ini gösterir (güncel ✓, bozuk ✗, derlenecek kesikli daire).
         PART_Glyph.Status = visual;
         // [design v1.11.0 §2.4-5] Glyph TOOLTIP TAŞIMAZ; ekran okuyucunun duyacağı statü metni UIA adına
-        // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK).
-        System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(status));
+        // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK). [design v1.20.0 §2.7] Ad GÖSTERİLENİ söyler (görsel
+        // durum): atlanan güncel satır "Up to date" duyurulur, "Skipped" değil.
+        System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(visual));
 
         // [design v1.11.0 §2.4-3] Ad TEK kurala bağlıdır: bu İŞLEMDE işi olan satır (marked · queued ·
         // building · succeeded · failed) primary beyaz, geri kalanı secondary gri.

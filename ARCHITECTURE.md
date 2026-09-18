@@ -845,7 +845,7 @@ into a single line, `N outside cycle scope — skipped`. `decision.log` still re
 name; only the live stream collapses them.
 
 The App carries the same restraint into the row list, the counters and the ribbon: an out-of-scope project
-never shows a "skipped" row, is never counted as skipped, and never appears under the *Skipped* filter chip —
+never shows a "skipped" row and is never counted in the run's skipped total —
 the engine's own pre-skip for it is not this run's business, so its status and colour do not change (§13.2).
 Only a project genuinely inside the scope — a cycle member or the upstream this run pulled in — that comes
 back `skipped — up to date` reads as a result. The project's own page is the one place the pre-skip does
@@ -2068,13 +2068,26 @@ steps its background on hover, in the design as much as here — it is a status 
 of its own to select.
 
 **Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
-there (`Σ`, building, `✓`, `✗`, `—`); one more appears **only when the list actually holds one** — `⚠`, the
-combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional situation, and
-carrying it permanently as an empty grey chip weakened the signal.
+there: `Σ` (all — clears the filters), building (a spinner while something compiles, a grey dot otherwise),
+`✓` up to date, `○` to build and `✗` failed; one more appears **only when the list actually holds one** —
+`⚠`, the combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional
+situation, and carrying it permanently as an empty grey chip weakened the signal.
+
+The three glyph chips count **state**, not the last run's results: each counts the rows that *show* that
+state — `✓` every green row (up-to-date output, whether this run skipped it, built it or never ran), `○` every
+grey row, `✗` every red one. The bucket is read from the row's visual status in one place
+(`VisualStatuses.StateOf`, surfaced as `ProjectFilter.StateKey`), and `RunCounters` and the filter both ask it,
+so pressing a chip lists exactly as many rows as its badge says. A failure without evidence (a timeout, a stop,
+an invocation error) leaves its output stale and the row grey, so it counts under `○`, not `✗`; rows the run is
+queueing or compiling, rows lit by the marking wave and rows with no decision yet are in no state bucket.
+Building counts only what is compiling right now — a queued row, or a cycle member waiting its turn, is not
+building. There is no skipped chip: being skipped is not a state — a skipped row keeps its standing's colour —
+and the `—` glyph belongs to run-story surfaces only. The run's own tally (succeeded · failed · skipped ·
+dependency-affected) stays where it is, in the ribbon's completion line.
 
 The chips **combine**. The active filter is a set: chips toggle independently and the selected ones are OR'd
-together — `✓` plus `✗` reads as "what this run built" — while the search box is AND'ed on top. An active chip
-lights in its own status colour, and the removable chip in the PROJECTS header lists the selected set joined
+together — `✓` plus `✗` reads as "up to date or broken" — while the search box is AND'ed on top. An active chip
+lights in its own status colour (green, neutral grey, red; amber for building and warnings), and the removable chip in the PROJECTS header lists the selected set joined
 with ` + `. Pressing a filter also drops the selection: a selection locks the graph camera onto one node, a
 filter says "look at this set", and the two fought each other. A filter reaches the **graph** too — nodes
 outside the visible set fade to the same 0.1 the unfocused set uses. The matching rule lives in one place
@@ -2139,7 +2152,7 @@ its standing colour until its own `projectStarted` arrives, exactly the "queued 
 plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row genuinely outside
 the scope never turns colour at all, and it never turns `Skipped` either: the engine's own pre-skip for it
 (`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line, §8.1) does not
-reach the row's status or colour, the *Skipped* filter chip, or the skipped counter — those read the row
+reach the row's status or colour, the state filters, or the run's skipped total — those read the row
 exactly as a Sync left it, for the run's whole life. The one place the pre-skip does reach is the row's own
 project page: it states the same reason, because the run's own preview already forced the row's will-build flag
 `false` (every pre-skipped project's is, regardless of why, §8.1) and a page that said nothing would read a
@@ -2708,7 +2721,7 @@ lines.
   selected row's own `ProjectRowViewModel.Status`, the same value the row and the graph node draw, so the header never
   keeps a second state-to-glyph mapping: a cycle member that is `Started` but not the one actually compiling shows
   `Queued` in the row and in the header alike. The status word beside it, and its colour, read the very same table
-  (`StatusGlyph.LabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed vocabulary, so
+  (`StatusGlyph.RunLabelFor`/`BrushKeyFor`) the glyph does rather than a second `ProjectRowState`-keyed vocabulary, so
   word, colour and glyph are one call and cannot disagree. A dependency-issue badge and a cycle badge can appear
   **together** (unlike the single triangle a project row shows, which picks one by priority): both are an 8 px
   `Icon.AlertTri` outline triangle in `Brush.AmberText`, declared directly in XAML as `{DynamicResource}` bindings so
@@ -3399,19 +3412,26 @@ meets 4.5:1.
 
 | Status | Glyph | Text |
 |---|---|---|
-| Unknown · to build · marked | dashed circle | Discovered |
-| Up to date | ✓ in a ring | Discovered |
+| Unknown — no decision yet | dashed circle | Not synced |
+| To build | dashed circle | To build |
+| Marked — lit by the marking wave | dashed circle | Marked to build |
+| Up to date | ✓ in a ring | Up to date |
 | Queued | clock | Queued |
 | Building | rotating dashed ring | Building |
-| Succeeded | ✓ in a ring | Succeeded |
+| Succeeded — built by this run | ✓ in a ring | Up to date · *Succeeded* in the console header |
 | Failed — a compiler failure, in this run or proven by the ledger | ✗ in a ring | Failed |
 | Skipped — run-story surfaces only | — in a ring | Skipped |
 
-The glyph is drawn from the visual status; the text — the glyph's screen-reader name and the console
-header's status word — names what the engine last said about the project in this run (`GraphStatus`), which
-is why an up-to-date row the run has not touched reads `Discovered`. The `—` is a run-story mark: it appears on
-the event stream's skip line and in the console header's run result, never on a list row, a graph node or a
-counter — a skipped project keeps the colour and glyph of its standing.
+Glyph and text are both drawn from the visual status. On the state surfaces — the row glyph's and the graph
+node's screen-reader names — the word names what the surface *shows*, with the same words the filter chips use
+(`StatusGlyph.LabelFor`, which reads the same state bucket as the counters): a skipped up-to-date row is
+announced *Up to date*, never *Skipped*, and a row this run built is *Up to date* too. The console header is a
+run-story surface: its status word names what the engine last said about the project in this run
+(`StatusGlyph.RunLabelFor` — *Succeeded*, *Skipped*, *Discovered* for a project the run has not touched), and
+shares the words it has in common (*Queued*, *Building*, *Failed*) with the state table rather than spelling
+them again. The `—` is a run-story mark: it appears on the event stream's skip line and in the console
+header's run result, never on a list row, a graph node or a counter — a skipped project keeps the colour and
+glyph of its standing.
 
 **One colour channel — the visual status.** The row's stripe, the dot beside the name, the status glyph, the
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour

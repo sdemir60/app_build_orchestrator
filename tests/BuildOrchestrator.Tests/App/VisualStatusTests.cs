@@ -139,4 +139,33 @@ public class VisualStatusTests
         foreach (var state in Enum.GetValues<VisualStatus>())
             Assert.Equal(state == VisualStatus.Skipped, StatusGlyph.InnerIconKeyFor(state) == "Icon.StatusDash");
     }
+
+    /// <summary>[design v1.20.0 §2.7] DURUM yüzeylerinin (satır glyph'i, graf düğümü) ekran-okuyucu sözcüğü
+    /// GÖSTERİLENİ söyler ve filtre chip'iyle AYNI sözcüğü kullanır: yeşil (güncel ya da bu koşuda derlenmiş)
+    /// "Up to date", gri "To build", kırmızı "Failed"; koşu bindirmesi "Queued"/"Building"; dalga
+    /// "Marked to build"; karar yoksa "Not synced". Tek eşleme, tek metin kaynağı.</summary>
+    [Theory]
+    [InlineData(VisualStatus.Unknown, "Not synced")]
+    [InlineData(VisualStatus.Current, "Up to date")]
+    [InlineData(VisualStatus.Succeeded, "Up to date")]
+    [InlineData(VisualStatus.Stale, "To build")]
+    [InlineData(VisualStatus.Failed, "Failed")]
+    [InlineData(VisualStatus.Marked, "Marked to build")]
+    [InlineData(VisualStatus.Queued, "Queued")]
+    [InlineData(VisualStatus.Building, "Building")]
+    public void A_state_surface_announces_what_it_shows(VisualStatus shown, string label)
+        => Assert.Equal(label, StatusGlyph.LabelFor(shown));
+
+    /// <summary>[design v1.20.0 §1.4] RUN-STORY yüzeyi (konsol başlığı) koşunun sonucunu söyler — "Skipped" ve
+    /// "Succeeded" burada kalır; ortak sözcükler (Queued · Building · Failed) durum tablosuyla AYNI kaynaktandır.</summary>
+    [Theory]
+    [InlineData(GraphStatus.Queued, "Queued")]
+    [InlineData(GraphStatus.Building, "Building")]
+    [InlineData(GraphStatus.Succeeded, "Succeeded")]
+    [InlineData(GraphStatus.Failed, "Failed")]
+    [InlineData(GraphStatus.Skipped, "Skipped")]
+    [InlineData(GraphStatus.Cycle, "Cycle")]
+    [InlineData(GraphStatus.Discovered, "Discovered")]
+    public void A_run_story_surface_names_the_runs_result(GraphStatus status, string label)
+        => Assert.Equal(label, StatusGlyph.RunLabelFor(status));
 }

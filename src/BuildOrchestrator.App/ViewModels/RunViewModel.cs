@@ -1906,8 +1906,8 @@ public sealed partial class RunViewModel : ObservableObject
         // [Task 2/cycles — kök neden B · review fix I-1] Kapsam-dışı pre-skip bu run'ın parçası DEĞİLDİR: motor
         // kapsam dışı her projeyi kendiliğinden atlar (SkipReasons.OutOfCycleScope, RunCoordinator.cs) ama
         // kullanıcı bu projeyi hiç istemedi — satır motorun "atladım" STATÜSÜNÜ TAŞIMAZ, nötr (Pending/
-        // Discovered) kalır: State dokunulmaz, atlandı sayacı (RunCounters) ve atlandı filtresi
-        // (ProjectFilter.Skipped) bu projeyi hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda
+        // Discovered) kalır: State dokunulmaz, koşu tablosunun atlandı sayacı (RunCounters.Skipped)
+        // bu projeyi hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda
         // birikiyordu (RunViewModel.Stream.cs, DEĞİŞMEDİ). [DEĞİŞEN KURAL — review fix I-1] SkipReason'a YİNE
         // DE yazılır: motor bu run için WillBuild'i her pre-skip'te (kapsam dışı da GERÇEKTEN kirli de) false
         // ZORLAR (RunCoordinator.cs — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan

@@ -45,9 +45,11 @@ public class AccessibilityTests
 
         Assert.Equal(AccessibilityNames.FilterAll, AutomationProperties.GetName(bar.SigmaChip));
         Assert.Equal(AccessibilityNames.FilterBuilding, AutomationProperties.GetName(bar.BuildingChip));
-        Assert.Equal(AccessibilityNames.FilterSucceeded, AutomationProperties.GetName(bar.SucceededChip));
-        Assert.Equal(AccessibilityNames.FilterFailed, AutomationProperties.GetName(bar.FailedChip));
-        Assert.Equal(AccessibilityNames.FilterSkipped, AutomationProperties.GetName(bar.SkippedChip));
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski adlar "Succeeded — filter" ve "Skipped — filter" idi; chip'ler
+        // artık durum filtreleridir ve adları filtre etiketinin sözcüğünü taşır.
+        Assert.Equal("Up to date — filter", AutomationProperties.GetName(bar.CurrentChip));
+        Assert.Equal("To build — filter", AutomationProperties.GetName(bar.StaleChip));
+        Assert.Equal("Failed — filter", AutomationProperties.GetName(bar.FailedChip));
         Assert.Equal(AccessibilityNames.FilterWarn, AutomationProperties.GetName(bar.WarnChip));
         Assert.Equal(AccessibilityNames.BranchChip, AutomationProperties.GetName(bar.BranchChip));
         Assert.Equal(AccessibilityNames.WorktreeChip, AutomationProperties.GetName(bar.WorktreeChip));
@@ -97,13 +99,15 @@ public class AccessibilityTests
         var peer = UIElementAutomationPeer.CreatePeerForElement(body);
         Assert.True(peer is not null, "Düğüm gövdesinin automation peer'ı YOK — UIA ağacında hiç görünmüyor.");
         Assert.Equal(AutomationControlType.Button, peer!.GetAutomationControlType()); // tıklanır → buton rolü
-        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Discovered"), peer.GetName());
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Ad eskiden koşu statüsünü söylüyordu ("Discovered"); artık düğümün
+        // GÖSTERDİĞİ durumu söyler — hiç Sync yapılmamış düğüm kesikli çerçeveyle çizilir: "Not synced".
+        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Not synced"), peer.GetName());
 
         // Veri akınca (bu proje derlenmeye başlayınca) ad da tazelenir — bayat ad YASAK.
         vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("OSYS.Base"), "OSYS.Base"));
         Assert.Equal(AccessibilityNames.GraphNode("OSYS.Base", "Building"), peer.GetName());
         // Komşu düğüm etkilenmez (ad düğüm başına, tek bir ortak metin DEĞİL).
-        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Domain", "Discovered"),
+        Assert.Equal(AccessibilityNames.GraphNode("OSYS.Domain", "Not synced"),
             AutomationProperties.GetName(window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("OSYS.Domain")].Body));
     }
 
@@ -473,7 +477,7 @@ public class AccessibilityTests
         Assert.True(scanned >= MinimumScannedSurfaces, $"Yalnız {scanned} yüzey tarandı — ağaç kurulmamış olabilir.");
         foreach (string expected in new[]
                  {
-                     AccessibilityNames.GraphNode("OSYS.Base", "Discovered"), // n1
+                     AccessibilityNames.GraphNode("OSYS.Base", "Not synced"), // n1
                      AccessibilityNames.CopyLog,                              // n2
                      AccessibilityNames.LatestProjects,                       // n3
                      AccessibilityNames.LatestConsole,

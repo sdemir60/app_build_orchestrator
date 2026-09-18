@@ -29,8 +29,9 @@ namespace BuildOrchestrator.App.Graph;
 /// ikisi birlikte çekirdeği boyardı, turuncu amber'i eziyordu). v1.11.0 ikisini de kaldırdı; iki alan da bu
 /// kayıttan SÖKÜLDÜ çünkü grafta okuyucuları kalmadı.</para>
 ///
-/// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ve ekran-okuyucu adı ondan gelir —
-/// ikisi de bir RENK sorusu değildir.</para>
+/// <para><see cref="Status"/> KALIR: beads animasyonunun kapısı (Building) ondan gelir — bir RENK sorusu
+/// değildir. Ekran-okuyucu adı ise düğümün GÖSTERDİĞİ durumu söyler ve <see cref="Visual"/>'dan okunur
+/// (design v1.20.0 §2.7).</para>
 /// </summary>
 /// <param name="Id">Düğümün KİMLİĞİ — proje Id'si (tam csproj yolu). Yerleşim, slot haritası, kenarlar,
 /// seçim, hover, filtre ve işaretleme kümelerinin tamamı bunu anahtarlar.</param>

@@ -16,7 +16,7 @@ namespace BuildOrchestrator.App.Console;
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
 /// <para><b>Metin İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
-/// (<see cref="Controls.StatusGlyph.LabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
+/// (<see cref="Controls.StatusGlyph.RunLabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
 /// (son başarıyla derlendiği commit, ya da hiç derlenmediği). Derlenmekte olan bir projenin tek satırı vardır:
 /// orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///

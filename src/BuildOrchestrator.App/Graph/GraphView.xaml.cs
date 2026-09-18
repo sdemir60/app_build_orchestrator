@@ -917,9 +917,10 @@ public partial class GraphView : UserControl
 
         // [A13/T5] Ekran-okuyucu adı: kare/ikon görselleri ekran okuyucuya HİÇBİR ŞEY söylemez. Ad düğüm
         // BAŞINA anlamlıdır (tam proje adı + statü) ve statü görselleriyle AYNI yerde sürülür — statü
-        // değişince ad da tazelenir, bayat kalmaz.
+        // değişince ad da tazelenir, bayat kalmaz. [design v1.20.0 §2.7] Ad düğümün GÖSTERDİĞİ durumu söyler
+        // (Visual — çerçeve/zeminle aynı kanal), koşu statüsünü değil.
         AutomationProperties.SetName(
-            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Status)));
+            visual.Body, AccessibilityNames.GraphNode(visual.Model.Name, StatusGlyph.LabelFor(visual.Model.Visual)));
 
         // [design v1.11.0 §2.3 "Renk kuralı"] TEK statü kanalı: node border'ı, zemini ve içindeki küp AYNI
         // görsel durumdan boyanır. Eşleme tablosu VisualStatuses'tedir — liste satırı da AYNI tablodan okur;

@@ -79,6 +79,22 @@ public static class VisualStatuses
         _ => VisualStatus.Unknown,
     };
 
+    /// <summary>[design v1.20.0 §2.7] DURUM kovası: bu görsel durum hangi çıktı durumunu GÖSTERİR — yeşil
+    /// (güncel ya da bu koşuda derlenmiş) <see cref="StandingStatus.Current"/>, gri <see cref="StandingStatus.Stale"/>,
+    /// kırmızı <see cref="StandingStatus.Failed"/>. Koşu bindirmesi (kuyruk · derleme), işaretleme dalgası ve karar
+    /// yokluğu hiçbir kovada değildir → <c>null</c>.
+    /// <para>Kural TEK yerdedir ve görsel durumdan okunur: sayaç (<c>RunCounters</c>), filtre
+    /// (<c>ProjectFilter</c>) ve ekran-okuyucu sözcüğü (<see cref="StatusGlyph.LabelFor(VisualStatus)"/>) aynı
+    /// soruyu buradan sorar — satır neyi gösteriyorsa o sayılır, o listelenir, o duyurulur. Durum + koşu
+    /// statüsünden ikinci bir türetme kanıtsız hatayı (State Failed, çıktı bayat → GRİ) yanlış kovaya koyardı.</para></summary>
+    public static StandingStatus? StateOf(VisualStatus state) => state switch
+    {
+        VisualStatus.Current or VisualStatus.Succeeded => StandingStatus.Current,
+        VisualStatus.Stale => StandingStatus.Stale,
+        VisualStatus.Failed => StandingStatus.Failed,
+        _ => null, // unknown · marked · queued · building · skipped (run-story)
+    };
+
     private static VisualStatus Of(StandingStatus standing) => standing switch
     {
         StandingStatus.Current => VisualStatus.Current,

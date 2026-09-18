@@ -29,14 +29,24 @@ namespace BuildOrchestrator.App.ViewModels;
 /// cref="ProjectRowViewModel.CycleWaiting"/>) <c>Queued</c>'a taşınır — bölme değil TAŞIMA, toplam korunur.
 /// Aksi halde 32 üyeli bir SCC 4 worker'lı bir run'da "32 building" raporlardı ve şerit "finishing 32 in
 /// flight" derdi.</para>
+///
+/// <para>[design v1.20.0 §2.7] <b>İki tablo.</b> <c>Succeeded</c>/<c>Failed</c>/<c>Skipped</c> KOŞUNUN tablosudur —
+/// şeridin koşu özeti (<see cref="RibbonText"/>: "N failed · N succeeded · N skipped") onları okur ve değişmez.
+/// <c>Current</c>/<c>Stale</c>/<c>Broken</c> DURUM kovalarıdır — action bar'ın ✓ · ○ · ✗ chip'leri onları okur:
+/// satır neyi GÖSTERİYORSA o sayılır (<see cref="ProjectFilter.StateKey"/>, filtreyle AYNI kural). Bu yüzden
+/// kanıtsız hata (State Failed, çıktı bayat → gri) koşu tablosunda <c>Failed</c>, durum kovasında <c>Stale</c>'dir;
+/// kuyruk · derleme · işaretleme dalgası · karar yokluğu hiçbir durum kovasına girmez. Bir satır en çok BİR
+/// durum kovasındadır.</para>
 /// </summary>
 public readonly record struct RunCounters(int Total, int Building, int Queued, int Succeeded,
                                           int Failed, int Skipped, int DepAffected, int StuckCycles,
-                                          int Cycle = 0, int Warn = 0)
+                                          int Cycle = 0, int Warn = 0,
+                                          int Current = 0, int Stale = 0, int Broken = 0)
 {
     public static RunCounters From(IEnumerable<ProjectRowViewModel> rows)
     {
         int total = 0, building = 0, queued = 0, succeeded = 0, failed = 0, skipped = 0, dep = 0, stuck = 0, cycle = 0, warn = 0;
+        int current = 0, stale = 0, broken = 0;
         foreach (var r in rows)
         {
             total++;
@@ -57,7 +67,15 @@ public readonly record struct RunCounters(int Total, int Building, int Queued, i
                 case ProjectRowState.Failed: failed++; break;
                 case ProjectRowState.Skipped: skipped++; break;
             }
+            // [design v1.20.0 §2.7] Durum kovası — filtreyle TEK kural (kopya YASAK).
+            switch (ProjectFilter.StateKey(r.VisualStatus))
+            {
+                case ProjectFilter.Current: current++; break;
+                case ProjectFilter.Stale: stale++; break;
+                case ProjectFilter.Failed: broken++; break;
+            }
         }
-        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle, warn);
+        return new RunCounters(total, building, queued, succeeded, failed, skipped, dep, stuck, cycle, warn,
+                               current, stale, broken);
     }
 }

@@ -113,7 +113,7 @@ public partial class ConsoleHeader : UserControl
     /// <summary>[Final review I-2 · kullanıcı kararı] Glyph, yazı VE renk satırın KENDİ
     /// <see cref="ProjectRowViewModel.Status"/>'unu okur — satır ve graf da onu okur; başlık ikinci bir
     /// durum→glyph/ad/renk eşlemesi KURMAZ (Started ama derlenmeyen döngü üyesi satırda Queued ise başlıkta da
-    /// Queued'dır — hem ikon hem yazı). Ad/renk tablosu <see cref="StatusGlyph.LabelFor"/>/
+    /// Queued'dır — hem ikon hem yazı). Ad/renk tablosu <see cref="StatusGlyph.RunLabelFor"/>/
     /// <see cref="StatusGlyph.BrushKeyFor"/>'dur — glyph'in KENDİ tablosu; ikinci bir kopya AÇILMAZ.
     ///
     /// <para><b>[DEĞİŞEN KURAL]</b> Yazı ve rengi eskiden <c>ConsoleStatus.Name/BrushKey(row.State)</c> ile
@@ -128,7 +128,7 @@ public partial class ConsoleHeader : UserControl
         var glyph = VisualStatuses.OfRun(row.Status);
         StatusGlyphIcon.Status = glyph;
 
-        StatusNameText.Text = StatusGlyph.LabelFor(row.Status);
+        StatusNameText.Text = StatusGlyph.RunLabelFor(row.Status); // run-story: koşunun sonucu ("Skipped" burada kalır)
         StatusNameText.SetResourceReference(ForegroundProperty, StatusGlyph.BrushKeyFor(glyph));
 
         var depIssues = row.DepIssues;

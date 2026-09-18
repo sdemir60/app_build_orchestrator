@@ -747,7 +747,11 @@ public class ProjectRowTests
     /// uyarı üçgeni) ve aynı şey iki yerde okunuyordu. Listede tooltip taşıyan TEK öğe uyarı üçgenidir.</para>
     ///
     /// <para>Ekran okuyucu KAYBETMEZ: statü metni glyph'in UIA adına yazılır (eşleme
-    /// <see cref="StatusGlyph.LabelFor"/> — kopya YASAK).</para></summary>
+    /// <see cref="StatusGlyph.LabelFor(VisualStatus)"/> — kopya YASAK).</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4]</b> Ad eskiden KOŞU statüsünü söylüyordu: atlanan
+    /// satır "Skipped" duyuruluyordu. Değişme gerekçesi: satır bir durum yüzeyidir ve atlanan satır kendi
+    /// durumunun glyph'ini/rengini gösterir (güncel ✓) — ekran okuyucu da GÖSTERİLENİ duyar, filtre chip'iyle AYNI
+    /// sözcükle ("Up to date" · "To build" · "Failed"). "Skipped" yalnız run-story yüzeylerinde kalır.</para></summary>
     [StaFact]
     public void The_status_glyph_has_no_tooltip_and_announces_its_status_through_the_automation_name()
     {
@@ -756,15 +760,15 @@ public class ProjectRowTests
         var (row, window, _) = Realize(vm);
 
         Assert.Null(row.Glyph.ToolTip);
-        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Building),
-            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+        Assert.Equal("Building", System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
 
         vm.State = ProjectRowState.Skipped;
+        vm.WillBuild = false;
+        vm.WillBuildReason = WillBuildReason.UpToDate;
         vm.CycleUnconverged = true;
         row.UpdateLayout();
         Assert.Null(row.Glyph.ToolTip);
-        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Skipped),
-            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+        Assert.Equal("Up to date", System.Windows.Automation.AutomationProperties.GetName(row.Glyph)); // "Skipped" DEĞİL
         // ...gerekçe uyarı üçgeninde, TEK satır.
         Assert.Equal(RowWarning.CycleUnconverged, row.DepTooltip);
         GC.KeepAlive(window);
