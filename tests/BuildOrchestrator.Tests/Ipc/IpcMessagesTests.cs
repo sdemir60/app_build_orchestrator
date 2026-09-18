@@ -544,6 +544,40 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.3] branch checkout
+
+    /// <summary>Branch chip'inin komutu: hedef, uzak mı, kirli ağaçta stash'lensin mi — kendi ayrımcısıyla.</summary>
+    [Fact]
+    public void CheckoutBranchCommand_roundtrips_with_its_own_discriminator()
+    {
+        IpcCommand cmd = new CheckoutBranchCommand(@"D:\repo", "origin/feature/x", IsRemote: true, StashIfDirty: true);
+        string json = JsonSerializer.Serialize(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"checkoutBranch\"", json);
+        Assert.Contains("\"stashIfDirty\":true", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    /// <summary>Checkout sonucu: durum camelCase METİN olarak gider (yeni değer sona eklenebilir), boş alanlar
+    /// yazılmaz ve geri okunduğunda aynı kayıt çıkar.</summary>
+    [Fact]
+    public void CheckoutCompletedEvent_roundtrips_with_its_own_discriminator_and_camelCase_status()
+    {
+        IpcEvent[] events =
+        [
+            new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x", "b7e91d4aa", 2,
+                "build-orchestrator: leaving main for feature/x", null),
+            new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null),
+        ];
+        foreach (var ev in events)
+        {
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains("\"type\":\"checkoutCompleted\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        }
+        Assert.Contains("\"status\":\"switched\"", JsonSerializer.Serialize(events[0], IpcJson.Options));
+        Assert.DoesNotContain("\"revision\"", JsonSerializer.Serialize(events[1], IpcJson.Options));
+    }
+
     // ---------------------------------------------------------------- [A5/T69] Sync / branch / topoloji
 
     // App'in branch seçicisini besleyen komut RootPath taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR —

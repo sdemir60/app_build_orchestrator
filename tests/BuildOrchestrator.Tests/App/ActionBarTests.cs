@@ -38,17 +38,17 @@ public partial class ActionBarTests
     // ---------------------------------------------------------------- [K3] branch seçimi (saf VM)
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1/8]</b> Aktif olmayan bir branch'i seçmek (checkout gelene dek)
-    /// HİÇBİR ŞEY yapmaz: değer, faz, satır durumları ve konsol olduğu gibi kalır.
+    /// <b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Aktif olmayan bir branch'i seçmek bir checkout İSTER; ekran
+    /// motorun cevabına kadar DEĞİŞMEZ: değer, faz, satır durumları olduğu gibi kalır ve konsol TEMİZLENMEZ
+    /// (bölümü yalnız başarılı bir checkout'un cevabı açar — <see cref="BranchCheckoutTests"/>).
     ///
-    /// <para><b>Eski iddia</b> (<c>Selecting_a_non_active_branch_forces_worktree_on_and_writes_the_intent_line_not_git_switch</c>):
-    /// seçim worktree'yi ZORUNLU açar, satırları Pending'e sıfırlar, fazı Boot'a düşürür ve konsola
-    /// "branch target: … — worktree will be used at Build" + "Branch changed: … — Sync required" yazardı.
-    /// <b>Değişme gerekçesi:</b> worktree kalktı; seçili ama checkout edilmemiş bir hedef yoktur. Branch
-    /// değiştirmenin tek yolu gerçek bir checkout'tur (§1-8).</para>
+    /// <para><b>Eski iddia</b> (<c>Selecting_a_non_active_branch_changes_nothing_until_it_is_checked_out</c>, Task 4):
+    /// seçim HİÇBİR ŞEY yapmazdı — konsol bayt-bayt aynı kalırdı. <b>Değişme gerekçesi:</b> checkout geldi
+    /// (Task 5); seçim artık bir <c>checkoutBranch</c> komutu gönderir. Bu testin motoru başlatılmamıştır, yani
+    /// gönderim düşer ve konsola tek bir gönderim hatası EKLENİR — önceki metin ise yerinde durur.</para>
     /// </summary>
     [Fact]
-    public void Selecting_a_non_active_branch_changes_nothing_until_it_is_checked_out()
+    public async Task Selecting_a_non_active_branch_asks_for_a_checkout_and_changes_nothing_on_screen_until_it_answers()
     {
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
@@ -61,14 +61,23 @@ public partial class ActionBarTests
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State);
         string before = vm.GetRunDocumentText();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
 
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, true));
+        await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, true));
 
+        Assert.Single(sent.OfType<CheckoutBranchCommand>());
         Assert.Equal("main", vm.Branch);
         Assert.Equal(AppPhase.Idle, vm.Phase);
         Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State);
-        Assert.Equal(before, vm.GetRunDocumentText());
+        Assert.StartsWith(before, vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
+
+    /// <summary>[spec 2026-09-18 §6.3] Chip artık bir hedef SEÇMEZ, çalışma ağacının branch'ini DEĞİŞTİRİR — ad
+    /// bunu söyler (eski ad: "Branch — choose build target", worktree döneminden).</summary>
+    [Fact]
+    public void The_branch_chip_is_named_for_what_it_does()
+        => Assert.Equal("Branch — switch the checked-out branch", AccessibilityNames.BranchChip);
 
     // ---------------------------------------------------------------- görünüm kablajı (GERÇEK ActionBar/BuildMenu)
 
@@ -773,6 +782,23 @@ public partial class ActionBarTests
         Assert.False(bar.BranchChip.IsEnabled);   // T12: branch/config KİLİTLİ
         Assert.False(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);       // perf CANLI kalır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Chip'in kilidi VM'in TEK predicate'idir (<see cref="RunViewModel.CanSwitchBranch"/>):
+    /// koşu dışında uçuştaki bir Sync de onu kilitler — Sync'in okuduğu ağaç altından değişmemeli.</summary>
+    [StaFact]
+    public void The_branch_chip_is_locked_while_a_sync_is_in_flight()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        Assert.True(bar.BranchChip.IsEnabled);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:epo", "main"));
+        Assert.False(bar.BranchChip.IsEnabled);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.True(bar.BranchChip.IsEnabled);
         GC.KeepAlive(window);
     }
 

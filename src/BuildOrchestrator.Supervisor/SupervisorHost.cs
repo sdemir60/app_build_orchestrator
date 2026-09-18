@@ -130,6 +130,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await ApplyPerfModeAsync(p, ct); break;
             case PullRepositoryCommand p:
                 await PullRepositoryAsync(p, ct); break;
+            case CheckoutBranchCommand c:
+                await CheckoutBranchAsync(c, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -201,6 +203,53 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
 
         await writer.WriteAsync(new SyncProgressEvent(line, tone), ct);
         await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated), ct);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Branch chip'inden seçim: çalışma ağacında gerçek bir checkout. Yürütme
+    /// <see cref="BranchSwitcher"/>'dır (kir kapısı → isteğe bağlı <c>stash push -u</c> → <c>checkout</c>);
+    /// mutasyon yüzeyi o dosyada kalır.
+    ///
+    /// <para><b>Konsol satırı YAZILMAZ</b> (Pull'dan farkı budur): başarılı bir checkout yeni bir bölüm açar ve
+    /// App konsolu ÖNCE temizleyip stash/switch satırlarını SONRA yazar. Supervisor satır yayınlasaydı App'e
+    /// temizlikten ÖNCE ulaşır ve temizlikle silinirdi. Tek çıktı <see cref="CheckoutCompletedEvent"/>'tir;
+    /// satırlar <c>PlanProgressLines</c>'tan App'te kurulur.</para>
+    ///
+    /// <para><b>Kapı:</b> bir koşu uçuştaysa <c>checkoutRejected</c> — derlenmekte olan ağacı altından
+    /// değiştirmek koşunun kaynağını yarıda değiştirirdi. App'in kendi kapısı chip'i zaten kapatır; bu ikinci
+    /// katman komut yoldayken başlayan bir koşunun yarışını kapatır. Sync gibi komut döngüsünü BLOKLAR:
+    /// hemen ardından gelen bir <c>startRun</c> yarı değişmiş bir ağaçta başlamamalıdır.</para>
+    /// </summary>
+    private async Task CheckoutBranchAsync(CheckoutBranchCommand cmd, CancellationToken ct)
+    {
+        if (coordinator.IsRunActive)
+        {
+            await writer.WriteAsync(
+                new ErrorEvent("checkoutRejected", "A run is in flight — stop it before switching branches."), ct);
+            return;
+        }
+
+        try
+        {
+            // "from" checkout'tan ÖNCE okunur: sonrasında aktif branch zaten hedeftir. Detached HEAD'de kısa sha.
+            var git = workspace.Git(cmd.RootPath);
+            var current = await git.GetCurrentBranchAsync(ct);
+            string? from = current.Value;
+            if (current.Success && from is null)
+                from = (await git.GetHeadCommitAsync(ct)).Value is { } head ? RevisionText.Short(head) : null;
+
+            var result = await new BranchSwitcher(new ProcessRunner(), cmd.RootPath)
+                .SwitchAsync(cmd.Branch, cmd.IsRemote, cmd.StashIfDirty, ct);
+
+            await writer.WriteAsync(new CheckoutCompletedEvent(result.Status, from, result.Branch, result.Revision,
+                result.DirtyCount, result.StashMessage, result.Detail), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // BranchSwitcher git hatalarını zaten tipli sonuca çevirir; buraya yalnız GERÇEKTEN beklenmeyen bir
+            // hata düşer. IPC sınırını exception ASLA geçmemeli — App bu kodla chip kilidini açar.
+            await writer.WriteAsync(new ErrorEvent("checkoutFailed", ex.Message), ct);
+        }
     }
 
     /// <summary>

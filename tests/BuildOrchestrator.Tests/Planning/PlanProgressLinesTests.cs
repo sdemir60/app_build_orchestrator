@@ -41,6 +41,24 @@ public sealed class PlanProgressLinesTests
     public void The_head_line_reports_the_distance_from_the_remote(int? behind, string expected)
         => Assert.Equal(expected, PlanProgressLines.HeadDistance("a3f81c2", behind, "main"));
 
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'un satırları: App onları
+    /// <c>CheckoutCompletedEvent</c>'ten kurar — başarıda temizlenen konsolun ilk satırları, reddetmede
+    /// korunan konsolun altına eklenen uyarı.</summary>
+    [Fact]
+    public void The_branch_switch_lines_say_what_happened_and_what_to_do()
+    {
+        Assert.Equal("Switched to feature/x (b7e91d4) — from main",
+            PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"));
+        Assert.Equal(
+            "Stashed uncommitted changes: \"build-orchestrator: leaving main for feature/x\" — restore them with git stash pop",
+            PlanProgressLines.StashedBeforeSwitch("build-orchestrator: leaving main for feature/x"));
+        Assert.Equal("3 files have uncommitted changes — commit or stash them first",
+            PlanProgressLines.SwitchRefusedDirty(3));
+        Assert.Equal("1 file has uncommitted changes — commit or stash them first",
+            PlanProgressLines.SwitchRefusedDirty(1));
+        Assert.Equal("Switch failed — pathspec 'x' did not match", PlanProgressLines.SwitchFailed("pathspec 'x' did not match"));
+    }
+
     /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
     /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>
     [Fact]

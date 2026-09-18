@@ -113,7 +113,8 @@ public static class AccessibilityNames
     }
 
     public const string StopButton = "Stop build";
-    public const string BranchChip = "Branch — choose build target";
+    /// <summary>[spec 2026-09-18 §6.3] Chip bir hedef seçmez, çalışma ağacının branch'ini değiştirir (checkout).</summary>
+    public const string BranchChip = "Branch — switch the checked-out branch";
 
     /// <summary>[design v1.16.0 §2.7-6a] <c>N behind</c> chip'i. Sayı bilindiğinde ad SAYIYLA yeniden
     /// yazılır (<c>"3 behind"</c>) — burada duran, chip henüz hiç veri görmemişken geçerli olan addır.</summary>

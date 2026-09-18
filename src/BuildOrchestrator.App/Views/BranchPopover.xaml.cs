@@ -115,6 +115,7 @@ public partial class BranchPopover : PopoverBase
     private void Pick(BranchRef branch)
     {
         BranchPicked?.Invoke();  // popover'ı kapat (BuildApp.jsx:1337 setBranchPop(false))
-        Vm?.SelectBranch(branch);
+        // Checkout async'tir (gönderim + motorun cevabı); tıklama onu beklemez, sonucu konsol ve chip anlatır.
+        _ = Vm?.SelectBranch(branch);
     }
 }

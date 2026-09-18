@@ -829,6 +829,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// kontrolü doğrudan buna bağlanabilir.</para></summary>
     [ObservableProperty] private bool _updateExternals = true;
 
+    /// <summary>[spec 2026-09-18 §6.3] Settings → General "Stash and switch branches": branch chip'inden checkout'ta
+    /// ağaç kirliyse değişiklikler (izlenmeyenler dahil) stash'lenip geçilsin mi. <b>Varsayılan: hayır</b> — checkout
+    /// durur ve kullanıcıdan önce commit/stash ister. Değer her <see cref="CheckoutBranchCommand"/> ile motora gider.
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _stashOnBranchSwitch;
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -1656,7 +1662,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// çıkışın TEK yolu "Restart engine"dir. Optimize'da bu daha da keskindir: onun bir iptal komutu YOKTUR,
     /// uzun bir restore dizisinden tek kaçış budur.</para>
     private bool WaitingOnEngine =>
-        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy || CleanBusy || OptimizeBusy;
+        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy;
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
@@ -1712,6 +1718,8 @@ public sealed partial class RunViewModel : ObservableObject
             // [v1.16.0] Pull sonucu: başarıysa chip düşer + otomatik Sync (konsol KORUNUR). Sync'in kendisi
             // async'tir ve bu dal onu BEKLEMEZ — event pompası bloklanmaz (gönderim zaten milisaniyeler).
             case PullCompletedEvent e: _ = OnPullCompletedAsync(e); break;
+            // [spec 2026-09-18 §6.3] Checkout sonucu: başarıda yeni bölüm + Sync zinciri (beklenmez — pompa bloklanmaz).
+            case CheckoutCompletedEvent e: _ = OnCheckoutCompletedAsync(e); break;
             // [clean] Clean yüzeyi — handler'lar RunViewModel.Workspace.cs'te (Sync guard'ın yanında).
             // Satırlar Sync yüzeyine AİT DEĞİLDİR: ayrı bayrak, ayrı kanal.
             case CleanStartedEvent: OnCleanStarted(); break;
@@ -2165,6 +2173,7 @@ public sealed partial class RunViewModel : ObservableObject
         // dönüş RunEndingErrorCodes kapısından önce gelmelidir: bu kodlar orada YOKTUR.
         if (TryConsumeCleanFailure(e.Code, e.Message)) return;
         if (TryConsumeOptimizeFailure(e.Code, e.Message)) return;
+        if (TryConsumeCheckoutFailure(e.Code)) return;
         if (e.Code == RunInProgressCode) IsStarting = false;
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
@@ -2254,6 +2263,7 @@ public sealed partial class RunViewModel : ObservableObject
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
         ReleaseCleanSurface();
         ReleaseOptimizeSurface();
+        SetCheckoutBusy(false); // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
         EngineOverdueMessage = null;

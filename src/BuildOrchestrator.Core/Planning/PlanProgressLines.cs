@@ -91,6 +91,27 @@ public static class PlanProgressLines
     /// <summary>Uzak uç zaten yakalanmıştı — ilerletilecek bir şey yok.</summary>
     public static string PullAlreadyCurrent(string branch) => $"Already up to date with origin/{branch}";
 
+    // --- Ana repo: branch chip'inden checkout (spec 2026-09-18 §6.3) ------------------------------
+    // Satırları Supervisor DEĞİL App yazar (CheckoutCompletedEvent'ten): başarıda konsol ÖNCE temizlenir, bu
+    // satırlar yeni bölümün İLK satırlarıdır. Reddetme/hata satırları ise temizlenmeyen konsolun altına eklenir.
+
+    /// <summary>Checkout başarılı: yeni branch, yeni HEAD'in kısa sha'sı ve nereden gelindiği.</summary>
+    public static string SwitchedBranch(string from, string to, string revision)
+        => $"Switched to {to} ({revision}) — from {from}";
+
+    /// <summary>Kirli ağaç stash'lendi — mesaj <c>git stash list</c>'te görünen metnin aynısıdır; geri
+    /// uygulama kullanıcınındır, araç stash'i ne gösterir ne geri uygular.</summary>
+    public static string StashedBeforeSwitch(string message)
+        => $"Stashed uncommitted changes: \"{message}\" — restore them with git stash pop";
+
+    /// <summary>Kirli ağaç ve stash ayarı kapalı: hiçbir şey yapılmadı.</summary>
+    public static string SwitchRefusedDirty(int files) => files == 1
+        ? "1 file has uncommitted changes — commit or stash them first"
+        : $"{files} files have uncommitted changes — commit or stash them first";
+
+    /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.</summary>
+    public static string SwitchFailed(string reason) => $"Switch failed — {reason}";
+
     // --- Harici projeler ------------------------------------------------------------------------
     // Aynı metinler iki yüzeyde görünür: Sync transkripti ve koşu planlaması. Bu yüzden onlar da burada, tek
     // kaynakta durur. Koşuyu İPTAL eden metinler buraya GİRMEZ — onlar progress satırı değil,

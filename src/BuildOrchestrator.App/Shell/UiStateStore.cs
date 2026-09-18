@@ -85,6 +85,11 @@ public sealed class UiState
     /// dosya, özelliğin bugünkü davranışını (güncelle) korumalıdır.</para></summary>
     public bool? UpdateExternals { get; set; }
 
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi
+    /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
+    public bool? StashOnBranchSwitch { get; set; }
+
     public bool Autostart { get; set; }
 }
 

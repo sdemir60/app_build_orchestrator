@@ -171,6 +171,12 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.SyncBusy):
                 RefreshSyncBusy();
                 break;
+            // [spec 2026-09-18 §6.3] Branch chip'inin kapısı: meşgul yüzeyler, uçuştaki checkout ve motorun
+            // erişilemezliği koşu bildirimlerinden AYRI gelir.
+            case nameof(RunViewModel.CanSwitchBranch):
+            case nameof(RunViewModel.IsEngineUnavailable):
+                RefreshEnabled();
+                break;
             case nameof(RunViewModel.Branch):
                 RefreshBranch();
                 RefreshBehindChip();   // [v1.16.0] chip'in tooltip'i branch adını söyler
@@ -579,8 +585,9 @@ public partial class ActionBar : UserControl
         foreach (var chip in new[] { _sigmaChip, _buildingChip, _currentChip, _staleChip, _failedChip, _warnChip })
             chip.IsEnabled = hasWs;
 
-        // T12: koşarken branch/Debug|Release görünür şekilde disabled; perf CANLI.
-        PART_BranchChip.IsEnabled = hasWs && !midRun;
+        // T12: koşarken branch/Debug|Release görünür şekilde disabled; perf CANLI. [spec 2026-09-18 §6.3] Branch
+        // chip'i artık checkout eder: kapısı VM'in TEK predicate'idir (koşu + Sync/Clean/Optimize + motor + uçuştaki checkout).
+        PART_BranchChip.IsEnabled = _vm?.CanSwitchBranch ?? false;
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.

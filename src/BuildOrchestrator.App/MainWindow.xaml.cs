@@ -175,6 +175,8 @@ public partial class MainWindow : Window
         // [design v1.14.0 §9] Bayrak hiç yazılmamışsa (ya da bayat bir null token'sa) varsayılan GÜNCELLE:
         // bayrak öncesi kaydedilmiş bir dosya özelliğin bugünkü davranışını korumalıdır.
         _vm.UpdateExternals = saved.UpdateExternals ?? true;
+        // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
+        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -1034,7 +1036,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals)
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1046,11 +1048,13 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.Configuration):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
+            case nameof(RunViewModel.StashOnBranchSwitch):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
+                s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
                 _uiState.Save(s);
                 break;
         }

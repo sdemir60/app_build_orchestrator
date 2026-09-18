@@ -1,0 +1,247 @@
+using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Tests.Supervisor;
+
+namespace BuildOrchestrator.Tests.App;
+
+/// <summary>
+/// [spec 2026-09-18 §6.3] Branch chip'i GERÇEK bir checkout yapar: popover'dan aktif olmayan bir branch'i seçmek
+/// <see cref="CheckoutBranchCommand"/> gönderir; sonuç (<see cref="CheckoutCompletedEvent"/>) konsolu anlatır.
+///
+/// <para><b>Konsol kuralı (§6.2):</b> başarılı checkout yeni bir BÖLÜM açar — konsol ve olay akışı ÖNCE
+/// temizlenir, stash ve switch satırları SONRA yazılır (yeni bölümün ilk satırları onlardır), ardından Sync
+/// konsolu KORUYARAK zincirlenir. Reddedilen/başarısız checkout bölüm açmaz: konsol temizlenmez, uyarı altına
+/// eklenir.</para>
+///
+/// <para>Harness <see cref="CleanCommandTests"/> ile aynıdır: başlatılmamış <see cref="EngineHost"/> — gönderim
+/// SENKRON düşer ve VM içinde yutulur; uçuş penceresi gönderim ANINDA (<c>DebugOnCommandSent</c>) gözlenir,
+/// motorun cevabı <c>vm.OnEvent(...)</c> ile verilir. D8: sleep/poll yok.</para>
+/// </summary>
+public class BranchCheckoutTests
+{
+    private const string FullSha = "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1";
+    private const string StashMessage = "build-orchestrator: leaving main for feature/x";
+
+    private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
+
+    private static RunViewModel NewVm()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", IsActive: true, IsRemoteTracking: false),
+            new BranchRef("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false),
+            new BranchRef("origin/release", "cccccccccccc", IsActive: false, IsRemoteTracking: true),
+        ]));
+        return vm;
+    }
+
+    private static readonly BranchRef FeatureX = new("feature/x", "bbbbbbbbbbbb", false, false);
+
+    private static string[] Lines(RunViewModel vm) =>
+        vm.GetRunDocumentText().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+    // ---------------------------------------------------------------- gönderim
+
+    /// <summary>Seçim hedefi, uzak mı olduğunu ve Settings → General'ın stash ayarını motora taşır. Uzak bir
+    /// hedef <c>origin/x</c> biçiminde gider — izleyen yerel branch'i motor kurar.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Picking_another_branch_sends_a_checkout_with_the_stash_setting(bool stash)
+    {
+        var vm = NewVm();
+        vm.StashOnBranchSwitch = stash;
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SelectBranch(new BranchRef("origin/release", "cccccccccccc", false, IsRemoteTracking: true));
+
+        var cmd = Assert.Single(sent.OfType<CheckoutBranchCommand>());
+        Assert.Equal(new CheckoutBranchCommand(@"D:\repo", "origin/release", IsRemote: true, StashIfDirty: stash), cmd);
+    }
+
+    [Fact]
+    public async Task Picking_the_active_branch_sends_nothing()
+    {
+        var vm = NewVm();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        string before = vm.GetRunDocumentText();
+
+        await vm.SelectBranch(new BranchRef("main", "aaaaaaaaaaaa", IsActive: true, IsRemoteTracking: false));
+
+        Assert.Empty(sent);
+        Assert.Equal(before, vm.GetRunDocumentText());
+    }
+
+    /// <summary>Gönderim anından motorun cevabına kadar chip kilitlidir (ikinci bir tık ikinci bir checkout
+    /// kuyruklatırdı) ve kalıcı işlem pill'i işlemi adlandırır.</summary>
+    [Fact]
+    public async Task A_checkout_in_flight_locks_the_chip_and_names_the_operation()
+    {
+        var vm = NewVm();
+        bool? lockedAtSend = null;
+        string? opAtSend = null;
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is not CheckoutBranchCommand) return;
+            lockedAtSend = !vm.CanSwitchBranch;
+            opAtSend = vm.CurrentOperation;
+        };
+
+        await vm.SelectBranch(FeatureX);
+
+        Assert.True(lockedAtSend);
+        Assert.Equal(OperationLabel.Checkout, opAtSend);
+        Assert.True(vm.CanSwitchBranch); // gönderim düştü → hiçbir cevap gelmeyecek, kilit bırakılır
+    }
+
+    // ---------------------------------------------------------------- sonuç → konsol
+
+    /// <summary>Temizlik önce, not sonra: önceki işlemin satırı gider; yeni bölümün ilk iki satırı stash ve
+    /// switch satırıdır (bu sırayla), ardından konsolu KORUYAN Sync gider.</summary>
+    [Fact]
+    public void A_successful_switch_clears_the_console_then_writes_the_stash_and_switch_lines()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x", FullSha, 2, StashMessage, null));
+
+        var lines = Lines(vm);
+        Assert.DoesNotContain("previous operation line", lines);
+        Assert.Equal(PlanProgressLines.StashedBeforeSwitch(StashMessage), lines[0]);
+        Assert.Equal(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), lines[1]);
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Contains(PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"), Lines(vm)); // Sync satırları SİLMEZ
+    }
+
+    [Fact]
+    public void A_refused_switch_keeps_the_console_and_appends_the_warning()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+
+        var lines = Lines(vm);
+        Assert.Contains("previous operation line", lines);
+        Assert.Equal(PlanProgressLines.SwitchRefusedDirty(3), lines[^1]);
+        Assert.Empty(sent); // başarısız işlem bölüm açmaz, Sync zincirlemez
+    }
+
+    /// <summary>Stash yapıldı ama checkout düştü: kullanıcının değişiklikleri stash'tedir — konsol bunu SÖYLEMEK
+    /// zorundadır, yoksa değişiklikler kaybolmuş gibi görünür. Konsol yine temizlenmez.</summary>
+    [Fact]
+    public void A_failed_switch_after_a_stash_still_says_where_the_changes_went()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Failed, "main", "main", null, 2, StashMessage, "exit 1"));
+
+        var lines = Lines(vm);
+        Assert.Contains("previous operation line", lines);
+        Assert.Equal([PlanProgressLines.StashedBeforeSwitch(StashMessage), PlanProgressLines.SwitchFailed("exit 1")],
+            lines.TakeLast(2));
+    }
+
+    /// <summary>Stash kendisi düştü: checkout hiç denenmedi, stash YOKTUR — stash satırı yazılmaz.</summary>
+    [Fact]
+    public void A_failed_stash_writes_only_the_failure()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.StashFailed, "main", "main", null, 2, StashMessage, "exit 1"));
+
+        var lines = Lines(vm);
+        Assert.Equal(["previous operation line", PlanProgressLines.SwitchFailed("exit 1")], lines.TakeLast(2));
+    }
+
+    // ---------------------------------------------------------------- kilit
+
+    [Fact]
+    public async Task The_branch_chip_is_locked_mid_run()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent([new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null)], [], [], []));
+        Assert.True(vm.CanSwitchBranch);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.False(vm.CanSwitchBranch);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.SelectBranch(FeatureX);
+        Assert.Empty(sent);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Assert.True(vm.CanSwitchBranch);
+    }
+
+    /// <summary>Uçuştaki bir Sync ya da motorun erişilemezliği de chip'i kilitler — Sync'in okuduğu ağaç altından
+    /// değişmemeli, erişilemeyen motora gönderim anlamsızdır.</summary>
+    [Fact]
+    public void The_branch_chip_is_locked_while_a_sync_is_in_flight_or_the_engine_is_unavailable()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.CanSwitchBranch);
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.True(vm.CanSwitchBranch);
+
+        vm.OnEngineUnavailable(@"D:\repo\supervisor\BuildOrchestrator.Supervisor.exe");
+        Assert.False(vm.CanSwitchBranch);
+    }
+
+    /// <summary>Motorun reddi (koşu uçuşta) ya da beklenmeyen hatası: reddedilen checkout gibi davranılır —
+    /// konsol temizlenmez, hata satırı altına eklenir, kilit açılır ve işlem pill'i düşer.</summary>
+    [Theory]
+    [InlineData("checkoutRejected")]
+    [InlineData("checkoutFailed")]
+    public async Task A_rejected_checkout_keeps_the_console_and_unlocks_the_chip(string code)
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        bool? unlockedByError = null;
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is not CheckoutBranchCommand) return;
+            vm.OnEvent(new ErrorEvent(code, "A run is in flight — stop it before switching branches."));
+            unlockedByError = vm.CanSwitchBranch;
+        };
+
+        await vm.SelectBranch(FeatureX);
+
+        Assert.True(unlockedByError);
+        Assert.Null(vm.CurrentOperation);
+        Assert.Equal("previous operation line", Lines(vm)[0]);
+        Assert.Contains(Lines(vm), l => l.Contains(code, StringComparison.Ordinal));
+    }
+
+    /// <summary>Motor checkout sırasında ölürse hiçbir cevap gelmez — kilit sızmamalı.</summary>
+    [Fact]
+    public async Task Losing_the_engine_mid_checkout_unlocks_the_chip()
+    {
+        var vm = NewVm();
+        bool? unlockedByLoss = null;
+        vm.DebugOnCommandSent = c =>
+        {
+            if (c is not CheckoutBranchCommand) return;
+            vm.OnEngineExited(1);
+            unlockedByLoss = vm.CanSwitchBranch;
+        };
+
+        await vm.SelectBranch(FeatureX);
+
+        Assert.True(unlockedByLoss);
+    }
+}

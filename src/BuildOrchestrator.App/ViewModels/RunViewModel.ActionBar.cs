@@ -41,19 +41,43 @@ public sealed partial class RunViewModel
     public string? ActiveBranchName => Branches.FirstOrDefault(b => b.IsActive)?.Name;
 
     /// <summary>
-    /// [spec 2026-09-18 §1-8] Branch popover'ından seçim. Branch değeri checkout edilmiş branch'in kendisidir
-    /// (<see cref="OnBranchList"/>); bir seçimi ona yansıtmanın tek yolu gerçek bir checkout'tur ve o, sonraki
-    /// adımda bu metoda gelir. O zamana dek seçim HİÇBİR ŞEY yapmaz: değer değişmez, satırlar sıfırlanmaz,
-    /// konsola satır düşmez.
+    /// [spec 2026-09-18 §6.3] Branch popover'ından seçim = çalışma ağacında GERÇEK bir checkout. Aktif branch'i
+    /// seçmek ya da kilitliyken seçmek hiçbir şey yapmaz. Aksi hâlde <see cref="CheckoutBranchCommand"/> gider
+    /// (uzak bir hedef <c>origin/x</c> olarak; izleyen yerel branch'i motor kurar) ve kirli ağaçta ne
+    /// yapılacağını Settings → General'ın <see cref="StashOnBranchSwitch"/> ayarı söyler.
     ///
-    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eskiden aktif olmayan bir branch'i seçmek onu
-    /// worktree'de derlenecek HEDEF yapardı (worktree zorlanır, satırlar hollow'a, faz Boot'a düşer, konsola
-    /// "Sync required" yazılırdı). Worktree kalktı; "seçili ama checkout edilmemiş" bir hedef yoktur.</para>
+    /// <para>Ekran motorun cevabına kadar DEĞİŞMEZ: <see cref="Branch"/> yine yalnız envanterden yazılır
+    /// (<see cref="OnBranchList"/>), konsol TIKLAMADA temizlenmez — bölümü yalnız başarılı bir checkout'un
+    /// cevabı açar (<see cref="OnCheckoutCompletedAsync"/>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1 → §6.3]</b> Worktree döneminde seçim onu worktree'de
+    /// derlenecek HEDEF yapardı; worktree kalkınca (Task 4) seçim bir süre HİÇBİR ŞEY yapmadı. Artık checkout
+    /// eder.</para>
     /// </summary>
-    public void SelectBranch(BranchRef branch)
+    public async Task SelectBranch(BranchRef branch)
     {
         ArgumentNullException.ThrowIfNull(branch);
+        if (branch.IsActive || !CanSwitchBranch) return;
+
+        CurrentOperation = OperationLabel.Checkout;
+        SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
+        ArmEngineWatchdog();
+        bool sent = await TrySendAsync(
+            new CheckoutBranchCommand(RootPath, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
+        // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
+        // chip kalıcı pasif kalırdı.
+        if (!sent) SetCheckoutBusy(false);
     }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Branch chip'inin TEK kapısı — chip'in <c>IsEnabled</c>'ı bunu okur. Koşu
+    /// uçuştayken (derlenen ağaç altından değişmemeli), bir Sync/Clean/Optimize sürerken (onlar ağacı okur ya da
+    /// değiştirir), motor erişilemezken ve bir checkout zaten uçuştayken kapalıdır.
+    /// <para>BİLDİRİMLİDİR: meşgul yüzeylerin geçişleri <see cref="NotifySyncGatedCommands"/>'dan, checkout'unki
+    /// <see cref="SetCheckoutBusy"/>'den duyurulur; koşu ve motor durumunu bar kendi abonelikleriyle izler.</para>
+    /// </summary>
+    public bool CanSwitchBranch =>
+        HasWorkspace && !IsMidRunLocked && !SyncBusy && !CleanBusy && !OptimizeBusy && !IsEngineUnavailable && !CheckoutBusy;
 
     /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
     /// brief 7-hane pinler.</summary>
@@ -136,6 +160,21 @@ public sealed partial class RunViewModel
             : "Pull before build off — external working copies are used as they are");
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Settings Save: "Stash and switch branches" switch'ini uygular. Değer bir sonraki
+    /// <see cref="CheckoutBranchCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
+    /// (<see cref="ApplyPullExternals"/> deseni) — değişmeyen bir ayar her Save'de gürültü olurdu. Harici proje
+    /// koşulunun karşılığı yoktur: bu ayar her repoda anlamlıdır.
+    /// </summary>
+    private void ApplyStashOnBranchSwitch(bool stash)
+    {
+        if (stash == StashOnBranchSwitch) return;
+        StashOnBranchSwitch = stash;
+        AppendRunLine(stash
+            ? "Stash and switch branches on — uncommitted changes are stashed before a branch switch"
+            : "Stash and switch branches off — a branch switch stops while there are uncommitted changes");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -170,13 +209,15 @@ public sealed partial class RunViewModel
     /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
     /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
+    /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true)
+        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false)
     {
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
+        ApplyStashOnBranchSwitch(stashOnBranchSwitch);
         if (IsMidRunLocked)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");

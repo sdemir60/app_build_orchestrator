@@ -13,13 +13,14 @@ using BuildOrchestrator.Contracts.Model;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [design v1.19.0 §2.9] Settings → <b>General</b> sayfası: katalogdan (<see cref="GeneralSettingsCatalog"/>) doğan üç
-/// grup ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
+/// [design v1.19.0 §2.9] Settings → <b>General</b> sayfası: katalogdan (<see cref="GeneralSettingsCatalog"/>) doğan
+/// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
 /// <para><b>Kullanıcı kararı 1:</b> <c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>,
 /// <c>Show notifications</c> YALNIZ taslakta yaşar — kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana döner.
-/// <c>Pull before build</c> ise gerçek bayraktır (<see cref="PullBeforeBuildTests"/>).</para>
+/// <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>) ve <c>Stash and switch branches</c>
+/// (<see cref="StashOnBranchSwitchTests"/>) ise gerçek bayraklardır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsGeneralPageTests
@@ -45,14 +46,17 @@ public class SettingsGeneralPageTests
 
     // ---------------------------------------------------------------- katalog
 
-    /// <summary>Gruplar ve satırlar BİREBİR (git-only uyarlanmış pull açıklaması dahil); yeni ayar = kataloğa bir satır.</summary>
+    /// <summary>Gruplar ve satırlar BİREBİR (git-only uyarlanmış pull açıklaması dahil); yeni ayar = kataloğa bir satır.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Eski iddia (<c>The_catalog_carries_the_three_groups_and_their_rows_verbatim</c>):
+    /// katalog üç gruptu (STARTUP, BUILD, NOTIFICATIONS). Branch chip'i checkout edince kirli ağaç kararı bir ayar
+    /// oldu: BUILD'in ardına dördüncü grup BRANCHES ve tek satırı <c>Stash and switch branches</c> eklendi.</para></summary>
     [Fact]
-    public void The_catalog_carries_the_three_groups_and_their_rows_verbatim()
+    public void The_catalog_carries_the_groups_and_their_rows_verbatim()
     {
         var actual = GeneralSettingsCatalog.Groups
             .Select(g => (g.Title, Rows: g.Rows.Select(r => (r.Label, r.Description)).ToList())).ToList();
 
-        Assert.Equal(["STARTUP", "BUILD", "NOTIFICATIONS"], actual.Select(g => g.Title));
+        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "NOTIFICATIONS"], actual.Select(g => g.Title));
         Assert.Equal(
         [
             ("Start with Windows", "Launch when you sign in to Windows."),
@@ -63,8 +67,13 @@ public class SettingsGeneralPageTests
             [("Pull before build", "Update every external working copy first — a fast-forward-only git pull, one per copy.")],
             actual[1].Rows);
         Assert.Equal(
-            [("Show notifications", "A tray notification when a build finishes — succeeded or failed.")],
+            [("Stash and switch branches",
+                "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
+                + "Off: switching stops and asks you to commit or stash first.")],
             actual[2].Rows);
+        Assert.Equal(
+            [("Show notifications", "A tray notification when a build finishes — succeeded or failed.")],
+            actual[3].Rows);
     }
 
     /// <summary>Taslak satırları katalogdan doğar (sıra ve metin kopyalanmaz); dört yeni anahtarın varsayılanı
@@ -131,14 +140,15 @@ public class SettingsGeneralPageTests
     }
 
     /// <summary>Dört yeni anahtar ayar dosyasına GİRMEZ (kullanıcı kararı 1): hepsi çevrilse de export JSON'u
-    /// varsayılanla aynıdır.</summary>
+    /// varsayılanla aynıdır. Gerçek bayraklar (pull, stash — kendi testleri: <see cref="PullBeforeBuildTests"/>,
+    /// <see cref="StashOnBranchSwitchTests"/>) çevrilmez.</summary>
     [Fact]
     public void The_four_new_switches_are_not_written_to_the_settings_file()
     {
         var untouched = new SettingsDraftViewModel(null, @"D:\repo");
         var flipped = new SettingsDraftViewModel(null, @"D:\repo");
         foreach (var row in flipped.GeneralGroups.SelectMany(g => g.Rows)
-                     .Where(r => r.Definition.Setting != GeneralSetting.PullBeforeBuild))
+                     .Where(r => r.Definition.Setting is not (GeneralSetting.PullBeforeBuild or GeneralSetting.StashOnBranchSwitch)))
             row.IsOn = !row.IsOn;
 
         Assert.Equal(untouched.ToFile().ToJson(), flipped.ToFile().ToJson());
@@ -146,10 +156,13 @@ public class SettingsGeneralPageTests
 
     // ---------------------------------------------------------------- realize
 
-    /// <summary>Üç grup: caps başlık 11px/500 <c>text-dim</c>, başlık → satırlar 5px, gruplar arası 22px; satırların
-    /// sırası ve metinleri katalogla aynı; UIA adı etiket (pull: mevcut ad).</summary>
+    /// <summary>Dört grup: caps başlık 11px/500 <c>text-dim</c>, başlık → satırlar 5px, gruplar arası 22px; satırların
+    /// sırası ve metinleri katalogla aynı; UIA adı etiket (pull: mevcut ad).
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Eski iddia (<c>The_general_page_realizes_three_groups_with_their_rows</c>):
+    /// sayfa üç grup, beş satır realize ederdi. BRANCHES grubu (<c>Stash and switch branches</c>) eklendi — yeni satır
+    /// aynı <c>ToggleRow</c> şablonuyla realize olur ve ölçüler onu da kapsar.</para></summary>
     [StaFact]
-    public void The_general_page_realizes_three_groups_with_their_rows()
+    public void The_general_page_realizes_its_groups_with_their_rows()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
@@ -158,7 +171,7 @@ public class SettingsGeneralPageTests
         var headingStyle = dialog.FindResource("Ds.Settings.GroupHeading");
         var headings = DsResources.Descendants(page).OfType<TextBlock>().Where(t => ReferenceEquals(t.Style, headingStyle))
             .OrderBy(t => t.TranslatePoint(new Point(0, 0), page).Y).ToList();
-        Assert.Equal(["STARTUP", "BUILD", "NOTIFICATIONS"], headings.Select(h => h.Text));
+        Assert.Equal(["STARTUP", "BUILD", "BRANCHES", "NOTIFICATIONS"], headings.Select(h => h.Text));
         Assert.All(headings, h =>
         {
             Assert.Equal(11.0, h.FontSize);
@@ -167,10 +180,11 @@ public class SettingsGeneralPageTests
         });
 
         var rows = Rows(dialog);
-        Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build", "Show notifications"],
+        Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray", "Pull before build",
+                "Stash and switch branches", "Show notifications"],
             rows.Select(r => DsResources.Descendants(r).OfType<TextBlock>().First().Text));
         Assert.Equal(["Start with Windows", "Start minimized to tray", "Close to tray",
-                AccessibilityNames.PullExternalsBeforeBuild, "Show notifications"],
+                AccessibilityNames.PullExternalsBeforeBuild, "Stash and switch branches", "Show notifications"],
             rows.Select(r => AutomationProperties.GetName(SwitchOf(r))));
 
         // Başlık → ilk satır 5px; bir grubun son satırı → sonraki başlık 22px.
@@ -180,6 +194,8 @@ public class SettingsGeneralPageTests
         Assert.Equal(5.0, Top(rows[3]) - Bottom(headings[1]), precision: 1);
         Assert.Equal(22.0, Top(headings[1]) - Bottom(rows[2]), precision: 1);
         Assert.Equal(22.0, Top(headings[2]) - Bottom(rows[3]), precision: 1);
+        Assert.Equal(5.0, Top(rows[4]) - Bottom(headings[2]), precision: 1);
+        Assert.Equal(22.0, Top(headings[3]) - Bottom(rows[4]), precision: 1);
     }
 
     /// <summary>ToggleRow: padding <c>13 0</c>, satırlar arası 1px <c>border-subtle</c> (grubun ilk satırında yok);
@@ -192,7 +208,7 @@ public class SettingsGeneralPageTests
         using var _scope = scope;
         var rows = Rows(dialog);
 
-        var firstOfGroup = new[] { true, false, false, true, true };
+        var firstOfGroup = new[] { true, false, false, true, true, true };
         for (int i = 0; i < rows.Count; i++)
         {
             Assert.Equal(new Thickness(0, 13, 0, 13), rows[i].Padding);
@@ -223,14 +239,14 @@ public class SettingsGeneralPageTests
         Assert.Equal(row.ActualWidth, toggle.TranslatePoint(new Point(toggle.ActualWidth, 0), row).X, precision: 1);
     }
 
-    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull canlı değerden.</summary>
+    /// <summary>Switch'lerin açılış değerleri: <c>off/off/on/on</c> + pull ve stash canlı değerden.</summary>
     [StaFact]
     public void The_switches_open_on_their_defaults()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(r => r.UpdateExternals = false);
         using var _scope = scope;
 
-        Assert.Equal([false, false, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+        Assert.Equal([false, false, true, false, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
     }
 
     /// <summary>Start with Windows kapalıyken <c>Start minimized to tray</c> satırı %45 opak ve etkileşimsiz; açınca
@@ -280,7 +296,7 @@ public class SettingsGeneralPageTests
 
             dialog.Open(run, store, () => null);
             dialog.UpdateLayout();
-            Assert.Equal([false, false, true, true, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+            Assert.Equal([false, false, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
             return JsonSerializer.Serialize(store.State);
         }
 

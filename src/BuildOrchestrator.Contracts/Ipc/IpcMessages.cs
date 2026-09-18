@@ -27,6 +27,7 @@ public static class IpcJson
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
 [JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
 [JsonDerivedType(typeof(PullRepositoryCommand), "pullRepository")]
+[JsonDerivedType(typeof(CheckoutBranchCommand), "checkoutBranch")]
 public abstract record IpcCommand;
 
 /// <summary>
@@ -39,6 +40,18 @@ public abstract record IpcCommand;
 /// </summary>
 /// <param name="Branch">Ilerletilecek branch — App bunu YALNIZ aktif branch seçiliyken gönderir.</param>
 public sealed record PullRepositoryCommand(string RootPath, string Branch) : IpcCommand;
+
+/// <summary>
+/// [spec 2026-09-18 §6.3] Branch chip'inden seçim: çalışma ağacında GERÇEK bir <c>git checkout</c>. Yürütme
+/// Core'un <c>BranchSwitcher</c>'ıdır (mutasyon yüzeyi tek dosya). Supervisor konsol satırı YAZMAZ — sonucu
+/// <see cref="CheckoutCompletedEvent"/> ile bildirir ve satırları App kurar: başarıda konsol ÖNCE temizlenir,
+/// satırlar SONRA yazılır ("temizlik önce, not sonra" kuralı yalnız böyle mümkün).
+/// <para>Bir koşu uçuştayken <c>error(checkoutRejected)</c> ile REDDEDİLİR (App kapısının altındaki ikinci katman).</para>
+/// </summary>
+/// <param name="Branch">Hedef: yerel branch adı ya da <c>origin/&lt;ad&gt;</c> biçiminde uzak-izleme branch'i.</param>
+/// <param name="IsRemote">Hedef uzak-izleme branch'i mi (<c>BranchRef.IsRemoteTracking</c>).</param>
+/// <param name="StashIfDirty">Settings → General "Stash and switch branches": kirli ağaçta stash'le ve geç.</param>
+public sealed record CheckoutBranchCommand(string RootPath, string Branch, bool IsRemote, bool StashIfDirty) : IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
 public sealed record ShutdownCommand : IpcCommand;
@@ -225,6 +238,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
+[JsonDerivedType(typeof(CheckoutCompletedEvent), "checkoutCompleted")]
 [JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
 [JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
 [JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
@@ -330,6 +344,18 @@ public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool F
 /// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
 /// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
 public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+/// <summary>
+/// [spec 2026-09-18 §6.3] <see cref="CheckoutBranchCommand"/>'ın sonucu — konsol satırlarının TEK girdisi (App
+/// satırları <c>PlanProgressLines</c>'tan kurar).
+/// </summary>
+/// <param name="FromBranch">Checkout ÖNCESİ aktif branch; detached HEAD'de kısa sha; okunamadıysa null.</param>
+/// <param name="Branch">Checkout SONRASI aktif branch (Switched/AlreadyOn) ya da öncekisi (diğer durumlar).</param>
+/// <param name="Revision">Yalnız <see cref="CheckoutStatus.Switched"/>'te yeni HEAD sha'sı; aksi hâlde null.</param>
+/// <param name="DirtyCount">Denemeden önce kirli olan yol sayısı.</param>
+/// <param name="StashMessage">Stash gerçekten yapıldıysa mesajı (checkout sonra başarısız olsa bile dolu).</param>
+/// <param name="Detail">Hata ayrıntısı (İngilizce); gerekmiyorsa null.</param>
+public sealed record CheckoutCompletedEvent(CheckoutStatus Status, string? FromBranch, string? Branch,
+    string? Revision, int DirtyCount, string? StashMessage, string? Detail) : IpcEvent;
 /// <summary>[clean] <see cref="CleanWorkspaceCommand"/> kabul edildi ve silme başlıyor.</summary>
 public sealed record CleanStartedEvent(string RootPath) : IpcEvent;
 /// <summary>[clean] Clean transkriptinin tek satırı. İmzası <see cref="SyncProgressEvent"/> ile aynıdır ama

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -274,6 +275,8 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(CleanBusy));
         OnPropertyChanged(nameof(OptimizeBusy));
         OnPropertyChanged(nameof(SyncBusy));
+        // [spec 2026-09-18 §6.3] Branch chip'inin kapısı da bu üç meşgul yüzeyi okur — aynı geçişte duyurulur.
+        OnPropertyChanged(nameof(CanSwitchBranch));
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
@@ -459,6 +462,78 @@ public sealed partial class RunViewModel
         Behind = 0;                          // ff sonrası yerel HEAD uzak uca eşitlendi
         await SyncCoreAsync(clearBuffers: false);
     }
+
+    /// <summary>[spec 2026-09-18 §6.3] Bir checkout motora GÖNDERİLDİ ama cevabı (<see cref="CheckoutCompletedEvent"/>
+    /// ya da <see cref="CheckoutErrorCodes"/>'tan bir hata) HENÜZ gelmedi. Supervisor checkout boyunca komut
+    /// döngüsünü bloklar ve başlangıç olayı yayınlamaz, bu yüzden istek ve uçuş penceresi TEK bayraktır.</summary>
+    public bool CheckoutBusy { get; private set; }
+
+    /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
+    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
+    /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
+    /// (<see cref="RunViewModel.ReleaseAfterEngineLoss"/> — motor checkout ortasında ölürse kilit sızmaz).</summary>
+    private void SetCheckoutBusy(bool busy)
+    {
+        if (CheckoutBusy == busy) return;
+        CheckoutBusy = busy;
+        OnPropertyChanged(nameof(CheckoutBusy));
+        OnPropertyChanged(nameof(CanSwitchBranch));
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.2 · §6.3] Checkout'un cevabı — konsol satırlarını App kurar, metinler
+    /// <see cref="PlanProgressLines"/>'tan (tek kaynak).
+    ///
+    /// <para><b>Başarı yeni bir BÖLÜM açar:</b> konsol ve olay akışı ÖNCE temizlenir, stash satırı (varsa) ve
+    /// switch satırı SONRA yazılır — yeni bölümün ilk satırları onlardır ("temizlik önce, not sonra"). Ardından
+    /// Sync konsolu KORUYARAK zincirlenir (<c>clearBuffers: false</c>): ikinci bir temizlik bu satırları silerdi.
+    /// Temizlik seçimden ÖNCE gelir (<see cref="SyncCoreAsync"/>'in kırpışma gerekçesi).</para>
+    ///
+    /// <para><b>Başarısız işlem bölüm açmaz:</b> kirli ağaç reddi ve stash/checkout hatası konsolu temizlemez,
+    /// uyarı altına eklenir ve işlem biter. Checkout stash'ten SONRA düştüyse stash satırı yine yazılır —
+    /// kullanıcının değişiklikleri stash'tedir ve konsol bunu söylemezse kaybolmuş gibi görünürdü.
+    /// <see cref="CheckoutStatus.AlreadyOn"/> hiçbir şey yazmaz (App aktif branch'e zaten komut göndermez; bu
+    /// yalnız envanterin bayat olduğu yarışta gelir).</para>
+    /// </summary>
+    private async Task OnCheckoutCompletedAsync(CheckoutCompletedEvent e)
+    {
+        SetCheckoutBusy(false);
+        if (e.Status != CheckoutStatus.Switched)
+        {
+            CurrentOperation = null;
+            if (e.Status == CheckoutStatus.Dirty) AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
+            if (e.Status == CheckoutStatus.Failed && e.StashMessage is { } kept)
+                AppendRunLine(PlanProgressLines.StashedBeforeSwitch(kept));
+            if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)
+                AppendRunLine(PlanProgressLines.SwitchFailed(e.Detail ?? "unknown error"));
+            return;
+        }
+
+        ClearConsoleForNewOperation();
+        ClearStreamForNewOperation();
+        SelectedProjectId = null;
+        if (e.StashMessage is { } stashed) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(stashed));
+        AppendRunLine(PlanProgressLines.SwitchedBranch(e.FromBranch ?? "HEAD", e.Branch ?? "HEAD", ShortSha(e.Revision)));
+        // [Task 6] Bu çağrı SyncMode.BranchChange'e dönüşür (fetch'siz, kısa transkript).
+        await SyncCoreAsync(clearBuffers: false);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".
+    /// <see cref="TryConsumeCleanFailure"/>'ın ikizi: motorun reddi (koşu uçuşta) reddedilen bir checkout gibi
+    /// ele alınır — hata satırı <see cref="RunViewModel.OnError"/>'ın ilk satırı olarak konsolun ALTINA düşer
+    /// (temizlik yok), kilit açılır, işlem pill'i düşer. Reddetme KOŞAN bir run'ın ortasında gelebilir ve o
+    /// run'ı YIKMAMALIDIR.</summary>
+    private bool TryConsumeCheckoutFailure(string code)
+    {
+        if (!CheckoutErrorCodes.Contains(code) || !CheckoutBusy) return false;
+        SetCheckoutBusy(false);
+        CurrentOperation = null;
+        return true;
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Checkout'un yayınlayabildiği hata kodları: <c>checkoutRejected</c>
+    /// (Supervisor'da bir koşu uçuşta) ve <c>checkoutFailed</c> (beklenmeyen hata). Run-bitiren kodlarla KESİŞMEZ.</summary>
+    private static readonly HashSet<string> CheckoutErrorCodes = new(StringComparer.Ordinal) { "checkoutFailed", "checkoutRejected" };
 
     /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
     /// (proje durumları artık bilinir — hollow değil).</summary>
