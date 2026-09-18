@@ -103,6 +103,23 @@ public class WillBuildTests
         Assert.Equal(WillBuildReason.NeverBuilt, ReasonOf("sig1", neverBuilt));
     }
 
+    /// <summary>[final review M1 · spec §5.3] Kaynağı geri alınan hata: sig1'de başarı, sig0'da KANITLI hata,
+    /// kaynak sig1'e geri döndü. Motorun gerçekten yazdığı kayıt budur (<c>InvalidateBuildStateOnFailure</c>
+    /// partial merge: <c>BuiltSignature</c> korunur, <c>LastResult=Failed</c> + <c>FailedSignature=sig0</c>).
+    /// Kanıt bugünkü imzaya ait değil; bugünkü imzanın son bilinen sonucu başarıdır ⇒ <c>UpToDate</c> ve
+    /// pre-skip (<c>WillBuild=false</c>). "<c>LastResult != Succeeded</c> ⇒ derlenir" genel bir kural DEĞİLDİR.</summary>
+    [Fact]
+    public void Content_reverted_to_the_last_successful_signature_after_a_failure_reads_UpToDate()
+    {
+        var state = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: "sig0", FailedAt: DateTimeOffset.UtcNow);
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig1", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.UpToDate, reason);
+        Assert.False(willBuild);
+    }
+
     /// <summary>Kesilmiş deneme (ortam hatası, kill, timeout — Task 2'nin YAZMADIĞI durumlar): sonuç başarısız
     /// ama <c>FailedSignature</c> boş, yani hangi imzada patladığı kanıtlanmamış. Gerekçe <c>NeverBuilt</c>'tir
     /// (gri), <c>LastFailed</c> DEĞİL — kanıtsız kırmızı gösterilmez. <c>WillBuild</c> yine <c>true</c>: proje

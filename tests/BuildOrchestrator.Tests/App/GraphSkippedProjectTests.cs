@@ -137,7 +137,6 @@ public class GraphSkippedProjectTests
     [Theory]
     [InlineData(GraphStatus.Succeeded, true)]
     [InlineData(GraphStatus.Failed, true)]
-    [InlineData(GraphStatus.Cycle, true)]
     [InlineData(GraphStatus.Skipped, false)]
     [InlineData(GraphStatus.Queued, false)]
     [InlineData(GraphStatus.Building, false)]

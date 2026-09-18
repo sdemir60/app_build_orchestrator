@@ -898,8 +898,8 @@ public sealed partial class RunViewModel : ObservableObject
         // yapmıştım?" sorusunu cevaplar ve o soru gönderim gecikmesi boyunca da geçerlidir.
         //
         // Yazım NÖTRLEMEDEN SONRAdir: etiketin değişmesi, kabuğun grafa "yeni bir işlem başladı, statüleri
-        // yeniden oku" dediği sinyaldir — başlangıç modunun düşüşü <c>Counters</c>'ı hareket ettirmez, bu
-        // yüzden sayaca bakan kapı onu kaçırır. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
+        // yeniden oku" dediği sinyaldir — nötrleme görsel durumu sayıları değiştirmeden de değiştirebilir, bu
+        // yüzden sayaca bakan kapı onu kaçırabilir. Sinyal erken çıkarsa graf önceki koşunun renkleriyle tazelenir.
         CurrentOperation = OperationLabel.ForRunMode(mode);
         ActiveProjectId = null;
         // [tek proje] Hedef, kilitten ÖNCE yazılır: kilit düşerken (PropagateRunLock) bırakılır, dolayısıyla
@@ -1525,7 +1525,7 @@ public sealed partial class RunViewModel : ObservableObject
             row.WillBuild = true; // her şey dirty
             if (row.WillBuildReason is { } reason && reason != WillBuildReason.NeverBuilt)
             {
-                row.WillBuildReason = ReasonAfterConfigurationChange(reason, row.CurrentSha);
+                row.WillBuildReason = NextPreview.AfterConfigurationChange(reason, row.CurrentSha);
                 row.Conditional = false;
                 row.DependencyRoots = null;
             }
@@ -1536,24 +1536,6 @@ public sealed partial class RunViewModel : ObservableObject
         RaiseRowDecisionsChanged(); // graf da aynı anda griye iner
         AppendRunLine($"Configuration → {value} — all projects will rebuild");
     }
-
-    /// <summary>[R-Config · M6] Configuration değişince motorun bir sonraki önizlemesinin diyeceği gerekçe
-    /// (<see cref="Core.Planning.WillBuildEvaluator"/>: configuration imzaya girer, yani imza her kayıtta değişir).
-    /// Kaydında bir başarı olan (<c>BuiltSignature</c> dolu) her proje <see cref="WillBuildReason.SignatureChanged"/>;
-    /// hiç başarısı olmayan <see cref="WillBuildReason.NeverBuilt"/>. App <c>BuiltSignature</c>'ı görmez — yalnız
-    /// <see cref="WillBuildReason.LastFailed"/> satırı iki tarafa da düşebilir ve orada başarı izi olarak
-    /// önizlemenin <c>BuiltCommit</c>'i okunur (<paramref name="builtCommit"/>; defterde onu yalnız başarı yazar).
-    /// <c>LastBuiltAt</c> ayırıcı DEĞİLDİR: son koşu başarısızsa her LastFailed satırında null'dır
-    /// (<c>BuildStateStore.LastBuiltAtOf</c>).
-    /// <para><b>Bilinen ve KABUL EDİLEN boşluk (M6, kullanıcı kararı):</b> commit'i kaydedilmemiş bir başarının
-    /// (git dışı bir kök ya da revizyonu okunamayan harici proje) ardından patlayan proje burada
-    /// <c>never built</c> okunur, motor ise <c>SignatureChanged</c> diyecektir; ikisi de gridir, yalnız etiket
-    /// farklıdır ve bir sonraki Sync düzeltir. Kesin ayırıcı (<c>BuiltSignature</c> var mı) önizlemede
-    /// taşınmıyor; onu taşımak için sözleşme değişikliği bilerek yapılmadı.</para></summary>
-    internal static WillBuildReason ReasonAfterConfigurationChange(WillBuildReason reason, string? builtCommit) =>
-        reason == WillBuildReason.LastFailed && builtCommit is null ? WillBuildReason.NeverBuilt
-        : reason == WillBuildReason.NeverBuilt ? WillBuildReason.NeverBuilt
-        : WillBuildReason.SignatureChanged;
 
     /// <summary>
     /// [T20-b/K11] Perf profilini App tarafında TÜRETMENİN tek kapısı — üç tüketicisi de buradan geçer:
@@ -1725,7 +1707,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectStartedEvent e: OnProjectStarted(e); break;
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
-            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled); break;
+            case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled, trusted: e.Trusted); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, evidence: e.Evidence); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case CycleCompletedEvent e: OnCycleCompleted(e); break;
@@ -1963,8 +1945,10 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <param name="evidence"><see cref="ProjectFailedEvent.Evidence"/> — yalnız Failed'da anlamlı: motorun, defter
     /// yazımıyla AYNI kapıdan verdiği kanıt kararı.</param>
+    /// <param name="trusted"><see cref="ProjectSucceededEvent.Trusted"/> — yalnız Succeeded'da anlamlı: motor bu
+    /// başarıyı defterine başarı olarak yazdı mı (AYNI yerden: <c>ReportProjectResult</c>'ın <c>invalidates</c>'i).</param>
     private void OnProjectDone(string projectId, ProjectRowState state, long durationMs, IReadOnlyList<string>? depIssues,
-        bool cycleUnsettled = false, bool evidence = false)
+        bool cycleUnsettled = false, bool evidence = false, bool trusted = true)
     {
         var row = FindRow(projectId);
         if (row is null) return; // protokole göre Started her zaman önce gelir — savunmacı no-op
@@ -1993,13 +1977,15 @@ public sealed partial class RunViewModel : ObservableObject
         // aşağıdaki AfterSuccess çağrısının yorumu).
         // [Task 4 review round 2 — I1] Üçlü (WillBuild/Reason/Conditional) App'te TÜRETİLMEZ — motorun bir
         // sonraki önizlemesinin (WillBuildEvaluator + ConditionalRebuild.AppliesTo) AYNEN kendisi TEK yerden
-        // sorulur (ConditionalRebuild.AfterSuccess). Round 1'in kendi kopyası (yalnız bool) bir SCC üyesi için
+        // sorulur (NextPreview.AfterSuccess). Round 1'in kendi kopyası (yalnız bool) bir SCC üyesi için
         // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
         // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
         // gelmesi bu boşluğu kapatır.
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
-            var after = ConditionalRebuild.AfterSuccess(row.InCycle, cycleUnsettled, depIssues);
+            // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin
+            // yeşil üyesi) defterde kanıtsız hatadır — satır Sync'in okuyacağı NeverBuilt'i şimdiden der.
+            var after = NextPreview.AfterSuccess(row.InCycle, trusted, depIssues);
             row.WillBuild = after.WillBuild;
             row.Conditional = after.Conditional;
             row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? depIssues : null;
@@ -2011,7 +1997,7 @@ public sealed partial class RunViewModel : ObservableObject
             row.DependencyRoots = null;
             // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
             // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
-            row.WillBuildReason = WillBuildReason.NeverBuilt;
+            row.WillBuildReason = NextPreview.AfterClean;
         }
         else // Failed
         {
@@ -2026,7 +2012,7 @@ public sealed partial class RunViewModel : ObservableObject
             // hemen griye iner. App reason metnini YENİDEN sınıflandırmaz: metin SCC üyesinde kanıt gibi görünür.
             // [DEĞİŞEN KURAL — design v1.20.0 §5] Eskiden her hata LastFailed yazardı; timeout'lu satır bir
             // sonraki Sync'e kadar kırmızı durur, Sync onu griye çevirirdi — aynı proje iki farklı renk.
-            row.WillBuildReason = evidence ? WillBuildReason.LastFailed : WillBuildReason.NeverBuilt;
+            row.WillBuildReason = NextPreview.AfterFailure(evidence);
             row.FailedAt = evidence ? DateTimeOffset.Now : null;
         }
         if (state == ProjectRowState.Succeeded)

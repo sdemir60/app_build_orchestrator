@@ -129,27 +129,32 @@ public class RunCountersTests
     }
 
     /// <summary>[design v1.20.0 §2.7] ✓ chip'i DURUMU sayar: güncel çıktı (atlansa da, hiç koşu olmasa da) ∪ bu
-    /// koşunun başarıları. Kova satırın GÖSTERDİĞİ görsel durumdan okunur — satır yeşilse ✓'dadır.</summary>
+    /// koşunun başarıları. Kova satırın GÖSTERDİĞİ görsel durumdan okunur — satır yeşilse ✓'dadır.
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> Eski fixture "bu koşu derledi" satırını <c>NeverBuilt</c>
+    /// gerekçesiyle kuruyor ve ✓'da sayıyordu: başarı her çıktı durumunu eziyordu. Canlı geçiş gerçekte başarıya
+    /// <c>UpToDate</c> yazar (B artık öyle); <c>NeverBuilt</c> bırakan başarı — Clean ya da motorun arkasında
+    /// durmadığı SCC üyesi — gri görünür ve ○'da sayılır (G). Koşu tablosu (<c>Succeeded</c>) ikisini de sayar.</para></summary>
     [Fact]
     public void Current_counts_standing_current_and_this_runs_successes()
     {
         var rows = new[]
         {
             Decided("A", ProjectRowState.Skipped, WillBuildReason.UpToDate),             // atlandı, çıktısı güncel
-            Decided("B", ProjectRowState.Succeeded, WillBuildReason.NeverBuilt),         // bu koşu derledi
+            Decided("B", ProjectRowState.Succeeded, WillBuildReason.UpToDate),           // bu koşu derledi
             Decided("C", ProjectRowState.Pending, WillBuildReason.UpToDate),             // koşu yok, güncel
             Decided("D", ProjectRowState.Pending, WillBuildReason.WaitingForDependency), // bekliyor ama çıktısı sağlam
             Decided("E", ProjectRowState.Succeeded, null),                               // karar yok, koşu derledi
             Decided("F", ProjectRowState.Pending, WillBuildReason.SignatureChanged),     // derlenecek → ✓ DEĞİL
+            Decided("G", ProjectRowState.Succeeded, WillBuildReason.NeverBuilt),         // temizlendi → ○, ✓ DEĞİL
         };
 
         var c = RunCounters.From(rows);
 
         Assert.Equal(5, c.Current);
-        Assert.Equal(1, c.Stale);
+        Assert.Equal(2, c.Stale);
         Assert.Equal(0, c.Broken);
         Assert.Equal(1, c.Skipped); // koşu tablosu (şeridin "N skipped"i) DEĞİŞMEDİ
-        Assert.Equal(2, c.Succeeded);
+        Assert.Equal(3, c.Succeeded);
     }
 
     /// <summary>[design v1.20.0 §2.7 · §5] ✗ chip'i kırmızıyı sayar: kanıtlı bozuk çıktı ∪ bu koşunun hataları —

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Specialized;
 using System.IO;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -1765,13 +1766,18 @@ public class RunViewModelTests
     }
 
     /// <summary>
-    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi de (<c>CycleUnsettled=true</c> — arkasında
-    /// durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) aynı kuralın altındadır: canlı geçiş
-    /// onu koşullu SANMAZ. <c>CycleUnsettled</c> zaten yalnız döngü üyeleri için doğru olabildiğinden bu, (i)'in
-    /// aynı korumasının farklı bir teline dokunduğunu doğrular.
+    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi (<c>CycleUnsettled=true</c>, <c>Trusted=false</c> —
+    /// arkasında durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) canlı geçişte koşullu SANILMAZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eski iddia: satır <c>UpToDate</c> okur ("defter bu
+    /// başarıdan hiçbir şey öğrenmedi, bugünkü olguya dön"). Yanlıştı: motor aynı anda defterine
+    /// <c>LastResult=Failed</c>, <c>FailedSignature=null</c> yazar (<c>InvalidateBuildStateOnFailure</c>) ve bir
+    /// sonraki Sync'in <c>WillBuildEvaluator</c>'ı bunu <c>NeverBuilt</c> okur — satır canlıda yeşil ✓
+    /// ("Up to date", ✓ sayacında), Sync'ten sonra gri ○ idi. Karar artık motorundur ve olayla gelir
+    /// (<c>ProjectSucceededEvent.Trusted</c>); satır Sync'in diyeceğini şimdiden der: gri, "To build".</para>
     /// </summary>
     [Fact]
-    public async Task An_unsettled_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    public async Task An_untrusted_cycle_member_success_reads_never_built_like_the_next_sync()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1779,12 +1785,42 @@ public class RunViewModelTests
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
 
-        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true, Trusted: false));
 
         var row = Assert.Single(vm.Projects);
         Assert.False(row.Conditional);
-        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
         Assert.Null(row.DependencyRoots);
+        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; kapsam dışı üye ⇒ WillBuild=false.
+        Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
+        Assert.False(row.WillBuild);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);                  // gri, yeşil ✓ DEĞİL
+        Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));  // ekran okuyucu da aynı şeyi duyar
+        Assert.Equal((0, 1), (vm.Counters.Current, vm.Counters.Stale));    // ✓ değil ○ sayılır
+        Assert.Equal(1, vm.Counters.Succeeded);                              // koşunun tablosu yine "başarılı" der
+
+        // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme — satır titremez.
+        var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.NeverBuilt)]));
+        Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
+    }
+
+    /// <summary>[final review I1] Kontrol grubu: güvenilir (varsayılan) bir döngü üyesi başarısı yeşil kalır.</summary>
+    [Fact]
+    public async Task A_trusted_cycle_member_success_stays_green()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Equal("Up to date", StatusGlyph.LabelFor(row.VisualStatus));
+        Assert.Equal((1, 0), (vm.Counters.Current, vm.Counters.Stale));
     }
 
     /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>

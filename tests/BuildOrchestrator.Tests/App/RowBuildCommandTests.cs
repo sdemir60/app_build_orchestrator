@@ -1,7 +1,9 @@
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -175,6 +177,31 @@ public class RowBuildCommandTests
         built.OnEvent(new ProjectSucceededEvent("r2", A, 120));
 
         Assert.False(Row(built, A).WillBuild);
+    }
+
+    /// <summary>
+    /// [final review I2] Temizlenen satır yeşil ✓ GÖSTERMEZ. Başarılı bir Clean'in gerekçesi <c>NeverBuilt</c>'tir
+    /// ("never built" etiketi) — renk, sayaç ve ekran-okuyucu adı da AYNI şeyi söylemeli: gri, ○ sayacında,
+    /// "To build". Koşu statüsü <c>Succeeded</c> durum yüzeyinde çıktı durumuna düşer (Failed ile aynı biçim);
+    /// run-story yüzeyleri ise yine "Succeeded" der.
+    /// </summary>
+    [Fact]
+    public async Task A_cleaned_row_shows_its_to_build_standing_not_a_green_tick()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = NewVm(engine);
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", false, null, WillBuildReason.UpToDate)]));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "a"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 120));
+
+        var row = Row(vm, A);
+        Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);
+        Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));
+        Assert.Equal(0, vm.Counters.Current);
+        Assert.Equal(1, vm.Counters.Stale);
+        Assert.Equal("Succeeded", StatusGlyph.RunLabelFor(row.Status)); // run-story: koşunun sonucu
     }
 
     /// <summary>Hedef satır TIKLAMA ANINDA işaretlenir (gönderim penceresi dahil) ve koşu bittiğinde bırakılır;

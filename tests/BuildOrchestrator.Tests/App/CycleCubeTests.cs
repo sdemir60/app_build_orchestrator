@@ -68,11 +68,15 @@ public class CycleCubeTests
     /// <para>[R-M4] Kırmızı çerçeve KANITLI hatanındır: koşu kanıtlı hatayı çıktı durumuna da yazar
     /// (<see cref="StandingStatus.Failed"/>), bu yüzden Failed satırı o durumla sınanır — kanıtsız hata
     /// (bayat durum) gri kalır, bkz. <c>VisualStatusTests.A_failure_that_is_not_evidence_reads_as_its_stale_standing</c>.
-    /// Eski fixture dört satırı da <c>Stale</c> ile sınıyordu.</para></summary>
+    /// Eski fixture dört satırı da <c>Stale</c> ile sınıyordu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> Succeeded satırı da artık kendi çıktı durumuyla sınanır:
+    /// güvenilir başarı durumu güncel yazar (<see cref="StandingStatus.Current"/>). Eski fixture onu <c>Stale</c>
+    /// ile sınıyor ve yeşil bekliyordu; başarı artık bayat durumu EZMEZ (Clean/güvenilmez başarı gri kalır, bkz.
+    /// <c>VisualStatusTests.Succeeded_falls_to_a_stale_or_failed_standing</c>).</para></summary>
     [Theory]
     [InlineData(GraphStatus.Queued, StandingStatus.Stale, VisualStatus.Queued, "Brush.Amber")]
     [InlineData(GraphStatus.Building, StandingStatus.Stale, VisualStatus.Building, "Brush.Amber")]
-    [InlineData(GraphStatus.Succeeded, StandingStatus.Stale, VisualStatus.Succeeded, "Brush.StatusSuccess")]
+    [InlineData(GraphStatus.Succeeded, StandingStatus.Current, VisualStatus.Succeeded, "Brush.StatusSuccess")]
     [InlineData(GraphStatus.Failed, StandingStatus.Failed, VisualStatus.Failed, "Brush.StatusFail")]
     public void A_member_that_is_actually_built_keeps_the_amber_cube_and_frames_its_result(
         GraphStatus status, StandingStatus standing, VisualStatus visual, string frame)

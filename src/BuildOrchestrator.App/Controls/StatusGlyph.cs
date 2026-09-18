@@ -130,7 +130,6 @@ public class StatusGlyph : Control
     internal static string RunLabelFor(GraphStatus status) => status switch
     {
         GraphStatus.Succeeded => "Succeeded",
-        GraphStatus.Cycle => "Cycle",
         GraphStatus.Discovered => "Discovered",
         _ => LabelFor(VisualStatuses.OfRun(status)), // Queued · Building · Failed · Skipped
     };

@@ -46,15 +46,34 @@ public class VisualStatusTests
     /// ezer (Stale üstünde de kırmızı). Değişme gerekçesi: kırmızı KANITTIR — timeout/Stop kanıt sayılmaz ve
     /// satırı kırmızıya çevirmez; kanıtsız hata bayat (Stale) çıktı durumunu bırakır ve satır onu gösterir
     /// (<see cref="A_failure_that_is_not_evidence_reads_as_its_stale_standing"/>). Kanıtlı hatanın çıktı
-    /// durumu zaten Failed'dır; Stale DIŞINDAKİ her durumda <c>Failed</c> hâlâ ezer.</para></summary>
+    /// durumu zaten Failed'dır; Stale DIŞINDAKİ her durumda <c>Failed</c> hâlâ ezer.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> Eski iddia: <c>Succeeded</c> de Stale üstünde ezer (yeşil).
+    /// Değişme gerekçesi: temizlenen (Clean) ya da motorun arkasında durmadığı (yakınsamayan SCC) bir başarı
+    /// "derlenecek" çıktı bırakır — satır "never built" yazarken yeşil ✓ gösteriyor, ✓ sayılıyor, "Up to date"
+    /// duyuruluyordu. Başarı artık Failed ile aynı biçimde çıktı durumuna düşer
+    /// (<see cref="Succeeded_falls_to_a_stale_or_failed_standing"/>).</para></summary>
     [Theory]
     [InlineData(GraphStatus.Queued, VisualStatus.Queued)]
     [InlineData(GraphStatus.Building, VisualStatus.Building)]
-    [InlineData(GraphStatus.Succeeded, VisualStatus.Succeeded)]
     public void The_run_overlays_the_standing(GraphStatus status, VisualStatus expected)
     {
         Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Current, marked: false));
         Assert.Equal(expected, VisualStatuses.For(status, StandingStatus.Stale, marked: true));
+    }
+
+    /// <summary>[final review I2] Durum yüzeyinde başarı, çıktı durumu yeşilse (ya da karar hiç yoksa) koşunun
+    /// <see cref="VisualStatus.Succeeded"/>'ıdır — vurgulu ad ve yeşil ✓ korunur; çıktı bayat ya da bozuksa
+    /// (Clean · güvenilmez başarı) o durumu gösterir. Run-story yüzeyleri (<see cref="VisualStatuses.OfRun"/>)
+    /// bundan etkilenmez.</summary>
+    [Fact]
+    public void Succeeded_falls_to_a_stale_or_failed_standing()
+    {
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Current, marked: false));
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Unknown, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Stale, marked: false));
+        Assert.Equal(VisualStatus.Stale, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Stale, marked: true));
+        Assert.Equal(VisualStatus.Failed, VisualStatuses.For(GraphStatus.Succeeded, StandingStatus.Failed, marked: false));
+        Assert.Equal(VisualStatus.Succeeded, VisualStatuses.OfRun(GraphStatus.Succeeded)); // run-story "Succeeded" der
     }
 
     /// <summary>[R-M4 · design v1.20.0 §5 "bozuk (kanıtlı)"] Kanıt olmayan bir koşu hatası (timeout, Stop,
@@ -164,7 +183,6 @@ public class VisualStatusTests
     [InlineData(GraphStatus.Succeeded, "Succeeded")]
     [InlineData(GraphStatus.Failed, "Failed")]
     [InlineData(GraphStatus.Skipped, "Skipped")]
-    [InlineData(GraphStatus.Cycle, "Cycle")]
     [InlineData(GraphStatus.Discovered, "Discovered")]
     public void A_run_story_surface_names_the_runs_result(GraphStatus status, string label)
         => Assert.Equal(label, StatusGlyph.RunLabelFor(status));

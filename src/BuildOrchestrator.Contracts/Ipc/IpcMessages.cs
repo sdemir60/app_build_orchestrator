@@ -278,8 +278,14 @@ public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNum
 /// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
 /// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
 /// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+/// <param name="Trusted">Motor bu başarının ARKASINDA duruyor mu — defterine başarı olarak yazdı mı. Kararı
+/// YALNIZ motor verir, defter yazımıyla AYNI yerden (<c>RunCoordinator.ReportProjectResult</c>'ın
+/// <c>invalidates</c>'i): yakınsamayan (tavana dayanan ya da ilerlemeyen) bir SCC'nin yeşil üyesi <c>false</c>
+/// taşır (yarıda kesilen grup üyelerini zaten Failed raporlar) ve defterde "kanıtsız hata" olarak durur — App
+/// satırı yeşil değil gri çizer, bir sonraki Sync'le ayrışmaz. Varsayılan <c>true</c>: bu alandan ÖNCE yazılmış NDJSON satırları bugünkü
+/// anlamıyla (güvenilir başarı) okunur.</param>
 public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long DurationMs,
-    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false) : IpcEvent;
+    IReadOnlyList<string>? DepIssues = null, bool CycleUnsettled = false, bool Trusted = true) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları; yoksa null (JSON'a yazılmaz). [It-3]</param>
 /// <param name="Evidence">[spec 2026-09-18 §1-14 · R-M4b] Bu hata KANIT mı — motor defterine kanıtlı hata
 /// (<c>FailedSignature</c>) yazdıysa <c>true</c>. Kararı YALNIZ motor verir, defter yazımıyla AYNI kapıdan

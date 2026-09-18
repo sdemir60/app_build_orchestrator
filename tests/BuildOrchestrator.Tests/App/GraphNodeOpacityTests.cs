@@ -22,7 +22,6 @@ public class GraphNodeOpacityTests
     [InlineData(GraphStatus.Succeeded)]
     [InlineData(GraphStatus.Failed)]
     [InlineData(GraphStatus.Skipped)]
-    [InlineData(GraphStatus.Cycle)]
     public void Everything_is_fully_opaque_while_the_graph_is_idle(GraphStatus status)
         => Assert.Equal(1.0, Op(status, GraphRunPhase.Idle), 6);
 
@@ -39,7 +38,6 @@ public class GraphNodeOpacityTests
     [Theory]
     [InlineData(GraphStatus.Succeeded)]
     [InlineData(GraphStatus.Failed)]
-    [InlineData(GraphStatus.Cycle)]
     public void A_finished_node_settles_at_twenty_percent_while_the_run_continues(GraphStatus status)
         => Assert.Equal(0.2, Op(status, GraphRunPhase.Running), 6);
 

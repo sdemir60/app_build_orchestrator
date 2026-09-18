@@ -453,7 +453,11 @@ public class CycleRoundsTests
             Assert.StartsWith("exit ", bFailed.Reason, StringComparison.Ordinal);
             Assert.False(bFailed.Evidence);
             // Kontrol: A kullanıcıya yine Succeeded raporlanır — invalidasyon SONUCU maskelemez.
-            Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
+            var aSucceeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.Equal(Id("A"), aSucceeded.ProjectId);
+            // [final review I1] ...ama olay defterle AYNI kararı taşır: motor bu başarının arkasında DURMUYOR
+            // (defter "kanıtsız hata" yazdı) — App satırı yeşil bıraksaydı bir sonraki Sync onu griye çevirirdi.
+            Assert.False(aSucceeded.Trusted);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -490,6 +494,8 @@ public class CycleRoundsTests
             }
             // Yakınsama tavana dayanmak DEĞİLDİR: "oturmamış döngü" bayrağı taşınmaz.
             Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.CycleUnsettled));
+            // [final review I1] Kontrol grubu: yakınsayan grubun başarısı GÜVENİLİRDİR (defter imzayı yazdı).
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -734,6 +740,9 @@ public class CycleRoundsTests
             var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], succeeded.Select(e => e.ProjectId));
             Assert.All(succeeded, e => Assert.True(e.CycleUnsettled));
+            // [final review I1] Tavan da yakınsama DEĞİLDİR: olay "güvenilmez başarı" der — aşağıdaki
+            // invalidate ile AYNI karar.
+            Assert.All(succeeded, e => Assert.False(e.Trusted));
             // Dep-issue listesine SAHTE isim enjekte EDİLMEZ: o liste "hangi bağımlılık patladı" sorusunun
             // cevabıdır — ikinci bir anlam yüklenirse ▲ N sayacı ile filtre chip'i yanlış sayar.
             Assert.All(succeeded, e => Assert.Null(e.DepIssues));

@@ -73,13 +73,16 @@ public class ProjectFilterTests
     /// "✓ + ✗ = bu koşuda derlenenler" — ✓ koşunun başarılarını, ✗ hatalarını seçiyordu ve atlanan satır ikisinde
     /// de yoktu. Değişme gerekçesi: chip'ler artık DURUM filtreleridir. ✓ güncel çıktının hepsidir (bu koşuda
     /// atlanan güncel satır dahil), ✗ yalnız kırmızı görünendir (kanıtsız hata gri görünür → ○). Küme hâlâ
-    /// VEYA ile birleşir.</summary>
+    /// VEYA ile birleşir.
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> A'nın fixture'ı "bu koşu derledi" satırını <c>NeverBuilt</c>
+    /// ile kurup ✓'da bekliyordu; canlı geçiş başarıya <c>UpToDate</c> yazar (A artık öyle). <c>NeverBuilt</c>
+    /// bırakan başarı (Clean) gri görünür → ○'dadır, ✓'da DEĞİL (G).</para></summary>
     [Fact]
     public void Current_plus_failed_no_longer_means_what_this_run_built()
     {
         var both = Set(ProjectFilter.Current, ProjectFilter.Failed);
 
-        Assert.True(ProjectFilter.Matches(Decided("A", ProjectRowState.Succeeded, WillBuildReason.NeverBuilt), null, both));
+        Assert.True(ProjectFilter.Matches(Decided("A", ProjectRowState.Succeeded, WillBuildReason.UpToDate), null, both));
         Assert.True(ProjectFilter.Matches(Decided("B", ProjectRowState.Failed, WillBuildReason.LastFailed), null, both));
         // Bu koşunun DERLEMEDİĞİ güncel satır artık ✓'dadır.
         Assert.True(ProjectFilter.Matches(Decided("C", ProjectRowState.Skipped, WillBuildReason.UpToDate), null, both));
@@ -89,6 +92,9 @@ public class ProjectFilterTests
         Assert.False(ProjectFilter.Matches(greyFailure, null, both));
         Assert.True(ProjectFilter.Matches(greyFailure, null, Set(ProjectFilter.Stale)));
         Assert.False(ProjectFilter.Matches(Decided("F", ProjectRowState.Pending, WillBuildReason.SignatureChanged), null, both));
+        var cleaned = Decided("G", ProjectRowState.Succeeded, WillBuildReason.NeverBuilt);
+        Assert.False(ProjectFilter.Matches(cleaned, null, both));
+        Assert.True(ProjectFilter.Matches(cleaned, null, Set(ProjectFilter.Stale)));
     }
 
     /// <summary>[design v1.20.0 §2.7] Filtre ile sayaç AYNI kovayı okur: bir chip'e basınca listede kalan satır

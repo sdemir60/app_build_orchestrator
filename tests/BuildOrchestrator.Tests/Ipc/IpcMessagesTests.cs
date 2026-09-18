@@ -208,6 +208,21 @@ public class IpcMessagesTests
         Assert.False(legacy.Evidence);
     }
 
+    /// <summary>[final review I1] <c>Trusted</c> IPC sınırını geçer; alansız eski bir satır GÜVENİLİR başarı
+    /// (true) okunur — eski bir motorun başarısı bugünkü anlamını korur.</summary>
+    [Fact]
+    public void ProjectSucceededEvent_carries_the_engines_trust_verdict_and_old_lines_read_as_trusted()
+    {
+        var ev = new ProjectSucceededEvent("r1", "a", 900, Trusted: false);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"trusted\":false", json, StringComparison.Ordinal);
+        Assert.False(Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Trusted);
+
+        var legacy = Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectSucceeded","runId":"r1","projectId":"a","durationMs":900}""", IpcJson.Options));
+        Assert.True(legacy.Trusted);
+    }
+
     // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
     // satırına çevirir; burada yalnız NDJSON round-trip'i ve ayırt edicisi pinlenir.
     [Fact]

@@ -1263,13 +1263,17 @@ public sealed class RunCoordinator(
     {
         string name = NameOf(run, projectId);
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
-        // [R-M4b · spec 2026-09-18 §1-14] Kanıt kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
-        // olay (ProjectFailedEvent.Evidence) ve defter yazımı (InvalidateBuildStateOnFailure). İkisi ayrı
-        // hesaplansaydı satır ile bir sonraki Sync ayrışabilirdi — App metni yeniden sınıflandırmaz.
+        // [R-M4b · spec 2026-09-18 §1-14] Defterin kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
+        // olay (ProjectFailedEvent.Evidence · ProjectSucceededEvent.Trusted) ve defter yazımı
+        // (InvalidateBuildStateOnFailure). İkisi ayrı hesaplansaydı satır ile bir sonraki Sync ayrışabilirdi —
+        // App metni yeniden sınıflandırmaz, başarının güvenilir olup olmadığını da tahmin etmez.
         bool invalidates = result != BuildResult.Succeeded || !trustedResult;
-        string? evidenceSignature = invalidates ? FailureEvidenceSignature(run, projectId, failReason, trustedResult) : null;
+        string? evidenceSignature = null;
         try
         {
+            // [final review O4] Kanıt kapısı da Complete garantisinin İÇİNDEDİR: fırlasa bile scheduler askıda
+            // kalmaz (finally yine TAM BİR KEZ Complete eder).
+            if (invalidates) evidenceSignature = FailureEvidenceSignature(run, projectId, failReason, trustedResult);
             if (result == BuildResult.Succeeded)
             {
                 run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
@@ -1290,7 +1294,10 @@ public sealed class RunCoordinator(
                 else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs,
                         depIssueRoots: depIssuesForEvent is null ? null : depIssues.RootIds);
-                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent, cycleUnsettled));
+                // [final review I1] Trusted = defter bu başarıyı başarı olarak tuttu mu (invalidates'in tersi);
+                // tutmadıysa App satırı, bir sonraki Sync'in okuyacağı "kanıtsız hata" hâliyle çizer.
+                run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent,
+                    cycleUnsettled, Trusted: !invalidates));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
                     "{0}: succeeded ({1}ms)", name, durationMs));
             }
@@ -1863,8 +1870,12 @@ public sealed class RunCoordinator(
     /// <summary>
     /// [A2 fix-1][spec 2026-09-18 §1-14] Bir proje BAŞARISIZ bittiğinde stored <see cref="BuildState"/>'i
     /// GEÇERSİZLEŞTİRİR: <c>LastResult=Failed</c> yazılır, böylece <see cref="Core.Planning.WillBuildEvaluator"/>
-    /// (<c>LastResult != Succeeded ⇒ WillBuild=true</c>) bir sonraki Build'de bu projeyi "up to date" sayıp
-    /// pre-skip EDEMEZ. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek yeri burasıdır.
+    /// bir sonraki Build'de bu projeyi AYNI kaynakla "up to date" sayıp pre-skip EDEMEZ — kanıtsızsa
+    /// <c>NeverBuilt</c>, kanıt bugünkü imzadaysa <c>LastFailed</c> okur. Tek istisna kaynağın geri alınmasıdır
+    /// (spec §5.3): kanıt başka bir imzaya aitse ve kaynak son BAŞARILI imzaya (<c>BuiltSignature</c>) döndüyse
+    /// karar <c>UpToDate</c>'tir — o imzanın son bilinen sonucu başarıdır. Yani "<c>LastResult != Succeeded</c>
+    /// ⇒ derlenir" genel bir kural DEĞİLDİR. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek
+    /// yeri burasıdır.
     /// <para>
     /// <b>Yazım nedene göre AYRIŞIR.</b> Kanıt kararı bu metodun DIŞINDA, TEK yerde verilir
     /// (<see cref="FailureEvidenceSignature"/>: arkasında durulabilir sonuç + derleyici hatası + bilinen imza) ve
@@ -1931,11 +1942,16 @@ public sealed class RunCoordinator(
     /// kendi sıfır-dışı çıkışıysa (<see cref="FailureClassification.IsCompilerFailure"/> — timeout, stopped,
     /// invoke error değil) ve (3) planlamadaki imzası biliniyorsa (<c>run.Incremental.SignatureById</c> — imzasız
     /// kanıt YASAK, <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c>'i imza eşitliğine bakar)
-    /// ve (4) yazılacak bir defter varsa KANITTIR. Dönen imza kanıtın kendisidir; <c>null</c> = kanıt yok.
-    /// Hem defter yazımı hem App'e giden olay BUNU okur, ikisi ayrışamaz.
+    /// ve (4) yazılacak bir defter varsa ve (5) koşunun hedefi DERLİYORSA (Build/Rebuild) KANITTIR. Dönen imza
+    /// kanıtın kendisidir; <c>null</c> = kanıt yok. Hem defter yazımı hem App'e giden olay BUNU okur, ikisi
+    /// ayrışamaz.
+    /// <para>(5)'in gerekçesi: <c>msbuild /t:Clean</c> derleyiciyi hiç çağırmaz; sıfır-dışı çıkışı (kilitli
+    /// dosya, erişim hatası) kaynağın derlenmediğini söylemez. Patlayan bir Clean kanıtsızdır — çıktı yarım
+    /// silinmiş olabileceği için defter yine geçersizleşir, ama satır "bu kaynakta patladı" kırmızısı almaz.</para>
     /// </summary>
     private static string? FailureEvidenceSignature(RunContext run, string projectId, string? reason, bool trustedResult) =>
         run.StateStore is not null
+        && (run.MsBuildTarget is MsBuildTarget.Build or MsBuildTarget.Rebuild)
         && trustedResult
         && FailureClassification.IsCompilerFailure(reason)
         && run.Incremental is { } inc
