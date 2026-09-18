@@ -370,6 +370,7 @@ public sealed partial class RunViewModel
         }
         ClearPreviewSets();     // kümeler ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
         RefreshRunSurface();    // sayaç/görünür-liste + willBuild yüzeyi
+        RaiseRowDecisionsChanged(); // [Task 4 review I-1] graf da başlangıç moduna AYNI anda düşer
     }
 
     /// <summary>

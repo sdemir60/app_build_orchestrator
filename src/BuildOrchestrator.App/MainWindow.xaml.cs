@@ -199,9 +199,12 @@ public partial class MainWindow : Window
         // bir işaret zaten kalmaz.
         _vm.BuildPreviewApplied += (_, _) =>
         {
-            PushGraphStatuses();
+            // Graf itişi RowDecisionsChanged'dedir (hemen önce, AYNI sırayla yayılır) — burada tekrar edilmez.
             if (_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
         };
+        // [design v1.20.0 §2.3 · Task 4 review I-1] Satırların karar girdisi (standing) toplu değişti —
+        // önizleme ya da branch/repo değişiminin hollow reset'i. Grafın renk girdisini öğrendiği TEK sinyal.
+        _vm.RowDecisionsChanged += (_, _) => PushGraphStatuses();
         RefreshProjectGroups();
         RebuildGraph();
 

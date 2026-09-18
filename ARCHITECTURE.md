@@ -3437,7 +3437,8 @@ every other row, because the triangle already says it. This is not the orange ch
 the warning's own amber.
 
 **The start mode** is the `unknown` standing: a row that has no decision yet — the application has started but
-no Sync has run. Nothing is known, so nothing is coloured: the row draws a plain grey stripe at full opacity and
+no Sync has run, or the branch or the repository root has just changed and the decisions the rows carried no
+longer describe what will be built; the list and the graph drop back together. Nothing is known, so nothing is coloured: the row draws a plain grey stripe at full opacity and
 a **four-arc ring** in place of the filled dot, the glyph is a dashed circle, and the graph node carries a dashed
 border. The mode drops the moment a decision arrives — a Sync's preview colours every row with its standing —
 and the ring cross-fades into the filled dot, 380 ms, same element, same size, so nothing shifts. Starting an

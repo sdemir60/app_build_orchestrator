@@ -64,18 +64,17 @@ public class OperationPipelineTests
     // ============================================================ _neutralize
 
     /// <summary>
-    /// [§9-4 <c>_neutralize</c>] Yeni bir işlem başlarken önceki koşunun TÜM izleri silinir — herkes düz nötr
-    /// griye iner. Tasarımın cümlesi: "önceki koşunun tüm izleri silinir, herkes düz gri".
+    /// [§9-4 <c>_neutralize</c> · design v1.20.0 §2.3] Yeni bir işlem başlarken önceki koşunun BİNDİRMESİ
+    /// silinir (koşu statüsü <c>Discovered</c>'a, süre ve uyarı sıfıra), satırın rengi ise kendi çıktı
+    /// durumunda kalır: az önce yeşil biten A güncel, kanıtlı hatayla biten B kırmızı, kararı olmayan C
+    /// bilinmiyor. Dalga bu durum renklerinin üzerine yanar.
     ///
-    /// <para>Bu, koreografinin ön koşuludur: dalga bir NÖTR ZEMİN üzerine yanar. Zemin nötr değilse (ekranda
-    /// hâlâ önceki koşunun yeşili ve kırmızısı varsa) "renk yalnız son işlemin hikâyesini anlatır" ilkesi
-    /// daha ilk karede bozulur.</para>
-    /// </summary>
     /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski ad/iddia:
-    /// <c>A_new_operation_wipes_every_trace_of_the_previous_run</c> — nötrlemeden sonra herkes düz nötr gri
-    /// (<c>Discovered</c>). Değişme gerekçesi: renk kümülatiftir. Yeni iddia: koşu bindirmesi silinir (statü
-    /// <c>Discovered</c>, süre, uyarı), satır kendi çıktı durumunda kalır — az önce yeşil biten A güncel, kanıtlı
-    /// hatayla biten B kırmızı, kararı olmayan C bilinmiyor.</para>
+    /// <c>A_new_operation_wipes_every_trace_of_the_previous_run</c> — önceki koşunun TÜM izleri silinir, herkes
+    /// düz nötr griye (<c>Discovered</c>) iner; zemin nötr olmazsa "renk yalnız son işlemin hikâyesini anlatır"
+    /// ilkesi ilk karede bozulur. Değişme gerekçesi (kullanıcı ölçümü): Sync sonrası neyin güncel olduğu
+    /// renkten okunmuyordu — renk artık kümülatiftir.</para>
+    /// </summary>
     [Fact]
     public async Task A_new_operation_wipes_the_run_overlay_but_keeps_the_standing()
     {
@@ -121,14 +120,15 @@ public class OperationPipelineTests
     }
 
     /// <summary>
-    /// [§3.1 "Sync"] Sync bir İŞLEM DEĞİLDİR — işlemlerin zeminidir. Nötrlemesi kendi kuralını izler ve
-    /// başlangıç moduna DÖNDÜRÜR (kesikli), bir işlemin nötrlemesi ise başlangıç modunu DÜŞÜRÜR.
-    /// İki yol aynı sıfırlamayı paylaşır, yalnız bu bayrakta ayrışır.
-    /// </summary>
+    /// [§3.1 "Sync" · design v1.20.0 §2.3] Sync bir İŞLEM DEĞİLDİR — işlemlerin zeminidir; o da koşu
+    /// bindirmesini siler, ama her satır kendi çıktı durumuna iner: kararı olan satır (A güncel, B kırmızı)
+    /// renkli, kararı olmayan (C) başlangıç modunda.
+    ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski iddia: Sync'in nötrlemesi herkesi başlangıç
-    /// moduna (<c>VisualStatus.Fresh</c>) indirir. Değişme gerekçesi: Sync artık renk verir; başlangıç modu
-    /// yalnız kararın yokluğudur. Yeni iddia: bayrak yine yazılır ama görsel durum çıktı durumudur — kararı
-    /// olan satır (A güncel, B kırmızı) renkli, kararı olmayan (C) başlangıç modunda.</para>
+    /// moduna (<c>VisualStatus.Fresh</c>, kesikli) DÖNDÜRÜR, bir işlemin nötrlemesi onu DÜŞÜRÜR; iki yol yalnız
+    /// bu bayrakta ayrışır. Değişme gerekçesi: Sync artık renk verir; başlangıç modu yalnız kararın yokluğudur,
+    /// bayrak görsel durumu etkilemez.</para>
+    /// </summary>
     [Fact]
     public void A_sync_neutralizes_too_and_every_row_lands_on_its_standing()
     {

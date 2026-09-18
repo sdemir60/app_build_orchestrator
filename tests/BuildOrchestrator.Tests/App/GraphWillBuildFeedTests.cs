@@ -86,6 +86,35 @@ public class GraphWillBuildFeedTests
         Assert.Empty(VisualOf(window, "Dirty").Square.StrokeDashArray);
     }
 
+    /// <summary>[design v1.20.0 §2.3 · Task 4 review I-1] <b>Branch değişimi kararları düşürür ve graf bunu
+    /// listeyle AYNI ANDA duyar</b>: her node kesikli başlangıç moduna döner. Ölçülen kusur: satır anında
+    /// başlangıç moduna düşüyordu ama graf yalnız sayaç/işlem/önizleme sinyallerinde besleniyordu — sayaçlar
+    /// değişmediği için eski yeşil/gri/kırmızı grafta kalıyordu.</summary>
+    [StaFact]
+    public void A_branch_change_drops_every_node_back_to_the_dashed_start_mode()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Dirty", null), ("Clean", null));
+        var content = MainWindowHost.Realize(window);
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(MainWindowHost.IdOf("Dirty"), "Dirty", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(MainWindowHost.IdOf("Clean"), "Clean", false, Reason: WillBuildReason.UpToDate),
+        ]));
+        content.UpdateLayout();
+        Assert.Equal(DsResources.TokenColor(window, "Brush.StatusSuccessText"), CoreColour(window, "Clean")); // ön-koşul
+
+        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false)); // aktif OLMAYAN branch
+        content.UpdateLayout();
+
+        Assert.All(vm.Projects, r => Assert.Equal(VisualStatus.Unknown, r.VisualStatus)); // liste düştü
+        foreach (var name in new[] { "Dirty", "Clean" })
+        {
+            Assert.Equal(VisualStatus.Unknown, VisualOf(window, name).Model.Visual);     // graf da AYNI anda
+            Assert.NotEmpty(VisualOf(window, name).Square.StrokeDashArray);
+        }
+        Assert.Equal(DsResources.TokenColor(window, "Brush.TextFaint"), CoreColour(window, "Clean"));
+    }
+
     /// <summary>[Task 1 review fix — I-1] <b>Dalganın yaktığı kapsam, runStarted ile bu run'ın kendi
     /// buildPreview'i arasında SÖNMEMELİDİR.</b> Kuyruk artık <see cref="ProjectRowViewModel.InRunQueue"/>'dan
     /// türediği ve o YALNIZ bu run'ın kendi önizlemesinden yazıldığı için, <c>runStarted</c> ile

@@ -475,8 +475,22 @@ public sealed partial class RunViewModel : ObservableObject
     /// önizleme sonrası değeri birebir aynı kaldığı için <c>PropertyChanged</c> yutulur — graf hiç
     /// uyarılmazdı. Sayaç kanalını "plan da değişti" diye genişletmek de yanlış olurdu: iki proje ters yönde
     /// takas ettiğinde (biri temizlendi, biri kirlendi) sayı yine aynı kalır. Bu yüzden AÇIK bir sinyal.</para>
+    /// <para>[Task 4 review I-1] Grafın itişi artık <see cref="RowDecisionsChanged"/>'dedir (hemen önce yayılır);
+    /// bu olayın kalan tüketicisi kapsam işaretinin kuyruğa devridir (<c>MainWindow</c>).</para>
     /// </summary>
     public event EventHandler? BuildPreviewApplied;
+
+    /// <summary>[design v1.20.0 §2.3 · Task 4 review I-1] Satırların RENK GİRDİSİ olan karar (<see
+    /// cref="ProjectRowViewModel.WillBuild"/> + <see cref="ProjectRowViewModel.WillBuildReason"/> →
+    /// <see cref="ProjectRowViewModel.Standing"/>) toplu olarak değişti — graf yeniden beslenmelidir.
+    /// <para><b>TEK sinyal:</b> kararları toplu yazan/düşüren HER yol (<see cref="RaiseRowDecisionsChanged"/>'i
+    /// çağıranlar: önizleme ve hollow reset) bunu yayar; kabuk yalnız buna abone olur. Ayrı ayrı sinyaller
+    /// ölçüldü ve ayrıştı: branch değişimi satırları başlangıç moduna düşürürken graf eski renkte kalıyordu,
+    /// çünkü sayaçlar değişmiyordu ve önizleme sinyali o yolda hiç çıkmıyordu.</para></summary>
+    public event EventHandler? RowDecisionsChanged;
+
+    /// <summary>Kararlar toplu yazıldıktan/düşürüldükten SONRA çağrılır (kopya YASAK — sinyalin tek yayıcısı).</summary>
+    private void RaiseRowDecisionsChanged() => RowDecisionsChanged?.Invoke(this, EventArgs.Empty);
 
     /// <summary>[Fix wave 1, Finding 2 regression testi] YALNIZ testler için: <see cref="OnProjectLogChunk"/>
     /// dikiş kilidinden çıkar çıkmaz (kilit ne zaman kapansa, kapandığı ANDA) senkron tetiklenir. Üretimde
@@ -1751,7 +1765,8 @@ public sealed partial class RunViewModel : ObservableObject
             row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
         }
         RefreshRunSurface();
-        BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // graf plan kanalını buradan öğrenir
+        RaiseRowDecisionsChanged();                          // graf renk girdisini buradan öğrenir
+        BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // işaretin kuyruğa devri (MainWindow)
     }
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
