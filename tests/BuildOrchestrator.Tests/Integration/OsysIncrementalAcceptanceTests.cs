@@ -85,10 +85,16 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // build-state.json GERÇEKTEN yazıldı mı (persist kanıtı — sonraki Build'in incremental olmasının önkoşulu).
         var store = new BuildStateStore(shared);
         var stateAfterRun1 = store.Load();
-        // [A2] Persist EDEN küme = "depIssue TAŞIMAYAN success"ler. depIssue taşıyan bir success A2'den beri taze
-        // imza persist ETMEZ (RunCoordinator.BuildProjectAsync: `if (depIssuesForEvent is null)` →
-        // PersistBuildStateOnSuccess), FAILED'ler ise BOŞ store'da geçersizleştirilecek kayıt bulamadığı için
-        // satır EKLEMEZ (InvalidateBuildStateOnFailure "kayıt yoksa yazma").
+        // [A2] Persist EDEN küme = "depIssue TAŞIMAYAN success"ler + KANITLI (evidence) FAILED'ler. depIssue
+        // taşıyan bir success A2'den beri taze imza persist ETMEZ (RunCoordinator.BuildProjectAsync:
+        // `if (depIssuesForEvent is null)` → PersistBuildStateOnSuccess).
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: "FAILED'ler BOŞ store'da geçersizleştirilecek
+        // kayıt bulamadığı için satır EKLEMEZ." Artık yanlış: kanıtlı bir derleyici hatası (evidence-based red)
+        // kayıt yoksa bile taze bir satır AÇAR — `FailedSignature`/`FailedAt` ile, `BuiltSignature: null`
+        // (RunCoordinator.InvalidateBuildStateOnFailure, §8.8: "opening a fresh record when the project has
+        // never been seen before, so a first-ever compile failure is not lost"). Yalnız KANITSIZ bir
+        // başarısızlık (timeout/stopped/invoke error/yakınsamayan SCC üyesi) hâlâ eski davranışı korur: kayıt
+        // yoksa hiçbir şey açılmaz.
         // İddia ZAYIFLAMAZ: derlenen her proje için KURAL OLARAK bir satır beklenir — biri bile eksik kalırsa
         // sayı bu alt sınırın ALTINA düşer ve test kırmızı verir. Muafiyet listesi tam OLSUN
         // diye: bir persist-etmeme yolu daha vardır ve o da bu iddiaya girmez —
@@ -240,8 +246,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         Assert.Empty(notSkippedUnexplained);
         // SABİT bir taban ("en az 100 proje up-to-date olmalı") burada YANLIŞ ölçüdür: Run 2'de pre-skip
         // EDİLEBİLECEK proje sayısı repodaki failure sayısına göre değişir (depIssue notlu satırlar yine
-        // derlenir). Doğru ölçü koşunun KENDİ ürettiği sayıdan türer: Run 1'de NOTSUZ satır persist eden
-        // her proje Run 2'de "skipped — up to date" pre-skip EDİLMELİDİR.
+        // derlenir). Doğru ölçü koşunun KENDİ ürettiği sayıdan türer: Run 1'de bir BAŞARIYI temsil eden ve
+        // DepIssue notu taşımayan her satır Run 2'de "skipped — up to date" pre-skip EDİLMELİDİR.
         // NEDEN ">=" DEĞİL "==": ters yön de üretim kodunca garanti altındadır — WillBuildEvaluator "false"
         // (⇒ pre-skip) diyebilmek için state'te LastResult=Succeeded + EŞLEŞEN imza taşıyan bir satır ARAR
         // (WillBuildEvaluator.cs:16-18) ve run2UpToDate yalnız "skipped — up to date" reason'ıyla
@@ -251,9 +257,22 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // gerçek bir bug olurdu. İddia ZAYIF DEĞİL — incremental bozulup satır yazmış tek bir proje bile Run
         // 2'de yeniden derlenirse sol taraf düşer ve test kırmızı verir. Koşunun ÖLÇEĞİ ayrıca "Run 1 başarılı
         // > 100" ve persist alt sınırı iddialarıyla ayrıca pinlidir.
-        int cleanRows = stateAfterRun1.Values.Count(s => !s.DepIssue);
+        //
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: "DepIssue notu taşımayan HER persist edilmiş
+        // satır Run 2'de pre-skip edilir" — yani `cleanRows = stateAfterRun1.Values.Count(s => !s.DepIssue)`.
+        // Artık yanlış: kanıtlı bir derleyici hatası da (yukarıdaki [A2] notuna bak) artık kayıt yoksa bile
+        // taze bir satır AÇAR (`FailedSignature`/`FailedAt` ile, `BuiltSignature: null`) ve böyle bir satır
+        // DepIssue TAŞIMAZ ama BAŞARILI da DEĞİLDİR. WillBuildEvaluator onu `BuiltSignature: null` olduğu için
+        // `NeverBuilt` sayar (WillBuild=true) — pre-skip ETMEZ, ve bu DOĞRUDUR: kanıtlı-kırmızı bir satırın Run
+        // 2'de yeniden derlenmesi beklenen davranıştır, bug değil. Doğru ölçü artık WillBuildEvaluator'ın
+        // UpToDate dalıyla AYNI iki şartı okur: `LastResult == Succeeded` (yalnız bir BAŞARI kaydı pre-skip
+        // adayıdır — bir başarısızlık kaydı asla `BuiltSignature` taşımaz) VE `!DepIssue` (bayat bağımlılığa
+        // link'li değil). Gerekçe: bir kanıtlı-kırmızı satırı "temiz satır" sayıp pre-skip beklemek, testi
+        // gerçek üretim kararıyla değil eski bir varsayımla karşılaştırırdı — ölçülen sapma tam Run 1'in kanıtlı
+        // başarısızlık sayısı kadardı (18/18).
+        int cleanRows = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded && !s.DepIssue);
         Assert.True(run2UpToDate.Count == cleanRows,
-            Inv($"'up to date' pre-skip sayısı ({run2UpToDate.Count}) ≠ Run 1'de NOTSUZ persist edilen satır sayısı ({cleanRows} / toplam {stateAfterRun1.Count}) — incremental çalışmıyor: notsuz satır yazan HER proje Run 2'de skip edilmeliydi."));
+            Inv($"'up to date' pre-skip sayısı ({run2UpToDate.Count}) ≠ Run 1'de NOTSUZ BAŞARI persist edilen satır sayısı ({cleanRows} / toplam {stateAfterRun1.Count}) — incremental çalışmıyor: notsuz başarı satırı yazan HER proje Run 2'de skip edilmeliydi."));
         // Bu bir ÜST SINIR (⊆) iddiasıdır: "Run 2 yalnız meşru kümeden derleyebilir". İfade EDEMEDİĞİ şey,
         // kümenin TAMAMININ gerçekten derlendiği (eşitlik) — bir carrier, DAHA ÖNCEKİ bir koşudan kalan
         // Succeeded kaydı sayesinde meşru olarak skip de EDİLEBİLİR (bu testte Run 1 sıfır state ile başladığı
