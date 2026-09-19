@@ -40,12 +40,24 @@ public static class ProjectInputs
     /// <param name="evaluated">Bu projenin değerlendirmesi; yoksa yalnız klasör taraması ve csproj kalır.</param>
     /// <param name="workspaceRoot">Çalışma alanı kökü — yukarı yürüme burada durur (proje kökün altındaysa).</param>
     /// <returns>Yola göre tekilleştirilmiş, sıralı (deterministik) girdi listesi.</returns>
-    public static IReadOnlyList<ProjectInput> Collect(string projectFile, EvaluatedProject? evaluated, string workspaceRoot)
+    public static IReadOnlyList<ProjectInput> Collect(string projectFile, EvaluatedProject? evaluated, string workspaceRoot) =>
+        CollectWithFolders(projectFile, evaluated, workspaceRoot).Files;
+
+    /// <summary>
+    /// [Task 2] <see cref="Collect"/> ile TAM AYNI yürüyüşü yapar (ikinci bir tarama YOKTUR), ayrıca gezilen
+    /// klasörleri de döner. "Zaman modu"nda bir klasörün mtime'ı bir dosya silme/yeniden adlandırmayı
+    /// yakalar — içerik imzasına giren <see cref="Files"/> Collect'in döndüğüyle birebir aynıdır.
+    /// </summary>
+    /// <returns><c>Files</c>: Collect ile aynı küme. <c>Folders</c>: proje klasörü dahil, <c>obj</c>/<c>bin</c>
+    /// hariç, gezilen tüm klasörler — tam yol, sıralı, harf büyüklüğünden bağımsız tekilleştirilmiş.</returns>
+    public static (IReadOnlyList<ProjectInput> Files, IReadOnlyList<string> Folders) CollectWithFolders(
+        string projectFile, EvaluatedProject? evaluated, string workspaceRoot)
     {
         ArgumentNullException.ThrowIfNull(projectFile);
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
         var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var folders = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
         void Add(string path)
         {
@@ -64,19 +76,21 @@ public static class ProjectInputs
         }
 
         string projectDir = Path.GetDirectoryName(project)!;
-        SweepFolder(projectDir, paths);
+        SweepFolder(projectDir, paths, folders);
         WalkUp(projectDir, workspaceRoot, paths);
 
-        return [.. paths.Select(p => new ProjectInput(p))];
+        return ([.. paths.Select(p => new ProjectInput(p))], [.. folders]);
     }
 
     /// <summary>
-    /// Proje klasörünün altındaki derleme-etkileyen dosyalar.
+    /// Proje klasörünün altındaki derleme-etkileyen dosyalar; AYNI yürüyüşte gezilen klasörleri de
+    /// <paramref name="intoFolders"/>'a toplar (proje klasörü dahil, <c>obj</c>/<c>bin</c> hariç — onlar hiç
+    /// yığına girmediği için zaten toplanmazlar).
     ///
     /// <para>Yürüyüş elle yapılır çünkü <c>obj</c>/<c>bin</c> dizinlerine HİÇ GİRİLMEMELİDİR: onları
     /// enumerate edip sonra elemek, bir derleme çıktısındaki binlerce dosyayı boşuna gezmek olurdu.</para>
     /// </summary>
-    private static void SweepFolder(string projectDir, SortedSet<string> into)
+    private static void SweepFolder(string projectDir, SortedSet<string> into, SortedSet<string> intoFolders)
     {
         var pending = new Stack<string>();
         pending.Push(projectDir);
@@ -84,6 +98,7 @@ public static class ProjectInputs
         while (pending.Count > 0)
         {
             string dir = pending.Pop();
+            intoFolders.Add(Path.GetFullPath(dir));
 
             try
             {

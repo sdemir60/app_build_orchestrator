@@ -28,6 +28,7 @@ public sealed class IncrementalRunBinder
     private readonly string _workspaceRoot;
     private readonly SourceHashCache _hashes;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _foldersById;
     // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
     private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
 
@@ -52,11 +53,18 @@ public sealed class IncrementalRunBinder
         _hashes = hashes;
         // Girdi toplama proje başına BAĞIMSIZDIR ve büyük kısmı klasör taramasıdır (IO). Gerçek OSYS'te 177
         // projenin toplamı seri koşuşta ölçülebilir bir gecikmeydi; paralel toplamak sonucu değiştirmez.
-        var collected = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        // [Task 2] Klasörler de AYNI taramadan (CollectWithFolders) toplanır — ikinci bir yürüyüş yapılmaz.
+        var collectedInputs = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        var collectedFolders = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
-            collected[node.Id] = ProjectInputs.Collect(
-                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot));
-        _inputsById = collected;
+        {
+            var (files, folders) = ProjectInputs.CollectWithFolders(
+                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot);
+            collectedInputs[node.Id] = files;
+            collectedFolders[node.Id] = folders;
+        });
+        _inputsById = collectedInputs;
+        _foldersById = collectedFolders;
     }
 
     /// <summary>Bu koşuda özeti gerekecek TÜM girdi dosyaları (tekil).</summary>
@@ -116,6 +124,12 @@ public sealed class IncrementalRunBinder
     /// <summary>Bir projenin girdi dosyaları — tanı ve test içindir.</summary>
     public IReadOnlyList<ProjectInput> InputsOf(string projectId) =>
         _inputsById.TryGetValue(projectId, out var inputs) ? inputs : [];
+
+    /// <summary>[Task 2] Bir projenin gezilen klasörleri (proje klasörü dahil, <c>obj</c>/<c>bin</c> hariç)
+    /// — "zaman modu"nda bir dosya silme/yeniden adlandırmayı klasör mtime'ından yakalamak içindir; bkz.
+    /// <see cref="ProjectInputs.CollectWithFolders"/>.</summary>
+    public IReadOnlyList<string> FoldersOf(string projectId) =>
+        _foldersById.TryGetValue(projectId, out var folders) ? folders : [];
 
     /// <summary>
     /// Fingerprint koşu boyunca proje başına BİR KEZ hesaplanır: iki bağlama geçişi (Safe/Fast) ve SCC

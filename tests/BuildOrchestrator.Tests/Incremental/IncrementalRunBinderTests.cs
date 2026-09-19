@@ -295,4 +295,20 @@ public sealed class IncrementalRunBinderTests : IDisposable
         Assert.Equal(2, binder.Prefill());     // ilk geçiş iki dosyayı okur
         Assert.Equal(0, binder.Prefill());     // ikinci geçişte hepsi önbellekte
     }
+
+    [Fact]
+    public void the_binder_exposes_the_folders_it_swept()
+    {
+        string root = NewRoot();
+        var (plan, evaluated) = SingleProject(root);
+        string projDir = Path.Combine(root, "src", "A");
+        Write(projDir, "A.csproj", "<Project/>");
+        Write(projDir, "A.cs", "class A {}");
+        string id = plan.Nodes[0].Id;
+
+        var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
+
+        Assert.Contains(projDir, binder.FoldersOf(id));
+        Assert.Empty(binder.FoldersOf("unknown"));
+    }
 }

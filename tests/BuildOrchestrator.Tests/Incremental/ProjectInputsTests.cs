@@ -164,4 +164,37 @@ public sealed class ProjectInputsTests : IDisposable
 
         Assert.DoesNotContain(PathsOf(csproj), p => p.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public void The_swept_folders_include_the_project_folder_and_subfolders_but_not_bin_or_obj()
+    {
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        Write(@"src\A\Views\Main.xaml", "<Window/>");
+        Write(@"src\A\obj\Debug\A.AssemblyInfo.cs", "// generated");
+        Write(@"src\A\bin\Debug\Something.cs", "// copied");
+        string projectDir = Path.Combine(_root, "src", "A");
+        string viewsDir = Path.Combine(projectDir, "Views");
+        string objDir = Path.Combine(projectDir, "obj");
+        string binDir = Path.Combine(projectDir, "bin");
+
+        var (_, folders) = ProjectInputs.CollectWithFolders(csproj, null, _root);
+
+        Assert.Contains(projectDir, folders);
+        Assert.Contains(viewsDir, folders);
+        Assert.DoesNotContain(folders, f => f.StartsWith(objDir, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(folders, f => f.StartsWith(binDir, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Collect_still_returns_the_same_files()
+    {
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        Write(@"src\A\Model.cs", "class Model {}");
+        Write(@"src\A\obj\Debug\Generated.cs", "// generated");
+
+        var viaCollect = ProjectInputs.Collect(csproj, null, _root);
+        var (viaCollectWithFolders, _) = ProjectInputs.CollectWithFolders(csproj, null, _root);
+
+        Assert.Equal(viaCollect, viaCollectWithFolders);
+    }
 }
