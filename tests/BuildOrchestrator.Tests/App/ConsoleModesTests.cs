@@ -244,6 +244,20 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
     }
 
+    /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5.4] BuiltOutside bir DİSK OLGUSUDUR: proje bu araç dışında
+    /// derlenmiş ve çıktısı güncel. Kanıt satırı da aracın KENDİ başarısını (LastBuiltAt/CurrentSha, ki burada
+    /// ikisi de boştur) değil, dışarıdaki derlemenin zamanını (OutputBuiltAt) söyler.</summary>
+    [Fact]
+    public void A_row_built_outside_says_so_instead_of_the_last_build()
+    {
+        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(
+            ["Up to date — built outside this tool.", "Built outside this tool: 5m ago"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                willBuildReason: WillBuildReason.BuiltOutside, outputBuiltAt: now.AddMinutes(-5)), now));
+    }
+
     /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
     /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır
     /// (RunCoordinator.cs, tüm pre-skip'ler için — kapsam dışı da GERÇEKTEN güncel de aynı yoldan geçer). Satır
@@ -342,7 +356,8 @@ public class ConsoleModesTests
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
         bool runActive = false, DateTimeOffset? lastBuiltAt = null, bool? inRunQueue = null,
-        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "") =>
+        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "",
+        DateTimeOffset? outputBuiltAt = null) =>
         new(@"C:\p\a.csproj", "A", state)
         {
             SkipReason = skipReason,
@@ -359,6 +374,8 @@ public class ConsoleModesTests
             Conditional = conditional,
             DependencyRoots = dependencyRoots,
             NamePrefix = namePrefix,
+            // [Task 7 — Faz 3] BuiltOutside'ın kanıt satırı buradan — aracın kendi LastBuiltAt'inden BAĞIMSIZ.
+            OutputBuiltAt = outputBuiltAt,
         };
 
     /// <summary>

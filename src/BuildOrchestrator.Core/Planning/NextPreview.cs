@@ -77,8 +77,13 @@ public static class NextPreview
     /// farklıdır ve bir sonraki Sync düzeltir. Kesin ayırıcı (<c>BuiltSignature</c> var mı) önizlemede
     /// taşınmıyor; onu taşımak için sözleşme değişikliği bilerek yapılmadı.</para>
     /// </summary>
+    /// <para><b>[Faz 3 — spec 2026-09-18 §5, Task 7]</b> <see cref="WillBuildReason.OutputMissing"/> de
+    /// <c>NeverBuilt</c> gibi okunur: motor zaten "bu projeye ait derleme kanıtı yok" diyor, configuration
+    /// değişimini <c>SignatureChanged</c> okumak "bir şey değişti, yeniden derlenecek" der ki bu YANLIŞTIR —
+    /// proje hiç derlenmemiş gibi kalmalı. Diğer üç yeni gerekçe (<c>BuiltOutside</c>, <c>OutputStale</c>,
+    /// <c>OutputReplaced</c>) bugünkü düşüşü izler: <c>SignatureChanged</c>.</para>
     public static WillBuildReason AfterConfigurationChange(WillBuildReason reason, string? builtCommit) =>
         reason == WillBuildReason.LastFailed && builtCommit is null ? WillBuildReason.NeverBuilt
-        : reason == WillBuildReason.NeverBuilt ? WillBuildReason.NeverBuilt
+        : reason is WillBuildReason.NeverBuilt or WillBuildReason.OutputMissing ? WillBuildReason.NeverBuilt
         : WillBuildReason.SignatureChanged;
 }

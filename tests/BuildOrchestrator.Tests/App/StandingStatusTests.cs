@@ -18,6 +18,12 @@ public class StandingStatusTests
     [InlineData(true, WillBuildReason.NeverBuilt, StandingStatus.Stale)]
     [InlineData(true, WillBuildReason.SignatureChanged, StandingStatus.Stale)]
     [InlineData(true, WillBuildReason.DepIssue, StandingStatus.Stale)]
+    // [Faz 3 — spec 2026-09-18 §5.4] Dört yeni gerekçe: BuiltOutside güncel (yeşil), diğer üçü bugünkü kanıta
+    // göre bayat (gri) — çıktının kendisi bozuk ya da eskidir.
+    [InlineData(false, WillBuildReason.BuiltOutside, StandingStatus.Current)]
+    [InlineData(true, WillBuildReason.OutputStale, StandingStatus.Stale)]
+    [InlineData(true, WillBuildReason.OutputMissing, StandingStatus.Stale)]
+    [InlineData(true, WillBuildReason.OutputReplaced, StandingStatus.Stale)]
     public void A_decision_reads_its_colour_from_the_reason(bool willBuild, WillBuildReason reason, StandingStatus expected)
         => Assert.Equal(expected, StandingStatuses.From(willBuild, reason));
 

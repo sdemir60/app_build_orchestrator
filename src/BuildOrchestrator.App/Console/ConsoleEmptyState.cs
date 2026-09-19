@@ -50,11 +50,13 @@ public static class ConsoleEmptyState
         return RepeatsReason(row) ? [reason] : [reason, Evidence(row, at)];
     }
 
-    /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.</summary>
+    /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.
+    /// [Faz 3 — Task 7] <see cref="WillBuildReason.OutputMissing"/> de kapsanır — o da "bu araç bu projeye ait
+    /// bir çıktı bilmiyor" der, kanıt satırı aynı şeyi tekrar eder.</summary>
     private static bool RepeatsReason(ProjectRowViewModel row) =>
         string.IsNullOrEmpty(row.CurrentSha)
         && row.State == ProjectRowState.Pending
-        && row.WillBuildReason == WillBuildReason.NeverBuilt;
+        && row.WillBuildReason is WillBuildReason.NeverBuilt or WillBuildReason.OutputMissing;
 
     /// <summary>İlk satır: bu proje NEDEN bu durumda.</summary>
     private static string Reason(ProjectRowViewModel row) => row.State switch
@@ -102,7 +104,13 @@ public static class ConsoleEmptyState
         if (row.InCycle) return InCycleText;
         if (row.WillBuild is not { } willBuild)
             return "Not analysed yet — run Sync to see what this project will do.";
-        if (!willBuild) return "Up to date — nothing to compile.";
+        // [Faz 3 — spec 2026-09-18 §5.4, Task 7] BuiltOutside de "derlenmeyecek" bir disk olgusudur, ama genel
+        // "nothing to compile" cümlesi NEDENİ söylemez (Sync'in kendi kararı mı, yoksa çıktı zaten dışarıdan mı
+        // güncellendi?) — kullanıcı bu sayfayı tam da bunu sormak için açar.
+        if (!willBuild)
+            return row.WillBuildReason == WillBuildReason.BuiltOutside
+                ? "Up to date — built outside this tool."
+                : "Up to date — nothing to compile.";
 
         // Bir koşu uçuştaysa VE bu satır BU koşunun kendi kuyruğundaysa KUYRUKTADIR; değilse yalnız bir plandır.
         // [Task 1 review fix — I-2] Eskiden yalnız row.IsRunActive okurdu — genel plan bayrağının (WillBuild)
@@ -125,6 +133,13 @@ public static class ConsoleEmptyState
             // kopya YASAK — bu, uyarı üçgeninin TOOLTIP'i ile AYNI değildir, bkz. WaitingForDependencyReason'ın
             // kendi özeti).
             WillBuildReason.WaitingForDependency => WaitingForDependencyReason(row),
+            // [Faz 3 — spec 2026-09-18 §5.3/§5.4, Task 7] Üç yeni gerekçe: çıktının kendisi diskte yok / bayat /
+            // öğrenilmiş kopyası bozuk. Metinler claude-decisions.md'nin "Proje sayfası" kararlarıyla birebir.
+            WillBuildReason.OutputMissing => $"{head} — its build output is missing.",
+            WillBuildReason.OutputStale => row.OwnFilesChanged == true
+                ? $"{head} — its files are newer than its build output."
+                : $"{head} — a dependency's output is newer than its build output.",
+            WillBuildReason.OutputReplaced => $"{head} — its copy in the shared folder does not match its build output.",
             _ => $"{head} in this run.",
         };
     }
@@ -151,6 +166,13 @@ public static class ConsoleEmptyState
     /// </summary>
     private static string Evidence(ProjectRowViewModel row, DateTimeOffset now)
     {
+        // [Faz 3 — spec 2026-09-18 §5, P8, Task 7] BuiltOutside'ın kanıtı aracın KENDİ başarısı değil, dışarıdaki
+        // derlemenin zamanıdır (row.CurrentSha/LastBuiltAt bu satırda boş kalabilir — araç o çıktıyı üretmedi).
+        // Zaman bilinmiyorsa (eski/okunamayan kanıt) bugünkü satırın kuralına düşülür — uydurma bir yaş yazılmaz.
+        if (row.WillBuildReason == WillBuildReason.BuiltOutside
+            && AgeFormat.Age(row.OutputBuiltAt, now) is { } builtOutsideAge)
+            return $"Built outside this tool: {builtOutsideAge} ago";
+
         if (row.CurrentSha is not { Length: > 0 } revision) return NeverBuilt;
 
         string sha = RevisionText.Short(revision);
