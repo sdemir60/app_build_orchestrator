@@ -246,7 +246,10 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         var git = new GitService(new ProcessRunner(), root);
 
         var sw = Stopwatch.StartNew();
-        var blobs = await git.GetTrackedBlobHashesAsync();
+        // [final review O6] Ürünün blob tablosu sorgusu (GetTrackedBlobHashesAsync) karar artık diskten verildiği için
+        // silindi; ölçümün tabanı aynı git çağrısını doğrudan koşar — satır sayısı = tracked blob sayısı (yaklaşık).
+        int blobs = BuildOrchestrator.Tests.Git.GitTestRepo.RunGitAt(root, "ls-tree", "-r", "HEAD")
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries).Length;
         var dirty = await git.GetDirtyPathsAsync();
         int dirtyHashed = 0;
         foreach (string rel in dirty.Value ?? [])
@@ -258,7 +261,7 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         }
         sw.Stop();
 
-        line(Inv($"- git baseline: {blobs.Value?.Count ?? 0} tracked blobs, {dirty.Value?.Count ?? 0} dirty paths ({dirtyHashed} hashed)"));
+        line(Inv($"- git baseline: {blobs} tracked blobs, {dirty.Value?.Count ?? 0} dirty paths ({dirtyHashed} hashed)"));
         return sw.ElapsedMilliseconds;
     }
 
