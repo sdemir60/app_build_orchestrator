@@ -212,7 +212,9 @@ public partial class GraphView : UserControl
         // CSS `transform: translate(...) scale(...)` = önce ölçek, sonra öteleme (TransformGroup sırası birebir).
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
         World.RenderTransformOrigin = new Point(0, 0);
-        CurrentCamera = GraphCamera.Default;
+        // [task 2] Kuruluşta HEDEF ile EKRAN aynı tek yoldan (SnapCameraTo) kurulur — ApplyGraph'ın izlediği
+        // aynı sözleşme, kopya YASAK (bkz. ApplyGraph'ın SnapCameraTo çağrısı).
+        SnapCameraTo(GraphCamera.Default);
         // [quiet · görsel geçiş] Overlay (tooltip + ad etiketi) EKRAN koordinatındadır, yani konumu kameranın
         // CANLI hâlinden türer. Yalnız hedef değiştiğinde tazelemek yetmez: kamera 460ms (seçim) / 160ms
         // (wheel) boyunca ANİMASYONLA kayar ve o ara karelerde etiket hedefte, graf ise yolda olurdu. Freezable
@@ -666,7 +668,11 @@ public partial class GraphView : UserControl
         _deps.Clear();
         _dependents.Clear();
         ResetPanGesture();
-        CurrentCamera = GraphCamera.Default;
+        // [task 2] HEDEF DEĞİL, EKRANDAKİ transform da anında sıfırlanır: aksi halde AnimateCameraTo'nun
+        // "hedef değişmedi" kapısı (camera == CurrentCamera) hedef zaten Default olduğu için hemen dönerdi
+        // ve ekran önceki zoom/pan'da KALIRDI (SnapCameraTo hiç çağrılmazdı) — bkz. GraphPanZoomTests'teki
+        // "ON_SCREEN" testleri.
+        SnapCameraTo(GraphCamera.Default);
 
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
         CountsText.Text = string.Format(
@@ -1755,6 +1761,10 @@ public partial class GraphView : UserControl
     internal int RevealGeneration => _reveal.Generation;
     internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     internal CameraTransform CurrentCamera { get; private set; }
+    /// <summary>[test yüzeyi] Kameranın o an EKRANA uygulanmış hâli — <see cref="CurrentCamera"/> HEDEFİ
+    /// okur, bu ise <see cref="LiveCamera"/> üzerinden gerçek transform değerlerini okur. İkisi hiçbir yolda
+    /// ayrışmamalıdır; testler bunu birbirinden AYRI doğrular.</summary>
+    internal CameraTransform LiveCameraForTest => LiveCamera;
     internal bool LastCameraAnimated { get; private set; }
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
