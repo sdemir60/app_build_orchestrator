@@ -303,7 +303,7 @@ the App never passes that flag. Every other command in the list executes in the 
 `startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the
 dependent-propagation mode, the layer patterns, the perf mode name and the external project list. It carries no
 branch: a run always builds the working tree at the repository root, whatever is checked out there (§10.3).
-Older lines that still carry the fields a run no longer reads parse, the extra fields ignored. Parallelism and
+Unknown fields on an incoming line are ignored. Parallelism and
 perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
 recomputes the worker count, which the App has already resolved from the same table.
 
@@ -1110,9 +1110,11 @@ in-flight ledger closes that hole.
   `previous run was interrupted; N projects will rebuild`.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
-  permission) or a ledger write that fails is a different case: a warning goes to stderr, the file stays, and
-  the lines that could not be invalidated are kept in memory and retried at the start of the next run, before
-  planning, so a half-written output can never be planned as up to date.
+  permission) is a different case: a warning goes to stderr, the file stays, and the next engine start tries
+  again. When the file was read but invalidating a listed project fails, the ids that could not be invalidated
+  are kept in memory — and in the file — and retried at the start of the next run, before planning, so a
+  half-written output can never be planned as up to date. A ledger write that fails during a run never stops
+  the run either: it becomes a warning line on the engine's stderr, and only that project's recovery is lost.
 
 The same ledger state — a failure without evidence — is what a result arriving after a branch-change interrupt
 leaves behind (§8.8). The two cases are the same fact: the engine cannot stand behind that output.
@@ -1427,7 +1429,7 @@ as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` fi
 submodule), `HEAD` and the ref it names (loose or packed), the last lines of `logs/HEAD`, and the presence of
 the operation markers. They run on every trigger, so they cost a file read rather than a `git` child.
 
-`ls-tree` is no longer called: it existed to feed the signature, and the signature no longer reads git (§7.1).
+`ls-tree` is not called: the signature does not read git (§7.1).
 
 ### 10.2 Sync
 
@@ -2157,7 +2159,7 @@ does not move and the graph is not rebuilt; the new decisions simply arrive on t
 different structure (a project added or removed, a moved layer, a changed edge) rebuilds the list with the
 staggered reveal and — when nothing is selected — scrolls it back to the top, while the graph replays its own
 reveal in the same moment, so the two read together as "listed from scratch". The rule holds for every Sync
-kind, because Syncs now run on their own (§10.2) and a list that jumped back to the top on every commit or
+kind, because Syncs also run on their own (§10.2) and a list that jumped back to the top on every commit or
 return to the window would take the user's place away from them. The click of Clean and Optimize, and a real
 repository change, empty the surface and forget the signature, so the Sync that fills it again always reveals.
 Build, Rebuild, Clean and Resolve leave the scroll where it is: the opening choreography already tells their
@@ -4403,8 +4405,8 @@ An honest list, kept because omitting it would make the guarantees above read wi
 3. **`explorer` and `devenv` arguments are hand-quoted** rather than going through the MSVCRT escaper. A path
    containing a quote would break the escaping; unreachable in practice, since Windows file names cannot
    contain one and the paths come from a disk scan.
-4. **A branch name reaches git's argv without a `--` separator or pre-validation.** It now comes only from git
-   itself — the inventory and HEAD — and is no longer stored in `ui-state.json`; git refuses to create a branch
+4. **A branch name reaches git's argv without a `--` separator or pre-validation.** It comes only from git
+   itself — the inventory and HEAD — and is never stored; git refuses to create a branch
    whose name begins with `-`, so an option-shaped name would need a hand-edited ref inside the repository.
    Reaching it requires already being inside the user's account.
 5. **Supervisor arguments are not validated.** `--logs` and `--debug-hooks` are taken raw. The App passes

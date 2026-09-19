@@ -226,7 +226,7 @@
         <!-- ============================ EXTERNAL PROJECTS ============================
              Kart = yol (klasör / .sln / .csproj). Diyalog yolu TARAMAZ: liste Save'de UiState'e yazılır
              (SettingsDraftViewModel.CommitAsync) ve her Sync/Build komutuyla motora gider; taranan projeler ve çalışma
-             kopyası kökü Core'da her koşuda yeniden çözülür (ARCHITECTURE §10.6). Kartın altındakiler ayrılmış
+             kopyası kökü Core'da her koşuda yeniden çözülür (ARCHITECTURE §10.4). Kartın altındakiler ayrılmış
              "External" katmanına girer: build-order'da ana repo projelerinden önce gelirler. Kart sırası yalnız
              çalışma kopyalarının güncellenme sırasıdır. PaneHead metni git-only uyarlamadır (TFVC kaldırıldı).
              [DEĞİŞEN KURAL — design v1.19.0] ESKİ: sayfanın başında Pull before build kural satırı (hairline + caps
