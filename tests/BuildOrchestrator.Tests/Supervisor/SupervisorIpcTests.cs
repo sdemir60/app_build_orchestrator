@@ -209,10 +209,12 @@ public class SupervisorIpcTests
     [Fact] // negatif — DAVRANIŞ: reddedilen komut hiçbir çocuk process doğurmaz
     public async Task Rejected_debugSpawnChildren_spawns_no_cmd_or_powershell_child()
     {
+        // Sandbox'lar job'dan ÖNCE bildirilir: ters sırada önce job (iki supervisor da ölür), sonra klasörler gider.
+        using var sandbox = new SupervisorSandbox();
+        using var markerSandbox = new SupervisorSandbox();
         using var outer = JobObject.CreateKillOnClose();
         using var iocp = outer.AttachCompletionPort(); // Launch'tan ÖNCE — kaçırılan doğum bildirimi olmasın
 
-        using var sandbox = new SupervisorSandbox();
         using var supervisor = LaunchIsolatedSupervisorIn(outer, sandbox); // --debug-hooks YOK = üretimin başlattığı Supervisor
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
@@ -229,7 +231,6 @@ public class SupervisorIpcTests
         // <b>Neden çıkış değil doğum randevusu:</b> hiçbir şey öldürülmediği için doğan process'lerin ADI
         // hâlâ okunabilir; Supervisor'ın çıkışını beklesek sızan çocuklar inner Job kaskadıyla çoktan ölmüş
         // ve isimleri okunamaz olurdu (iddia yanlışlıkla yeşile düşerdi).
-        using var markerSandbox = new SupervisorSandbox();
         using var marker = LaunchIsolatedSupervisorIn(outer, markerSandbox);
 
         var births = new List<(int Pid, string Name)>();
