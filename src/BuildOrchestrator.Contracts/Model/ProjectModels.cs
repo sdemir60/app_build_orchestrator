@@ -6,7 +6,7 @@ namespace BuildOrchestrator.Contracts.Model;
 // It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
 // DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
 
-public enum HintPathClass { Edge, ExternalThirdParty, ExternalOsysPlatform, Unclassified }
+public enum HintPathClass { Edge, ExternalThirdParty, ExternalPlatformBin, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
 
 public sealed record SolutionRef(string Name, string Path);

@@ -269,7 +269,7 @@ public sealed class OptimizeWorkspaceService(
     /// <summary>
     /// Restore DENENDİKTEN SONRA hâlâ diskte olmayan HintPath hedefleri: NuGet <c>packages</c> hedefleri
     /// (sürüm drift'i — <c>HintPath</c> ≠ <c>packages.config</c> sürümü) ve üreticisi olmayan
-    /// <c>bin</c> hedefleri (eksik OSYS platform DLL'i). Bugün bunlar run ortasında kriptik bir derleme
+    /// <c>bin</c> hedefleri (eksik havuzdaki platform DLL'i). Bugün bunlar run ortasında kriptik bir derleme
     /// hatası olarak patlıyor; burada tık anında isimli, eyleme dönük bir listeye dönüşürler.
     /// </summary>
     private static void ReportUnresolvedReferences(IReadOnlyList<EvaluatedProject> projects, Tally tally, Action<IpcEvent> emit)

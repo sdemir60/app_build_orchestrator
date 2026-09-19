@@ -34,11 +34,14 @@ public class ProjectModelsTests
         Assert.NotEqual(state.GetHashCode(), (state with { FedOutputs = [@"C:\lib2\A.dll"] }).GetHashCode());
     }
 
+    /// <summary>[DEĞİŞEN KURAL — spec 2026-09-18 §1-20] Eski iddia: <c>"externalOsysPlatform"</c>. Karar 20
+    /// araca hard-wired OSYS bağlılığı yasaklar; enum değeri ürün adı taşıyordu, ürün-bağımsız ada
+    /// (<c>ExternalPlatformBin</c>) taşındı.</summary>
     [Fact]
     public void HintPathClass_serializes_camelCase()
     {
-        string json = JsonSerializer.Serialize(HintPathClass.ExternalOsysPlatform, IpcJson.Options);
-        Assert.Equal("\"externalOsysPlatform\"", json);
+        string json = JsonSerializer.Serialize(HintPathClass.ExternalPlatformBin, IpcJson.Options);
+        Assert.Equal("\"externalPlatformBin\"", json);
     }
 
     [Fact]

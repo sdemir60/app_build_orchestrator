@@ -243,4 +243,78 @@ internal static class SourceLiterals
     }
 
     private static int LineOf(string text, int index) => text.AsSpan(0, index).Count('\n') + 1;
+
+    /// <summary>
+    /// [Faz 3/Task 8] <see cref="FromCSharp"/>'ın TERSİ: yorumları (<c>//</c>/<c>///</c>/<c>/* */</c>) ve
+    /// string/char literallerini metni ÇIKARMADAN, satır sonlarını KORUYARAK boşluğa çevirir — geri kalan
+    /// KOD olduğu gibi durur. Kaynak-tanımlayıcı guard'ları (ör. ürün adı sızıntısı) buradan beslenir: kural
+    /// yalnız KODA uygulanmalı, yorum ve literal veriye DEĞİL.
+    ///
+    /// <para>Sınır tespiti (yorum/string/char nerede başlar-biter, iç içe interpolation dahil) <see
+    /// cref="ReadCSharpString"/> ile AYNI tarayıcıdan gelir — bu tespit iki ayrı yerde YAZILMAZ (kopya YASAK).
+    /// Naif bir regex bu ayrımı YAPAMAZ: <c>$"…{x ?? "iç"}…"</c> gibi bir interpolation hole'undaki iç string,
+    /// dış literalin kapanışını erken sanıp geri kalan dosyayı kaydırırdı — <see cref="ReadCSharpString"/>'in
+    /// var oluş sebebi tam olarak bu (bkz. sınıf özeti, fix-1 · C1).</para>
+    /// </summary>
+    public static string CodeOnly(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        int i = 0, n = text.Length;
+        while (i < n)
+        {
+            char c = text[i];
+
+            if (c == '/' && i + 1 < n && text[i + 1] == '/')
+            {
+                int start = i;
+                while (i < n && text[i] != '\n') i++;
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            if (c == '/' && i + 1 < n && text[i + 1] == '*')
+            {
+                int start = i;
+                i += 2;
+                while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/')) i++;
+                i = Math.Min(n, i + 2);
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            if (c is '"' or '@' or '$')
+            {
+                int end = ReadCSharpString(text, i);
+                if (end > i)
+                {
+                    sb.Append(Blanked(text, i, end));
+                    i = end;
+                    continue;
+                }
+            }
+            if (c == '\'')
+            {
+                int start = i;
+                i++;
+                while (i < n && text[i] != '\'' && text[i] != '\n') { if (text[i] == '\\') i++; i++; }
+                i = Math.Min(n, i + 1);
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>[<paramref name="start"/>, <paramref name="end"/>) aralığını, satır sonlarını KORUYARAK
+    /// boşluğa çevirir.</summary>
+    private static string Blanked(string text, int start, int end)
+    {
+        char[] blanked = new char[end - start];
+        for (int k = 0; k < blanked.Length; k++)
+        {
+            char ch = text[start + k];
+            blanked[k] = ch is '\n' or '\r' ? ch : ' ';
+        }
+        return new string(blanked);
+    }
 }
