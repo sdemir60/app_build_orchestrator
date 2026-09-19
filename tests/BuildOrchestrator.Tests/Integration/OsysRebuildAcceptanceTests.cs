@@ -30,6 +30,7 @@ namespace BuildOrchestrator.Tests.Integration;
 /// sürer; genel bir üst sınır (<see cref="OverallBudget"/>) hang'i sonsuz beklemeye değil test hatasına çevirir.
 /// [D8] sleep-poll YOK — akış tamamen event üzerinden, sınırlı bekleme ile sürülür.</para>
 /// </summary>
+[Collection("OSYS acceptance (serial)")]
 [Trait("Category", "Acceptance")]
 public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
 {

@@ -36,6 +36,7 @@ namespace BuildOrchestrator.Tests.Integration;
 /// <b>[K1]</b> OSYS aktif branch + HEAD koşu boyunca ASLA değişmez (assert öncesi/sonrası). Normal suite'ten
 /// HARİÇ (<c>[Trait("Category","Acceptance")]</c>). [D8] sleep-poll YOK — event-driven, sınırlı bekleme.
 /// </summary>
+[Collection("OSYS acceptance (serial)")]
 [Trait("Category", "Acceptance")]
 public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 {
