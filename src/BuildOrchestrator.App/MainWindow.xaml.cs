@@ -308,6 +308,11 @@ public partial class MainWindow : Window
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
             else Dispatcher.InvokeAsync(() => _vm.OnEvent(ev));
         };
+        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
+        // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş
+        // dahil — ShowFromTray Activate çağırır) koordinatöre gider.
+        _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
+        Activated += (_, _) => _vm.OnWindowActivated();
 
         _elapsedTimer.Tick += (_, _) =>
         {
@@ -1232,6 +1237,7 @@ public partial class MainWindow : Window
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
+        _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();

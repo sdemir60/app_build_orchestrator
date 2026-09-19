@@ -8,6 +8,19 @@ public enum HeadMove
     Other,
 }
 
+/// <summary>[Faz 2/T7] <see cref="HeadMove"/>'lar arasındaki güç sırası — TEK kaynak. Aynı pencerede birden çok
+/// hareket birikirse (izleyicinin sessizlik penceresi, koordinatörün bekleyen tetiği) en güçlüsü kalır.</summary>
+public static class HeadMoveRules
+{
+    /// <summary>Commit en zayıftır (altındaki dünya değişmez; koşuyu durdurmaz); branch değişimi ve diğer
+    /// hareketler (pull, reset, rebase, merge) eşit ve daha güçlüdür — ikisi de dünyayı değiştirebilir.</summary>
+    public static int Weight(this HeadMove move) => move == HeadMove.Commit ? 1 : 2;
+
+    /// <summary>İkisinden güçlüsü; eşitse <paramref name="later"/> (en son görülen) kalır.</summary>
+    public static HeadMove Stronger(HeadMove earlier, HeadMove later) =>
+        earlier.Weight() > later.Weight() ? earlier : later;
+}
+
 /// <summary>
 /// [Faz 2/T1] HEAD reflog'unun (<c>.git/logs/HEAD</c>) SON satırını sınıflandırır — saf metin ayrıştırması,
 /// process YOK. Satır git'in ham reflog biçimidir (<c>&lt;eski sha&gt; &lt;yeni sha&gt; &lt;yazar&gt;

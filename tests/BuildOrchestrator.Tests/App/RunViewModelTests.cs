@@ -2478,6 +2478,48 @@ public class RunViewModelTests
         Assert.Empty(sent);
     }
 
+    /// <summary>[Faz 2/T7 · spec §6.2] Dışarıdan gelen branch değişimi yeni bölüm açar: konsol temizlenir, ilk satır
+    /// koordinatörün verdiği switch satırıdır, fetch yapılmaz (checkout'un cevabıyla aynı yol).</summary>
+    [Fact]
+    public async Task An_external_branch_switch_opens_a_section_led_by_the_switched_line()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        string line = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+
+        Assert.True(await vm.SyncAfterExternalBranchChangeAsync(line));
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string console = vm.GetRunDocumentText();
+        Assert.StartsWith(line, console, StringComparison.Ordinal);
+        Assert.DoesNotContain("previous operation line", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>[Faz 2/T7] Sync uçuştayken gelen HEAD tetiği bekler; Sync bitince VM'in meşguliyet bildirimi onu UI
+    /// kuyruğuna atar ve BİR sessiz Sync koşar (kök git deposu değil → HEAD okunamaz → güvenli yön: sessiz yenileme).</summary>
+    [Fact]
+    public async Task A_head_trigger_during_a_sync_runs_after_the_sync_ends()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+        var posted = new Queue<Action>();
+        vm.EnableAutoSync(posted.Enqueue);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        Assert.Empty(sent);
+        Assert.Empty(posted);
+
+        ReplySync(vm, upToDateB: false);
+        while (posted.TryDequeue(out var action)) action();
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+    }
+
     /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — git
     /// fetch…" demez), önceki işlemin pill'i canlanmaz; bitince faz olduğu yerde kalır.</summary>
     [Fact]

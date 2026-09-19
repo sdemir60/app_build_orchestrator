@@ -856,6 +856,7 @@ public sealed partial class RunViewModel : ObservableObject
     partial void OnRootPathChanged(string value)
     {
         if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
+        AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
     }
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
@@ -1484,6 +1485,7 @@ public sealed partial class RunViewModel : ObservableObject
         bool locked = IsMidRunLocked;
         foreach (var row in Projects) row.IsRunLocked = locked;
         if (!locked) RunTargetId = null;
+        NotifyAutoSyncGate(); // [spec 2026-09-18 §6.1] koşu bitti → bekleyen kendiliğinden Sync tetiği
     }
 
     partial void OnRunTargetIdChanged(string? value)

@@ -112,6 +112,11 @@ public static class PlanProgressLines
     /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.</summary>
     public static string SwitchFailed(string reason) => $"Switch failed — {reason}";
 
+    /// <summary>[spec 2026-09-18 §6.1] HEAD izleyicisi kurulamadı (ağ sürücüsü, izin, reflog klasörü yok) — kök
+    /// başına BİR kez yazılır; pencereye dönüş Sync'i güvenlik ağı olarak kalır.</summary>
+    public static string HeadWatcherUnavailable(string reason)
+        => $"HEAD watcher unavailable ({reason}) — switching back to the window still syncs";
+
     // --- Harici projeler ------------------------------------------------------------------------
     // Aynı metinler iki yüzeyde görünür: Sync transkripti ve koşu planlaması. Bu yüzden onlar da burada, tek
     // kaynakta durur. Koşuyu İPTAL eden metinler buraya GİRMEZ — onlar progress satırı değil,

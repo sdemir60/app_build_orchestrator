@@ -273,6 +273,8 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(SyncBusy));
         // [spec 2026-09-18 §6.3] Branch chip'inin kapısı da bu üç meşgul yüzeyi okur — aynı geçişte duyurulur.
         OnPropertyChanged(nameof(CanSwitchBranch));
+        // [spec 2026-09-18 §6.1] Meşgulken bekletilen kendiliğinden Sync tetiği aynı geçişte yeniden sorulur.
+        NotifyAutoSyncGate();
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
