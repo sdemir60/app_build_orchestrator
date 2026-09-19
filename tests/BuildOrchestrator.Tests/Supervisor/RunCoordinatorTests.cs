@@ -1575,10 +1575,7 @@ public class RunCoordinatorTests
         try
         {
             string xId = LegacyFixture.CreateClassLib(Path.Combine(root, "X"), "X");
-            string dll = Path.Combine(root, "X", "bin", "Debug", "X.dll");
-            Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
-            File.WriteAllBytes(dll, new byte[16]);
-            EvidenceTimes.Stamp(root, [dll]);
+            EvidenceTimes.Stamp(root, [LegacyFixture.WriteBuiltOutput(Path.Combine(root, "X"), "X")]);
 
             var received = new List<IpcEvent>();
             using (var p = Process.Start(TestPaths.Psi(logsDir))!)
@@ -1626,10 +1623,7 @@ public class RunCoordinatorTests
         try
         {
             string xId = Path.GetFullPath(LegacyFixture.CreateClassLib(Path.Combine(root, "X"), "X"));
-            string dll = Path.Combine(root, "X", "bin", "Debug", "X.dll");
-            Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
-            File.WriteAllBytes(dll, new byte[16]);
-            EvidenceTimes.Stamp(root, [dll]);
+            EvidenceTimes.Stamp(root, [LegacyFixture.WriteBuiltOutput(Path.Combine(root, "X"), "X")]);
 
             var noState = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
             var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)

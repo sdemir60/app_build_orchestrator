@@ -738,14 +738,9 @@ public class SyncWorkspaceServiceTests
         repo.CommitAll("legacy");
     }
 
-    /// <summary>VS'in (ya da başka bir aracın) yazacağı derleme kanıtını elle yazar: <c>src\{ad}\bin\Debug\{ad}.dll</c>.</summary>
-    private static string WriteBuiltOutput(GitTestRepo repo, string name)
-    {
-        string path = Path.Combine(repo.RootPath, "src", name, "bin", "Debug", name + ".dll");
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllBytes(path, new byte[16]);
-        return path;
-    }
+    /// <summary><c>src\{ad}</c> projesinin elle yazılmış derleme kanıtı (<see cref="LegacyFixture.WriteBuiltOutput"/>).</summary>
+    private static string WriteBuiltOutput(GitTestRepo repo, string name) =>
+        LegacyFixture.WriteBuiltOutput(Path.Combine(repo.RootPath, "src", name), name);
 
     /// <summary>Ağa çıkmayan bir Sync (<c>Fetch: false</c>) — bu testlerin konusu kararın kendisidir.</summary>
     private static async Task<List<IpcEvent>> SyncWithoutFetchAsync(GitTestRepo repo, string cacheRoot)

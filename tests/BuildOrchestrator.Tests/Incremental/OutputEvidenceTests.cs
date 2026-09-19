@@ -19,10 +19,11 @@ namespace BuildOrchestrator.Tests.Incremental;
 /// </summary>
 public sealed class OutputEvidenceTests : IDisposable
 {
-    private static readonly DateTime T0 = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-    private static readonly DateTime ToolBuilt = T0.AddMinutes(10);
-    private static readonly DateTime ToolRun = T0.AddMinutes(11);
-    private static readonly DateTime Later = T0.AddMinutes(20);
+    // Ortak saat (EvidenceTimes) bu dosyanın senaryo adlarıyla; yalnız aşağıdaki iki an bu dosyaya özgüdür.
+    private static readonly DateTime T0 = EvidenceTimes.InputsAt;
+    private static readonly DateTime ToolBuilt = EvidenceTimes.EvidenceAt;
+    private static readonly DateTime ToolRun = EvidenceTimes.ToolRunAt;
+    private static readonly DateTime Later = EvidenceTimes.EditedAt;
     private static readonly DateTime ElsewhereBuilt = T0.AddMinutes(30);
     private static readonly DateTime Latest = T0.AddMinutes(40);
     private const int Size = 10;
