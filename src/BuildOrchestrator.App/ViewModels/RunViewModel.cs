@@ -857,6 +857,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
         AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
+        RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
     }
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
@@ -926,6 +927,10 @@ public sealed partial class RunViewModel : ObservableObject
         var previousPhase = Phase;
         Phase = AppPhase.Starting;
         AppendRunLine(RunRequestedLine(mode, target?.Name));
+        // [spec 2026-09-18 §6.4] Yarıda bir merge/rebase/cherry-pick/revert koşuyu ENGELLEMEZ; planlamanın başında tek
+        // uyarı satırı düşer. Clean derlemez — çakışma işaretli dosya onu ilgilendirmez.
+        if (mode != RunMode.Clean && Core.Git.GitOperationText.BuildWarning(RefreshGitOperation()) is { } gitWarning)
+            AppendRunLine(gitWarning);
 
         // [design v1.11.0 §9-4 `_mark`] AÇILIŞ KOREOGRAFİSİ — koşu ondan SONRA başlar (prototipte de:
         // `_mark(scope, () => startRun())`). Kapsamı VM bilir, zamanlamayı kabuk; bu yüzden kapı bir
@@ -1157,9 +1162,10 @@ public sealed partial class RunViewModel : ObservableObject
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
 
     /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
-    /// açan Sync (<see cref="SyncMode.Manual"/>).</summary>
+    /// açan Sync (<see cref="SyncMode.Manual"/>). [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de koşar; bölümün
+    /// ilk satırı ağacın yarım olduğunu söyler (<see cref="MidOperationSyncLines"/>).</summary>
     [RelayCommand(CanExecute = nameof(CanSync))]
-    private Task SyncAsync() => SyncCoreAsync(SyncMode.Manual);
+    private Task SyncAsync() => SyncCoreAsync(SyncMode.Manual, sectionLines: MidOperationSyncLines());
 
     /// <summary>
     /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
@@ -1175,7 +1181,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// boot satırı) görünür kalmalıdır
     /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>).
     /// BranchChange'te yeni bölümün ilk satırları <paramref name="sectionLines"/>'tır ("temizlik önce, not
-    /// sonra"): çağıran (checkout) onları yazmaz, burada temizlikten SONRA yazılır.</para>
+    /// sonra"): çağıran (checkout) onları yazmaz, burada temizlikten SONRA yazılır. Sync düğmesi (Manual) de aynı
+    /// yolu kullanır: yarıda bir git işlemi varsa bölümün ilk satırı onu söyler.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Plan yüzeyi (liste + graf) artık Sync'te BOŞALMAZ
     /// (eskiden her Sync tıklamada <see cref="ClearPlanSurface"/> çağırırdı — kullanıcı kararı 2026-09-12). Yapı
@@ -1185,7 +1192,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     /// <param name="mode">Konsol ilişkisi, fetch ve pill kararı.</param>
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
-    /// <param name="sectionLines">Yalnız <see cref="SyncMode.BranchChange"/>: temizlikten sonra yazılan ilk satırlar.</param>
+    /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
+    /// temizlikten sonra yazılan ilk satırlar.</param>
     private async Task SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
         IReadOnlyList<string>? sectionLines = null)
     {

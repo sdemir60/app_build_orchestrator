@@ -46,6 +46,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
     /// <summary>Pencere etkinleşti (tepsiden dönüş dahil — <c>ShowFromTray</c> <c>Activate</c> çağırır).</summary>
     internal void OnWindowActivated()
     {
+        RefreshGitOperation(); // [spec §6.4] dönüşte chip'in noktası ve kilitleri koordinatörsüz de tazelenir
         if (_autoSync is { } autoSync) _ = autoSync.WindowActivatedAsync();
     }
 
@@ -94,6 +95,8 @@ public sealed partial class RunViewModel : IAutoSyncPort
     string? IAutoSyncPort.TakeInterruptedRunSummary() => TakeInterruptedRunSummary();
 
     void IAutoSyncPort.AppendStreamLine(string line) => PushStream(StreamKind.Info, null, line);
+
+    bool IAutoSyncPort.WaitForGitOperation() => WaitForGitOperation();
 
     // ---------------------------------------------------------------- [T8] koşu sırasında branch değişimi
 

@@ -46,6 +46,11 @@ public static class StreamText
     /// istendiği an akışa düşen TEK satır.</summary>
     public const string InterruptedByBranchChange = "interrupted by branch change";
 
+    /// <summary>[spec 2026-09-18 §6.4 · karar 22] Kendiliğinden Sync yarıdaki bir git işlemini bekliyor — işlem başına
+    /// BİR kez: <c>waiting for git — {tooltip}</c>; tooltip metni <see cref="Core.Git.GitOperationText.Tooltip"/>'ten.</summary>
+    public static string WaitingForGit(Core.Git.GitOperation operation) =>
+        "waiting for git — " + Core.Git.GitOperationText.Tooltip(operation);
+
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";
 

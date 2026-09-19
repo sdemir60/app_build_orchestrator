@@ -32,6 +32,7 @@ public partial class ActionBar : UserControl
     private const double LabelIconSize = 14;    // branch/tree/sync/stop/play ikonları ~14px
     private const double ChevronSize = 12;
     private const double DotSizePx = 8;         // BuildApp.jsx:1553 boş building noktası 8px
+    private const double GitDotSizePx = 6;      // [spec 2026-09-18 §6.4] branch chip'inin git-işlemi noktası 6px
     private const double ChipContentGap = 6;    // _ds_bundle.js:166 chip gap 6
     private const double ChipStripGap = 8;      // BuildApp.jsx:1544 bar gap 8
 
@@ -49,6 +50,8 @@ public partial class ActionBar : UserControl
     private TextBlock _sigmaValue = null!, _buildingValue = null!, _currentValue = null!, _staleValue = null!, _failedValue = null!, _warnValue = null!;
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
+    /// <summary>[spec 2026-09-18 §6.4] Branch chip'indeki amber nokta — yarıda bir git işlemi varken görünür.</summary>
+    private Ellipse _gitOperationDot = null!;
     private Path _warnTriangle = null!;
     private TextBlock _branchValue = null!, _perfValue = null!;
 
@@ -90,6 +93,8 @@ public partial class ActionBar : UserControl
     internal ToggleButton WarnChip => _warnChip;
     internal ToggleButton BranchChip => PART_BranchChip;
     internal Button BehindChip => PART_BehindChip;
+    /// <summary>[spec 2026-09-18 §6.4] Branch chip'inin amber git-işlemi noktası.</summary>
+    internal Ellipse GitOperationDot => _gitOperationDot;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
     /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
@@ -184,6 +189,12 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.CanShowBehind):
                 RefreshBehindChip();
                 break;
+            // [spec 2026-09-18 §6.4] Yarıdaki git işlemi: nokta + tooltip; behind chip'inin kilidi ve tooltip'i
+            // (RefreshEnabled → RefreshBehindChip). Branch chip'inin kapısı CanSwitchBranch bildirimiyle gelir.
+            case nameof(RunViewModel.GitOperationTooltip):
+                RefreshGitOperation();
+                RefreshEnabled();
+                break;
             case nameof(RunViewModel.Configuration):
                 RefreshConfig();
                 break;
@@ -199,6 +210,7 @@ public partial class ActionBar : UserControl
         RefreshChips();
         RefreshWorkspaceLabel();
         RefreshBranch();
+        RefreshGitOperation();
         RefreshPerf();
         RefreshConfig();
         RefreshBuildArea();
@@ -349,8 +361,41 @@ public partial class ActionBar : UserControl
     private void BuildBranchChips()
     {
         _branchValue = LabelChipContent(PART_BranchChip, "Icon.Branch", "branch", chevron: true);
+        BuildGitOperationDot();
         BuildBehindChip();
         AutomationProperties.SetName(PART_BranchChip, AccessibilityNames.BranchChip);
+        // [spec 2026-09-18 §6.4] Git kilidinde iki chip de pasiftir ve nedeni tooltip'lerindedir — WPF pasif bir
+        // öğenin tooltip'ini varsayılan olarak saklar.
+        ToolTipService.SetShowOnDisabled(PART_BranchChip, true);
+        ToolTipService.SetShowOnDisabled(PART_BehindChip, true);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.4 · karar 22] Branch chip'inin içeriğine eklenen amber nokta: çalışma ağacında yarıda bir git
+    /// işlemi varken görünür. Renk mevcut <c>Brush.Amber</c> token'ı (yeni renk yok); boyu <see cref="GitDotSizePx"/>.
+    /// </summary>
+    private void BuildGitOperationDot()
+    {
+        _gitOperationDot = new Ellipse
+        {
+            Width = GitDotSizePx,
+            Height = GitDotSizePx,
+            Margin = new Thickness(ChipContentGap, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+        _gitOperationDot.SetResourceReference(Shape.FillProperty, "Brush.Amber");
+        ((StackPanel)PART_BranchChip.Content).Children.Add(_gitOperationDot);
+    }
+
+    /// <summary>[spec §6.4] Noktanın görünürlüğü ve branch chip'inin tooltip'i — ikisi de VM'in tek kararından
+    /// (<see cref="RunViewModel.GitOperationTooltip"/>): işlem yoksa nokta yok, tooltip yok.</summary>
+    private void RefreshGitOperation()
+    {
+        if (!_built) return;
+        string? tooltip = _vm?.GitOperationTooltip;
+        _gitOperationDot.Visibility = tooltip is null ? Visibility.Collapsed : Visibility.Visible;
+        PART_BranchChip.ToolTip = tooltip;
     }
 
     /// <summary>
@@ -391,7 +436,8 @@ public partial class ActionBar : UserControl
         int behind = _vm!.Behind ?? 0;
         _behindValue.Text = Inv(behind);
         AutomationProperties.SetName(PART_BehindChip, Inv(behind) + " behind");
-        PART_BehindChip.ToolTip = InteractionText.BehindChipTooltip(behind, _vm.Branch);
+        // [spec 2026-09-18 §6.4] Git kilidinde chip pasiftir; tooltip daveti değil kilidin nedenini söyler.
+        PART_BehindChip.ToolTip = _vm.GitOperationTooltip ?? InteractionText.BehindChipTooltip(behind, _vm.Branch);
     }
 
     private void BuildPerfChip()
@@ -590,7 +636,7 @@ public partial class ActionBar : UserControl
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.
-        PART_BehindChip.IsEnabled = hasWs && !midRun;
+        PART_BehindChip.IsEnabled = hasWs && !midRun && _vm?.GitOperationTooltip is null; // [spec §6.4] git kilidi
         RefreshBehindChip();
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.

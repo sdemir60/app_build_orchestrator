@@ -311,6 +311,8 @@ public partial class MainWindow : Window
         // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
         // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş
         // dahil — ShowFromTray Activate çağırır) koordinatöre gider.
+        // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
+        _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
         Activated += (_, _) => _vm.OnWindowActivated();
 
@@ -1238,6 +1240,7 @@ public partial class MainWindow : Window
         _hotkey?.Dispose();
         _tray?.Dispose();
         _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
+        _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();

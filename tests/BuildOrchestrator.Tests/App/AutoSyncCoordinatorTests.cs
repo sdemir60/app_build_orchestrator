@@ -71,6 +71,9 @@ public sealed class AutoSyncCoordinatorTests
 
         public void AppendStreamLine(string line) => StreamLines.Add(line);
 
+        /// <summary>[T9] Yarıda bir git işlemi var mı — koordinatör testlerinde yok (VM testleri pinler).</summary>
+        public bool WaitForGitOperation() => false;
+
         public int SyncCount => Silent.Count + BranchChanges.Count;
 
         /// <summary>Bir Sync tamamlandı: HEAD ve an kaydedilir (VM'in <c>OnSyncCompleted</c>'ının yaptığı).</summary>

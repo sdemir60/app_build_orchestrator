@@ -2961,4 +2961,198 @@ public class RunViewModelTests
         Assert.Equal(5000, vm.LastSyncCompletedAtMs);
         Assert.Equal(5000, vm.LastSyncAtMs); // [review M3] başlangıç hiç yazılmadıysa da tamamlanma okunur
     }
+
+    // ---------------------------------------------------------------- [T9 · spec §6.4 · karar 22] git işlemi yarıdayken
+
+    private const Core.Git.GitOperation Merge = Core.Git.GitOperation.Merge;
+
+    /// <summary>Sync'lenmiş iki satırlı workspace; git işlemi <paramref name="op"/>'tan okunur (sahte probe), yoklama
+    /// zamanlayıcısı <paramref name="timer"/>'dır.</summary>
+    private static RunViewModel GitGatedVm(EngineHost engine, Func<Core.Git.GitOperation> op, FakePollTimer timer)
+    {
+        var vm = SyncedTwoRowVm(engine);
+        vm.InspectGitOperation = _ => op();
+        vm.GitOperationPollTimer = timer;
+        return vm;
+    }
+
+    /// <summary>Kendiliğinden Sync merge yarıdayken koşmaz: tetik bekler ve akışa işlem başına BİR kez
+    /// <c>waiting for git — Merge in progress — finish or abort it in git</c> düşer.</summary>
+    [Fact]
+    public async Task A_head_trigger_waits_while_a_merge_is_in_progress()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other);
+        Drain(posted);
+
+        Assert.Empty(sent);
+        Assert.Equal(Merge, vm.GitOperation);
+        Assert.Single(vm.StreamEvents, e => e.Text == "waiting for git — Merge in progress — finish or abort it in git");
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>İşaret kalkınca (yoklamanın tıkı) bekleyen tetik normal yoldan değerlendirilir: BİR sessiz Sync.</summary>
+    [Fact]
+    public async Task When_the_marker_goes_the_waiting_sync_runs()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var op = Merge;
+        var timer = new FakePollTimer();
+        var vm = GitGatedVm(engine, () => op, timer);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        timer.Tick(); // işaret hâlâ duruyor
+        Drain(posted);
+        Assert.Empty(sent);
+
+        op = Core.Git.GitOperation.None;
+        timer.Tick();
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary><c>index.lock</c> 30 s kesintisiz durursa konsola BİR kez takılı kilit uyarısı düşer; araç kilidi
+    /// silmez. Gerçek bir git dizini ve gerçek probe — kilit dosyası testin sonunda hâlâ yerindedir.</summary>
+    [Fact]
+    public void A_lock_held_for_30_seconds_warns_once_and_is_never_deleted()
+    {
+        using var root = new TempDir();
+        string lockFile = Path.Combine(root.Path, ".git", "index.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockFile)!);
+        File.WriteAllText(lockFile, "");
+        long now = 1000;
+        var timer = new FakePollTimer();
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            GitOperationPollTimer = timer,
+        };
+        vm.RootPath = root.Path;
+        static int Warnings(RunViewModel vm) => vm.GetRunDocumentText().Split('\n')
+            .Count(l => l.Contains(Core.Git.GitOperationText.StuckLock, StringComparison.Ordinal));
+
+        Assert.Equal(Core.Git.GitOperation.CommandRunning, vm.GitOperation);
+        now += 29_999;
+        timer.Tick();
+        Assert.Equal(0, Warnings(vm));
+
+        now += 1;
+        timer.Tick();
+        now += 10_000;
+        timer.Tick();
+        vm.OnWindowActivated();
+
+        Assert.Equal(1, Warnings(vm));
+        Assert.True(File.Exists(lockFile));
+        Assert.True(timer.IsRunning);
+    }
+
+    /// <summary>Merge yarıdayken checkout ve pull kilitlidir; kilitli chip'lerin tooltip'i nedeni söyler. Kapı
+    /// gönderimden önce yeniden yoklanır: bayat bir "boşta" değeriyle bile komut gitmez.</summary>
+    [Fact]
+    public async Task Checkout_and_pull_are_locked_mid_merge()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var op = Core.Git.GitOperation.None;
+        var vm = GitGatedVm(engine, () => op, new FakePollTimer());
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", true, false),
+            new BranchRef("feature/x", "bbbbbbbbbbbb", false, false),
+        ]));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, Behind: 2, ActiveBranch: "main"));
+        vm.OnWindowActivated();
+        Assert.True(vm.CanSwitchBranch);                           // ön-koşul: kilit yalnız git işleminden
+        Assert.True(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.Null(vm.GitOperationTooltip);
+
+        op = Merge; // bayat: henüz yoklanmadı
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", false, false));
+        await vm.PullRepositoryCommand.ExecuteAsync(null);
+
+        Assert.Empty(sent);
+        Assert.False(vm.CanSwitchBranch);
+        Assert.False(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.Equal("Merge in progress — finish or abort it in git", vm.GitOperationTooltip);
+    }
+
+    /// <summary>Build merge yarıdayken engellenmez: konsol temizlendikten sonra planlamanın başında TEK uyarı satırı,
+    /// komut yine gider.</summary>
+    [Fact]
+    public async Task Build_mid_merge_warns_once_and_still_runs()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.True(vm.BuildCommand.CanExecute(null));
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Single(sent.OfType<StartRunCommand>());
+        var lines = vm.GetRunDocumentText().Split('\n');
+        Assert.Single(lines, l => l.Contains("a merge is in progress — files with conflict markers will not compile", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains("previous operation line", StringComparison.Ordinal));
+    }
+
+    /// <summary>Sync düğmesi merge yarıdayken de çalışır; temizlikten sonra ilk satır ağacın yarım olduğunu söyler.</summary>
+    [Fact]
+    public async Task The_sync_button_still_runs_mid_merge_and_says_so()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.True(vm.SyncCommand.CanExecute(null));
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        string console = vm.GetRunDocumentText();
+        Assert.StartsWith("the working tree is mid-merge — results may change once it finishes", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("previous operation line", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>Yoklama YALNIZ bir işaret dururken çalışır (2 s): işaret yokken ve git dizini olmayan kökte kurulmaz,
+    /// işaret kalkınca durur.</summary>
+    [Fact]
+    public void Polling_runs_only_while_a_marker_exists()
+    {
+        using var noGit = new TempDir();
+        var timer = new FakePollTimer();
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        {
+            GitOperationPollTimer = timer,
+        };
+        vm.RootPath = noGit.Path; // gerçek probe: git dizini yok
+        vm.OnWindowActivated();
+        Assert.Equal(Core.Git.GitOperation.None, vm.GitOperation);
+        Assert.False(timer.IsRunning);
+
+        var op = Core.Git.GitOperation.Rebase;
+        vm.InspectGitOperation = _ => op;
+        vm.OnWindowActivated();
+        Assert.True(timer.IsRunning);
+        Assert.Equal(TimeSpan.FromSeconds(2), timer.Interval);
+        timer.Tick();
+        Assert.True(timer.IsRunning);
+
+        op = Core.Git.GitOperation.None;
+        timer.Tick();
+        Assert.False(timer.IsRunning);
+        Assert.Equal(Core.Git.GitOperation.None, vm.GitOperation);
+    }
 }

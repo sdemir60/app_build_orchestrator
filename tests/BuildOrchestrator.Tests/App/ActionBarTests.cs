@@ -191,6 +191,48 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §6.4 · karar 22] Merge yarıdayken branch chip'inin İÇİNDE 6 px amber nokta görünür (renk
+    /// <c>Brush.Amber</c> token'ı) ve chip'in tooltip'i işlemi adlandırır. Realize testi.
+    /// </summary>
+    [StaFact]
+    public void The_branch_chip_shows_an_amber_dot_mid_merge()
+    {
+        var vm = NewVm();
+        vm.InspectGitOperation = _ => Core.Git.GitOperation.Merge;
+        var (bar, window) = Realize(vm);
+
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+
+        var dot = bar.GitOperationDot;
+        Assert.Contains(dot, DsResources.RealizedObjects(bar.BranchChip));
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(6, dot.Width);
+        Assert.Equal(6, dot.Height);
+        Assert.Same(bar.FindResource("Brush.Amber"), dot.Fill);
+        Assert.Equal("Merge in progress — finish or abort it in git", bar.BranchChip.ToolTip);
+        Assert.False(bar.BranchChip.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
+    [StaFact]
+    public void No_dot_when_git_is_idle()
+    {
+        var vm = NewVm();
+        vm.InspectGitOperation = _ => Core.Git.GitOperation.None;
+        var (bar, window) = Realize(vm);
+
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+
+        Assert.Contains(bar.GitOperationDot, DsResources.RealizedObjects(bar.BranchChip));
+        Assert.Equal(Visibility.Collapsed, bar.GitOperationDot.Visibility);
+        Assert.Null(bar.BranchChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
     private static (ActionBar bar, Window window) Realize(RunViewModel vm)
     {
         var host = DsResources.NewHost();

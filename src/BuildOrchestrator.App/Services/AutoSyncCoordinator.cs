@@ -49,6 +49,11 @@ internal interface IAutoSyncPort
 
     /// <summary>Olay akışına (temizlemeden) tek bilgi satırı.</summary>
     void AppendStreamLine(string line);
+
+    /// <summary>[T9 · spec §6.4 · karar 22] Git dizinini yoklar: yarıda bir git işlemi varsa <c>true</c> — tetik bekler,
+    /// akışa işlem başına BİR kez "waiting for git" satırı düşer (satırı VM yazar). İşaret kalkınca VM meşguliyet
+    /// bildirimini (<see cref="AutoSyncCoordinator.OnWorkspaceIdle"/>) atar ve bekleyen tetik değerlendirilir.</summary>
+    bool WaitForGitOperation();
 }
 
 /// <summary>
@@ -208,7 +213,10 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// pull, merge, reset, rebase) → koşu BİR kez nazikçe kesilir (<see cref="IAutoSyncPort.RequestInterruptAsync"/>)
     /// ve tetik saklanır; pencereye dönüş → saklanır. Koşu bitince bekleyen tetik değerlendirilir.</item>
     /// <item>Meşgul (workspace işi) → tetik saklanır (<see cref="Remember"/>), meşguliyet bitince yeniden
-    /// değerlendirilir (<see cref="OnWorkspaceIdle"/>). Yarıdaki git işlemi Task 9'un işidir.</item>
+    /// değerlendirilir (<see cref="OnWorkspaceIdle"/>).</item>
+    /// <item>[T9 · spec §6.4] Yarıda bir git işlemi (merge, rebase, cherry-pick, revert, <c>index.lock</c>) → tetik
+    /// saklanır (<see cref="IAutoSyncPort.WaitForGitOperation"/>); işaret kalkınca VM'in yoklaması meşguliyet
+    /// bildirimini atar ve tetik normal yoldan değerlendirilir.</item>
     /// <item>Hiç Sync tamamlanmamış → hiçbir şey: kıyaslanacak HEAD yok ve ilk bölümü açılış Sync'i açar.</item>
     /// <item>Pencereye dönüş ve son Sync'ten <see cref="ActivationQuietMs"/> geçmemiş → hiçbir şey.</item>
     /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey.</item>
@@ -235,7 +243,7 @@ internal sealed class AutoSyncCoordinator : IDisposable
             await _port.RequestInterruptAsync();
             return;
         }
-        if (_port.IsWorkspaceBusy)
+        if (_port.IsWorkspaceBusy || _port.WaitForGitOperation())
         {
             Remember(trigger);
             return;

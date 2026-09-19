@@ -440,6 +440,8 @@ public sealed partial class RunViewModel
     [RelayCommand(CanExecute = nameof(CanPullRepository))]
     private async Task PullRepositoryAsync()
     {
+        // [spec 2026-09-18 §6.4] Git kapısı gönderimden önce yeniden sorulur — yoklama bayat olabilir.
+        if (RefreshGitOperation() != Core.Git.GitOperation.None) return;
         CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
         SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
@@ -452,9 +454,11 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
-    /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).</summary>
+    /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).
+    /// [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de kapalıdır (<see cref="GitOperationTooltip"/>).</summary>
     private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
+        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy
+        && GitOperation == Core.Git.GitOperation.None;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
