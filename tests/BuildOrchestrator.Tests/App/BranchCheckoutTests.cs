@@ -215,6 +215,34 @@ public class BranchCheckoutTests
         Assert.Empty(sent); // başarısız işlem bölüm açmaz, Sync zincirlemez
     }
 
+    /// <summary>[Task 7] Konsolun açıklamalı uyarı satırının yanına (yukarıdaki test) event stream'e de KISA bir
+    /// Warn satırı düşer — iki panel aynı reddi farklı ayrıntı seviyesinde anlatır. Metin
+    /// <see cref="StreamText.BranchSwitchRefused"/>'ta (tek kaynak); rengi mevcut amber token'ı, glyph yok
+    /// (sync/info'yla aynı ▸), daktiloyla gelir (Fail gibi anında DEĞİL).</summary>
+    [Fact]
+    public void A_refused_switch_also_writes_a_warn_line_to_the_stream()
+    {
+        // [fırtına dışı] nowMs enjekte edilir: iki push arasında >340ms olmazsa StreamComposer'ın kendi fırtına
+        // kuralı (Instant=true) devreye girer ve Warn'ın "Fail gibi anında DEĞİL" kuralını ÖLÇÜLEMEZ kılar.
+        long t = 0;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => t)
+            { RootPath = @"D:\repo" };
+        // İlk satır daktilo ETMEZ (prevNewest==null) — reddi ikinci satır yapıp ShouldType'ı ölçülebilir kılar.
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
+        t += 1000;
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null));
+
+        var line = vm.StreamEvents[^1];
+        Assert.Equal(StreamKind.Warn, line.Kind);
+        Assert.Equal(StreamText.BranchSwitchRefused(3), line.Text);
+        Assert.Equal("branch switch refused — 3 uncommitted files", line.Text);
+        Assert.Equal("Brush.AmberText", line.TextBrushKey);
+        Assert.Null(line.GlyphStatus);
+        Assert.False(line.Instant);
+        Assert.True(line.ShouldType);
+    }
+
     /// <summary>Stash yapıldı ama checkout düştü: kullanıcının değişiklikleri stash'tedir — konsol bunu SÖYLEMEK
     /// zorundadır, yoksa değişiklikler kaybolmuş gibi görünür. Konsol yine temizlenmez.
     /// <para>[final review M2] Satırlar ardışıktır ama artık sonuncu olmak zorunda değildir: ardından gelen sessiz

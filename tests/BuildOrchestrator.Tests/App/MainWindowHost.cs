@@ -79,6 +79,36 @@ internal static class MainWindowHost
     /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
     public static string IdOf(string name) => $@"C:\p\{name}.csproj";
 
+    /// <summary>[task 3] Gönderimler motor yerine başarıyla "gider" (<see cref="RunViewModel.DebugSendOverride"/>) —
+    /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
+    public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
+
+    /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),
+    /// dışarıdan branch değişimi (BranchChange), kendiliğinden Sync (Silent), motor hazır oldu (Appended).</summary>
+    public static Task StartSync(RunViewModel vm, SyncMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        switch (mode)
+        {
+            case SyncMode.Manual: return vm.SyncCommand.ExecuteAsync(null);
+            case SyncMode.BranchChange: return vm.SyncAfterExternalBranchChangeAsync("Switched to feature");
+            case SyncMode.Silent: return vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
+            case SyncMode.Appended: vm.OnEngineReady("1.0.0", 1); return Task.CompletedTask;
+            default: throw new ArgumentOutOfRangeException(nameof(mode), mode, null);
+        }
+    }
+
+    /// <summary>[task 3] Motorun bir Sync'e cevabı: başlangıç, verilen topoloji (<see cref="Node"/> kuralıyla,
+    /// <see cref="NewWithProjects"/> ile AYNI yapı üretilebilsin diye), tamamlanma.</summary>
+    public static void ReplySync(RunViewModel vm, params (string Name, string? Layer)[] nodes)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(nodes);
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent([.. nodes.Select((n, i) => Node(n.Name, i, n.Layer))], [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0));
+    }
+
     /// <summary>
     /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>
     /// gerçek bir <c>PresentationSource</c> (HWND) olmadan içeriğe HİÇ İNMEZ; caption butonlarının şablonları

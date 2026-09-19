@@ -273,4 +273,45 @@ public class GraphPanZoomTests
         view.HandlePanMove(Anchor + new Vector(200, 200));
         Assert.Equal(frozen, view.CurrentCamera);
     }
+
+    // ---------------------------------------------------------------- [task 2] hedef ≠ ekran
+
+    /// <summary>
+    /// [task 2] <b>Kusur:</b> <c>ApplyGraph</c> yalnız <c>CurrentCamera</c> (HEDEF) alanını <c>Default</c>'a
+    /// yazıyordu; ekrandaki <c>_cameraScale</c>/<c>_cameraTranslate</c> dokunulmadan kalıyordu. Ardından
+    /// <c>AnimateCameraTo</c>'nun "hedef değişmediyse no-op" kapısı (<c>camera == CurrentCamera</c>) hedef
+    /// zaten Default olduğu için hemen dönüyor ve ekranı Default'a SNAP'leyen çağrı hiç yapılmıyordu. Sonuç:
+    /// graf yeniden kurulduktan sonra önceki zoom/pan EKRANDA kalıyordu — <see cref="GraphView.CurrentCamera"/>
+    /// Default derken kullanıcı hâlâ eski zoomlu görünümü görüyordu.
+    /// </summary>
+    [StaFact]
+    public void Rebuilding_the_graph_snaps_the_ON_SCREEN_camera_to_default_not_just_the_target()
+    {
+        var view = NewView();
+        view.HandleWheel(Anchor, 120); // canlı kamerayı zoom'lu hedefe götürür (animasyon kapalı ⇒ hedef=ekran)
+        Assert.NotEqual(GraphCamera.Default, view.LiveCameraForTest); // ön-koşul: ekran zoomlu
+
+        view.SetGraph(Nodes(), Edges());
+
+        Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
+    }
+
+    /// <summary>
+    /// [task 2] Aynı kusurun ikinci belirtisi: graf yeniden kurulduktan sonra boş alana tıklamak hiçbir şey
+    /// YAPMIYORDU, çünkü hedef zaten (yanlışlıkla) Default'tu ve <c>AnimateCameraTo</c> no-op'a düşüyordu —
+    /// kullanıcı yeniden zoom oynatmadan ekran asla düzelmiyordu.
+    /// </summary>
+    [StaFact]
+    public void A_click_after_a_graph_rebuild_still_returns_the_ON_SCREEN_camera_to_default()
+    {
+        var view = NewView();
+        view.HandleWheel(Anchor, 120);
+        view.SetGraph(Nodes(), Edges());
+
+        view.HandlePanStart(Anchor);
+        view.HandlePanMove(Anchor + new Vector(1, 0)); // eşik altı — tıklama
+        view.HandlePanEnd();
+
+        Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
+    }
 }

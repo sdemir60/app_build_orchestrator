@@ -114,4 +114,24 @@ public class GraphVisibilityTests
         Assert.True(view.NodeStatusApplyCount > before);
         Assert.Equal(GraphStatus.Building, view.NodeVisuals["OSYS.Base"].Model.Status);
     }
+
+    /// <summary>
+    /// [task 2] Gizli panelin bekleyen topolojisi görünür olunca uygulanır (<c>ApplyGraph</c>) — ama o çağrı
+    /// EKRANDAKİ kamerayı (<c>_cameraScale</c>/<c>_cameraTranslate</c>) da Default'a SNAP'lemeliydi, yalnız
+    /// hedefi değil. Panel gizliyken kalan zoom, panel geri geldiğinde ekranda kalıyordu — aynı kök neden,
+    /// üçüncü yol (bkz. <c>GraphPanZoomTests</c>'teki iki kardeş test).
+    /// </summary>
+    [StaFact]
+    public void A_topology_that_arrives_while_hidden_snaps_the_ON_SCREEN_camera_to_default_when_shown_again()
+    {
+        var view = Built();
+        view.HandleWheel(new Point(430, 120), 120); // canlı kamerayı zoom'lu hedefe götürür
+        Assert.NotEqual(GraphCamera.Default, view.LiveCameraForTest); // ön-koşul: ekran zoomlu
+
+        view.Visibility = Visibility.Collapsed;
+        view.SetGraph(Nodes(GraphStatus.Discovered), Edges()); // gizliyken yeni topoloji — ertelenir
+        view.Visibility = Visibility.Visible; // bekleyen topoloji şimdi ApplyGraph'a uygulanır
+
+        Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
+    }
 }

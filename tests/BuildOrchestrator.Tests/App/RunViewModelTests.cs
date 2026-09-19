@@ -1582,25 +1582,148 @@ public class RunViewModelTests
     [Fact]
     public async Task A_later_segments_preview_refreshes_the_current_sha_of_an_already_terminal_row()
     {
-        // [W1] OnBuildPreview'daki terminal-satır `continue` guard'ı YALNIZ WillBuild'i korur (segment 1'in canlı
-        // succeeded→clean geçişi ezilmesin). CurrentSha o guard'dan ÖNCE atanır: segment 2'nin okuduğu build-state
-        // segment 1'in persist'ini içerir, yani derlenmiş satırın sol yarısı ancak burada tazelenebilir.
+        // [W1 · Task 1] OnBuildPreview'daki terminal-satır `continue` guard'ı YALNIZ WillBuild'i korur (segment 1'in
+        // canlı succeeded→clean geçişi ezilmesin) VE YALNIZ koşu sürerken (RunActive) — bu yüzden run burada
+        // GERÇEKTEN sürüyor olmalı (RunStartedEvent + henüz RunCompleted YOK), aksi halde bu artık "segment 2"
+        // değil, koşu bittikten sonraki bağımsız bir tazeleme olurdu (bkz. aşağıdaki A_post_run_preview_* testleri).
+        // CurrentSha guard'dan ÖNCE atanır: segment 2'nin okuduğu build-state segment 1'in persist'ini içerir,
+        // yani derlenmiş satırın sol yarısı ancak burada tazelenebilir.
+        // [DEĞİŞEN KURAL — Task 1] Eski iddia: guard KOŞULSUZDU — terminal satırın WillBuild'i HİÇBİR önizlemeyle
+        // yazılmazdı; test bu yüzden RunStartedEvent'siz kuruluyordu. Değişme gerekçesi: koşu bittikten sonra gelen
+        // önizleme (pencereye dönüşün sessiz Sync'i) de guard'a çarpıyor, arka planda değişen proje yeşil kalıyordu.
+        // Koruma artık yalnız koşu sürerken geçerli; bu test onu o koşulda pinler.
         const string oldSha = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const string newSha = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         const string projectId = @"C:\p\dirty.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, oldSha)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // satır artık terminal + clean
 
-        // Continue segmenti: preview BAYAT willBuild=true taşır ama build-state TAZE commit'i taşır.
+        // Continue segmenti: preview BAYAT willBuild=true taşır ama build-state TAZE commit'i taşır. Run HÂLÂ
+        // sürüyor (RunCompleted henüz gelmedi) — guard bu yüzden hâlâ devrede.
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, newSha)]));
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(newSha, row.CurrentSha); // sha TAZELENDİ
         Assert.False(row.WillBuild);          // ama canlı succeeded→clean geçişi KORUNDU
+    }
+
+    [Fact]
+    public async Task A_post_run_preview_refreshes_a_succeeded_rows_standing()
+    {
+        // [Task 1] Koşu BİTMİŞ (RunCompleted geldi, RunActive artık false), satır Succeeded + temiz. Pencereye
+        // dönüşün tetiklediği sessiz Sync'in önizlemesi o satır için WillBuild=true derse — ör. döngü üyesi
+        // arka planda değişti — satırın kararı da tazelenmeli: elle Sync beklemeden gri/"modified" olmalı.
+        const string projectId = @"C:\p\cycle.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Cycle"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Succeeded, row.State);
+        Assert.False(row.WillBuild); // ön koşul: koşu az önce temizledi
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        Assert.True(row.WillBuild);
+        Assert.Equal(WillBuildReason.SignatureChanged, row.WillBuildReason);
+        Assert.Equal(StandingStatus.Stale, row.Standing);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus); // gri/"modified", yeşil ✓ DEĞİL
+    }
+
+    [Fact]
+    public async Task A_post_run_preview_refreshes_a_skipped_rows_standing()
+    {
+        // [Task 1] Aynı kusur, döngü üyesinin normal bittiği hal: run bitince Skipped. Kusurun asıl senaryosu
+        // budur (kullanıcı testi 2026-09-19) — döngü üyeleri Build'de hep Skipped biter.
+        const string projectId = @"C:\p\member.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Member", false, Reason: WillBuildReason.UpToDate)]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 1, 0, 50));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Skipped, row.State);
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(projectId, "Member", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        Assert.True(row.WillBuild);
+        Assert.Equal(WillBuildReason.SignatureChanged, row.WillBuildReason);
+        Assert.Equal(StandingStatus.Stale, row.Standing);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);
+    }
+
+    [Fact]
+    public async Task A_post_run_preview_can_turn_a_failed_row_green_again()
+    {
+        // [Task 1] Failed biten satır için de aynı kural: önizleme artık güncel diyorsa satır yeşile döner —
+        // koşu bitmiş olmak kırmızıyı sonsuza dek DONDURMAZ.
+        const string projectId = @"C:\p\broken.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Broken", true, Reason: WillBuildReason.SignatureChanged)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Broken"));
+        vm.OnEvent(new ProjectFailedEvent("r1", projectId, 100, "exit 1", Evidence: true));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 1, 0, 0, 100));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Failed, row.State);
+
+        // Kullanıcı elle düzeltip başka bir yolla derledi — sessiz Sync artık güncel diyor.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Broken", false, Reason: WillBuildReason.UpToDate)]));
+
+        Assert.False(row.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Equal(StandingStatus.Current, row.Standing);
+        Assert.Equal(VisualStatus.Current, row.VisualStatus); // yeşil, kırmızı DEĞİL
+    }
+
+    [Fact]
+    public async Task A_post_run_preview_never_raises_InRunQueue_on_a_terminal_row()
+    {
+        // [Task 1 review fix round 1] InRunQueue'nun belgelenen değişmezi (ProjectRowViewModel.InRunQueue'nun
+        // XML yorumu): YALNIZ koşan run'ın KENDİ BuildPreviewEvent'inden yazılır, koşu bitince
+        // PropagateRunActive onu düşürür (RunActive=false ⇒ InRunQueue=false, ~satır 1507) ve bir sonraki
+        // run'ın kendi önizlemesine kadar bir daha YÜKSELMEZ. Bu task terminal satırların karar alanlarını
+        // (WillBuild/Reason/Conditional/DependencyRoots) koşu bittikten sonra da tazeliyor — ama InRunQueue
+        // AYRI bir kanaldır (run-scoped) ve AYNI guard'ı paylaşamaz: koşu sürmüyorken gelen bir önizleme
+        // kuyruğu bir daha YÜKSELTMEMELİDİR, aksi halde bu değişmez sessizce bozulur (bugün gözlemlenemez —
+        // TEK okuyucu <c>Status</c>'un <c>IsRunActive &amp;&amp; InRunQueue</c> dalı ve terminal State zaten
+        // ondan ÖNCE eşleşir — ama alanın kendi doğruluğu bağımsız korunmalı).
+        const string projectId = @"C:\p\cycle.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Cycle"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.InRunQueue); // ön koşul: koşu bitince PropagateRunActive kuyruğu düşürdü
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        Assert.True(row.WillBuild);   // karar tazelendi — bu task'ın asıl davranışı, KIRILMADI
+        Assert.False(row.InRunQueue); // ama kuyruk YİNE düşük — koşu sürmüyor, bu YÜKSELMEMELİ
     }
 
     /// <summary>
@@ -2513,6 +2636,40 @@ public class RunViewModelTests
 
         Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
         Assert.Equal(StreamText.SyncedProjectsChanged(1), vm.StreamEvents[^1].Text);
+    }
+
+    /// <summary>[Task 1] Sayaç <see cref="RunViewModel.DecisionKeys"/> üzerinden <c>row.Standing</c> + karar
+    /// etiketini okur; koşu bitmiş (Succeeded) bir satırın kararı sessiz Sync'le değiştiyse sayaç bunu da
+    /// görmeli — terminal satır guard'ın dışında kalmamalı.</summary>
+    [Fact]
+    public async Task A_silent_sync_counts_a_refreshed_terminal_row_as_changed()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        const string projectId = A;
+
+        // Build koşusu bitti: proje Succeeded + temiz.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(projectId, "A", 0)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "A", true, Reason: WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        int streamBefore = vm.StreamEvents.Count;
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(projectId, "A", 0)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(projectId, "A", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, ToBuildCount: 1, UpToDateCount: 0,
+            HeadSha: "1111111111111111111111111111111111111111", ActiveBranch: "main"));
+
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
+        Assert.Equal(StreamText.SyncedProjectsChanged(1), vm.StreamEvents[^1].Text);
+        Assert.True(Assert.Single(vm.Projects).WillBuild);
     }
 
     /// <summary>Sessiz Sync kapı kapalıyken (başka bir Sync uçuşta) hiçbir şey göndermez.</summary>

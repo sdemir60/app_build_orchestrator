@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.Supervisor;
@@ -53,7 +54,9 @@ public class PullRepositoryTests
 
         Assert.Contains($"git merge --ff-only origin/{branch}", Lines(events));
         Assert.Contains($"Pulled origin/{branch} — fast-forward {first[..7]}..{second[..7]}", Lines(events));
-        Assert.True(Assert.Single(events.OfType<PullCompletedEvent>()).Succeeded);
+        var completed = Assert.Single(events.OfType<PullCompletedEvent>());
+        Assert.True(completed.Succeeded);
+        Assert.Null(completed.RefusalReason); // [Task 7] başarıda reddetme nedeni YOK
         Assert.Equal(second, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
     }
 
@@ -96,6 +99,11 @@ public class PullRepositoryTests
         Assert.Equal(head, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — Task 7]</b> Eski iddia: reddin satırı öneksizdi (<c>Pull refused — …</c>) ve
+    /// <c>pullCompleted</c> yalnız başarıyı taşıyordu. Değişme gerekçesi: ret konsolda düz tonda
+    /// gözden kaçıyordu — satır artık <c>warning:</c> önekiyle amber boyanır, reddin nedeni de olayda
+    /// yapılandırılmış gider ki akışın kısa amber satırı konsol metnini ayrıştırmadan kurulsun. Aynı not
+    /// <see cref="A_diverged_branch_is_refused_with_the_reason_instead_of_a_merge"/> için de geçerlidir.</summary>
     [Fact]
     public async Task Uncommitted_work_refuses_the_pull_and_never_touches_the_working_tree()
     {
@@ -113,8 +121,12 @@ public class PullRepositoryTests
         var events = await PullAsync(clone, branch);
 
         Assert.Contains(
-            "Pull refused — uncommitted changes in the working tree; commit or stash them first", Lines(events));
-        Assert.False(Assert.Single(events.OfType<PullCompletedEvent>()).Succeeded);
+            "warning: pull refused — uncommitted changes in the working tree; commit or stash them first", Lines(events));
+        var completed = Assert.Single(events.OfType<PullCompletedEvent>());
+        Assert.False(completed.Succeeded);
+        // [Task 7] Reddetme nedeni yapılandırılmış olarak da taşınır — App'in event stream'i (kısa, amber,
+        // daktilo) bunu OKUR; konsolun açıklamalı metniyle aynı satırı ayrıştırmaz (kopya YASAK).
+        Assert.Equal(PullRefusalReason.Dirty, completed.RefusalReason);
         Assert.Equal(first, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
         Assert.Equal("local edit", File.ReadAllText(Path.Combine(clone, "a.cs")));
     }
@@ -139,8 +151,10 @@ public class PullRepositoryTests
         var events = await PullAsync(clone, branch);
 
         Assert.Contains(
-            $"Pull refused — local branch has diverged from origin/{branch}; reconcile it manually", Lines(events));
-        Assert.False(Assert.Single(events.OfType<PullCompletedEvent>()).Succeeded);
+            $"warning: pull refused — local branch has diverged from origin/{branch}; reconcile it manually", Lines(events));
+        var completed = Assert.Single(events.OfType<PullCompletedEvent>());
+        Assert.False(completed.Succeeded);
+        Assert.Equal(PullRefusalReason.Diverged, completed.RefusalReason);
         Assert.Equal(localHead, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
     }
 }

@@ -166,6 +166,8 @@ public partial class GraphView : UserControl
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
     /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
     private IReadOnlySet<string>? _filterMatches;
+    /// <summary>[kullanıcı kararı 2026-09-19] Graf filtreyi ASKIYA aldı mı — bkz. <see cref="IsFilterSuspended"/>.</summary>
+    private bool _filterSuspended;
 
     // ---- [design v1.11.0 §9-4/§9-5] koreografiler: açılış (marking) ve bitiş (neon) ----
     private MarkStep _markStep = MarkStep.None;
@@ -212,7 +214,9 @@ public partial class GraphView : UserControl
         // CSS `transform: translate(...) scale(...)` = önce ölçek, sonra öteleme (TransformGroup sırası birebir).
         World.RenderTransform = new TransformGroup { Children = { _cameraScale, _cameraTranslate } };
         World.RenderTransformOrigin = new Point(0, 0);
-        CurrentCamera = GraphCamera.Default;
+        // [task 2] Kuruluşta HEDEF ile EKRAN aynı tek yoldan (SnapCameraTo) kurulur — ApplyGraph'ın izlediği
+        // aynı sözleşme, kopya YASAK (bkz. ApplyGraph'ın SnapCameraTo çağrısı).
+        SnapCameraTo(GraphCamera.Default);
         // [quiet · görsel geçiş] Overlay (tooltip + ad etiketi) EKRAN koordinatındadır, yani konumu kameranın
         // CANLI hâlinden türer. Yalnız hedef değiştiğinde tazelemek yetmez: kamera 460ms (seçim) / 160ms
         // (wheel) boyunca ANİMASYONLA kayar ve o ara karelerde etiket hedefte, graf ise yolda olurdu. Freezable
@@ -400,8 +404,60 @@ public partial class GraphView : UserControl
     /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
     /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
     /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
+    ///
+    /// <para><b>[kullanıcı kararı 2026-09-19]</b> İşlemin başı aynı zamanda grafın filtreyi ASKIYA aldığı andır
+    /// (açılış dalgasından ÖNCE): bkz. <see cref="IsFilterSuspended"/>.</para>
     /// </summary>
-    public void BeginOperation() => StopEndFinale();
+    public void BeginOperation()
+    {
+        StopEndFinale();
+        SuspendFilter();
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Koşu bitti (ya da hiç başlamadı): Stop, motor ölümü, düşen gönderim,
+    /// tamamlanma — hepsi. Final oynuyorsa filtreye dönüş finalin KENDİ son adımıdır
+    /// (<see cref="EndFinale.FilterReturnAtMs"/>), burada bir şey yapılmaz; oynamıyorsa filtre ŞİMDİ döner.
+    /// <para>Çağıran koşunun bitiş sinyallerinin sırasına güvenmez: faz (<c>Done</c>/<c>Stopped</c> →
+    /// <see cref="PlayEndFinale"/>) ile kilidin düşmesi (bu metot) VM'de yola göre farklı sırada gelir.
+    /// Kilit önce düşerse filtre döner, hemen ardından doğan final onu yeniden askıya alır — ikisi aynı
+    /// dispatcher turundadır, arada kare çizilmez.</para>
+    /// </summary>
+    public void EndOperation()
+    {
+        if (_endPlayer.IsPlaying) return;
+        ResumeFilter();
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] <b>Filtre açıkken Build: graf koşu boyunca filtreyi yok sayar.</b> Build
+    /// tıklamasından (<see cref="BeginOperation"/>) koşunun bitişi tamamlanana dek (final + kısa bekleme, ya da
+    /// final yoksa koşu bitince) opaklık kararı filtre YOKMUŞ gibi verilir: açılış dalgası, koşu opaklıkları ve
+    /// neon finali standart hâliyle oynar. Proje LİSTESİ filtreli kalır — askı yalnız grafındır.
+    ///
+    /// <para>Askı sürerken değişen filtre (<see cref="FilterMatches"/>) saklanır ve askı kalkınca uygulanır.
+    /// Dönüş filtrenin kendi geçiş süresiyle (<see cref="GraphNodeOpacity.FilterFadeMs"/>) oynar. Filtre yokken
+    /// askının hiçbir görünür etkisi yoktur (opaklık kararı zaten filtresizdir).</para>
+    /// </summary>
+    internal bool IsFilterSuspended => _filterSuspended;
+
+    /// <summary>Opaklık kararının gördüğü filtre — askıdayken <c>null</c>. <see cref="ApplyNodeOpacity"/>
+    /// <see cref="_filterMatches"/> yerine BUNU okur (tek kaynak).</summary>
+    private IReadOnlySet<string>? EffectiveFilter => _filterSuspended ? null : _filterMatches;
+
+    private void SuspendFilter()
+    {
+        if (_filterSuspended) return;
+        _filterSuspended = true;
+        ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs);
+    }
+
+    private void ResumeFilter()
+    {
+        if (!_filterSuspended) return;
+        _filterSuspended = false;
+        ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs); // filtre geri gelir — kullanıcı filtresinin kendi süresi
+    }
 
     /// <summary>
     /// [design v1.11.0 §9-4 · §2.3 · v1.18.0] Açılış koreografisinin adımını ve kapsamını grafa iter: node
@@ -434,6 +490,10 @@ public partial class GraphView : UserControl
 
     /// <summary>[test yüzeyi] Grafın o anki bitiş-koreografisi adımı.</summary>
     internal EndStep EndStep => _endStep;
+
+    /// <summary>[test yüzeyi] Bitiş koreografisini (filtre dönüş adımı dahil) duvar saatini beklemeden
+    /// <paramref name="atMs"/> anına dek ilerletir — bkz. <see cref="StepPlayer.AdvanceToForTest"/>.</summary>
+    internal void AdvanceEndFinaleForTest(double atMs) => _endPlayer.AdvanceToForTest(atMs);
 
     /// <summary>
     /// [design v1.13.2 §2.5] <b>Bitiş koreografisi tam görünümde oynar.</b> Koreografi doğarken (Hold'dan
@@ -469,7 +529,14 @@ public partial class GraphView : UserControl
     {
         ArgumentNullException.ThrowIfNull(builtNodeNames);
         StopEndFinale();
-        if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider()) return;
+        if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider())
+        {
+            ResumeFilter(); // [kullanıcı kararı 2026-09-19] final yok → koşunun bitişi tamamlandı, filtre döner
+            return;
+        }
+        // [kullanıcı kararı 2026-09-19] Final filtresiz oynar ve dönüşü kendi son adımı yapar (aşağıda). Askı
+        // burada da kurulur: bitiş sinyallerinin sırası yola göre değişir (bkz. EndOperation).
+        SuspendFilter();
 
         // [design v1.13.2 §2.5] Koreografi doğarken o anki seçim "bırakılmış odak" olarak hatırlanır — bkz.
         // IsFinale. Hemen aşağıdaki _endPlayer.Play ilk adımı (Hold) SENKRON tetikler (StepPlayer.Play);
@@ -487,11 +554,30 @@ public partial class GraphView : UserControl
             .Select(s => (EndFinale.StepAtMs(s, builtNodeNames.Count), (Action)(() => SetEndStep(s))))
             .ToList();
         steps.Add((EndFinale.TotalMs(builtNodeNames.Count), () => SetEndStep(EndStep.None)));
+        steps.Add((EndFinale.FilterReturnAtMs(builtNodeNames.Count), ResumeFilter));
         _endPlayer.Play(steps);
     }
 
-    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.</summary>
-    public void StopEndFinale()
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Ekran baştan başlıyor (Sync düğmesi / branch değişimi — kabuğun
+    /// <c>BlankPlanSurface</c>'i): oynayan bitiş koreografisi ANINDA kesilir ve filtre askısı kalkar. Final
+    /// kesilmeseydi kalan adımları yeni grafın düğümlerinin gövde opaklığını boyamayı sürdürür, filtre de
+    /// yeni grafın reveal'inden SONRA sönerdi; böylece reveal filtreli görünür kümeyle oynar. Yeni bir işlem
+    /// başlamadığı için askı sürdürülmez (<see cref="BeginOperation"/>'ın tersine).
+    /// </summary>
+    public void CancelEndFinale()
+    {
+        StopEndFinale();
+        ResumeFilter();
+    }
+
+    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.
+    /// <para>[kullanıcı kararı 2026-09-19] Bekleyen filtre dönüş adımını (<see cref="EndFinale.FilterReturnAtMs"/>)
+    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: üç çağıranı bunu telafi eder
+    /// (<see cref="BeginOperation"/> askıyı sürdürür, <see cref="PlayEndFinale"/> dönüşü yeniden planlar ya da
+    /// filtreyi anında döndürür, <see cref="CancelEndFinale"/> filtreyi anında döndürür). Dışarıdan çağrılsaydı
+    /// graf filtresiz asılı kalabilirdi.</para></summary>
+    private void StopEndFinale()
     {
         _endPlayer.Stop();
         if (_endStep == EndStep.None) return;
@@ -555,14 +641,17 @@ public partial class GraphView : UserControl
     /// <para>Kapı bir SUSTURUCU değil ERTELEYİCİDİR: yalnız EN SON besleme tutulur (ara durumlar zaten hiç
     /// görülmedi) ve panel görünür olduğunda TOPOLOJİ ÖNCE, statüler SONRA uygulanır.</para>
     /// </summary>
-    private (IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges)? _pendingTopology;
+    private (IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges, bool ShowEmptyState)? _pendingTopology;
     private IReadOnlyList<GraphNode>? _pendingStatuses;
 
     private bool IsPanelVisible => Visibility == Visibility.Visible;
 
     /// <summary>Topolojiyi (düğüm + kenar) kurar: yerleşim, görseller ve ilk açılış dalgası. Yalnız topoloji
     /// DEĞİŞTİĞİNDE çağrılır — statü güncellemeleri için <see cref="UpdateStatuses"/> kullanılır.</summary>
-    public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    /// <param name="showEmptyState">Boş bir graf Sync-öncesi etiketini ("Graph appears after Sync") göstersin mi.
+    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve
+    /// panel yalnız boş/sakin durur.</param>
+    public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState = true)
     {
         ArgumentNullException.ThrowIfNull(nodes);
         ArgumentNullException.ThrowIfNull(edges);
@@ -570,12 +659,12 @@ public partial class GraphView : UserControl
         if (!IsPanelVisible)
         {
             // Yeni topoloji bekleyen statüleri GEÇERSİZ kılar: o statüler ESKİ grafın düğümlerine aitti.
-            _pendingTopology = (nodes, edges);
+            _pendingTopology = (nodes, edges, showEmptyState);
             _pendingStatuses = null;
             return;
         }
 
-        ApplyGraph(nodes, edges);
+        ApplyGraph(nodes, edges, showEmptyState);
     }
 
     /// <summary>Statüleri yerinde günceller: düğüm renkleri ve building animasyonu. Topoloji ve geometri
@@ -646,7 +735,7 @@ public partial class GraphView : UserControl
         if (_pendingTopology is { } topology)
         {
             _pendingTopology = null;
-            ApplyGraph(topology.Nodes, topology.Edges);
+            ApplyGraph(topology.Nodes, topology.Edges, topology.ShowEmptyState);
         }
         if (_pendingStatuses is { } statuses)
         {
@@ -655,7 +744,7 @@ public partial class GraphView : UserControl
         }
     }
 
-    private void ApplyGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    private void ApplyGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState)
     {
         _edgeLayer.Children.Clear();
         _nodeLayer.Children.Clear();
@@ -666,12 +755,19 @@ public partial class GraphView : UserControl
         _deps.Clear();
         _dependents.Clear();
         ResetPanGesture();
-        CurrentCamera = GraphCamera.Default;
+        // [task 2] HEDEF DEĞİL, EKRANDAKİ transform da anında sıfırlanır: aksi halde AnimateCameraTo'nun
+        // "hedef değişmedi" kapısı (camera == CurrentCamera) hedef zaten Default olduğu için hemen dönerdi
+        // ve ekran önceki zoom/pan'da KALIRDI (SnapCameraTo hiç çağrılmazdı) — bkz. GraphPanZoomTests'teki
+        // "ON_SCREEN" testleri.
+        SnapCameraTo(GraphCamera.Default);
 
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
-        CountsText.Text = string.Format(
+        // [task 3 · fix round 1] Baştan başlatan Sync'in boşaltması (etiketsiz boş graf) sahte bir "0 projects"
+        // sayısı yazmaz: başlık boş durur, topolojinin reveal'i onu yeniden yazar.
+        bool restartBlank = nodes.Count == 0 && !showEmptyState;
+        CountsText.Text = restartBlank ? "" : string.Format(
             CultureInfo.InvariantCulture, "{0} projects · {1} dependencies", nodes.Count, edges.Count);
-        ShowEmptyState(nodes.Count == 0);
+        ShowEmptyState(nodes.Count == 0 && !restartBlank);
         if (nodes.Count == 0)
         {
             _layout = QuietGraphLayout.Compute([], ViewportSize);
@@ -1400,8 +1496,8 @@ public partial class GraphView : UserControl
             EffectiveSelection is not null,
             _focusSet.Contains(visual.Model.Id),
             string.Equals(_hoveredNode, visual.Model.Id, StringComparison.OrdinalIgnoreCase),
-            _filterMatches is not null,
-            _filterMatches?.Contains(visual.Model.Id) ?? true);
+            EffectiveFilter is not null,
+            EffectiveFilter?.Contains(visual.Model.Id) ?? true);
 
         if (target.Equals(visual.OpacityTarget)) return;
         visual.OpacityTarget = target;
@@ -1755,6 +1851,10 @@ public partial class GraphView : UserControl
     internal int RevealGeneration => _reveal.Generation;
     internal bool HasPendingRevealRelease => _reveal.HasPendingRelease;
     internal CameraTransform CurrentCamera { get; private set; }
+    /// <summary>[test yüzeyi] Kameranın o an EKRANA uygulanmış hâli — <see cref="CurrentCamera"/> HEDEFİ
+    /// okur, bu ise <see cref="LiveCamera"/> üzerinden gerçek transform değerlerini okur. İkisi hiçbir yolda
+    /// ayrışmamalıdır; testler bunu birbirinden AYRI doğrular.</summary>
+    internal CameraTransform LiveCameraForTest => LiveCamera;
     internal bool LastCameraAnimated { get; private set; }
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;

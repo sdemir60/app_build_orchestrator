@@ -362,7 +362,11 @@ public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool F
 /// </summary>
 /// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
 /// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
-public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+/// <param name="RefusalReason">[Task 7] <paramref name="Succeeded"/> <c>false</c> VE reddetme gerçek bir
+/// REDSE (Dirty/Diverged/Detached) doldurulur; beklenmeyen bir hatada (ağ/kimlik) <c>null</c> kalır. App'in
+/// event stream'i bunu okur — konsolun açıklamalı <see cref="SyncProgressEvent.Line"/>'ını ayrıştırmadan KISA
+/// bir Warn satırı bileştirir (kopya YASAK: metin ayrıştırma yerine yapılandırılmış veri).</param>
+public sealed record PullCompletedEvent(bool Succeeded, PullRefusalReason? RefusalReason = null) : IpcEvent;
 /// <summary>
 /// [spec 2026-09-18 §6.3] <see cref="CheckoutBranchCommand"/>'ın sonucu — konsol satırlarının TEK girdisi (App
 /// satırları <c>PlanProgressLines</c>'tan kurar).

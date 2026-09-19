@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.RegularExpressions;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Tests.App;
 
@@ -43,7 +44,12 @@ public sealed class PlanProgressLinesTests
 
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'un satırları: App onları
     /// <c>CheckoutCompletedEvent</c>'ten kurar — başarıda temizlenen konsolun ilk satırları, reddetmede
-    /// korunan konsolun altına eklenen uyarı.</summary>
+    /// korunan konsolun altına eklenen uyarı.
+    /// <para><b>[DEĞİŞEN KURAL — Task 7]</b> Eski iddia: reddetme ve hata satırları öneksizdi
+    /// (<c>3 files have uncommitted changes — …</c>, <c>Switch failed — …</c>) ve konsolda düz tonda kalıyordu.
+    /// Değişme gerekçesi: bir git reddi gözden kaçıyordu; konsol satırı METNİNDEN boyadığı için
+    /// (§13.5) amber'in tek yolu <c>warning:</c> önekidir — bkz.
+    /// <see cref="Git_refusal_and_failure_lines_carry_the_warning_prefix_so_the_console_colours_them_amber"/>.</para></summary>
     [Fact]
     public void The_branch_switch_lines_say_what_happened_and_what_to_do()
     {
@@ -52,11 +58,25 @@ public sealed class PlanProgressLinesTests
         Assert.Equal(
             "Stashed uncommitted changes: \"build-orchestrator: leaving main for feature/x\" — restore them with git stash pop",
             PlanProgressLines.StashedBeforeSwitch("build-orchestrator: leaving main for feature/x"));
-        Assert.Equal("3 files have uncommitted changes — commit or stash them first",
+        Assert.Equal("warning: 3 files have uncommitted changes — commit or stash them first",
             PlanProgressLines.SwitchRefusedDirty(3));
-        Assert.Equal("1 file has uncommitted changes — commit or stash them first",
+        Assert.Equal("warning: 1 file has uncommitted changes — commit or stash them first",
             PlanProgressLines.SwitchRefusedDirty(1));
-        Assert.Equal("Switch failed — pathspec 'x' did not match", PlanProgressLines.SwitchFailed("pathspec 'x' did not match"));
+        Assert.Equal("warning: switch failed — pathspec 'x' did not match", PlanProgressLines.SwitchFailed("pathspec 'x' did not match"));
+    }
+
+    /// <summary>[Task 7] Kirli ağaç reddi, checkout hatası ve pull redleri artık <c>warning:</c> önekiyle
+    /// gider — konsolun TEK renklendirme sözleşmesi (<see cref="ConsoleLineClassifier"/>) metinden türetildiği
+    /// için (§13.5, Level alanından DEĞİL) bu önek bu satırların amber boyanmasının TEK yoludur; yeni bir
+    /// sınıflandırma mekanizması İCAT EDİLMEZ.</summary>
+    [Fact]
+    public void Git_refusal_and_failure_lines_carry_the_warning_prefix_so_the_console_colours_them_amber()
+    {
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.SwitchRefusedDirty(3)));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.SwitchFailed("exit 1")));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.PullRefusedDirty()));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.PullRefusedDiverged("main")));
+        Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.PullRefusedDetached()));
     }
 
     /// <summary>[spec 2026-09-18 §6.2] Kesilen koşunun özeti: kaç proje bitti, kaçı derlenmedi, log klasörü —

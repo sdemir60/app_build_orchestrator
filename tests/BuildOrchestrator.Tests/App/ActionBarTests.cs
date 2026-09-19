@@ -247,6 +247,37 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[Task 7] Pull reddi (kirli/ayrışmış/detached) konsola <c>warning:</c> önekli açıklamalı satırı
+    /// bırakır (bkz. <c>PullRepositoryTests</c>, Supervisor tarafı) VE event stream'e KISA bir Warn satırı
+    /// düşer — ikisi aynı olayı farklı ayrıntı seviyesinde anlatır (kopya YASAK: metin tek kaynak
+    /// <see cref="StreamText.PullRefused"/>'ta, reddetme nedeni <see cref="PullCompletedEvent.RefusalReason"/>'dan
+    /// yapılandırılmış gelir — konsol metni ayrıştırılmaz).</summary>
+    [Theory]
+    [InlineData(PullRefusalReason.Dirty)]
+    [InlineData(PullRefusalReason.Diverged)]
+    [InlineData(PullRefusalReason.Detached)]
+    public void A_refused_pull_writes_a_warn_line_to_the_stream(PullRefusalReason reason)
+    {
+        // [fırtına dışı] nowMs enjekte edilir — iki push arasında >340ms olmazsa StreamComposer'ın kendi
+        // fırtına kuralı Instant'ı true'ya çevirir ve Warn'ın "Fail gibi anında DEĞİL" kuralı ölçülemez.
+        long t = 0;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => t)
+            { RootPath = @"D:\repo" };
+        // İlk satır daktilo ETMEZ (prototip prevNewest==null) — reddi ikinci satır yapıp ShouldType'ı ölçülebilir kılar.
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
+        t += 1000;
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: false, RefusalReason: reason));
+
+        var line = vm.StreamEvents[^1];
+        Assert.Equal(StreamKind.Warn, line.Kind);
+        Assert.Equal(StreamText.PullRefused(reason), line.Text);
+        Assert.Equal("Brush.AmberText", line.TextBrushKey);
+        Assert.Null(line.GlyphStatus); // glyph yok → amber ▸
+        Assert.False(line.Instant);    // fırtına/hata değil → daktiloyla gelir (Fail gibi anında DEĞİL)
+        Assert.True(line.ShouldType);
+    }
+
     /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
     [StaFact]
     public void No_dot_when_git_is_idle()

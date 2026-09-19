@@ -161,8 +161,13 @@ public class StickyRevealTriggerTests
 
     // ---------------------------------------------------------------- [D3/T5 · design v1.13.2 §2.4/§9] Sync listeyi başa alır
 
+    /// <summary><c>count</c> katmansız proje (P0…P{count-1}) — TEK yer: fixture bununla kurar, AYNI yapıyla cevap
+    /// veren Sync'ler bunu yeniden yayınlar.</summary>
+    private static (string Name, string? Layer)[] ManyProjects(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => ($"P{i}", (string?)null))];
+
     private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithManyProjects(TempDir dir, int count) =>
-        MainWindowHost.NewWithProjects(dir, [.. Enumerable.Range(0, count).Select(i => ($"P{i}", (string?)null))]);
+        MainWindowHost.NewWithProjects(dir, ManyProjects(count));
 
     /// <summary>İKİNCİ (farklı) bir topoloji — <c>count</c> proje, <c>MainWindowHost.Node</c> ile BİREBİR aynı
     /// kural. Bir öncekinden en az bir proje FAZLA olduğundan <c>TopologySignature</c> her zaman değişir (bkz.
@@ -209,19 +214,9 @@ public class StickyRevealTriggerTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[spec 2026-09-18 §1-13 · §6.2] <b>Yapısı aynı bir Sync listeyi YERİNDE tazeler — kaydırma
-    /// konumu korunur.</b> Reveal'i yeniden oynatan tek şey yapısal imzanın değişmesidir (kardeş test
-    /// <see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/> o yoldan geçer).
-    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
-    /// <c>A_no_changes_sync_returns_the_list_to_the_top</c> — aynı topolojiyle biten bir Sync de reveal'i oynatır
-    /// ve listeyi başa alır (<c>_syncInFlight</c> imza guard'ını geçiyordu). Değişme gerekçesi: Sync artık
-    /// kendiliğinden de koşar (commit, pencereye dönüş); kullanıcının baktığı yer her seferinde başa sarılırdı.</para></summary>
-    [StaFact]
-    public void A_sync_with_the_same_structure_updates_in_place()
+    /// <summary>60 projelik listeyi kaydırır (150px) ve reveal taban çizgisini döndürür — iki kardeş testin ortak girişi.</summary>
+    private static int ScrollManyProjects(StickyLayerList list)
     {
-        using var dir = new TempDir();
-        var (window, vm, list) = NewWithManyProjects(dir, 60);
-
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         int before = list.RevealGeneration;
         Assert.True(before > 0, "ilk reveal hiç oynamadı — bu testin taban çizgisi yok (vakum)");
@@ -230,16 +225,64 @@ public class StickyRevealTriggerTests
         list.Scroll.ScrollToVerticalOffset(150);
         DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset >= 149.5, TimeSpan.FromSeconds(3));
         Assert.True(list.Scroll.VerticalOffset >= 149.5, "test scroll'u tutmadı — ön-koşul kurulamadı");
+        return before;
+    }
 
-        // ÜRETİM YOLU: Sync başlar, AYNI 60 proje yeniden yayınlanır (imza AYNI), Sync biter.
-        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
-        vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(60), [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 60, 0));
+    /// <summary>[spec 2026-09-18 §1-13 · §6.2 · task 3] <b>Kendiliğinden (Silent) ve Appended Sync, yapı aynıyken
+    /// listeyi YERİNDE tazeler — kaydırma konumu korunur.</b> Reveal'i bu kiplerde yeniden oynatan tek şey yapısal
+    /// imzanın değişmesidir (kardeş test <see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/>
+    /// o yoldan geçer).
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
+    /// <c>A_no_changes_sync_returns_the_list_to_the_top</c> — aynı topolojiyle biten bir Sync de reveal'i oynatır
+    /// ve listeyi başa alır (<c>_syncInFlight</c> imza guard'ını geçiyordu). Değişme gerekçesi: Sync artık
+    /// kendiliğinden de koşar (commit, pencereye dönüş); kullanıcının baktığı yer her seferinde başa sarılırdı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Bir önceki hâl kipten BAĞIMSIZDI (HER Sync yerinde
+    /// tazeler; Sync kip seçilmeden olaylarla sürülüyordu). Değişme gerekçesi: kullanıcı Sync düğmesine ve branch
+    /// değişimine "ekranı baştan başlat" anlamını verdi — o iki kipin kuralı
+    /// <see cref="A_restarting_sync_with_the_same_structure_returns_the_list_to_the_top"/>'ta.</para></summary>
+    [StaTheory]
+    [InlineData(SyncMode.Silent)]
+    [InlineData(SyncMode.Appended)]
+    public async Task A_sync_with_the_same_structure_updates_in_place(SyncMode mode)
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+        int before = ScrollManyProjects(list);
+
+        // ÜRETİM YOLU: kipin kendi girişi, motor AYNI 60 projeyle cevap verir (imza AYNI).
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, mode);
+        MainWindowHost.ReplySync(vm, ManyProjects(60));
 
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(300)); // reveal/scroll (olsaydı) pompada ilerlerdi
         Assert.Equal(before, list.RevealGeneration); // reveal OYNAMADI
         Assert.True(list.Scroll.VerticalOffset >= 149.5,
             $"[spec 2026-09-18 §1-13] yapısı aynı Sync kaydırma konumunu korumalıydı (VerticalOffset={list.Scroll.VerticalOffset})");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Sync düğmesi ve branch değişimi ekranı baştan başlatır:
+    /// yapı aynı olsa da reveal yeniden oynar ve (seçim düştüğü için) liste başa döner — standart açılış.</summary>
+    [StaTheory]
+    [InlineData(SyncMode.Manual)]
+    [InlineData(SyncMode.BranchChange)]
+    public async Task A_restarting_sync_with_the_same_structure_returns_the_list_to_the_top(SyncMode mode)
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = NewWithManyProjects(dir, 60);
+        ScrollManyProjects(list);
+
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, mode);
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
+        int afterClick = list.RevealGeneration;
+        MainWindowHost.ReplySync(vm, ManyProjects(60));
+
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterClick, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(afterClick, list.RevealGeneration); // reveal OYNADI
+        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset <= 0.5, TimeSpan.FromSeconds(3));
+        Assert.True(list.Scroll.VerticalOffset <= 0.5,
+            $"[task 3] baştan başlatan Sync listeyi başa almalıydı (VerticalOffset={list.Scroll.VerticalOffset})");
         GC.KeepAlive(window);
     }
 

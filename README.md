@@ -172,7 +172,11 @@ the running instance first — tray icon → Exit).
    line to the event stream (`synced after commit`, `synced · 3 projects changed`). They do not go to the
    network either, so the `N behind` count they show is against the last remote state you fetched; the *Sync*
    button fetches. The list and the graph are only rebuilt with their opening animation when a project was
-   added or removed — otherwise the rows simply change colour in place.
+   added or removed — otherwise the rows simply change colour in place, the graph keeps its zoom, and rows the
+   last build finished are re-decided too, so a project that changed in the background turns grey again.
+   Pressing *Sync* yourself, or changing branch, starts the screen over instead: the list and the graph empty
+   together with the console and the event stream, then come back with their opening animation and the graph
+   fitted to the panel. If that Sync fails, the previous list and graph come back.
 
    **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
    will be built, red when its last build failed with a compiler error. A project you built in Visual Studio is
@@ -191,7 +195,8 @@ the running instance first — tray icon → Exit).
    The Sync line in the console also says where you stand against the remote:
    `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next
    to the branch chip; clicking it fast-forwards the repository (`merge --ff-only` — never a merge commit, never
-   a rebase, and never on a dirty or diverged tree; stashing does not apply here) and runs a Sync afterwards. The
+   a rebase, and never on a dirty or diverged tree; stashing does not apply here) and runs a Sync afterwards. A
+   refused pull says why in an amber console line and a short line in the event stream. The
    chip is locked while a build, a Sync or another git action is running, and while git itself is in the middle
    of an operation. Offline, the distance is unknown and the chip is not drawn. The tool writes to your
    repository only when you click: this chip, the branch chip below, and the external working copies of step 4.
@@ -199,8 +204,9 @@ the running instance first — tray icon → Exit).
    its list checks it out (`git checkout`; a remote branch gets a local tracking branch), then the console
    starts over with a `Switched to <branch> (<sha>) — from <previous>` line and a Sync follows. If the working
    tree has uncommitted changes, *Settings → General → Stash and switch branches* decides:
-   - **off** (default) — nothing happens, and the console says `N files have uncommitted changes — commit or
-     stash them first`;
+   - **off** (default) — nothing happens: the console says, in amber, `warning: N files have uncommitted
+     changes — commit or stash them first`, and the event stream adds `branch switch refused — N uncommitted
+     files`;
    - **on** — the changes, untracked files included, are stashed first (`build-orchestrator: leaving <branch>
      for <target>`) and the console tells you to restore them with `git stash pop`. The tool never pops a
      stash for you.
@@ -301,7 +307,8 @@ project alone, and it compiles it even when nothing changed: pressing play is an
 for building again, because its outputs are gone. Dependencies are never rebuilt, and one that is stale is
 reported as a dependency issue on the row and in the project log, so a later *Build* compiles the project
 again once that dependency is healthy again — not on every *Build* regardless.
-Starting from a row clears the selection, so a graph focused on some node returns to the fitted view. While
+Starting from a row clears the selection, so a graph focused on some node returns to the fitted view; the
+filter stays, as it does for every build. While
 the run is in flight the row's play button becomes a red Stop and the other rows' actions wait.
 
 **Layer headings jump.** Hover one and it lifts a step; click it (mouse only — it is not a Tab stop) and the
@@ -403,9 +410,13 @@ bright for a moment before settling. Projects that are skipped settle quietly wi
 they stay exactly as dim as the queue and never move at all, because the graph is there to show what changed
 and they did not. The camera does not follow the run — it stays where you left it. Filtering the list dims the
 graph to match: the projects still in the list stay bright, everything else fades back, and the fade is slower
-than the ones a run makes so it can be followed by eye.
+than the ones a run makes so it can be followed by eye. Building keeps your filter — the list stays filtered —
+but the graph shows the whole run unfiltered, from the opening sequence to the closing lights, and returns to
+the filtered view a moment after they end — a stopped run too, when it built something (at once if nothing was
+built).
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
-clicking empty background with nothing selected returns the view to its default.
+clicking empty background with nothing selected returns the view to its default, and a graph rebuilt by a Sync
+always starts from that default view.
 
 You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
 a build is running the product mark animates in the bottom-right corner of the screen — click it to bring the

@@ -11,8 +11,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [tek proje · design v1.11.0 §3.8] Satırdan tetiklenen koşunun VM tarafı: play/⋯ → <see
 /// cref="RunViewModel.BuildProjectCommand"/>/<see cref="RunViewModel.RebuildProjectCommand"/>. Satırdan
-/// tetiklemek satıra tıklamak DEĞİLDİR: seçim + filtre düşer (graf odaktan fit görünüme, konsol ana loga
-/// döner), koreografi yalnız hedef satırla oynar, komut kapsamı taşır. Koşu boyunca hedef satır işaretlidir
+/// tetiklemek satıra tıklamak DEĞİLDİR: seçim düşer (graf odaktan fit görünüme, konsol ana loga döner),
+/// filtre korunur (kullanıcı kararı 2026-09-19), koreografi yalnız hedef satırla oynar, komut kapsamı taşır. Koşu boyunca hedef satır işaretlidir
 /// (play → Stop) ve her satır kilidi bilir (busy tooltip'i).
 /// </summary>
 public class RowBuildCommandTests
@@ -31,8 +31,12 @@ public class RowBuildCommandTests
 
     private static ProjectRowViewModel Row(RunViewModel vm, string id) => vm.Projects.Single(r => r.Id == id);
 
+    /// <summary><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Eski ad/iddia:
+    /// <c>Build_project_sends_a_scoped_build_and_clears_selection_and_filter</c> — satırdan tetiklenen koşu
+    /// filtreyi de düşürüyordu. Değişme gerekçesi: tam koşudaki kuralın aynısı — Build filtreyi silmez, yalnız
+    /// seçim düşer (bkz. <c>RunViewModelStateTests.Build_and_retry_clear_the_selection_but_keep_the_filter_and_the_search</c>).</summary>
     [Fact]
-    public async Task Build_project_sends_a_scoped_build_and_clears_selection_and_filter()
+    public async Task Build_project_sends_a_scoped_build_clears_the_selection_and_keeps_the_filter()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
@@ -47,7 +51,7 @@ public class RowBuildCommandTests
         Assert.Equal(RunMode.Build, sent!.Mode);
         Assert.Equal(A, sent.ScopeProjectId);
         Assert.Null(vm.SelectedProjectId);         // odak düşer → graf fit görünüme döner
-        Assert.Empty(vm.ActiveFilters);
+        Assert.Equal([ProjectFilter.Failed], vm.ActiveFilters.Order()); // filtre KORUNUR (kullanıcı kararı 2026-09-19)
         Assert.Contains("build requested — a (single project)", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
@@ -81,7 +85,7 @@ public class RowBuildCommandTests
 
     /// <summary>
     /// <b>Satırdaki play ile ⋯ menüsünün Build maddesi AYNI yoldan geçer</b> — ikisi de aynı komuta aynı
-    /// hedefi verir, dolayısıyla seçim düşmesi (graf odaktan fit görünüme dönmesi), filtre sıfırlaması,
+    /// hedefi verir, dolayısıyla seçim düşmesi (graf odaktan fit görünüme dönmesi), filtrenin korunması,
     /// koreografi kapsamı ve gönderilen komut BİREBİR aynıdır.
     /// <para>Bu test kullanıcı bildirimi üzerine yazıldı ("play çalışıyor, menüden Build'de fit olmuyor"):
     /// iki yolun ayrışabileceği tek yer komutun kendisidir ve o da paylaşılır. Menü, komutu satırın kendi
@@ -118,7 +122,8 @@ public class RowBuildCommandTests
 
         Assert.Null(viaMenu.Selection);                       // seçim düştü → graf fit görünüme döner
         Assert.Equal(viaPlay.Selection, viaMenu.Selection);
-        Assert.Empty(viaMenu.Filters);
+        Assert.Equal([ProjectFilter.Failed], viaMenu.Filters.Order()); // filtre korunur (kullanıcı kararı 2026-09-19)
+        Assert.Equal(viaPlay.Filters.Order(), viaMenu.Filters.Order());
         Assert.Equal([A], viaMenu.Scope);                     // koreografi yalnız hedefi işaretler
         Assert.Equal(viaPlay.Scope, viaMenu.Scope);
         Assert.Equal(viaPlay.Sent with { RunId = "" }, viaMenu.Sent with { RunId = "" }); // runId dışında AYNI komut

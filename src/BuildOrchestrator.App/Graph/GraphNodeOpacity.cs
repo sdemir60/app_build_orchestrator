@@ -94,6 +94,12 @@ public static class GraphNodeOpacity
     /// v1.13.2): "Beads halkası amber dönerken gövdenin 0.1'de kalması 'derlenmiyor' gibi okunuyordu."
     /// İstisna YALNIZ <paramref name="hasSelection"/> dalına aittir — <paramref name="hasFilter"/> dalında
     /// YOK (prototipte filtre satırında <c>live</c> istisnası yok, BuildApp.jsx:545,562-563).</para>
+    ///
+    /// <para><b>[kullanıcı kararı 2026-09-19]</b> Filtre dalı bir koşu boyunca HİÇ sorulmaz: graf Build
+    /// tıklamasından koşunun bitişi tamamlanana dek filtreyi askıya alır ve buraya <paramref name="hasFilter"/>
+    /// = <c>false</c> geçer (<c>GraphView.IsFilterSuspended</c>) — koşu kuralı uygulanır. Filtre dalında bir
+    /// <c>live</c> istisnası bu yüzden gerekmez; askı kararı bu saf fonksiyonun değil, zamanlamayı bilen
+    /// görsel tarafındır.</para>
     /// </summary>
     /// <param name="status">Düğümün statüsü.</param>
     /// <param name="phase">Koşu sürüyor mu.</param>

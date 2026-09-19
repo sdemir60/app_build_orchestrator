@@ -150,13 +150,19 @@ public class OperationPipelineTests
     /// Clean gibi tıklama anında <c>ClearPlanSurface</c> çağırırdı — liste ve graf boşalır, topoloji gelince
     /// yeniden dolardı. Değişme gerekçesi: kendiliğinden Sync'ler (commit, pencereye dönüş) sıklaştı ve her biri
     /// listeyi sarsıyordu; yapı aynıyken boşaltmak hiçbir bilgi taşımıyor.</para>
+    /// <para><b>[task 3 · kullanıcı kararı 2026-09-19]</b> Sync düğmesi artık EKRANDA liste ve grafı boşaltıp
+    /// reveal'le geri getirir (<c>ProjectListFilterTests.A_restarting_sync_*</c>) — ama bu, VM'in listesi ve
+    /// topolojisi üzerinden DEĞİL: bu test VM verisinin tıklamada durduğunu pinler ve gönderimi başarılı kurar ki
+    /// iddia yeniden başlatma SÜRERKEN ölçülsün (düşen gönderim yüzeyi hemen geri getirirdi).</para>
     /// </summary>
     [Fact]
-    public async Task A_sync_click_keeps_the_list_and_the_graph()
+    public async Task A_sync_click_keeps_the_plan_in_the_view_model()
     {
         var vm = AfterOneCompletedRun();
+        MainWindowHost.AcceptSends(vm);
 
         await vm.SyncCommand.ExecuteAsync(null);
+        Assert.True(vm.PlanSurfaceRestarting); // ön-koşul: ekran baştan başlıyor — ölçüm o pencerede
 
         Assert.Equal(["A", "B", "C"], vm.Projects.Select(r => r.Name));
         Assert.Equal(3, vm.Topology.Count);

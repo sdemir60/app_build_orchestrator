@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Graph;
+using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -36,6 +38,13 @@ public sealed class IncrementalRunBinder
     private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
     // [Faz 3/Task 4] OutputsById TEMBEL hesaplanır — yalnız istenirse (başarılı derlemeler için Supervisor okur).
     private IReadOnlyDictionary<string, ProjectOutputs>? _outputsById;
+    // [Task 4 — sync-graph-polish] Aynı ikisi TEMBEL: DLL adı → üreten proje (ChecksFor'un döngü kardeşi
+    // filtresi için) ve plan.Cycles'ın üyelik haritası. İkisi de plan/evaluatedById DEĞİŞMEDİĞİ için koşu
+    // boyunca BİR KEZ kurulur. Döngü üyeliği plan.Cycles'tan okunur (ikinci bir SCC hesabı YOK); üretici haritası
+    // ise planın (BuildPlanBuilder) kurduğunun AYNI kurucuyla (ProducerMapBuilder.Build) AYNI değerlendirilmiş
+    // projeler üzerinden yeniden kurulur — plan haritayı taşımadığı için. Kural tek kaynaktadır, kopya yoktur.
+    private ProducerMap? _producerMap;
+    private CycleGroups? _cycleGroups;
 
     /// <param name="plan">Bağlanacak plan.</param>
     /// <param name="evaluatedById">projectId (tam csproj yolu) → değerlendirme; eksik proje yalnız kendi
@@ -132,15 +141,18 @@ public sealed class IncrementalRunBinder
     public IReadOnlyDictionary<string, OutputCheck> ChecksFor(IReadOnlyDictionary<string, BuildState> state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        var outputsById = OutputsById; // tembel alan paralel döngüden ÖNCE bir kez kurulur
+        var outputsById = OutputsById; // tembel alanlar paralel döngüden ÖNCE bir kez kurulur
+        var producerMap = _producerMap ??= ProducerMapBuilder.Build([.. _evaluatedById.Values]);
+        var cycleGroups = _cycleGroups ??= CycleGroups.From(_plan);
 
         OutputCheck CheckOf(string id, bool timeOnly)
         {
             var outputs = outputsById.GetValueOrDefault(id);
             var record = state.GetValueOrDefault(id);
             IReadOnlyList<string> inputFiles = [.. InputsOf(id).Select(i => i.Path)];
-            IReadOnlyList<string> hintTargets =
+            IReadOnlyList<string> ownHints =
                 _evaluatedById.TryGetValue(id, out var evaluated) ? evaluated.HintPathTargets() : [];
+            IReadOnlyList<string> hintTargets = ExcludingSameCycleSiblings(id, ownHints, cycleGroups, producerMap);
             return timeOnly
                 ? OutputEvidence.TimeCheck(outputs, record, inputFiles, FoldersOf(id), hintTargets)
                 : OutputEvidence.Inspect(outputs, record, inputFiles, FoldersOf(id), hintTargets);
@@ -150,6 +162,29 @@ public sealed class IncrementalRunBinder
         Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 },
             node => checks[node.Id] = CheckOf(node.Id, timeOnly: false));
         return OutputEvidence.ApplyCycleGroups(checks, _plan.Cycles, id => CheckOf(id, timeOnly: true));
+    }
+
+    /// <summary>
+    /// [Task 4 — ARCHITECTURE §7.6 "Cycle groups"] Zaman kipinde bir döngü üyesinin <c>DependencyNewer</c>
+    /// kontrolü AYNI SCC'deki kardeşlerin çıktısını SAYMAZ: üyeler sırayla dışarıda derlendiğinde biri hep
+    /// ötekinden yeni kalır ve <see cref="OutputEvidence.ApplyCycleGroups"/>'un <c>allFresh</c>'i hiç
+    /// gerçekleşemezdi — grup pratikte hiçbir zaman "built outside" okunamıyordu. Döngü DIŞI hedefler
+    /// dokunulmadan sayılır (bir upstream'in gerçekten yeni çıktısı hâlâ grubu bayatlatır).
+    ///
+    /// <para>Üyelik <paramref name="cycleGroups"/>'tan (plan.Cycles'ın hazır üyelik haritası) okunur, üretici
+    /// kimliği <paramref name="producerMap"/>'ten (graf kenarlarını kuran AYNI <c>ProducerMapBuilder.Build</c>'in
+    /// aynı projeler üzerindeki çıktısı — bkz. <see cref="_producerMap"/>) — kural tek kaynaktadır, burada
+    /// yeniden yazılmaz (kopya YASAK, CLAUDE.md).</para>
+    /// </summary>
+    private static IReadOnlyList<string> ExcludingSameCycleSiblings(
+        string id, IReadOnlyList<string> hints, CycleGroups cycleGroups, ProducerMap producerMap)
+    {
+        var siblings = cycleGroups.MembersOf(id);
+        if (siblings.Count == 0) return hints; // döngü üyesi değil: hiçbir hedef elenmez
+
+        return [.. hints.Where(target =>
+            !producerMap.DllToProducer.TryGetValue(Path.GetFileName(target), out string? producer)
+            || !siblings.Contains(producer, StringComparer.OrdinalIgnoreCase))];
     }
 
     /// <summary>

@@ -188,6 +188,14 @@ public partial class MainWindow : Window
         // reset orada meşru — StickyLayerList); statü tikleri satır VM'lerinin INotifyPropertyChanged'inden akar.
         // [D5] Aynı topoloji sinyalinde grafı da yeniden kur (SetGraph = tam yeniden inşa + reveal stagger).
         _vm.TopologyChanged += (_, _) => { RefreshProjectGroups(); RebuildGraph(); };
+        // [task 3] Sync düğmesi / branch değişimi ekranı baştan başlatır: liste ve graf konsolla AYNI anda boşalır.
+        // Geri getiren şey her yolda bir sonraki TopologyChanged'dir (topoloji ya da düşen Sync) — bayrağın
+        // inişine ayrıca abone olunmaz.
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.PlanSurfaceRestarting) && _vm.PlanSurfaceRestarting)
+                BlankPlanSurface();
+        };
         // [plan kanalı] Önizleme grafın ÜÇÜNCÜ besleme sinyalidir. Topoloji önizlemeden ÖNCE geldiği için
         // SetGraph anında satırlar planı henüz bilmez; statü kanalı (Counters) ise WillBuild'i taşımaz ve
         // record-struct eşitliğiyle bildirimi yutar. Bu abonelik olmadan Sync'ten sonra küpler nötr kalır.
@@ -657,8 +665,23 @@ public partial class MainWindow : Window
     /// sırası/kimliği gerçekten değiştiğinde WPF'e dokunulur.</para></summary>
     private void RefreshVisibleRows()
     {
+        // [task 3] Ekran baştan başlarken liste boş DURUR: ara bildirimler (önizleme, satır statüsü) onu sessizce
+        // yeniden doldurmasın — geri dönüş reveal'li TopologyChanged yolundandır.
+        if (_vm.PlanSurfaceRestarting) return;
         if (VisibleRowSignature() == _visibleRowSignature) return;
         ApplyProjectGroups(reveal: false);
+    }
+
+    /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Liste ve grafı EKRANDA boşaltır (VM'e dokunmaz — bkz.
+    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf Sync-öncesi etiketini göstermez: Sync zaten sürüyor,
+    /// panel yalnız boş/sakin durur. Liste daveti VM'den karar verilir ve satırlar VM'de durduğu için çıkmaz.</summary>
+    private void BlankPlanSurface()
+    {
+        Shell.ProjectsList.SetGroups([], reveal: false);
+        _orderedRows = [];
+        _visibleRowSignature = "";
+        Shell.GraphHost.CancelEndFinale(); // oynayan final kesilir, filtre döner — reveal filtreli oynar
+        Shell.GraphHost.SetGraph([], [], showEmptyState: false);
     }
 
     /// <summary>[D1] VM'in katman gruplarını StickyLayerList'e verir. <paramref name="reveal"/> = kademeli
@@ -853,6 +876,10 @@ public partial class MainWindow : Window
                     // HEMEN silinir: hiçbir preview asla gelmeyecektir.
                     if (!_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
                 }
+                // [kullanıcı kararı 2026-09-19] Koşu bitti ya da hiç başlamadı (tamamlanma, Stop, motor ölümü,
+                // düşen gönderim, koreografide iptal — hepsi kilidi düşürür): graf filtreye döner — final
+                // oynuyorsa dönüşü finalin kendisi yapar (GraphView.EndOperation).
+                if (!_vm.IsMidRunLocked) Shell.GraphHost.EndOperation();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
