@@ -427,4 +427,123 @@ public sealed class IncrementalRunBinderTests : IDisposable
         Assert.Equal(WillBuildReason.OutputStale, bound.Nodes[0].WillBuildReason);
         Assert.Equal(WillBuildReason.UpToDate, bound.Nodes[1].WillBuildReason);
     }
+
+    // ---- [Task 4] Döngü grubu zaman kipi: kardeşin çıktısı DependencyNewer'a girmez --------------------
+
+    /// <summary>
+    /// Üç üyeli gerçek bir SCC: A → B (HintPath), B → C (HintPath), C → A (HintPath) — hiçbiri defterde kayıtlı
+    /// değil (hepsi zaman kipinde). Ayrıca döngü DIŞI bir üretici D: yalnız A onun HintPath'ini taşır.
+    /// Kaynaklar hepsinde <see cref="EvidenceTimes.InputsAt"/>'ta; her üyenin KENDİ dll'i çağıranın verdiği
+    /// zamanda — kardeş dll'lerin birbirinden ileri geri olması testin konusu, çağıran ayarlar.
+    /// </summary>
+    private (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> Evaluated, string A, string B, string C, string D)
+        ThreeMemberCycleWithOutsideUpstream(string root, DateTime aDllAt, DateTime bDllAt, DateTime cDllAt, DateTime dDllAt)
+    {
+        const string Legacy = """
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <PropertyGroup><AssemblyName>{0}</AssemblyName><OutputType>Library</OutputType></PropertyGroup>
+              <ItemGroup>
+                <Compile Include="{0}.cs" />
+                {1}
+              </ItemGroup>
+            </Project>
+            """;
+        static string Ref(string name) =>
+            $"""<Reference Include="{name}"><HintPath>..\{name}\bin\Debug\{name}.dll</HintPath></Reference>""";
+
+        string a = Write(Path.Combine(root, "A"), "A.csproj", string.Format(Legacy, "A", Ref("B") + Ref("D")));
+        string b = Write(Path.Combine(root, "B"), "B.csproj", string.Format(Legacy, "B", Ref("C")));
+        string c = Write(Path.Combine(root, "C"), "C.csproj", string.Format(Legacy, "C", Ref("A")));
+        string d = Write(Path.Combine(root, "D"), "D.csproj", string.Format(Legacy, "D", ""));
+        foreach (string name in new[] { "A", "B", "C", "D" })
+            Write(Path.Combine(root, name), name + ".cs", "class " + name + " {}");
+
+        EvidenceTimes.Stamp(root,
+        [
+            Write(Path.Combine(root, "A", "bin", "Debug"), "A.dll", "a-binary"),
+            Write(Path.Combine(root, "B", "bin", "Debug"), "B.dll", "b-binary"),
+            Write(Path.Combine(root, "C", "bin", "Debug"), "C.dll", "c-binary"),
+            Write(Path.Combine(root, "D", "bin", "Debug"), "D.dll", "d-binary"),
+        ]);
+        // Stamp herkesi InputsAt/EvidenceAt'a çeker; üye dll'lerinin BİRBİRİNE göre sırasını burada elle veririz.
+        File.SetLastWriteTimeUtc(Path.Combine(root, "A", "bin", "Debug", "A.dll"), aDllAt);
+        File.SetLastWriteTimeUtc(Path.Combine(root, "B", "bin", "Debug", "B.dll"), bDllAt);
+        File.SetLastWriteTimeUtc(Path.Combine(root, "C", "bin", "Debug", "C.dll"), cDllAt);
+        File.SetLastWriteTimeUtc(Path.Combine(root, "D", "bin", "Debug", "D.dll"), dDllAt);
+
+        var evaluator = new CsprojEvaluator();
+        var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)
+        {
+            [a] = evaluator.Evaluate(a),
+            [b] = evaluator.Evaluate(b),
+            [c] = evaluator.Evaluate(c),
+            [d] = evaluator.Evaluate(d),
+        };
+        var plan = new BuildPlan(
+        [
+            new ProjectNode(a, "A", a, [], [b, d], 0, null, null, InCycle: true, WillBuild: null),
+            new ProjectNode(b, "B", b, [], [c], 0, null, null, InCycle: true, WillBuild: null),
+            new ProjectNode(c, "C", c, [], [a], 0, null, null, InCycle: true, WillBuild: null),
+            new ProjectNode(d, "D", d, [], [], 0, null, null, InCycle: false, WillBuild: null),
+        ], [[a, b, c]], "Debug");
+        return (plan, evaluated, a, b, c, d);
+    }
+
+    /// <summary>
+    /// [Kusur] Üyeler SIRAYLA dışarıda derlenmiş (A önce, sonra B, sonra C — her dll bir öncekinden yeni).
+    /// A'nın HintPath hedefi B'nin dll'i (yeni), B'ninki C'nin dll'i (yeni) — döngü DIŞI D'nin dll'i hepsinden
+    /// eski. Doğru davranış: kardeş çıktıları sayılmaz ⇒ üçü de taze/<c>BuiltOutside</c>. Düzeltmeden önce
+    /// <c>ChecksFor</c> ham (filtresiz) HintPath hedeflerini kullandığı için A ve B <c>DependencyNewer</c>
+    /// okunur, <c>ApplyCycleGroups</c> grubu hep bayat bırakır.
+    /// </summary>
+    [Fact]
+    public void A_cycle_built_outside_in_sequence_is_fresh_when_siblings_are_excluded()
+    {
+        string root = NewRoot();
+        var t0 = EvidenceTimes.InputsAt;
+        var (plan, evaluated, a, b, c, _) = ThreeMemberCycleWithOutsideUpstream(
+            root, aDllAt: t0.AddMinutes(10), bDllAt: t0.AddMinutes(11), cDllAt: t0.AddMinutes(12), dDllAt: t0.AddMinutes(9));
+
+        var checks = new IncrementalRunBinder(plan, evaluated, root, FreshCache()).ChecksFor(NoState);
+
+        Assert.Equal(TimeVerdict.Fresh, checks[a].Time);
+        Assert.Equal(TimeVerdict.Fresh, checks[b].Time);
+        Assert.Equal(TimeVerdict.Fresh, checks[c].Time);
+    }
+
+    /// <summary>Aynı gruptaki bir üyenin (B) kendi kaynağı kendi dll'inden yeni ⇒ grubun TAMAMI bayat: A ve C
+    /// kendi kontrollerini geçer ama grup tazeliği topluca reddedildiği için <c>DependencyNewer</c>'a çekilir,
+    /// B kendi hükmünü (<c>OwnNewer</c>) korur. Bu kural KORUNUR — kardeş filtresi bunu bozmaz.</summary>
+    [Fact]
+    public void One_member_with_a_newer_source_keeps_the_whole_cycle_stale()
+    {
+        string root = NewRoot();
+        var t0 = EvidenceTimes.InputsAt;
+        var (plan, evaluated, a, b, c, _) = ThreeMemberCycleWithOutsideUpstream(
+            root, aDllAt: t0.AddMinutes(10), bDllAt: t0.AddMinutes(11), cDllAt: t0.AddMinutes(12), dDllAt: t0.AddMinutes(9));
+        File.SetLastWriteTimeUtc(Path.Combine(root, "B", "B.cs"), t0.AddMinutes(20)); // B.cs > B.dll
+
+        var checks = new IncrementalRunBinder(plan, evaluated, root, FreshCache()).ChecksFor(NoState);
+
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[a].Time);
+        Assert.Equal(TimeVerdict.OwnNewer, checks[b].Time);
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[c].Time);
+    }
+
+    /// <summary>Döngü DIŞI D'nin dll'i A'nın (bir üyenin) dll'inden yeni ⇒ grup bayat — döngü dışı upstream'ler
+    /// SAYILMAYA devam eder, kardeş filtresi yalnız AYNI SCC'deki üreticileri eler.</summary>
+    [Fact]
+    public void An_outside_cycle_upstream_still_stales_the_whole_group()
+    {
+        string root = NewRoot();
+        var t0 = EvidenceTimes.InputsAt;
+        var (plan, evaluated, a, b, c, _) = ThreeMemberCycleWithOutsideUpstream(
+            root, aDllAt: t0.AddMinutes(10), bDllAt: t0.AddMinutes(11), cDllAt: t0.AddMinutes(12), dDllAt: t0.AddMinutes(15));
+
+        var checks = new IncrementalRunBinder(plan, evaluated, root, FreshCache()).ChecksFor(NoState);
+
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[a].Time);
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[b].Time);
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[c].Time);
+    }
 }
