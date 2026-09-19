@@ -126,6 +126,31 @@ public class BuildStateStoreTests : IDisposable
         Assert.Null(old.FailedAt);
     }
 
+    /// <summary>
+    /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] <see cref="BuildState.FedOutputs"/> içerikle round-trip eder (liste
+    /// alanı — JSON round-trip farklı örnek üretir) ve bu alandan ÖNCE yazılmış bir kayıt (serializer'ın
+    /// bugünkü çıktısından değil, alan eklenmeden önceki biçimin birebir kopyasından) <c>null</c>'a çözülür —
+    /// <see cref="Dep_issue_roots_round_trip_and_a_record_written_before_the_field_still_loads"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Fed_outputs_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.FedOutputs);
+
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", FedOutputs: [@"C:\lib\New.dll"]);
+        store.Upsert(fresh);
+
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal([@"C:\lib\New.dll"], back.FedOutputs);
+        Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {

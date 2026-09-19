@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -39,12 +40,18 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// <param name="ContentById">[v1.16.0] Proje → KENDİ girdi dosyalarının içerik özeti. İki yere gider:
 /// başarılı bir derlemede deftere (<see cref="BuildState.BuiltContent"/>) ve önizlemeye — satırın
 /// <c>modified</c> ↔ <c>affected</c> ayrımı, deftere yazılmış özetle bugünkünün karşılaştırmasıdır.</param>
+/// <param name="OutputsById">[Faz 3/Task 4 — spec 2026-09-18 §5.1] Proje → çıktı kanıtı + beslenen aday kopyalar
+/// (<see cref="Core.Incremental.OutputEvidence.Locate"/>, <see cref="IncrementalRunBinder.OutputsById"/>).
+/// Başarılı bir derlemeden sonra <see cref="OutputEvidence.LearnFedOutputs"/> BUNDAN okur ve gerçekten beslenen
+/// kopyaları <see cref="BuildState.FedOutputs"/>'a yazar. Kayıt yoksa (testlerdeki basit planner) o proje için
+/// öğrenme yapılmaz (<c>null</c> ⇒ <see cref="BuildState.FedOutputs"/> null kalır).</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
     string? Branch,
     IReadOnlyDictionary<string, string>? CommitByProjectId = null,
-    IReadOnlyDictionary<string, string?>? ContentById = null);
+    IReadOnlyDictionary<string, string?>? ContentById = null,
+    IReadOnlyDictionary<string, ProjectOutputs>? OutputsById = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
@@ -1835,7 +1842,10 @@ public sealed class RunCoordinator(
             : inc.HeadCommit;
         var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
             DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssueRoots is not null,
-            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots);
+            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots,
+            // [Faz 3/Task 4 — spec 2026-09-18 §5.1] Bu derlemenin GERÇEKTEN güncellediği havuz kopyaları —
+            // OutputsById'de kayıt yoksa (testlerdeki basit planner, kanıtsız proje) null (öğrenme yok).
+            FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)));
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }

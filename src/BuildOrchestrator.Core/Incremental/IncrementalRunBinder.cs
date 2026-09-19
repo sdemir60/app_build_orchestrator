@@ -27,10 +27,13 @@ public sealed class IncrementalRunBinder
     private readonly BuildPlan _plan;
     private readonly string _workspaceRoot;
     private readonly SourceHashCache _hashes;
+    private readonly IReadOnlyDictionary<string, EvaluatedProject> _evaluatedById;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _foldersById;
     // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
     private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
+    // [Faz 3/Task 4] OutputsById TEMBEL hesaplanır — yalnız istenirse (başarılı derlemeler için Supervisor okur).
+    private IReadOnlyDictionary<string, ProjectOutputs>? _outputsById;
 
     /// <param name="plan">Bağlanacak plan.</param>
     /// <param name="evaluatedById">projectId (tam csproj yolu) → değerlendirme; eksik proje yalnız kendi
@@ -51,6 +54,7 @@ public sealed class IncrementalRunBinder
         _plan = plan;
         _workspaceRoot = Path.GetFullPath(workspaceRoot);
         _hashes = hashes;
+        _evaluatedById = evaluatedById;
         // Girdi toplama proje başına BAĞIMSIZDIR ve büyük kısmı klasör taramasıdır (IO). Gerçek OSYS'te 177
         // projenin toplamı seri koşuşta ölçülebilir bir gecikmeydi; paralel toplamak sonucu değiştirmez.
         // [Task 2] Klasörler de AYNI taramadan (CollectWithFolders) toplanır — ikinci bir yürüyüş yapılmaz.
@@ -130,6 +134,43 @@ public sealed class IncrementalRunBinder
     /// <see cref="ProjectInputs.CollectWithFolders"/>.</summary>
     public IReadOnlyList<string> FoldersOf(string projectId) =>
         _foldersById.TryGetValue(projectId, out var folders) ? folders : [];
+
+    /// <summary>
+    /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] Her düğüm için çıktı kanıtı + beslenen aday kopyalar (<see
+    /// cref="OutputEvidence.Locate"/>) — ikinci bir hesap YOK, Supervisor başarılı bir derlemeden sonra bunu
+    /// okuyup <see cref="OutputEvidence.LearnFedOutputs"/> ile <see cref="Contracts.Model.BuildState.FedOutputs"/>'a
+    /// yazar. Kanıt yolu türetilemeyen (SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
+    /// cref="OutputEvidence.Locate"/>'in <c>null</c> dönüşü.
+    /// </summary>
+    public IReadOnlyDictionary<string, ProjectOutputs> OutputsById => _outputsById ??= ComputeOutputsById();
+
+    private IReadOnlyDictionary<string, ProjectOutputs> ComputeOutputsById()
+    {
+        // Ters kenar: her düğümün ÜRETİCİLERİ (Dependencies) için "beni tüketen" listesine kendini ekler —
+        // graf zaten kurulu, ikinci bir DFS/tarama YOK.
+        var dependentsById = new Dictionary<string, List<EvaluatedProject>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _plan.Nodes)
+        {
+            if (!_evaluatedById.TryGetValue(node.Id, out var dependentProject)) continue;
+            foreach (string producerId in node.Dependencies)
+            {
+                if (!dependentsById.TryGetValue(producerId, out var list))
+                    dependentsById[producerId] = list = [];
+                list.Add(dependentProject);
+            }
+        }
+
+        var result = new Dictionary<string, ProjectOutputs>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _plan.Nodes)
+        {
+            var project = _evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null;
+            IReadOnlyList<EvaluatedProject> dependents =
+                dependentsById.TryGetValue(node.Id, out var list) ? list : [];
+            if (OutputEvidence.Locate(project, _plan.Configuration, dependents) is { } outputs)
+                result[node.Id] = outputs;
+        }
+        return result;
+    }
 
     /// <summary>
     /// Fingerprint koşu boyunca proje başına BİR KEZ hesaplanır: iki bağlama geçişi (Safe/Fast) ve SCC

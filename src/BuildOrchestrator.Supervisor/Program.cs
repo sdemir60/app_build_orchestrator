@@ -196,7 +196,9 @@ public static class Program
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
             // ve önizlemenin modified ↔ affected ayrımı defterdeki özetle bugünkünün karşılaştırmasından çıkar.
-            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById));
+            // [Faz 3/Task 4] OutputsById de aynı binder'dan — Supervisor başarılı derlemeden sonra beslenen
+            // kopyaları buradan öğrenir (BuildState.FedOutputs).
+            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById, binder.OutputsById));
         }
         catch (Exception ex)
         {
