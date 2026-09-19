@@ -314,4 +314,22 @@ public class GraphPanZoomTests
 
         Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
     }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Bir işlem başlarken (Build tıklaması — <see cref="GraphView.BeginOperation"/>)
+    /// kamera varsayılan görünüme döner. <b>Eski davranış:</b> seçim yoksa kamera "yalnız seçimle hareket eder"
+    /// kuralıyla yerinde kalıyordu; zoom'lu bir grafta açılış dalgası ve koşu ekran dışında oynuyordu.
+    /// </summary>
+    [StaFact]
+    public void Starting_an_operation_returns_a_zoomed_camera_to_default()
+    {
+        var view = NewView();
+        view.HandleWheel(Anchor, 120);
+        Assert.NotEqual(GraphCamera.Default, view.LiveCameraForTest); // ön-koşul: ekran zoomlu
+
+        view.BeginOperation();
+
+        Assert.Equal(GraphCamera.Default, view.CurrentCamera);
+        Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
+    }
 }

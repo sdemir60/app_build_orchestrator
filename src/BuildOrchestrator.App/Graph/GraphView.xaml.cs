@@ -407,11 +407,16 @@ public partial class GraphView : UserControl
     ///
     /// <para><b>[kullanıcı kararı 2026-09-19]</b> İşlemin başı aynı zamanda grafın filtreyi ASKIYA aldığı andır
     /// (açılış dalgasından ÖNCE): bkz. <see cref="IsFilterSuspended"/>.</para>
+    ///
+    /// <para><b>[kullanıcı kararı 2026-09-19]</b> Kamera da burada varsayılan görünüme döner: zoom'lu ya da
+    /// kaydırılmış bir grafta açılış dalgası ve koşu ekran dışında oynamasın. Seçim tıklamada zaten düşer,
+    /// dolayısıyla hedef <see cref="ResolveCameraTarget"/>'ın verdiği fit görünümdür.</para>
     /// </summary>
     public void BeginOperation()
     {
         StopEndFinale();
         SuspendFilter();
+        ApplyCamera(animate: true);
     }
 
     /// <summary>
@@ -1706,8 +1711,8 @@ public partial class GraphView : UserControl
     // ---------------------------------------------------------------- kamera
 
     /// <summary>
-    /// Kameranın hedefi: seçim varsa odak kümesinin sığdırması, yoksa varsayılan görünüm. Kamera başka
-    /// hiçbir sebeple hareket etmez (§2.3: koşu sırasında kamera durur).
+    /// Kameranın hedefi: seçim varsa odak kümesinin sığdırması, yoksa varsayılan görünüm. Koşu SIRASINDA
+    /// kamera durur (§2.3); işlemin başında bir kez varsayılana döner (<see cref="BeginOperation"/>).
     /// </summary>
     private void ApplyCamera(bool animate)
     {
