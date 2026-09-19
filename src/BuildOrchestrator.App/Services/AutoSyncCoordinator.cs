@@ -17,7 +17,8 @@ internal interface IAutoSyncPort
     /// <summary>Workspace'e dokunan bir iş (Sync/Clean/Optimize/checkout/pull) YA DA bir koşu uçuşta mı — tetik bekletilir.</summary>
     bool IsWorkspaceBusy { get; }
 
-    /// <summary>Bir koşu uçuşta mı (planlama dahil) — <see cref="IsWorkspaceBusy"/>'nin koşu yarısı.</summary>
+    /// <summary>Bir koşu uçuşta mı — planlama dahil, <c>runCompleted</c> gelene dek (<c>runStopped</c> kilidi düşürse
+    /// de) — <see cref="IsWorkspaceBusy"/>'nin koşu yarısı. Bitişi (true → false) koşunun sonudur.</summary>
     bool IsRunInFlight { get; }
 
     /// <summary>[spec §6.1 · karar 10] Uçuştaki koşuyu branch değişimi yüzünden nazikçe keser: akışa tek satır ve

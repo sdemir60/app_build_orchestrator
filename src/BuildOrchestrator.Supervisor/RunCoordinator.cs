@@ -272,8 +272,8 @@ public sealed class RunCoordinator(
     /// yarım yazılmış kalmaz); [P3] bu drain penceresi boyunca CPU cap KALDIRILIR (bkz.
     /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
     /// <c>projectFailed("stopped")</c> raporlanır. <b>Interrupt</b> (branch değişti): Graceful'un kendisi + koşu
-    /// kesilmiş sayılır — bundan sonra biten sonuçlar deftere yazılmaz (bkz. <see cref="ReportProjectResult"/>). Terminate edilmiş Job yeni process kabul ettiği için ikisi de
-    /// Continue'ya açıktır.</para>
+    /// kesilmiş sayılır — bundan sonra biten sonuçlar deftere yazılmaz (bkz. <see cref="ReportProjectResult"/>).
+    /// Terminate edilmiş Job yeni process kabul ettiği için ikisi de Continue'ya açıktır.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
     {
@@ -1503,6 +1503,10 @@ public sealed class RunCoordinator(
                                     int roundsRun, int lastFailedCount, long totalDurationMs)
     {
         if (decision == CycleRoundDecision.Continue) return;
+        // [spec 2026-09-18 §6.1 · T8 fix round 1 M4] Branch kesmesinden sonra verilen tur kararı da güvenilmez: üyeler
+        // zaten güvenilmez raporlandı (ReportProjectResult), karar ne yayılır ne hafızaya yazılır — Stop'un
+        // "Continue" kuralıyla aynı sonuç (Converged bir kesmede eski yakınsamama hafızasını silmemeli).
+        lock (_gate) { if (_interrupted) return; }
 
         // Logda grubu ANAN ad, CycleRoundStartedEvent'in lideriyle AYNI olmalıdır (build-order'daki ilk üye) —
         // yoksa aynı grup iki kanalda iki farklı adla anılırdı. Bu, aşağıdaki İMZA temsilcisinden ayrı bir

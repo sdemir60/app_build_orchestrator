@@ -72,7 +72,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     bool IAutoSyncPort.HasWorkspace => HasWorkspace;
 
-    bool IAutoSyncPort.IsWorkspaceBusy => WorkspaceBusy || IsMidRunLocked;
+    bool IAutoSyncPort.IsWorkspaceBusy => WorkspaceBusy || IsRunInFlight;
 
     (string? Branch, string? HeadSha)? IAutoSyncPort.LastSyncHead => LastSyncHead;
 
@@ -87,7 +87,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     void IAutoSyncPort.AppendConsoleLine(string line) => AppendRunLine(line);
 
-    bool IAutoSyncPort.IsRunInFlight => IsMidRunLocked;
+    bool IAutoSyncPort.IsRunInFlight => IsRunInFlight;
 
     Task IAutoSyncPort.RequestInterruptAsync() => RequestInterruptAsync();
 
@@ -101,44 +101,78 @@ public sealed partial class RunViewModel : IAutoSyncPort
     /// alınınca ya da başka bir koşu başlayınca düşer.</summary>
     private string? _interruptedRunId;
 
-    /// <summary>Bu koşunun güvenilir başarıları (<c>ProjectSucceededEvent.Trusted</c>) — özetin "N built"i. Kesmeden
+    /// <summary>Bu koşuda güvenilir biten projeler (<c>ProjectSucceededEvent.Trusted</c>) — özetin "N built"i. Kesmeden
     /// sonra biten başarı motor tarafında güvenilmezdir (Trusted=false), yani sayılmaz.</summary>
-    private int _trustedBuiltThisRun;
+    private readonly HashSet<string> _trustedBuiltIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Kesme anında sabitlenen koşu kapsamı (<see cref="InterruptScope"/>) — özetin paydası.</summary>
+    private readonly HashSet<string> _interruptScopeIds = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Bu koşunun disk log klasörü (<see cref="RunStartedEvent.LogDirectory"/>).</summary>
     private string? _runLogDirectory;
 
     /// <summary><c>runStarted</c>'ta koşunun özet kaydı sıfırlanır. Planlama penceresinde kesilmiş koşunun kaydı
-    /// korunur: kesme isteği aynı id'yle gitti, runStarted onun ardından gelebilir.</summary>
+    /// (id ve kapsam) korunur: kesme isteği aynı id'yle gitti, runStarted onun ardından gelebilir.</summary>
     private void BeginInterruptRecord(RunStartedEvent e)
     {
-        _trustedBuiltThisRun = 0;
+        _trustedBuiltIds.Clear();
         _runLogDirectory = e.LogDirectory;
         if (!string.Equals(_interruptedRunId, e.RunId, StringComparison.Ordinal)) _interruptedRunId = null;
     }
 
+    /// <summary>Güvenilir bir başarı — <see cref="OnProjectDone"/> bildirir.</summary>
+    private void NoteTrustedBuilt(string projectId) => _trustedBuiltIds.Add(projectId);
+
+    /// <summary>
+    /// [T8 fix round 1 · M3] Özetin kapsamının TEK tanımı: satırdan tetiklenen koşuda hedef satır; aksi hâlde
+    /// önizlemenin derlenecek gördüğü her proje, koşullular DAHİL (<see cref="_dirtyIds"/> — koşullu proje kökü
+    /// sağlıklıysa gerçekten derlenir, derlenmediyse "not built"tur); önizleme yoksa tüm satırlar.
+    /// </summary>
+    private IEnumerable<string> InterruptScope() =>
+        RunTargetId is { } target ? [target]
+        : _dirtyIds.Count > 0 ? _dirtyIds
+        : Projects.Select(p => p.Id);
+
     /// <summary>[spec 2026-09-18 §6.1 · karar 10] Uçuştaki koşuyu branch değişimi yüzünden nazikçe keser: akışa
     /// <see cref="StreamText.InterruptedByBranchChange"/>, motora <see cref="StopKind.Interrupt"/> (yeni proje
-    /// başlamaz, uçuştakiler biter ama sonuçları deftere yazılmaz). Koşu başına BİR kez. Açılış koreografisi
-    /// sırasında komut henüz gitmediyse istek Stop'taki gibi geri alınır — derlenmiş hiçbir şey yoktur.</summary>
+    /// başlamaz, uçuştakiler biter ama sonuçları deftere yazılmaz). Koşu başına BİR kez; kapsam bu anda sabitlenir.
+    /// <para>[fix round 1 · M5] Açılış koreografisi sırasında komut henüz gitmediyse istek Stop'taki gibi geri alınır
+    /// ve kayıt yine açılır: yeni bölümün ilk satırı "0 built, N not built" der (log klasörü yok) — Build tıklamasının
+    /// neden sonuçsuz kaldığı açıklanır.</para></summary>
     internal async Task RequestInterruptAsync()
     {
-        if (_pendingRunId is not null) { CancelPendingRun(); return; }
+        if (_pendingRunId is { } pendingId)
+        {
+            // Başlamamış koşu: önceki koşunun başarıları ve log klasörü bu koşunun değildir.
+            _trustedBuiltIds.Clear();
+            _runLogDirectory = null;
+            OpenInterruptRecord(pendingId);
+            CancelPendingRun();
+            return;
+        }
         if (_currentRunId is not { } runId || _interruptedRunId == runId) return;
-        _interruptedRunId = runId;
+        OpenInterruptRecord(runId);
         PushStream(StreamKind.Info, null, StreamText.InterruptedByBranchChange);
         await SendStopAsync(runId, StopKind.Interrupt);
     }
 
+    private void OpenInterruptRecord(string runId)
+    {
+        _interruptedRunId = runId;
+        _interruptScopeIds.Clear();
+        _interruptScopeIds.UnionWith(InterruptScope());
+    }
+
     /// <summary>[spec 2026-09-18 §6.2] Kesilen koşu bittiyse özeti — bir kez: <c>N built</c> güvenilir başarılar,
-    /// <c>M not built</c> koşunun kesin kapsamının (önizlemenin derlenecekler kümesi; yoksa motorun plan boyutu)
-    /// kalanı, ardından log klasörü. Koşu hâlâ uçuştaysa ya da kesilen koşu yoksa <c>null</c>.</summary>
+    /// <c>M not built</c> kesme anındaki kapsamın (<see cref="InterruptScope"/>) güvenilir bitmeyen kısmı, ardından log
+    /// klasörü. Koşu hâlâ uçuştaysa (<see cref="IsRunInFlight"/>) ya da kesilen koşu yoksa <c>null</c>.</summary>
     internal string? TakeInterruptedRunSummary()
     {
-        if (_interruptedRunId is null || IsMidRunLocked) return null;
+        if (_interruptedRunId is null || IsRunInFlight) return null;
         _interruptedRunId = null;
-        int scope = _willBuildIds.Count > 0 ? _willBuildIds.Count : _totalProjects ?? 0;
+        int notBuilt = _interruptScopeIds.Count(id => !_trustedBuiltIds.Contains(id));
         return Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(
-            _trustedBuiltThisRun, Math.Max(0, scope - _trustedBuiltThisRun), _runLogDirectory);
+            _trustedBuiltIds.Count, notBuilt, _runLogDirectory);
     }
 }
+

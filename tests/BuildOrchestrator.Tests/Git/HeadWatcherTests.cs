@@ -107,28 +107,52 @@ public sealed class HeadWatcherTests
     }
 
     /// <summary>Pencere içindeki dürtmeler tek bekleyişte birleşir: öncekiler iptal edilir, yalnız sonuncusu tamamlanınca
-    /// tek çağrı yapılır — saat enjekte (gerçek bekleme yok).</summary>
+    /// tek çağrı yapılır — saat enjekte (gerçek bekleme yok).
+    /// <para>[T8 fix round 1 · I2] Çağrı, bekleyişin DEVAMINDA gelir ve devam satır içi koşmak zorunda değildir (tam
+    /// süit yükünde thread-pool'a düşer): sayaç eskiden devamı beklemeden okunuyordu ve test yükte yarışlıydı. Şimdi
+    /// çağrı bir sinyalle beklenir; ardından aynı enjekte saatle İKİNCİ bir pencere açılıp o da beklenir — sayaç tam
+    /// 2 ise ilk pencerenin iptal edilmiş bekleyişlerinden gecikmiş bir çağrı gelmemiştir (uyku yok).</para></summary>
     [Fact]
-    public void Writes_within_the_window_collapse_into_one()
+    public async Task Writes_within_the_window_collapse_into_one()
     {
         var delays = new List<(TimeSpan Window, TaskCompletionSource Tcs)>();
         Task Delay(TimeSpan window, CancellationToken ct)
         {
             var tcs = new TaskCompletionSource();
             ct.Register(() => tcs.TrySetCanceled(ct));
-            delays.Add((window, tcs));
+            lock (delays) delays.Add((window, tcs));
             return tcs.Task;
         }
         int settled = 0;
-        using var debouncer = new SettleDebouncer(HeadWatcher.SettleDelay, Delay, () => settled++);
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var debouncer = new SettleDebouncer(HeadWatcher.SettleDelay, Delay, () =>
+        {
+            Interlocked.Increment(ref settled);
+            Volatile.Read(ref signal).TrySetResult();
+        });
 
         debouncer.Poke();
         debouncer.Poke();
         debouncer.Poke();
-        foreach (var (_, tcs) in delays) tcs.TrySetResult();
+        foreach (var (_, tcs) in delays.ToList()) tcs.TrySetResult();
 
+        Assert.True(await Arrives(signal.Task), "the settled callback never came");
         Assert.Equal(3, delays.Count);
         Assert.All(delays, d => Assert.Equal(HeadWatcher.SettleDelay, d.Window));
-        Assert.Equal(1, settled);
+        Assert.Equal(1, Volatile.Read(ref settled));
+
+        // Sessizlik kontrolü: ikinci pencere — gecikmiş bir üçüncü çağrı olsaydı sayaç 2'yi aşardı.
+        Volatile.Write(ref signal, new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        debouncer.Poke();
+        delays[^1].Tcs.TrySetResult();
+        Assert.True(await Arrives(Volatile.Read(ref signal).Task), "the second window's callback never came");
+        Assert.Equal(2, Volatile.Read(ref settled));
+    }
+
+    /// <summary>Görev <see cref="Ceiling"/> içinde tamamlandı mı — bekleme sınırı zaman aşımı değil assertion olsun diye.</summary>
+    private static async Task<bool> Arrives(Task task)
+    {
+        try { await task.WaitAsync(Ceiling); return true; }
+        catch (TimeoutException) { return false; }
     }
 }

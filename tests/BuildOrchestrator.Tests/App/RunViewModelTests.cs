@@ -2591,8 +2591,8 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync();
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
@@ -2611,8 +2611,8 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync();
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
         Drain(posted);
@@ -2631,8 +2631,8 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync();
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
 
         await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
@@ -2647,6 +2647,122 @@ public class RunViewModelTests
         vm.DisableAutoSync();
     }
 
+    /// <summary>Motor her Sync isteğine hemen başlangıçla cevap verir (<c>syncStarted</c>) — gönderilen her yeni
+    /// <see cref="SyncWorkspaceCommand"/> için bir kez.</summary>
+    private static void AnswerNewSyncs(RunViewModel vm, IEnumerable<IpcCommand> sent, ref int answered)
+    {
+        int syncs = sent.OfType<SyncWorkspaceCommand>().Count();
+        for (; answered < syncs; answered++) vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+    }
+
+    /// <summary>[T8 fix round 1 · I1] <c>runStopped</c> ile <c>runCompleted</c> ayrı flush'larla, ayrı UI
+    /// kuyruğu işleriyle gelir. Koşu <c>runCompleted</c>'a dek uçuşta sayılır: arada kuyruğa düşen değerlendirme
+    /// Sync başlatmaz; yeni bölüm <c>runCompleted</c>'tan SONRA açılır — bölümde eski koşunun "Stopped" satırı yok,
+    /// faz Sync'e aittir.</summary>
+    [Fact]
+    public async Task The_new_section_opens_only_after_the_interrupted_run_completed()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+        int answered = 0;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Drain(posted);
+        AnswerNewSyncs(vm, sent, ref answered);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+        AnswerNewSyncs(vm, sent, ref answered);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.Stopped(0));
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · I1] Host'un geç <c>runStopped</c> onayı (kesme, koşu kapanırken gitti) ya da başka
+    /// bir koşunun olayı, bitmiş koşunun ardından başlamış Sync'in fazına ve akışına dokunmaz.</summary>
+    [Fact]
+    public async Task A_late_run_end_event_does_not_touch_the_next_operation()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase); // ön-koşul
+        int streamBefore = vm.StreamEvents.Count;
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunStoppedEvent("r0", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Stopped, 0, 0, 0, 3, 500));
+
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · M3] Özetin kapsamı koşullu projeleri de sayar: A kesin, C koşullu derlenecekti;
+    /// A kesmeden önce güvenilir bitti, C hiç başlamadı → "1 built, 1 not built".</summary>
+    [Fact]
+    public async Task The_summary_counts_conditional_projects_that_were_not_built()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
+            new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.WaitingForDependency, Conditional: true),
+        ]));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 300));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 1, 500));
+        Drain(posted);
+
+        Assert.StartsWith(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(1, 1, null),
+            vm.GetRunDocumentText(), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · M5] Açılış koreografisi oynarken branch değişirse Build isteği geri alınır ve yeni
+    /// bölümün ilk satırı bunu açıklar: "0 built, N not built" (log klasörü yok — koşu başlamadı).</summary>
+    [Fact]
+    public async Task An_interrupt_during_the_opening_choreography_explains_the_build_click()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        choreography.SetResult();
+        await build;
+        Drain(posted);
+
+        Assert.Empty(sent.OfType<StartRunCommand>());
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, null);
+        string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+        Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
     /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır — aynı branch'te yeni commit
     /// sessiz Sync'tir; kesme yoktu, özet yok.</summary>
     [Fact]
@@ -2655,8 +2771,8 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync();
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -2674,8 +2790,8 @@ public class RunViewModelTests
         await using var engine = await StartedEngineAsync();
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
 
         vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));

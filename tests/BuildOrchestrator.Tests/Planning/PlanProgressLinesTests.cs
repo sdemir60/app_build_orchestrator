@@ -59,8 +59,6 @@ public sealed class PlanProgressLinesTests
         Assert.Equal("Switch failed — pathspec 'x' did not match", PlanProgressLines.SwitchFailed("pathspec 'x' did not match"));
     }
 
-    /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
-    /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>
     /// <summary>[spec 2026-09-18 §6.2] Kesilen koşunun özeti: kaç proje bitti, kaçı derlenmedi, log klasörü —
     /// klasör bilinmiyorsa ek yazılmaz.</summary>
     [Fact]
@@ -72,6 +70,8 @@ public sealed class PlanProgressLinesTests
             PlanProgressLines.RunInterruptedByBranchChange(0, 1, null));
     }
 
+    /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
+    /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>
     [Fact]
     public void An_unknown_distance_leaves_the_line_with_the_head_alone()
         => Assert.DoesNotContain("behind", PlanProgressLines.HeadDistance("a3f81c2", null, "main"));

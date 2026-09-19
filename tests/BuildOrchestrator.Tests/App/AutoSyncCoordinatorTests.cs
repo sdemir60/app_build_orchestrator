@@ -202,7 +202,7 @@ public sealed class AutoSyncCoordinatorTests
 
     // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında
 
-    private const string Summary = "Run interrupted by a branch change — 1 built, 1 not built";
+    private static readonly string Summary = PlanProgressLines.RunInterruptedByBranchChange(1, 1, null);
 
     /// <summary>Koşu uçuşta: <see cref="AutoSyncCoordinator.OnWorkspaceIdle"/> koşunun başladığını görür (VM'de
     /// <c>PropagateRunLock</c> her kilit geçişinde bildirir).</summary>

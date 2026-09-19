@@ -689,6 +689,8 @@ public class CycleRoundsTests
             var store = new BuildStateStore(cacheRoot);
             SeedGreen(store, "A");
             SeedGreen(store, "B");
+            // [fix round 1 · M4] Eski bir yakınsamama hafızası: kesilen koşunun "Converged" kararı onu SİLMEMELİ.
+            store.Upsert(store.Load()[Id("A")] with { NonConvergentSignature = "mem" });
             var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
             var rec = new RoundRecorder();
             RunCoordinator? sut = null;
@@ -708,6 +710,9 @@ public class CycleRoundsTests
             Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
             Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // "sig" YAZILMADI
             Assert.Equal("old", store.Load()[Id("B")].BuiltSignature);
+            // [M4] Kesilen koşunun tur kararı yayılmaz ve hafızaya yazılmaz — Stop'un "Continue" kuralıyla aynı.
+            Assert.DoesNotContain(h.Events, e => e is CycleCompletedEvent);
+            Assert.Equal("mem", store.Load()[Id("A")].NonConvergentSignature);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

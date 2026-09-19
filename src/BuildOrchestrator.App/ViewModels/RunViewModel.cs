@@ -1717,6 +1717,7 @@ public sealed partial class RunViewModel : ObservableObject
         // "susuyor mu". Uyarının kendisi BURADA temizlenmez: bu metot ProjectLogEvent için arka plan
         // thread'inden de çağrılır ve gözlemlenebilir alanların tek yazıcısı UI thread'indeki tick'tir.
         Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+        if (IsStaleRunEnd(ev)) return; // [T8 fix round 1 · I1] faz ve akış bu koşuya ait değil
         switch (ev)
         {
             case RunStartedEvent e: OnRunStarted(e); break;
@@ -1767,6 +1768,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        _awaitingRunCompleted = true;
         BeginInterruptRecord(e);
         // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
         // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
@@ -2000,7 +2002,7 @@ public sealed partial class RunViewModel : ObservableObject
         // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
         // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
         // gelmesi bu boşluğu kapatır.
-        if (state == ProjectRowState.Succeeded && trusted) _trustedBuiltThisRun++; // [T8] kesilen koşunun özeti
+        if (state == ProjectRowState.Succeeded && trusted) NoteTrustedBuilt(projectId); // [T8] kesilen koşunun özeti
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
             // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin
@@ -2148,12 +2150,43 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnRunCompleted(RunCompletedEvent e)
     {
+        _awaitingRunCompleted = false;
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
         RefreshRunSurface();
+        // [T8 fix round 1 · I1] Koşunun kendiliğinden Sync için bitişi BURASIDIR (runStopped değil): faz ve akış
+        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz.
+        NotifyAutoSyncGate();
     }
+
+    /// <summary>
+    /// [T8 fix round 1 · I1] <c>runStarted</c> görüldü, <c>runCompleted</c> henüz gelmedi. Motor ikisini ayrı
+    /// flush'larla yazar, App ayrı UI kuyruğu işleriyle işler: arada <c>runStopped</c> kilidi düşürür ama koşu
+    /// kendiliğinden Sync için hâlâ uçuştadır (<see cref="IsRunInFlight"/>). <c>runCompleted</c>, motor kaybı ve
+    /// koşu-bitiren hata yolları bırakır.
+    /// </summary>
+    private bool _awaitingRunCompleted;
+
+    /// <summary>Kendiliğinden Sync'in gördüğü koşu: kilit (<see cref="IsMidRunLocked"/>) ya da henüz
+    /// <c>runCompleted</c>'ı gelmemiş başlamış koşu.</summary>
+    internal bool IsRunInFlight => IsMidRunLocked || _awaitingRunCompleted;
+
+    /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
+    /// koşu çoktan bittikten sonra gelen <c>runStopped</c> (host, sahiplenemediği bir Stop'u — ör. koşu kapanırken
+    /// giden kesmeyi — anında onaylar). Faza ve akışa dokunmaz; o an başlamış olan işlemin (yeni bölümün Sync'i)
+    /// fazını ezerdi. Bekleyen bir Stop (<see cref="AppPhase.Stopping"/>) onayı her zaman kabul edilir — fazı
+    /// çözecek başka olay yoktur.</summary>
+    private bool IsStaleRunEnd(IpcEvent ev) => ev switch
+    {
+        RunStoppedEvent e => !IsCurrentRun(e.RunId) || !(IsRunInFlight || Phase == AppPhase.Stopping),
+        RunCompletedEvent e => !IsCurrentRun(e.RunId),
+        _ => false,
+    };
+
+    private bool IsCurrentRun(string runId) =>
+        _currentRunId is null || string.Equals(_currentRunId, runId, StringComparison.Ordinal);
 
     /// <summary>[B2] <c>runStopped</c> TEK DALLIDIR — run başlamış olsun ya da olmasın, faz
     /// <see cref="AppPhase.Stopped"/> ve run state serbest.
@@ -2206,6 +2239,7 @@ public sealed partial class RunViewModel : ObservableObject
         // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
         // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
         if (TryConsumeSyncFailure(e.Code, e.Message)) return;
+        _awaitingRunCompleted = false; // runCompleted gelmeyecek — kilit düşüşü koşunun bitişidir
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound — Rebuild'i geri aç
         // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
@@ -2278,6 +2312,7 @@ public sealed partial class RunViewModel : ObservableObject
         // olmayan bir koşuyu anlatırdı. Dinlenme fazı dürüst tabandır (şerit zaten engine-died önceliğiyle
         // kırmızı metni gösterir; bu, o metin temizlendikten SONRA görülecek durumdur).
         else if (Phase == AppPhase.Starting) Phase = RestingPhase;
+        _awaitingRunCompleted = false; // motor gitti — runCompleted gelmeyecek
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;
