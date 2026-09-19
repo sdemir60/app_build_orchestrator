@@ -170,7 +170,7 @@ public class RunCoordinatorTests
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
             BuildStateStore? stateStore = null,
-            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
+            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -190,7 +190,8 @@ public class RunCoordinatorTests
                 cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
                 // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
-                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; });
+                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; },
+                inFlight: inFlight);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -679,6 +680,75 @@ public class RunCoordinatorTests
         Assert.Equal(RunOutcome.Stopped, done.Outcome);
         Assert.Equal(1, done.Failed);
         Assert.Equal(3, done.Queued);
+    }
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §5.5] uçuş defteri
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Bir proje dispatch edildiği andan sonucu raporlanana dek
+    /// <c>run-inflight.json</c>'da durur — motor bu aralıkta ölürse bir sonraki açılış onu geçersizler. Zincirin
+    /// ikinci halkası derlenirken birincisi listede OLMAMALI: sonucu raporlandı, arkasında durulabilir.</summary>
+    [Fact]
+    public async Task A_project_in_flight_is_listed_until_its_result_is_reported()
+    {
+        using var dir = new TempDir();
+        var plan = PlanOf(Node("A"), Node("B", deps: ["A"]));
+        var seen = new Dictionary<string, IReadOnlyList<string>>();
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            // Sonraki açılışın göreceği tek şey dosyadır — iddia diskten, yeni bir örnekle okunur.
+            seen[NameOf(req.ProjectId)] = new InFlightLedger(dir.Path).ReadListed();
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, inFlight: new InFlightLedger(dir.Path));
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("A")], seen["A"]);
+        Assert.Equal([Id("B")], seen["B"]); // A'nın sonucu raporlandı → listeden düştü
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+    }
+
+    public enum RunExit { Normal, GracefulStop, HardStop, PlanFailed }
+
+    /// <summary>[spec 2026-09-18 §5.5] Koşunun HER çıkışında defter boşalır — kalan bir satır bir sonraki açılışta
+    /// derlenmemiş bir projeyi "uçuşta ölmüş" sayıp boşuna geçersizlerdi. Defter koşu başlamadan önce elle
+    /// kirletilir (raporlanmadan kalmış bir satır): çıkışın kendisi onu da süpürmeli, yalnız Remove yetmez.</summary>
+    [Theory]
+    [InlineData(RunExit.Normal)]
+    [InlineData(RunExit.GracefulStop)]
+    [InlineData(RunExit.HardStop)]
+    [InlineData(RunExit.PlanFailed)]
+    public async Task The_ledger_is_empty_after_every_run_exit(RunExit exit)
+    {
+        using var dir = new TempDir();
+        var ledger = new InFlightLedger(dir.Path);
+        ledger.Add(Id("Leftover"));
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return exit == RunExit.HardStop ? Exit(1) : Ok();
+        });
+        Func<StartRunCommand, Action<string>, RunPlan>? planner =
+            exit == RunExit.PlanFailed ? (_, _) => throw new IOException("disk okunamadı") : null;
+        using var h = new Harness(plan, invoker, planner, inFlight: ledger);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        if (exit != RunExit.PlanFailed)
+        {
+            await inFlight.Task.WaitAsync(Limit);
+            if (exit == RunExit.GracefulStop) Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+            if (exit == RunExit.HardStop) Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+            release.SetResult();
+        }
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+        Assert.False(File.Exists(Path.Combine(dir.Path, InFlightLedger.FileName)));
     }
 
     // ---------------------------------------------------------------- 5) planlama penceresinde stop

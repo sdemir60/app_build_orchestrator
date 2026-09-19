@@ -61,8 +61,11 @@ public sealed record WorkspaceServices(
 /// <param name="debugHooks">[A13/B4] Test kancalarının (bugün yalnız <c>debugSpawnChildren</c>) AÇIK olup
 /// olmadığı. <b>Varsayılan KAPALI</b> — üretim ikilisi bu kancayı dinlemez; yalnız Supervisor'ı
 /// <see cref="SupervisorHost.DebugHooksArg"/> ile başlatan testlerde canlıdır.</param>
+/// <param name="interruptedProjects">[spec 2026-09-18 §5.5] Açılıştaki çökme kurtarmasının sayısı —
+/// <c>Program.Main</c> host'u kurmadan ÖNCE <see cref="BuildOrchestrator.Core.State.InFlightLedger.Recover"/>'ı
+/// koşar ve sonucu buraya verir; host dosya okumaz, yalnız <see cref="EngineReadyEvent"/>'e taşır.</param>
 public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob,
-    RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false)
+    RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false, int interruptedProjects = 0)
 {
     /// <summary>[A13/B4] Test kancalarını açan Supervisor argümanı. <b>Değer almaz</b> (varlığı yeterlidir),
     /// bu yüzden <c>--logs</c>'un isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
@@ -87,7 +90,7 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             typeof(SupervisorHost).Assembly
                 .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(SupervisorHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-        await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version), ct);
+        await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version, interruptedProjects), ct);
         while (_running)
         {
             IpcCommand? cmd;

@@ -16,10 +16,6 @@ public sealed class BuildStateStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
-    /// <summary>Atomik rename'in retry bütçesi: 20 deneme x <see cref="RenameRetryBackoff"/> ≈ 100ms üst sınır
-    /// (bkz. <see cref="MoveAtomicWithRetry"/>).</summary>
-    private const int RenameAttempts = 20;
-
     /// <summary>Rename retry'ının ÜRETİM backoff'u — <see cref="DefaultRenameRetryDelay"/>'in tek kaynağı.</summary>
     private static readonly TimeSpan RenameRetryBackoff = TimeSpan.FromMilliseconds(5);
 
@@ -159,6 +155,35 @@ public sealed class BuildStateStore
         Write(map => map.Remove(projectId));
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §5.5 · karar 12] <b>Kanıtsız geçersizlemenin TEK yeri.</b> Projenin mevcut kaydı "son deneme
+    /// başarısız, ama bu kaynağın patladığına dair kanıt yok" hâline çekilir: <c>LastResult=Failed</c>,
+    /// <c>LastRunAt=</c><paramref name="now"/>, <c>FailedSignature=null</c>, <c>FailedAt=null</c>. İmza, commit ve
+    /// süre KORUNUR (Fast modda dependent'ların tabanı, ETA'nın ölçümü). Satır bir sonraki Sync'te gri
+    /// <c>never built</c> olur: derleme kanıtı <c>LastRunAt</c>'tan eski kalır, zaman kipine giremez.
+    ///
+    /// <para>Kayıt yoksa no-op — kanıtsız bir olay deftere yeni kayıt AÇMAZ (kayıtsız proje zaten derlenir).
+    /// İki çağıran: koşu içinde kanıtsız biten proje (<c>RunCoordinator.InvalidateBuildStateOnFailure</c>) ve
+    /// açılıştaki çökme kurtarması (<see cref="InFlightLedger.Recover"/>). Okuma ile yazma aynı kilit
+    /// altındadır: eşzamanlı bir <see cref="Upsert"/> araya giremez.</para>
+    /// </summary>
+    public void InvalidateWithoutEvidence(string projectId, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        Write(map =>
+        {
+            if (!map.TryGetValue(projectId, out var existing)) return false; // kayıt yok ⇒ hiçbir şey açılmaz
+            map[existing.ProjectId] = existing with
+            {
+                LastResult = BuildResult.Failed,
+                LastRunAt = now,
+                FailedSignature = null,
+                FailedAt = null,
+            };
+            return true;
+        });
+    }
+
     /// <summary>Defterin TEK yazma yolu: kilit → oku → değiştir → geçici dosya → atomik rename. <paramref
     /// name="mutate"/> <c>false</c> derse (değişen bir şey yok) dosyaya hiç dokunulmaz.</summary>
     private void Write(Func<Dictionary<string, BuildState>, bool> mutate)
@@ -170,20 +195,7 @@ public sealed class BuildStateStore
             // kopya sadece ilgili anahtarı merge eder, ayrıca bir case-collision riski taşımaz.
             var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase);
             if (!mutate(map)) return;
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
-                MoveAtomicWithRetry(tmp, _path);
-            }
-            catch
-            {
-                // [Review Minor 4] rename retry bütçesini aşarsa (veya yazım sonrası başka bir şey fırlarsa) tmp
-                // dosyası diskte öksüz kalmasın — best-effort temizlik, orijinal exception önceliklidir.
-                try { File.Delete(tmp); } catch { /* best-effort, temizlik başarısızlığı orijinal hatayı gölgelemez */ }
-                throw;
-            }
+            AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(map, Json), EffectiveRenameRetryDelay);
         }
         finally
         {
@@ -258,26 +270,6 @@ public sealed class BuildStateStore
         using var reader = new StreamReader(fs);
         return reader.ReadToEnd();
     }
-
-    /// <summary>
-    /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma handle'ı olduğunda — Delete-share
-    /// verilmiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
-    /// ile başarısız olabilir (gözlemlenen Windows davranışı: handle kapanışı ile rename arasında kısa bir yarış
-    /// penceresi kalıyor). Bu GERÇEK VERİ KAYBI değildir — tmp dosya hâlâ diskte durur; kısa, sınırlı bir retry
-    /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni; gecikme
-    /// orada olduğu gibi burada da ENJEKTE EDİLEBİLİR — <see cref="RenameRetryDelay"/>).
-    /// </summary>
-    private void MoveAtomicWithRetry(string tmp, string target)
-        // [B2] Döngünün kendisi ortak (SyncRetry) — burada yalnız BU yolun kararları durur: kaç deneme, hangi
-        // istisna geçici, gecikme nereden gelir, bütçe tükenince ne olur (burada: orijinal istisna yayılır).
-        => SyncRetry.Run(
-            () => File.Move(tmp, target, overwrite: true),
-            RenameAttempts,
-            ex => ex is IOException or UnauthorizedAccessException,
-            // [fix round 2] SyncRetry 0-based index verir; bu yolun dikişi ortaklaştırmadan ÖNCE de 1-based
-            // deneme no alıyordu — uyarlama burada, davranış birebir korunur.
-            failedAttemptIndex => EffectiveRenameRetryDelay(failedAttemptIndex + 1),
-            rethrowWhenExhausted: true);
 
     /// <summary>
     /// [B1] Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı. Ayrı bir üye olmasının

@@ -258,7 +258,10 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
 
-public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
+/// <param name="InterruptedProjects">[spec 2026-09-18 §5.5 · karar 12] Motor açılırken <c>run-inflight.json</c>'dan
+/// kurtarılan (önceki motor ölürken uçuşta olan) proje sayısı; 0 ⇒ kesilmiş koşu yok. App &gt;0 ise konsola
+/// "previous run was interrupted" satırını yazar.</param>
+public sealed record EngineReadyEvent(int Pid, string EngineVersion, int InterruptedProjects = 0) : IpcEvent;
 public sealed record PongEvent(int Seq) : IpcEvent;
 public sealed record ErrorEvent(string Code, string Message) : IpcEvent;
 public sealed record RunStoppedEvent(string RunId, bool WasHard) : IpcEvent;

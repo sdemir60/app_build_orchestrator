@@ -103,6 +103,11 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// birlikte cap taban penceresinin açılıp kapanması) gerçek zaman beklenmeden doğrulanabilsin diye. Varsayılan
 /// (null) ⇒ <c>Task.Delay</c>.
 /// </param>
+/// <param name="inFlight">
+/// [spec 2026-09-18 §5.5 · karar 12] Uçuştaki projelerin defteri (<c>run-inflight.json</c>): dispatch anında
+/// <c>Add</c>, sonuç raporlanınca <c>Remove</c>, koşunun her çıkışında <c>Clear</c>. Null ⇒ defter tutulmaz.
+/// Defter I/O hatası koşuyu durdurmaz — konsol uyarısıdır.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -113,7 +118,8 @@ public sealed class RunCoordinator(
     Action<string> console,
     BuildStateStore? stateStore = null,
     ICpuGovernor? cpuGovernor = null,
-    Func<TimeSpan, CancellationToken, Task>? retryDelay = null) : IDisposable
+    Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
+    InFlightLedger? inFlight = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
@@ -598,6 +604,9 @@ public sealed class RunCoordinator(
             // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (RunSegmentAsync döndü), yani kısılacak bir
             // MSBuild child'ı kalmamıştır.
             ReleasePerf();
+            // [spec 2026-09-18 §5.5] Uçuş defteri HER çıkışta boşalır (normal, stop, planFailed, beklenmeyen hata):
+            // worker'lar join oldu, uçuşta kimse yok — kalan bir satır bir sonraki açılışta boşuna geçersizlerdi.
+            TrackInFlight(ledger => ledger.Clear());
             // ACK BORCU: TryRequestStop true dediyse runStopped'ı yazmak BİZİM sorumluluğumuzdur — ama run,
             // runStarted'a hiç ulaşmamış olabilir (planFailed/msbuildNotFound ya da beklenmeyen bir hata; ör.
             // kullanıcı 177 projelik bir planlama sürerken Stop'a bastı). O yolda aşağıdaki finally çalışmadığı
@@ -1111,6 +1120,7 @@ public sealed class RunCoordinator(
 
         try
         {
+            TrackInFlight(ledger => ledger.Add(projectId)); // [§5.5] dispatch anı: motor ölürse açılış bunu geçersizler
             run.Events.TryWrite(new ProjectStartedEvent(run.RunId, projectId, NameOf(run, projectId)));
 
             InvokeOutcome outcome;
@@ -1299,6 +1309,10 @@ public sealed class RunCoordinator(
             // [spec 2026-09-18 §1-14] reason ve trustedResult birlikte TAŞINIR: invalidate artık nedene göre
             // yazar (kanıtlı derleyici hatası ⇔ imza+zaman; kanıtsız ⇔ yalnız LastResult/LastRunAt).
             if (invalidates) InvalidateBuildStateOnFailure(run, projectId, evidenceSignature);
+            // [spec 2026-09-18 §5.5] Sonuç raporlandı VE defter yazıldı — proje artık uçuşta değil. En SONDA: motor
+            // bu iki yazım arasında ölürse proje hâlâ listededir ve açılış onu geçersizler. Complete'ten sonra
+            // olduğu için defter I/O'su scheduler'ı asla askıda bırakamaz (TrackInFlight zaten fırlatmaz).
+            TrackInFlight(ledger => ledger.Remove(projectId));
         }
     }
 
@@ -1402,6 +1416,7 @@ public sealed class RunCoordinator(
                     if (StopRequested) { cutShort = true; break; }
 
                     var member = state[id];
+                    TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
                     run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
                     var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct);
                     member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
@@ -1883,24 +1898,36 @@ public sealed class RunCoordinator(
         if (run.StateStore is null) return;
         try
         {
-            bool evidence = evidenceSignature is not null;
-            string? signature = evidenceSignature;
+            var now = DateTimeOffset.UtcNow;
+            // [spec 2026-09-18 §5.5] Kanıtsız dal TEK yerdedir (çökme kurtarması da onu çağırır): kayıt yoksa no-op.
+            if (evidenceSignature is null) { run.StateStore.InvalidateWithoutEvidence(projectId, now); return; }
 
             run.StateStore.Load().TryGetValue(projectId, out var existing);
-            if (!evidence && existing is null) return; // kanıtsız + kayıt yok ⇒ hiçbir şey açılmaz
-
-            var now = DateTimeOffset.UtcNow;
             var baseline = existing ?? new BuildState(projectId, BuiltSignature: null);
             run.StateStore.Upsert(baseline with
             {
                 LastResult = BuildResult.Failed,
                 LastRunAt = now,
-                FailedSignature = evidence ? signature : null,
-                FailedAt = evidence ? now : null,
+                FailedSignature = evidenceSignature,
+                FailedAt = now,
             });
         }
         catch (Exception ex)
         { console("warning: build-state could not be invalidated (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.5 · karar 12] Uçuş defterine (<c>run-inflight.json</c>) dokunan HER çağrının kapısı.
+    /// Defter yoksa no-op; I/O hatası koşuyu DURDURMAZ, konsol uyarısıdır — çağıranların ikisi <c>finally</c>'dedir
+    /// (sonuç raporu, koşu çıkışı) ve oradan kaçan bir istisna worker'ı öldürüp koşuyu asardı. Bedeli yalnız
+    /// kurtarmanın o proje için eksik kalmasıdır; derlemenin kendisi etkilenmez.
+    /// </summary>
+    private void TrackInFlight(Action<InFlightLedger> write)
+    {
+        if (inFlight is null) return;
+        try { write(inFlight); }
+        catch (Exception ex)
+        { console("warning: in-flight ledger could not be updated (" + inFlight.FilePath + "): " + ex.Message); }
     }
 
     /// <summary>

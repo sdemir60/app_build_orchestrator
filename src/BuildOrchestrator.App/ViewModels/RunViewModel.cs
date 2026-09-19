@@ -1765,6 +1765,7 @@ public sealed partial class RunViewModel : ObservableObject
             case OptimizeCompletedEvent: _ = OnOptimizeCompletedAsync(); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
+            case EngineReadyEvent e: OnEngineRecovered(e.InterruptedProjects); break;
         }
 
         // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten
@@ -2392,6 +2393,16 @@ public sealed partial class RunViewModel : ObservableObject
         if (_engineWasReady) return;
         _engineWasReady = true;
         if (HasWorkspace && CanSync()) _ = SyncCoreAsync(SyncMode.Appended);
+    }
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardı: konsola kaç projenin
+    /// yeniden derleneceği yazılır (metin Core'daki tek kaynaktan). Olay akışından (<see cref="OnEvent"/>) gelir,
+    /// <see cref="OnEngineReady"/>'nin çağıranından DEĞİL: <c>engineReady</c> hem ilk açılışta hem
+    /// <see cref="RestartEngineAsync"/>'te <c>EventReceived</c>'dan geçer — çökmeden sonra yeniden başlatılan motor
+    /// tam da kurtarmanın gerektiği durumdur, ve tek dal iki yolu birden kapsar.</summary>
+    private void OnEngineRecovered(int interruptedProjects)
+    {
+        if (interruptedProjects > 0) AppendRunLine(PlanProgressLines.PreviousRunInterrupted(interruptedProjects));
     }
 
     /// <summary>Motor bu oturumda en az bir kez hazır oldu mu — açılış Sync'i yalnız ilk hazır oluşta gider.</summary>

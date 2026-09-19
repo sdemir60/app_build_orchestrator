@@ -121,6 +121,13 @@ public static class PlanProgressLines
             ? $"Run interrupted by a branch change — {built} built, {notBuilt} not built"
             : $"Run interrupted by a branch change — {built} built, {notBuilt} not built · logs: {logDirectory}";
 
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Önceki motor koşu ortasında öldü: açılış kurtarması uçuştaki
+    /// <paramref name="projects"/> projeyi kanıtsız hata olarak geçersizledi, bir sonraki Build onları derler.
+    /// Satırı App yazar (<c>EngineReadyEvent.InterruptedProjects</c> &gt; 0).</summary>
+    public static string PreviousRunInterrupted(int projects) => projects == 1
+        ? "previous run was interrupted; 1 project will rebuild"
+        : $"previous run was interrupted; {projects} projects will rebuild";
+
     /// <summary>[spec 2026-09-18 §6.1] HEAD izleyicisi kurulamadı (ağ sürücüsü, izin, reflog klasörü yok) — kök
     /// başına BİR kez yazılır; pencereye dönüş Sync'i güvenlik ağı olarak kalır.</summary>
     public static string HeadWatcherUnavailable(string reason)

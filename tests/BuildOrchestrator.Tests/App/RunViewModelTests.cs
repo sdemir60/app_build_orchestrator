@@ -2940,6 +2940,24 @@ public class RunViewModelTests
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
     }
 
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardıysa konsol bunu söyler —
+    /// metin Core'daki tek kaynaktan. Kurtarılacak bir şey yoksa satır yoktur. Satır <c>engineReady</c> OLAYINDAN
+    /// yazılır: olay hem ilk açılışta hem motor yeniden başlatılınca aynı akıştan gelir.</summary>
+    [Fact]
+    public void An_engine_that_recovered_an_interrupted_run_says_how_many_projects_will_rebuild()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        string line = BuildOrchestrator.Core.Planning.PlanProgressLines.PreviousRunInterrupted(3);
+
+        vm.OnEvent(new EngineReadyEvent(42, "1.0.0"));
+        Assert.DoesNotContain("previous run was interrupted", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        // engineReady olay akışından gelir — ilk açılışta da, Restart engine'de de aynı dal.
+        vm.OnEvent(new EngineReadyEvent(43, "1.0.0", InterruptedProjects: 3));
+        Assert.Contains(line, vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal("previous run was interrupted; 3 projects will rebuild", line);
+    }
+
     /// <summary>[spec 2026-09-18 §6.1] Tamamlanan Sync branch değerini checkout edilmiş branch'e hizalar ve son
     /// Sync'in HEAD'ini + zamanını kaydeder (çift Sync kontrolünün kaynağı).</summary>
     [Fact]

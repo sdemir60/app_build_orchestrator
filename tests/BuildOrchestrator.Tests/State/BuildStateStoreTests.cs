@@ -51,6 +51,35 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath)); // dosyaya hiç dokunulmadı
     }
 
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Kanıtsız geçersizleme: kayıt "son deneme başarısız, kanıt yok"
+    /// hâline çekilir (LastResult=Failed, LastRunAt=şimdi, hata imzası ve zamanı SİLİNİR), imza/commit/süre
+    /// korunur. Kaydı olmayan proje için hiçbir şey açılmaz ve dosyaya dokunulmaz.</summary>
+    [Fact]
+    public void InvalidateWithoutEvidence_marks_an_unevidenced_failure_keeps_the_signature_and_opens_no_record()
+    {
+        var store = new BuildStateStore(_root);
+        var earlier = new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero);
+        var now = new DateTimeOffset(2026, 9, 19, 10, 0, 0, TimeSpan.Zero);
+        store.Upsert(new BuildState(@"C:\r\A.csproj", "sigA", BuiltCommit: "c1", LastResult: BuildResult.Failed,
+            LastRunAt: earlier, LastDurationMs: 1234, FailedSignature: "sigA", FailedAt: earlier));
+
+        store.InvalidateWithoutEvidence(@"c:\R\a.CSPROJ", now); // proje Id'leri Windows yollarıdır → harf-duyarsız
+
+        var a = store.Load()[@"C:\r\A.csproj"];
+        Assert.Equal(BuildResult.Failed, a.LastResult);
+        Assert.Equal(now, a.LastRunAt);
+        Assert.Null(a.FailedSignature);
+        Assert.Null(a.FailedAt);
+        Assert.Equal("sigA", a.BuiltSignature);
+        Assert.Equal("c1", a.BuiltCommit);
+        Assert.Equal(1234, a.LastDurationMs);
+
+        var stamp = File.GetLastWriteTimeUtc(StatePath);
+        store.InvalidateWithoutEvidence(@"C:\r\Never.csproj", now);
+        Assert.Single(store.Load());                               // kayıt açılmadı
+        Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath));  // dosyaya hiç dokunulmadı
+    }
+
     /// <summary>
     /// Dep-issue notunun kök kimlikleri (<see cref="BuildState.DepIssueRoots"/>) diske yazılır ve aynen geri
     /// okunur; alanın olmadığı ESKİ bir <c>build-state.json</c> satırı da okunmaya devam eder (kökler null ⇒

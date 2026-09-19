@@ -29,6 +29,10 @@ public static class Program
         // gerçek cache/state'ini kirletmez (testler kendi temp logsRoot'unu verir).
         string cacheRoot = Path.GetDirectoryName(logsRoot) ?? logsRoot;
         var stateStore = new BuildStateStore(cacheRoot); // [Task 19] global build-state (projectId anahtarlı)
+        // [spec 2026-09-18 §5.5 · karar 12] Çökme kurtarması host kurulmadan, HİÇBİR komut kabul edilmeden ÖNCE:
+        // önceki motor koşu ortasında öldüyse uçuştaki projeler kanıtsız hata olur. Sayı engineReady ile App'e gider.
+        var inFlight = new InFlightLedger(cacheRoot);
+        int interruptedProjects = RecoverInterruptedRun(inFlight, stateStore);
 
         // [A13/B4] Test kancaları (bugün yalnız debugSpawnChildren) VARSAYILAN OLARAK KAPALI. Bayrak DEĞER
         // ALMAZ, bu yüzden GetArg'ın (isim + değer) sözleşmesine girmez. App bu bayrağı HİÇ göndermez
@@ -48,13 +52,15 @@ public static class Program
             innerJob: innerJob,
             nowMs: () => Environment.TickCount64, // MONOTONİK — duvar saati geri atlayabilir, elapsed negatife düşerdi
             console: Console.Error.WriteLine,
-            stateStore: stateStore); // [Task 19] projectSucceeded → BuildState persist
+            stateStore: stateStore, // [Task 19] projectSucceeded → BuildState persist
+            inFlight: inFlight); // [§5.5] dispatch → Add, sonuç → Remove, koşu çıkışı → Clear
         var host = new SupervisorHost(writer, new NdjsonReader(stdin), innerJob, coordinator,
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).
             WorkspaceServices.Default(cacheRoot,
                 async ct => (await ResolveMsBuildAsync(innerJob, ct)).Invoker),
-            debugHooks); // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
+            debugHooks, // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
+            interruptedProjects);
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan → (fresh modda)
@@ -213,6 +219,21 @@ public static class Program
         // [D10] dotnet build DEĞİL, MSBuild.exe; child'lar JobProcessLauncher ile inner Job içinde doğar.
         // Ham (retry'siz) invoker verilir — retry sarmalaması run'a özgü decision.log'a yazdığı için koordinatörün işi.
         return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.5] Açılış kurtarmasını koşar ve yeniden derlenecek proje sayısını döner. Defter I/O
+    /// hatası motoru AYAĞA KALDIRMAYI engellemez: stderr'e uyarı düşer (stdout YALNIZ NDJSON [D4]), sayı 0 olur ve
+    /// dosya yerinde kalır — bir sonraki açılış yeniden dener.
+    /// </summary>
+    private static int RecoverInterruptedRun(InFlightLedger inFlight, BuildStateStore stateStore)
+    {
+        try { return inFlight.Recover(stateStore, DateTimeOffset.UtcNow).Count; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("warning: interrupted run could not be recovered (" + inFlight.FilePath + "): " + ex.Message);
+            return 0;
+        }
     }
 
     private static string? GetArg(string[] args, string name)

@@ -302,6 +302,38 @@ public class SupervisorIpcTests
         await child.WaitForExitAsync(new CancellationTokenSource(5000).Token);
     }
 
+    // ---------------------------------------------------------------- [spec 2026-09-18 §5.5] çökme kurtarması
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Önceki motor koşu ortasında ölmüş: <c>run-inflight.json</c> dolu
+    /// kalmış. Yeni motor host'u kurmadan ÖNCE kurtarır — listedeki kayıtlı proje kanıtsız hata olur, dosya silinir
+    /// ve sayı <c>engineReady.interruptedProjects</c> ile App'e gider (kaydı olmayan proje de sayılır: o da
+    /// yeniden derlenecek).</summary>
+    [Fact]
+    public async Task A_supervisor_started_after_a_crash_recovers_and_reports_the_count()
+    {
+        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
+        string recorded = @"C:\r\A\A.csproj";
+        var store = new BuildOrchestrator.Core.State.BuildStateStore(sandbox); // cacheRoot = logs'un üstü
+        store.Upsert(new BuildState(recorded, "sigA", LastResult: BuildResult.Succeeded,
+            LastRunAt: DateTimeOffset.UtcNow.AddDays(-1)));
+        var crashed = new BuildOrchestrator.Core.State.InFlightLedger(sandbox);
+        crashed.Add(recorded);
+        crashed.Add(@"C:\r\B\B.csproj");
+
+        using var p = Process.Start(Psi(Path.Combine(sandbox, "logs")))!;
+        var writer = new NdjsonWriter(p.StandardInput.BaseStream);
+        var reader = new NdjsonReader(p.StandardOutput.BaseStream);
+        var ready = Assert.IsType<EngineReadyEvent>(
+            await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
+
+        Assert.Equal(2, ready.InterruptedProjects);
+        Assert.False(File.Exists(crashed.FilePath));
+        Assert.Equal(BuildResult.Failed, store.Load()[recorded].LastResult);
+
+        await writer.WriteAsync(new ShutdownCommand());
+        await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+    }
+
     // ---------------------------------------------------------------- [A5/T69] sync / branch
 
     /// <summary>İzole bir Supervisor: kendi logs/cache kökü (kullanıcının gerçek dosyaları korunur).</summary>
