@@ -858,8 +858,9 @@ either — only the build evidence speaks for it.
 output was built by someone else: **time mode**. Otherwise it is the tool's own: **ledger mode**. The tool's own
 output is always older than its last run, because the record is written after MSBuild exits and a copy keeps
 its source's time — which is also why crash recovery's "last run = now" (§8.7) keeps a half-written output out
-of time mode for a project with a record. Recovery writes nothing for a project that has none, so such a
-project stays in time mode and is judged by its output's time against its inputs.
+of time mode. That holds for a project the ledger had never recorded too: recovery, and every other failure
+without evidence (§8.8), opens a failed record with no built signature for it, so its next decision is never
+built rather than built outside this tool.
 
 **Ledger mode** is the decision of §7.4 with two vetoes. `LastFailed` and never built stand as they are. For
 every other reason a missing build evidence reads **output missing** — also when the signature moved, because
@@ -876,6 +877,16 @@ broken → **output replaced**; otherwise **built outside this tool** — green,
 as old as the output counts as current, and a missing or unreadable input or target is ignored. Time mode has
 no red: the ledger's notes (the failed signature, the dependency issue) describe a build older than the output
 on disk and are not read. Nothing is written back to the ledger; every Sync proves the output again.
+
+**Behind a dependency that will build.** A time check reads only file times, so it cannot see that a dependency
+is about to be rebuilt: until that build runs, the dependency's shared copy is still the old one and the
+dependent's output looks current against it. Dependents are always judged by the signature, so in the Safe mode
+(§7.2) a time-mode project any of whose upstream projects in the plan — directly or transitively — will build
+reads output stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own
+files did not change, and carries no built-outside age. A project whose own verdict comes earlier in the order
+above — no build evidence, or an own input newer — keeps it. The Fast mode follows no upstream and does not
+cascade here either. The rule lives in the planner, after every project's own decision, and does not depend on
+the plan's order.
 
 **`modified` or `affected`.** In time mode the split comes from the evidence — own input newer means
 `modified` — and elsewhere from the stored content fingerprint compared with today's (§7.5). The Sync and a
@@ -1208,9 +1219,10 @@ in-flight ledger closes that hole.
   longer than the parallelism.
 - **Startup invalidates what is left.** Before the host accepts a single command, the engine reads the file and
   marks every listed project as a failure without evidence (`LastResult = Failed`, the run timestamp set to now,
-  the built signature kept, no failed signature written — §7.5). The next `Build` compiles them, and their row
-  reads grey `never built` rather than green: the App runs a Sync every time the engine reports ready, after a
-  restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
+  the built signature kept, no failed signature written — §7.5); a listed project without a record gets one in
+  that same shape, with no built signature, so its half-written output cannot enter time mode (§7.6) either. The
+  next `Build` compiles them, and their row reads grey `never built` rather than green: the App runs a Sync every
+  time the engine reports ready, after a restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
   the App prints `previous run was interrupted; N projects will rebuild`.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
@@ -1264,9 +1276,10 @@ before, so a first-ever compile failure is not lost. Every other case — a time
 failed Clean (which never calls the compiler), or a result the run does not trust at all, such as a
 non-converged cycle's member that came back green — is not proof the sources are broken, only that this
 attempt's output cannot be, and it clears any failed signature a past success has since invalidated rather
-than writing one; it opens no record where none exists, since a placeholder failure for a project the ledger
-has never heard of would answer nothing. Either way only `LastResult` and the run timestamp change beyond
-that — the built signature, commit, branch and duration stay exactly as a past success left them.
+than writing one. For a project the ledger has never heard of it opens a failed record with no built signature:
+without one the project would stay in time mode (§7.6) and a half-written output newer than its inputs would read
+built outside this tool. Either way only `LastResult` and the run timestamp change beyond that — the built
+signature, commit, branch and duration stay exactly as a past success left them.
 
 The verdict is taken once, in one gate (`FailureEvidenceSignature`: a trusted result of a compiling target, a
 compiler exit, a known planning signature and a ledger to write to), and the same answer goes two ways: into
