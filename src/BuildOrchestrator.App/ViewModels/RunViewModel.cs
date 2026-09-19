@@ -1894,7 +1894,15 @@ public sealed partial class RunViewModel : ObservableObject
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
             row.Conditional = item.Conditional;         // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
             row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — WillBuild/Reason'la AYNI guard
-            row.InRunQueue = InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten
+            // [Task 1 review fix round 1] InRunQueue AYRI bir kanaldır (run-scoped) ve yukarıdaki karar
+            // alanlarıyla (WillBuild/Reason/Conditional/DependencyRoots) AYNI guard'ı PAYLAŞAMAZ: onlar koşu
+            // bittikten sonra da tazelenir (bu task), InRunQueue ise YALNIZ koşu sürerken yükselir — belgelenen
+            // değişmez (bkz. alanın kendi XML yorumu + PropagateRunActive'in "koşu biterken kuyruk da düşer"
+            // satırı) budur. RunActive burada AYRICA sorulmazsa koşu bittikten sonra gelen bir önizleme (sessiz
+            // Sync) InRunQueue'yu sessizce yeniden yükseltir — bugün gözlemlenemez (TEK okuyucu Status'un
+            // IsRunActive && InRunQueue dalı, terminal State ondan önce eşleşir) ama alanın kendi doğruluğu
+            // okuyucudan BAĞIMSIZ korunmalı.
+            row.InRunQueue = RunActive && InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten VE YALNIZ koşu sürerken
         }
         RaiseRowDecisionsChanged();                          // graf renk girdisini buradan öğrenir
         BuildPreviewApplied?.Invoke(this, EventArgs.Empty); // işaretin kuyruğa devri (MainWindow)

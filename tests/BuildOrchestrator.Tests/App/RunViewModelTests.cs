@@ -1690,6 +1690,38 @@ public class RunViewModelTests
         Assert.Equal(VisualStatus.Current, row.VisualStatus); // yeşil, kırmızı DEĞİL
     }
 
+    [Fact]
+    public async Task A_post_run_preview_never_raises_InRunQueue_on_a_terminal_row()
+    {
+        // [Task 1 review fix round 1] InRunQueue'nun belgelenen değişmezi (ProjectRowViewModel.InRunQueue'nun
+        // XML yorumu): YALNIZ koşan run'ın KENDİ BuildPreviewEvent'inden yazılır, koşu bitince
+        // PropagateRunActive onu düşürür (RunActive=false ⇒ InRunQueue=false, ~satır 1507) ve bir sonraki
+        // run'ın kendi önizlemesine kadar bir daha YÜKSELMEZ. Bu task terminal satırların karar alanlarını
+        // (WillBuild/Reason/Conditional/DependencyRoots) koşu bittikten sonra da tazeliyor — ama InRunQueue
+        // AYRI bir kanaldır (run-scoped) ve AYNI guard'ı paylaşamaz: koşu sürmüyorken gelen bir önizleme
+        // kuyruğu bir daha YÜKSELTMEMELİDİR, aksi halde bu değişmez sessizce bozulur (bugün gözlemlenemez —
+        // TEK okuyucu <c>Status</c>'un <c>IsRunActive &amp;&amp; InRunQueue</c> dalı ve terminal State zaten
+        // ondan ÖNCE eşleşir — ama alanın kendi doğruluğu bağımsız korunmalı).
+        const string projectId = @"C:\p\cycle.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Cycle"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.False(row.InRunQueue); // ön koşul: koşu bitince PropagateRunActive kuyruğu düşürdü
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true)]));
+
+        Assert.True(row.WillBuild);   // karar tazelendi — bu task'ın asıl davranışı, KIRILMADI
+        Assert.False(row.InRunQueue); // ama kuyruk YİNE düşük — koşu sürmüyor, bu YÜKSELMEMELİ
+    }
+
     /// <summary>
     /// [design v1.16.0 §2.4] Satırın karar etiketi CANLI geçişi izler: bir proje bu koşuda derlendiği anda
     /// satır "up to date · just now" yazar, patladığı anda "failed · retry". Motorun bir sonraki önizlemesi
