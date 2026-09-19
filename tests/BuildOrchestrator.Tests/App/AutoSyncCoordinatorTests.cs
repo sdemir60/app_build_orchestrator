@@ -42,14 +42,20 @@ public sealed class AutoSyncCoordinatorTests
 
         public long NowMs() => Now;
 
+        /// <summary>[final review I1] VM'in Sync'i gönderip gönderemediği — <c>false</c> iken hiçbir Sync kaydedilmez ve
+        /// port <c>false</c> döner (kapı kapalı ya da gönderim düştü).</summary>
+        public bool Accepts { get; set; } = true;
+
         public Task<bool> SyncSilentlyAsync(SilentSyncReason reason)
         {
+            if (!Accepts) return Task.FromResult(false);
             Silent.Add(reason);
             return Task.FromResult(true);
         }
 
         public Task<bool> SyncAfterExternalBranchChangeAsync(IReadOnlyList<string> sectionLines)
         {
+            if (!Accepts) return Task.FromResult(false);
             BranchChanges.Add(string.Join("\n", sectionLines));
             return Task.FromResult(true);
         }
@@ -160,6 +166,43 @@ public sealed class AutoSyncCoordinatorTests
         h.Coordinator.OnWorkspaceIdle();
 
         Assert.Equal([SilentSyncReason.Commit], h.Port.Silent);
+    }
+
+    /// <summary>[final review I1] Gönderilemeyen Sync (kapı kapalı ya da gönderim düştü) tetiği KAYBETMEZ: tetik bekler
+    /// ve bir sonraki meşguliyet bitişinde (ör. motor yeniden hazır) yeniden değerlendirilir.</summary>
+    [Fact]
+    public async Task A_silent_sync_that_could_not_be_sent_stays_pending_for_the_next_idle()
+    {
+        var h = Harness.SyncedOnMain();
+        h.Head = new HeadState("main", ShaB);
+        h.Port.Accepts = false;
+
+        await h.Coordinator.HeadTriggerAsync(HeadMove.Commit);
+        Assert.NotNull(h.Coordinator.PendingTrigger);
+
+        h.Port.Accepts = true;
+        h.Coordinator.OnWorkspaceIdle();
+
+        Assert.Equal([SilentSyncReason.Commit], h.Port.Silent);
+        Assert.Null(h.Coordinator.PendingTrigger);
+    }
+
+    /// <summary>[final review I1] Branch değişiminin bölümü de gönderilemezse kaybolmaz: bir sonraki meşguliyet bitişinde
+    /// bölüm açılır.</summary>
+    [Fact]
+    public async Task A_branch_section_that_could_not_be_sent_stays_pending_for_the_next_idle()
+    {
+        var h = Harness.SyncedOnMain();
+        h.Head = new HeadState("feature", ShaB);
+        h.Port.Accepts = false;
+
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+        Assert.NotNull(h.Coordinator.PendingTrigger);
+
+        h.Port.Accepts = true;
+        h.Coordinator.OnWorkspaceIdle();
+
+        Assert.Equal([PlanProgressLines.SwitchedBranch("main", "feature", RevisionText.Short(ShaB))], h.Port.BranchChanges);
     }
 
     [Fact]

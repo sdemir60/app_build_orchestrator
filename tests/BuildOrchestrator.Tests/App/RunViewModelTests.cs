@@ -2899,7 +2899,10 @@ public class RunViewModelTests
     }
 
     /// <summary>[review M1] Gönderimi düşen bir Sync kipini bırakır (sonraki transkript satırı gizlenmez) ve
-    /// başlangıç zamanı YAZMAZ — hiçbir Sync başlamadı; başarılı gönderim yazar.</summary>
+    /// başlangıç zamanı YAZMAZ — hiçbir Sync başlamadı; başarılı gönderim yazar.
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden düşen gönderimde de <c>true</c> dönerdi (yalnız kapı
+    /// soruluyordu) ve koordinatör tetiği kaybederdi. Artık dönüş "motora gitti mi"dir: düşen gönderim <c>false</c>
+    /// verir ve tetik bekler.</para></summary>
     [Fact]
     public async Task A_silent_sync_whose_send_fails_leaves_no_mode_or_start_time()
     {
@@ -2909,7 +2912,7 @@ public class RunViewModelTests
             RootPath = @"D:\repo",
         };
 
-        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit)); // gönderim senkron düşer
+        Assert.False(await vm.SyncSilentlyAsync(SilentSyncReason.Commit)); // gönderim senkron düşer
 
         Assert.Null(vm.LastSyncStartedAtMs);
         vm.OnEvent(new SyncProgressEvent("a later transcript line", "info"));
@@ -2918,7 +2921,7 @@ public class RunViewModelTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
         var sentVm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
-        await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        Assert.True(await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit));
         Assert.Equal(7000, sentVm.LastSyncStartedAtMs);
     }
 
@@ -2940,18 +2943,19 @@ public class RunViewModelTests
     }
 
     /// <summary>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motorun İLK hazır oluşu, bir workspace varken, fetch'li bir
-    /// Sync başlatır ve boot satırları kalır (transkript altına eklenir). Motorun yeniden hazır oluşu (restart)
-    /// Sync başlatmaz; workspace yoksa da gidecek bir kök yoktur.</summary>
+    /// Sync başlatır ve boot satırları kalır (transkript altına eklenir); workspace yoksa gidecek bir kök yoktur.</summary>
     [Fact]
-    public async Task The_first_engine_ready_syncs_with_the_transcript_and_a_restart_does_not()
+    public async Task The_first_engine_ready_syncs_with_the_transcript()
     {
-        var noRepo = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        var noRepo = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            { LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
         var noRepoSent = new List<IpcCommand>();
         noRepo.DebugOnCommandSent = noRepoSent.Add;
         noRepo.OnEngineReady("1.0.0", 42);
         Assert.Empty(noRepoSent);
 
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 
@@ -2960,12 +2964,35 @@ public class RunViewModelTests
 
         Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
         Assert.Contains("Engine ready — v1.0.0", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
 
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0)); // ilk Sync bitti, kapı açık
-        vm.OnEngineReady("1.0.0", 43);
-        await Task.Yield();
+    /// <summary>[final review I1 · spec 2026-09-18 §5.5 · §6.2] Çökmeden sonra "Restart engine": yeniden başlatılan motor
+    /// ilk açılışla AYNI hazır yolundan geçer — konsola "Engine ready — v…" düşer, PID/sürüm yenilenir — ve bir
+    /// workspace açıkken TEK bir Appended Sync koşar: kurtarılan projelerin satırları gri "never built" okunur.
+    /// Test gerçek restart yolunu (<c>RestartEngineCommand</c>, izole motor, elle yazılmış uçuş defteri) sürer.
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden bu test <c>OnEngineReady</c>'yi iki kez çağırır ve ikinci
+    /// hazır oluşun Sync BAŞLATMADIĞINI pinlerdi ("restart dünyayı değiştirmez"). Oysa üretimde restart yolu
+    /// <c>OnEngineReady</c>'yi hiç çağırmıyordu (ne satır ne PID) ve motor çökmeden sonra kurtarma yaptığında ekran
+    /// eski kararları gösteriyordu — kurtarmanın tam da gerektiği an.</para></summary>
+    [Fact]
+    public async Task A_restarted_engine_prints_its_ready_line_and_syncs_once()
+    {
+        using var sandbox = new SupervisorSandbox();
+        new BuildOrchestrator.Core.State.InFlightLedger(sandbox.CacheRoot).Add(@"C:\r\A\A.csproj"); // koşu ortasında ölmüş motor
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        using var root = new TempDir();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+            { RootPath = root.Path, LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
+        vm.OnEngineExited(3);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.RestartEngineCommand.ExecuteAsync(null);
 
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Contains("Engine ready — v", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.NotNull(vm.EnginePid);
+        Assert.True(vm.SyncBusy); // Sync kapıyı tutuyor — restart'ın temizliği onu geri açmadı
     }
 
     /// <summary>[Task 11] Eski worktree havuzu klasörü hâlâ diskteyse motorun bu oturumdaki İLK hazır oluşunda

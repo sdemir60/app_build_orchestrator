@@ -634,15 +634,12 @@ public sealed partial class RunViewModel
     /// yazılır; bitişte akışa tek satır (<paramref name="reason"/>'a göre, metinler <see cref="StreamText"/>'te).
     /// <para>Kapı Sync düğmesininkiyle AYNIdır (<see cref="CanSync"/>) + bir workspace: koşu, planlama, başka bir
     /// workspace işi (Sync/Clean/Optimize/checkout/pull) uçuştayken ya da motor erişilemezken hiçbir şey gönderilmez ve
-    /// <c>false</c> döner — çağıran (izleyici) tetiği sonra yeniden deneyebilir.</para>
+    /// <c>false</c> döner — çağıran (izleyici) tetiği sonra yeniden deneyebilir. Gönderim düştüyse de (motor ölü)
+    /// <c>false</c>.</para>
     /// </summary>
-    /// <returns>Sync istendi mi.</returns>
-    internal async Task<bool> SyncSilentlyAsync(SilentSyncReason reason)
-    {
-        if (!HasWorkspace || !CanSync()) return false;
-        await SyncCoreAsync(SyncMode.Silent, reason);
-        return true;
-    }
+    /// <returns>Sync motora gitti mi.</returns>
+    internal async Task<bool> SyncSilentlyAsync(SilentSyncReason reason) =>
+        HasWorkspace && CanSync() && await SyncCoreAsync(SyncMode.Silent, reason);
 
     /// <summary>Bir Sync istenirken kipini kurar (<see cref="SyncCoreAsync"/>): sessiz kipte karar anlık görüntüsü
     /// ALINIR (istek anı — motorun cevabından önceki ekran), başlangıç saati her kipte yazılır.</summary>

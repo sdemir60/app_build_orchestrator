@@ -37,11 +37,12 @@ internal interface IAutoSyncPort
     /// <summary>Şimdiki monoton ms — <see cref="LastSyncAtMs"/> ile aynı saat.</summary>
     long NowMs();
 
-    /// <summary>Sessiz Sync (<see cref="SyncMode.Silent"/>); kapı kapalıysa hiçbir şey göndermez, <c>false</c>.</summary>
+    /// <summary>Sessiz Sync (<see cref="SyncMode.Silent"/>); kapı kapalıysa ya da gönderim düştüyse <c>false</c> —
+    /// koordinatör tetiği bekletir.</summary>
     Task<bool> SyncSilentlyAsync(SilentSyncReason reason);
 
     /// <summary>Dışarıdan gelen branch değişimi: yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satırları
-    /// <paramref name="sectionLines"/>. Kapı kapalıysa hiçbir şey göndermez, <c>false</c>.</summary>
+    /// <paramref name="sectionLines"/>. Kapı kapalıysa ya da gönderim düştüyse <c>false</c>.</summary>
     Task<bool> SyncAfterExternalBranchChangeAsync(IReadOnlyList<string> sectionLines);
 
     /// <summary>Konsola (temizlemeden) tek satır.</summary>
@@ -260,31 +261,42 @@ internal sealed class AutoSyncCoordinator : IDisposable
         if (head is null)
         {
             if (summary is null && trigger.RunEnded) return;
-            await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh);
+            KeepIfNotSent(trigger, await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh));
             return;
         }
 
         if (!string.Equals(head.Branch, last.Branch, StringComparison.Ordinal))
         {
             string switched = SwitchedLine(last, head);
-            await _port.SyncAfterExternalBranchChangeAsync(summary is null ? [switched] : [summary, switched]);
+            KeepIfNotSent(trigger,
+                await _port.SyncAfterExternalBranchChangeAsync(summary is null ? [switched] : [summary, switched]));
             return;
         }
         if (summary is not null)
         {
-            await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh);
+            KeepIfNotSent(trigger, await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh));
             return;
         }
         if (!trigger.IsActivation && string.Equals(head.Sha, last.HeadSha, StringComparison.Ordinal)) return;
 
-        await _port.SyncSilentlyAsync(trigger.Move == HeadMove.Commit ? SilentSyncReason.Commit : SilentSyncReason.Refresh);
+        KeepIfNotSent(trigger,
+            await _port.SyncSilentlyAsync(trigger.Move == HeadMove.Commit ? SilentSyncReason.Commit : SilentSyncReason.Refresh));
     }
 
     /// <summary>Sessiz Sync; önünde kesilen koşunun özeti varsa önce o akışa tek satır düşer.</summary>
-    private async Task SyncSilentlyAfterAsync(string? summary, SilentSyncReason reason)
+    private async Task<bool> SyncSilentlyAfterAsync(string? summary, SilentSyncReason reason)
     {
         if (summary is not null) _port.AppendStreamLine(summary);
-        await _port.SyncSilentlyAsync(reason);
+        return await _port.SyncSilentlyAsync(reason);
+    }
+
+    /// <summary>[final review I1] Port Sync'i gönderemediyse (kapı kapalı ya da gönderim düştü — ör. motor ölü) tetik
+    /// KAYBOLMAZ: bekleyen tetik olarak kalır ve bir sonraki meşguliyet bitişinde (<see cref="OnWorkspaceIdle"/>;
+    /// motorun yeniden hazır oluşu da bir geçiştir) yeniden değerlendirilir. Kesilen koşunun özeti zaten tüketildi —
+    /// o satır tekrar yazılmaz.</summary>
+    private void KeepIfNotSent(Trigger trigger, bool sent)
+    {
+        if (!sent) Remember(trigger);
     }
 
     /// <summary>Tek bekleyen tetik: yenisi eskisinden güçlüyse (ya da eşitse) yerini alır.</summary>

@@ -1106,8 +1106,9 @@ in-flight ledger closes that hole.
 - **Startup invalidates what is left.** Before the host accepts a single command, the engine reads the file and
   marks every listed project as a failure without evidence (`LastResult = Failed`, the run timestamp set to now,
   the built signature kept, no failed signature written — §7.5). The next `Build` compiles them, and their row
-  reads grey `never built` rather than green. The count rides on `engineReady` (§5.3) and the App prints
-  `previous run was interrupted; N projects will rebuild`.
+  reads grey `never built` rather than green: the App runs a Sync every time the engine reports ready, after a
+  restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
+  the App prints `previous run was interrupted; N projects will rebuild`.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
   permission) is a different case: a warning goes to stderr, the file stays, and the next engine start tries
@@ -1469,7 +1470,7 @@ rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers nev
 | Kind | Started by | Console and event stream | Fetch | Visible as an operation |
 |---|---|---|---|---|
 | Manual | the Sync button | cleared at the click; full transcript | yes | yes |
-| Appended | application start, a successful pull, the hand-over after Clean/Optimize, Settings Save and a repository change | kept; transcript appended below the note or transcript that is already there | yes | yes |
+| Appended | application start and an engine restart, a successful pull, the hand-over after Clean/Optimize, Settings Save and a repository change | kept; transcript appended below the note or transcript that is already there | yes | yes |
 | BranchChange | a checkout from the branch chip, or a branch change seen by the HEAD watcher | cleared; the new section's first lines are the caller's (the stash and switch lines), then the transcript | no | yes |
 | Silent | a commit, a return to the window, any other HEAD movement on the same branch | untouched; the transcript is hidden, but `warn` and `error` lines are still written; one line in the event stream at the end | no | no |
 
@@ -1771,15 +1772,17 @@ the hero-motion coordinator.
 The shell also enables the automatic Sync (§10.3) once: the HEAD watcher attaches to the repository root and
 follows it when the root changes, and window activation is wired to the same coordinator.
 
-The first time the engine reports ready in a session, the App does three things, in this order. It prints
-`Engine ready — v<version>`. If the pool folder that older versions kept at
-`%LOCALAPPDATA%\BuildOrchestrator\worktrees` still exists, it prints one line saying the pool is no longer used
-and can be deleted, followed by `git worktree prune` in the repository — the tool neither creates nor deletes
-that folder. And when a workspace is open it starts the first Sync (Appended, §10.2), which opens the first
-console section with a full transcript and a reveal. A restarted engine prints its ready line again but starts
-no Sync of its own. Separately, whenever `engineReady` carries interrupted projects — at startup or after a
-restart, which is exactly when an engine died mid-run — the console says `previous run was interrupted; N
-projects will rebuild` (§8.7).
+Every time the engine reports ready — at startup and after **Restart engine** — the App takes the same ready
+path. It prints `Engine ready — v<version>` and records the engine's version and PID. The first time in a
+session only, if the pool folder that older versions kept at `%LOCALAPPDATA%\BuildOrchestrator\worktrees`
+still exists, it prints one line saying the pool is no longer used and can be deleted, followed by
+`git worktree prune` in the repository — the tool neither creates nor deletes that folder. Then, when a
+workspace is open and a Sync is allowed, it starts a Sync (Appended, §10.2): at startup that opens the first
+console section with a full transcript and a reveal; after a restart it refreshes the decisions a recovered
+engine may have changed. A restart releases everything the old engine left waiting before the ready path runs,
+so that Sync is the only operation in flight. Separately, whenever `engineReady` carries interrupted projects —
+at startup or after a restart, which is exactly when an engine died mid-run — the console says `previous run was
+interrupted; N projects will rebuild` (§8.7).
 
 ### 12.2 Window chrome
 

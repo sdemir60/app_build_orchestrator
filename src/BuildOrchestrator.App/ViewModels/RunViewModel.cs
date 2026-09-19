@@ -1195,7 +1195,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
     /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
     /// temizlikten sonra yazılan ilk satırlar.</param>
-    private async Task SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
+    /// <returns>Sync komutu motora gitti mi — düşen gönderimde <c>false</c> (kendiliğinden Sync tetiği bekletir).</returns>
+    private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
         IReadOnlyList<string>? sectionLines = null)
     {
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
@@ -1240,6 +1241,7 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
         await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
+        return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
     // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
@@ -1419,30 +1421,37 @@ public sealed partial class RunViewModel : ObservableObject
     /// için <see cref="EngineRestartable"/> true kalır ve <see cref="EngineDiedMessage"/> eski "unexpectedly
     /// stopped" metniyle donar: kullanıcıya sonsuza dek "Restart engine" sunulur, komutlar açık kalır ve her
     /// tıklama şeritteki mesajla ÇELİŞEN ikinci bir hata satırı üretir — <see cref="EngineRestartable"/>'ın
-    /// değişmezi de ("EngineDiedMessage'ı yazan HER yol bunu da yazar") bozulurdu.</para></summary>
+    /// değişmezi de ("EngineDiedMessage'ı yazan HER yol bunu da yazar") bozulurdu.</para>
+    /// <para>[final review I1] Başarılı yeniden başlatma ilk açılışla AYNI hazır yolundan geçer
+    /// (<see cref="OnEngineReady"/>): "Engine ready" satırı, PID/sürüm ve — bir workspace açıkken — tek bir Appended
+    /// Sync. Sıra ZORUNLUdur: önce eski motorun pencereleri bırakılır (<see cref="ReleaseAfterEngineLoss"/>), SONRA
+    /// hazır yolu — ters sırada bırakma yeni Sync'in istek bayrağını da silerdi.</para></summary>
     [RelayCommand]
     private async Task RestartEngineAsync()
     {
+        // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği event'leri
+        // bekleyen hiçbir durum kalmamalı (ReleaseAfterEngineLoss). Yeni motor başlatılamadıysa da geçerlidir: orada
+        // da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
+        EngineReadyEvent ready;
         try
         {
-            await _engine.RestartAsync();
+            ready = await _engine.RestartAsync();
             EngineDiedMessage = null;
         }
         catch (Services.EngineUnavailableException ex)
         {
             OnEngineUnavailable(ex.ExePath, ex.Reason); // [final review I-2] D1'in "engine yok" durumu
+            ReleaseAfterEngineLoss();
+            return;
         }
         catch (Exception ex)
         {
             AppendRunLine($"[error] engine restart failed: {ex.Message}");
-        }
-        finally
-        {
-            // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği
-            // event'leri bekleyen hiçbir durum kalmamalı. Yeni motor başlatılamadıysa da geçerlidir:
-            // orada da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
             ReleaseAfterEngineLoss();
+            return;
         }
+        ReleaseAfterEngineLoss();
+        OnEngineReady(ready.EngineVersion, ready.Pid);
     }
 
     /// <summary>[C2] Aynı projeye tekrar tıklamak seçimi kaldırır (kanonik deselect, BuildApp.jsx). Proje
@@ -2378,10 +2387,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
     /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.
     /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para>
-    /// <para>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motorun İLK hazır oluşunda, bir workspace varsa, fetch'li
-    /// bir Sync başlar (<see cref="SyncMode.Appended"/>: boot satırları kalır, transkript altına akar). Yalnız ilk
-    /// kez: motorun yeniden başlatılması (<see cref="RestartEngineAsync"/>) dünyayı değiştirmez, ekranın planı
-    /// hâlâ geçerlidir.</para>
+    /// <para>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motor hazır olduğunda, bir workspace varsa ve Sync'e izin
+    /// varsa, fetch'li bir Sync başlar (<see cref="SyncMode.Appended"/>: boot satırları kalır, transkript altına akar).
+    /// İki çağıran: kabuğun ilk açılışı (<c>MainWindow.StartEngineAsync</c>) ve <see cref="RestartEngineAsync"/>.
+    /// Yalnız eski havuz ipucu oturum başına BİR kez yazılır (<see cref="_engineWasReady"/>).</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden Sync yalnız ilk hazır oluşta giderdi ("restart dünyayı
+    /// değiştirmez"). Oysa çökmeden sonra yeniden başlayan motor uçuştaki projeleri kurtarır (spec §5.5): ekranın
+    /// kararları artık yanlıştır ve kurtarılan satırlar ancak bir Sync'le gri "never built" okunur.</para>
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.2]</b> Eskiden açılış "seed-but-idle"dı (kayıtlı repo bilinir
     /// ama Sync kullanıcıya kalır — <c>MainWindow</c> kök seed'i). Seed'in kendisi hâlâ komut göndermez
     /// (<c>RunViewModelStateTests.Seeding_the_root_path_directly_lands_in_boot_without_starting_a_sync</c>);
@@ -2391,10 +2403,12 @@ public sealed partial class RunViewModel : ObservableObject
         EngineVersion = engineVersion;
         EnginePid = pid;
         AppendRunLine($"Engine ready — v{engineVersion}");
-        if (_engineWasReady) return;
-        _engineWasReady = true;
-        string? legacyPoolHint = LegacyWorktreePool.Hint(LegacyWorktreePoolRoot);
-        if (legacyPoolHint is not null) AppendRunLine(legacyPoolHint);
+        if (!_engineWasReady)
+        {
+            _engineWasReady = true;
+            string? legacyPoolHint = LegacyWorktreePool.Hint(LegacyWorktreePoolRoot);
+            if (legacyPoolHint is not null) AppendRunLine(legacyPoolHint);
+        }
         if (HasWorkspace && CanSync()) _ = SyncCoreAsync(SyncMode.Appended);
     }
 
@@ -2413,7 +2427,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (interruptedProjects > 0) AppendRunLine(PlanProgressLines.PreviousRunInterrupted(interruptedProjects));
     }
 
-    /// <summary>Motor bu oturumda en az bir kez hazır oldu mu — açılış Sync'i yalnız ilk hazır oluşta gider.</summary>
+    /// <summary>Motor bu oturumda en az bir kez hazır oldu mu — eski havuz ipucu yalnız ilk hazır oluşta yazılır.</summary>
     private bool _engineWasReady;
 
     // ---------------------------------------------------------------- konsol/log

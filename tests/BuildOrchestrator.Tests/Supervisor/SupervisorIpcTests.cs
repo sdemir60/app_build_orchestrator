@@ -36,6 +36,13 @@ public static class TestPaths
     /// bu test AYRICA gerçek bir EngineHost başlatır.</summary>
     public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>[final review M8] Eski worktree havuzunun TEST kökü: diskte OLMAYAN, süreç başına tek bir geçici yol.
+    /// Motorun hazır oluşunu (<c>RunViewModel.OnEngineReady</c>) yaşayan her VM testi <c>LegacyWorktreePoolRoot</c>'u
+    /// buna bağlar — aksi hâlde ipucu kararı kullanıcının GERÇEK <c>%LOCALAPPDATA%</c> klasörüne bakar ve test
+    /// makineye göre değişirdi.</summary>
+    public static string MissingLegacyPoolRoot { get; } =
+        Path.Combine(Path.GetTempPath(), "bo-no-legacy-pool-" + Guid.NewGuid().ToString("N"));
+
     /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).
     /// <paramref name="logsDir"/> ZORUNLUDUR: argümansız bir Supervisor kullanıcının gerçek önbelleğini
     /// (<c>%LOCALAPPDATA%</c>) kullanır ve açılışta onun <c>run-inflight.json</c>'ını kurtarırdı (spec 2026-09-18

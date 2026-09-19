@@ -62,12 +62,8 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>[spec 2026-09-18 §6.2] Dışarıdan gelen branch değişimi: checkout'un cevabıyla AYNI yol
     /// (<see cref="SyncMode.BranchChange"/> + bölümün ilk satırı), kapı <see cref="SyncSilentlyAsync"/>'inkiyle aynı.</summary>
-    internal async Task<bool> SyncAfterExternalBranchChangeAsync(params IReadOnlyList<string> sectionLines)
-    {
-        if (!HasWorkspace || !CanSync()) return false;
-        await SyncCoreAsync(SyncMode.BranchChange, sectionLines: sectionLines);
-        return true;
-    }
+    internal async Task<bool> SyncAfterExternalBranchChangeAsync(params IReadOnlyList<string> sectionLines) =>
+        HasWorkspace && CanSync() && await SyncCoreAsync(SyncMode.BranchChange, sectionLines: sectionLines);
 
     // ---------------------------------------------------------------- IAutoSyncPort
 
