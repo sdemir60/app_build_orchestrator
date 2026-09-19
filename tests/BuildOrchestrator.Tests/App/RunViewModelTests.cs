@@ -3098,14 +3098,37 @@ public class RunViewModelTests
         var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
+        const string warning = "a merge is in progress — files with conflict markers will not compile";
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal); // ön-koşul: tohum satırı
 
         Assert.True(vm.BuildCommand.CanExecute(null));
         await vm.BuildCommand.ExecuteAsync(null);
 
         Assert.Single(sent.OfType<StartRunCommand>());
         var lines = vm.GetRunDocumentText().Split('\n');
-        Assert.Single(lines, l => l.Contains("a merge is in progress — files with conflict markers will not compile", StringComparison.Ordinal));
-        Assert.DoesNotContain(lines, l => l.Contains("previous operation line", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Contains("previous operation line", StringComparison.Ordinal)); // temizlendi
+        Assert.Single(lines, l => l.Contains(warning, StringComparison.Ordinal));
+        int requested = Array.IndexOf(lines, RunViewModel.RunRequestedLine(RunMode.Build));
+        Assert.True(requested >= 0, "ön-koşul: build requested satırı yok");
+        Assert.Equal(warning, lines[requested + 1]); // planlamanın başı: istek satırının hemen ardından
+    }
+
+    /// <summary>[T9 fix round 1 · M2] Zamanlayıcı kök uygulandıktan SONRA verilse de (kabuğun sırası: kayıtlı kök
+    /// seed'i, sonra zamanlayıcı) atama anında yoklanır — tepsiden merge yarıdayken açılış da yoklar.</summary>
+    [Fact]
+    public void A_poll_timer_assigned_after_the_root_starts_polling_mid_merge()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        {
+            RootPath = @"D:\repo",
+        };
+        vm.InspectGitOperation = _ => Merge;
+        var timer = new FakePollTimer();
+
+        vm.GitOperationPollTimer = timer;
+
+        Assert.True(timer.IsRunning);
+        Assert.Equal(Merge, vm.GitOperation);
     }
 
     /// <summary>Sync düğmesi merge yarıdayken de çalışır; temizlikten sonra ilk satır ağacın yarım olduğunu söyler.</summary>

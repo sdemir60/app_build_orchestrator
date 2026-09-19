@@ -29,22 +29,24 @@ public static class GitOperationText
     /// <summary>Build başlamadan önce gösterilen uyarı. <see cref="GitOperation.None"/> ve
     /// <see cref="GitOperation.CommandRunning"/> için <c>null</c> — ikisi de "conflict marker'lı dosya"
     /// riski taşımaz (CommandRunning kısa süreli bir git komutudur, çakışma durumu değil).</summary>
-    public static string? BuildWarning(GitOperation operation) =>
-        Noun(operation) is { } noun ? $"a {noun} is in progress — files with conflict markers will not compile" : null;
+    public static string? BuildWarning(GitOperation operation) => operation switch
+    {
+        GitOperation.Merge => "a merge is in progress — files with conflict markers will not compile",
+        GitOperation.Rebase => "a rebase is in progress — files with conflict markers will not compile",
+        GitOperation.CherryPick => "a cherry-pick is in progress — files with conflict markers will not compile",
+        GitOperation.Revert => "a revert is in progress — files with conflict markers will not compile",
+        _ => null,
+    };
 
     /// <summary>[Faz 2/T9 · spec §6.4] Sync düğmesi yarım bir ağaçta koşarken temizlikten sonra yazılan TEK satır.
     /// <see cref="BuildWarning"/> ile aynı kural: <see cref="GitOperation.None"/> ve
     /// <see cref="GitOperation.CommandRunning"/> için <c>null</c>.</summary>
-    public static string? SyncWarning(GitOperation operation) =>
-        Noun(operation) is { } noun ? $"the working tree is mid-{noun} — results may change once it finishes" : null;
-
-    /// <summary>Yarıda kalabilen işlemin küçük harfli, kısa çizgili adı (enum adından: <c>CherryPick</c> →
-    /// <c>cherry-pick</c>); yarıda kalma durumu olmayanlar (None, CommandRunning) için <c>null</c>. Uyarı metinlerinin
-    /// tek ad kaynağı. Ad literal olarak YAZILMAZ: git fiili taşıyan bir string literal'i mutasyon guard'ı
-    /// (<c>NoGitMutationOutsideTheWriterTests</c>) yalnız yazıcı dosyada kabul eder.</summary>
-    private static string? Noun(GitOperation operation) =>
-        operation is GitOperation.Merge or GitOperation.Rebase or GitOperation.CherryPick or GitOperation.Revert
-            ? string.Concat(operation.ToString().Select((c, i) =>
-                char.IsUpper(c) ? (i == 0 ? "" : "-") + char.ToLowerInvariant(c) : c.ToString()))
-            : null;
+    public static string? SyncWarning(GitOperation operation) => operation switch
+    {
+        GitOperation.Merge => "the working tree is mid-merge — results may change once it finishes",
+        GitOperation.Rebase => "the working tree is mid-rebase — results may change once it finishes",
+        GitOperation.CherryPick => "the working tree is mid-cherry-pick — results may change once it finishes",
+        GitOperation.Revert => "the working tree is mid-revert — results may change once it finishes",
+        _ => null,
+    };
 }

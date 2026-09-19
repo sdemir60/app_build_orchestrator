@@ -47,8 +47,21 @@ public sealed partial class RunViewModel
     internal Func<string, GitOperation> InspectGitOperation { get; set; } = InspectRootOnDisk;
 
     /// <summary>İşaret dururken tık atan zamanlayıcı — kabuk <see cref="DispatcherPollTimer"/> verir; <c>null</c> ise
-    /// (çıplak VM testleri) yoklama yalnız olay anlarında olur.</summary>
-    internal IPollTimer? GitOperationPollTimer { get; set; }
+    /// (çıplak VM testleri) yoklama yalnız olay anlarında olur. [fix round 1 · M2] Atama anında kök yoklanır: kabuk
+    /// kayıtlı kökü zamanlayıcıdan ÖNCE uygular ve o anki yoklama zamanlayıcısız kalmıştır — tepsiden, merge yarıdayken
+    /// açılışta da yoklama başlar. Eski zamanlayıcı (varsa) durdurulur.</summary>
+    internal IPollTimer? GitOperationPollTimer
+    {
+        get => _gitOperationPollTimer;
+        set
+        {
+            _gitOperationPollTimer?.Stop();
+            _gitOperationPollTimer = value;
+            RefreshGitOperation();
+        }
+    }
+
+    private IPollTimer? _gitOperationPollTimer;
 
     /// <summary>Kesintisiz <see cref="GitOperation.CommandRunning"/>'in ilk görüldüğü an (enjekte saat, ms); başka bir
     /// durumda <c>null</c>.</summary>

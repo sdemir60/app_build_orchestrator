@@ -143,13 +143,31 @@ public partial class ActionBar : UserControl
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         // Chip değeri yalnız vm.Branch'i okur ve o PropertyChanged yayınlar — envanter aboneliği gerekmez.
-        if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
+        if (_vm is not null)
+        {
+            _vm.PropertyChanged -= OnVmPropertyChanged;
+            _vm.PullRepositoryCommand.CanExecuteChanged -= OnPullGateChanged;
+        }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
-        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
+        if (_vm is not null)
+        {
+            _vm.PropertyChanged += OnVmPropertyChanged;
+            // [T9 fix round 1 · M4] Behind chip'inin kapısı pull komutunun kapısıdır — her geçişi buradan gelir.
+            _vm.PullRepositoryCommand.CanExecuteChanged += OnPullGateChanged;
+        }
         RefreshAll();
+    }
+
+    private void OnPullGateChanged(object? sender, EventArgs e) => RefreshBehindGate();
+
+    /// <summary>[T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği = pull komutunun kapısı (CanPullRepository:
+    /// koşu, workspace işi, motor, git kilidi) — bar kapıyı yeniden türetmez.</summary>
+    private void RefreshBehindGate()
+    {
+        if (_built) PART_BehindChip.IsEnabled = _vm?.PullRepositoryCommand.CanExecute(null) ?? false;
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -636,7 +654,7 @@ public partial class ActionBar : UserControl
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.
-        PART_BehindChip.IsEnabled = hasWs && !midRun && _vm?.GitOperationTooltip is null; // [spec §6.4] git kilidi
+        RefreshBehindGate(); // [T9 fix round 1 · M4] komutun kapısı; geçişleri CanExecuteChanged aboneliği de duyurur
         RefreshBehindChip();
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.

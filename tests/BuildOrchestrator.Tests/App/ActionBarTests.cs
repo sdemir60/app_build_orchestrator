@@ -216,6 +216,37 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği pull komutunun KENDİ kapısıdır (<c>CanExecute</c>) —
+    /// bar kapıyı yeniden türetmez. Sync uçuştayken komut kapalıdır, chip de; merge yarıdayken de kapalıdır ve
+    /// tooltip nedeni söyler.
+    /// </summary>
+    [StaFact]
+    public void The_behind_chip_follows_the_pull_command_gate()
+    {
+        var vm = NewVm();
+        var op = Core.Git.GitOperation.None;
+        vm.InspectGitOperation = _ => op;
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 2));
+        bar.UpdateLayout();
+        Assert.True(bar.BehindChip.IsEnabled); // ön-koşul
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        bar.UpdateLayout();
+        Assert.False(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.False(bar.BehindChip.IsEnabled);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 2));
+        op = Core.Git.GitOperation.Merge;
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+        Assert.False(bar.BehindChip.IsEnabled);
+        Assert.Equal("Merge in progress — finish or abort it in git", bar.BehindChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
     [StaFact]
     public void No_dot_when_git_is_idle()
