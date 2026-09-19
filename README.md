@@ -412,7 +412,8 @@ and they did not. The camera does not follow the run — it stays where you left
 graph to match: the projects still in the list stay bright, everything else fades back, and the fade is slower
 than the ones a run makes so it can be followed by eye. Building keeps your filter — the list stays filtered —
 but the graph shows the whole run unfiltered, from the opening sequence to the closing lights, and returns to
-the filtered view a moment after they end (at once if the run is stopped or nothing was built).
+the filtered view a moment after they end — a stopped run too, when it built something (at once if nothing was
+built).
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
 clicking empty background with nothing selected returns the view to its default, and a graph rebuilt by a Sync
 always starts from that default view.

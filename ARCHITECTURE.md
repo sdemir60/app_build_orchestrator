@@ -906,8 +906,9 @@ time mode is decided member by member in ledger mode.
 Inside the group, a member's `HintPath` check leaves out the targets its own siblings produce. Those targets are
 the cycle's edges themselves: members built one after another outside this tool always leave one sibling's
 output newer than the next member's, so counting them would keep every group stale for good. Which target
-belongs to a sibling is read from the same producer map the graph's edges come from (§6.4) and the plan's own
-cycle membership — nothing is computed a second time. A target produced outside the group still counts, so a
+belongs to a sibling is read from the plan's own cycle membership and from a producer map made by the same
+builder, over the same evaluated projects, as the one the graph's edges come from (§6.4) — the plan does not
+carry its map, so the binder builds it once more, lazily and once per run. A target produced outside the group still counts, so a
 newer upstream output still makes the whole group stale.
 
 **Where the evidence goes.** The Sync binds its Safe pass with the checks and the engine binds a run's plan with
@@ -3481,9 +3482,12 @@ the opening wave — through the run and its ending finale, opacity is decided a
 (`GraphView.IsFilterSuspended`; the pure `Resolve` is simply not handed one), so the wave, the run's dimming and
 the neon play in their standard form. Once the finale has played the graph holds its final look for one more
 short beat (`EndFinale.FilterReturnAtMs`, the finale's length plus the design's short `LightMs`) and then
-fades back to the filtered look at the filter's own 420 ms. When there is no finale — nothing was built, reduced
-motion — or the run ends any other way (a stop, a cancelled opening, the engine dying, a command that never
-went out), the filter returns as soon as the run is over. The two end signals — the phase that starts the finale
+fades back to the filtered look at the filter's own 420 ms. A stop and the engine dying end the run in the
+`Stopped` phase, which plays the finale too when something was built, so they follow the same rule. When there
+is no finale — nothing was built, reduced motion, a stop during the opening sequence, a command that never went
+out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
+change, §10.2) cuts a finale still playing and brings the filter back at once (`GraphView.CancelEndFinale`), so
+the new graph's reveal plays with the filtered look. The two end signals — the phase that starts the finale
 and the run lock falling — arrive in different orders on different paths, and either order lands on the same
 result. A filter changed during the run is kept and is what the graph returns to. Without a filter none of this
 has a visible effect.
@@ -4816,7 +4820,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
 | Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface) | `App/ViewModels/SyncMode.cs` |
-| Plan-surface restart on the Sync button and a branch change: the flag, blanking the list and the graph, the replay on topology, the restore when no topology comes | `App/ViewModels/RunViewModel.ActionBar.cs` (`PlanSurfaceRestarting`), `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`), `MainWindow.xaml.cs` (`BlankPlanSurface`) |
+| Plan-surface restart on the Sync button and a branch change: the flag, blanking the list and the graph, the replay on topology, the restore when no topology comes, cutting a playing finale | `App/ViewModels/RunViewModel.cs` (`SyncCoreAsync` — the trigger), `RunViewModel.ActionBar.cs` (`PlanSurfaceRestarting`), `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`), `MainWindow.xaml.cs` (`BlankPlanSurface`), `App/Graph/GraphView.xaml.cs` (`CancelEndFinale`) |
 | Branch chip checkout, its gate, the stash setting; the checkout's answer and the pull, with their stream `warn` lines | `App/ViewModels/RunViewModel.ActionBar.cs` (`SelectBranch`, `CanSwitchBranch`), `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnPullCompletedAsync`, `PullRepositoryAsync`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |

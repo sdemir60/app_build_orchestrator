@@ -40,7 +40,9 @@ public sealed class IncrementalRunBinder
     private IReadOnlyDictionary<string, ProjectOutputs>? _outputsById;
     // [Task 4 — sync-graph-polish] Aynı ikisi TEMBEL: DLL adı → üreten proje (ChecksFor'un döngü kardeşi
     // filtresi için) ve plan.Cycles'ın üyelik haritası. İkisi de plan/evaluatedById DEĞİŞMEDİĞİ için koşu
-    // boyunca BİR KEZ kurulur — ikinci bir SCC hesabı ya da ikinci bir üretici taraması YOK (kopya YASAK).
+    // boyunca BİR KEZ kurulur. Döngü üyeliği plan.Cycles'tan okunur (ikinci bir SCC hesabı YOK); üretici haritası
+    // ise planın (BuildPlanBuilder) kurduğunun AYNI kurucuyla (ProducerMapBuilder.Build) AYNI değerlendirilmiş
+    // projeler üzerinden yeniden kurulur — plan haritayı taşımadığı için. Kural tek kaynaktadır, kopya yoktur.
     private ProducerMap? _producerMap;
     private CycleGroups? _cycleGroups;
 
@@ -170,8 +172,9 @@ public sealed class IncrementalRunBinder
     /// dokunulmadan sayılır (bir upstream'in gerçekten yeni çıktısı hâlâ grubu bayatlatır).
     ///
     /// <para>Üyelik <paramref name="cycleGroups"/>'tan (plan.Cycles'ın hazır üyelik haritası) okunur, üretici
-    /// kimliği <paramref name="producerMap"/>'ten (graf kenarlarının TEK kaynağı) — ikisi de burada İKİNCİ bir
-    /// hesap DEĞİL, var olan tek kaynağın okunuşudur (kopya YASAK, CLAUDE.md).</para>
+    /// kimliği <paramref name="producerMap"/>'ten (graf kenarlarını kuran AYNI <c>ProducerMapBuilder.Build</c>'in
+    /// aynı projeler üzerindeki çıktısı — bkz. <see cref="_producerMap"/>) — kural tek kaynaktadır, burada
+    /// yeniden yazılmaz (kopya YASAK, CLAUDE.md).</para>
     /// </summary>
     private static IReadOnlyList<string> ExcludingSameCycleSiblings(
         string id, IReadOnlyList<string> hints, CycleGroups cycleGroups, ProducerMap producerMap)
