@@ -1248,7 +1248,8 @@ public sealed partial class RunViewModel : ObservableObject
     // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
     // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
     // [clean] Clean uçuştayken Sync de beklemelidir: Sync'in tam analizi tam o sırada silinen bin/obj'i okur.
-    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
+    // [final review O1] Soru tek yerde: WorkspaceGateOpen.
+    private bool CanSync() => WorkspaceGateOpen;
 
     /// <summary>
     /// [clean] Bakım kutusundaki <b>Clean</b>: aktif workspace'in keşfedilen projelerinin <c>bin</c>/<c>obj</c>
@@ -1294,8 +1295,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[clean] Clean yalnız bir repo seçiliyken anlamlıdır (<see cref="HasWorkspace"/>) — topoloji
     /// GEREKMEZ: servis kendi taramasını yapar, hiç Sync yapılmamış bir workspace'te de çalışır. Uçuştaki bir
     /// run/Sync/Clean ise onu kapatır (karşılıklı dışlama).</summary>
-    private bool CanClean() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
+    private bool CanClean() => HasWorkspace && WorkspaceGateOpen;
 
     /// <summary>
     /// [optimize] Workspace doktoru: eksik NuGet paketlerini restore eder, restore'un çözemediği kırık
@@ -1335,8 +1335,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[optimize] <see cref="CanClean"/>'in birebir simetriği: repo şart, topoloji DEĞİL (servis kendi
     /// taramasını yapar). Uçuştaki bir run/Sync/Clean/Optimize kapıyı kapatır.</summary>
-    private bool CanOptimize() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy;
+    private bool CanOptimize() => HasWorkspace && WorkspaceGateOpen;
 
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE

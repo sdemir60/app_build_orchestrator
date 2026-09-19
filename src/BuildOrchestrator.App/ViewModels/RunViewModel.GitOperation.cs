@@ -85,6 +85,18 @@ public sealed partial class RunViewModel
         return operation;
     }
 
+    /// <summary>[final review O2] Git'e yazan komutların (checkout, pull) git kapısı — TEK tanım: yarıda bir işlem yok.</summary>
+    private bool GitWritesAllowed => GitOperation == GitOperation.None;
+
+    /// <summary>[final review O2] Git'e yazan bir komutun gönderimden hemen önceki kapısı: yoklama bayat olabilir, kök
+    /// yeniden yoklanır (<see cref="RefreshGitOperation"/>) ve <see cref="GitWritesAllowed"/> sorulur — checkout ve
+    /// pull aynı adımı paylaşır.</summary>
+    private bool RefreshGitWritesAllowed()
+    {
+        RefreshGitOperation();
+        return GitWritesAllowed;
+    }
+
     /// <summary>İşaret kalktı: bekleme satırı hakkı yenilenir ve bekleyen kendiliğinden Sync tetiği meşguliyet
     /// bildiriminin TEK noktasından (<see cref="NotifyAutoSyncGate"/>) yeniden sorulur — normal yol.</summary>
     partial void OnGitOperationChanged(GitOperation value)

@@ -324,11 +324,24 @@ public sealed partial class RunViewModel
         await HoldAsync(MaintenanceStepGapMs);
         // [ölçülen kusur] Yüzey burada, Sync kapıyı DEVRALDIKTAN SONRA bırakılır. Önce bırakılıyordu ve o
         // pencerede Sync/Clean tıklanabilir haldeydi, düğmeler de sönük → canlı → sönük kırpışıyordu; iki
-        // işlem tek bir meşgul pencere olarak okunmalıdır. Devralma SENKRONDUR: SyncCoreAsync ilk await'ine
-        // varmadan `_syncRequested`'ı kurar, yani Task'ı beklemeden başlatmak kapıyı kesintisiz tutar.
-        // Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve aşağıdaki bırakma doğru sonucu verir.
-        var sync = SyncCoreAsync(SyncMode.Appended);
-        releaseSurface();
+        // işlem tek bir meşgul pencere olarak okunmalıdır (sıra SyncThenReleaseAsync'te).
+        await SyncThenReleaseAsync(releaseSurface, SyncMode.Appended);
+    }
+
+    /// <summary>
+    /// [final review O3] Bir workspace işinden Sync'e DEVRİN TEK yeri — checkout, pull, Clean/Optimize aynı sırayı oynar:
+    /// Sync kapıyı DEVRALIR, SONRA önceki işin yüzeyi bırakılır; arada Build/Sync düğmeleri bir kare bile açılmaz ve
+    /// bekleyen bir HEAD tetiği ikinci bir Sync başlatamaz (spec §6.1 "çift Sync yok"). Devralma SENKRONDUR:
+    /// <see cref="SyncCoreAsync"/> ilk await'ine varmadan <c>_syncRequested</c>'ı kurar, yani Task'ı beklemeden başlatmak
+    /// kapıyı kesintisiz tutar. Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve ardından gelen bırakma
+    /// doğru sonucu verir.
+    /// </summary>
+    /// <param name="release">Önceki işin yüzeyini bırakan adım.</param>
+    private async Task SyncThenReleaseAsync(Action release, SyncMode mode,
+        SilentSyncReason silentReason = SilentSyncReason.Refresh, IReadOnlyList<string>? sectionLines = null)
+    {
+        var sync = SyncCoreAsync(mode, silentReason, sectionLines);
+        release();
         await sync;
     }
 
@@ -440,8 +453,7 @@ public sealed partial class RunViewModel
     [RelayCommand(CanExecute = nameof(CanPullRepository))]
     private async Task PullRepositoryAsync()
     {
-        // [spec 2026-09-18 §6.4] Git kapısı gönderimden önce yeniden sorulur — yoklama bayat olabilir.
-        if (RefreshGitOperation() != Core.Git.GitOperation.None) return;
+        if (!RefreshGitWritesAllowed()) return; // [spec 2026-09-18 §6.4] yoklama bayat olabilir
         CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
         SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
@@ -456,9 +468,7 @@ public sealed partial class RunViewModel
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
     /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).
     /// [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de kapalıdır (<see cref="GitOperationTooltip"/>).</summary>
-    private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !WorkspaceBusy
-        && GitOperation == Core.Git.GitOperation.None;
+    private bool CanPullRepository() => CanShowBehind && WorkspaceGateOpen && GitWritesAllowed;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
@@ -474,11 +484,9 @@ public sealed partial class RunViewModel
         }
 
         Behind = 0;                          // ff sonrası yerel HEAD uzak uca eşitlendi
-        // Kilit, zincirli Sync kapıyı DEVRALDIKTAN SONRA bırakılır (checkout'un ve HandOverToSyncAsync'in sırası):
-        // arada kapı bir an açılsaydı bekleyen HEAD tetiği ikinci bir Sync başlatırdı (spec §6.1 "çift Sync yok").
-        var sync = SyncCoreAsync(SyncMode.Appended); // pull'un satırları kalır, Sync altına eklenir
-        SetPullBusy(false);
-        await sync;
+        // Kilit, zincirli Sync kapıyı DEVRALDIKTAN SONRA bırakılır (SyncThenReleaseAsync); pull'un satırları kalır,
+        // Sync altına eklenir.
+        await SyncThenReleaseAsync(() => SetPullBusy(false), SyncMode.Appended);
     }
 
     /// <summary>[spec 2026-09-18 §6.1] Bir pull motora GÖNDERİLDİ ama <see cref="PullCompletedEvent"/> HENÜZ gelmedi.
@@ -558,28 +566,22 @@ public sealed partial class RunViewModel
                 AppendRunLine(PlanProgressLines.SwitchFailed(e.Detail ?? "unknown error"));
             // [final review M2] Stash'ten sonra düşen checkout ağacı DEĞİŞTİRDİ (değişiklikler stash'e gitti): bölüm
             // açılmaz ama kararlar bayattır — sessiz bir Sync tazeler. Kilit, Sync kapıyı devraldıktan SONRA düşer.
-            if (treeChanged)
-            {
-                var refresh = SyncCoreAsync(SyncMode.Silent, SilentSyncReason.Refresh);
-                SetCheckoutBusy(false);
-                await refresh;
-                return;
-            }
-            SetCheckoutBusy(false);
+            if (treeChanged) await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.Silent, SilentSyncReason.Refresh);
+            else ReleaseCheckout();
             return;
         }
 
         // [spec 2026-09-18 §6.2] Yeni bölüm: temizliği ve bölümün ilk satırlarını (stash, switch) BranchChange
-        // Sync'i yapar — temizlik önce, not sonra, tek yerde; ardından fetch'siz transkript.
+        // Sync'i yapar — temizlik önce, not sonra, tek yerde; ardından fetch'siz transkript. Kilit, Sync kapıyı
+        // DEVRALDIKTAN SONRA bırakılır (SyncThenReleaseAsync).
         List<string> section = [];
         if (e.StashMessage is { } stashed) section.Add(PlanProgressLines.StashedBeforeSwitch(stashed));
         section.Add(PlanProgressLines.SwitchedBranch(e.FromBranch ?? "HEAD", e.Branch ?? "HEAD", ShortSha(e.Revision)));
-        // Kilit, Sync kapıyı DEVRALDIKTAN SONRA bırakılır (HandOverToSyncAsync'in sırası): SyncCoreAsync ilk
-        // await'inden önce `_syncRequested`'ı kurar, yani arada Build/Sync düğmeleri bir kare bile açılmaz.
-        var sync = SyncCoreAsync(SyncMode.BranchChange, sectionLines: section);
-        SetCheckoutBusy(false);
-        await sync;
+        await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.BranchChange, sectionLines: section);
     }
+
+    /// <summary>Checkout kilidini bırakır — <see cref="SyncThenReleaseAsync"/>'e verilen adım.</summary>
+    private void ReleaseCheckout() => SetCheckoutBusy(false);
 
     /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".
     /// <see cref="TryConsumeCleanFailure"/>'ın ikizi: motorun reddi (koşu uçuşta) reddedilen bir checkout gibi

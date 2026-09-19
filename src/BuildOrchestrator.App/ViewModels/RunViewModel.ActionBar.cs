@@ -58,8 +58,7 @@ public sealed partial class RunViewModel
     {
         ArgumentNullException.ThrowIfNull(branch);
         if (branch.IsActive) return;
-        RefreshGitOperation(); // [spec §6.4] kapı gönderimden önce yeniden sorulur — yoklama bayat olabilir
-        if (!CanSwitchBranch) return;
+        if (!RefreshGitWritesAllowed() || !CanSwitchBranch) return; // [spec §6.4] yoklama bayat olabilir
 
         CurrentOperation = OperationLabel.Checkout;
         SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
@@ -84,9 +83,7 @@ public sealed partial class RunViewModel
     /// <para>[spec 2026-09-18 §6.4] Git dizininde yarıda bir işlem (merge, rebase, cherry-pick, revert, çalışan bir git
     /// komutu) varken de kapalıdır; nedeni <see cref="GitOperationTooltip"/> söyler.</para>
     /// </summary>
-    public bool CanSwitchBranch =>
-        HasWorkspace && !IsMidRunLocked && !WorkspaceBusy && !IsEngineUnavailable
-        && GitOperation == Core.Git.GitOperation.None;
+    public bool CanSwitchBranch => HasWorkspace && WorkspaceGateOpen && GitWritesAllowed;
 
     /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
     /// brief 7-hane pinler.</summary>
