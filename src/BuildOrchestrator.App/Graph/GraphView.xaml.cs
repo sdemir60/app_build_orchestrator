@@ -678,9 +678,12 @@ public partial class GraphView : UserControl
         SnapCameraTo(GraphCamera.Default);
 
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
-        CountsText.Text = string.Format(
+        // [task 3 · fix round 1] Baştan başlatan Sync'in boşaltması (etiketsiz boş graf) sahte bir "0 projects"
+        // sayısı yazmaz: başlık boş durur, topolojinin reveal'i onu yeniden yazar.
+        bool restartBlank = nodes.Count == 0 && !showEmptyState;
+        CountsText.Text = restartBlank ? "" : string.Format(
             CultureInfo.InvariantCulture, "{0} projects · {1} dependencies", nodes.Count, edges.Count);
-        ShowEmptyState(nodes.Count == 0 && showEmptyState);
+        ShowEmptyState(nodes.Count == 0 && !restartBlank);
         if (nodes.Count == 0)
         {
             _layout = QuietGraphLayout.Compute([], ViewportSize);

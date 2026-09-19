@@ -161,8 +161,13 @@ public class StickyRevealTriggerTests
 
     // ---------------------------------------------------------------- [D3/T5 · design v1.13.2 §2.4/§9] Sync listeyi başa alır
 
+    /// <summary><c>count</c> katmansız proje (P0…P{count-1}) — TEK yer: fixture bununla kurar, AYNI yapıyla cevap
+    /// veren Sync'ler bunu yeniden yayınlar.</summary>
+    private static (string Name, string? Layer)[] ManyProjects(int count) =>
+        [.. Enumerable.Range(0, count).Select(i => ($"P{i}", (string?)null))];
+
     private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithManyProjects(TempDir dir, int count) =>
-        MainWindowHost.NewWithProjects(dir, [.. Enumerable.Range(0, count).Select(i => ($"P{i}", (string?)null))]);
+        MainWindowHost.NewWithProjects(dir, ManyProjects(count));
 
     /// <summary>İKİNCİ (farklı) bir topoloji — <c>count</c> proje, <c>MainWindowHost.Node</c> ile BİREBİR aynı
     /// kural. Bir öncekinden en az bir proje FAZLA olduğundan <c>TopologySignature</c> her zaman değişir (bkz.
@@ -223,10 +228,6 @@ public class StickyRevealTriggerTests
         return before;
     }
 
-    /// <summary>Motorun AYNI 60 projeyle cevabı (imza AYNI).</summary>
-    private static (string Name, string? Layer)[] SameSixty() =>
-        [.. Enumerable.Range(0, 60).Select(i => ($"P{i}", (string?)null))];
-
     /// <summary>[spec 2026-09-18 §1-13 · §6.2 · task 3] <b>Kendiliğinden (Silent) ve Appended Sync, yapı aynıyken
     /// listeyi YERİNDE tazeler — kaydırma konumu korunur.</b> Reveal'i bu kiplerde yeniden oynatan tek şey yapısal
     /// imzanın değişmesidir (kardeş test <see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/>
@@ -251,7 +252,7 @@ public class StickyRevealTriggerTests
         // ÜRETİM YOLU: kipin kendi girişi, motor AYNI 60 projeyle cevap verir (imza AYNI).
         MainWindowHost.AcceptSends(vm);
         await MainWindowHost.StartSync(vm, mode);
-        MainWindowHost.ReplySync(vm, SameSixty());
+        MainWindowHost.ReplySync(vm, ManyProjects(60));
 
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(300)); // reveal/scroll (olsaydı) pompada ilerlerdi
         Assert.Equal(before, list.RevealGeneration); // reveal OYNAMADI
@@ -275,7 +276,7 @@ public class StickyRevealTriggerTests
         await MainWindowHost.StartSync(vm, mode);
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
         int afterClick = list.RevealGeneration;
-        MainWindowHost.ReplySync(vm, SameSixty());
+        MainWindowHost.ReplySync(vm, ManyProjects(60));
 
         DispatcherPump.PumpUntil(() => list.RevealGeneration != afterClick, TimeSpan.FromSeconds(3));
         Assert.NotEqual(afterClick, list.RevealGeneration); // reveal OYNADI

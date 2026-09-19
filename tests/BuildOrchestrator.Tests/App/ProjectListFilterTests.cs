@@ -35,7 +35,11 @@ public class ProjectListFilterTests
     /// <summary>[T2 fix-1 · I-F] Ortak fixture: iki katmanlı örnek — Core(Alpha, Beta) · Ui(Gamma).
     /// Kurulum <see cref="MainWindowHost.NewWithProjects"/>'ta (üretim sırası: kabuk ÖNCE realize, veri SONRA).</summary>
     private static (MainWindow window, RunViewModel vm, StickyLayerList list) NewShellWithProjects(TempDir temp) =>
-        MainWindowHost.NewWithProjects(temp, ("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui"));
+        MainWindowHost.NewWithProjects(temp, SameStructure);
+
+    /// <summary>Fixture'ın yapısı — TEK yer: <see cref="NewShellWithProjects"/> bununla kurar, AYNI yapıyla cevap
+    /// veren Sync'ler bunu yeniden yayınlar.</summary>
+    private static readonly (string Name, string? Layer)[] SameStructure = [("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui")];
 
     // ---------------------------------------------------------------- 1) statü chip'i filtresi
 
@@ -262,9 +266,6 @@ public class ProjectListFilterTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Fixture'ın yapısı (<see cref="NewShellWithProjects"/>) — AYNI yapıyla cevap veren Sync'ler bunu yayınlar.</summary>
-    private static readonly (string Name, string? Layer)[] SameStructure = [("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui")];
-
     /// <summary>Grafın canlı kamerasını zoom'lar (animasyon kapalı ⇒ hedef = ekran) ve ön-koşulu doğrular.</summary>
     private static CameraTransform ZoomGraph(GraphView graph)
     {
@@ -351,6 +352,8 @@ public class ProjectListFilterTests
         Assert.Empty(VisibleRowNames(list));
         Assert.Equal(0, graph.NodeCount);
         Assert.False(graph.IsEmptyStateVisible, "graf Sync-öncesi etiketini göstermemeli — ekran yalnız boş durur");
+        // [fix round 1] Başlık sahte bir sayı ("0 projects · 0 dependencies") söylemez — boş durur, reveal yeniden yazar.
+        Assert.Equal("", graph.HeaderCountsText);
         Assert.Equal(System.Windows.Visibility.Collapsed, window.Shell.PART_NoProjects.Visibility);
         Assert.NotEqual(AppPhase.Boot, vm.Phase);
         Assert.Equal(3, vm.Projects.Count); // VM'in bilgisi durur — boşalan yalnız ekrandır
@@ -388,6 +391,7 @@ public class ProjectListFilterTests
         Assert.NotEqual(listReveal, list.RevealGeneration);   // AYNI yapı, yine de liste reveal'i oynadı
         Assert.Equal(3, graph.NodeCount);
         Assert.NotEqual(graphReveal, graph.RevealGeneration); // graf da yeniden kuruldu
+        Assert.Equal("3 projects · 0 dependencies", graph.HeaderCountsText); // başlık reveal'le yeniden yazıldı
         Assert.Equal(GraphCamera.Default, graph.LiveCameraForTest); // ...ve ekranda fit'e oturdu
         GC.KeepAlive(window);
     }
@@ -395,6 +399,10 @@ public class ProjectListFilterTests
     /// <summary>
     /// [task 3] Ekran boş KALMAZ: baştan başlatan Sync'in gönderimi düşerse (motor hazır değil/ölü) ya da Sync
     /// topoloji getirmeden biterse (<c>planFailed</c>, motor kaybı) önceki liste ve graf geri gelir.
+    /// <para><b>Not:</b> <c>sendFails</c> satırları yalnız REGRESYON guard'ıdır — gönderim senkron düştüğü için
+    /// <c>await</c> döndüğünde yüzey çoktan geri gelmiştir, test boşalmayı hiç GÖRMEZ (ön-koşul assert'i bu satırlarda
+    /// atlanır) ve düzeltmeden önce de yeşildi. Boşalmanın kendisi diğer satırlarda ve
+    /// <see cref="A_restarting_sync_empties_the_list_and_the_graph_at_the_click"/>'te ölçülür.</para>
     /// </summary>
     [StaTheory]
     [InlineData(SyncMode.Manual, "sendFails")]
