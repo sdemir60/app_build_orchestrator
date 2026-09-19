@@ -325,9 +325,7 @@ public class CsprojEvaluatorTests
         try
         {
             string dirExe = Path.Combine(root, "Exe");
-            Directory.CreateDirectory(dirExe);
-            string projExe = Path.Combine(dirExe, "A.csproj");
-            File.WriteAllText(projExe, """
+            string projExe = WriteProj(dirExe, "A.csproj", """
                 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
                   <PropertyGroup>
                     <AssemblyName>OSYS.A</AssemblyName>
@@ -339,9 +337,7 @@ public class CsprojEvaluatorTests
             Assert.Equal(Path.Combine(dirExe, "bin", "Debug", "OSYS.A.exe"), evExe.OutputFileFor("Debug"));
 
             string dirWinExe = Path.Combine(root, "WinExe");
-            Directory.CreateDirectory(dirWinExe);
-            string projWinExe = Path.Combine(dirWinExe, "A.csproj");
-            File.WriteAllText(projWinExe, """
+            string projWinExe = WriteProj(dirWinExe, "A.csproj", """
                 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
                   <PropertyGroup>
                     <AssemblyName>OSYS.A</AssemblyName>
