@@ -9,6 +9,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Scheduling;
@@ -2392,8 +2393,15 @@ public sealed partial class RunViewModel : ObservableObject
         AppendRunLine($"Engine ready — v{engineVersion}");
         if (_engineWasReady) return;
         _engineWasReady = true;
+        string? legacyPoolHint = LegacyWorktreePool.Hint(LegacyWorktreePoolRoot);
+        if (legacyPoolHint is not null) AppendRunLine(legacyPoolHint);
         if (HasWorkspace && CanSync()) _ = SyncCoreAsync(SyncMode.Appended);
     }
+
+    /// <summary>[Task 11 · test injection] Eski worktree havuzunun kökü — üretimde
+    /// <see cref="LegacyWorktreePool.DefaultRoot"/>, testlerde gerçek %LOCALAPPDATA%'a bakmasın diye
+    /// override edilir.</summary>
+    internal string LegacyWorktreePoolRoot { get; set; } = LegacyWorktreePool.DefaultRoot;
 
     /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardı: konsola kaç projenin
     /// yeniden derleneceği yazılır (metin Core'daki tek kaynaktan). Olay akışından (<see cref="OnEvent"/>) gelir,

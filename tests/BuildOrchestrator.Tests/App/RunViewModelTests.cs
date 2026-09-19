@@ -2968,6 +2968,35 @@ public class RunViewModelTests
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());
     }
 
+    /// <summary>[Task 11] Eski worktree havuzu klasörü hâlâ diskteyse motorun bu oturumdaki İLK hazır oluşunda
+    /// konsola tek satırlık bir ipucu yazılır; motorun yeniden hazır oluşu (restart) bunu TEKRARLAMAZ — aynı
+    /// ilk-kez kapısı (<c>_engineWasReady</c>) açılış Sync'iyle paylaşılır. Kök testte gerçek %LOCALAPPDATA%'a
+    /// değil, enjekte edilen <see cref="RunViewModel.LegacyWorktreePoolRoot"/>'a bakar.</summary>
+    [Fact]
+    public void The_first_engine_ready_hints_at_a_leftover_legacy_pool_and_a_restart_does_not()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-legacy-pool-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            {
+                LegacyWorktreePoolRoot = root,
+            };
+            string hint = BuildOrchestrator.Core.Paths.LegacyWorktreePool.Hint(root)!;
+
+            vm.OnEngineReady("1.0.0", 42);
+            Assert.Contains(hint, vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+            vm.OnEngineReady("1.0.0", 43);
+            Assert.Equal(1, vm.GetRunDocumentText().Split(hint, StringSplitOptions.None).Length - 1);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardıysa konsol bunu söyler —
     /// metin Core'daki tek kaynaktan. Kurtarılacak bir şey yoksa satır yoktur. Satır <c>engineReady</c> OLAYINDAN
     /// yazılır: olay hem ilk açılışta hem motor yeniden başlatılınca aynı akıştan gelir.</summary>

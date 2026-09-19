@@ -174,8 +174,8 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
 /// [clean] Aktif workspace'in derleme çıktısını sıfırla. <b>Siler:</b> <paramref name="RootPath"/> altında
 /// keşfedilen her csproj'un klasöründeki <c>bin\</c> ve <c>obj\</c> + o workspace'e ait
 /// <c>build-state.json</c> kayıtları (RootPath önekiyle, workspace-scoped). <b>Silmez:</b> <c>packages\</c>,
-/// ortak OutDir, worktree havuzu (<c>_obj</c> dahil), run logları, <c>evaluation-cache.json</c>,
-/// <c>ui-state.json</c>.
+/// ortak OutDir, run logları, <c>evaluation-cache.json</c>, <c>ui-state.json</c>. Worktree havuzu artık YOK —
+/// araç böyle bir klasörü ne kurar ne siler (eski sürümlerden kalanı <c>LegacyWorktreePool</c> ayrıca anar).
 /// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme. Gerekçe: eski-stil
 /// projelerde <c>/t:Clean</c>'in sildiği küme (<c>FileListAbsolute.txt</c> kayıtlıları) bin/obj silmenin alt
 /// kümesidir; obj silinince o kayıt da gider; ve tracked çıktılar ortak OutDir'e yazılmışsa <c>/t:Clean</c>
@@ -206,7 +206,8 @@ public sealed record CleanWorkspaceCommand(
 /// <c>evaluation-cache.json</c>, <c>source-hash-cache.json</c>) dosyası artık var olmayan girdiler budanır ve
 /// öksüz <c>.tmp</c> artıkları süpürülür.</para>
 /// <para><b>Dokunmadıkları:</b> global NuGet cache'leri, <c>NuGet.config</c>, git (Optimize hiçbir git komutu
-/// KOŞMAZ), worktree havuzu, <c>bin</c>/OutDir, run logları, <c>ui-state.json</c>. Build kararlarını
+/// KOŞMAZ), <c>bin</c>/OutDir, run logları, <c>ui-state.json</c> — worktree havuzu zaten YOK, dokunacak bir şey
+/// kalmadı. Build kararlarını
 /// DEĞİŞTİRMEZ — imza kaynak-tabanlıdır, hiçbir projeyi dirty yapmaz.</para>
 /// <para>Bir koşu uçuştayken reddedilir (<c>error(optimizeRejected)</c>) ve Sync gibi Supervisor'ın komut
 /// döngüsünü BLOKLAR — iptal komutu YOKTUR (uzun restore'larda tek kaçış "Restart engine"dir).</para>
