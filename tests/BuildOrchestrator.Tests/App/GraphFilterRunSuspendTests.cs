@@ -128,6 +128,33 @@ public class GraphFilterRunSuspendTests
         Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6);
     }
 
+    /// <summary>
+    /// [fix round 1 · regresyon guard'ı] Final bittikten sonraki kısa beklemede (<see cref="EndFinale.FilterReturnAtMs"/>)
+    /// İKİNCİ bir Build başlarsa askı SÜRER: bekleyen dönüş adımı iptal edilir ama yeni işlem askıyı yeniden kurar —
+    /// graf ikinci koşunun ortasında filtreye dönmez. İkinci koşunun bitişi askıyı kaldırır.
+    /// </summary>
+    [StaFact]
+    public void A_second_build_during_the_post_finale_hold_keeps_the_suspension()
+    {
+        var view = FilteredGraph();
+        StartRun(view, GraphStatus.Queued, GraphStatus.Building);
+        view.UpdateStatuses([new(Base, Base, 0, GraphStatus.Skipped), new(Data, Data, 1, GraphStatus.Succeeded)]);
+        view.RunPhase = GraphRunPhase.Idle;
+        view.PlayEndFinale([Data], runCount: 1);
+        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(8));
+        Assert.True(view.IsFilterSuspended); // ön-koşul: bekleme penceresindeyiz
+
+        view.BeginOperation(); // ikinci Build
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(MarkingChoreography.LightMs + 200));
+
+        Assert.True(view.IsFilterSuspended);
+        Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6);
+
+        view.EndOperation(); // ikinci koşu bitti (final yok)
+        Assert.False(view.IsFilterSuspended);
+        Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
+    }
+
     /// <summary>Kontrol: filtre YOKKEN koşu opaklıkları değişmez (askının etkisi yalnız filtre dalındadır).</summary>
     [StaFact]
     public void Without_a_filter_the_run_opacities_are_unchanged()
@@ -196,6 +223,38 @@ public class GraphFilterRunSuspendTests
         await vm.BuildCommand.ExecuteAsync(null); // AcceptSends yok → gönderim senkron düşer
 
         Assert.False(vm.IsMidRunLocked);                                                      // ön-koşul
+        Assert.Equal(GraphNodeOpacity.Unfocused, VisualOf(window, "Beta").OpacityTarget, 6);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [fix round 1 · regresyon guard'ı] Açılış koreografisi SÜRERKEN Stop (<c>CancelPendingRun</c> — "Cancelled —
+    /// build not started"): komut hiç gitmez, faz Idle'a döner, final oynamaz — graf yine filtreye döner. Bu
+    /// kabukta hareket kapalı ve koreografi anında biter; pencereyi açık tutmak için üretim kapısı (askıyı kuran
+    /// <c>BeginOperation</c> dahil) sarılır ve bitişi test tarafından bekletilir.
+    /// </summary>
+    [StaFact]
+    public async Task Stop_during_the_opening_choreography_returns_the_graph_to_the_filter()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Alpha", null), ("Beta", null));
+        vm.ProjectQuery = "Alpha";
+        MainWindowHost.AcceptSends(vm);
+        var production = vm.OperationChoreography!;
+        var gate = new TaskCompletionSource();
+        vm.OperationChoreography = async scope => { await production(scope); await gate.Task; };
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        Assert.True(window.Shell.GraphHost.IsFilterSuspended);                            // ön-koşul: askıda
+        // Koşu fazındayız: filtre dışı düğüm koşu kuralındadır (RunDim), filtrenin 0.1'inde değil.
+        Assert.Equal(GraphNodeOpacity.RunDim, VisualOf(window, "Beta").OpacityTarget, 6);
+
+        await vm.StopCommand.ExecuteAsync(null);
+        gate.SetResult();
+        await build;
+
+        Assert.Contains("Cancelled — build not started", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.False(window.Shell.GraphHost.IsFilterSuspended);
         Assert.Equal(GraphNodeOpacity.Unfocused, VisualOf(window, "Beta").OpacityTarget, 6);
         GC.KeepAlive(window);
     }

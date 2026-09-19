@@ -554,8 +554,12 @@ public partial class GraphView : UserControl
         _endPlayer.Play(steps);
     }
 
-    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.</summary>
-    public void StopEndFinale()
+    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.
+    /// <para>[kullanıcı kararı 2026-09-19] Bekleyen filtre dönüş adımını (<see cref="EndFinale.FilterReturnAtMs"/>)
+    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: iki çağıranı bunu telafi eder
+    /// (<see cref="BeginOperation"/> askıyı sürdürür, <see cref="PlayEndFinale"/> dönüşü yeniden planlar ya da
+    /// filtreyi anında döndürür). Dışarıdan çağrılsaydı graf filtresiz asılı kalabilirdi.</para></summary>
+    private void StopEndFinale()
     {
         _endPlayer.Stop();
         if (_endStep == EndStep.None) return;
