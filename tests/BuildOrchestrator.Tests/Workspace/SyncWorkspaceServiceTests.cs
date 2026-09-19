@@ -257,7 +257,10 @@ public class SyncWorkspaceServiceTests
     /// <summary>Her projeyi "en son bu imzayla başarıyla derlendi" diye işaretler — servisin will-build pass'inin
     /// hesapladığı imzanın AYNISI kullanılır (<see cref="IncrementalRunBinder.Bind"/>), böylece sonraki Sync
     /// gerçekten all-clean görür (sayaçlar uydurulmaz).</summary>
-    private static async Task PrimeBuildStateAsUpToDateAsync(string root, string cacheRoot)
+    /// <returns>Binder'ın hesapladığı bugünkü içerik özetleri (<see cref="IncrementalRunBinder.ContentById"/>) —
+    /// deftere YAZILMAZ; bir testin <c>BuiltContent</c>'i kendisi kurması içindir.</returns>
+    private static async Task<IReadOnlyDictionary<string, string?>> PrimeBuildStateAsUpToDateAsync(
+        string root, string cacheRoot)
     {
         var scanner = new WorkspaceScanner();
         var evaluator = new CsprojEvaluator();
@@ -280,6 +283,7 @@ public class SyncWorkspaceServiceTests
         var store = new BuildStateStore(cacheRoot);
         foreach (var (projectId, signature) in signatures)
             store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
+        return binder.ContentById;
     }
 
     /// <summary>
@@ -727,6 +731,39 @@ public class SyncWorkspaceServiceTests
         Assert.Empty(events.OfType<SyncCompletedEvent>());
     }
 
+    /// <summary>
+    /// [Faz 3/Task 9 fix round 2 — kullanıcı kararı I1] Defter kipinde önizlemenin <c>OwnFilesChanged</c>'ı
+    /// koşu önizlemesiyle AYNI kaynaktan gelir: deftere yazılmış içerik özeti ile bugünkünün karşılaştırması
+    /// (<see cref="BuildStateStore.OwnFilesChanged"/>), Fast geçişinden DEĞİL. B'nin kendi dosyalarına
+    /// dokunulmadı (<c>BuiltContent</c> bugünküyle aynı) ama kaydındaki imza bayat — Fast geçişi B'yi "değişti"
+    /// bulur. Satır <c>affected</c> okumalı (Build'in kendi önizlemesi gibi), <c>modified</c> değil. "N changed"
+    /// sayacı ise Fast semantiğinde kalır (ruling R9, ARCHITECTURE §5.3) — B orada sayılır.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string idB = Path.Combine(cloneRoot, "src", "B", "B.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        store.Upsert(store.Load()[idB] with { BuiltSignature = "stale-signature", BuiltContent = content[idB] });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var b = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items, i => i.Name == "B");
+        Assert.Equal((true, WillBuildReason.SignatureChanged), (b.WillBuild, b.Reason)); // sanity: B derlenecek
+        Assert.False(b.OwnFilesChanged);                                                 // affected, modified DEĞİL
+        Assert.Equal(1, Assert.Single(events.OfType<SyncCompletedEvent>()).ChangedCount); // R9: sayaç Fast
+    }
+
     // ---------------------------------------------------------------- [Faz 3/Task 6] dışarıdan derleme kredisi
 
     /// <summary>Repo'ya <c>src\{ad}</c> altında gerçek legacy class library'ler yazar (<see
@@ -831,6 +868,11 @@ public class SyncWorkspaceServiceTests
     /// [spec 2026-09-18 §5.2 "kanıtsız"] Derleme kanıtının yolu türetilemeyen proje (SDK-style) bugünkü kararla
     /// karar verir: diskte ondan yeni bir DLL dursa bile hiç derlenmemiş sayılır (<c>NeverBuilt</c>), yaşı
     /// taşınmaz ve "changed" sayılır. Kanıt yalnız yolu bilinen projelere kredi verir.
+    /// <para><b>[DEĞİŞEN KURAL — Task 9 fix round 2, kullanıcı kararı I1]</b> Eski iddia
+    /// <c>OwnFilesChanged == true</c> idi (defter kipinde cevap Fast geçişinden geliyordu). Cevap artık koşu
+    /// önizlemesiyle aynı kaynaktan, defterdeki içerik özetinden gelir; kaydı olmayan projede özet yoktur ve cevap
+    /// <c>null</c>dır (bilinmiyor — etiket zaten <c>never built</c>). "N changed" sayacı Fast semantiğinde kalır
+    /// (ruling R9), iki proje orada sayılmaya devam eder.</para>
     /// </summary>
     [Fact]
     public async Task A_project_without_derivable_output_is_decided_as_today()
@@ -848,7 +890,7 @@ public class SyncWorkspaceServiceTests
         var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
         Assert.All(preview.Items, i =>
         {
-            Assert.Equal((true, WillBuildReason.NeverBuilt, true), (i.WillBuild, i.Reason, i.OwnFilesChanged));
+            Assert.Equal((true, WillBuildReason.NeverBuilt, (bool?)null), (i.WillBuild, i.Reason, i.OwnFilesChanged));
             Assert.Null(i.OutputBuiltAt);
         });
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());

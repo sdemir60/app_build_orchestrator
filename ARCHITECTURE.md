@@ -374,8 +374,9 @@ Its permission to write in the workspace is bounded by the resolved project set:
 is never touched, and the only files it changes anywhere else are its own three ledgers (§16). **It changes no
 build decision** of a project this tool built — the signature is computed from source (§7.1) and Optimize
 deletes no build output, so neither a restore nor a deleted leftover makes such a project dirty; for an output
-built elsewhere, a `HintPath` target a restore writes is an input like any other (§7.6). That is why the App
-keeps the list and the graph on screen and chains no Sync when it ends (§13.2).
+built elsewhere, a `HintPath` target a restore writes is an input like any other (§7.6). The App still runs a
+Sync when it ends, the same hand-over a Clean uses: the list was emptied at the click, and that Sync is what
+brings the decisions back (§13.2).
 
 Like `syncWorkspace` and `cleanWorkspace` it blocks the command loop until it finishes, and an
 `optimizeWorkspace` that arrives while a run holds the slot is rejected with `error(optimizeRejected)` (§5.4).
@@ -877,9 +878,12 @@ no red: the ledger's notes (the failed signature, the dependency issue) describe
 on disk and are not read. Nothing is written back to the ledger; every Sync proves the output again.
 
 **`modified` or `affected`.** In time mode the split comes from the evidence — own input newer means
-`modified` — and elsewhere from the stored content fingerprint (§7.5). One helper answers it
-(`OutputEvidence.OwnFilesChanged`) for both the Sync and a run's preview, and the Sync's *N changed* counter
-reads the same answer, so the counter and the labels cannot disagree.
+`modified` — and elsewhere from the stored content fingerprint compared with today's (§7.5). The Sync and a
+run's preview make the same call (`OutputEvidence.OwnFilesChanged` over `BuildStateStore.OwnFilesChanged`), so
+a row reads the same word after a Sync as in the next *Build*. The Sync's *N changed* counter is a different
+count (§5.3): the projects the Fast pass finds dirty, with the evidence's answer in time mode. The two can
+differ — a project whose record carries a stale signature while its own files are untouched counts as changed
+yet reads `affected`.
 
 **Cycle groups.** If any member of a group is in time mode, every member goes through the time check. When all
 of them are current, all read built outside this tool; otherwise a member that fails its own check keeps its own
@@ -889,8 +893,8 @@ time mode is decided member by member in ledger mode.
 
 **Where the evidence goes.** The Sync binds its Safe pass with the checks and the engine binds a run's plan with
 the same checks, so the Sync's will-build is the next plain *Build*'s decision; the Sync's Fast pass — which
-only measures whether a project's own files changed — is bound without them, or a project whose shared copy was
-overwritten would count as changed. The checks also travel with the run's plan, so the run preview writes the
+only feeds the *N changed* counter — is bound without them, or a project whose shared copy was overwritten
+would count as changed. The checks also travel with the run's plan, so the run preview writes the
 same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only for built
 outside this tool and is the age the row's label shows. A project this tool then builds successfully drops that
 time at once: its output is now the tool's own.
