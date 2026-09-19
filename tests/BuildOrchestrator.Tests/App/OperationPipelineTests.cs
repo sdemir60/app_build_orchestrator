@@ -156,7 +156,7 @@ public class OperationPipelineTests
     /// iddia yeniden başlatma SÜRERKEN ölçülsün (düşen gönderim yüzeyi hemen geri getirirdi).</para>
     /// </summary>
     [Fact]
-    public async Task A_sync_click_keeps_the_list_and_the_graph()
+    public async Task A_sync_click_keeps_the_plan_in_the_view_model()
     {
         var vm = AfterOneCompletedRun();
         MainWindowHost.AcceptSends(vm);

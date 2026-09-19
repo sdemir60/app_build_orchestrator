@@ -18,8 +18,10 @@ namespace BuildOrchestrator.Tests.App;
 /// filtreli kalır; yalnız graf filtreyi askıya alır.</para>
 ///
 /// <para>Askı işlemin başında (<see cref="GraphView.BeginOperation"/> — açılış dalgasından önce) başlar ve
-/// koşunun BİTİŞİ tamamlanınca kalkar: final oynadıysa final + kısa bekleme sonunda, oynamadıysa (derlenen yok,
-/// azaltılmış hareket, Stop, motor ölümü, hiç başlamayan koşu) koşu bitince. Dönüş filtrenin kendi geçiş
+/// koşunun BİTİŞİ tamamlanınca kalkar: final oynadıysa final + kısa bekleme sonunda — Stop ve motor ölümü de
+/// buna dahildir (faz <c>Stopped</c>, bir şey derlendiyse finali oynatır); oynamadıysa (derlenen yok, azaltılmış
+/// hareket, açılış koreografisinde Stop, hiç gitmeyen komut) koşu bitince. Ekranın baştan başlaması (Sync
+/// düğmesi / branch değişimi) oynayan finali keser ve filtreyi anında döndürür. Dönüş filtrenin kendi geçiş
 /// süresiyle (<see cref="GraphNodeOpacity.FilterFadeMs"/>) oynar.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -152,6 +154,39 @@ public class GraphFilterRunSuspendTests
 
         view.EndOperation(); // ikinci koşu bitti (final yok)
         Assert.False(view.IsFilterSuspended);
+        Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
+    }
+
+    /// <summary>
+    /// [final review I-2] Final OYNARKEN ekran baştan başlarsa (Sync düğmesi / branch değişimi —
+    /// <see cref="GraphView.CancelEndFinale"/> + boş graf) final ANINDA kesilir ve askı kalkar: yeni grafın
+    /// reveal'i filtreli görünür kümeyle oynar. Kesilmeseydi final adımları yeni düğümlerin gövde opaklığını
+    /// boyamayı sürdürür, filtre de reveal'den sonra geç sönerdi.
+    /// </summary>
+    [StaFact]
+    public void A_restart_blank_during_the_finale_cuts_it_and_the_reveal_plays_under_the_filter()
+    {
+        var view = FilteredGraph();
+        StartRun(view, GraphStatus.Queued, GraphStatus.Building);
+        view.UpdateStatuses([new(Base, Base, 0, GraphStatus.Skipped), new(Data, Data, 1, GraphStatus.Succeeded)]);
+        view.RunPhase = GraphRunPhase.Idle;
+        view.PlayEndFinale([Data], runCount: 1);
+        Assert.NotEqual(EndStep.None, view.EndStep); // ön-koşul: final oynuyor
+
+        view.CancelEndFinale();                 // ekran baştan başlıyor (BlankPlanSurface)
+        view.SetGraph([], [], showEmptyState: false);
+
+        Assert.Equal(EndStep.None, view.EndStep);
+        Assert.False(view.IsFilterSuspended);
+
+        view.SetGraph( // Sync'in getirdiği yeni graf
+            [new(Base, Base, 0, GraphStatus.Succeeded), new(Data, Data, 1, GraphStatus.Succeeded)],
+            [new(Base, Data)]);
+        Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
+
+        // Kesilen finalin kalan adımları sonradan düşmez.
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(EndFinale.FilterReturnAtMs(1) + 200));
+        Assert.Equal(EndStep.None, view.EndStep);
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
     }
 

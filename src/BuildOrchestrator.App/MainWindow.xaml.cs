@@ -680,6 +680,7 @@ public partial class MainWindow : Window
         Shell.ProjectsList.SetGroups([], reveal: false);
         _orderedRows = [];
         _visibleRowSignature = "";
+        Shell.GraphHost.CancelEndFinale(); // oynayan final kesilir, filtre döner — reveal filtreli oynar
         Shell.GraphHost.SetGraph([], [], showEmptyState: false);
     }
 

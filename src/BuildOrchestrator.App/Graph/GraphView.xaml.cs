@@ -556,9 +556,23 @@ public partial class GraphView : UserControl
 
     /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.
     /// <para>[kullanıcı kararı 2026-09-19] Bekleyen filtre dönüş adımını (<see cref="EndFinale.FilterReturnAtMs"/>)
-    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: iki çağıranı bunu telafi eder
+    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: üç çağıranı bunu telafi eder
     /// (<see cref="BeginOperation"/> askıyı sürdürür, <see cref="PlayEndFinale"/> dönüşü yeniden planlar ya da
-    /// filtreyi anında döndürür). Dışarıdan çağrılsaydı graf filtresiz asılı kalabilirdi.</para></summary>
+    /// filtreyi anında döndürür, <see cref="CancelEndFinale"/> filtreyi anında döndürür). Dışarıdan çağrılsaydı
+    /// graf filtresiz asılı kalabilirdi.</para></summary>
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Ekran baştan başlıyor (Sync düğmesi / branch değişimi — kabuğun
+    /// <c>BlankPlanSurface</c>'i): oynayan bitiş koreografisi ANINDA kesilir ve filtre askısı kalkar. Final
+    /// kesilmeseydi kalan adımları yeni grafın düğümlerinin gövde opaklığını boyamayı sürdürür, filtre de
+    /// yeni grafın reveal'inden SONRA sönerdi; böylece reveal filtreli görünür kümeyle oynar. Yeni bir işlem
+    /// başlamadığı için askı sürdürülmez (<see cref="BeginOperation"/>'ın tersine).
+    /// </summary>
+    public void CancelEndFinale()
+    {
+        StopEndFinale();
+        ResumeFilter();
+    }
+
     private void StopEndFinale()
     {
         _endPlayer.Stop();
