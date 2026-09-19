@@ -99,6 +99,11 @@ public class PullRepositoryTests
         Assert.Equal(head, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
     }
 
+    /// <summary><b>[DEĞİŞEN KURAL — Task 7]</b> Eski iddia: reddin satırı öneksizdi (<c>Pull refused — …</c>) ve
+    /// <c>pullCompleted</c> yalnız başarıyı taşıyordu. Değişme gerekçesi: ret konsolda düz tonda
+    /// gözden kaçıyordu — satır artık <c>warning:</c> önekiyle amber boyanır, reddin nedeni de olayda
+    /// yapılandırılmış gider ki akışın kısa amber satırı konsol metnini ayrıştırmadan kurulsun. Aynı not
+    /// <see cref="A_diverged_branch_is_refused_with_the_reason_instead_of_a_merge"/> için de geçerlidir.</summary>
     [Fact]
     public async Task Uncommitted_work_refuses_the_pull_and_never_touches_the_working_tree()
     {

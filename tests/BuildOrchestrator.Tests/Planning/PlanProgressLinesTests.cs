@@ -44,7 +44,12 @@ public sealed class PlanProgressLinesTests
 
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'un satırları: App onları
     /// <c>CheckoutCompletedEvent</c>'ten kurar — başarıda temizlenen konsolun ilk satırları, reddetmede
-    /// korunan konsolun altına eklenen uyarı.</summary>
+    /// korunan konsolun altına eklenen uyarı.
+    /// <para><b>[DEĞİŞEN KURAL — Task 7]</b> Eski iddia: reddetme ve hata satırları öneksizdi
+    /// (<c>3 files have uncommitted changes — …</c>, <c>Switch failed — …</c>) ve konsolda düz tonda kalıyordu.
+    /// Değişme gerekçesi: bir git reddi gözden kaçıyordu; konsol satırı METNİNDEN boyadığı için
+    /// (§13.5) amber'in tek yolu <c>warning:</c> önekidir — bkz.
+    /// <see cref="Git_refusal_and_failure_lines_carry_the_warning_prefix_so_the_console_colours_them_amber"/>.</para></summary>
     [Fact]
     public void The_branch_switch_lines_say_what_happened_and_what_to_do()
     {

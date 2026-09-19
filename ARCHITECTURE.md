@@ -431,8 +431,10 @@ failed restore are results rather than errors: only a missing
 root or an unexpected exception becomes `error(optimizeFailed)`.
 
 `pullRepository` has no channel of its own. Its reasons flow as `syncProgress` lines — a fast-forward is a git
-transcript — and `pullCompleted` answers the only question the App has left: did the fast-forward succeed
-(§10.5).
+transcript — and `pullCompleted` answers the only questions the App has left: did the fast-forward succeed, and
+if it was refused, why — a dirty tree, a diverged branch or a detached HEAD (`PullRefusalReason`; empty on
+success and on an unexpected failure). The reason is structured so the event stream's short line never has to
+be parsed out of the console's text (§10.5).
 
 `checkoutCompleted` is the whole answer to `checkoutBranch`: a status (`switched`, `alreadyOn`, `dirty`,
 `stashFailed`, `failed`), the branch before and after, the new HEAD on success, the number of dirty paths the
@@ -901,6 +903,12 @@ of them are current, all read built outside this tool; otherwise a member that f
 verdict and a member that passes reads output stale from a dependency — the group is stale as a group. A member
 with no build evidence cannot prove it is current, so it keeps such a group stale. A group with no member in
 time mode is decided member by member in ledger mode.
+Inside the group, a member's `HintPath` check leaves out the targets its own siblings produce. Those targets are
+the cycle's edges themselves: members built one after another outside this tool always leave one sibling's
+output newer than the next member's, so counting them would keep every group stale for good. Which target
+belongs to a sibling is read from the same producer map the graph's edges come from (§6.4) and the plan's own
+cycle membership — nothing is computed a second time. A target produced outside the group still counts, so a
+newer upstream output still makes the whole group stale.
 
 **Where the evidence goes.** The Sync binds its Safe pass with the checks and the engine binds a run's plan with
 the same checks, so the Sync's will-build is the next plain *Build*'s decision; the Sync's Fast pass — which
@@ -1606,11 +1614,24 @@ stream line is `synced after commit` for a commit, and `synced · N projects cha
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
 
-**The list and the graph are rebuilt only when the structure changes.** A Sync whose topology has the same
-structural signature as the last one — node ids, names, layers and edges — reconciles the rows in place and
-leaves the graph standing; only a project added or removed, a moved layer or a changed edge replays the reveal
-(§13.2). The click of Clean and Optimize still empties both, and a real repository change does too; each also
-forgets the signature, so the Sync chained behind it reveals even the same structure.
+**The Sync button and a branch change start the screen over; the other kinds refresh it in place.** A Manual or
+BranchChange Sync (`SyncModeRules.RestartsPlanSurface`) blanks the project list and the graph at the request, in
+the same moment as the console and the event stream. Only the screen is blanked: the rows, their decisions and
+the topology stay in the view model, so the phase does not drop to `Boot`, the list shows no invite and the graph
+no *appears after Sync* label, and its header stays empty rather than counting zero projects. When the Sync's
+topology arrives the list and the graph come back with the reveal and the graph fitted to the panel, even when
+the structure is the same as before. A Sync that brings no topology — the send failed, planning failed, the
+engine was lost, or it completed without one — puts the previous surface back. An Appended or Silent Sync
+rebuilds nothing unless the structure changed: a topology with the same structural signature as the last one —
+node ids, names, layers and edges — reconciles the rows in place, leaves the graph and its camera where they
+are, and only a project added or removed, a moved layer or a changed edge replays the reveal (§13.2). The click
+of Clean and Optimize empties the plan itself, and a real repository change does too; each also forgets the
+signature, so the Sync chained behind it reveals even the same structure.
+
+Every preview that arrives outside a run — every Sync's, the silent one included — rewrites the decision of every
+row, including a row the last run finished, so a project that changed in the background after a run goes grey
+without a Sync from the button. Only while a run is in flight does a preview leave a finished row's decision
+alone (§14.3).
 
 Sync also asks git one more, purely read-only question: `git status --porcelain -z` on the repository root —
 never `-uall`, so a new untracked folder comes back as a single directory entry rather than one entry per file
@@ -1640,13 +1661,15 @@ answers: the chip is locked from the click, the operation pill reads `SWITCHING 
 cleared
 at the click. A successful checkout opens a new section through a BranchChange Sync (§10.2) whose first lines
 are the stash line when there was one and `Switched to <branch> (<sha>) — from <previous>`. A checkout that
-fails opens nothing: its line is appended under the console as it stands.
+fails opens nothing: its line — `warning: switch failed — <git's reason>`, amber like every `warning:` line
+(§13.5) — is appended under the console as it stands.
 
 **A dirty tree is the user's setting to decide.** Settings → General → *Stash and switch branches* (off by
 default):
 
-- **Off** — nothing is done, and the console says `N files have uncommitted changes — commit or stash them
-  first`.
+- **Off** — nothing is done. The console says, in amber, `warning: N files have uncommitted changes — commit or
+  stash them first`, and the event stream adds a short amber line, `branch switch refused — N uncommitted files`
+  (§13.2).
 - **On** — the changes, untracked files included, are stashed with `git stash push -u -m "build-orchestrator:
   leaving <branch> for <target>"` before the checkout, and the section's first line names that stash and says
   `restore them with git stash pop`. The tool never shows, applies or pops a stash; getting the work back is
@@ -1819,8 +1842,11 @@ Clicking it runs the same principled sequence the external roots use (`FastForwa
 What is advanced is always the branch checked out in the working tree, and the lines name the branch the engine
 reads there — the name the command carries is only what the App last knew. Every outcome is a console line — the
 fast-forward range on success, and on
-refusal the reason and the fix (`uncommitted changes … commit or stash
-them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal is not
+refusal an amber `warning: pull refused — …` line with the reason and the fix (`uncommitted changes … commit or
+stash them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal
+also adds a short amber line to the event stream (`pull refused — uncommitted changes`, `— branch diverged`,
+`— not on a branch`), built from the reason `pullCompleted` carries (§5.3). An unexpected failure — the
+network, credentials — stays a plain `Pull failed — …` console line with nothing in the stream. A refusal is not
 an error state: on a dirty or diverged tree, doing nothing is the correct behaviour. After a successful
 fast-forward the chip drops and a Sync runs automatically — with the console **kept**, because the user needs
 to see the result of the action they just took. The HEAD movement the pull causes is the same HEAD that Sync
@@ -2225,8 +2251,8 @@ width of the icons that follow it, and that number goes stale the moment the ico
 *Build* and the play button start a **single-project run** (§8.1) — the project alone, its dependencies
 untouched, and always compiled even when it is up to date — while *Rebuild* runs MSBuild's own clean-then-build
 for it. Starting from a row is not selecting the row:
-the selection and the filter drop, exactly as they do for a full run, so a graph that was focused on some node
-glides back to the fitted view and the console returns to the run log; the opening choreography marks just
+the selection drops and the filter stays, exactly as for a full run (§13.7), so a graph that was focused on some
+node glides back to the fitted view and the console returns to the run log; the opening choreography marks just
 that one row, and the ribbon pill reads `BUILD` or `REBUILD` with no target name — the target is named in the
 console (`build requested — X (single project)`) and in the stream's opening line. Colour follows the same cut:
 the engine's own preview for this run names only the target, so only the target's row turns queued-amber —
@@ -2314,15 +2340,20 @@ the list cannot, because WPF owns its containers, so it closes the surface inste
 filter path — leaves the surface alone, or every keystroke would cost a blank frame. A reveal that is refused,
 under reduced motion or while another hero holds the stage, still reopens it.
 
-**The reveal plays only when the structure changes.** A topology whose structural signature — node ids,
+**The reveal plays when the structure changes, or when the user starts over.** A topology whose structural signature — node ids,
 names, layers and edges — matches the last one is reconciled in place: rows stay where they are, the scroll
 does not move and the graph is not rebuilt; the new decisions simply arrive on the existing rows. Only a
 different structure (a project added or removed, a moved layer, a changed edge) rebuilds the list with the
 staggered reveal and — when nothing is selected — scrolls it back to the top, while the graph replays its own
-reveal in the same moment, so the two read together as "listed from scratch". The rule holds for every Sync
-kind, because Syncs also run on their own (§10.2) and a list that jumped back to the top on every commit or
-return to the window would take the user's place away from them. The click of Clean and Optimize, and a real
-repository change, empty the surface and forget the signature, so the Sync that fills it again always reveals.
+reveal in the same moment, so the two read together as "listed from scratch". The rule holds for the Syncs that
+run on their own and the appended ones (§10.2), because a list that jumped back to the top on every commit or
+return to the window would take the user's place away from them. The Sync button and a branch change are the
+user saying "start over", and they get exactly that: the list and the graph blank with the console at the
+request and come back with the reveal, back at the top, even when the structure is unchanged — or, if the Sync
+brings no topology, the previous surface comes back. While the surface is blank, previews and row
+updates do not quietly refill the list; only the topology's reveal (or the restore) does. The click of Clean
+and Optimize, and a real repository change, empty the surface and forget the signature, so the Sync that fills
+it again always reveals.
 Build, Rebuild, Clean and Resolve leave the scroll where it is: the opening choreography already tells their
 story, and the row under the pointer must not run away.
 
@@ -2358,11 +2389,15 @@ Settings' Save sends does not, because Save already wrote the console's first li
 the new root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one
 before it. An automatic Sync clears nothing and adds at most one line of its own (`synced after commit`,
 `synced · N projects changed`), as do the branch-change interrupt (`interrupted by branch change`) and the wait
-for a git operation (`waiting for git — …`).
-That question is the console's and the stream's alone: the **plan surface** — rows, graph nodes, the cycle
-map, the *to build* count — is not emptied by a Sync at all. A Sync reconciles the rows in place and replays the
-reveal only when the structure changed (§13.2); only the click of Clean or Optimize and a real repository change
-empty it. It is not virtualized and does not need to
+for a git operation (`waiting for git — …`). A git refusal adds one short `warn` line — a branch switch refused
+on a dirty tree, a pull refused (§10.3, §10.5): no glyph (the amber `▸`, like `sync` and `info`), text in the
+same amber the console gives a `warning:` line, and typed like `info` rather than printed at once like a
+failure; it carries no project, so it is not clickable.
+The **plan surface** — rows, graph nodes, the cycle map, the *to build* count — follows its own rule. No Sync
+empties the plan: the Sync button and a branch change only blank the list and the graph on screen and bring
+them back with the reveal (§10.2), and the other kinds reconcile the rows in place, replaying the reveal only
+when the structure changed; only the click of Clean or Optimize and a real repository change empty the plan
+itself. The stream is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -2374,7 +2409,7 @@ through the list or the graph.
 
 **Every row answers hover, one step apart — but the once-only flourish always wins first.** A clickable row (one
 carrying a project id — `ok`/`fail`/`skip` lines, and a cycle-round `info` line) steps to `surface-hover` and swaps in
-the hand cursor; a row with nothing to click — `sync`/plain `info`/the closing `done` summary — steps to the quieter
+the hand cursor; a row with nothing to click — `sync`/plain `info`/`warn`/the closing `done` summary — steps to the quieter
 `surface` instead and keeps the plain arrow, so long-log tracking gets the same visual foothold without implying a
 click that would do nothing. The selected row's own `surface-raised` outranks both and does not move under the
 pointer. A background step on a non-clickable row could in principle fight the done line's once-only flourish. The two
@@ -2420,7 +2455,7 @@ lights in its own status colour (green, neutral grey, red; amber for building an
 removable chip in the PROJECTS header lists the selected set joined with ` + `. Pressing a filter also drops the
 selection: a selection locks the graph camera onto one node, a filter says "look at this set", and the two
 fought each other. A filter reaches the **graph** too — nodes outside the visible set fade to the same 0.1 the
-unfocused set uses. The matching rule lives in one place (`ProjectFilter.Matches`): the graph is handed the
+unfocused set uses — except while a run is being told there, when the graph sets it aside (§13.6). The matching rule lives in one place (`ProjectFilter.Matches`): the graph is handed the
 list's visible names and never writes a second matcher, so the chip, the list and the graph can never disagree.
 
 **The whole bar speaks one hover language.** Every neutral control — Sync, the three maintenance icons, the
@@ -2537,12 +2572,13 @@ and the event stream: the outputs are about to be deleted, so nothing on screen 
 more, and dropping the plan at some later instant would read as a second jolt in one operation. **Optimize
 behaves identically**, and for the reason that generalises the rule: an operation that is about to replace the
 plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
-own does not: it replaces decisions, not the plan's structure, and reconciles in place (§10.2).
+own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
 `Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
-Sync* empty state. A repository change does exactly this for the same reason; a branch change does not — the
-list stays, and its Sync reconciles it. Because the emptying happens at the
+Sync* empty state. A repository change does exactly this for the same reason; a branch change does not — its
+rows and decisions stay in the plan, only the screen starts over until its Sync's topology brings them back
+(§10.2). Because the emptying happens at the
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
@@ -3124,7 +3160,10 @@ lines.
   so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
-  pinned to the panel rather than to the document.
+  pinned to the panel rather than to the document. That prompt caret is the console's **only** live caret. The
+  editor is read-only but still takes keyboard focus when clicked, and its own thin text caret would then blink
+  beside the prompt's; it is painted with a transparent brush instead. Only its visibility goes — the editor stays
+  focusable, and text selection and Ctrl+C go through it as usual.
 - **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
   idle window the list's frontier following uses, and the same constant — and during it arriving content
   never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
@@ -3261,7 +3300,7 @@ lines.
 ### 13.6 Graph renderer
 
 The panel is a **quiet graph**: unnamed mini nodes in layer bands, no permanent edge network, and a camera
-that only ever moves when you select something. The point is that a 100-project workspace should read at a
+that stays on the fitted view unless you select something or move it yourself. The point is that a 100-project workspace should read at a
 glance instead of demanding to be studied.
 
 **Layout is a function of the panel.** Nodes sit in horizontal bands ordered by build sequence — layer 0 on
@@ -3426,7 +3465,8 @@ scope dimmed to 0.13 and then flared back to 0.2 as their pre-skips arrived, and
 sequence read as a flicker. Later ticks find the value already settled and start nothing, which matters because status pushes
 arrive several times a second. When the run ends every node comes back to full opacity in its result
 colour. The decision itself is pure (`GraphNodeOpacity.Resolve`) and its precedence is fixed: selection beats
-a filter, a filter beats the run, and hover beats all three.
+a filter, a filter beats the run, and hover beats all three — though a filter and the run never actually meet,
+because the graph sets the filter aside for the length of a run (below).
 
 A filter (or a search) in the list dims the graph the same way a selection does — the names that survive the
 list's own `ProjectFilter.Matches` stay opaque and everything else drops to 0.1, with the matching set handed
@@ -3434,6 +3474,19 @@ to the graph rather than recomputed there, so the two surfaces can never disagre
 fade runs at 420 ms rather than the 280 ms a run tick uses, in both directions. The difference is deliberate:
 a run transition reports a state change and happens several times a second, while a filter is the user's own
 one-off gesture that dims half the graph at once and wants to be followed by eye.
+
+**A run ignores the filter in the graph, and only there.** Starting a run keeps the filter (§13.7), and the list
+stays filtered throughout. The graph, though, tells the run across the whole workspace: from the click — before
+the opening wave — through the run and its ending finale, opacity is decided as if no filter were set
+(`GraphView.IsFilterSuspended`; the pure `Resolve` is simply not handed one), so the wave, the run's dimming and
+the neon play in their standard form. Once the finale has played the graph holds its final look for one more
+short beat (`EndFinale.FilterReturnAtMs`, the finale's length plus the design's short `LightMs`) and then
+fades back to the filtered look at the filter's own 420 ms. When there is no finale — nothing was built, reduced
+motion — or the run ends any other way (a stop, a cancelled opening, the engine dying, a command that never
+went out), the filter returns as soon as the run is over. The two end signals — the phase that starts the finale
+and the run lock falling — arrive in different orders on different paths, and either order lands on the same
+result. A filter changed during the run is kept and is what the graph returns to. Without a filter none of this
+has a visible effect.
 
 *One rule of the design is deliberately not implemented:* colour changes are instant rather than a 380 ms
 transition. A brush property cannot be interpolated in WPF, so the transition needs a local
@@ -3550,10 +3603,14 @@ leaves the selection alone. There is no pan clamp, and that is a conclusion rath
 canvas *is* the panel, so a clamp of the "an axis that fits is centred" kind would force the translation to
 the graph's centre on every selection whose fit scale falls below 1, overriding focus-and-fit entirely. The
 design supplies its own recovery instead: clicking empty ground with nothing selected returns the view to its
-default. (§2.3 puts a mono hint line in the bottom-right corner announcing the two gestures; it was removed —
+default. Rebuilding the graph — a new structure, or a Sync that starts the screen over (§10.2) — also puts the
+camera back at its default, on screen as well as in its target (`SnapCameraTo`): the camera's target and its live
+transform are set together on every path, so no zoom or pan from the previous graph survives into the new one,
+and what the screen shows never disagrees with what the camera believes it shows. (§2.3 puts a mono hint line in the bottom-right corner announcing the two gestures; it was removed —
 the panel reads more quietly without it.)
 
-**Opening.** After a Sync the nodes appear in build order — each one delayed by `index × 9 ms`, capped at
+**Opening.** Whenever the graph is built — a Sync with a new structure, a Sync that starts the screen over, the
+Sync that follows a Clean — the nodes appear in build order, each one delayed by `index × 9 ms`, capped at
 520 ms, rising 5 px over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the
 bands are read in. It is a hero (`sync-reveal`, shared with the project list), so it yields if another hero
 is already playing, and reduced motion places everything instantly.
@@ -3585,6 +3642,12 @@ selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
+
+**Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
+Build, Rebuild and Clean all go through the same start: the selection is cleared, so the graph glides back to
+the fitted view and the console returns to the run log, while the chips and the search stay exactly as they
+were and the list stays filtered for the whole run. The graph sets the filter aside while it tells the run and
+takes it back after the finale (§13.6).
 
 **Neither is a click inside the row's own action block** — the hover icons, the ⋯ menu and the Open-in-Visual
 Studio chooser. The row has to say so explicitly, because a mouse event raised inside a `Popup` continues out
@@ -3819,8 +3882,12 @@ on the success event (`Trusted`), so the row and the next Sync never disagree. T
 `failed` for every failure and `succeeded` for every success. Being skipped is not a colour — a skipped project
 falls back to its standing, although the run story (the ribbon's `N skipped`, the console's *nothing to compile
 in this run*) keeps counting it until the next operation begins. A result is written into the standing as the
-project finishes (the next preview confirms it) and stays there until a later run changes it, so colour is
-cumulative rather than the story of the last operation alone. Switching the configuration moves the standing
+project finishes and stays there until a later decision changes it, so colour is cumulative rather than the
+story of the last operation alone. The next preview that arrives outside a run — any Sync's, the silent one a
+return to the window starts included — decides every row afresh, a row the last run finished included, so an
+output that went stale in the background after the run does not stay green; only while a run is still in flight
+does a preview leave a finished row's decision alone, since a preview arriving mid-run describes the run's plan
+from before that row's result. Switching the configuration moves the standing
 ahead of the next preview as well: the configuration is part of every signature, so every decided row drops to
 `stale` at once, with the reason the next preview will give — `SignatureChanged` when the project has ever built
 successfully, `never built` when it has not or when its output was missing (for a row that last failed, the
@@ -3839,7 +3906,8 @@ which is the only mapping that still yields `skipped`.
 (`WillBuild`) — `WillBuild` is a standing fact about the project, decided fresh after every Sync and unaware of
 which run is in flight. The queue flag is cleared in exactly two places — at the start of every run, before that
 run's own preview has had a chance to say anything, and when the run ends — and in between it is written only by
-that run's own preview, never re-derived from the standing `WillBuild`. The distinction matters exactly when the
+that run's own preview, never re-derived from the standing `WillBuild`. A preview that arrives while no run is
+in flight — a Sync's — never raises it. The distinction matters exactly when the
 two disagree: a single-project run cuts the engine's plan to the one target (§8.1), so its preview names only
 that project, and every other row — however dirty a stale Sync left it — is never handed the flag and keeps
 its standing colour for the run's whole life. Between the run starting and that preview arriving, the marking
@@ -3861,8 +3929,9 @@ the warning's own amber.
 
 **The start mode** is the `unknown` standing: a row that has no decision yet — the application has started but
 no Sync has run, or the repository root has just changed and the decisions the rows carried no longer describe
-what will be built; the list and the graph drop back together. A branch change does not drop them: its Sync
-arrives with the new decisions and recolours the rows in place. Nothing is known, so nothing is
+what will be built; the list and the graph drop back together. A branch change does not drop them: the rows
+keep their decisions while the screen starts over (§10.2), and its Sync's preview recolours them with the new
+branch's decisions. Nothing is known, so nothing is
 coloured: the row draws a plain grey stripe at full opacity and a **four-arc ring** in place of the filled dot,
 the glyph is a dashed circle, and the graph node carries a dashed border. The mode drops the moment a decision
 arrives — a Sync's preview colours every row with its standing — and the ring cross-fades into the filled dot,
@@ -4135,7 +4204,10 @@ The **ending** — the neon ignition — lives only in the graph; the list stays
 tubes, flickering irregularly over 1150 ms with a chain of at most 1.5 s; a 700 ms breath; then every
 remaining grey — skipped and untouched alike — comes up **together** over 980 ms. The graph also releases any
 selection focus for the same span, gliding to the default view so the whole finale stays in frame (§13.6).
-With nothing built it does not play at all, and a new operation cuts it instantly.
+With nothing built it does not play at all, and a new operation cuts it instantly. When the list is filtered,
+the finale — like the wave and the run before it — plays across the whole graph as if no filter were set; its
+own last step, one short `LightMs` beat after the finale ends, fades the graph back to the filter (§13.6). A new
+operation that cuts the finale cancels that step too and keeps the filter set aside for its own run.
 
 Under reduced motion neither choreography runs: the scope is marked and the run proceeds.
 
@@ -4682,7 +4754,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
 | Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
-| Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`) | `Core/Incremental/IncrementalRunBinder.cs` |
+| Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
@@ -4743,8 +4815,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
-| Sync kinds and their rules (clearing, fetch, transcript, visibility) | `App/ViewModels/SyncMode.cs` |
-| Branch chip checkout, its gate, the stash setting; the checkout's answer and the pull | `App/ViewModels/RunViewModel.ActionBar.cs` (`SelectBranch`, `CanSwitchBranch`), `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `PullRepositoryAsync`) |
+| Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface) | `App/ViewModels/SyncMode.cs` |
+| Plan-surface restart on the Sync button and a branch change: the flag, blanking the list and the graph, the replay on topology, the restore when no topology comes | `App/ViewModels/RunViewModel.ActionBar.cs` (`PlanSurfaceRestarting`), `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`), `MainWindow.xaml.cs` (`BlankPlanSurface`) |
+| Branch chip checkout, its gate, the stash setting; the checkout's answer and the pull, with their stream `warn` lines | `App/ViewModels/RunViewModel.ActionBar.cs` (`SelectBranch`, `CanSwitchBranch`), `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnPullCompletedAsync`, `PullRepositoryAsync`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Sync flow (fetch or last known remote → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
@@ -4838,7 +4911,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
 | Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
 | Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |
-| Ending choreography: neon timings and keyframes | `App/Controls/EndFinale.cs` |
+| Ending choreography: neon timings and keyframes, the moment the filter returns (`FilterReturnAtMs`) | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
@@ -4851,7 +4924,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band | `App/Console/ConsoleView.xaml(.cs)` |
+| AvalonEdit host, batching, active line, cascade, chunk paging, cursor + row hover band, the hidden native caret | `App/Console/ConsoleView.xaml(.cs)` |
 | Line colouring | `App/Console/ConsoleColorizer.cs`, `ConsolePalette.cs`, `ConsoleLine.cs` |
 | Row hover band target-line geometry (pure) | `App/Console/ConsoleHoverBand.cs` |
 | Typewriter timing for the active stream line (pure) | `App/Console/TypewriterScheduler.cs` |
@@ -4866,6 +4939,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
 | Graph node identity (project id, not name) and the label that is the name | `App/Graph/GraphModels.cs`, `QuietGraphLayout.cs` |
 | Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
+| The filter set aside for a run and its return; the camera reset on rebuild | `App/Graph/GraphView.xaml.cs` (`BeginOperation`/`EndOperation`, `IsFilterSuspended`, `SnapCameraTo`), `MainWindow.xaml.cs` |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |
 | Bead orbit geometry and timings | `App/Graph/GraphBeads.cs` |

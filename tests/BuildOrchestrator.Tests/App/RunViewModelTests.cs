@@ -1588,6 +1588,10 @@ public class RunViewModelTests
         // değil, koşu bittikten sonraki bağımsız bir tazeleme olurdu (bkz. aşağıdaki A_post_run_preview_* testleri).
         // CurrentSha guard'dan ÖNCE atanır: segment 2'nin okuduğu build-state segment 1'in persist'ini içerir,
         // yani derlenmiş satırın sol yarısı ancak burada tazelenebilir.
+        // [DEĞİŞEN KURAL — Task 1] Eski iddia: guard KOŞULSUZDU — terminal satırın WillBuild'i HİÇBİR önizlemeyle
+        // yazılmazdı; test bu yüzden RunStartedEvent'siz kuruluyordu. Değişme gerekçesi: koşu bittikten sonra gelen
+        // önizleme (pencereye dönüşün sessiz Sync'i) de guard'a çarpıyor, arka planda değişen proje yeşil kalıyordu.
+        // Koruma artık yalnız koşu sürerken geçerli; bu test onu o koşulda pinler.
         const string oldSha = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const string newSha = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         const string projectId = @"C:\p\dirty.csproj";
