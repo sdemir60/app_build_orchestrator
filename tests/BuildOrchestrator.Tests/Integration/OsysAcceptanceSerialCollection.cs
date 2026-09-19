@@ -3,12 +3,11 @@ using Xunit;
 namespace BuildOrchestrator.Tests.Integration;
 
 /// <summary>
-/// [OSYS kabul testleri sıra sıra koşar] <see cref="OsysIncrementalAcceptanceTests"/> ve
-/// <see cref="OsysRebuildAcceptanceTests"/> gerçek OSYS working tree'sini (<c>D:\Projects\Delta\OSYS</c>) paylaşır
-/// (kendi obj izolasyonundan bağımsız olarak). Paralel koştukları zaman iki sınıf aynı output dizinine (MSBuild
-/// /p:OutDir) yazmaya çalışıyor — MSB3026 çatışmaları + kontention. Ayrıca yeni karar motoru output zaman bilgisini
-/// okuyor (incremental hint): bir sınıfın Rebuild'i output'ı güncelleyip, diğerinin ikinci koşusunu time-rebuild
-/// moduna sokabilir (yanlış karar). Çözüm: bu collection'a koy, diğer collection'larla eşzamanlı koşmasını engelle.
+/// <see cref="OsysIncrementalAcceptanceTests"/> ile <see cref="OsysRebuildAcceptanceTests"/> gerçek OSYS çalışma ağacını
+/// (<c>D:\Projects\Delta\OSYS</c>) ve onun ortak çıktı klasörlerini paylaşır. Paralel koştukları zaman aynı DLL'leri aynı
+/// anda yazarlar (MSB3026). Ayrıca karar artık başkasının derlediği çıktının zamanını okuduğu için (zaman kipi), bir
+/// sınıfın Rebuild'i diğerinin ikinci koşusundaki projeleri defter kipinden zaman kipine itebilir. Bu yüzden iki sınıf
+/// sırayla koşar.
 /// </summary>
 [CollectionDefinition("OSYS acceptance (serial)", DisableParallelization = true)]
 public class OsysAcceptanceSerialCollection
