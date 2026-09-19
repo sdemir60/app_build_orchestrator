@@ -554,12 +554,6 @@ public partial class GraphView : UserControl
         _endPlayer.Play(steps);
     }
 
-    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.
-    /// <para>[kullanıcı kararı 2026-09-19] Bekleyen filtre dönüş adımını (<see cref="EndFinale.FilterReturnAtMs"/>)
-    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: üç çağıranı bunu telafi eder
-    /// (<see cref="BeginOperation"/> askıyı sürdürür, <see cref="PlayEndFinale"/> dönüşü yeniden planlar ya da
-    /// filtreyi anında döndürür, <see cref="CancelEndFinale"/> filtreyi anında döndürür). Dışarıdan çağrılsaydı
-    /// graf filtresiz asılı kalabilirdi.</para></summary>
     /// <summary>
     /// [kullanıcı kararı 2026-09-19] Ekran baştan başlıyor (Sync düğmesi / branch değişimi — kabuğun
     /// <c>BlankPlanSurface</c>'i): oynayan bitiş koreografisi ANINDA kesilir ve filtre askısı kalkar. Final
@@ -573,6 +567,12 @@ public partial class GraphView : UserControl
         ResumeFilter();
     }
 
+    /// <summary>Bekleyen bitiş koreografisini iptal eder ve final görünüme döner.
+    /// <para>[kullanıcı kararı 2026-09-19] Bekleyen filtre dönüş adımını (<see cref="EndFinale.FilterReturnAtMs"/>)
+    /// da iptal eder ve filtreyi GERİ GETİRMEZ — bu yüzden private'tır: üç çağıranı bunu telafi eder
+    /// (<see cref="BeginOperation"/> askıyı sürdürür, <see cref="PlayEndFinale"/> dönüşü yeniden planlar ya da
+    /// filtreyi anında döndürür, <see cref="CancelEndFinale"/> filtreyi anında döndürür). Dışarıdan çağrılsaydı
+    /// graf filtresiz asılı kalabilirdi.</para></summary>
     private void StopEndFinale()
     {
         _endPlayer.Stop();
