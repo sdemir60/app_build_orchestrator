@@ -8,7 +8,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
-/// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, layers[{ name, pattern }] }</c> —
+/// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, stashOnBranchSwitch, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
 /// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
 /// <see cref="FileName"/>'dir.
@@ -52,6 +52,11 @@ public sealed class SettingsFile
     /// ZORUNDADIR — <see cref="SettingsDraftViewModel.LoadFrom"/> yalnız BİRİNCİSİNDE taslağı korur.</summary>
     [JsonPropertyName("pullExternalBeforeBuild")] public bool? PullExternalBeforeBuild { get; set; }
 
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
+    /// <see cref="PullExternalBeforeBuild"/> gibi KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya
+    /// taslaktaki değeri sıfırlamaz (<see cref="SettingsDraftViewModel.LoadFrom"/>).</summary>
+    [JsonPropertyName("stashOnBranchSwitch")] public bool? StashOnBranchSwitch { get; set; }
+
     [JsonPropertyName("layers")] public List<SettingsFileLayer> Layers { get; set; } = [];
 
     private static readonly JsonSerializerOptions Options = new()
@@ -66,13 +71,15 @@ public sealed class SettingsFile
     /// HER ZAMAN gerçek (boş olabilir ama null OLMAYAN) bir liste geçer — bu yüzden GERÇEK bir Export anahtarı
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
-        IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null)
+        IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null,
+        bool? stashOnBranchSwitch = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
         {
             RepositoryRoot = repositoryRoot,
             PullExternalBeforeBuild = pullExternalBeforeBuild,
+            StashOnBranchSwitch = stashOnBranchSwitch,
             // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.

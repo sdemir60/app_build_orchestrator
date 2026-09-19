@@ -49,8 +49,8 @@ public static class LocalEdits
 
         foreach (var (projectId, inputs) in inputsById)
         {
-            bool dirty = inputs.Any(i => dirtyFiles.Contains(i.LogicalPath)
-                || dirtyDirs.Exists(d => i.LogicalPath.StartsWith(d, StringComparison.OrdinalIgnoreCase)));
+            bool dirty = inputs.Any(i => dirtyFiles.Contains(i.Path)
+                || dirtyDirs.Exists(d => i.Path.StartsWith(d, StringComparison.OrdinalIgnoreCase)));
             if (dirty) result.Add(projectId);
         }
 

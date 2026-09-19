@@ -308,22 +308,130 @@ public class SyncWorkspaceServiceTests
         Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
     }
 
-    /// <summary>Başka bir branch seçiliyken mesafe ÖLÇÜLMEZ: derleme worktree'den yapılır ve ana ağacın uzak
-    /// uçla mesafesi kullanıcıya bir şey söylemez (chip de çizilmez).</summary>
+    /// <summary>Sync fetch'i ve mesafeyi komutun adlandırdığı branch'e değil, CHECKOUT EDİLMİŞ branch'e göre
+    /// yapar: araç yalnız çalışma ağacında derler, ölçülecek tek branch odur.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.5]</b> Eski ad/iddia:
+    /// <c>No_distance_is_reported_when_the_selected_branch_is_not_the_active_one</c> — komut aktif olmayan bir
+    /// branch adlandırırsa o branch fetch edilir ve mesafe ÖLÇÜLMEZ (chip çizilmez). Gerekçe worktree'ydi: seçili
+    /// branch çalışma ağacından farklı olabiliyordu. Worktree kalktı; komuttaki ad yalnız detached HEAD'de yedektir
+    /// ve bayat bir ad (açılış Sync'inin boş adı, envanterden önceki değer) chip'i yanlışlıkla gizliyordu.</para></summary>
     [Fact]
-    public async Task No_distance_is_reported_when_the_selected_branch_is_not_the_active_one()
+    public async Task Sync_fetches_the_checked_out_branch_whatever_the_command_names()
     {
         using var origin = new GitTestRepo();
         WriteWorkspace(origin);
         origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
         string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
 
         var events = new List<IpcEvent>();
         await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(
             new SyncWorkspaceCommand(cloneRoot, "some-other-branch"), events.Add);
 
-        Assert.Null(Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
-        Assert.DoesNotContain(Progress(events), e => e.Line.Contains("behind origin/", StringComparison.Ordinal));
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(1, done.Behind);
+        Assert.Equal(branch, done.Branch);
+    }
+
+    /// <summary>[Task 4 review] Açılış Sync'i henüz envanter gelmeden gider ve komutta boş bir branch adı taşır —
+    /// fetch yine checkout edilmiş branch'le yapılır ve mesafe ölçülür (chip açılışta da doğru çıkar).</summary>
+    [Fact]
+    public async Task A_sync_command_with_an_empty_branch_fetches_the_checked_out_branch_and_measures_behind()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int y; }");
+        origin.CommitAll("c3");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, ""), events.Add);
+
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        Assert.Equal(2, Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
+    }
+
+    /// <summary>[review M2] Detached HEAD'de izlenen bir branch yoktur: fetch komuttaki yedek adla yine yapılır
+    /// ama mesafe ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir, bayat bir adla sayılan "N behind" yalan olurdu.</summary>
+    [Fact]
+    public async Task A_detached_head_fetches_the_fallback_but_reports_no_distance()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        GitTestRepo.RunGitAt(cloneRoot, "checkout", "--detach");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Null(done.Behind);
+        Assert.Null(done.ActiveBranch);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Fetch'siz Sync (kendiliğinden Sync, branch değişimi) ağa çıkmaz: fetch
+    /// satırı yok, git fetch çağrısı yok; <c>N behind</c> son bilinen uzak uca göre yerelde hesaplanır. Uzak uç,
+    /// son fetch'ten SONRA bir commit daha ilerledi — o commit bilinmediği için sayılmaz (2, 3 değil).</summary>
+    [Fact]
+    public async Task A_sync_without_fetch_runs_no_fetch_and_measures_behind_from_the_known_remote()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int y; }");
+        origin.CommitAll("c3");
+        GitTestRepo.RunGitAt(cloneRoot, "fetch", "origin");   // son bilinen uzak uç: c3
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int z; }");
+        origin.CommitAll("c4");                               // bilinmeyen: fetch edilmedi
+
+        var recorder = new RecordingProcessRunner();
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), recorder).RunAsync(
+            new SyncWorkspaceCommand(cloneRoot, branch, Fetch: false), events.Add);
+
+        Assert.DoesNotContain(recorder.Calls, call => call.Contains("fetch"));
+        Assert.DoesNotContain(Progress(events), e => e.Line.StartsWith("git fetch", StringComparison.Ordinal));
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.False(done.FetchDegraded);
+        Assert.Equal(2, done.Behind);
+        Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
+        Assert.Single(events.OfType<WorkspaceTopologyEvent>()); // analiz yine tam koşar
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Tamamlanma olayı yerel HEAD'i ve checkout edilmiş branch'i taşır — App'in
+    /// çift Sync kontrolü ve branch değeri buradan okunur.</summary>
+    [Fact]
+    public async Task The_completed_event_carries_head_and_active_branch()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string localHead = GitTestRepo.RunGitAt(cloneRoot, "rev-parse", "HEAD").Trim();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(localHead, done.HeadSha);
+        Assert.Equal(branch, done.ActiveBranch);
     }
 
     [Fact]

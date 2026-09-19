@@ -33,7 +33,7 @@ public class TitleBarContextTests
         return [.. lockPanel.Children.Cast<UIElement>().OfType<TextBlock>()];
     }
 
-    /// <summary>Kilit tek bir metin taşır: ürün adı. Repo/branch/worktree hiçbir koşulda başlığa yazılmaz.</summary>
+    /// <summary>Kilit tek bir metin taşır: ürün adı. Repo/branch hiçbir koşulda başlığa yazılmaz.</summary>
     [StaFact]
     public void The_title_bar_carries_the_brand_only_and_never_a_repo_or_branch_context()
     {
@@ -43,8 +43,6 @@ public class TitleBarContextTests
 
         vm.RootPath = @"C:\src\OSYS";
         vm.Branch = "main";
-        vm.UseWorktree = true;
-        vm.WorktreeName = "main-2";
 
         var texts = LogoLockTexts(window);
         Assert.Equal([BuildOrchestrator.App.Services.AppIdentity.Product], texts.Select(t => t.Text));

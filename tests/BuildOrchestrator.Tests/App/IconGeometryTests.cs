@@ -23,7 +23,7 @@ public class IconGeometryTests
     public static readonly string[] RequiredKeys =
     [
         "Icon.Play", "Icon.Stop", "Icon.Sync", "Icon.Rot", "Icon.Redo", "Icon.Folder", "Icon.FolderOpen",
-        "Icon.Vs", "Icon.Branch", "Icon.Tree", "Icon.Search", "Icon.Check", "Icon.Copy", "Icon.Down",
+        "Icon.Vs", "Icon.Branch", "Icon.Search", "Icon.Check", "Icon.Copy", "Icon.Down",
         "Icon.Trash", "Icon.Plus", "Icon.Back", "Icon.Grip", "Icon.Gear", "Icon.Sigma", "Icon.ChevUp",
         "Icon.AlertTri", "Icon.DepWarn", "Icon.LayQuad", "Icon.LayList", "Icon.LayFocus", "Icon.Package",
         "Icon.CaptionMinimize", "Icon.CaptionMaximize", "Icon.CaptionRestore", "Icon.CaptionClose",

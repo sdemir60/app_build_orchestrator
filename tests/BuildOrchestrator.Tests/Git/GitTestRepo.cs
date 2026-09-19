@@ -61,6 +61,34 @@ public sealed class GitTestRepo : IDisposable
     public string CurrentBranchName() => RunGit(RootPath, "symbolic-ref", "--short", "-q", "HEAD").Trim();
 
     /// <summary>
+    /// [Faz 2/T1] Bu repo için AYRI bir dizinde <c>git worktree add</c> ile linked bir worktree açar
+    /// (yalnız fixture — ürün kodu worktree add ASLA çağırmaz) ve worktree kökünün TAM yolunu döner.
+    /// <see cref="Core.Git.HeadReader"/>'ın <c>commondir</c> çözümlemesini gerçek bir linked worktree
+    /// üzerinde sınamak içindir; <paramref name="branch"/> önceden <see cref="CreateBranch"/> ile
+    /// oluşturulmuş, henüz hiçbir yerde checkout edilmemiş bir yerel branch olmalıdır.
+    /// </summary>
+    public string AddWorktree(string branch)
+    {
+        string worktreePath = Path.Combine(Path.GetTempPath(), "gitsvc-wt-" + Guid.NewGuid().ToString("N"));
+        RunGit(RootPath, "worktree", "add", "-q", worktreePath, branch);
+        _extraDirsToClean.Add(worktreePath);
+        return worktreePath;
+    }
+
+    /// <summary>
+    /// [Faz 2/T1] HEAD reflog'unun (<c>.git/logs/HEAD</c>) SON satırını ham haliyle döner — git'in dosyaya
+    /// yazdığı TAB-ayrılmış biçim (<c>&lt;eski sha&gt; &lt;yeni sha&gt; &lt;yazar&gt; &lt;zaman&gt;\t&lt;mesaj&gt;</c>),
+    /// <c>git reflog</c> komutunun insan-okur (<c>HEAD@{0}: ...</c>) biçimi DEĞİL. <see
+    /// cref="Core.Git.ReflogEntry.Classify"/>'ı gerçek git çıktısına karşı sınamak içindir.
+    /// </summary>
+    public string LastHeadReflogLine()
+    {
+        string path = Path.Combine(RootPath, ".git", "logs", "HEAD");
+        string[] lines = File.ReadAllLines(path);
+        return lines[^1];
+    }
+
+    /// <summary>
     /// Bu repoyu <c>git clone --depth 1</c> ile ayrı bir temp dizine klonlar ve klonun kökünü döner
     /// (shallow-repo edge testi). <c>file://</c> URI (<c>new Uri(RootPath).AbsoluteUri</c>) KASITLI
     /// kullanılıyor: düz yerel yol ile klonlarken git "--depth is ignored in local clones; use file://

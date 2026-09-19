@@ -222,56 +222,7 @@ public sealed class IncrementalRunBinderTests : IDisposable
         Assert.False(cleanPlan.Nodes[0].WillBuild);
     }
 
-    // ---- Kök bağımsızlığı ve worktree eşitliği (D5) ------------------------------------------------
-
-    /// <summary>
-    /// AYIRT EDİCİ — bir worktree'de derlenen proje, ana kökte yapılan bir sonraki Sync'te BULUNUR ve
-    /// "güncel" sayılır.
-    ///
-    /// <para>Sahada latent duran kusur buydu: kimlik tam csproj yolu olduğu için worktree koşusu kayıtları
-    /// worktree yollarıyla yazıyor, in-place Sync onları ana kök id'siyle arayıp bulamıyordu — yani farklı
-    /// bir branch'e alınan TEK bir Build'den sonra her şey yeniden "derlenecek" görünüyordu.</para>
-    ///
-    /// <para>Çözümün iki yarısı vardır ve bu test ikisini birden sürer: kimlikler imza hesabından ÖNCE ana
-    /// köke taşınır (<see cref="ProjectIdentityRebase"/>) ve imzanın yol terimi köke GÖRELİ tutulup içerik
-    /// derlenen ağacın fiziksel dosyasından okunur (D5). İkincisi olmasaydı aynı içerik iki kökte iki farklı
-    /// imza üretirdi.</para>
-    /// </summary>
-    [Fact]
-    public void a_project_built_in_a_worktree_is_recognised_as_up_to_date_by_the_next_in_place_sync()
-    {
-        string main = NewRoot("bo-main-");
-        string tree = NewRoot("bo-tree-");
-        foreach (string root in new[] { main, tree })
-        {
-            Write(Path.Combine(root, "src", "A"), "A.csproj", "<Project/>");
-            Write(Path.Combine(root, "src", "A"), "A.cs", "class A {}");
-        }
-
-        // --- Worktree koşusu: plan worktree'de kurulur, kimlik ANA KÖKE taşınır, sonra imza hesaplanır.
-        var (treePlan, treeEvaluated) = SingleProject(tree);
-        var rebased = ProjectIdentityRebase.To(main, tree, treePlan,
-            new Dictionary<string, IReadOnlyList<SolutionRef>>(), treeEvaluated);
-        string mainId = Path.Combine(main, "src", "A", "A.csproj");
-        Assert.Equal(Path.Combine(tree, "src", "A", "A.csproj"), rebased.BuildPathById[mainId]);
-
-        string ToWorktree(string logical) =>
-            logical.StartsWith(main, StringComparison.OrdinalIgnoreCase)
-                ? Path.Combine(tree, logical[(main.Length + 1)..])
-                : logical;
-
-        var (_, worktreeSignatures) = new IncrementalRunBinder(
-                rebased.Plan, rebased.EvaluatedById, main, FreshCache(), ToWorktree)
-            .Bind(NoState, buildCycles: false, DependentMode.Safe);
-
-        // --- Sonraki in-place Sync: ana kök, aynı içerik.
-        var (mainPlan, mainEvaluated) = SingleProject(main);
-        var (syncPlan, inPlaceSignatures) = new IncrementalRunBinder(mainPlan, mainEvaluated, main, FreshCache())
-            .Bind(Built(mainId, worktreeSignatures[mainId]), buildCycles: false, DependentMode.Safe);
-
-        Assert.Equal(worktreeSignatures[mainId], inPlaceSignatures[mainId]);
-        Assert.False(syncPlan.Nodes[0].WillBuild, "worktree'de derlenen proje ana kökte 'güncel' sayılmalı");
-    }
+    // ---- Kök bağımsızlığı (D5) --------------------------------------------------------------------
 
     [Fact]
     public void the_same_content_in_a_different_root_yields_the_same_signature()
@@ -330,7 +281,7 @@ public sealed class IncrementalRunBinderTests : IDisposable
     // ---- Girdi kümesi binder üstünden de görünür ---------------------------------------------------
 
     [Fact]
-    public void the_binder_exposes_the_physical_paths_it_will_hash()
+    public void the_binder_exposes_the_input_paths_it_will_hash()
     {
         string root = NewRoot();
         var (plan, evaluated) = SingleProject(root);
@@ -340,7 +291,7 @@ public sealed class IncrementalRunBinderTests : IDisposable
 
         var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
 
-        Assert.Equal(2, binder.PhysicalPaths.Count);
+        Assert.Equal(2, binder.InputPaths.Count);
         Assert.Equal(2, binder.Prefill());     // ilk geçiş iki dosyayı okur
         Assert.Equal(0, binder.Prefill());     // ikinci geçişte hepsi önbellekte
     }

@@ -49,7 +49,8 @@ public sealed class EngineSilenceWatchdogTests
     private static (RunViewModel Vm, FakeClock Clock) NewVm(EngineHost engine)
     {
         var clock = new FakeClock();
-        return (new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock.Now) { RootPath = @"D:\repo" },
+        return (new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock.Now)
+                { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot },
                 clock);
     }
 
@@ -303,11 +304,15 @@ public sealed class EngineSilenceWatchdogTests
     /// artırır (eski exit-watcher susturulur) ve ancak sonra child'ı öldürür — yani YAŞAYAN bir motoru
     /// yeniden başlatmak <c>EngineExited</c> ATEŞLEMEZ. Eskiden run state'ini yalnız <c>OnEngineExited</c>
     /// temizliyordu; donmuş (ama yaşayan) bir motorda Restart'a basmak şeridi temizler, kilidi AÇMAZDI.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden restart'tan hemen sonra Build açık olurdu. Artık yeniden
+    /// başlayan motor bir workspace açıkken tek bir Sync koşar (kurtarılan projelerin kararı değişmiş olabilir) ve
+    /// Build — her Sync'te olduğu gibi — o Sync bitene dek bekler; koşu kilidi yine restart anında düşer.</para>
     /// </summary>
     [Fact]
     public async Task Restarting_the_engine_releases_the_locked_run_state()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        using var sandbox = new SupervisorSandbox(); // [§5.5] restart gerçek bir motor başlatır — izole önbellek
+        await using var engine = sandbox.IsolatedEngineHost();
         var (vm, clock) = NewVm(engine);
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
@@ -322,6 +327,8 @@ public sealed class EngineSilenceWatchdogTests
         Assert.False(vm.IsRunning);
         Assert.False(vm.IsStarting);
         Assert.Equal(AppPhase.Stopped, vm.Phase); // kullanıcı zaten durmak istiyordu
+        Assert.True(vm.SyncBusy);                 // yeniden başlayan motorun Sync'i uçuşta — Build onu bekler
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
         Assert.True(vm.BuildCommand.CanExecute(null));
     }
 }

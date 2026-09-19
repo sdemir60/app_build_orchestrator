@@ -16,6 +16,17 @@ public class IpcMessagesTests
         Assert.Equal(StopKind.Hard, back.Kind);
     }
 
+    /// <summary>[spec 2026-09-18 §6.1] Branch kesmesi tel üzerinde metin olarak yazılır (enum'lar camelCase metin).</summary>
+    [Fact]
+    public void An_interrupt_stop_is_written_as_text()
+    {
+        string json = JsonSerializer.Serialize<IpcCommand>(new StopRunCommand("run-1", StopKind.Interrupt), IpcJson.Options);
+
+        Assert.Contains("\"kind\":\"interrupt\"", json);
+        Assert.Equal(StopKind.Interrupt,
+            Assert.IsType<StopRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)).Kind);
+    }
+
     [Fact]
     public void Event_roundtrip_all_types()
     {
@@ -87,11 +98,8 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_roundtrip()
     {
         var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 6,
-            Branch: "feature/x", UseWorktree: true, WorktreeName: "wt-1", DependentMode: DependentMode.Fast);
+            DependentMode: DependentMode.Fast);
         string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
-        Assert.Contains("\"branch\":\"feature/x\"", json);
-        Assert.Contains("\"useWorktree\":true", json);
-        Assert.Contains("\"worktreeName\":\"wt-1\"", json);
         Assert.Contains("\"dependentMode\":\"fast\"", json); // camelCase enum
         var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
         Assert.Equal(cmd, back);
@@ -101,12 +109,31 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_default_to_safe_backward_compatible_shape()
     {
         var cmd = new StartRunCommand("r1", RunMode.Rebuild, @"D:\repo", "Debug", 6);
-        Assert.Equal("", cmd.Branch);
-        Assert.False(cmd.UseWorktree);
-        Assert.Null(cmd.WorktreeName);
         Assert.Equal(DependentMode.Safe, cmd.DependentMode);
         Assert.Null(cmd.LayerPatterns); // [A1] katman ataması varsayılan olarak KAPALI (mevcut davranış)
         Assert.Null(cmd.ScopeProjectId); // [tek proje] varsayılan: kapsam yok, tam koşu
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-1] Worktree modu kalktı ve <c>StartRunCommand</c>'ın <c>branch</c>/<c>useWorktree</c>/
+    /// <c>worktreeName</c> alanları silindi. Bu alanları taşıyan ESKİ bir NDJSON satırı (eski bir App ya da
+    /// kaydedilmiş bir komut) yine çözülür: fazla alanlar yok sayılır, kalan alanlar aynen okunur.
+    /// </summary>
+    [Fact]
+    public void An_old_start_run_line_with_worktree_fields_still_parses()
+    {
+        const string oldLine = """
+            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug",
+             "parallelism":4,"branch":"feature/x","useWorktree":true,"worktreeName":"wt-1","dependentMode":"fast"}
+            """;
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(oldLine, IpcJson.Options));
+
+        Assert.Equal("r1", back.RunId);
+        Assert.Equal(RunMode.Build, back.Mode);
+        Assert.Equal(@"D:\repo", back.RootPath);
+        Assert.Equal(4, back.Parallelism);
+        Assert.Equal(DependentMode.Fast, back.DependentMode);
     }
 
     // [tek proje · design §3.8] Satırdan tetiklenen koşu kapsamını proje KİMLİĞİYLE taşır (tam csproj yolu —
@@ -528,22 +555,52 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
-    // ---------------------------------------------------------------- [A5/T69] Sync / branch / worktree / topoloji
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.3] branch checkout
 
-    // App'in branch seçici, worktree havuzu ve "worktree sil" akışlarını besleyen üç komut: hepsi RootPath
-    // taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR — kök her komutta gelir).
+    /// <summary>Branch chip'inin komutu: hedef, uzak mı, kirli ağaçta stash'lensin mi — kendi ayrımcısıyla.</summary>
     [Fact]
-    public void ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators()
+    public void CheckoutBranchCommand_roundtrips_with_its_own_discriminator()
     {
-        IpcCommand[] commands = [new ListBranchesCommand(@"D:\repo"), new ListWorktreesCommand(@"D:\repo"),
-            new DeleteWorktreeCommand(@"D:\repo", "main-1")];
-        string[] expectedDiscriminators = ["\"type\":\"listBranches\"", "\"type\":\"listWorktrees\"", "\"type\":\"deleteWorktree\""];
-        for (int i = 0; i < commands.Length; i++)
+        IpcCommand cmd = new CheckoutBranchCommand(@"D:\repo", "origin/feature/x", IsRemote: true, StashIfDirty: true);
+        string json = JsonSerializer.Serialize(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"checkoutBranch\"", json);
+        Assert.Contains("\"stashIfDirty\":true", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    /// <summary>Checkout sonucu: durum camelCase METİN olarak gider (yeni değer sona eklenebilir), boş alanlar
+    /// yazılmaz ve geri okunduğunda aynı kayıt çıkar.</summary>
+    [Fact]
+    public void CheckoutCompletedEvent_roundtrips_with_its_own_discriminator_and_camelCase_status()
+    {
+        IpcEvent[] events =
+        [
+            new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x", "b7e91d4aa", 2,
+                "build-orchestrator: leaving main for feature/x", null),
+            new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null),
+        ];
+        foreach (var ev in events)
         {
-            string json = JsonSerializer.Serialize(commands[i], IpcJson.Options);
-            Assert.Contains(expectedDiscriminators[i], json);
-            Assert.Equal(commands[i], JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains("\"type\":\"checkoutCompleted\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
         }
+        Assert.Contains("\"status\":\"switched\"", JsonSerializer.Serialize(events[0], IpcJson.Options));
+        Assert.DoesNotContain("\"revision\"", JsonSerializer.Serialize(events[1], IpcJson.Options));
+    }
+
+    // ---------------------------------------------------------------- [A5/T69] Sync / branch / topoloji
+
+    // App'in branch seçicisini besleyen komut RootPath taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR —
+    // kök her komutta gelir). [spec 2026-09-18 §1-1] Worktree havuzunun iki komutu da burada round-trip
+    // edilirdi (ad: ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators); komutlar kalktı.
+    [Fact]
+    public void ListBranches_roundtrips_with_discriminator()
+    {
+        IpcCommand command = new ListBranchesCommand(@"D:\repo");
+        string json = JsonSerializer.Serialize(command, IpcJson.Options);
+        Assert.Contains("\"type\":\"listBranches\"", json);
+        Assert.Equal(command, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
     }
 
     // [A5/T69] Graf paneli (D5), katman gruplaması (D1) ve Open-in-VS (E1) için gereken TÜM veri tek event'te
@@ -576,19 +633,6 @@ public class IpcMessagesTests
         Assert.Equal([@"C:\p\a.csproj"], back.Nodes[1].Dependencies);
         Assert.Equal("UiLayer", back.Nodes[1].LayerName);
         Assert.Equal(@"C:\p\Osys.sln", back.Solutions[0].Path);
-    }
-
-    [Fact]
-    public void WorktreeList_roundtrips_with_discriminator()
-    {
-        var ev = new WorktreeListEvent([
-            new Worktree("main-1", "main", @"C:\pool\main-1", true, 1234),
-            new Worktree("feature-x-1", "feature/x", @"C:\pool\feature-x-1", false, null),
-        ]);
-        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
-        Assert.Contains("\"type\":\"worktreeList\"", json);
-        var back = Assert.IsType<WorktreeListEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
-        Assert.Equal(ev.Worktrees, back.Worktrees);
     }
 
     // [A5/T69] Sync de katman pattern'lerini taşır (StartRunCommand ile aynı gerekçe): topoloji event'indeki

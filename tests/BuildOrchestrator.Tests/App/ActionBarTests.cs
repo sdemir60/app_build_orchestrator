@@ -20,9 +20,8 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [D6/T40+T12+T43-UI] Alt aksiyon barı: sayaç chip'leri (toggle/Σ-clear), Build split-button menüsü
-/// (koşullu maddeler + F5 rozetinin yeri), mid-run kilidi (branch/worktree/config sönük, perf canlı) ve
-/// K3 branch seçimi (worktree zorlama + niyet satırı, git switch DEĞİL) + worktree auto-ad üretimi.
-/// Saf VM mantığı (SelectBranch/AutoWorktreeName) WPF'siz <see cref="FactAttribute"/> ile; görünüm kablajı
+/// (koşullu maddeler + F5 rozetinin yeri), mid-run kilidi (branch/config sönük, perf canlı) ve branch
+/// seçimi. Saf VM mantığı (SelectBranch) WPF'siz <see cref="FactAttribute"/> ile; görünüm kablajı
 /// <see cref="StaFactAttribute"/> ile GERÇEK ActionBar kurulup sürülerek pinlenir.
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
@@ -38,8 +37,18 @@ public partial class ActionBarTests
 
     // ---------------------------------------------------------------- [K3] branch seçimi (saf VM)
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.3]</b> Aktif olmayan bir branch'i seçmek bir checkout İSTER; ekran
+    /// motorun cevabına kadar DEĞİŞMEZ: değer, faz, satır durumları olduğu gibi kalır ve konsol TEMİZLENMEZ
+    /// (bölümü yalnız başarılı bir checkout'un cevabı açar — <see cref="BranchCheckoutTests"/>).
+    ///
+    /// <para><b>Eski iddia</b> (<c>Selecting_a_non_active_branch_changes_nothing_until_it_is_checked_out</c>, Task 4):
+    /// seçim HİÇBİR ŞEY yapmazdı — konsol bayt-bayt aynı kalırdı. <b>Değişme gerekçesi:</b> checkout geldi
+    /// (Task 5); seçim artık bir <c>checkoutBranch</c> komutu gönderir. Bu testin motoru başlatılmamıştır, yani
+    /// gönderim düşer ve konsola tek bir gönderim hatası EKLENİR — önceki metin ise yerinde durur.</para>
+    /// </summary>
     [Fact]
-    public void Selecting_a_non_active_branch_forces_worktree_on_and_writes_the_intent_line_not_git_switch()
+    public async Task Selecting_a_non_active_branch_asks_for_a_checkout_and_changes_nothing_on_screen_until_it_answers()
     {
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node(@"C:\p\a.csproj", "A", 0)], [], [], []));
@@ -48,62 +57,27 @@ public partial class ActionBarTests
             new BranchRef("main", "aaaaaaaaaaaa", true, false),
             new BranchRef("feature/x", "bbbbbbbccccc", false, true),
         ]));
-        vm.Branch = "main";
-
-        // [D6 fix-wave] Satırı ÖNCE terminal (Succeeded) bir duruma sürükle — SelectBranch'in reset döngüsünün
-        // GERÇEKTEN çalıştığını kanıtlamak için (aksi halde satır zaten Pending'den geldiği için Assert.All
-        // hiçbir şey ispatlamaz). SelectBranch RunId/IsRunning kontrolü yapmaz, bu yüzden run BAŞLATMAYA gerek yok.
+        // Satır ÖNCE terminal (Succeeded) bir duruma sürüklenir — bir reset olsaydı Pending'e düşerdi.
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
-        Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State); // ön-koşul: satır gerçekten terminal
+        Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State);
+        string before = vm.GetRunDocumentText();
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
 
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, true));
+        await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, true));
 
-        Assert.Equal("feature/x", vm.Branch);
-        Assert.True(vm.UseWorktree);      // aktif-olmayan branch → worktree ZORUNLU ON
-        Assert.True(vm.IsWorktreeForced);
-        Assert.Equal(AppPhase.Boot, vm.Phase);
-        Assert.Equal(ProjectRowState.Pending, vm.Projects.Single().State); // reset döngüsü GERÇEKTEN çalıştı (Succeeded→Pending)
-
-        string doc = vm.GetRunDocumentText();
-        Assert.Contains("branch target: feature/x (bbbbbbb) — worktree will be used at Build", doc);
-        Assert.Contains("Branch changed: feature/x — Sync required", doc);
-        Assert.DoesNotContain("git switch", doc);   // [K3] prototipten SAPMA: git switch/--detach YAZILMAZ
-        Assert.DoesNotContain("--detach", doc);
-    }
-
-    [Fact]
-    public void Selecting_the_active_branch_only_sets_branch_without_forcing_worktree_or_reset()
-    {
-        var vm = NewVm();
-        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaaaaaaaaaaa", true, false)]));
-        vm.Branch = "feature/x"; // önceden aktif-olmayan seçilmiş gibi
-        vm.UseWorktree = false;
-
-        vm.SelectBranch(new BranchRef("main", "aaaaaaaaaaaa", true, false));
-
+        Assert.Single(sent.OfType<CheckoutBranchCommand>());
         Assert.Equal("main", vm.Branch);
-        Assert.False(vm.UseWorktree);        // aktif branch → worktree zorlaması YOK
-        Assert.False(vm.IsWorktreeForced);
-        Assert.DoesNotContain("Sync required", vm.GetRunDocumentText()); // niyet satırı yazılmaz
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+        Assert.Equal(ProjectRowState.Succeeded, vm.Projects.Single().State);
+        Assert.StartsWith(before, vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
-    // ---------------------------------------------------------------- worktree auto-ad (saf VM)
-
+    /// <summary>[spec 2026-09-18 §6.3] Chip artık bir hedef SEÇMEZ, çalışma ağacının branch'ini DEĞİŞTİRİR — ad
+    /// bunu söyler (eski ad: "Branch — choose build target", worktree döneminden).</summary>
     [Fact]
-    public void Auto_worktree_name_slugs_slashes_and_increments_the_suffix()
-    {
-        var worktrees = new List<Worktree>
-        {
-            new("feature-foo-1", "feature/foo", @"D:\wt\feature-foo-1", false, null),
-            new("main-1", "main", @"D:\wt\main-1", false, null),
-        };
-
-        Assert.Equal("feature-foo-2", RunViewModel.AutoWorktreeName("feature/foo", worktrees)); // slug + (mevcut 1)+1
-        Assert.Equal("main-2", RunViewModel.AutoWorktreeName("main", worktrees));
-        Assert.Equal("release-hotfix-1", RunViewModel.AutoWorktreeName("release/hotfix", worktrees)); // eşleşen yok → 1
-        // [D6 fix-wave] çok-slash'lı branch: Replace('/','-') TÜM slash'ları değiştirmeli (yalnız ilkini DEĞİL).
-        Assert.Equal("feature-foo-bar-1", RunViewModel.AutoWorktreeName("feature/foo/bar", worktrees));
-    }
+    public void The_branch_chip_is_named_for_what_it_does()
+        => Assert.Equal("Branch — switch the checked-out branch", AccessibilityNames.BranchChip);
 
     // ---------------------------------------------------------------- görünüm kablajı (GERÇEK ActionBar/BuildMenu)
 
@@ -171,6 +145,125 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.5]</b> Chip, ağaç geride olduğu HER an görünür.
+    ///
+    /// <para><b>Eski iddia</b> (<c>RunViewModelTests.The_behind_chip_stays_hidden_while_another_branch_is_selected</c>): aktif
+    /// olmayan bir branch seçiliyken (worktree modu) chip çizilmezdi — derleme worktree'den yapılıyordu ve ana
+    /// ağacı ilerletmek o koşuyu etkilemezdi. <b>Değişme gerekçesi:</b> worktree modu kalktı (§1-1); koşu her
+    /// zaman çalışma ağacında derlenir, dolayısıyla <c>CanShowBehind</c>'deki worktree koşulu da düştü. Aktif
+    /// olmayan bir branch'e tıklamak artık seçili değeri değiştirmez (değer checkout edilmiş branch'tir).</para>
+    /// </summary>
+    [StaFact]
+    public void The_behind_chip_shows_whenever_the_tree_is_behind()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false),
+            new BranchRef("feature/x", "bbb", IsActive: false, IsRemoteTracking: false),
+        ]));
+        vm.SelectBranch(new BranchRef("feature/x", "bbb", IsActive: false, IsRemoteTracking: false));
+
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        bar.UpdateLayout();
+
+        Assert.True(vm.CanShowBehind);
+        Assert.Equal(Visibility.Visible, bar.BehindChip.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-1] Worktree modu kalktı: alt barda worktree chip'i de popover'ı da YOKTUR. Realize
+    /// testi — gerçek bar kurulur ve adlandırılmış öğeler çözülür; ayrıca barın hiçbir metni "worktree" demez.
+    /// </summary>
+    [StaFact]
+    public void The_action_bar_has_no_worktree_chip()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+
+        Assert.Null(bar.FindName("PART_WorktreeChip"));
+        Assert.Null(bar.FindName("PART_WorktreePopup"));
+        Assert.Null(bar.FindName("PART_WorktreePopover"));
+        var texts = DsResources.Descendants(bar).OfType<TextBlock>().Select(t => t.Text).ToList();
+        Assert.DoesNotContain(texts, t => t.Contains("worktree", StringComparison.OrdinalIgnoreCase));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.4 · karar 22] Merge yarıdayken branch chip'inin İÇİNDE 6 px amber nokta görünür (renk
+    /// <c>Brush.Amber</c> token'ı) ve chip'in tooltip'i işlemi adlandırır. Realize testi.
+    /// </summary>
+    [StaFact]
+    public void The_branch_chip_shows_an_amber_dot_mid_merge()
+    {
+        var vm = NewVm();
+        vm.InspectGitOperation = _ => Core.Git.GitOperation.Merge;
+        var (bar, window) = Realize(vm);
+
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+
+        var dot = bar.GitOperationDot;
+        Assert.Contains(dot, DsResources.RealizedObjects(bar.BranchChip));
+        Assert.Equal(Visibility.Visible, dot.Visibility);
+        Assert.Equal(6, dot.Width);
+        Assert.Equal(6, dot.Height);
+        Assert.Same(bar.FindResource("Brush.Amber"), dot.Fill);
+        Assert.Equal("Merge in progress — finish or abort it in git", bar.BranchChip.ToolTip);
+        Assert.False(bar.BranchChip.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği pull komutunun KENDİ kapısıdır (<c>CanExecute</c>) —
+    /// bar kapıyı yeniden türetmez. Sync uçuştayken komut kapalıdır, chip de; merge yarıdayken de kapalıdır ve
+    /// tooltip nedeni söyler.
+    /// </summary>
+    [StaFact]
+    public void The_behind_chip_follows_the_pull_command_gate()
+    {
+        var vm = NewVm();
+        var op = Core.Git.GitOperation.None;
+        vm.InspectGitOperation = _ => op;
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 2));
+        bar.UpdateLayout();
+        Assert.True(bar.BehindChip.IsEnabled); // ön-koşul
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        bar.UpdateLayout();
+        Assert.False(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.False(bar.BehindChip.IsEnabled);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 2));
+        op = Core.Git.GitOperation.Merge;
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+        Assert.False(bar.BehindChip.IsEnabled);
+        Assert.Equal("Merge in progress — finish or abort it in git", bar.BehindChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
+    [StaFact]
+    public void No_dot_when_git_is_idle()
+    {
+        var vm = NewVm();
+        vm.InspectGitOperation = _ => Core.Git.GitOperation.None;
+        var (bar, window) = Realize(vm);
+
+        vm.OnWindowActivated();
+        bar.UpdateLayout();
+
+        Assert.Contains(bar.GitOperationDot, DsResources.RealizedObjects(bar.BranchChip));
+        Assert.Equal(Visibility.Collapsed, bar.GitOperationDot.Visibility);
+        Assert.Null(bar.BranchChip.ToolTip);
+        GC.KeepAlive(window);
+    }
+
     private static (ActionBar bar, Window window) Realize(RunViewModel vm)
     {
         var host = DsResources.NewHost();
@@ -205,7 +298,7 @@ public partial class ActionBarTests
     }
 
     /// <summary>[A13/T3c · c5] design-v1 BuildApp.jsx:1546-1614 sırası: Sync · ayraç · 6 sayaç chip'i (Σ/building/
-    /// succeeded/failed/skipped/dep) · … · branch · worktree · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
+    /// succeeded/failed/skipped/dep) · … · branch · Debug|Release · perf · ayraç · Stop/Build. Hiçbir
     /// test bu SIRAYI assert etmiyordu — chip'ler kod-tarafı kurulduğu için ("BuildCounterChips") sıra sessizce
     /// kayabilirdi.
     /// <para><b>[DEĞİŞEN KURAL — design v1.7.0 §2.7-2]</b> Sol grup Sync'ten HEMEN SONRA <b>bakım kutusunu</b>
@@ -249,8 +342,11 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · <b>behind</b> · worktree ·
+    /// <summary>[A13/T3c · c5] Sağ grubun sırası: workspace adı · branch · <b>behind</b> ·
     /// Debug|Release · perf · ayraç · Stop/Build grid'i.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Behind'dan sonra worktree chip'i gelirdi (grup sekiz
+    /// öğeydi; ad: <c>The_right_group_orders_workspace_branch_behind_worktree_config_perf_a_separator_then_the_build_area</c>).
+    /// Worktree modu kalktı, chip de kalktı — grup yedi öğedir.</para>
     /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-5a]</b> Grup artık <b>workspace adıyla BAŞLAR</b>: title
     /// bar'ın mono bağlam metni kaldırıldı ve geriye kalan tek yeni bilgi (hangi workspace) branch chip'inin
     /// soluna geçti. Eski iddia gruba altı öğe sayıyordu ve ilk öğeyi branch chip'i sanıyordu.</para>
@@ -258,24 +354,23 @@ public partial class ActionBarTests
     /// chip'i eklendi. Yeri tesadüfi değildir: mesafe branch'in bir olgusudur ve chip yalnız geride kalınca
     /// çizilir (varsayılan <c>Collapsed</c>) — grup normalde eskisi gibi görünür.</para></summary>
     [StaFact]
-    public void The_right_group_orders_workspace_branch_behind_worktree_config_perf_a_separator_then_the_build_area()
+    public void The_right_group_orders_workspace_branch_behind_config_perf_a_separator_then_the_build_area()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var rightGroup = Assert.IsType<StackPanel>(bar.Segment.Parent);
         var rightChildren = rightGroup.Children.Cast<UIElement>().ToList();
-        Assert.Equal(8, rightChildren.Count);
+        Assert.Equal(7, rightChildren.Count);
         Assert.Same(bar.WorkspaceLabel, rightChildren[0]);
         Assert.Same(bar.BranchChip, ((Grid)rightChildren[1]).Children.Cast<UIElement>().First());
         Assert.Same(bar.BehindChip, rightChildren[2]);
         Assert.Equal(Visibility.Collapsed, bar.BehindChip.Visibility);   // geride değilken çizilmez
-        Assert.Same(bar.WorktreeChip, ((Grid)rightChildren[3]).Children.Cast<UIElement>().First());
-        Assert.Same(bar.Segment, rightChildren[4]);
-        Assert.Same(bar.PerfChip, rightChildren[5]);
-        var rightSeparator = Assert.IsType<Border>(rightChildren[6]);
+        Assert.Same(bar.Segment, rightChildren[3]);
+        Assert.Same(bar.PerfChip, rightChildren[4]);
+        var rightSeparator = Assert.IsType<Border>(rightChildren[5]);
         Assert.Same(bar.FindResource("Brush.BorderSubtle"), rightSeparator.Background);
-        var buildArea = Assert.IsType<Grid>(rightChildren[7]);
+        var buildArea = Assert.IsType<Grid>(rightChildren[6]);
         Assert.Contains(bar.StopButton, buildArea.Children.Cast<UIElement>());
         Assert.Contains(bar.Split, buildArea.Children.Cast<UIElement>());
         GC.KeepAlive(window);
@@ -284,14 +379,15 @@ public partial class ActionBarTests
     // ---------------------------------------------------------------- [A13/T4 · m6] popover 8px boşluk
 
     /// <summary>[A13/T4 · m6 · fix-1 · D5] design-v1 prototipi (<c>BuildApp.jsx:821</c> <c>bottom: 'calc(100% +
-    /// 8px)'</c>) — branch/worktree popover'ları anchor'larının 8px ÜSTÜNDE açılır. WPF karşılığı
+    /// 8px)'</c>) — branch popover'ı anchor'ının 8px ÜSTÜNDE açılır ([spec 2026-09-18 §1-1] worktree popover'ı
+    /// kalktı; ad: <c>The_branch_and_worktree_popovers_open_eight_pixels_above_their_chip</c>). WPF karşılığı
     /// <c>Placement="Top"</c> + <c>VerticalOffset="-8"</c> (yukarı = negatif) + <c>PlacementTarget</c>'ın GERÇEKTEN
     /// chip'e bağlı olması (aksi halde offset doğru olsa da popover yanlış öğenin üstünde açılır — <c>ActionBar.xaml
     /// :26-27,:39-40</c>'ın <c>PlacementTarget="{Binding ElementName=PART_BranchChip}"</c> bağının runtime karşılığı,
     /// fix-1'de eklendi). Bir XAML değişikliği (ör. -8 → -4 ya da binding kopması) burada KIRMIZI verir, saf metin
     /// taraması vermez.</summary>
     [StaFact]
-    public void The_branch_and_worktree_popovers_open_eight_pixels_above_their_chip()
+    public void The_branch_popover_opens_eight_pixels_above_its_chip()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -299,9 +395,6 @@ public partial class ActionBarTests
         Assert.Equal(PlacementMode.Top, bar.BranchPopup.Placement);
         Assert.Equal(-8.0, bar.BranchPopup.VerticalOffset);
         Assert.Same(bar.BranchChip, bar.BranchPopup.PlacementTarget); // [fix-1 · D5] doğru chip'in ÜSTÜNDE açılır
-        Assert.Equal(PlacementMode.Top, bar.WorktreePopup.Placement);
-        Assert.Equal(-8.0, bar.WorktreePopup.VerticalOffset);
-        Assert.Same(bar.WorktreeChip, bar.WorktreePopup.PlacementTarget);
         GC.KeepAlive(window);
     }
 
@@ -490,37 +583,32 @@ public partial class ActionBarTests
 
     // ---------------------------------------------------------------- [A13/T3b · b1] popover kabukları
 
-    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> / <c>"Worktree (300px)"</c> —
-    /// OTORİTE LİTERALLERİ. Ölçülen, ActionBar'ın KENDİ sarmalayıcı Border'ıdır (<c>Ds.Popover</c> stilli,
-    /// <c>Width="272"</c>/<c>"300"</c>, ActionBar.xaml) — <see cref="BranchPopover"/>/<see cref="WorktreePopover"/>
-    /// kontrollerinin kendi genişliği DEĞİL (bu ikisi FARKLI kavramlardır).
+    /// <summary>[A13/T3b · b1] design-v1 README §2.8: <c>"Branch (272px)"</c> — OTORİTE LİTERALİ. Ölçülen,
+    /// ActionBar'ın KENDİ sarmalayıcı Border'ıdır (<c>Ds.Popover</c> stilli, <c>Width="272"</c>, ActionBar.xaml)
+    /// — <see cref="BranchPopover"/> kontrolünün kendi genişliği DEĞİL (bu ikisi FARKLI kavramlardır).
     ///
     /// <para>[fix-1 · B7] Test <c>PopoverTests</c>'ten BURAYA taşındı (kalem ActionBar'ındır) ve oradaki inline
     /// <see cref="Realize"/> kopyası silindi. [fix-1 · C8] Açılan her popup KAPATILIR: <c>StaysOpen="False"</c> +
     /// <c>AllowsTransparency="True"</c> bir Popup, kapatılmadan bırakılırsa STA thread'inde canlı bir HWND olarak
-    /// asılı kalır. [fix-1 · C11] Ata yürüyüşü <see cref="DsResources.Ancestors"/>'a çıkarıldı.</para></summary>
+    /// asılı kalır. [fix-1 · C11] Ata yürüyüşü <see cref="DsResources.Ancestors"/>'a çıkarıldı.</para>
+    /// <para>[spec 2026-09-18 §1-1] Worktree popover'ının 300px kabuğu da pinlenirdi (ad:
+    /// <c>Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells</c>);
+    /// popover kalktı.</para></summary>
     [StaFact]
-    public void Action_bar_wraps_the_branch_and_worktree_popovers_in_design_v1s_272_and_300_pixel_shells()
+    public void Action_bar_wraps_the_branch_popover_in_design_v1s_272_pixel_shell()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         var branchBorder = PopoverShellBorder(bar.BranchPopoverControl);
-        var worktreeBorder = PopoverShellBorder(bar.WorktreePopoverControl);
         Assert.Equal(272.0, branchBorder.Width);
-        Assert.Equal(300.0, worktreeBorder.Width);
 
         // Realize zorunlu (kural 5): Popup içeriği yalnız IsOpen=true iken ölçülüp yerleşir — gerçek açılış
         // olmadan ActualWidth hep 0 kalırdı (bu yüzden literal DP okumak TEK BAŞINA yetmezdi).
         bar.BranchChip.IsChecked = true;
         DispatcherPump.PumpUntil(() => branchBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
         Assert.Equal(272.0, branchBorder.ActualWidth);
-        bar.BranchChip.IsChecked = false;
-
-        bar.WorktreeChip.IsChecked = true;
-        DispatcherPump.PumpUntil(() => worktreeBorder.ActualWidth > 0, TimeSpan.FromSeconds(2));
-        Assert.Equal(300.0, worktreeBorder.ActualWidth);
-        bar.WorktreeChip.IsChecked = false; // simetri: açılan popup kapatılır (fix-1 · C8)
+        bar.BranchChip.IsChecked = false; // simetri: açılan popup kapatılır (fix-1 · C8)
 
         GC.KeepAlive(window);
     }
@@ -748,25 +836,42 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T12] Koşarken branch ve configuration kilitli, perf canlı. ([spec 2026-09-18 §1-1] worktree
+    /// chip'i de kilitlenirdi; chip kalktı — ad: <c>Branch_worktree_and_configuration_are_disabled_while_running_but_perf_is_not</c>.)</summary>
     [StaFact]
-    public void Branch_worktree_and_configuration_are_disabled_while_running_but_perf_is_not()
+    public void Branch_and_configuration_are_disabled_while_running_but_perf_is_not()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
 
         // Idle: hepsi etkin.
         Assert.True(bar.BranchChip.IsEnabled);
-        Assert.True(bar.WorktreeChip.IsEnabled);
         Assert.True(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         Assert.True(vm.IsRunning);
 
-        Assert.False(bar.BranchChip.IsEnabled);   // T12: branch/worktree/config KİLİTLİ
-        Assert.False(bar.WorktreeChip.IsEnabled);
+        Assert.False(bar.BranchChip.IsEnabled);   // T12: branch/config KİLİTLİ
         Assert.False(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);       // perf CANLI kalır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Chip'in kilidi VM'in TEK predicate'idir (<see cref="RunViewModel.CanSwitchBranch"/>):
+    /// koşu dışında uçuştaki bir Sync de onu kilitler — Sync'in okuduğu ağaç altından değişmemeli.</summary>
+    [StaFact]
+    public void The_branch_chip_is_locked_while_a_sync_is_in_flight()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        Assert.True(bar.BranchChip.IsEnabled);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:epo", "main"));
+        Assert.False(bar.BranchChip.IsEnabled);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.True(bar.BranchChip.IsEnabled);
         GC.KeepAlive(window);
     }
 

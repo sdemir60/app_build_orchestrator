@@ -23,16 +23,13 @@ namespace BuildOrchestrator.Core.Workspace;
 /// akış YEREL HEAD ile devam eder. Degrade yolu topoloji ve will-build pass'ini ATLAMAZ: offline'da da tam,
 /// kullanılabilir bir Sync üretilir (yalnız hedef SHA yerel HEAD'e düşer).</para>
 ///
-/// <para><b>Will-build pass'in kapsamı (bilinen seam):</b> pass IN-PLACE, yani kullanıcının O ANKİ ÇALIŞMA
-/// AĞACINA karşı koşar — Sync anında kullanıcının baktığı ağaç budur ve imzanın local-diff terimini anlamlı
-/// kılan da odur. Sonuç olarak <see cref="SyncWorkspaceCommand.Branch"/> AKTİF branch'ten farklı bir branch'i
-/// adlandırıyorsa, üretilen önizleme adlandırılan branch'i DEĞİL aktif branch'i tarif eder (fetch yine de o
-/// branch'in ref'ini günceller ve <see cref="SyncCompletedEvent.TargetSha"/> onu taşır). Bu seam'in
-/// kapatılması branch seçimini UI'a bağlayan task'ın (D6) işidir; burada kasıtlı olarak YALNIZ gerçekten
-/// hesaplanan şey raporlanır — önizlemenin adlandırılan branch'i tarif ettiği İMA EDİLMEZ.</para>
+/// <para><b>Tek ağaç [spec 2026-09-18 §6.5]:</b> pass IN-PLACE, yani kullanıcının O ANKİ ÇALIŞMA AĞACINA karşı
+/// koşar; fetch ve <c>N behind</c> de AYNI ağacın checkout edilmiş branch'ine göre yapılır.
+/// <see cref="SyncWorkspaceCommand.Branch"/> yalnız detached HEAD'de yedektir — önizleme, fetch ve mesafe hep
+/// aynı branch'i tarif eder.</para>
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
-/// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
+/// KULLANICININ REPO KÖKÜ.</param>
 /// <param name="hashes">[D1/D3] Kaynak içerik özetlerinin önbelleği — kararın tek kaynağı budur ve Build ile
 /// AYNI dosyada paylaşılır (iki yüzey aynı özetleri iki kez hesaplamaz).</param>
 public sealed class SyncWorkspaceService(
@@ -91,32 +88,16 @@ public sealed class SyncWorkspaceService(
             return;
         }
 
-        // --- 1) ref-only fetch (K1). §3.1 satır 1.
-        emit(Cmd($"git fetch origin {cmd.Branch}"));
-        var fetch = await git.FetchRefOnlyAsync(cmd.Branch, ct);
-        if (fetch.Degraded)
-        {
-            // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam
-            // eder. Mesafe de bilinemez; bunu söylemek chip'in NEDEN çıkmadığını da açıklar.
-            emit(Warn($"warning: git fetch failed — continuing against the local HEAD; "
-                + $"distance from origin/{cmd.Branch} is unknown ({fetch.Warning})"));
-        }
-
-        // §3.1 satır 2 [v1.16.0]: yerel HEAD + uzak uçtan mesafe. Mesafe YALNIZ fetch başarılıyken ve seçili
-        // branch AKTİF branch iken hesaplanır — başka bir branch seçiliyken derleme worktree'den yapılır ve
-        // ana ağacın uzak uçla mesafesi kullanıcıya bir şey söylemez.
-        string? targetSha = fetch.TargetSha;
+        // [spec 2026-09-18 §6.5] Ölçülen branch CHECKOUT EDİLMİŞ branch'tir: araç yalnız çalışma ağacında
+        // derler. Komuttaki ad yalnız detached HEAD'de yedektir (orada izlenecek bir branch yoktur).
         string? activeBranch = (await git.GetCurrentBranchAsync(ct)).Value;
-        int? behind = null;
-        if (!fetch.Degraded && targetSha is not null && head.Value is not null
-            && string.Equals(activeBranch, cmd.Branch, StringComparison.Ordinal))
-        {
-            behind = (await git.CountBehindAsync(targetSha, ct)).Value;
-        }
+        string branch = activeBranch ?? cmd.Branch;
+        var (targetSha, degraded, behind) = await MeasureRemoteAsync(
+            cmd.Fetch, branch, measureBehind: activeBranch is not null, head.Value, emit, ct);
 
         // Hedef hiç çözülemediyse (commit'siz repo) satır BASILMAZ — yarım bir satır üretmek yerine sessiz kalınır.
         if (head.Value is not null)
-            emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, cmd.Branch)));
+            emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, branch)));
 
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
         // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
@@ -209,10 +190,54 @@ public sealed class SyncWorkspaceService(
             emit(Info($"Sync complete — {outcome.Plan.Nodes.Count} projects, project states unknown"));
         }
 
-        emit(new SyncCompletedEvent(cmd.Branch, targetSha, fetch.Degraded,
+        emit(new SyncCompletedEvent(branch, targetSha, degraded,
             ProjectCount: outcome.Plan.Nodes.Count, CycleCount: outcome.Plan.Cycles.Count,
             ChangedCount: outcome.Changed, ToBuildCount: outcome.ToBuild, UpToDateCount: outcome.UpToDate,
-            Behind: behind));
+            Behind: behind, HeadSha: head.Value, ActiveBranch: activeBranch));
+    }
+
+    /// <summary>
+    /// §3.1 satır 1-2: uzak uç ve yerel HEAD'in ondan mesafesi.
+    /// <para><b><paramref name="fetch"/>=true:</b> ref-only fetch (K1) — ağ yoksa hata YUTULUR, uyarı basılır,
+    /// hedef yerel HEAD'e düşer ve mesafe bilinmez.</para>
+    /// <para><b><paramref name="fetch"/>=false</b> [spec 2026-09-18 §6.2]: ağa çıkılmaz ve fetch satırı yazılmaz;
+    /// mesafe son bilinen uzak uca (<c>refs/remotes/origin/&lt;branch&gt;</c>) göre yerelde hesaplanır. Uzak ref
+    /// yoksa hedef yerel HEAD'dir ve mesafe bilinmez — bu bir hata değildir, degrade bayrağı kurulmaz.</para>
+    /// <para>Boş <paramref name="branch"/> (detached HEAD ve komutta ad yok): izlenecek uzak branch yoktur —
+    /// fetch denenmez, hedef yerel HEAD, mesafe bilinmez.</para>
+    /// <para><paramref name="measureBehind"/>=false (detached HEAD): fetch yedek adla yine yapılır ama mesafe
+    /// ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir; bayat bir adla sayılan <c>N behind</c> yalan olurdu.</para>
+    /// </summary>
+    private async Task<(string? TargetSha, bool Degraded, int? Behind)> MeasureRemoteAsync(
+        bool fetch, string branch, bool measureBehind, string? head, Action<IpcEvent> emit, CancellationToken ct)
+    {
+        if (branch.Length == 0) return (head, false, null);
+
+        string? targetSha;
+        if (fetch)
+        {
+            emit(Cmd($"git fetch origin {branch}"));
+            var result = await git.FetchRefOnlyAsync(branch, ct);
+            if (result.Degraded)
+            {
+                // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam
+                // eder. Mesafe de bilinemez; bunu söylemek chip'in NEDEN çıkmadığını da açıklar.
+                emit(Warn($"warning: git fetch failed — continuing against the local HEAD; "
+                    + $"distance from origin/{branch} is unknown ({result.Warning})"));
+                return (result.TargetSha, true, null);
+            }
+            targetSha = result.TargetSha;
+        }
+        else
+        {
+            targetSha = (await git.GetRemoteTrackingShaAsync(branch, ct)).Value;
+            if (targetSha is null) return (head, false, null);
+        }
+
+        int? behind = measureBehind && targetSha is not null && head is not null
+            ? (await git.CountBehindAsync(targetSha, ct)).Value
+            : null;
+        return (targetSha, false, behind);
     }
 
     /// <summary>

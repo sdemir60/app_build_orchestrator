@@ -7,7 +7,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/> ve <see cref="ShowNotifications"/> yalnız diyalog
 /// taslağında yaşar — kaydedilmez, ayar dosyasına yazılmaz/okunmaz, konsola not düşmez ve hiçbir davranışı
 /// (autostart, tray, bildirim) sürmez; her açılışta varsayılana döner. Yalnız <see cref="PullBeforeBuild"/>
-/// gerçektir (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>).</para></summary>
+/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
+/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
@@ -20,6 +21,9 @@ public enum GeneralSetting
     PullBeforeBuild,
     /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
     ShowNotifications,
+    /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
+    /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>
+    StashOnBranchSwitch,
 }
 
 /// <summary>General sayfasındaki tek bir ayar satırının tanımı (prototip <c>GENERAL_GROUPS</c> satırı).</summary>
@@ -58,6 +62,12 @@ public static class GeneralSettingsCatalog
             new(GeneralSetting.PullBeforeBuild, "Pull before build",
                 "Update every external working copy first — a fast-forward-only git pull, one per copy.", Default: true,
                 AutomationName: AccessibilityNames.PullExternalsBeforeBuild),
+        ]),
+        new("BRANCHES",
+        [
+            new(GeneralSetting.StashOnBranchSwitch, "Stash and switch branches",
+                "When the working tree has uncommitted changes, stash them (including untracked files) and switch. "
+                + "Off: switching stops and asks you to commit or stash first.", Default: false),
         ]),
         new("NOTIFICATIONS",
         [

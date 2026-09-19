@@ -31,20 +31,16 @@ public sealed class IncrementalRunBinder
     // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
     private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <param name="plan">Bağlanacak plan (kimlikleri ana köke taşınmış olmalıdır — bkz. <see
-    /// cref="BuildOrchestrator.Core.Planning.ProjectIdentityRebase"/>).</param>
+    /// <param name="plan">Bağlanacak plan.</param>
     /// <param name="evaluatedById">projectId (tam csproj yolu) → değerlendirme; eksik proje yalnız kendi
     /// klasörünün taramasıyla temsil edilir.</param>
     /// <param name="workspaceRoot">Çalışma alanı kökü — imzanın yol terimleri buna göredir.</param>
     /// <param name="hashes">Kaynak içerik özetlerinin önbelleği (koşu boyunca TEK örnek).</param>
-    /// <param name="physicalPathOf">Kimlik yolu → diskteki gerçek yol. Worktree koşusunda havuzdaki kopyayı
-    /// gösterir; <c>null</c> ⇒ in-place.</param>
     public IncrementalRunBinder(
         BuildPlan plan,
         IReadOnlyDictionary<string, EvaluatedProject> evaluatedById,
         string workspaceRoot,
-        SourceHashCache hashes,
-        Func<string, string>? physicalPathOf = null)
+        SourceHashCache hashes)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(evaluatedById);
@@ -59,13 +55,13 @@ public sealed class IncrementalRunBinder
         var collected = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
         Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
             collected[node.Id] = ProjectInputs.Collect(
-                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot, physicalPathOf));
+                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot));
         _inputsById = collected;
     }
 
-    /// <summary>Bu koşuda özeti gerekecek TÜM fiziksel dosyalar (tekil).</summary>
-    public IReadOnlyList<string> PhysicalPaths =>
-        [.. _inputsById.Values.SelectMany(i => i).Select(i => i.PhysicalPath).Distinct(StringComparer.OrdinalIgnoreCase)];
+    /// <summary>Bu koşuda özeti gerekecek TÜM girdi dosyaları (tekil).</summary>
+    public IReadOnlyList<string> InputPaths =>
+        [.. _inputsById.Values.SelectMany(i => i).Select(i => i.Path).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Önbellekte olmayan dosyaların özetlerini PARALEL hesaplar (bkz. <see cref="SourceHashCache.Prefill"/>).
@@ -75,7 +71,7 @@ public sealed class IncrementalRunBinder
     /// <param name="announce">Okunacak dosya sayısı, okuma başlamadan önce (konsol satırı için).</param>
     public int Prefill(Action<int>? announce = null, CancellationToken ct = default)
     {
-        int read = _hashes.Prefill(PhysicalPaths, announce, ct);
+        int read = _hashes.Prefill(InputPaths, announce, ct);
 
         // Fingerprint'ler de BURADA, proje başına paralel ısıtılır. Ölçüldü: sıcak önbellekte bile bedelin
         // yarısı stat geçişiydi ve bağlama DFS'i tek iş parçacığında ilerlediği için o geçiş seri koşuyordu
@@ -117,7 +113,7 @@ public sealed class IncrementalRunBinder
     public IReadOnlyDictionary<string, string?> ContentById =>
         _plan.Nodes.ToDictionary(n => n.Id, FingerprintOf, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Bir projenin girdi dosyaları (kimlik + fiziksel yol) — tanı ve test içindir.</summary>
+    /// <summary>Bir projenin girdi dosyaları — tanı ve test içindir.</summary>
     public IReadOnlyList<ProjectInput> InputsOf(string projectId) =>
         _inputsById.TryGetValue(projectId, out var inputs) ? inputs : [];
 
@@ -127,26 +123,25 @@ public sealed class IncrementalRunBinder
     /// </summary>
     private string? FingerprintOf(ProjectNode node) =>
         _fingerprintById.GetOrAdd(node.Id, _ => IncrementalPlanner.ComputeContentFingerprint(
-            InputsOf(node.Id), logical => PathTerm(_workspaceRoot, logical), _hashes.HashOf));
+            InputsOf(node.Id), path => PathTerm(_workspaceRoot, path), _hashes.HashOf));
 
     /// <summary>
     /// [D5] Bir girdi dosyasının imzaya giren YOL terimi: çalışma alanı kökünün altındaysa köke göreli ve
     /// <c>/</c>-normalize, değilse tam yol (yine <c>/</c>-normalize).
     ///
-    /// <para>Köke göreli olmak zorunludur: worktree koşusunda dosyalar başka bir kökün altında yaşar ve tam
-    /// yol kullanılsaydı aynı içerik iki modda FARKLI imza üretirdi — worktree ile alınan tek bir Build'den
-    /// sonra her şey yeniden "derlenecek" görünürdü.</para>
+    /// <para>Köke göreli olmak zorunludur: aynı içerik, reponun başka bir klonunda (başka bir kökün altında)
+    /// da AYNI imzayı üretmelidir — tam yol kullanılsaydı imza içeriği değil konumu ölçerdi.</para>
     ///
     /// <para>Kök DIŞINDAKİ girdiler (harici köklerden gelen projeler, kökün üstündeki bir
     /// <c>Directory.Build.props</c>) tam yolla temsil edilir: onların köke göreli bir kimliği yoktur ve
     /// bulundukları yer koşudan koşuya değişmez.</para>
     /// </summary>
-    public static string PathTerm(string workspaceRoot, string logicalPath)
+    public static string PathTerm(string workspaceRoot, string path)
     {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
-        ArgumentNullException.ThrowIfNull(logicalPath);
+        ArgumentNullException.ThrowIfNull(path);
 
-        string full = Path.GetFullPath(logicalPath);
+        string full = Path.GetFullPath(path);
         string relative = Path.GetRelativePath(workspaceRoot, full);
         bool outside = Path.IsPathRooted(relative)
             || relative.StartsWith("..", StringComparison.Ordinal);

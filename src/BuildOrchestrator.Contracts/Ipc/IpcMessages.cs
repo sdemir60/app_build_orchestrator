@@ -25,10 +25,9 @@ public static class IpcJson
 [JsonDerivedType(typeof(CleanWorkspaceCommand), "cleanWorkspace")]
 [JsonDerivedType(typeof(OptimizeWorkspaceCommand), "optimizeWorkspace")]
 [JsonDerivedType(typeof(ListBranchesCommand), "listBranches")]
-[JsonDerivedType(typeof(ListWorktreesCommand), "listWorktrees")]
-[JsonDerivedType(typeof(DeleteWorktreeCommand), "deleteWorktree")]
 [JsonDerivedType(typeof(SetPerfModeCommand), "setPerfMode")]
 [JsonDerivedType(typeof(PullRepositoryCommand), "pullRepository")]
+[JsonDerivedType(typeof(CheckoutBranchCommand), "checkoutBranch")]
 public abstract record IpcCommand;
 
 /// <summary>
@@ -39,12 +38,29 @@ public abstract record IpcCommand;
 /// köküne uygular — kir kapısı, ref-only fetch, "yalnız geride miyim" kontrolü ve <c>merge --ff-only</c>.
 /// Kirli ya da ayrışmış ağaç REDDEDİLİR ve gerekçe konsola yazılır.</para>
 /// </summary>
-/// <param name="Branch">Ilerletilecek branch — App bunu YALNIZ aktif branch seçiliyken gönderir.</param>
+/// <param name="Branch">App'in son bildiği aktif branch. İlerletilen branch her zaman çalışma ağacında checkout edilmiş
+/// olandır — motor onu diskten okur ve konsol satırlarında o adı kullanır; bu alan yalnız branch okunamazsa geri
+/// düşüştür [final review M5].</param>
 public sealed record PullRepositoryCommand(string RootPath, string Branch) : IpcCommand;
+
+/// <summary>
+/// [spec 2026-09-18 §6.3] Branch chip'inden seçim: çalışma ağacında GERÇEK bir <c>git checkout</c>. Yürütme
+/// Core'un <c>BranchSwitcher</c>'ıdır (mutasyon yüzeyi tek dosya). Supervisor konsol satırı YAZMAZ — sonucu
+/// <see cref="CheckoutCompletedEvent"/> ile bildirir ve satırları App kurar: başarıda konsol ÖNCE temizlenir,
+/// satırlar SONRA yazılır ("temizlik önce, not sonra" kuralı yalnız böyle mümkün).
+/// <para>Bir koşu uçuştayken <c>error(checkoutRejected)</c> ile REDDEDİLİR (App kapısının altındaki ikinci katman).</para>
+/// </summary>
+/// <param name="Branch">Hedef: yerel branch adı ya da <c>origin/&lt;ad&gt;</c> biçiminde uzak-izleme branch'i.</param>
+/// <param name="IsRemote">Hedef uzak-izleme branch'i mi (<c>BranchRef.IsRemoteTracking</c>).</param>
+/// <param name="StashIfDirty">Settings → General "Stash and switch branches": kirli ağaçta stash'le ve geç.</param>
+public sealed record CheckoutBranchCommand(string RootPath, string Branch, bool IsRemote, bool StashIfDirty) : IpcCommand;
 
 public sealed record PingCommand(int Seq) : IpcCommand;
 public sealed record ShutdownCommand : IpcCommand;
-public enum StopKind { Graceful, Hard }
+/// <summary>Durdurma türü. <see cref="Interrupt"/> [spec 2026-09-18 §6.1 · karar 10]: koşu sırasında branch
+/// değişti — Graceful gibi (yeni proje başlamaz, uçuştakiler biter) ama kesmeden SONRA biten hiçbir projenin
+/// sonucu deftere başarı/kanıt olarak yazılmaz (derlediği kaynak artık diskteki kaynak değildir).</summary>
+public enum StopKind { Graceful, Hard, Interrupt }
 public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
 public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
@@ -75,9 +91,6 @@ public enum DependentMode { Safe, Fast }
 /// §4 gereği DLL/bin timestamp'i okunmadığından defter, diskte çıktı olup olmadığını bilen tek yerdir ve
 /// kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Bugün yalnız satır menüsünden,
 /// <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
-/// <param name="Branch">Sync/build hedefi branch adı. [It-3]</param>
-/// <param name="UseWorktree">true ise derleme ayrı bir git worktree üzerinde yapılır. [It-3]</param>
-/// <param name="WorktreeName">UseWorktree=true iken kullanılacak worktree adı; null ise varsayılan ad türetilir. [It-3]</param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>
@@ -110,8 +123,10 @@ public enum DependentMode { Safe, Fast }
 /// dep-issue olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu
 /// bayat bir DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi
 /// derlenir; döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
+/// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür.</remarks>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
-    string Branch = "", bool UseWorktree = false, string? WorktreeName = null, DependentMode DependentMode = DependentMode.Safe,
+    DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
     IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
     string? ScopeProjectId = null) : IpcCommand;
@@ -135,12 +150,10 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/> ile App'e taşınır.
 /// </para>
 /// </summary>
-/// <param name="Branch">Fetch edilecek ref (<c>git fetch origin &lt;Branch&gt;</c>) ve
-/// <see cref="SyncCompletedEvent.TargetSha"/>'in kaynağı.
-/// <b>[A5/T69 bilinen seam] Analizi SEÇMEZ:</b> tarama ve will-build pass'i her zaman AKTİF çalışma ağacı
-/// üzerinde (in-place) koşar — K1 gereği hiçbir branch checkout EDİLMEZ. Aktif branch'ten farklı bir ad
-/// verilirse fetch ve <c>TargetSha</c> o branch'i gösterir ama topoloji/önizleme/sayaçlar hâlâ AKTİF ağacı
-/// tarif eder. Seam'i kapatmak branch seçimini UI'a bağlayan task'ın (D6) işidir.</param>
+/// <param name="Branch">[spec 2026-09-18 §6.5] YALNIZ detached HEAD'de kullanılan yedek ad. Sync fetch'i ve mesafeyi
+/// çalışma ağacının CHECKOUT EDİLMİŞ branch'ine göre yapar; analiz her zaman çalışma ağacınındır — K1 gereği hiçbir
+/// branch checkout EDİLMEZ. Detached HEAD'de fetch bu adla yapılır (boş değilse) ama mesafe ÖLÇÜLMEZ
+/// (<see cref="SyncCompletedEvent.Behind"/> = <c>null</c>). Boş ad geçerlidir (açılış Sync'i envanterden önce gider).</param>
 /// <param name="LayerPatterns">[A1/T15] Katman ataması pattern'leri — <see cref="StartRunCommand.LayerPatterns"/>
 /// ile AYNI anlam. null/boş ise katmanlama KAPALIDIR; dolu ise topoloji event'i LayerIndex/LayerName ve
 /// ters-katman uyarılarını taşır.</param>
@@ -151,16 +164,20 @@ public sealed record SetPerfModeCommand(string PerfMode) : IpcCommand;
 /// <param name="Configuration">Will-build pass'inin imza terimine giren configuration (Debug/Release) — config
 /// değişimi TÜM projeleri dirty yapar (bkz. <c>BuildSignature.Compute</c> "cfg=" terimi), bu yüzden Sync'in
 /// önizlemesi ancak doğru configuration ile anlamlıdır.</param>
+/// <param name="Fetch">[spec 2026-09-18 §6.2] <c>false</c> ⇒ ağa çıkılmaz: fetch satırı yazılmaz, <c>N behind</c>
+/// son bilinen uzak uca (<c>refs/remotes/origin/&lt;aktif branch&gt;</c>) göre yerelde hesaplanır. Kendiliğinden
+/// Sync'ler (commit, pencereye dönüş) ve branch değişiminin Sync'i böyle gider. Varsayılan <c>true</c>: alanı hiç
+/// yazmayan eski NDJSON satırları bugünkü gibi fetch eder.</param>
 public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string Configuration = "Debug",
-    IReadOnlyList<ExternalProject>? ExternalProjects = null) : IpcCommand;
+    IReadOnlyList<ExternalProject>? ExternalProjects = null, bool Fetch = true) : IpcCommand;
 
 /// <summary>
 /// [clean] Aktif workspace'in derleme çıktısını sıfırla. <b>Siler:</b> <paramref name="RootPath"/> altında
 /// keşfedilen her csproj'un klasöründeki <c>bin\</c> ve <c>obj\</c> + o workspace'e ait
 /// <c>build-state.json</c> kayıtları (RootPath önekiyle, workspace-scoped). <b>Silmez:</b> <c>packages\</c>,
-/// ortak OutDir, worktree havuzu (<c>_obj</c> dahil), run logları, <c>evaluation-cache.json</c>,
-/// <c>ui-state.json</c>.
+/// ortak OutDir, run logları, <c>evaluation-cache.json</c>, <c>ui-state.json</c>. Worktree havuzu artık YOK —
+/// araç böyle bir klasörü ne kurar ne siler (eski sürümlerden kalanı <c>LegacyWorktreePool</c> ayrıca anar).
 /// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme. Gerekçe: eski-stil
 /// projelerde <c>/t:Clean</c>'in sildiği küme (<c>FileListAbsolute.txt</c> kayıtlıları) bin/obj silmenin alt
 /// kümesidir; obj silinince o kayıt da gider; ve tracked çıktılar ortak OutDir'e yazılmışsa <c>/t:Clean</c>
@@ -191,7 +208,8 @@ public sealed record CleanWorkspaceCommand(
 /// <c>evaluation-cache.json</c>, <c>source-hash-cache.json</c>) dosyası artık var olmayan girdiler budanır ve
 /// öksüz <c>.tmp</c> artıkları süpürülür.</para>
 /// <para><b>Dokunmadıkları:</b> global NuGet cache'leri, <c>NuGet.config</c>, git (Optimize hiçbir git komutu
-/// KOŞMAZ), worktree havuzu, <c>bin</c>/OutDir, run logları, <c>ui-state.json</c>. Build kararlarını
+/// KOŞMAZ), <c>bin</c>/OutDir, run logları, <c>ui-state.json</c> — worktree havuzu zaten YOK, dokunacak bir şey
+/// kalmadı. Build kararlarını
 /// DEĞİŞTİRMEZ — imza kaynak-tabanlıdır, hiçbir projeyi dirty yapmaz.</para>
 /// <para>Bir koşu uçuştayken reddedilir (<c>error(optimizeRejected)</c>) ve Sync gibi Supervisor'ın komut
 /// döngüsünü BLOKLAR — iptal komutu YOKTUR (uzun restore'larda tek kaçış "Restart engine"dir).</para>
@@ -209,14 +227,6 @@ public sealed record OptimizeWorkspaceCommand(
 
 /// <summary>[A5/T69] Yerel + remote-tracking branch listesi iste (yanıt: <see cref="BranchListEvent"/>). SALT-OKUR.</summary>
 public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
-
-/// <summary>[A5/T69] Worktree havuzunun envanterini iste (yanıt: <see cref="WorktreeListEvent"/>). SALT-OKUR.</summary>
-public sealed record ListWorktreesCommand(string RootPath) : IpcCommand;
-
-/// <summary>[A5/T69] Havuzdaki tek bir worktree'yi sil; ardından güncel envanter (<see cref="WorktreeListEvent"/>)
-/// yayınlanır. <paramref name="Name"/> havuz kökü altındaki DİZİN ADIDIR (yol değil) — Core tarafında
-/// <c>PathSanitizer.IsSafeSegment</c> ile doğrulanır.</summary>
-public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCommand;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(EngineReadyEvent), "engineReady")]
@@ -236,6 +246,7 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
+[JsonDerivedType(typeof(CheckoutCompletedEvent), "checkoutCompleted")]
 [JsonDerivedType(typeof(CleanStartedEvent), "cleanStarted")]
 [JsonDerivedType(typeof(CleanProgressEvent), "cleanProgress")]
 [JsonDerivedType(typeof(CleanCompletedEvent), "cleanCompleted")]
@@ -246,12 +257,14 @@ public sealed record DeleteWorktreeCommand(string RootPath, string Name) : IpcCo
 [JsonDerivedType(typeof(BranchListEvent), "branchList")]
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
-[JsonDerivedType(typeof(WorktreeListEvent), "worktreeList")]
 [JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
 [JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
 
-public sealed record EngineReadyEvent(int Pid, string EngineVersion) : IpcEvent;
+/// <param name="InterruptedProjects">[spec 2026-09-18 §5.5 · karar 12] Motor açılırken <c>run-inflight.json</c>'dan
+/// kurtarılan (önceki motor ölürken uçuşta olan) proje sayısı; 0 ⇒ kesilmiş koşu yok. App &gt;0 ise konsola
+/// "previous run was interrupted" satırını yazar.</param>
+public sealed record EngineReadyEvent(int Pid, string EngineVersion, int InterruptedProjects = 0) : IpcEvent;
 public sealed record PongEvent(int Seq) : IpcEvent;
 public sealed record ErrorEvent(string Code, string Message) : IpcEvent;
 public sealed record RunStoppedEvent(string RunId, bool WasHard) : IpcEvent;
@@ -267,8 +280,10 @@ public enum RunOutcome { Completed, Stopped }
 /// BAŞARISIZ olması (o durumda Supervisor konsoluna bir uyarı da düşer). Yani bu alan İSTENEN değil
 /// YÜRÜRLÜKTEKİ değeri taşır. Run ORTASINDA <see cref="SetPerfModeCommand"/> ile değişen cap'i İZLEMEZ:
 /// bu, run'ın başlangıç durumunun kaydıdır.</param>
+/// <param name="LogDirectory">[spec 2026-09-18 §6.2] Bu koşunun disk log klasörü (<c>RunLogWriter.RunDirectory</c>);
+/// branch değişimiyle kesilen koşunun özet satırı onu anar. Bilinmiyorsa <c>null</c>.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null) : IpcEvent;
+    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
@@ -312,29 +327,34 @@ public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
 /// <summary>[planlama görünürlüğü] Bir run'ın TAZE segmentinde, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
-/// planlama penceresinin adım satırı (worktree hazırlığı → tarama → graf → topo → incremental → MSBuild
+/// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
 /// kaynak. <c>syncProgress</c>'ten AYRI bir kanaldır: bu pencere Sync DEĞİLDİR ve App'in Sync yüzeyini
 /// (<c>_syncInFlight</c>) hiç ilgilendirmez.</summary>
 public sealed record PlanProgressEvent(string Line) : IpcEvent;
 /// <param name="TargetSha">Sync sonrası HEAD sha'sı; belirlenemediyse null.</param>
 /// <param name="FetchDegraded">true ise fetch başarısız/kısıtlı oldu ve sync yerel state ile devam etti.</param>
-/// <remarks>[A5/T69 bilinen seam] Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/
-/// <paramref name="ToBuildCount"/>/<paramref name="UpToDateCount"/>) AKTİF çalışma ağacına karşı hesaplanır —
-/// <paramref name="Branch"/> farklı bir branch adlandırsa bile (bkz. <see cref="SyncWorkspaceCommand.Branch"/>).
-/// <paramref name="TargetSha"/> ise fetch edilen ref'i taşır; ikisi FARKLI commit'leri tarif edebilir.</remarks>
+/// <remarks>Aşağıdaki ÜÇ sayaç da (<paramref name="ChangedCount"/>/<paramref name="ToBuildCount"/>/
+/// <paramref name="UpToDateCount"/>) çalışma ağacına karşı hesaplanır. <paramref name="Branch"/> ölçülen branch'tir
+/// (checkout edilmiş branch; detached HEAD'de komuttaki yedek ad), <paramref name="TargetSha"/> onun uzak ucu.</remarks>
 /// <param name="ChangedCount">[A5/T69] DOĞRUDAN değişen (kendi imza terimi bayatlamış) proje sayısı — will-build
 /// pass'inin <c>DependentMode.Fast</c> (cascade YOK) sonucudur. <paramref name="ToBuildCount"/>'tan TÜRETİLEMEZ:
 /// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>
 /// <param name="ToBuildCount">[A5/T69] Will-build kümesinin boyutu (<c>DependentMode.Safe</c> — dirty + transitive dependent).</param>
 /// <param name="UpToDateCount">[A5/T69] Güncel (<c>WillBuild=false</c>) proje sayısı — Build'de pre-skip edilecekler.</param>
 /// <param name="Behind">[v1.16.0] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
-/// alt bardaki <c>N behind</c> chip'i bunu okur. <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu ya da
-/// seçili branch aktif branch değil): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
+/// alt bardaki <c>N behind</c> chip'i bunu okur. Fetch'siz Sync'te son bilinen uzak uca göre hesaplanır.
+/// <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu, uzak ref yok ya da detached HEAD): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
 /// satırları alansız çözülür.</param>
+/// <param name="HeadSha">[spec 2026-09-18 §6.1] Sync'in ölçtüğü YEREL HEAD commit'i (<c>null</c> ⇒ commit'siz repo).
+/// App bunu <see cref="ActiveBranch"/> ile birlikte "son Sync'in HEAD'i" olarak saklar — çift Sync kontrolünün
+/// kaynağı.</param>
+/// <param name="ActiveBranch">[spec 2026-09-18 §1-7] Sync anında checkout edilmiş branch (<c>null</c> ⇒ detached
+/// HEAD). App'in <c>Branch</c> değeri Sync biter bitmez buradan hizalanır.</param>
 public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool FetchDegraded,
     int ProjectCount, int CycleCount,
-    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0, int? Behind = null) : IpcEvent;
+    int ChangedCount = 0, int ToBuildCount = 0, int UpToDateCount = 0, int? Behind = null,
+    string? HeadSha = null, string? ActiveBranch = null) : IpcEvent;
 /// <summary>
 /// [v1.16.0] <see cref="PullRepositoryCommand"/>'ın sonucu. Gerekçe satırları zaten <see
 /// cref="SyncProgressEvent"/> olarak akmıştır; bu event yalnız "ilerledi mi" sorusunu cevaplar.
@@ -342,6 +362,18 @@ public sealed record SyncCompletedEvent(string Branch, string? TargetSha, bool F
 /// <param name="Succeeded">Fast-forward gerçekleşti mi. <c>true</c> ⇒ App chip'i düşürür ve otomatik bir Sync
 /// koşar (konsol KORUNARAK — kullanıcı kendi tetiklediği pull'un sonucunu görmeye devam etmeli).</param>
 public sealed record PullCompletedEvent(bool Succeeded) : IpcEvent;
+/// <summary>
+/// [spec 2026-09-18 §6.3] <see cref="CheckoutBranchCommand"/>'ın sonucu — konsol satırlarının TEK girdisi (App
+/// satırları <c>PlanProgressLines</c>'tan kurar).
+/// </summary>
+/// <param name="FromBranch">Checkout ÖNCESİ aktif branch; detached HEAD'de kısa sha; okunamadıysa null.</param>
+/// <param name="Branch">Checkout SONRASI aktif branch (Switched/AlreadyOn) ya da öncekisi (diğer durumlar).</param>
+/// <param name="Revision">Yalnız <see cref="CheckoutStatus.Switched"/>'te yeni HEAD sha'sı; aksi hâlde null.</param>
+/// <param name="DirtyCount">Denemeden önce kirli olan yol sayısı.</param>
+/// <param name="StashMessage">Stash gerçekten yapıldıysa mesajı (checkout sonra başarısız olsa bile dolu).</param>
+/// <param name="Detail">Hata ayrıntısı (İngilizce); gerekmiyorsa null.</param>
+public sealed record CheckoutCompletedEvent(CheckoutStatus Status, string? FromBranch, string? Branch,
+    string? Revision, int DirtyCount, string? StashMessage, string? Detail) : IpcEvent;
 /// <summary>[clean] <see cref="CleanWorkspaceCommand"/> kabul edildi ve silme başlıyor.</summary>
 public sealed record CleanStartedEvent(string RootPath) : IpcEvent;
 /// <summary>[clean] Clean transkriptinin tek satırı. İmzası <see cref="SyncProgressEvent"/> ile aynıdır ama
@@ -414,10 +446,6 @@ public sealed record WorkspaceTopologyEvent(
     IReadOnlyList<SolutionRef> Solutions,
     IReadOnlyList<string> LayerWarnings) : IpcEvent;
 
-/// <summary>[A5/T69] Worktree havuzunun envanteri — <see cref="ListWorktreesCommand"/>/<see
-/// cref="DeleteWorktreeCommand"/> yanıtı.</summary>
-public sealed record WorktreeListEvent(IReadOnlyList<Worktree> Worktrees) : IpcEvent;
-
 /// <summary>
 /// [cycle rounds] Bir SCC'nin (dairesel bağımlılık grubunun) yeni bir turu başladı. Grup TEK bir derleme
 /// birimidir: üyeleri her turda build-order sırasıyla ve sıralı derlenir, ara tur sonuçları YAYILMAZ — bu
@@ -451,7 +479,7 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// cref="SyncCompletedEvent.TargetSha"/>'dir. <b>Hiç derlenmemiş</b> (build-state kaydı olmayan) proje ⇒
 /// <c>null</c> — JSON'a hiç yazılmaz, dolayısıyla W1 ÖNCESİ yazılmış NDJSON satırları da alansız çözülmeye
 /// devam eder (geriye dönük uyum). <b>Not:</b> bu değer ile <c>TargetSha</c> FARKLI ref ailelerinden gelir
-/// (bu: derleme anındaki yerel/worktree HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
+/// (bu: derleme anındaki yerel HEAD — o: <c>refs/remotes/origin/&lt;branch&gt;</c>).</param>
 /// <param name="Reason">[gerekçe] <see cref="WillBuild"/> kararının NEDENİ — kart, will-build noktasının
 /// tooltip'inde bunu söyler ("commit aynı ama neden derlenecek?" sorusunun cevabı). Düğümden AYNEN taşınır;
 /// koordinatörün koşu-zamanlama kuralıyla (pre-skip) <c>false</c>'a çevirdiği projelerde <c>null</c>'dır —

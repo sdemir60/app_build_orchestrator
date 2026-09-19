@@ -4,7 +4,7 @@ namespace BuildOrchestrator.Contracts.Model;
 
 // It-1 domain DTO'ları — A9 şeklini sabitler. Core → Contracts referansı üzerinden Core bu tipleri üretir.
 // It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
-// DependentMode) artık IpcMessages.cs'de sabit; BranchRef/Worktree git-yüzeyi DTO'ları burada.
+// DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
 
 public enum HintPathClass { Edge, ExternalThirdParty, ExternalOsysPlatform, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
@@ -233,6 +233,19 @@ public sealed record ExternalProject(string Path);
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);
 
-/// <summary>Bir git worktree bilgisi (GitService.ListWorktrees). IPC yüzeyi minimal — bu DTO It-3'te yalnız
-/// GitService tarafında kullanılır; tam listWorktrees/deleteWorktree komutları It-4 UI'a ertelendi. [It-3]</summary>
-public sealed record Worktree(string Name, string Branch, string Path, bool IsActive, long? DiskSizeBytes);
+/// <summary>[Faz 2/Task 2] <c>BranchSwitcher.SwitchAsync</c>'in (<c>Core/Git/RepositoryWriter.cs</c>) sonucu —
+/// Task 5'in IPC üzerinden App'e taşıyacağı checkout durumu, bu yüzden Contracts'ta yaşar (Core → Contracts
+/// referansı, kopya YASAK).</summary>
+public enum CheckoutStatus
+{
+    /// <summary>Checkout başarıyla yapıldı; çalışma ağacı artık hedef branch'te.</summary>
+    Switched,
+    /// <summary>Hedef zaten aktif branch'ti — git'e hiç dokunulmadı.</summary>
+    AlreadyOn,
+    /// <summary>Commit'lenmemiş yerel değişiklik var ve stash istenmedi — hiçbir şey yapılmadı.</summary>
+    Dirty,
+    /// <summary><c>stash push</c> başarısız oldu — checkout hiç denenmedi.</summary>
+    StashFailed,
+    /// <summary>Checkout (stash başarılıysa stash SONRASI) başarısız oldu.</summary>
+    Failed,
+}

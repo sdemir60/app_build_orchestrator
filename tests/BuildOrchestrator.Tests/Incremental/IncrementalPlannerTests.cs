@@ -461,7 +461,7 @@ public class IncrementalPlannerTests
     // Yeni fonksiyon aynı şekli (sıra bağımsız, ayraç-güvenli, boş küme -> null) diskten okunan içerikle korur.
 
     private static IReadOnlyList<ProjectInput> Inputs(params string[] paths) =>
-        [.. paths.Select(p => new ProjectInput(p, p))];
+        [.. paths.Select(p => new ProjectInput(p))];
 
     private static Func<string, string> Term(string root) => path => IncrementalRunBinder.PathTerm(root, path);
 

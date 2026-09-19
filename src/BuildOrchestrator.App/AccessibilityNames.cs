@@ -113,12 +113,12 @@ public static class AccessibilityNames
     }
 
     public const string StopButton = "Stop build";
-    public const string BranchChip = "Branch — choose build target";
+    /// <summary>[spec 2026-09-18 §6.3] Chip bir hedef seçmez, çalışma ağacının branch'ini değiştirir (checkout).</summary>
+    public const string BranchChip = "Branch — switch the checked-out branch";
 
     /// <summary>[design v1.16.0 §2.7-6a] <c>N behind</c> chip'i. Sayı bilindiğinde ad SAYIYLA yeniden
     /// yazılır (<c>"3 behind"</c>) — burada duran, chip henüz hiç veri görmemişken geçerli olan addır.</summary>
     public const string BehindChip = "Behind the remote — click to fast-forward";
-    public const string WorktreeChip = "Worktree — build isolation";
     public const string PerfChip = "Performance profile";
     public const string BuildOptions = "Build options";
 
@@ -128,7 +128,6 @@ public static class AccessibilityNames
     /// ekran okuyucuya bir şey söylemez — işlev burada tarif edilir).</summary>
     public const string ClearFilterChip = "Clear the active filter";
     public const string BranchFilter = "Filter branches";
-    public const string WorktreeSwitch = "Build in worktree";
 
     // ---- [About] Title bar ----
     /// <summary>Title bar'daki ikon-yalnız info butonu. Tooltip'ten AYRIDIR: tooltip, kısayolu da anlatan
@@ -203,14 +202,6 @@ public static class AccessibilityNames
     /// <summary>[design v1.15.0 → v1.19.0 §2.9] General → BUILD grubundaki Pull before build switch'i — ekran okuyucu
     /// kısa etiketi değil, ne güncellendiğini söyleyen bu adı duyar (GeneralSettingsCatalog).</summary>
     public const string PullExternalsBeforeBuild = "Pull external working copies before build";
-
-    // ---- [A13/T5] Worktree popover: hedef satırı ----
-    /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>
-    public const string DeleteWorktree = "Delete worktree";
-
-    /// <summary>Çöp kutusunun UIA adı: liste birden çok satır taşır ve hepsinde AYNI ikon durur — ad HANGİ
-    /// worktree'nin silineceğini söylemelidir (tooltip kısa kalır, ekran okuyucu tam bilgiyi alır).</summary>
-    public static string DeleteWorktreeNamed(string worktreeName) => $"{DeleteWorktree} {worktreeName}";
 
     /// <summary>[A13/T5] Graf düğümü — ad DÜĞÜM BAŞINA anlamlıdır: sabit bir "graph node" metni ekran
     /// okuyucuya hiçbir şey söylemez. Tam proje adı + düğümün GÖSTERDİĞİ durumun sözcüğü

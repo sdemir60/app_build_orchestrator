@@ -32,7 +32,8 @@ namespace BuildOrchestrator.Core.Workspace;
 /// projelerle sınırlıdır: kartı verilmemiş bir dizine dokunulmaz.</para>
 ///
 /// <para><b>Dokunulmayanlar:</b> global NuGet cache'leri, <c>NuGet.config</c>, git (tek bir git komutu bile
-/// koşulmaz), worktree havuzu, <c>bin</c>/OutDir, run logları. <b>Build kararlarını değiştirmez:</b> imza
+/// koşulmaz), <c>bin</c>/OutDir, run logları — worktree havuzu zaten YOK, dokunacak bir şey kalmadı.
+/// <b>Build kararlarını değiştirmez:</b> imza
 /// kaynak-tabanlıdır, ne restore ne artık temizliği bir projeyi dirty yapar.</para>
 ///
 /// <para><b>Hata modeli:</b> exception IPC sınırını GEÇMEZ. Kilitli dosya hata DEĞİLDİR (warn +

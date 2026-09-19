@@ -209,14 +209,15 @@ public class StickyRevealTriggerTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.13.2 §2.4 · §9] <b>Aynı topolojiyle biten bir Sync ("no changes") da listeyi başa
-    /// alır.</b> Reveal'i yeniden oynatan şey topolojinin DEĞİŞMESİ değil, yayının bir <b>Sync'e</b> ait olmasıdır
-    /// (<c>RunViewModel.OnWorkspaceTopology</c>: <c>_syncInFlight</c> imza guard'ını geçer). Kardeş test
-    /// (<see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/>) imzayı değiştirerek
-    /// guard'dan kaçıyordu; bu test guard'ın tam ortasından geçer — kullanıcının gördüğü senaryo budur:
-    /// aynı repoda Sync'e basmak.</summary>
+    /// <summary>[spec 2026-09-18 §1-13 · §6.2] <b>Yapısı aynı bir Sync listeyi YERİNDE tazeler — kaydırma
+    /// konumu korunur.</b> Reveal'i yeniden oynatan tek şey yapısal imzanın değişmesidir (kardeş test
+    /// <see cref="A_replayed_reveal_with_no_selection_scrolls_the_list_back_to_zero"/> o yoldan geçer).
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
+    /// <c>A_no_changes_sync_returns_the_list_to_the_top</c> — aynı topolojiyle biten bir Sync de reveal'i oynatır
+    /// ve listeyi başa alır (<c>_syncInFlight</c> imza guard'ını geçiyordu). Değişme gerekçesi: Sync artık
+    /// kendiliğinden de koşar (commit, pencereye dönüş); kullanıcının baktığı yer her seferinde başa sarılırdı.</para></summary>
     [StaFact]
-    public void A_no_changes_sync_returns_the_list_to_the_top()
+    public void A_sync_with_the_same_structure_updates_in_place()
     {
         using var dir = new TempDir();
         var (window, vm, list) = NewWithManyProjects(dir, 60);
@@ -235,12 +236,10 @@ public class StickyRevealTriggerTests
         vm.OnEvent(new WorkspaceTopologyEvent(ReplayedTopology(60), [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 60, 0));
 
-        DispatcherPump.PumpUntil(() => list.RevealGeneration != before, TimeSpan.FromSeconds(3));
-        Assert.NotEqual(before, list.RevealGeneration); // reveal, imza aynıyken de YENİDEN oynadı
-
-        DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset <= 0.5, TimeSpan.FromSeconds(3));
-        Assert.True(list.Scroll.VerticalOffset <= 0.5,
-            $"[design v1.13.2] Sync sonrası liste başa dönmeliydi (VerticalOffset={list.Scroll.VerticalOffset})");
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(300)); // reveal/scroll (olsaydı) pompada ilerlerdi
+        Assert.Equal(before, list.RevealGeneration); // reveal OYNAMADI
+        Assert.True(list.Scroll.VerticalOffset >= 149.5,
+            $"[spec 2026-09-18 §1-13] yapısı aynı Sync kaydırma konumunu korumalıydı (VerticalOffset={list.Scroll.VerticalOffset})");
         GC.KeepAlive(window);
     }
 

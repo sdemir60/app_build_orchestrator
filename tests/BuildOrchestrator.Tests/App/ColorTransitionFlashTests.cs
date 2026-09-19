@@ -82,7 +82,7 @@ public sealed class ColorTransitionFlashTests
     }
 
     /// <summary>
-    /// Alt bardaki bir chip'in AKTİF olması (branch/worktree/filtre) da ortasında parlamaz.
+    /// Alt bardaki bir chip'in AKTİF olması (branch/filtre) da ortasında parlamaz.
     ///
     /// <para><b>Ölçülen kusur:</b> uçlardan biri opak (<c>surface-overlay</c>, hover), diğeri YARI SAYDAM
     /// (<c>amber-soft</c>, <c>#1F</c> alfa). WPF kanalları premultiply ETMEDEN interpole ettiği için RGB

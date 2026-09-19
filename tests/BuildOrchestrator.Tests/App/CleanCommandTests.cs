@@ -136,21 +136,22 @@ public class CleanCommandTests
     /// kapısı topolojidir, bu yüzden onlar Clean'in kapısıyla değil, o Sync'in yayınladığı topolojiyle geri
     /// gelir. Sync ve Clean'in kendi kapıları hemen açılır (ikisi topoloji istemez).</para>
     ///
-    /// <para><b>Üretimde ekstra bir bekleme YOKTUR</b> ve bu testin yapaylığı tam orada: burada komut hiç
-    /// çalıştırılmaz, yalnız event beslenir — yani <c>CleanAsync</c>'in kendi yüzey temizliği koşmamıştır ve
-    /// topoloji ayakta kalmıştır. Gerçek akışta Clean tıklandığı anda yüzey zaten boşalır ve üç komut
-    /// <c>!CleanBusy</c>/<c>!SyncBusy</c> ile de kapalıdır; plan, uçuş bayrağını düşüren AYNI olay yığınında
-    /// geldiği için kapının iki yarısı birlikte açılır. Bu testin pinlediği şey bir gecikme değil, KAPININ
-    /// KİMDE olduğudur: planda.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Test eskiden Clean'i yalnız event'le besliyordu ve
+    /// topolojiyi boşaltan şey bitişin zincirlediği Sync'ti. Sync artık yüzeyi boşaltmaz; boşaltan Clean'in
+    /// TIKLAMASIDIR (<c>CleanAsync</c> → <c>ClearPlanSurface</c>). Test bu yüzden gerçek akışı oynar: tıklama
+    /// (gönderim bu harness'te senkron düşer), ardından motorun <c>cleanStarted</c>/<c>cleanCompleted</c>'ı.
+    /// Pinlenen şey aynıdır: bir gecikme değil, KAPININ KİMDE olduğu — planda.</para>
     /// </summary>
     [Fact]
-    public void A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
+    public async Task A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
     {
         var vm = NewVm();
         SeedTopology(vm);
         Assert.True(vm.SyncCommand.CanExecute(null));
         Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.True(vm.RebuildCommand.CanExecute(null));
+
+        await vm.CleanCommand.ExecuteAsync(null); // tıklama: yüzey boşalır
 
         vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
 
@@ -165,7 +166,7 @@ public class CleanCommandTests
         // Topoloji İSTEMEYEN kapılar hemen açılır.
         Assert.True(vm.SyncCommand.CanExecute(null));
         Assert.True(vm.CleanCommand.CanExecute(null));
-        // Topolojiye bağlı olanlar bekler: bitişin tetiklediği Sync yüzeyi boşalttı, henüz cevap gelmedi.
+        // Topolojiye bağlı olanlar bekler: tıklama yüzeyi boşalttı, bitişin Sync'i henüz cevap vermedi.
         Assert.False(vm.HasTopology);
         Assert.False(vm.BuildCommand.CanExecute(null));
         Assert.False(vm.RebuildCommand.CanExecute(null));

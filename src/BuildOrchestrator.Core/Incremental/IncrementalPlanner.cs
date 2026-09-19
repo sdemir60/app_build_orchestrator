@@ -216,9 +216,7 @@ public static class IncrementalPlanner
     ///
     /// <para><b>Terim çifti: yol + içerik.</b> Yol terimi <paramref name="pathTermOf"/> ile üretilir (çalışma
     /// alanı köküne göreli, <c>/</c>-normalize — bkz. <see cref="IncrementalRunBinder.PathTerm"/>), içerik ise
-    /// dosyanın FİZİKSEL yolundan okunur. Ayrım D5'in kalbidir: worktree koşusunda kimlikler ana köke taşınmış
-    /// olsa da içerik havuzdaki gerçek dosyadan gelir, böylece aynı içerik in-place ve worktree koşusunda AYNI
-    /// imzayı üretir.</para>
+    /// aynı dosyanın diskteki hâlinden okunur.</para>
     ///
     /// <para>§4 kaynak-sinyali kuralı korunur: yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj ya da bir
     /// derleme çıktısının timestamp'ı ASLA. Okuma bedeli <see cref="SourceHashCache"/> ile koşu başına bir
@@ -227,9 +225,9 @@ public static class IncrementalPlanner
     /// <para>Okunamayan dosyalar (canlı build ↔ tarama yarışı, silinmiş dosya) sessizce elenir; hiçbiri
     /// okunamazsa <c>null</c> döner ve proje "hiç derlenmemiş" gibi ele alınır — güvenli taraf (over-build).</para>
     /// </summary>
-    /// <param name="inputs">Projenin girdi dosyaları (kimlik + fiziksel yol çiftleri).</param>
-    /// <param name="pathTermOf">Kimlik yolu → imzaya girecek yol terimi.</param>
-    /// <param name="hashOf">Fiziksel yol → içerik özeti; okunamıyorsa <c>null</c>.</param>
+    /// <param name="inputs">Projenin girdi dosyaları.</param>
+    /// <param name="pathTermOf">Dosya yolu → imzaya girecek yol terimi.</param>
+    /// <param name="hashOf">Dosya yolu → içerik özeti; okunamıyorsa <c>null</c>.</param>
     public static string? ComputeContentFingerprint(
         IReadOnlyList<ProjectInput> inputs, Func<string, string> pathTermOf, Func<string, string?> hashOf)
     {
@@ -238,7 +236,7 @@ public static class IncrementalPlanner
         ArgumentNullException.ThrowIfNull(hashOf);
 
         var terms = inputs
-            .Select(i => (Term: pathTermOf(i.LogicalPath), Hash: hashOf(i.PhysicalPath)))
+            .Select(i => (Term: pathTermOf(i.Path), Hash: hashOf(i.Path)))
             .Where(x => x.Hash is not null)
             .GroupBy(x => x.Term, StringComparer.OrdinalIgnoreCase)
             .Select(g => (Term: g.Key, g.First().Hash))

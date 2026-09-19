@@ -9,6 +9,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Scheduling;
@@ -546,7 +547,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     public ObservableCollection<ProjectRowViewModel> Projects { get; } = [];
 
-    // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / worktree / topoloji yüzeyi AYRI partial dosyada:
+    // [A5/T69 · Fix wave 1 — Finding 6] Sync / branch / topoloji yüzeyi AYRI partial dosyada:
     // RunViewModel.Workspace.cs (faz, hedef commit, envanter, topoloji uzlaştırma).
 
     [ObservableProperty]
@@ -555,6 +556,7 @@ public sealed partial class RunViewModel : ObservableObject
     // yönetmez, tek yazıcı komuttur. Repo değişince buton hâlâ pasif görünmesin diye bildirim buradan gider.
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private string _rootPath = "";
     [ObservableProperty] private string _configuration = "Debug";
 
@@ -617,7 +619,7 @@ public sealed partial class RunViewModel : ObservableObject
         WillBuildCount, FinishedOfWillBuild, Counters.Total,
         ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
-        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage,
+        runError: RunErrorMessage, engineOverdue: EngineOverdueMessage, syncFetches: _syncMode.Fetches(),
         resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
@@ -635,8 +637,9 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
-    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/worktree/config kilidi bundan türetilir
+    [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/config kilidi bundan türetilir
     [NotifyPropertyChangedFor(nameof(IsResolvingCycles))] // bakım kutusunun Resolve spinner'ı: koşu bitince iner
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isRunning;
 
     // [Fix wave 1(It-3), Finding 3] Supervisor runStarted'dan ÖNCE planlama yapar (scan/graph/topo — 177
@@ -656,6 +659,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isStarting;
 
     /// <summary>[tek proje · design §3.8] Uçuştaki KAPSAMLI koşunun hedefi (proje kimliği); <c>null</c> = tam
@@ -683,6 +687,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private string? _engineDiedMessage;
 
     /// <summary>[D1] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu ANLAMLI mı? Normal bir motor ölümü
@@ -701,6 +706,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
@@ -788,14 +794,9 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VisibleProjects))]
     private string _projectQuery = "";
 
-    /// <summary>[C2] Sync/build hedefi branch. Koşarken UI'da kilitli (<see cref="IsMidRunLocked"/>).</summary>
+    /// <summary>[spec 2026-09-18 §1-7] Çalışma ağacında checkout edilmiş branch — bir tercih değil, okunan bir
+    /// GERÇEK. Tek yazıcısı branch envanteridir (<see cref="OnBranchList"/>); detached HEAD'de son değer durur.</summary>
     [ObservableProperty] private string _branch = "";
-
-    /// <summary>[C2] true ⇒ derleme ayrı bir git worktree üzerinde. Koşarken UI'da kilitli.</summary>
-    [ObservableProperty] private bool _useWorktree;
-
-    /// <summary>[C2] <see cref="UseWorktree"/>=true iken worktree adı; null ⇒ Supervisor varsayılan ad türetir.</summary>
-    [ObservableProperty] private string? _worktreeName;
 
     // [Fix wave 1, C2 review Finding 2] PerfMode/Parallelism alan başlatıcılarının TEK ortak kaynağı (derleme
     // zamanı sabiti — alan başlatma SIRASINDAN bağımsız, yukarıdaki Parallelism başlatıcısından da güvenle
@@ -834,7 +835,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// kontrolü doğrudan buna bağlanabilir.</para></summary>
     [ObservableProperty] private bool _updateExternals = true;
 
-    /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/worktree/configuration kontrolleri kilitli;
+    /// <summary>[spec 2026-09-18 §6.3] Settings → General "Stash and switch branches": branch chip'inden checkout'ta
+    /// ağaç kirliyse değişiklikler (izlenmeyenler dahil) stash'lenip geçilsin mi. <b>Varsayılan: hayır</b> — checkout
+    /// durur ve kullanıcıdan önce commit/stash ister. Değer her <see cref="CheckoutBranchCommand"/> ile motora gider.
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _stashOnBranchSwitch;
+
+    /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
 
@@ -850,6 +857,8 @@ public sealed partial class RunViewModel : ObservableObject
     partial void OnRootPathChanged(string value)
     {
         if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
+        AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
+        RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
     }
 
     public RunViewModel(EngineHost engine, ConsoleBatcher console, Func<string> newRunId, Func<long>? nowMs = null,
@@ -866,7 +875,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Cycles) — tek yerde toplanır:
     /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
-    /// workspace hedefiyle (branch/worktree/layer patterns — Supervisor tarafı A1-A4'te bağlı) gönder.
+    /// workspace hedefiyle (kök/configuration/layer patterns) gönder.
     /// <para>[Fix wave 1(It-3), Finding 1] <paramref name="clearBuffers"/>=true iken önceki run'ın
     /// <c>_liveLines/_projectText/_runText</c> tortusu temizlenir: aksi halde İKİNCİ run'da kart tıklamasında
     /// dikiş filtresi (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve
@@ -913,12 +922,16 @@ public sealed partial class RunViewModel : ObservableObject
         // getirir, temizlik onu hemen silerdi (görünür bir kırpışma). SyncCoreAsync aynı sırayı izler.
         ClearSelectionAndFilter();
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
-        // bir not düşer. Motor runStarted'a kadar (taze segmentte: worktree hazırlığı → tarama → graf → topo →
+        // bir not düşer. Motor runStarted'a kadar (taze segmentte: tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
         // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
         var previousPhase = Phase;
         Phase = AppPhase.Starting;
         AppendRunLine(RunRequestedLine(mode, target?.Name));
+        // [spec 2026-09-18 §6.4] Yarıda bir merge/rebase/cherry-pick/revert koşuyu ENGELLEMEZ; planlamanın başında tek
+        // uyarı satırı düşer. Clean derlemez — çakışma işaretli dosya onu ilgilendirmez.
+        if (mode != RunMode.Clean && Core.Git.GitOperationText.BuildWarning(RefreshGitOperation()) is { } gitWarning)
+            AppendRunLine(gitWarning);
 
         // [design v1.11.0 §9-4 `_mark`] AÇILIŞ KOREOGRAFİSİ — koşu ondan SONRA başlar (prototipte de:
         // `_mark(scope, () => startRun())`). Kapsamı VM bilir, zamanlamayı kabuk; bu yüzden kapı bir
@@ -938,11 +951,9 @@ public sealed partial class RunViewModel : ObservableObject
         }
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
-        // [T2 fix-1 · C1/I4] Branch DEĞİL, RunBranchIntent gider — gerekçe RunBranchIntent'te (görüntüleme
-        // değeri ≠ niyet; seed'i niyet diye göndermek worktree'yi zorunlu kılıyor ve detached HEAD'de run'ı
-        // hiç başlatmıyordu).
+        // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
-            RunBranchIntent, EffectiveUseWorktree, WorktreeName, DependentMode.Safe, LayerPatterns, PerfMode,
+            DependentMode.Safe, LayerPatterns, PerfMode,
             ExternalProjectsForWire, UpdateExternals, scopeProjectId);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
@@ -1102,7 +1113,7 @@ public sealed partial class RunViewModel : ObservableObject
     // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
     // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
     // [clean] Clean uçuştayken de hiçbir run başlatılamaz: silme, MSBuild'in yazdığı bin/obj ile yarışırdı.
-    private bool CanRebuildOrRetry() => CanStartRun() && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    private bool CanRebuildOrRetry() => CanStartRun() && !WorkspaceBusy;
 
     // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
     // (gerekçe CanRebuildOrRetry'ın yorumundadır).
@@ -1151,49 +1162,60 @@ public sealed partial class RunViewModel : ObservableObject
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
     private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
 
-    /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, kendinden önce hiçbir
-    /// hazırlık notu YAZMAYAN saf Sync. <see cref="SyncCoreAsync"/>'i <c>clearBuffers:true</c> ile çağırır.</summary>
+    /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
+    /// açan Sync (<see cref="SyncMode.Manual"/>). [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de koşar; bölümün
+    /// ilk satırı ağacın yarım olduğunu söyler (<see cref="MidOperationSyncLines"/>).</summary>
     [RelayCommand(CanExecute = nameof(CanSync))]
-    private Task SyncAsync() => SyncCoreAsync(clearBuffers: true);
+    private Task SyncAsync() => SyncCoreAsync(SyncMode.Manual, sectionLines: MidOperationSyncLines());
 
     /// <summary>
-    /// Sync'in ortak gövdesi — üç girişi vardır: bu sınıftaki <see cref="SyncAsync"/> (Sync düğmesi),
-    /// <see cref="ApplySettingsAsync"/> (Settings → Save) ve <see cref="ChangeRepositoryAsync"/> (Choose Folder).
+    /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
+    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save / kök değişimi
+    /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; kendiliğinden Sync
+    /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un
+    /// özetindedir (spec 2026-09-18 §6.2).
     ///
-    /// <para><b><paramref name="clearBuffers"/>:</b> Sync düğmesi <c>true</c> geçer — [design v1.13.2 §9]
-    /// BeginRunAsync(clearBuffers:true) ile AYNI kural, AYNI iki metot (kopya YASAK): konsol + event stream
-    /// TIKLAMA ANINDA temizlenir, pill'in kendisiyle aynı gerekçe, motorun cevabı beklenmez. Diğer iki çağıran
-    /// <c>false</c> geçer: ikisi de bu Sync'ten HEMEN ÖNCE KENDİ hazırlık notunu yazar (<c>"Layer definitions
-    /// updated — N layers"</c>, <c>"Repository root → … — Sync required"</c>) ve o not "bu işlemin İLK satırı"dır
-    /// — bir önceki İŞLEMİN tortusu değildir, ikinci bir clear onu da silerdi
-    /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>
-    /// bu notun HALA orada olduğunu pinler).</para>
+    /// <para><b>Temizlik:</b> Manual ve BranchChange konsolu + event stream'i temizler — [design v1.13.2 §9]
+    /// BeginRunAsync(clearBuffers:true) ile AYNI iki metot (kopya YASAK), TIKLAMA ANINDA. Appended temizlemez:
+    /// çağıranlar bu Sync'ten HEMEN ÖNCE KENDİ notunu yazar (<c>"Layer definitions updated — N layers"</c>,
+    /// <c>"Repository root → … — Sync required"</c>) ya da önceki işlemin transkripti (pull, Clean, açılışın
+    /// boot satırı) görünür kalmalıdır
+    /// (<see cref="SettingsDialogTests.Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns"/>).
+    /// BranchChange'te yeni bölümün ilk satırları <paramref name="sectionLines"/>'tır ("temizlik önce, not
+    /// sonra"): çağıran (checkout) onları yazmaz, burada temizlikten SONRA yazılır. Sync düğmesi (Manual) de aynı
+    /// yolu kullanır: yarıda bir git işlemi varsa bölümün ilk satırı onu söyler.</para>
     ///
-    /// <para><b>Plan yüzeyi ise bayraktan BAĞIMSIZ, her Sync'te düşer</b> — bkz. aşağıdaki
-    /// <see cref="ClearPlanSurface"/> çağrısı. <paramref name="clearBuffers"/> yalnız konsol ve event
-    /// stream'in sorusudur (o ikisinde "bu işlemin ilk satırı kimin" diye bir sahiplik vardır); listenin ve
-    /// grafın böyle bir sahibi yoktur: her Sync topolojiyi baştan hesaplar, dolayısıyla ekranda duran plan
-    /// hangi yoldan gelinirse gelinsin o an geçersizdir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Plan yüzeyi (liste + graf) artık Sync'te BOŞALMAZ
+    /// (eskiden her Sync tıklamada <see cref="ClearPlanSurface"/> çağırırdı — kullanıcı kararı 2026-09-12). Yapı
+    /// aynıysa topoloji satırları yerinde uzlaştırır; yapısal imza değişirse reveal oynar
+    /// (<see cref="OnWorkspaceTopology"/>). Boşaltma yalnız Clean/Optimize tıklamasında ve gerçek bir kök
+    /// değişiminde kalır (<see cref="SyncAfterRootChangeAsync"/>).</para>
     /// </summary>
-    private async Task SyncCoreAsync(bool clearBuffers)
+    /// <param name="mode">Konsol ilişkisi, fetch ve pill kararı.</param>
+    /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
+    /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
+    /// temizlikten sonra yazılan ilk satırlar.</param>
+    /// <returns>Sync komutu motora gitti mi — düşen gönderimde <c>false</c> (kendiliğinden Sync tetiği bekletir).</returns>
+    private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
+        IReadOnlyList<string>? sectionLines = null)
     {
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
         // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
         // gönderim ne olursa olsun (senkron başarısız dahil) ekran zaten burada sıfırlanmış olur; bir sonraki
         // syncProgress bir öncekinin tortusunun ÜZERİNE yazılmaz (bkz. ClearConsoleForNewOperation).
-        if (clearBuffers)
+        if (mode.ClearsConsole())
         {
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
-        // [kullanıcı kararı 2026-09-12] Liste ve graf da AYNI karede boşalır — Clean'in birebir simetriği
-        // (bkz. CleanAsync). Gerekçe aynı: ekranda duran plan bu işlemin sonucuyla değişecek, farklı bir anda
-        // düşerse tek işlem iki sarsıntı gibi görünür (konsol anında boşalıp liste bayat kalıyordu). Geri
-        // getiren şey Sync'in kendi yayınladığı topolojidir (OnWorkspaceTopology).
-        ClearPlanSurface();
-        SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
-        CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
+        foreach (string line in sectionLines ?? []) AppendRunLine(line);
+        BeginSyncMode(mode, silentReason);
+        if (mode.IsVisible())
+        {
+            SelectedProjectId = null; // [design doSync] seçim temizlenir, filtre KORUNUR
+            CurrentOperation = OperationLabel.Sync; // [design v1.11.0 §2.2] kalıcı işlem pill'i
+        }
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
@@ -1204,11 +1226,13 @@ public sealed partial class RunViewModel : ObservableObject
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
         ArmEngineWatchdog();
         bool sent = await TrySendAsync(
-            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire), "sync");
+            new SyncWorkspaceCommand(RootPath, Branch, LayerPatterns, Configuration, ExternalProjectsForWire,
+                Fetch: mode.Fetches()), "sync");
         // Gönderim SENKRON düştüyse (engine hazır değil/ölü) hiçbir syncStarted GELMEYECEK — kapı burada
         // açılmazsa Sync düğmesi kalıcı pasif kalırdı. Envanter komutları yine de GÖNDERİLİR: onlar Sync'in
         // event akışından bağımsızdır ve tek huni buradan geçer (bkz. aşağıdaki gerekçeler).
-        if (!sent) ReleaseSyncRequest();
+        if (sent) LastSyncStartedAtMs = _nowMs(); // [review M1] yalnız motora giden istek bir Sync başlatır
+        else ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
         // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
@@ -1217,25 +1241,21 @@ public sealed partial class RunViewModel : ObservableObject
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
         await TrySendAsync(new ListBranchesCommand(RootPath), "listBranches");
-        // [T2 fix-1 · I-G] Worktree envanteri de BURADAN istenir — branch'in birebir simetriği ve AYNI
-        // gerekçelerle. Gönderilmediği sürece <see cref="Worktrees"/> boş kalıyordu; sonucu yalnız boş bir
-        // popover listesi değil, ÜRETİLEN AD'ın kendisiydi: AutoWorktreeName "aynı slug önekiyle başlayan
-        // mevcut worktree sayısı"nı hep 0 sayıp her seferinde `-1` son ekini veriyor, yani var olan bir
-        // worktree ile ÇAKIŞAN bir ad öneriyordu. Hatası ayrı kodla döner ("worktreeListFailed").
-        await TrySendAsync(new ListWorktreesCommand(RootPath), "listWorktrees");
+        return sent;
     }
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
     // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
     // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
     // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
     // [clean] Clean uçuştayken Sync de beklemelidir: Sync'in tam analizi tam o sırada silinen bin/obj'i okur.
-    private bool CanSync() => !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    // [final review O1] Soru tek yerde: WorkspaceGateOpen.
+    private bool CanSync() => WorkspaceGateOpen;
 
     /// <summary>
     /// [clean] Bakım kutusundaki <b>Clean</b>: aktif workspace'in keşfedilen projelerinin <c>bin</c>/<c>obj</c>
     /// klasörlerini ve o workspace'e ait build-state kayıtlarını siler. <b>Onay dialogu YOKTUR</b> — iş
     /// tıklar tıklamaz başlar; geri alınamayan tek şey zaten yeniden üretilebilen derleme çıktısıdır.
-    /// <para><see cref="SyncCoreAsync"/>'in (<c>clearBuffers:true</c>) simetriğidir ve AYNI sırayı izler: konsol +
+    /// <para><see cref="SyncCoreAsync"/>'in (<see cref="SyncMode.Manual"/>) simetriğidir ve AYNI sırayı izler: konsol +
     /// event stream TIKLAMA ANINDA temizlenir ([design v1.13.2 §9] "her işlemde temizlenir" — BeginRunAsync ve
     /// Sync ile AYNI iki metot, kopya YASAK), temizlik SEÇİMDEN ÖNCE gelir (kırpışma gerekçesi orada), seçim
     /// temizlenir, filtre KORUNUR, işlem pill'i yazılır, kapı GÖNDERİMDEN ÖNCE kapanır (istek penceresi), tek
@@ -1275,8 +1295,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[clean] Clean yalnız bir repo seçiliyken anlamlıdır (<see cref="HasWorkspace"/>) — topoloji
     /// GEREKMEZ: servis kendi taramasını yapar, hiç Sync yapılmamış bir workspace'te de çalışır. Uçuştaki bir
     /// run/Sync/Clean ise onu kapatır (karşılıklı dışlama).</summary>
-    private bool CanClean() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    private bool CanClean() => HasWorkspace && WorkspaceGateOpen;
 
     /// <summary>
     /// [optimize] Workspace doktoru: eksik NuGet paketlerini restore eder, restore'un çözemediği kırık
@@ -1316,8 +1335,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[optimize] <see cref="CanClean"/>'in birebir simetriği: repo şart, topoloji DEĞİL (servis kendi
     /// taramasını yapar). Uçuştaki bir run/Sync/Clean/Optimize kapıyı kapatır.</summary>
-    private bool CanOptimize() =>
-        HasWorkspace && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    private bool CanOptimize() => HasWorkspace && WorkspaceGateOpen;
 
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
@@ -1336,7 +1354,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// runCompleted gelmeyeceği için aksi halde <c>Stopping</c>'te sonsuza dek asılı kalırdı. Bu,
     /// <see cref="BeginRunAsync"/>'in "gönderim başarısız → IsStarting geri açılır" kapısının ikizidir.</para>
     /// <para><see cref="IsRunning"/>/<see cref="IsStarting"/>'e DOKUNULMAZ: motor hâlâ koşuyor, dolayısıyla
-    /// <see cref="IsMidRunLocked"/> sürer (branch/worktree/configuration kilidi kalkmaz, split-button geri
+    /// <see cref="IsMidRunLocked"/> sürer (branch/configuration kilidi kalkmaz, split-button geri
     /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
     /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
     /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
@@ -1359,10 +1377,18 @@ public sealed partial class RunViewModel : ObservableObject
         // alınacak bir İSTEK var. Motora hiçbir şey gitmez.
         if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
+        AppendRunLine(StopRequestedLine(Counters.Building));
+        await SendStopAsync(_currentRunId, StopKind.Graceful);
+    }
+
+    /// <summary>Stop'un gönderimi — kullanıcının Stop'u ve branch kesmesi (<see cref="RequestInterruptAsync"/>) AYNI
+    /// kapıdan geçer: faz gönderimden ÖNCE <see cref="AppPhase.Stopping"/>'e yazılır, gönderim senkron düşerse geri
+    /// alınır (gerekçe <see cref="StopAsync"/>'in özetinde).</summary>
+    private async Task SendStopAsync(string runId, StopKind kind)
+    {
         var previous = Phase;
         Phase = AppPhase.Stopping;
-        AppendRunLine(StopRequestedLine(Counters.Building));
-        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop"))
+        if (!await TrySendAsync(new StopRunCommand(runId, kind), "stop"))
             Phase = previous;
     }
 
@@ -1394,30 +1420,37 @@ public sealed partial class RunViewModel : ObservableObject
     /// için <see cref="EngineRestartable"/> true kalır ve <see cref="EngineDiedMessage"/> eski "unexpectedly
     /// stopped" metniyle donar: kullanıcıya sonsuza dek "Restart engine" sunulur, komutlar açık kalır ve her
     /// tıklama şeritteki mesajla ÇELİŞEN ikinci bir hata satırı üretir — <see cref="EngineRestartable"/>'ın
-    /// değişmezi de ("EngineDiedMessage'ı yazan HER yol bunu da yazar") bozulurdu.</para></summary>
+    /// değişmezi de ("EngineDiedMessage'ı yazan HER yol bunu da yazar") bozulurdu.</para>
+    /// <para>[final review I1] Başarılı yeniden başlatma ilk açılışla AYNI hazır yolundan geçer
+    /// (<see cref="OnEngineReady"/>): "Engine ready" satırı, PID/sürüm ve — bir workspace açıkken — tek bir Appended
+    /// Sync. Sıra ZORUNLUdur: önce eski motorun pencereleri bırakılır (<see cref="ReleaseAfterEngineLoss"/>), SONRA
+    /// hazır yolu — ters sırada bırakma yeni Sync'in istek bayrağını da silerdi.</para></summary>
     [RelayCommand]
     private async Task RestartEngineAsync()
     {
+        // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği event'leri
+        // bekleyen hiçbir durum kalmamalı (ReleaseAfterEngineLoss). Yeni motor başlatılamadıysa da geçerlidir: orada
+        // da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
+        EngineReadyEvent ready;
         try
         {
-            await _engine.RestartAsync();
+            ready = await _engine.RestartAsync();
             EngineDiedMessage = null;
         }
         catch (Services.EngineUnavailableException ex)
         {
             OnEngineUnavailable(ex.ExePath, ex.Reason); // [final review I-2] D1'in "engine yok" durumu
+            ReleaseAfterEngineLoss();
+            return;
         }
         catch (Exception ex)
         {
             AppendRunLine($"[error] engine restart failed: {ex.Message}");
-        }
-        finally
-        {
-            // Eski process (ve tüm MSBuild child'ları) her koşulda gitti — o motorun asla göndermeyeceği
-            // event'leri bekleyen hiçbir durum kalmamalı. Yeni motor başlatılamadıysa da geçerlidir:
-            // orada da bekleyecek bir şey yoktur (bkz. OnEngineUnavailable, komutlar zaten kapanır).
             ReleaseAfterEngineLoss();
+            return;
         }
+        ReleaseAfterEngineLoss();
+        OnEngineReady(ready.EngineVersion, ready.Pid);
     }
 
     /// <summary>[C2] Aynı projeye tekrar tıklamak seçimi kaldırır (kanonik deselect, BuildApp.jsx). Proje
@@ -1477,6 +1510,7 @@ public sealed partial class RunViewModel : ObservableObject
         bool locked = IsMidRunLocked;
         foreach (var row in Projects) row.IsRunLocked = locked;
         if (!locked) RunTargetId = null;
+        NotifyAutoSyncGate(); // [spec 2026-09-18 §6.1] koşu bitti → bekleyen kendiliğinden Sync tetiği
     }
 
     partial void OnRunTargetIdChanged(string? value)
@@ -1620,7 +1654,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[C2 testleri] YALNIZ testler ayarlar (bkz. <see cref="DebugAfterStitchLockExited"/> deseni):
     /// bir komut gönderilmeden hemen ÖNCE senkron tetiklenir; gönderilen <see cref="StartRunCommand"/>'ın
-    /// workspace argümanlarını (Mode/Branch/UseWorktree/WorktreeName/LayerPatterns) gerçek Supervisor'a
+    /// workspace argümanlarını (Mode/RootPath/Configuration/LayerPatterns) gerçek Supervisor'a
     /// ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
     internal Action<IpcCommand>? DebugOnCommandSent;
 
@@ -1669,7 +1703,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// çıkışın TEK yolu "Restart engine"dir. Optimize'da bu daha da keskindir: onun bir iptal komutu YOKTUR,
     /// uzun bir restore dizisinden tek kaçış budur.</para>
     private bool WaitingOnEngine =>
-        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || SyncBusy || CleanBusy || OptimizeBusy;
+        IsStarting || Phase is AppPhase.Stopping or AppPhase.Syncing || WorkspaceBusy;
 
     /// <summary>Sessizlik saatini şimdiye alır: bekleyiş TAM BURADA başlar. Kurulmasaydı, uzun süre boşta
     /// duran bir uygulamada basılan ilk Build anında "cevap vermiyor" derdi.</summary>
@@ -1700,6 +1734,7 @@ public sealed partial class RunViewModel : ObservableObject
         // "susuyor mu". Uyarının kendisi BURADA temizlenmez: bu metot ProjectLogEvent için arka plan
         // thread'inden de çağrılır ve gözlemlenebilir alanların tek yazıcısı UI thread'indeki tick'tir.
         Volatile.Write(ref _lastEngineSignalMs, _nowMs());
+        if (IsStaleRunEnd(ev)) return; // [T8 fix round 1 · I1] faz ve akış bu koşuya ait değil
         switch (ev)
         {
             case RunStartedEvent e: OnRunStarted(e); break;
@@ -1716,7 +1751,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ErrorEvent e: OnError(e); break;
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
-            case SyncProgressEvent e: AppendRunLine(e.Line); break;
+            case SyncProgressEvent e: OnSyncProgress(e); break; // [spec §6.2] sessiz kip transkripti gizler
             // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
             // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
             // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.
@@ -1725,6 +1760,8 @@ public sealed partial class RunViewModel : ObservableObject
             // [v1.16.0] Pull sonucu: başarıysa chip düşer + otomatik Sync (konsol KORUNUR). Sync'in kendisi
             // async'tir ve bu dal onu BEKLEMEZ — event pompası bloklanmaz (gönderim zaten milisaniyeler).
             case PullCompletedEvent e: _ = OnPullCompletedAsync(e); break;
+            // [spec 2026-09-18 §6.3] Checkout sonucu: başarıda yeni bölüm + Sync zinciri (beklenmez — pompa bloklanmaz).
+            case CheckoutCompletedEvent e: _ = OnCheckoutCompletedAsync(e); break;
             // [clean] Clean yüzeyi — handler'lar RunViewModel.Workspace.cs'te (Sync guard'ın yanında).
             // Satırlar Sync yüzeyine AİT DEĞİLDİR: ayrı bayrak, ayrı kanal.
             case CleanStartedEvent: OnCleanStarted(); break;
@@ -1737,7 +1774,7 @@ public sealed partial class RunViewModel : ObservableObject
             case OptimizeCompletedEvent: _ = OnOptimizeCompletedAsync(); break;
             case WorkspaceTopologyEvent e: OnWorkspaceTopology(e); break;
             case BranchListEvent e: OnBranchList(e); break;
-            case WorktreeListEvent e: Worktrees.ReplaceAll(e.Worktrees); break;
+            case EngineReadyEvent e: OnEngineRecovered(e.InterruptedProjects); break;
         }
 
         // [D3] Event stream (tampon anlatı + aktif satır) — proje satırları/sayaçlar YUKARIDA güncellendikten
@@ -1749,6 +1786,8 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        _awaitingRunCompleted = true;
+        BeginInterruptRecord(e);
         // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
         // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
         _currentRunMode = e.Mode;
@@ -1981,6 +2020,7 @@ public sealed partial class RunViewModel : ObservableObject
         // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
         // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
         // gelmesi bu boşluğu kapatır.
+        if (state == ProjectRowState.Succeeded && trusted) NoteTrustedBuilt(projectId); // [T8] kesilen koşunun özeti
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
             // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin
@@ -2128,12 +2168,43 @@ public sealed partial class RunViewModel : ObservableObject
 
     private void OnRunCompleted(RunCompletedEvent e)
     {
+        _awaitingRunCompleted = false;
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
         RefreshRunSurface();
+        // [T8 fix round 1 · I1] Koşunun kendiliğinden Sync için bitişi BURASIDIR (runStopped değil): faz ve akış
+        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz.
+        NotifyAutoSyncGate();
     }
+
+    /// <summary>
+    /// [T8 fix round 1 · I1] <c>runStarted</c> görüldü, <c>runCompleted</c> henüz gelmedi. Motor ikisini ayrı
+    /// flush'larla yazar, App ayrı UI kuyruğu işleriyle işler: arada <c>runStopped</c> kilidi düşürür ama koşu
+    /// kendiliğinden Sync için hâlâ uçuştadır (<see cref="IsRunInFlight"/>). <c>runCompleted</c>, motor kaybı ve
+    /// koşu-bitiren hata yolları bırakır.
+    /// </summary>
+    private bool _awaitingRunCompleted;
+
+    /// <summary>Kendiliğinden Sync'in gördüğü koşu: kilit (<see cref="IsMidRunLocked"/>) ya da henüz
+    /// <c>runCompleted</c>'ı gelmemiş başlamış koşu.</summary>
+    internal bool IsRunInFlight => IsMidRunLocked || _awaitingRunCompleted;
+
+    /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
+    /// koşu çoktan bittikten sonra gelen <c>runStopped</c> (host, sahiplenemediği bir Stop'u — ör. koşu kapanırken
+    /// giden kesmeyi — anında onaylar). Faza ve akışa dokunmaz; o an başlamış olan işlemin (yeni bölümün Sync'i)
+    /// fazını ezerdi. Bekleyen bir Stop (<see cref="AppPhase.Stopping"/>) onayı her zaman kabul edilir — fazı
+    /// çözecek başka olay yoktur.</summary>
+    private bool IsStaleRunEnd(IpcEvent ev) => ev switch
+    {
+        RunStoppedEvent e => !IsCurrentRun(e.RunId) || !(IsRunInFlight || Phase == AppPhase.Stopping),
+        RunCompletedEvent e => !IsCurrentRun(e.RunId),
+        _ => false,
+    };
+
+    private bool IsCurrentRun(string runId) =>
+        _currentRunId is null || string.Equals(_currentRunId, runId, StringComparison.Ordinal);
 
     /// <summary>[B2] <c>runStopped</c> TEK DALLIDIR — run başlamış olsun ya da olmasın, faz
     /// <see cref="AppPhase.Stopped"/> ve run state serbest.
@@ -2179,12 +2250,14 @@ public sealed partial class RunViewModel : ObservableObject
         // dönüş RunEndingErrorCodes kapısından önce gelmelidir: bu kodlar orada YOKTUR.
         if (TryConsumeCleanFailure(e.Code, e.Message)) return;
         if (TryConsumeOptimizeFailure(e.Code, e.Message)) return;
+        if (TryConsumeCheckoutFailure(e.Code)) return;
         if (e.Code == RunInProgressCode) IsStarting = false;
         if (!RunEndingErrorCodes.Contains(e.Code)) return; // runInProgress/logNotFound/... aktif run'ı ETKİLEMEZ
         // [A5/T69 · Fix wave 1, Finding 2] Sync fazını bırakır ve hatanın KAYNAĞINI ayırt eder: kod Sync'ten
         // geldiyse (uçuşta bir Sync var ve run planlama penceresinde DEĞİL) run state'ine DOKUNULMAZ — Sync
         // salt-okurdur ve koşan bir run sırasında da tetiklenebilir. Gerekçe: RunViewModel.Workspace.cs.
         if (TryConsumeSyncFailure(e.Code, e.Message)) return;
+        _awaitingRunCompleted = false; // runCompleted gelmeyecek — kilit düşüşü koşunun bitişidir
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound — Rebuild'i geri aç
         // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
@@ -2257,6 +2330,7 @@ public sealed partial class RunViewModel : ObservableObject
         // olmayan bir koşuyu anlatırdı. Dinlenme fazı dürüst tabandır (şerit zaten engine-died önceliğiyle
         // kırmızı metni gösterir; bu, o metin temizlendikten SONRA görülecek durumdur).
         else if (Phase == AppPhase.Starting) Phase = RestingPhase;
+        _awaitingRunCompleted = false; // motor gitti — runCompleted gelmeyecek
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;
@@ -2268,6 +2342,8 @@ public sealed partial class RunViewModel : ObservableObject
         // bayrak sızarsa yeniden başlatılan motorda da düğmeler kilitli kalırdı.
         ReleaseCleanSurface();
         ReleaseOptimizeSurface();
+        SetCheckoutBusy(false); // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
+        SetPullBusy(false); // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
         EngineOverdueMessage = null;
@@ -2309,13 +2385,49 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[D1 review · C5] Motor hazır: konsolun boot satırında sürüm gösterilir (design-v1 §2.5 anlatı
     /// dili — "Build started — 14 projects, parallelism 4" ile aynı kalıp). Sürüm kimliği TEK kaynaktan gelir:
     /// <c>Directory.Build.props</c> → Supervisor assembly'sinin InformationalVersion'ı → <c>engineReady</c>.
-    /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para></summary>
+    /// <para>[About] Sürüm ve PID ayrıca SAKLANIR (Environment sekmesi okur); boot satırı DEĞİŞMEDİ.</para>
+    /// <para>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motor hazır olduğunda, bir workspace varsa ve Sync'e izin
+    /// varsa, fetch'li bir Sync başlar (<see cref="SyncMode.Appended"/>: boot satırları kalır, transkript altına akar).
+    /// İki çağıran: kabuğun ilk açılışı (<c>MainWindow.StartEngineAsync</c>) ve <see cref="RestartEngineAsync"/>.
+    /// Yalnız eski havuz ipucu oturum başına BİR kez yazılır (<see cref="_engineWasReady"/>).</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden Sync yalnız ilk hazır oluşta giderdi ("restart dünyayı
+    /// değiştirmez"). Oysa çökmeden sonra yeniden başlayan motor uçuştaki projeleri kurtarır (spec §5.5): ekranın
+    /// kararları artık yanlıştır ve kurtarılan satırlar ancak bir Sync'le gri "never built" okunur.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.2]</b> Eskiden açılış "seed-but-idle"dı (kayıtlı repo bilinir
+    /// ama Sync kullanıcıya kalır — <c>MainWindow</c> kök seed'i). Seed'in kendisi hâlâ komut göndermez
+    /// (<c>RunViewModelStateTests.Seeding_the_root_path_directly_lands_in_boot_without_starting_a_sync</c>);
+    /// açılışın Sync'i motor hazır olunca buradan gider.</para></summary>
     public void OnEngineReady(string engineVersion, int pid)
     {
         EngineVersion = engineVersion;
         EnginePid = pid;
         AppendRunLine($"Engine ready — v{engineVersion}");
+        if (!_engineWasReady)
+        {
+            _engineWasReady = true;
+            string? legacyPoolHint = LegacyWorktreePool.Hint(LegacyWorktreePoolRoot);
+            if (legacyPoolHint is not null) AppendRunLine(legacyPoolHint);
+        }
+        if (HasWorkspace && CanSync()) _ = SyncCoreAsync(SyncMode.Appended);
     }
+
+    /// <summary>[Task 11 · test injection] Eski worktree havuzunun kökü — üretimde
+    /// <see cref="LegacyWorktreePool.DefaultRoot"/>, testlerde gerçek %LOCALAPPDATA%'a bakmasın diye
+    /// override edilir.</summary>
+    internal string LegacyWorktreePoolRoot { get; set; } = LegacyWorktreePool.DefaultRoot;
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardı: konsola kaç projenin
+    /// yeniden derleneceği yazılır (metin Core'daki tek kaynaktan). Olay akışından (<see cref="OnEvent"/>) gelir,
+    /// <see cref="OnEngineReady"/>'nin çağıranından DEĞİL: <c>engineReady</c> hem ilk açılışta hem
+    /// <see cref="RestartEngineAsync"/>'te <c>EventReceived</c>'dan geçer — çökmeden sonra yeniden başlatılan motor
+    /// tam da kurtarmanın gerektiği durumdur, ve tek dal iki yolu birden kapsar.</summary>
+    private void OnEngineRecovered(int interruptedProjects)
+    {
+        if (interruptedProjects > 0) AppendRunLine(PlanProgressLines.PreviousRunInterrupted(interruptedProjects));
+    }
+
+    /// <summary>Motor bu oturumda en az bir kez hazır oldu mu — eski havuz ipucu yalnız ilk hazır oluşta yazılır.</summary>
+    private bool _engineWasReady;
 
     // ---------------------------------------------------------------- konsol/log
 
@@ -2359,9 +2471,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// (run dokümanı + tüm proje logları) TEMİZLENİR — ekrandaki her şey artık yürüyen işlemin hikâyesidir.
     /// <see cref="ClearStreamForNewOperation"/>'ın konsol eşi; ikisi birlikte "her işlemde temizlenir" kuralını
     /// oluşturur. <see cref="BeginRunAsync"/> (Build/Rebuild/Cycles) VE <see cref="SyncCoreAsync"/> (Sync)
-    /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/>'in
-    /// üç çağıranından ikisi (<see cref="ApplySettingsAsync"/>, <see cref="ChangeRepositoryAsync"/>) bu metodu
-    /// hiç ÇAĞIRMAZ — nüans (kendi hazırlık notlarını korumak için) <see cref="SyncCoreAsync"/>'in kendi XML
+    /// AYNI metodu paylaşır — inline kopya YASAK. <b>Koşulsuz "her işlemde" OKUMA:</b> <see cref="SyncCoreAsync"/> bu metodu
+    /// yalnız bölüm açan kiplerde (<see cref="SyncMode.Manual"/>, <see cref="SyncMode.BranchChange"/>) çağırır —
+    /// nüans (Appended/Silent'ın geçmişi korumak için atlaması) <see cref="SyncCoreAsync"/>'in kendi XML
     /// doc'undadır.
     /// <para><b>[DEĞİŞEN KURAL — v1.13.2]</b> Bu gövde önceden yalnız <see cref="BeginRunAsync"/>'in İÇİNDE,
     /// adsız bir <c>if (clearBuffers) lock (_gate) { … }</c> bloğuydu; Sync bu bloğa hiç uğramadığından

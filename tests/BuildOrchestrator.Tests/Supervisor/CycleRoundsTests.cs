@@ -675,6 +675,48 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §6.1 · karar 10] Branch kesmesi SCC üyelerine de uygulanır — üyeler aynı tek kapıdan
+    /// (<c>ReportProjectResult</c>) geçer. Kesme tur 2'nin SON üyesi derlenirken düşer: tur tamamlanır ve
+    /// <c>Decide(2, {}, {})</c> Converged verir; kapı olmasaydı grup güvenilir sayılır ve "sig" persist edilirdi.
+    /// </summary>
+    [Fact]
+    public async Task a_cycle_member_finishing_after_an_interrupt_is_not_recorded_as_built()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            // [fix round 1 · M4] Eski bir yakınsamama hafızası: kesilen koşunun "Converged" kararı onu SİLMEMELİ.
+            store.Upsert(store.Load()[Id("A")] with { NonConvergentSignature = "mem" });
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            RunCoordinator? sut = null;
+            var invoker = rec.Invoker((name, round) =>
+            {
+                if (name == "B" && round == 2) Assert.True(sut!.TryRequestStop(StopKind.Interrupt));
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store);
+            sut = h.Sut;
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls); // tur 2 tamamlandı (yakınsama kararı verildi)
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.Trusted));
+            Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
+            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // "sig" YAZILMADI
+            Assert.Equal("old", store.Load()[Id("B")].BuiltSignature);
+            // [M4] Kesilen koşunun tur kararı yayılmaz ve hafızaya yazılmaz — Stop'un "Continue" kuralıyla aynı.
+            Assert.DoesNotContain(h.Events, e => e is CycleCompletedEvent);
+            Assert.Equal("mem", store.Load()[Id("A")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     [Fact]
     public async Task a_stop_mid_group_publishes_no_success_even_for_the_members_that_finished_green()
     {

@@ -10,9 +10,9 @@ using Xunit.Abstractions;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// Envanter yayınının (<c>branchList</c> / <c>listWorktrees</c>) UI maliyeti. <b>Ölçülen kusur:</b> her Sync
+/// Envanter yayınının (<c>branchList</c>) UI maliyeti. <b>Ölçülen kusur:</b> her Sync
 /// envanteri yeniden yayınlar; <c>RunViewModel.Replace</c> N kez <c>RemoveAt</c> + N kez <c>Add</c> yaparak
-/// <b>2N bildirim</b> üretir ve DÖRT abone (BranchPopover, WorktreePopover, ActionBar, MainWindow başlığı) her
+/// <b>2N bildirim</b> üretir ve her abone (BranchPopover — ölçüm anında dört aboneydi) her
 /// bildirimde tüm satırlarını yeniden kurar → O(n²). Gerçek OSYS reposu 475 branch taşır (<c>refs/heads</c> +
 /// <c>refs/remotes</c>) ve ölçüm bu ölçekte <b>Sync başına ~36 saniye</b> UI donması verdi.
 ///

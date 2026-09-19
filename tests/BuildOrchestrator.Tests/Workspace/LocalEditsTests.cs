@@ -20,7 +20,7 @@ public class LocalEditsTests
     private static IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> InputsFor(params string[] logicalPaths) =>
         new Dictionary<string, IReadOnlyList<ProjectInput>>
         {
-            [ProjectId] = [.. logicalPaths.Select(p => new ProjectInput(p, p))],
+            [ProjectId] = [.. logicalPaths.Select(p => new ProjectInput(p))],
         };
 
     /// <summary>Proje klasörünün dışındaki bir dirty dosya projeyi işaretlemez — kesişim GERÇEKTEN boş kalmalı.</summary>

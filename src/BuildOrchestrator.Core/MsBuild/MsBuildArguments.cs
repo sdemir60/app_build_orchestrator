@@ -18,19 +18,14 @@ public enum MsBuildTarget { Build, Rebuild, Clean }
 public static class MsBuildArguments
 {
     /// [D9 + SPIKE S2] v1 flag'leri SABİT; BuildProjectReferences=false ZORUNLU (bağımlılıklar ayrı node olarak derlenir).
+    /// Her proje kendi (VS-parity) obj'inde derlenir; obj yönlendirmesi yoktur.
     public static IReadOnlyList<string> Build(string projectPath, string configuration,
-        string? baseIntermediateOutputPath = null, MsBuildTarget target = MsBuildTarget.Build)
-    {
-        var args = new List<string>
-        {
-            projectPath, TargetArg(target), $"-p:Configuration={configuration}",
-            "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
-            "-clp:Summary", "-nologo",
-        };
-        if (baseIntermediateOutputPath is not null)
-            args.Add($"-p:BaseIntermediateOutputPath={EnsureTrailingBackslash(baseIntermediateOutputPath)}");
-        return args;
-    }
+        MsBuildTarget target = MsBuildTarget.Build) =>
+    [
+        projectPath, TargetArg(target), $"-p:Configuration={configuration}",
+        "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
+        "-clp:Summary", "-nologo",
+    ];
 
     /// [SPIKE S2 şart-1] packages.config restore sln bağlamı İSTER; [S1] nuget.exe YOK.
     public static IReadOnlyList<string> RestorePackagesConfig(string projectPath, string solutionDir) =>
@@ -42,7 +37,7 @@ public static class MsBuildArguments
     /// <summary>
     /// Bir invoke isteğinin hangi MSBuild çağrılarına dönüştüğü — BUILD yolunda argüman seçiminin TEK kaynağı
     /// (invoker yalnız çalıştırır, seçmez). Optimize'ın restore-only yolu buradan geçmez: onun isteğinde
-    /// seçilecek bir şey yoktur (ne hedef, ne configuration, ne obj izolasyonu), doğrudan
+    /// seçilecek bir şey yoktur (ne hedef, ne configuration), doğrudan
     /// <see cref="RestorePackagesConfig"/> çağrılır — argüman listesinin kaynağı yine TEKTİR.
     ///
     /// <para><b>[DEĞİŞEN KURAL]</b> Bir tur boyunca harici hedefler AYRI bir argüman listesi kullandı
@@ -57,7 +52,7 @@ public static class MsBuildArguments
         ArgumentNullException.ThrowIfNull(request);
 
         return (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
-                Build(request.ProjectId, request.Configuration, request.BaseIntermediateOutputPath, request.Target));
+                Build(request.ProjectId, request.Configuration, request.Target));
     }
 
     /// <summary>Hedefin komut satırı karşılığı — TEK yer; <c>-t:</c> argümanını başka hiçbir yol yazmaz.</summary>

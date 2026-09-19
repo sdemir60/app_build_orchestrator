@@ -15,11 +15,11 @@ namespace BuildOrchestrator.App.Views;
 /// [D6/T40] Branch popover (BuildApp.jsx:830-852). DataContext bir <see cref="RunViewModel"/>'dir; branch listesi
 /// <see cref="RunViewModel.Branches"/>'ten okunur. Arama BÜYÜK/küçük harf duyarsız alt-dize filtreler; kapanınca
 /// (<see cref="IsOpen"/>=false) sorgu SIFIRLANIR. Bir satıra tıklamak <see cref="RunViewModel.SelectBranch"/>'i
-/// çağırır (K3: worktree zorlama + niyet satırı — <c>git switch</c> DEĞİL) ve <see cref="BranchPicked"/>'i yayar
+/// çağırır ve <see cref="BranchPicked"/>'i yayar
 /// (ActionBar popover'ı kapatır).
 ///
 /// <para><b>[W2]</b> <see cref="IsOpen"/> DP'si + açılış (tazele → pop-in → odağı içeri) + Esc →
-/// <c>CloseRequested</c> + VM takası <see cref="PopoverBase"/>'e taşındı (WorktreePopover ile birebir kopyaydı);
+/// <c>CloseRequested</c> + VM takası <see cref="PopoverBase"/>'e taşındı (eski worktree popover'ıyla birebir kopyaydı);
 /// burada yalnız BRANCH'e özel olan kalır (arama filtresi, kapanışta sorgu sıfırlama, satır inşası).</para>
 /// </summary>
 public partial class BranchPopover : PopoverBase
@@ -43,8 +43,8 @@ public partial class BranchPopover : PopoverBase
     /// <summary>[E5/T47] Açılışta odak: ilk etkileşimli öğe = arama kutusu.</summary>
     protected override UIElement InitialFocusTarget => PART_Search;
 
-    // [E5/final fold — latent] Popover AÇIKKEN Branches envanteri değişirse liste bayat kalmasın: WorktreePopover
-    // deseniyle CollectionChanged'e (+ Branch değişimine, seçili ✓ için) abone ol; eski VM'den çöz. Böylece açık/
+    // [E5/final fold — latent] Popover AÇIKKEN Branches envanteri değişirse liste bayat kalmasın:
+    // CollectionChanged'e (+ Branch değişimine, seçili ✓ için) abone ol; eski VM'den çöz. Böylece açık/
     // kapalı fark etmeksizin CANLI kalır (fetch tamamlanınca gelen yeni branch listesi anında yansır).
     protected override void SubscribeVm(RunViewModel vm)
     {
@@ -115,6 +115,7 @@ public partial class BranchPopover : PopoverBase
     private void Pick(BranchRef branch)
     {
         BranchPicked?.Invoke();  // popover'ı kapat (BuildApp.jsx:1337 setBranchPop(false))
-        Vm?.SelectBranch(branch);
+        // Checkout async'tir (gönderim + motorun cevabı); tıklama onu beklemez, sonucu konsol ve chip anlatır.
+        _ = Vm?.SelectBranch(branch);
     }
 }

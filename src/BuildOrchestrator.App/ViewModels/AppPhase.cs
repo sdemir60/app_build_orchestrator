@@ -25,7 +25,7 @@ public enum AppPhase
     Idle,
 
     /// <summary>Run istendi ama motor henüz <c>runStarted</c> yazmadı: taze bir segmentte bu pencerede
-    /// planlama koşar (worktree hazırlığı → tarama → graf → topo → incremental) ve 177 projelik bir
+    /// planlama koşar (tarama → graf → topo → incremental) ve 177 projelik bir
     /// workspace'te saniyeler sürer. Tıklamanın kaydedildiğini gösteren TEK yüzey budur — pencere eskiden
     /// fazsızdı: konsol <c>BeginRunAsync</c> tarafından temizleniyor, şerit önceki metinde donuyordu.
     /// <para>Adı "Planning" DEĞİL: pencerenin işi tıklamanın kaydedildiğini göstermektir, planlamanın

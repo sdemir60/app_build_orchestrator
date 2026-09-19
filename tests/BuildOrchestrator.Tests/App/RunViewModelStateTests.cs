@@ -11,7 +11,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync vs Build/Retry
-/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/worktree/
+/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
 /// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
@@ -347,21 +347,20 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [kullanıcı kararı 2026-09-12] <b>Sync de plan yüzeyini TIKLAMA ANINDA boşaltır</b> — Clean'in birebir
-    /// simetriği (<c>CleanCommandTests.Clean_empties_the_project_list_and_the_graph_at_click</c>).
+    /// [spec 2026-09-18 §1-13 · §6.2] <b>Sync düğmesi plan yüzeyine tıklamada DOKUNMAZ:</b> graf yeniden
+    /// kurulmaz (<see cref="RunViewModel.TopologyChanged"/> yok), plan (will-build) durur, faz Boot'a düşmez.
+    /// Satırlar yapı aynıysa motorun topolojisiyle yerinde tazelenir
+    /// (<c>OperationPipelineTests.A_sync_click_keeps_the_list_and_the_graph</c> listeyi pinler).
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Sync eskiden yalnız konsolu ve event stream'i tıklamada temizliyordu; liste
-    /// ve graf ekranda ESKİ topolojiyle duruyor, ancak motorun cevabı gelince yenileniyordu. Kullanıcının
-    /// gördüğü şey tek bir işlemin iki ayrı sarsıntısıydı: konsol anında boşalıyor, liste bir süre bayat
-    /// kalıyor, sonra yerine yenisi geliyordu. Clean'in kuralı buraya da taşındı — aynı karede her şey boşalır,
-    /// Sync'in yayınladığı topoloji hepsini birden geri getirir.</para>
-    ///
-    /// <para>Bedeli Clean'inkiyle AYNI ve bilerek kabul edildi: gönderim düşerse liste boş kalır (burada motor
-    /// hiç başlatılmamıştır, yani gönderim SENKRON düşer) — geri getiren şey bir sonraki Sync'tir. Panel yanlış
-    /// konuşmaz: faz <see cref="AppPhase.Boot"/>'a döner ve davet hiçbir şey söylemez.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
+    /// <c>Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does</c> — kullanıcı kararı 2026-09-12:
+    /// Sync de Clean gibi tıklamada liste + grafı boşaltır, faz Boot'a döner, topoloji hepsini geri getirir.
+    /// Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her Sync'te listenin
+    /// boşalıp dolması yapı aynıyken hiçbir bilgi taşımadan ekranı sarsıyordu. Boşaltma Clean/Optimize
+    /// tıklamasında ve gerçek bir kök değişiminde kaldı.</para>
     /// </summary>
     [Fact]
-    public async Task Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does()
+    public async Task A_sync_click_leaves_the_plan_surface_alone()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -375,15 +374,15 @@ public class RunViewModelStateTests
         int topologyChanges = 0;
         vm.TopologyChanged += (_, _) => topologyChanges++;
 
+        var phaseBefore = vm.Phase;
+
         await vm.SyncCommand.ExecuteAsync(null);
 
-        Assert.Empty(vm.Projects);
-        Assert.False(vm.HasTopology);   // graf da boşalır — kabuk TopologyChanged ile yeniden kurar
-        Assert.Equal(1, topologyChanges);
-        Assert.Equal(0, vm.WillBuildCount);
-        Assert.Equal(AppPhase.Boot, vm.Phase);
-        Assert.Equal(ListInviteState.None,
-            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+        Assert.Single(vm.Projects);
+        Assert.True(vm.HasTopology);
+        Assert.Equal(0, topologyChanges);   // graf yeniden kurulmadı
+        Assert.Equal(1, vm.WillBuildCount); // plan durur — motorun önizlemesi gelince tazelenir
+        Assert.Equal(phaseBefore, vm.Phase);
     }
 
     [Fact]
@@ -451,8 +450,14 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "Build komutu seçili branch'i,
+    /// <c>UseWorktree</c>'yi ve worktree adını da taşır" idi (ad: <c>..._with_branch_worktree_and_layer_patterns</c>).
+    /// Motor artık yalnız çalışma ağacında derler; <c>StartRunCommand</c> bu alanları taşımaz
+    /// (<c>NoWorktreeSurfaceTests</c>). Kalan iddia: mod, kök, configuration ve katman pattern'leri.</para>
+    /// </summary>
     [Fact]
-    public async Task Build_command_sends_RunMode_Build_with_branch_worktree_and_layer_patterns()
+    public async Task Build_command_sends_RunMode_Build_with_workspace_arguments_and_layer_patterns()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var layers = new List<LayerPattern> { new(0, "^Core", "Core") };
@@ -460,19 +465,8 @@ public class RunViewModelStateTests
         {
             RootPath = @"D:\repo",
             Configuration = "Release",
-            UseWorktree = true,
             LayerPatterns = layers,
         };
-        // [T2 fix-1 · C1/I4] Branch ARTIK doğrudan atanamaz: StartRunCommand.Branch bir NİYETtir ve yalnız
-        // kullanıcının AÇIK seçimi oraya gider (bkz. RunViewModel.RunBranchIntent). Doğrudan atama bir
-        // görüntüleme/seed değeridir ve komuta GİTMEZ — bu testin konusu komutun ALANLARININ doğru
-        // taşındığı olduğundan, branch de üretimdeki gerçek yoldan (popover seçimi) kurulur.
-        vm.OnEvent(new BranchListEvent([
-            new BranchRef("main", "aaaaaaaaaaaa", true, false),
-            new BranchRef("feature/x", "bbbbbbbccccc", false, false),
-        ]));
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
-        vm.WorktreeName = "wt-1"; // SelectBranch hedefi auto'ya (null) döndürür → seçimden SONRA verilir
         StartRunCommand? sent = null;
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
 
@@ -482,9 +476,6 @@ public class RunViewModelStateTests
         Assert.Equal(RunMode.Build, sent!.Mode);
         Assert.Equal(@"D:\repo", sent.RootPath);
         Assert.Equal("Release", sent.Configuration);
-        Assert.Equal("feature/x", sent.Branch);
-        Assert.True(sent.UseWorktree);
-        Assert.Equal("wt-1", sent.WorktreeName);
         Assert.Same(layers, sent.LayerPatterns);
     }
 
@@ -522,7 +513,7 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- T12 kilit / T43 configuration
 
     [Fact]
-    public async Task Branch_worktree_and_configuration_are_locked_while_running_but_perf_stays_live()
+    public async Task Branch_and_configuration_are_locked_while_running_but_perf_stays_live()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
@@ -533,7 +524,7 @@ public class RunViewModelStateTests
         };
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         Assert.True(vm.IsRunning);
-        Assert.True(vm.IsMidRunLocked); // branch/worktree/configuration kontrolleri KİLİTLİ
+        Assert.True(vm.IsMidRunLocked); // branch/configuration kontrolleri KİLİTLİ
 
         vm.SetConfiguration("Release"); // koşarken kilitli → no-op
         Assert.Equal("Debug", vm.Configuration);
@@ -803,8 +794,8 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- [Sync guard] Sync'in kendisi de çift tetiklenemez
     //
     // Ölçülen kusur: Sync düğmesi, Sync sürerken basılabilir kalıyordu. İkinci basış motora ikinci bir TAM
-    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış ÜÇ komut gönderir
-    // (sync + listBranches + listWorktrees) — konsolda aynı transkript iki kez akıyor, şerit
+    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış İKİ komut gönderir
+    // (sync + listBranches) — konsolda aynı transkript iki kez akıyor, şerit
     // Syncing → Idle → Syncing yapıyordu. Kapı iki pencereyi de kapsar: tıklama→syncStarted arası
     // (_syncRequested) ve syncStarted→syncCompleted arası (_syncInFlight).
 
@@ -1554,16 +1545,21 @@ public class RunViewModelStateTests
         Assert.True(ProjectFilter.Matches(RowOf(vm, "W"), null, new HashSet<string> { ProjectFilter.Warn }));
     }
 
-    /// <summary>[design v1.20.0 §5] Karar düşünce (branch değişimi) defter notu da düşer: bilinmiyor
-    /// modundaki satır üçgen taşımaz — not, düşürülen kararın parçasıdır.</summary>
+    /// <summary>[design v1.20.0 §5] Karar düşünce (repo değişimi) defter notu da düşer: bilinmiyor
+    /// modundaki satır üçgen taşımaz — not, düşürülen kararın parçasıdır.
+    /// <para>[spec 2026-09-18 §1-1/8] Tetik eskiden aktif olmayan bir branch'in seçimiydi; o seçim artık
+    /// kararları düşürmez (checkout gelene dek hiçbir şey yapmaz). Kararları satırları KORUYARAK düşüren tek yol
+    /// Settings'ten repo değişimidir ve ardından gelen Sync'in listeyi boşaltmadığı durum motorun erişilemez
+    /// olduğu durumdur — iddia aynı, tetik o.</para></summary>
     [Fact]
-    public void Dropping_the_decisions_drops_the_ledger_triangle_too()
+    public async Task Dropping_the_decisions_drops_the_ledger_triangle_too()
     {
         var vm = T5Vm();
         SyncWith(vm, Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]));
         Assert.True(RowOf(vm, "W").HasDepIssue); // ön-koşul
+        vm.OnEngineUnavailable(@"D:\missing\BuildOrchestrator.Supervisor.exe"); // Sync gitmez, liste kalır
 
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
+        await vm.ApplySettingsAsync([], @"D:\other-repo", []);
 
         Assert.Equal(VisualStatus.Unknown, RowOf(vm, "W").VisualStatus);
         Assert.False(RowOf(vm, "W").HasDepIssue);

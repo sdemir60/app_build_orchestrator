@@ -5,10 +5,10 @@
              xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
   <!--
     [D6/T40+T12+T43-UI] design-v1 ALT AKSIYON BARI (BuildApp.jsx:1543-1615). DataContext bir RunViewModel
-    (ShellRoot'tan miras). Bar: Sync · ayraç · 6 sayaç chip'i · esnek boşluk · branch/worktree popover chip'leri ·
+    (ShellRoot'tan miras). Bar: Sync · ayraç · 6 sayaç chip'i · esnek boşluk · branch popover chip'i · behind ·
     Debug|Release segment · perf · ayraç · Build split-button (koşarken Stop).
 
-    Sayaç chip'leri + branch/worktree/perf chip'lerinin İÇERİĞİ (ikon+etiket+değer) ve enable/checked durumu
+    Sayaç chip'leri + branch/perf chip'lerinin İÇERİĞİ (ikon+etiket+değer) ve enable/checked durumu
     KOD-TARAFI (ActionBar.xaml.cs) VM'den sürülür — StickyRibbon deseni. Ölçü/renk token'dan (hardcode YASAK);
     bar yüksekliği kontrolden (ShellRoot'ta Height=Size.ActionBarHeight=42; satır Auto), padding '0 10' + gap 8 (BuildApp.jsx:1544).
     Üstte 1px Brush.Border (BuildApp.jsx:1545 borderTop = 1px solid border token).
@@ -45,23 +45,10 @@
           </Popup>
         </Grid>
 
-        <!-- [design v1.16.0 §2.7-6a] "N behind" chip'i: YALNIZ geride kalınca ve YALNIZ aktif branch
-             seçiliyken görünür. Tıklama = ff-only pull (§3.9). Nötr ağırlık — statü rengi taşımaz. -->
+        <!-- [design v1.16.0 §2.7-6a] "N behind" chip'i: YALNIZ geride kalınca görünür
+             (spec 2026-09-18 §6.5). Tıklama = ff-only pull (§3.9). Nötr ağırlık — statü rengi taşımaz. -->
         <Button x:Name="PART_BehindChip" Style="{DynamicResource Ds.Bar.Chip.Action}" Margin="8,0,0,0"
                 VerticalAlignment="Center" Visibility="Collapsed" />
-
-        <!-- worktree chip + popover -->
-        <Grid Margin="8,0,0,0" VerticalAlignment="Center">
-          <ToggleButton x:Name="PART_WorktreeChip" Style="{DynamicResource Ds.Bar.Chip}" />
-          <Popup x:Name="PART_WorktreePopup" Placement="Top" PlacementTarget="{Binding ElementName=PART_WorktreeChip}"
-                 StaysOpen="False" AllowsTransparency="True" VerticalOffset="-8" PopupAnimation="None"
-                 IsOpen="{Binding IsChecked, ElementName=PART_WorktreeChip, Mode=TwoWay}">
-            <Border Style="{DynamicResource Ds.Popover}" Width="300">
-              <views:WorktreePopover x:Name="PART_WorktreePopover"
-                                     IsOpen="{Binding IsOpen, ElementName=PART_WorktreePopup, Mode=OneWay}" />
-            </Border>
-          </Popup>
-        </Grid>
 
         <!-- Debug | Release segment -->
         <ItemsControl x:Name="PART_Segment" Style="{DynamicResource Ds.Segment}" Margin="8,0,0,0" VerticalAlignment="Center">

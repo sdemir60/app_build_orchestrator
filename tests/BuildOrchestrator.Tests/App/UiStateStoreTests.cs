@@ -33,7 +33,6 @@ public class UiStateStoreTests
         var store = new JsonUiStateStore(path);
         var state = store.Load();
         state.RepositoryRoot = @"D:\src\osys"; state.Configuration = "Debug"; state.PerfMode = "Full";
-        state.Branch = "feature/x"; state.UseWorktree = true; state.WorktreeName = "feature-x-1";
         // [D7] LayerPatterns artık List<LayerPattern> (Order/Regex/Name) — eskiden List<string>'ti.
         state.LayerPatterns = [new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")];
         // [K5 · design v1.14.0 §9] ExternalProjects LayerPatterns'ın YANI BAŞINDA seed edilir — AYNI commit'te
@@ -46,9 +45,6 @@ public class UiStateStoreTests
         Assert.Equal(@"D:\src\osys", reloaded.RepositoryRoot);
         Assert.Equal("Debug", reloaded.Configuration);
         Assert.Equal("Full", reloaded.PerfMode); // [D6] PerfMode artık string ("Full"/"Balanced"/"Light")
-        Assert.Equal("feature/x", reloaded.Branch);
-        Assert.True(reloaded.UseWorktree);
-        Assert.Equal("feature-x-1", reloaded.WorktreeName);
         Assert.Equal([new LayerPattern(0, "OSYS.*.Core", "Core"), new LayerPattern(1, "OSYS.Web.*", "Web")], reloaded.LayerPatterns);
         Assert.Equal(
             [new ExternalProject(@"C:\a"), new ExternalProject(@"D:\shared\b.csproj")],
@@ -64,13 +60,38 @@ public class UiStateStoreTests
     {
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
-        File.WriteAllText(path, """{ "ColPct": 61, "Branch": "feature/x" }""");
+        File.WriteAllText(path, """{ "ColPct": 61, "Configuration": "Release" }""");
 
         var reloaded = new JsonUiStateStore(path).Load();
 
         Assert.Equal(61, reloaded.ColPct);
-        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.Equal("Release", reloaded.Configuration);
         Assert.Empty(reloaded.ExternalProjects);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-1 · §1-7] Worktree modu ve kalıcı branch seçimi kalktı: <c>Branch</c>,
+    /// <c>UseWorktree</c> ve <c>WorktreeName</c> artık durum dosyasının alanı DEĞİLDİR (branch değeri her
+    /// açılışta checkout edilmiş branch'ten okunur). Eski bir dosya bu alanları taşısa da yüklenir — diğer
+    /// alanlar korunur — ve bir sonraki kayıt onları geri YAZMAZ.
+    /// </summary>
+    [Fact]
+    public void An_old_state_file_with_worktree_fields_still_loads()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path,
+            """{ "ColPct": 61, "Configuration": "Release", "Branch": "feature/x", "UseWorktree": true, "WorktreeName": "feature-x-1" }""");
+        var store = new JsonUiStateStore(path);
+
+        var loaded = store.Load();
+        Assert.Equal(61, loaded.ColPct);
+        Assert.Equal("Release", loaded.Configuration);
+
+        store.Save(loaded);
+        string written = File.ReadAllText(path);
+        Assert.DoesNotContain("\"Branch\"", written, StringComparison.Ordinal);
+        Assert.DoesNotContain("Worktree", written, StringComparison.Ordinal);
     }
 
     [Fact] // [D6 fold] PerfMode bool→string? göçü: diskteki eski bool token'ı TÜM Load'u devirmemeli (startup wipe YOK).
@@ -80,15 +101,14 @@ public class UiStateStoreTests
         string path = Path.Combine(temp.Path, "ui-state.json");
         // Eski şema (PerfMode bir BOOL'du) + kalıcı yerleşim/tercih alanları:
         File.WriteAllText(path,
-            """{ "ColPct": 61, "LeftPct": 33, "PerfMode": false, "Branch": "feature/x", "UseWorktree": true }""");
+            """{ "ColPct": 61, "LeftPct": 33, "PerfMode": false, "Configuration": "Release" }""");
 
         var reloaded = new JsonUiStateStore(path).Load();
 
         Assert.Equal(61, reloaded.ColPct);        // yerleşim korundu (bayat token Load'u DEVİRMEDİ)
         Assert.Equal(33, reloaded.LeftPct);
         Assert.Null(reloaded.PerfMode);           // legacy bool → null (VM Balanced/4 varsayılanı korunur)
-        Assert.Equal("feature/x", reloaded.Branch);
-        Assert.True(reloaded.UseWorktree);
+        Assert.Equal("Release", reloaded.Configuration);
     }
 
     [Fact] // [D7 şema göçü] LayerPatterns List<string>→List<LayerPattern>: diskteki eski değer HEP boş `[]`'ti
@@ -97,13 +117,13 @@ public class UiStateStoreTests
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
         // Eski şemada yazılmış (LayerPatterns hep boş kalmıştı) + kalıcı yerleşim:
-        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": [], "Branch": "feature/x" }""");
+        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": [], "Configuration": "Release" }""");
 
         var reloaded = new JsonUiStateStore(path).Load();
 
         Assert.Equal(61, reloaded.ColPct);         // boş dizi Load'u DEVİRMEDİ (startup wipe YOK)
         Assert.Empty(reloaded.LayerPatterns);      // [] → boş List<LayerPattern>
-        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.Equal("Release", reloaded.Configuration);
     }
 
     [Fact] // [D7 re-review][Fix7] Yukarıdaki test yalnız boş `[]`'ı sınar (List<string> ve List<LayerPattern>
@@ -117,13 +137,13 @@ public class UiStateStoreTests
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
         File.WriteAllText(path,
-            """{ "ColPct": 61, "LayerPatterns": ["OSYS.*.Core"], "Branch": "feature/x" }""");
+            """{ "ColPct": 61, "LayerPatterns": ["OSYS.*.Core"], "Configuration": "Release" }""");
 
         var reloaded = new JsonUiStateStore(path).Load();
 
         // Wipe: JsonException devraldı → varsayılan UiState (kalıcı yerleşim/tercih KAYBOLDU).
         Assert.Equal(50, reloaded.ColPct);       // varsayılan (61 DEĞİL — Load() new UiState() döndü)
-        Assert.Null(reloaded.Branch);            // varsayılan (feature/x DEĞİL)
+        Assert.Null(reloaded.Configuration);     // varsayılan (Release DEĞİL)
         Assert.Empty(reloaded.LayerPatterns);    // varsayılan (= [])
     }
 
@@ -135,12 +155,12 @@ public class UiStateStoreTests
     {
         using var temp = new TempDir();
         string path = Path.Combine(temp.Path, "ui-state.json");
-        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": null, "Branch": "feature/x" }""");
+        File.WriteAllText(path, """{ "ColPct": 61, "LayerPatterns": null, "Configuration": "Release" }""");
 
         var reloaded = new JsonUiStateStore(path).Load(); // FIRLAMAMALI
 
         Assert.Equal(61, reloaded.ColPct);      // diğer alanlar korunur (Load() TÜM state'i devirmedi)
-        Assert.Equal("feature/x", reloaded.Branch);
+        Assert.Equal("Release", reloaded.Configuration);
         Assert.Null(reloaded.LayerPatterns);    // açık null → alan GERÇEKTEN null (initializer EZİLDİ)
     }
 }

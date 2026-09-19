@@ -122,7 +122,6 @@ public class SyncStreamingTests
                 new GitService(gatedRunner, root), new BuildStateStore(sandbox),
                 new SourceHashCache(Path.Combine(sandbox, SourceHashCache.FileName))),
             root => new GitService(new ProcessRunner(), root),
-            root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(sandbox, "worktrees")),
             _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(sandbox)),
             // Bu test Sync akisini olcer; Optimize kurulur ama HIC cagrilmaz - restore fabrikasi da o yuzden firlatir.
             _ => new OptimizeWorkspaceService(

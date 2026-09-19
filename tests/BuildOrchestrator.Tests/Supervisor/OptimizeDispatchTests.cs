@@ -47,13 +47,12 @@ public class OptimizeDispatchTests
 
     // ---------------------------------------------------------------- fixture
 
-    private sealed record Sandbox(string Root, string CacheRoot, string LogsRoot, string PoolRoot);
+    private sealed record Sandbox(string Root, string CacheRoot, string LogsRoot);
 
     private static Sandbox NewSandbox()
     {
         string tmp = Directory.CreateTempSubdirectory("bo-optdispatch-").FullName;
-        var box = new Sandbox(Path.Combine(tmp, "repo"), Path.Combine(tmp, "cache"),
-            Path.Combine(tmp, "logs"), Path.Combine(tmp, "worktrees"));
+        var box = new Sandbox(Path.Combine(tmp, "repo"), Path.Combine(tmp, "cache"), Path.Combine(tmp, "logs"));
         Directory.CreateDirectory(box.Root);
         return box;
     }
@@ -87,7 +86,6 @@ public class OptimizeDispatchTests
                 new GitService(new ProcessRunner(), root), new BuildStateStore(box.CacheRoot),
                 new SourceHashCache(sourceHashPath)),
             root => new GitService(new ProcessRunner(), root),
-            root => new WorktreeManager(new ProcessRunner(), root, box.PoolRoot),
             _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(box.CacheRoot)),
             _ => new OptimizeWorkspaceService(
                 new WorkspaceScanner(), new CsprojEvaluator(),
