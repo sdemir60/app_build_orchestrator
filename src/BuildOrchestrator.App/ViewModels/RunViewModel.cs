@@ -1854,9 +1854,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// edge case DEĞİL): <see cref="RunCoordinator"/> her segmentin başında AYNI (dondurulmuş, segment-1
     /// zamanlı) plan'dan türetilmiş <see cref="BuildPreviewEvent"/>'i YENİDEN yayınlar, ve <see cref="Projects"/>
     /// Continue'da temizlenmez (bkz. <see cref="OnRunStarted"/>). Satır bu VM instance'ında zaten TERMİNAL
-    /// (Succeeded/Failed/Skipped) ise WillBuild GÜNCELLENMEZ — aksi halde segment 1'de gerçekleşen
-    /// succeeded→clean canlı geçişi (bkz. <see cref="OnProjectDone"/>), segment 2'nin (bilerek bayat) preview
-    /// değeriyle sessizce EZİLİRDİ.</summary>
+    /// (Succeeded/Failed/Skipped) ise ve koşu HÂLÂ sürüyorsa (<see cref="RunActive"/>) WillBuild GÜNCELLENMEZ
+    /// — aksi halde segment 1'de gerçekleşen succeeded→clean canlı geçişi (bkz. <see cref="OnProjectDone"/>),
+    /// segment 2'nin (bilerek bayat) preview değeriyle sessizce EZİLİRDİ.
+    /// <para>[Task 1 — sessiz Sync tazeleme] Koşu BİTTİKTEN sonra gelen her önizleme (pencereye dönüşün
+    /// tetiklediği sessiz Sync dahil) terminal satırların kararını da yazar: bu VM instance'ının hayatı
+    /// boyunca RunActive tekrar true olmadan gelen ikinci bir preview artık "segment 2" değil, kararı bugüne
+    /// taşıyan bağımsız bir tazelemedir — korumanın kapsamı yalnız koşu içidir.</para></summary>
     private void OnBuildPreview(BuildPreviewEvent e)
     {
         foreach (var item in e.Items)
@@ -1880,7 +1884,12 @@ public sealed partial class RunViewModel : ObservableObject
             // o yazılsaydı her koşu Sync'in "local" işaretini silerdi. Ayrım olayın geldiği ANDAKİ koşu
             // durumundandır (RunActive); `_currentRunId` bunu söylemez (yalnız motor ölümünde null'lanır).
             if (!RunActive) row.LocalEdits = item.LocalEdits;
-            if (row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
+            // [Task 1 — sessiz Sync tazeleme] Guard YALNIZ koşu sürerken geçerlidir: segment 1'in canlı
+            // succeeded→clean geçişi segment 2'nin bayat önizlemesiyle ezilmesin. Koşu bittiğinde (RunActive
+            // false) — ör. pencereye dönüşün tetiklediği sessiz Sync — terminal satırın kararı da her
+            // önizlemeyle TAZELENİR: aksi halde arka planda değişen bir proje (özellikle döngü üyesi) yeşil/
+            // "up to date" kalır, yalnız elle Sync düzeltir.
+            if (RunActive && row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             row.WillBuild = item.WillBuild;
             row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
             row.Conditional = item.Conditional;         // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
