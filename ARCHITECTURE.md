@@ -34,19 +34,20 @@ rebuilt, in what order, and how do we run that safely.**
 
 | Guarantee | Mechanism |
 |---|---|
-| The user's working tree is never checked out, switched or reset | The tool never writes to git on its own; building another branch happens in a detached worktree (§10). The one write a user can ask for is a fast-forward: the `N behind` chip (§10.7) |
+| The tool never writes to git on its own | Every write is a user action with its own gate: a fast-forward pull from the `N behind` chip (§10.5), a checkout from the branch chip — with a stash only when the user turned that on (§10.3) — and the update of an external root the user left on (§10.4). `reset`, `rebase` and plain `pull` never run; all writes live in one file (§10.1) |
 | Output lands exactly where Visual Studio would put it | `OutDir`/`OutputPath` are never passed to MSBuild (§9.4) |
 | "Changed?" is decided from source, never from build output | The signature hashes source **content** on disk; no DLL/`bin` timestamp is ever read (§7.1) |
 | Killing the app kills the whole build tree | Nested job objects with `KILL_ON_JOB_CLOSE`, no breakaway (§4) |
 | Stopping a run never leaves a torn DLL | Graceful stop drains at project boundaries; no compiler server lives outside the job (§4.5) |
 | The build order is deterministic | Order-preserving ready-set scheduler; no hashing, no randomness (§8.2) |
-| An external working copy is never updated over the user's uncommitted work | The dirty gate cancels the run before it starts; updates are `--ff-only` and never `pull`, and they only run when the user leaves them on (§10.6) |
+| An external working copy is never updated over the user's uncommitted work | The dirty gate cancels the run before it starts; updates are `--ff-only` and never `pull`, and they only run when the user leaves them on (§10.4) |
 
 ### 1.3 Non-goals (v1)
 
-Multi-repo *history* — one repository's git history drives the target sha, the branch and the worktree pool.
-Additional **external roots** (§10.6) are scanned into the same graph and built alongside, but they contribute
-no branch, no target sha and no worktree. Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
+Multi-repo *history* — one repository's git history drives the branch, the HEAD watcher and the `N behind`
+distance. Additional **external roots** (§10.4) are scanned into the same graph and built alongside, but they
+contribute no branch and no remote distance of their own.
+Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
 `packages.config` migration. Build-output isolation per branch. Graph editing. Attaching to an already-running
 Visual Studio instance via ROT/DTE (the "Open in Visual Studio" action resolves `devenv.exe` through `vswhere`
 — once per session, off the UI thread, since the query can take seconds and its timeout is 30 — and opens the
@@ -80,7 +81,7 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 | Project | Target | Responsibility |
 |---|---|---|
 | `src/BuildOrchestrator.Contracts` | `net10.0` | The App↔Supervisor contract: command and event records, domain DTOs, polymorphic JSON options, NDJSON framing. No logic. |
-| `src/BuildOrchestrator.Core` | `net10.0` | All decision-making, pure and testable: discovery, evaluation cache, dependency graph, layers, signature and incremental planning, scheduler, git service, worktree pool, MSBuild argument/invocation contract, job-object primitives, run logs, state persistence. |
+| `src/BuildOrchestrator.Core` | `net10.0` | All decision-making, pure and testable: discovery, evaluation cache, dependency graph, layers, signature and incremental planning, scheduler, git service and the single git writer, HEAD watcher, MSBuild argument/invocation contract, job-object primitives, run logs, state persistence. |
 | `src/BuildOrchestrator.Supervisor` | `net10.0-windows` | The engine process. Owns the inner job object, runs the plan Core produced, shells out one `MSBuild.exe` per project, writes per-run logs, serves the IPC. Executes; does not plan. |
 | `src/BuildOrchestrator.App` | `net10.0-windows` (WPF) | The interface. MVVM, DI, window shell, tray, single instance, global hotkey, all rendering and motion. Owns the outer job object and spawns the Supervisor. |
 | `tests/BuildOrchestrator.Tests` | `net10.0-windows` (`UseWPF`) | One suite for everything: Core unit tests, process-control tests, IPC tests, WPF realization/STA tests, source guards, integration and acceptance tests. |
@@ -216,7 +217,7 @@ Requesting a stop moves the phase to `stopping` **before the command is even sen
 would leave the button reading *Stop* and invite a second click. The button stays visible but reads
 *Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still finishing, and
 a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is still
-working, so branch, worktree and configuration stay locked and the Build split-button does not come back.
+working, so the branch chip and the configuration stay locked and the Build split-button does not come back.
 
 Leaving `stopping` cannot deadlock, because `runStopped` settles it unconditionally: phase `stopped`, run
 state released. The coordinator only writes that event once every in-flight result has been reported, so by
@@ -239,8 +240,9 @@ A process that dies announces itself. A process that *hangs* does not, and the A
 event that is never coming — the failure mode §4.3 describes, where a wedged planner leaves the phase on
 `starting` and then on `stopping` forever. So the App also watches for silence, but only inside the windows
 where an answer is owed: a run has been requested and `runStarted` has not arrived, a stop has been requested
-and `runStopped` has not, a Sync has been requested and `syncCompleted` has not, or a maintenance job has been
-requested and its own completion — `cleanCompleted` or `optimizeCompleted` — has not. Any event from the engine
+and `runStopped` has not, a Sync has been requested and `syncCompleted` has not, a maintenance job has been
+requested and its own completion — `cleanCompleted` or `optimizeCompleted` — has not, or a checkout or a pull
+has been sent and `checkoutCompleted` or `pullCompleted` has not. Any event from the engine
 resets the clock; crossing the threshold with no event at all raises an amber ribbon line and reveals the same
 *Restart engine* action.
 
@@ -292,20 +294,36 @@ discriminator whitelist on both hierarchies. An unknown discriminator does not d
 ### 5.2 Commands
 
 `ping` · `shutdown` · `syncWorkspace` · `cleanWorkspace` · `optimizeWorkspace` · `startRun` · `stopRun` ·
-`pullRepository` · `getProjectLog` · `listBranches` · `listWorktrees` · `deleteWorktree` · `setPerfMode` ·
-`debugSpawnChildren`.
+`pullRepository` · `checkoutBranch` · `getProjectLog` · `listBranches` · `setPerfMode` · `debugSpawnChildren`.
 
 `debugSpawnChildren` is a test hook for the breakaway probe. It remains part of the contract but is **rejected
 by default** with `error(debugHooksDisabled)`; only a Supervisor started with `--debug-hooks` executes it, and
 the App never passes that flag. Every other command in the list executes in the shipped pair.
 
-`startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the branch,
-the worktree intent, the dependent-propagation mode, the layer patterns, the perf mode name and the external
-project list. Parallelism and perf mode are separate fields on purpose: the Supervisor derives cap and priority
-from the perf name but never recomputes the worker count, which the App has already resolved from the same
-table.
+`startRun` carries the run id, the mode, the repository root, the configuration, the parallelism, the
+dependent-propagation mode, the layer patterns, the perf mode name and the external project list. It carries no
+branch: a run always builds the working tree at the repository root, whatever is checked out there (§10.3).
+Older lines that still carry the fields a run no longer reads parse, the extra fields ignored. Parallelism and
+perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
+recomputes the worker count, which the App has already resolved from the same table.
 
-The **external root list** (§10.6) rides on every command that walks the workspace — `startRun`,
+`stopRun` names one of three kinds: `graceful`, `hard` (§4.5) and `interrupt`. The App sends `interrupt` when
+the checked-out branch or HEAD moves under a run in flight (§8.8): the engine drains exactly as on a graceful
+stop, and in addition it stops standing behind any result that arrives after the request.
+
+`checkoutBranch` carries the repository root, the target — a local branch, or `origin/<name>` with an
+`isRemote` flag — and `stashIfDirty`, the user's *Stash and switch branches* setting (§10.3). The engine runs
+the checkout and answers with `checkoutCompleted`; it writes no console line of its own, because a successful
+checkout opens a new console section and the App has to clear the console before the section's first lines are
+written. While a run holds the slot the command is rejected with `error(checkoutRejected)`; an unexpected
+exception becomes `error(checkoutFailed)`. Like `syncWorkspace` it blocks the command loop until it finishes,
+so a `startRun` that arrives right behind it cannot begin on a half-switched tree.
+
+`syncWorkspace` carries a **`fetch`** flag. It defaults to true, so an older line fetches as it always did; the
+Syncs the App starts on its own and the Sync that follows a branch change send false, and the engine then
+measures the `N behind` distance against the last remote state it already has (§10.2).
+
+The **external root list** (§10.4) rides on every command that walks the workspace — `startRun`,
 `syncWorkspace`, `cleanWorkspace` and `optimizeWorkspace` — and carries the roots the user listed in Settings.
 Each entry is exactly what a Settings card holds: a path — a folder, a solution or a project file. Everything
 else about a root (which projects it contains, their names, the working-copy root above them) is resolved from
@@ -339,8 +357,8 @@ set that target removes — the paths recorded in `FileListAbsolute.txt` — is 
 deleting `obj` takes that record with it, so the target could not run after the folders are gone, and running
 it first would only remove a part of what the folder deletion removes anyway; and where tracked outputs were
 copied to the shared `OutDir`, `-t:Clean` would delete from there too, which the "`OutDir` is never touched"
-invariant forbids. `packages`, the shared `OutDir`, the worktree pool (its `_obj` roots included), the run
-logs, the evaluation cache and the UI state are all left alone. Like `syncWorkspace`, it blocks the command
+invariant forbids. `packages`, the shared `OutDir`, the run logs, the evaluation cache and the UI state are
+all left alone. Like `syncWorkspace`, it blocks the command
 loop until it finishes rather than running on a background task, and a `cleanWorkspace` that arrives while a
 run holds the slot is rejected with `error(cleanRejected)` (§5.4).
 
@@ -351,7 +369,7 @@ build: it restores the projects whose NuGet packages are missing from disk (§9.
 restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
 the three ledgers of entries whose file is gone, sweeping the temp files their atomic writes left behind
 (§16). Everything else is left alone — the global NuGet caches, `NuGet.config`, `bin` and the shared `OutDir`,
-the worktree pool, the run logs, the UI state, and git, since Optimize runs no version-control command at all.
+the run logs, the UI state, and git, since Optimize runs no version-control command at all.
 Its permission to write in the workspace is bounded by the resolved project set: a folder no card resolves to
 is never touched, and the only files it changes anywhere else are its own three ledgers (§16). **It changes no
 build decision** — the signature is computed from source (§7.1), so neither a restore nor a deleted leftover
@@ -369,12 +387,13 @@ restore step drops out. The repair degrades; it does not stop.
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
-Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted` · `pullCompleted`.
+Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted` · `pullCompleted` ·
+`checkoutCompleted`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
 `projectSkipped` · `cycleRoundStarted` · `cycleCompleted` · `runStopped` · `runCompleted`.
-Queries: `branchList` · `worktreeList` · `projectLogChunk`.
+Queries: `branchList` · `projectLogChunk`.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
 segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
@@ -411,7 +430,16 @@ root or an unexpected exception becomes `error(optimizeFailed)`.
 
 `pullRepository` has no channel of its own. Its reasons flow as `syncProgress` lines — a fast-forward is a git
 transcript — and `pullCompleted` answers the only question the App has left: did the fast-forward succeed
-(§10.7).
+(§10.5).
+
+`checkoutCompleted` is the whole answer to `checkoutBranch`: a status (`switched`, `alreadyOn`, `dirty`,
+`stashFailed`, `failed`), the branch before and after, the new HEAD on success, the number of dirty paths the
+gate saw, the stash message when a stash was actually made — kept even when the checkout after it failed — and
+git's own detail on failure. The App builds every console line of a branch switch from these fields (§10.3).
+
+`engineReady` carries `interruptedProjects`: how many projects the engine found in flight in
+`run-inflight.json` when it started, and invalidated before accepting any command (§8.7). Zero means the last
+run ended normally.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
 and the member count. A strongly-connected component is one build unit whose per-round results are never
@@ -453,9 +481,15 @@ Three of these carry the whole model:
   from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
   semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
   conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count.
+  It also carries the branch that was checked out when the Sync measured (`activeBranch`, null on a detached
+  HEAD) and the local HEAD commit (`headSha`, null in a repository with no commit yet). The App keeps the pair
+  as "the HEAD of the last Sync", which is what lets a trigger that finds HEAD unchanged skip its Sync (§10.2),
+  and it aligns the branch chip with `activeBranch` the moment the Sync ends.
 
 `runStarted.cpuCapPercent` reports the cap that was **actually** written to the job, not the one that was
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
+`runStarted.logDirectory` is the run's log folder on disk; the summary line of a run interrupted by a branch
+change names it (§8.8).
 
 ### 5.4 Error handling
 
@@ -535,7 +569,7 @@ order; the entry is dropped from the map instead. The drop is silent in its cons
 linking against that DLL quietly loses its dependency and may compile before its producer — so the plan
 carries a warning line naming the DLL and both projects, and both surfaces that show a plan print it: the
 Sync transcript and the run console. The usual cause is two roots contributing the same solution — an
-external card (§10.6) pointing at a second copy of something already under the repository root — and the fix
+external card (§10.4) pointing at a second copy of something already under the repository root — and the fix
 is the user's: rename one `AssemblyName`, or drop one of the roots.
 
 Not every `HintPath` resolves inside the repository, so each one is classified into one of four buckets:
@@ -544,7 +578,7 @@ Not every `HintPath` resolves inside the repository, so each one is classified i
 |---|---|
 | `Edge` | Resolved to a producing project in this repository — becomes a graph edge |
 | `ExternalThirdParty` | Path rule identifies a package or an installed product |
-| `ExternalOsysPlatform` | A sibling-repository platform binary. Registering that sibling as an external root (§10.6) turns these into real edges, because the producer map then spans both roots |
+| `ExternalOsysPlatform` | A sibling-repository platform binary. Registering that sibling as an external root (§10.4) turns these into real edges, because the producer map then spans both roots |
 | `Unclassified` | Neither — emitted as a warning line |
 
 The reported health metric is `Edge / (Edge + Unclassified)`: external classes are legitimate inputs and are
@@ -567,7 +601,7 @@ ready.
 Layers are optional and **empty by default** — with no patterns configured the list is a single flat list in
 build order.
 
-Projects from an external root (§10.6) are the one exception: they occupy a **reserved layer** named
+Projects from an external root (§10.4) are the one exception: they occupy a **reserved layer** named
 `External` at index −1, which is why they sit above every configured layer and above `Other`, and why they
 lead the build order. That layer is not configurable and no regex produces it — membership is read from the
 node's own source badge. User patterns are not applied to these projects at all: a pattern that happens to
@@ -610,16 +644,15 @@ input lists never matters (they are sorted `OrdinalIgnoreCase` internally). Ever
 cannot make two different input sets collapse to the same pre-hash string.
 
 **Version control is not part of the decision.** git is never consulted to decide what to build:
-the repository's own projects, projects contributed by external roots (§10.6) and a folder under no version
+the repository's own projects, projects contributed by external roots (§10.4) and a folder under no version
 control at all take the same path. A repository with no commits, or a machine where git is broken, still gets
 a complete answer.
 
 The fingerprint pairs a **path term** with a **content term**. The path term is the file's path relative to
-the workspace root, `/`-normalised — so the same tree produces the same signature in the main working tree and
-in a pool worktree, and moving a clone to another folder changes nothing. Files outside the root (an external
-root's projects, a `Directory.Build.props` above the root) carry their full path instead. The content term is
-read from the file that will actually be compiled: in a worktree run identities stay on the main root while
-the bytes come from the pool copy.
+the workspace root, `/`-normalised — so the same tree produces the same signature in any clone, and moving a
+clone to another folder changes nothing. Files outside the root (an external root's projects, a
+`Directory.Build.props` above the root) carry their full path instead. The content term is read from that same
+file, which is the one that will be compiled: every run builds the working tree it was planned from.
 
 #### The input set
 
@@ -744,8 +777,8 @@ compile error — is not evidence, and the project reads `NeverBuilt` instead of
 
 ### 7.5 Build state
 
-`build-state.json` is **global**, keyed by project id (the full csproj path — the *logical* identity, so a
-worktree build writes the same keys an in-place one does, §8.6), holding the built signature, the **built
+`build-state.json` is **global**, keyed by project id (the full csproj path), holding the built signature, the
+**built
 content fingerprint**, the built commit, the last result, the last run timestamp, the last branch, the last
 duration, a flag marking that this success was linked against a failed dependency together with the project
 ids of that dependency issue's roots (§8.3), the signature at which this project's cycle last failed to
@@ -760,11 +793,11 @@ to* the signature rather than folded into it because it answers a different ques
 files change?" — and the row's `modified` ↔ `affected` split is the only thing that reads it (§13.2). That last
 field is deliberately *not* folded into the built signature: the built signature means "this was compiled
 successfully", and Fast mode reads it as a frozen upstream baseline — a signature that was never built would be
-taken for a clean one. A project from an external root (§10.6) has the same record under the same key shape, and
+taken for a clean one. A project from an external root (§10.4) has the same record under the same key shape, and
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
-all (§10.6). None of these fields feeds a decision: the built commit is diagnostic, and the project log's "last
+all (§10.4). None of these fields feeds a decision: the built commit is diagnostic, and the project log's "last
 successful build" line is the only place a revision is shown. It is written by a single serialized writer,
 atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
 `FileShare.Delete` so they cannot block the writer's rename, and a transient sharing violation is retried a
@@ -831,7 +864,7 @@ permanent-stale-binary hole the `Cycles` scope
 closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
 not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
 member built alone can never make its group read as up to date for the next `Cycles` run. External working
-copies follow the same rule: only the copy that holds the target is updated before a scoped run (§10.6).
+copies follow the same rule: only the copy that holds the target is updated before a scoped run (§10.4).
 
 **Resuming and retrying are not modes.** A stopped run is not resumed and a failed run is not retried by a
 separate command: in both cases the user presses *Build* again, and the incremental decision produces exactly
@@ -1021,38 +1054,23 @@ Planning is entirely Core's work; the Supervisor's composition root only wires i
 (`Build`/`Rebuild`) the sequence is:
 
 ```
-update external working copies (§10.6)            ← before everything: a fast-forward can bring new
-                                                     project files, and a run a dirty external will
-                                                     cancel should not open a worktree first
-  → prepare workspace (in-place or worktree)      ← the scan and the signature must see the same
-  → scan (once, main root + every external root)     resolved root
+update external working copies (§10.4)            ← before everything: a fast-forward can bring new
+                                                     project files the scan must see
+  → scan (once, main root + every external root)
   → evaluate (cached) → producer map
   → edges → solution map → topological order → BuildPlan
-  → rebase identities onto the main root          ← before the signature, not after
   → (Build only) incremental pass: per-project signature + willBuild
-  → RunPlan { plan, solutionRefs, incremental, buildPathById }
+  → RunPlan { plan, solutionRefs, incremental }
 ```
 
 The update step is skipped when the user has turned it off and by a `Cycles` run, which is a repair pass over
 existing strongly connected components and has no business updating anyone's working copy. The *scan* still
 covers the external roots in every mode, so the graph a Cycles run repairs is the same graph a Build sees.
 
-**Identity is logical; the path is physical.** A project's id in this codebase is its full csproj path, so a
-build of another branch — which scans a pool worktree — would give the same project a completely different
-identity. Three things broke on that: the signature's upstream term hashes dependency ids, so every project
-with a dependency drifted; build state was written under worktree keys and the next in-place Sync could not
-find any of it, so a single worktree build made everything look dirty again; and the run's preview carried
-worktree ids, which produced duplicate rows in the App's list. So the plan's identities — node ids, project
-paths, dependencies, cycle members, the solution map's *keys* and the evaluation map — are rebased onto the
-main repository root as soon as the plan exists, and a `buildPathById` map remembers where each project
-really lives. Solution *values* stay in the worktree: the resolver has to find the real `.sln` on disk.
-
-The ordering is the point. Rebasing after the incremental pass would have left the signatures computed from
-worktree paths, so the fix had to happen before it — and because it does, the signature format never had to
-change: the same tree produces the same signature from either root, and stored signatures stay valid. From
-there on, everything flows by identity — the scheduler, events, the preview, persistence, `decision.log`, log
-file naming. The single place that converts an identity back into a physical path is the MSBuild invocation.
-In-place runs are a no-op: identity already *is* the path.
+**One tree, one identity.** A run always builds the working tree at the repository root — whatever branch is
+checked out there — so a project's id, its full csproj path, is also where it is compiled. Everything flows by
+that one value: the scheduler, events, the preview, persistence, `decision.log`, log file naming and the MSBuild
+invocation.
 
 Two details that are easy to get wrong and are pinned:
 
@@ -1064,33 +1082,40 @@ Two details that are easy to get wrong and are pinned:
 
 **Planning reports itself.** The planner takes a progress channel and emits a line per step; the coordinator
 turns each into a `planProgress` event on the same FIFO channel as everything else, so they all reach the App
-before `runStarted`. Lines that mark work about to begin — worktree preparation, the incremental pass — are
+before `runStarted`. Lines that mark work about to begin — an external update, the incremental pass — are
 written *before* it, because those are the long steps and they produce no count of their own; lines that report
 a count are written after the step that produced it. Every run plans, so every run has these lines.
 
 This repeats the work Sync already did, and that is correct: the working tree may have changed since, and
-worktree preparation and MSBuild resolution only exist on this path. What was wrong was doing it *silently* —
+the external update and MSBuild resolution only exist on this path. What was wrong was doing it *silently* —
 the App clears the console on a run request, so a multi-second planning window left the screen with nothing on
 it at all. The step texts therefore live in one place in Core and both callers read them; the same work must
 not acquire two names.
 
-### 8.7 Workspace preparation
+### 8.7 Crash recovery
 
-Worktrees are prepared at **Build** time, not at branch selection — branch selection is intent only (§10.3).
+An engine that dies mid-run — a crash, Task Manager, a closed session — leaves projects whose `MSBuild.exe` was
+killed halfway. Their output may be freshly written and incomplete, and nothing in the ledger says so. The
+in-flight ledger closes that hole.
 
-- If no worktree is requested and no branch is selected, the in-place path returns without invoking git at all.
-- If a pool worktree for the selected branch already exists it is **reused** (`reset --hard` inside it); a new
-  one is created only when there is no candidate or reuse fails. Reuse is the reason the pool is persistent:
-  same directory, same `obj`, warm cache.
-- The pool cap is applied **before** the new worktree is added — the classic cache-eviction placement. Pruning
-  is best-effort; its failure warns but does not block the build.
-- **Failure handling is asymmetric on purpose.** If the selected branch *is* the active branch, a preparation
-  failure warns and falls back to in-place. If the selected branch is *different*, worktree is mandatory
-  (§10.3) and any failure raises a preparation error that surfaces as `planFailed` — the run never starts.
-  Falling back there would silently compile the user's dirty working tree instead of the branch they asked for.
-- The resulting "in-place" flag must reflect **reality**, not intent: it can only be false when a worktree was
-  genuinely created. Deriving it from the request would make the signature omit its working-tree term while the
-  build actually ran on a dirty tree, persisting a signature that claims a clean commit was built.
+- **Dispatch writes, the result erases.** The coordinator adds a project to `run-inflight.json` (§16) the moment
+  it dispatches it — every round of a cycle group included — removes it when its result is reported, and empties
+  the file on every way out of a run: normal end, stop, planning failure, unexpected error. The set lives in
+  memory and the file mirrors it, rewritten whole and atomically under one lock on each change; the list is never
+  longer than the parallelism.
+- **Startup invalidates what is left.** Before the host accepts a single command, the engine reads the file and
+  marks every listed project as a failure without evidence (`LastResult = Failed`, the run timestamp set to now,
+  the built signature kept, no failed signature written — §7.5). The next `Build` compiles them, and their row
+  reads grey `never built` rather than green. The count rides on `engineReady` (§5.3) and the App prints
+  `previous run was interrupted; N projects will rebuild`.
+- **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
+  knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
+  permission) or a ledger write that fails is a different case: a warning goes to stderr, the file stays, and
+  the lines that could not be invalidated are kept in memory and retried at the start of the next run, before
+  planning, so a half-written output can never be planned as up to date.
+
+The same ledger state — a failure without evidence — is what a result arriving after a branch-change interrupt
+leaves behind (§8.8). The two cases are the same fact: the engine cannot stand behind that output.
 
 ### 8.8 Run coordination
 
@@ -1118,8 +1143,8 @@ log is the real record, and the channel is still drained to completion so no wri
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
 that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
 before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the
-solution directory, a restore flag derived from the presence of `packages.config`, and — in worktree mode
-only — the isolated intermediate path. The project's log file is opened before and closed after the
+solution directory and a restore flag derived from the presence of `packages.config`.
+The project's log file is opened before and closed after the
 invocation, so a late line cannot be silently dropped. The first line written is the real MSBuild command
 line. On success the build state is persisted with the signature computed during planning; on failure the
 stored state is invalidated so the next run does not consider the project up to date at the source it failed
@@ -1246,7 +1271,16 @@ pending intent, copy-floor depth, drain flag) are reset in one critical section,
 another thread and `setPerfMode` has no run-state precondition: an intent arriving in that window would
 otherwise leak into the next run.
 
-Nothing survives the run: the plan, the log writer, the resolved worktree obj root and the dependency-issue
+**Interrupt.** A `stopRun` of kind `interrupt` (§5.2) arrives when the checked-out branch or HEAD moves under
+a run in flight (§10.3). Dispatch and drain follow the graceful rule exactly — nothing new starts, the
+projects already compiling finish, the CPU cap is lifted — and a flag records that the run was interrupted. It
+is kept apart from the stop kind because it is a fact about the results, not a way of stopping: a later hard
+stop still wins as a stop, and the run stays interrupted. From the moment the flag is set, every result goes
+through the one reporting gate as untrusted: the tree those projects were compiled from is no longer the tree
+on disk. A success is written as a failure without evidence and arrives with `trusted: false`, a failure is not
+evidence — the same ledger state crash recovery leaves (§8.7). Cycle members pass through the same gate.
+
+Nothing survives the run: the plan, the log writer and the dependency-issue
 tally are all cleared when it ends. There is no second segment to hand them to — every run plans for itself
 and reads what it needs from the persisted build state.
 
@@ -1266,7 +1300,6 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 <project> -t:Build|-t:Rebuild -p:Configuration=<cfg>
           -p:UseSharedCompilation=false -nodeReuse:false -p:BuildProjectReferences=false
           -clp:Summary -nologo
-          [-p:BaseIntermediateOutputPath=<isolated obj>\]
 ```
 
 - The target is `-t:Build` everywhere except one case: *Rebuild* pressed in a **row menu** (§8.1), which runs
@@ -1281,10 +1314,10 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   eliminate. Correctness was chosen over the 2.9×; revisiting it requires a mechanism that closes the emit
   window, not just a faster number.
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
-- Projects from an external root (§10.6) get **exactly this list**. They are ordinary nodes whose
-  dependencies this tool builds itself, so nothing about the contract changes. The single exception is `obj`:
-  isolation belongs to the worktree pool and an external working copy does not live there, so even a worktree
-  run leaves an external project's `obj` alone.
+- No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
+  Studio would (§9.4).
+- Projects from an external root (§10.4) get **exactly this list**. They are ordinary nodes whose
+  dependencies this tool builds itself, so nothing about the contract changes.
 
 Arguments are passed through `ProcessRunner`'s `ArgumentList` — manual string concatenation is prohibited — and
 `UseShellExecute` is false everywhere. `cmd.exe`/PowerShell is never used as an intermediary. Where a command
@@ -1325,18 +1358,17 @@ If `MSBuild.exe` cannot
 be resolved at all, only this step is skipped and the rest of Optimize still runs — the toolset is resolved
 lazily, so a workspace with nothing to restore never pays for a `vswhere` search.
 
-### 9.4 `obj` isolation and `OutDir`
+### 9.4 `OutDir` and `obj`
 
 **`OutDir` is never touched and never read.** Build output lands exactly where Visual Studio would put it: in
 the solution's own shared output folder, produced by the projects' own post-build copy events. The orchestrator
 copies nothing.
 
-Only the intermediate directory is isolated, and only in worktree mode:
-`<worktreeRoot>\_obj\<first 8 bytes of SHA-256(lowercased project id)>`. Keying by project id makes it
-structurally impossible for two projects to share an `obj` folder. This is not cosmetic — a deleted sibling
-project's leftover `netstandard2.0` artefacts in a shared `obj` (`project.assets.json`, `*.nuget.g.props`)
-were measured breaking otherwise-healthy builds. In-place builds keep the default `obj` for Visual Studio
-parity. What happens to residue there depends on **who asked**, and the split is deliberate.
+The intermediate directory is not redirected either. Every run builds the user's working tree, and every
+project keeps its default `obj` for Visual Studio parity — no output path of any kind is changed. That default
+`obj` can carry residue that breaks a build: a deleted sibling project's leftover `netstandard2.0` artefacts
+(`project.assets.json`, `*.nuget.g.props`) were measured breaking otherwise-healthy builds. What happens to that
+residue depends on **who asked**, and the split is deliberate.
 
 *At the start of a run*, foreign-TFM residue in a default `obj` is detected and reported as a console warning,
 and **nothing is deleted or modified**. A run is not the moment to take a decision the user did not ask for,
@@ -1371,42 +1403,49 @@ Windows install. All number and duration formatting in the domain and the view m
 
 ## 10. Git integration
 
-### 10.1 The read-only surface
+### 10.1 The git surface
 
 The complete set of git invocations in the codebase:
 
 | Command | Mutates? |
 |---|---|
-| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` · `worktree list --porcelain` | no |
+| `rev-parse --verify -q HEAD` · `symbolic-ref --short -q HEAD` · `status --porcelain -z` · `rev-parse --is-shallow-repository` · `for-each-ref …` · `rev-parse --verify -q refs/{heads,remotes/origin}/<branch>` · `rev-list --count HEAD..<sha>` | no |
 | `fetch origin <branch> --no-tags` | only `refs/remotes/*` |
-| `worktree add --detach <path> <sha>` · `worktree remove --force <path>` | pool worktrees only |
-| `reset --hard <sha>` | **cwd is a pool worktree**, never the main repository |
+| `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.4), and the **main repository only when the user clicks the `N behind` chip** (§10.5) |
+| `stash push -u -m <message>` | the main repository, **only** when the user picks a branch on the branch chip, the tree is dirty and *Stash and switch branches* is on (§10.3) |
+| `checkout <branch>` · `checkout --track origin/<name>` | the main repository, **only** when the user picks a branch on the branch chip (§10.3) |
 
-| `merge-base --is-ancestor` · `merge --ff-only` | external working copies when updates are on (§10.6), and the **main repository only when the user clicks the `N behind` chip** (§10.7) |
+Every write in that table lives in one file, `Core/Git/RepositoryWriter.cs`: the fast-forward
+(`FastForwardUpdater`) and the branch switch (`BranchSwitcher`). Each is a user action with its own gate, and
+none of them runs on its own — not in Sync, not in Build, not from a background task. `reset`, `switch`,
+`pull`, `rebase`, `cherry-pick`, `clean`, `commit`, `push` and `worktree` do not appear anywhere. Two source
+guards pin this (§17.2): one allows mutating verbs in that single file and nowhere else, the other keeps the
+`worktree` verb and every worktree type out of the code and the contract.
 
-`checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash` and `clean` do not appear anywhere. `merge`
-appears exactly once, as `--ff-only`, and in exactly one file — `Core/Git/FastForwardUpdater.cs`. A source
-guard pins that file list, so a mutating verb cannot appear anywhere else.
+Some reads need no process at all. The HEAD watcher and the git-operation gate (§10.3) read the git directory
+as files: `.git` resolved to the real git directory (a folder, or a `gitdir:` file for a linked worktree or a
+submodule), `HEAD` and the ref it names (loose or packed), the last lines of `logs/HEAD`, and the presence of
+the operation markers. They run on every trigger, so they cost a file read rather than a `git` child.
 
-`ls-tree` is gone: it existed to feed the signature, and the signature no longer reads git (§7.1).
-
-`reset --hard` passes three gates: the candidate path comes from git's own `worktree list --porcelain` and must
-be under the pool root; it is rejected if it equals the main repository root (junction defence); and it is
-rejected unless that worktree's HEAD is detached, because resetting an attached HEAD would move a branch ref.
+`ls-tree` is no longer called: it existed to feed the signature, and the signature no longer reads git (§7.1).
 
 ### 10.2 Sync
 
 Sync runs the whole analysis, in Core:
 
 ```
-git fetch origin <branch> --no-tags   (ref-only)
+git fetch origin <branch> --no-tags   (ref-only; skipped when the Sync does not fetch)
   → scan → evaluate (cached) → producer map → edges → SCC/topo → layers
   → will-build pass
   → workspaceTopology + buildPreview + syncCompleted
 ```
 
-Full analysis happens **only** in Sync; the implicit Sync that precedes a Build is cheap because of the
-evaluation cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
+Everything in it describes the working tree at the repository root, and the branch it fetches and measures is
+the one checked out there. The command's branch name is only a fallback for a detached HEAD, where the fetch
+still uses it but no distance is measured — HEAD is not on that branch, and a count against it would be a lie.
+
+Full analysis is Sync's job; a Build repeats its planning part (§8.6), which is cheap because of the evaluation
+cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
 Build, pressed right now, would decide, and the preview says so directly: a project this run would only
 evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
 (`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
@@ -1416,12 +1455,34 @@ need a moment later, or the row lights amber for one frame and drops grey as soo
 
 If the remote is unreachable, the fetch failure is swallowed: a warning line is printed, the target SHA falls
 back to the local HEAD, and the flow continues. The degraded path does **not** skip topology or the will-build
-pass — offline still produces a complete, usable Sync.
+pass — offline still produces a complete, usable Sync. A Sync that does not fetch never goes to the network: it
+reads the last known remote tip (`refs/remotes/origin/<branch>`) and measures against that; with no remote ref
+the target is the local HEAD and the distance is unknown, which is not a degraded fetch.
 
-**A known seam, stated rather than implied:** the scan and the will-build pass always run against the *active*
-working tree, because K1 forbids checking anything out. If the selected branch differs from the active one, the
-fetch and the target SHA refer to that branch while the topology, the preview and the counters still describe
-the active tree. The code reports only what it actually computed.
+**Who starts a Sync, and what it does to the screen.** The console tells one *section* at a time. A new
+section is opened by an operation the user started, or by the world under the list changing — the branch.
+Refreshes that happen on their own in the same world open nothing. Every Sync is one of four kinds, and the
+rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers never compare kinds themselves:
+
+| Kind | Started by | Console and event stream | Fetch | Visible as an operation |
+|---|---|---|---|---|
+| Manual | the Sync button | cleared at the click; full transcript | yes | yes |
+| Appended | application start, a successful pull, the hand-over after Clean/Optimize, Settings Save and a repository change | kept; transcript appended below the note or transcript that is already there | yes | yes |
+| BranchChange | a checkout from the branch chip, or a branch change seen by the HEAD watcher | cleared; the new section's first lines are the caller's (the stash and switch lines), then the transcript | no | yes |
+| Silent | a commit, a return to the window, any other HEAD movement on the same branch | untouched; the transcript is hidden, but `warn` and `error` lines are still written; one line in the event stream at the end | no | no |
+
+*Visible as an operation* means the operation pill, the `Syncing` phase on the ribbon, the dropped selection
+and the clearing of the previous run's error text and overlay. A silent Sync does none of it: bad news on the
+screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. Its one
+stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
+when N, counted as the rows whose output status or decision label moved between the request and the answer, is
+above zero.
+
+**The list and the graph are rebuilt only when the structure changes.** A Sync whose topology has the same
+structural signature as the last one — node ids, names, layers and edges — reconciles the rows in place and
+leaves the graph standing; only a project added or removed, a moved layer or a changed edge replays the reveal
+(§13.2). The click of Clean and Optimize still empties both, and a real repository change does too; each also
+forgets the signature, so the Sync chained behind it reveals even the same structure.
 
 Sync also asks git one more, purely read-only question: `git status --porcelain -z` on the repository root —
 never `-uall`, so a new untracked folder comes back as a single directory entry rather than one entry per file
@@ -1434,46 +1495,89 @@ change of its own, computed by `LocalEdits.ProjectsWithLocalEdits` so the inters
 only calls it. A directory line marks every input beneath it, because that is the only file-level detail
 `--porcelain` gives for an untracked folder. If the query itself fails — no repository, a git error — the
 failure is swallowed the same way an unreachable remote is: no project is marked, rather than guessing every
-project dirty. A project from an external root (§10.6) never carries the flag in this phase; its inputs live
+project dirty. A project from an external root (§10.4) never carries the flag in this phase; its inputs live
 under a different working copy that this query never sees, and extending the read to every external root's own
 `status --porcelain` is left for later.
 
-### 10.3 Branch and worktree model
+### 10.3 Branch switching
 
-Branch selection is *intent*: nothing happens in git until Build is pressed. There is no separate "include
-local changes" toggle — the branch choice determines the mode:
+There is one tree. A run always builds the working tree at the repository root, and the branch chip shows the
+branch checked out there — a fact read from git, never a preference the tool stores. Picking another branch on
+the chip is a real checkout.
 
-| Selected branch | Worktree | Result |
-|---|---|---|
-| active | off (default) | in-place build, local changes **included** |
-| active | on | committed HEAD builds in a pool worktree, local changes excluded |
-| any other | forced on | committed HEAD of that branch builds in a worktree; the active branch is never touched |
+**Checkout from the chip.** Choosing a local branch runs `git checkout <branch>`; choosing `origin/<name>`
+checks out the local `<name>` when one exists and `git checkout --track origin/<name>` when it does not.
+`origin/HEAD` is not offered — it is a pointer, not a branch. Nothing changes on screen until the engine
+answers: the chip is locked from the click, the operation pill reads `SWITCHING BRANCH`, and the console is not
+cleared
+at the click. A successful checkout opens a new section through a BranchChange Sync (§10.2) whose first lines
+are the stash line when there was one and `Switched to <branch> (<sha>) — from <previous>`. A checkout that
+fails opens nothing: its line is appended under the console as it stands.
 
-Choosing a different branch resets project states to pending, returns the phase to boot and writes an intent
-line to the console (`branch target: … — worktree will be used at Build`). The actual `git worktree add` is
-logged when Build runs, as the command it really is.
+**A dirty tree is the user's setting to decide.** Settings → General → *Stash and switch branches* (off by
+default):
 
-If a worktree cannot be prepared and the selected branch differs from the active one, the run **does not
-start**. Silently building the wrong (dirty) tree is worse than stopping.
+- **Off** — nothing is done, and the console says `N files have uncommitted changes — commit or stash them
+  first`.
+- **On** — the changes, untracked files included, are stashed with `git stash push -u -m "build-orchestrator:
+  leaving <branch> for <target>"` before the checkout, and the section's first line names that stash and says
+  `restore them with git stash pop`. The tool never shows, applies or pops a stash; getting the work back is
+  the user's. If the checkout fails after the stash, the stash line is still written, so the changes do not
+  look lost.
 
-### 10.4 Worktree pool
+The stash setting applies to the branch chip only, never to a pull (§10.5): a pull stays on the branch, and a
+stash nobody restores would look like lost work.
 
-Pool root: `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`. Worktrees are persistent — that is the point, since
-they carry a warm `obj` cache — always created with `--detach`, and individually deletable from the UI. The
-pool is capped at 20 GiB with LRU pruning applied *before* a new worktree is added. Auto-naming slugs the
-branch (`/` → `-`) and appends the next free ordinal.
+**Changes made outside the tool are reflected.** The HEAD watcher follows `logs/HEAD` in the git directory
+with a Windows file notification — no polling, no work while idle; the repository, the sources and `bin`/`obj`
+are not watched. Git's successive writes within one operation settle into one trigger after 1.5 s of quiet, so
+a long rebase produces one Sync. The reflog lines appended in that window are classified — commit, checkout,
+anything else (pull, merge, reset, rebase) — and the strongest wins. Visual Studio's background `fetch` and
+`status` do not write this file and trigger nothing. A return to the window is the second trigger: when more
+than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
+moved, because files may have been edited elsewhere.
 
-The pool is the application's scratch space. A worktree edited by hand will have those edits discarded by the
-`reset --hard` on its next reuse; this is the one data-loss risk the tool carries and it is documented at the
-call site.
+Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted`), read from disk:
 
-### 10.5 Path sanitization
+- the branch name differs → a new section (BranchChange), first line `Switched to …`;
+- branch and commit are the same and the trigger is a HEAD movement → nothing: the tool's own checkout and the
+  Sync a pull chains are not followed by a second Sync;
+- otherwise → a silent Sync.
 
-Branch slugs replace `/`, `\` and `: * ? " < > |` and control characters with `-`, collapse repeated dashes,
-and **throw rather than fall back** if the result is empty or `.`/`..`. A separate validator rejects absolute
-paths, separators and `..` for any name that will become a directory segment.
+Before the first Sync completes nothing is compared — the Sync at application start opens the first section.
+A trigger that arrives while a Sync, Clean, Optimize, checkout or pull is in flight is not lost: one pending
+trigger is kept, the stronger replacing the weaker, and it is weighed again when the work ends. If the watcher
+cannot start (a network drive, a permission, a repository with no reflog yet) the console says so once per
+root and a return to the window keeps working as the safety net; the watcher is retried on each return.
 
-### 10.6 External roots
+**A branch change during a run interrupts it.** A commit during a run does nothing. Any other HEAD movement —
+checkout, pull, merge, reset, rebase — asks the engine to stop with kind `interrupt`, once per run (§8.8): no new
+project starts, the ones compiling finish, and from that moment their results are not trusted. The event
+stream says `interrupted by branch change`. When the run ends the pending trigger is weighed; if the branch
+changed, the new section's first line is the run's summary — `Run interrupted by a branch change — N built,
+M not built · logs: <folder>` — followed by the switch line; if the branch did not change, the summary goes to
+the event stream and a silent Sync runs. As a safety net the end of every run is itself a trigger, so a HEAD
+movement the watcher missed is still caught when the run finishes. The run logs on disk are never deleted;
+clearing is for the screen only.
+
+**While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
+`MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
+`CHERRY_PICK_HEAD` and `REVERT_HEAD`, and `index.lock` (a git command running right now); a named operation
+wins over the lock. While one stands:
+
+- an automatic Sync waits, and the event stream says `waiting for git — <reason>` once per operation;
+- the branch chip carries an amber dot, and its tooltip names the operation (`Merge in progress — finish or
+  abort it in git`);
+- checkout and pull are locked, with the same reason in the tooltip;
+- only then does a poll run: the markers' existence is checked every two seconds, and when they are gone the
+  pending trigger is weighed;
+- an `index.lock` that stands for 30 s is reported once as possibly left behind by a crashed git process — the
+  tool never deletes it;
+- Build is not blocked: right under the run request the console warns that files with conflict markers will
+  not compile;
+- the Sync button always works, and its section's first line says the tree is mid-operation.
+
+### 10.4 External roots
 
 Some projects an OSYS build depends on live **outside** the repository root — customer-specific components
 kept in their own git repositories. The user lists them in Settings; every Sync scans them
@@ -1518,8 +1622,8 @@ a failure now costs only the projects that actually depend on it.
 
 **Updating is a separate step, and optional.** Before anything is scanned, each external working copy is
 brought up to date with `fetch` + `merge --ff-only`. It runs first because a
-fast-forward can bring new project files that the scan must see, and before the worktree is prepared because a
-run that a dirty external will cancel should not pay for a worktree. `pull` is never used: it would produce a
+fast-forward can bring new project files that the scan must see, and a run that a dirty external will cancel
+should not pay for a scan. `pull` is never used: it would produce a
 merge commit or a rebase depending on configuration, and either one rewrites the user's repository on the
 tool's behalf. The flow is three typed steps instead — the dirty gate, a ref-only fetch, and a fast-forward
 taken only when `merge-base --is-ancestor` says one is genuinely possible. If it is not, the working copy is
@@ -1554,28 +1658,39 @@ The incremental decision needs no special case at all. Since the signature is ha
 primitive, same separators, same comparison against `build-state.json`. Uncommitted work in an external copy is
 captured naturally, and the answer does not depend on whether a git clone is behind the folder at all.
 
-### 10.7 Distance from the remote, and the one pull
+### 10.5 Distance from the remote, and the one pull
 
 Sync's ref-only fetch already resolves the remote tip, so the distance is a local question: `rev-list --count
-HEAD..<tip>`. It is measured only when the fetch succeeded **and** the selected branch is the active one — in
-worktree mode the build comes from the pool copy, and how far the main tree has fallen behind says nothing
-about it. The number reaches two places: the Sync line (`HEAD a3f81c2 · 3 commits behind origin/main`, or
-`· up to date with origin/main`) and the `N behind` chip next to the branch chip. When the distance is unknown
+HEAD..<tip>`. It is measured whenever a branch is checked out and its remote tip is known — after a successful
+fetch, or, for a Sync that does not fetch, against the last known `refs/remotes/origin/<branch>` (§10.2). A
+detached HEAD and a degraded fetch leave it unknown. Since every run builds the working tree, the distance
+always describes what the next Build compiles. The number reaches two places: the Sync line (`HEAD a3f81c2 ·
+3 commits behind origin/main`, or `· up to date with origin/main`) and the `N behind` chip next to the branch
+chip. When the distance is unknown
 the line drops the clause and the chip is not drawn at all — an invented number would be worse than silence.
 
-**The chip is the only way the tool writes to the main repository, and it is deliberate.** The rule "the tool
-never pulls" still holds for the tool: nothing — not Sync, not Build, not a background task — fast-forwards the
-main repository on its own. But once the fetch has said "you are three commits behind", sending the user to a
-terminal is leaving the job half done. Fast-forward is the one git write a build tool can honestly own: it
+**The chip is a deliberate write, and the user's own.** The rule "the tool never pulls" still holds for the
+tool: nothing — not Sync, not Build, not a background task — fast-forwards the main repository on its own. The
+chip is one of the two ways the tool writes to the main repository, both of them a click (§10.1); the other is
+the branch chip's checkout (§10.3). But once the fetch has said "you are three commits behind", sending the
+user to a terminal is leaving the job half done. Fast-forward is the one git write a build tool can honestly own: it
 rewrites no history, makes no merge decision, refuses to touch a dirty tree, and is trivially undone.
 
-Clicking it runs the same principled sequence the external roots use (`Core/Git/FastForwardUpdater.cs`): dirty
-gate → ref-only fetch → "am I strictly behind?" → `merge --ff-only`. Every outcome is a console line — the
-fast-forward range on success, and on refusal the reason and the fix (`uncommitted changes … commit or stash
+Clicking it runs the same principled sequence the external roots use (`FastForwardUpdater` in
+`Core/Git/RepositoryWriter.cs`): dirty gate → ref-only fetch → "am I strictly behind?" → `merge --ff-only`.
+Every outcome is a console line — the fast-forward range on success, and on
+refusal the reason and the fix (`uncommitted changes … commit or stash
 them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal is not
 an error state: on a dirty or diverged tree, doing nothing is the correct behaviour. After a successful
 fast-forward the chip drops and a Sync runs automatically — with the console **kept**, because the user needs
-to see the result of the action they just took.
+to see the result of the action they just took. The HEAD movement the pull causes is the same HEAD that Sync
+then records, so the watcher's trigger finds nothing new (§10.3).
+
+The chip is visible whenever the distance is known and above zero, but it is not always clickable. It is locked
+while a run is in flight or being planned, while any other workspace operation — Sync, Clean, Optimize, a
+checkout, a pull already sent — is in flight, while the engine is unavailable, and while git is mid-operation
+(§10.3), in which case its tooltip says why. A dirty tree is refused with a line on the console, whatever the
+stash setting says.
 
 ---
 
@@ -1650,6 +1765,19 @@ The composition root registers the `EngineHost` (resolving the Supervisor path f
 §3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service and the view models. Two application-wide
 singletons are exposed statically because their owners have no constructor seam: the reduced-motion settings and
 the hero-motion coordinator.
+
+The shell also enables the automatic Sync (§10.3) once: the HEAD watcher attaches to the repository root and
+follows it when the root changes, and window activation is wired to the same coordinator.
+
+The first time the engine reports ready in a session, the App does three things, in this order. It prints
+`Engine ready — v<version>`. If the pool folder that older versions kept at
+`%LOCALAPPDATA%\BuildOrchestrator\worktrees` still exists, it prints one line saying the pool is no longer used
+and can be deleted, followed by `git worktree prune` in the repository — the tool neither creates nor deletes
+that folder. And when a workspace is open it starts the first Sync (Appended, §10.2), which opens the first
+console section with a full transcript and a reveal. A restarted engine prints its ready line again but starts
+no Sync of its own. Separately, whenever `engineReady` carries interrupted projects — at startup or after a
+restart, which is exactly when an engine died mid-run — the console says `previous run was interrupted; N
+projects will rebuild` (§8.7).
 
 ### 12.2 Window chrome
 
@@ -1729,12 +1857,17 @@ registration did not take.
 
 Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No admin rights, no HKLM, no service.
 
+Coming back to the window — from the tray, the overlay, a notification or any other window — raises the window's
+activation, and activation is a trigger for the automatic Sync: when more than five seconds have passed since
+the last Sync, a silent Sync refreshes the decisions (§10.3). The same activation re-reads the git directory's
+operation markers, so the branch chip's amber dot and the git locks are current the moment the user looks.
+
 ### 12.4 Layout modes and persistence
 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
 hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
 and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
-bar below says it once, with the workspace name and the branch and worktree chips. The window's application
+bar below says it once, with the workspace name and the branch chip. The window's application
 commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
 toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
 
@@ -1779,9 +1912,8 @@ Text that the design specifies literally is produced by **pure, testable static 
 ```
 
 **Title bar.** The brand alone: the product mark, the product name, a hairline, the company mark. It carries
-no repository, branch or worktree context — branch and worktree already have chips in the action bar, and the
-one remaining fact, *which workspace is open*, sits next to them as a mono label whose tooltip is the
-repository root.
+no repository or branch context — the branch already has a chip in the action bar, and the one remaining fact,
+*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
 `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is the `-t:Clean` run the
@@ -1789,7 +1921,11 @@ row menu starts on one project, and `DEEP CLEAN` the maintenance box's workspace
 are two different operations. It lights amber while a run or a Sync is in flight and goes neutral when they
 finish; the two maintenance jobs write their word at the click and leave the pill neutral, because neither
 opens a phase of its own — their live state is told by their own button in the maintenance box and by the
-console transcript. The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`. It
+console transcript. The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`. A branch
+switch from the branch chip writes `SWITCHING BRANCH` at the click; the Sync a successful checkout chains
+overwrites it with `SYNC`, and a refused or failed one drops it. A pull from the `N behind` chip writes `SYNC`
+from the start, since the pull and its Sync are one operation. A Sync the application starts on its own — a
+commit, a return to the window (§10.2) — writes nothing: the pill keeps the last thing the user asked for. It
 *stays* until the next operation begins: the phase
 line is momentary, the pill is the identity of what was last asked for. The progress indicator lives inside
 it, six pixels right of the text — a spinner while live, the result glyph when done; the phase line does not
@@ -2015,12 +2151,17 @@ the list cannot, because WPF owns its containers, so it closes the surface inste
 filter path — leaves the surface alone, or every keystroke would cost a blank frame. A reveal that is refused,
 under reduced motion or while another hero holds the stage, still reopens it.
 
-**Every Sync replays the reveal.** The topology a Sync publishes is a fresh listing even when nothing in it
-changed, so the list is rebuilt and revealed again, and — when nothing is selected — scrolled back to the
-top; the graph replays its own reveal in the same moment, so the two read together as "listed from scratch".
+**The reveal plays only when the structure changes.** A topology whose structural signature — node ids,
+names, layers and edges — matches the last one is reconciled in place: rows stay where they are, the scroll
+does not move and the graph is not rebuilt; the new decisions simply arrive on the existing rows. Only a
+different structure (a project added or removed, a moved layer, a changed edge) rebuilds the list with the
+staggered reveal and — when nothing is selected — scrolls it back to the top, while the graph replays its own
+reveal in the same moment, so the two read together as "listed from scratch". The rule holds for every Sync
+kind, because Syncs now run on their own (§10.2) and a list that jumped back to the top on every commit or
+return to the window would take the user's place away from them. The click of Clean and Optimize, and a real
+repository change, empty the surface and forget the signature, so the Sync that fills it again always reveals.
 Build, Rebuild, Clean and Resolve leave the scroll where it is: the opening choreography already tells their
-story, and the row under the pointer must not run away. A structural signature still gates republishes that
-do not come from a Sync.
+story, and the row under the pointer must not run away.
 
 Follow-mode keeps the frontier visible while a run is in flight and nothing is selected: at most one scroll
 animation every 550 ms, and none at all if the target is within 54 px.
@@ -2047,14 +2188,18 @@ politely. One gesture cannot behave two ways depending on where it happens, so t
 **Console.** See §13.5.
 
 **Event stream.** A capped list of chronological one-line events, cleared — like the console — whenever a new
-operation begins, Sync included: everything on screen belongs to the operation that is running. What decides
-the clear is not the operation's kind but whether the click that starts it already left a note of its own in
-the console — Sync from the ribbon button clears both panels, since nothing precedes it; a Sync that Settings'
-Save sends does not, because Save already wrote the console's first line (the new layer count, or the new
-root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one before
-it. That question is the console's and the stream's alone: the **plan surface** — rows, graph nodes, the cycle
-map, the *to build* count — is emptied by every Sync however it was reached, because a Sync recomputes the
-whole topology and what is on screen is stale the moment the click lands. It is not virtualized and does not need to
+section begins (§10.2): everything on screen belongs to the operation that is running. What decides the clear
+is not the operation's kind but whether it opens a section — Sync from the ribbon button clears both panels,
+since nothing precedes it, and so does a branch change, whose section starts with the switch line; a Sync that
+Settings' Save sends does not, because Save already wrote the console's first line (the new layer count, or
+the new root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one
+before it. An automatic Sync clears nothing and adds at most one line of its own (`synced after commit`,
+`synced · N projects changed`), as do the branch-change interrupt (`interrupted by branch change`) and the wait
+for a git operation (`waiting for git — …`).
+That question is the console's and the stream's alone: the **plan surface** — rows, graph nodes, the cycle
+map, the *to build* count — is not emptied by a Sync at all. A Sync reconciles the rows in place and replays the
+reveal only when the structure changed (§13.2); only the click of Clean or Optimize and a real repository change
+empty it. It is not virtualized and does not need to
 be: the buffer is trimmed from the front to a render slice, so the panel is bounded by construction, and rows
 are inserted and removed one at a time as events arrive rather than rebuilt in bulk. Virtualization would also
 cost more than it saves here — each row owns animation state (a done line glows
@@ -2116,15 +2261,15 @@ unfocused set uses. The matching rule lives in one place (`ProjectFilter.Matches
 list's visible names and never writes a second matcher, so the chip, the list and the graph can never disagree.
 
 **The whole bar speaks one hover language.** Every neutral control — Sync, the three maintenance icons, the
-counter chips, `N behind`, the branch/worktree/perf chips — steps to the same `neutral-700` ground with a
+counter chips, `N behind`, the branch and perf chips — steps to the same `neutral-700` ground with a
 `neutral-500` hairline on hover, and its label and icon whiten to `text-primary` together; a control that
 carries its own status colour (a status glyph, the building spinner or dot, the warning triangle) keeps that
 colour through the hover, because there colour is a status, not a hover state. `Σ` is the one partial exception:
 its icon rests one shade dimmer than its neighbours (`text-dim`, matching the design system's own chip-icon
 rule) rather than sharing the chip's own resting `text-secondary`, so it answers hover through its own channel
 — dim at rest, the same `text-primary` on hover — instead of simply following the chip's foreground the way the
-branch/worktree/perf icons do. A control that is already open or checked — a lit filter chip, an open
-branch/worktree popover — steps instead to `amber-soft-hover` with an `amber` hairline, and its text stays the
+branch and perf icons do. A control that is already open or checked — a lit filter chip, an open
+branch popover — steps instead to `amber-soft-hover` with an `amber` hairline, and its text stays the
 fixed `amber-text` it already had: hover never overwrites what the state itself already said, and the two
 readings are mutually exclusive by construction (an unchecked and a checked control never answer the same
 trigger, so there is no race for the checked one to lose). The one control that opts out is the
@@ -2140,8 +2285,9 @@ whose `MouseEnter`/`MouseLeave` is what
 actually answers hover in that window; the button's real `IsMouseOver` answers it everywhere else.
 
 The remaining bar carries the **workspace label** (mono, the repository root's folder name, tooltip the root
-itself); the branch chip (searchable popover); the `N behind` chip (§10.7) — drawn only when the distance is
-known, greater than zero and the active branch is selected; the worktree chip; the `Debug | Release` segment;
+itself); the branch chip, which names the branch checked out in the working tree and whose searchable popover
+checks another one out (§10.3); the `N behind` chip (§10.5) — drawn whenever the distance is known and greater
+than zero; the `Debug | Release` segment;
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
@@ -2150,7 +2296,16 @@ untouched, and it is the one surface in the bar whose engine is not written: the
 disabled, and its tooltip names the job before saying it is not available yet. It is neither the row menu's
 project clean nor the box's *Clean*, a different operation described below. While a run is in flight the
 primary button becomes *Stop*, and the
-branch, worktree and configuration controls lock; the perf chip stays live.
+branch chip and the configuration control lock; the perf chip stays live.
+
+**The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
+no run is in flight or being planned, no workspace operation (Sync, Clean, Optimize, a checkout, a pull) is in
+flight, the engine is available and git is not mid-operation. The last case is the only one the chip explains
+on its own: a 6 px amber dot sits on it and its tooltip names the operation (`Merge in progress — finish or
+abort it in git`); the same tooltip replaces the `N behind` chip's while the pull is locked for the same
+reason (§10.3). A checkout that is in flight holds every one of those gates for itself: until the engine
+answers, Build, Sync, the maintenance jobs and the pull are closed, because a run started on the new tree would
+have its console cleared by the checkout's section, and a pull would advance the wrong branch.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
@@ -2216,18 +2371,21 @@ skip it as up to date and report green over deleted outputs.
 **The click empties the plan surface, and the Sync that follows fills it in again.** Rows, graph nodes, the
 cycle map and the *to build* count all go at the moment the button is pressed, in the same frame as the console
 and the event stream: the outputs are about to be deleted, so nothing on screen answers to anything on disk any
-more, and dropping the plan at some later instant would read as a second jolt in one operation. **Sync and
-Optimize behave identically**, and for the reason that generalises the rule: an operation that is about to
-replace the plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync.
+more, and dropping the plan at some later instant would read as a second jolt in one operation. **Optimize
+behaves identically**, and for the reason that generalises the rule: an operation that is about to replace the
+plan takes the old one down with the click, not with the reply — and an Optimize ends in a Sync. A Sync on its
+own does not: it replaces decisions, not the plan's structure, and reconciles in place (§10.2).
 The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
 `Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
-Sync* empty state. A branch change does exactly this for the same reason. Because the emptying happens at the
+Sync* empty state. A repository change does exactly this for the same reason; a branch change does not — the
+list stays, and its Sync reconciles it. Because the emptying happens at the
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
 This costs no extra waiting in practice. *Build*, *Rebuild* and *Resolve cycles* are already shut for the
-whole of a Sync, a Clean or an Optimize (`!SyncBusy && !CleanBusy && !OptimizeBusy`), and the plan arrives in
+whole of a Sync, a Clean or an Optimize — and of a checkout or a pull, the same busy question (`WorkspaceBusy`)
+— and the plan arrives in
 the same batch that clears the
 in-flight flag, so both halves of their gate open together. What the emptying does change is the failure case:
 a Sync that never delivers a plan — the engine is gone, planning failed — leaves the surface empty and those
@@ -2289,7 +2447,8 @@ a step that found nothing — packages, references, `obj` leftovers, caches — 
 event stream, and a pill reading `OPTIMIZE` until the Sync takes it over.
 
 **The two workspace jobs share one gate.** A workspace must be selected — a topology is not required, both
-services scan for themselves — the engine must be alive, and no run, Sync, Clean or Optimize may be in flight.
+services scan for themselves — the engine must be alive, and no run, Sync, Clean, Optimize, checkout or pull may
+be in flight.
 The exclusion is mutual and complete: while either of them runs, *Build*, *Rebuild*, *Resolve cycles*, the row
 actions, Sync, the `N behind` chip **and the other maintenance button** are all closed. Every pair of them is a
 race on the same workspace — deleting `bin` under a compiling MSBuild, a Sync (the automatic one after a pull
@@ -2348,22 +2507,24 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or 
 that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
 closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
-the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch,
-worktree, the Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are
-28 px. The branch popover is 272 px wide and carries a search box; the worktree popover is 300 px and carries
-the switch, the target list and the `source` line.
+the control that opened it. One gate (`PopoverToggle`) closes that window for all four popovers — branch, the
+Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are 28 px. The branch popover is
+272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
+nothing, and the remote `origin/HEAD` pointer is not listed.
 
 The branch list is virtualized, and a popover only builds rows while it is open — closed, it does nothing at
 all when the inventory changes. Both matter more than they sound: a real repository carries hundreds of refs
-(`refs/heads` plus `refs/remotes`), every Sync republishes the inventory, and four surfaces listen to it.
+(`refs/heads` plus `refs/remotes`), and every Sync — the automatic ones included — republishes the inventory.
 
-That is also why the inventories are **snapshots rather than incrementally mutated lists**. `Branches` and
-`Worktrees` are replaced wholesale and emit **at most one** change notification per publish — and none at all
-when the content is identical, which is the common case, since Sync asks for the inventory every time whether
-or not anything changed. Reconciling item by item would emit two notifications per entry, and with several
-listeners each rebuilding on every notification the cost is quadratic in the number of refs. The reset that a
+That is also why the inventory is a **snapshot rather than an incrementally mutated list**. `Branches` is
+replaced wholesale and emits **at most one** change notification per publish — and none at all when the
+content is identical, which is the common case, since every Sync asks for the inventory whether or not anything
+changed. Reconciling item by item would emit two notifications per entry, and with a listener rebuilding on
+every notification the cost is quadratic in the number of refs. The reset that a
 wholesale replacement implies is safe here, unlike in the projects list: there is no container identity or row
-selection to preserve — the selected branch is a value, reconciled separately against the new inventory.
+selection to preserve. The branch the chip shows is not a choice the list has to keep: it is the inventory's
+active entry — HEAD — read afresh on every publish, and `syncCompleted` aligns it even earlier (§5.3). On a
+detached HEAD the last known name stays.
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -2402,13 +2563,16 @@ on the first input of that page: the repository root input, or the first switch.
 The rail exists because settings grow. A single column put every section under the previous one and each new
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
-(`GeneralSettingsCatalog`) in three groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*) and *Notifications* (*Show notifications*) — and every row is drawn by
+(`GeneralSettingsCatalog`) in four groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
+to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
+(*Show notifications*) — and every row is drawn by
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
 no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
 switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Only
-*Pull before build* drives behaviour so far; the other four switches live in the draft alone (§20).
+*Pull before build* and *Stash and switch branches* drive behaviour so far; the other four switches live in the
+draft alone (§20). *Stash and switch branches* follows the pull switch's rules: saved with *Save*, carried to
+the engine on the next checkout, and a console note written only when its value actually changed.
 
 **Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
 required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
@@ -2422,16 +2586,16 @@ independently, each against its own collection. An empty path on any card disabl
 an empty layer name. The list starts **empty** and shows the same dashed empty-state box the Layers page uses.
 *Add external project* appends a blank card.
 
-*Pull before build* — whether every build refreshes these working copies first (§10.6) — is a switch on
+*Pull before build* — whether every build refreshes these working copies first (§10.4) — is a switch on
 **General**, not on this page: it is a behaviour of the build, and General is where the dialog collects those, so
 the external page stays a list. The page still says where the switch went and what it is set to: under the cards
 a hairline and one line read *Card order sets the order the working copies are updated. Updating them before a
 build is on* (or *off*, following the draft live), followed by a ghost *Pull before build* button that moves the
 rail to General. The switch is deliberately not a chip in the action bar: that bar carries per-run choices
-(configuration, perf, branch, worktree), while this one follows the external list and changes rarely. It follows
+(configuration, perf, branch), while this one follows the external list and changes rarely. It follows
 the same draft rule as everything else here: nothing is applied until *Save*, it defaults to on, and *Clear*
 returns it to on rather than off.
-The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.6): Sync scans
+The list is written to disk on *Save* and travels with every Sync and Build command (§5, §10.4): Sync scans
 each card's path and the projects it finds join the graph as ordinary rows, Build updates their working copies
 first and then compiles them in dependency order. A path is only validated when it is used — the dialog does
 not scan it — so a card pointing at nothing buildable is a warning in Sync and a refused run in Build, not a
@@ -2495,11 +2659,11 @@ starts there anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, layers[{ name, pattern }] }`, the external array sitting between the root and the
-layers (the field order the file is written in, not just a key that happens to be present) and holding only
+pullExternalBeforeBuild, stashOnBranchSwitch, layers[{ name, pattern }] }`, the external array sitting
+between the root and the layers (the field order the file is written in, not just a key that happens to be present) and holding only
 cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
-every external card, and returns every General switch to its default — *Pull before build* to on. Of General,
-only *Pull before build* travels in the file. All
+every external card, and returns every General switch to its default — *Pull before build* to on, *Stash and
+switch branches* to off. Of General, only those two travel in the file. All
 three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
@@ -2513,12 +2677,12 @@ name` or `Check the highlighted pattern`, in that order of priority. The draft d
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits `pullExternalBeforeBuild` leaves the pull switch where it is, the same rule the external list
-already follows: a file cannot silently reset a setting it does not carry.
+A file that omits `pullExternalBeforeBuild` or `stashOnBranchSwitch` leaves that switch where it is, the same
+rule the external list already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
-older file carries included (§10.6) — and an entry whose path is blank is skipped. A file that omits the key entirely leaves the draft's external list untouched, the
+older file carries included (§10.4) — and an entry whose path is blank is skipped. A file that omits the key entirely leaves the draft's external list untouched, the
 same rule the repository root already followed; a file that carries the key — an empty array included —
 replaces the list outright, because the key's presence is itself a decision. The import feedback line reflects
 that: `Imported — N layers · M external · root set`, with the `M external` clause appearing only when the file
@@ -2555,7 +2719,7 @@ inset 14 px top, 18 px sides and 20 px bottom.
   closes About and asks the window to open What's new through the same path as the title-bar button, so the
   unread mark clears exactly as it does there.
 - **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS — and **PATHS** — the resolved
-  `MSBuild.exe`, the repository root, the state file, the logs and the worktree pool. The application and engine
+  `MSBuild.exe`, the repository root, the state file and the logs. The application and engine
   versions are not repeated here.
 - **Shortcuts** is two caps groups, **BUILD** and **APPLICATION**; each row is the catalog's description and its
   key caps, and the global restore hotkey is marked `unavailable` when its registration failed.
@@ -2874,7 +3038,11 @@ lines.
   **not following**: what you are looking for in a build log is the first error, and following would have thrown you
   to the bottom on the next live line. Scrolling down yourself hands following back, by the same rule as any other
   user scroll. This is a deliberate departure from §5.1, which pins both directions to the bottom.
-- **A new operation empties the narrative in place.** The view-model clears its buffer and says so
+- **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
+  the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
+  every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
+  The disk logs are never
+  touched — clearing is for the screen. The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
@@ -2940,7 +3108,7 @@ that the graph always fits — there is no scrollbar, and no canvas larger than 
 **A node is identified by its project id, never by its name.** Positions, the slot map, edge endpoints,
 selection, hover, the filter set and the marking set all key on the full `.csproj` path; the display name is
 only a label, used for the tooltip, the selection caption and the screen-reader name. The distinction is not
-academic: two projects can produce the same `AssemblyName` — an external card (§10.6) pointing at a second
+academic: two projects can produce the same `AssemblyName` — an external card (§10.4) pointing at a second
 copy of a solution that already sits under the repository root is the ordinary way it happens. Keying on the
 name would have the band reserve a cell for each of them and then write both positions into one entry: the
 pair lands on a single point, one of them never receives a status or a click again, and the cell that was
@@ -3272,7 +3440,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
 | Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
-| Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.6) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
+| Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.4) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
 | Kbd · ProgressBar · Popover · Dialog · Focus visual | Styles over stock elements. A focus ring is a rectangle pushed outside its element by `-(offset + stroke/2)` and rounded by the same amount so it follows the corner — arithmetic XAML cannot do, so `DsChrome.FocusRingOffset` derives both. Its default is `NaN`, not zero: zero is a real offset (the input's ring hugs the edge with no gap) and WPF skips a property's change callback when the assigned value equals the default, which would leave that ring flat against the box and square-cornered |
@@ -3285,7 +3453,7 @@ The action bar's chip, secondary-button, icon-button and segment-item styles eac
 language") so the base styles the rest of the app uses (the ShellRoot filter chip, row icons, dialogs) are
 untouched. `Ds.Bar.Chip`'s neutral-hover trigger and its checked-hover trigger key off opposite values of
 `IsChecked` (`False` and `True`), so exactly one of them ever matches a given chip and there is no ordering
-between them to reason about. A checked, hovered chip — a lit filter chip, an open branch/worktree popover chip
+between them to reason about. A checked, hovered chip — a lit filter chip, an open branch popover chip
 — answers only the checked-hover trigger: ground and hairline step to `amber-soft-hover`/`amber`, and its text
 stays whatever `Ds.Chip`'s own `IsChecked` trigger already set (`amber-text`), because the checked-hover trigger
 never touches `Foreground`. An unchecked, hovered chip answers only the neutral trigger.
@@ -3309,7 +3477,7 @@ button is deliberately drawn live while its own command is closed.
 way `AnimatedForeground` carries the rest of the chip. It exists because Σ's chip shares `Ds.Chip`'s resting
 `Foreground` (`text-secondary`) with every other chip that has a label, but the design system draws a chip's
 *icon* one shade dimmer than its label at rest — binding Σ's icon straight to the chip's `Foreground` (the
-pattern the branch/worktree/perf icons use, where the icon's resting shade already equals the label's) would
+pattern the branch and perf icons use, where the icon's resting shade already equals the label's) would
 have raised Σ's icon to `text-secondary` at rest, losing that shade instead of merely failing to animate it.
 
 Three pieces of shared machinery keep the copies from multiplying:
@@ -3329,9 +3497,9 @@ Three pieces of shared machinery keep the copies from multiplying:
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
 
-Both popovers derive from a common base that owns the open state, the refresh-then-animate-then-focus sequence,
-the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and outside
-click; only the branch search filter and the worktree three-state text remain per-popover. The width belongs to
+The branch popover derives from a common base that owns the open state, the refresh-then-animate-then-focus
+sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and
+outside click; only the branch search filter is its own. The width belongs to
 the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
 number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
 edge of the body.
@@ -3520,8 +3688,9 @@ every other row, because the triangle already says it. This is not the orange ch
 the warning's own amber.
 
 **The start mode** is the `unknown` standing: a row that has no decision yet — the application has started but
-no Sync has run, or the branch or the repository root has just changed and the decisions the rows carried no
-longer describe what will be built; the list and the graph drop back together. Nothing is known, so nothing is
+no Sync has run, or the repository root has just changed and the decisions the rows carried no longer describe
+what will be built; the list and the graph drop back together. A branch change does not drop them: its Sync
+arrives with the new decisions and recolours the rows in place. Nothing is known, so nothing is
 coloured: the row draws a plain grey stripe at full opacity and a **four-arc ring** in place of the filled dot,
 the glyph is a dashed circle, and the graph node carries a dashed border. The mode drops the moment a decision
 arrives — a Sync's preview colours every row with its standing — and the ring cross-fades into the filled dot,
@@ -3554,7 +3723,7 @@ The dependency triangle is **cumulative**. Its roots come from one place on the 
 run's dependency list when the run produced one, otherwise the ledger's note — a project whose last success was
 built against a broken dependency (`WaitingForDependency`) carries the recorded roots from the preview, so the
 triangle is there right after a Sync, survives the next operation's neutralising, and goes only when the note
-does (the preview stops reporting it) or when the decisions are dropped with a branch or repository change.
+does (the preview stops reporting it) or when the decisions are dropped with a repository change.
 Two questions are kept apart on purpose: the `⚠` chip and the `warn` filter count the cumulative triangle,
 while the ribbon's run summary — `(N dependency-affected)` — counts only the projects this run found a
 dependency issue on, because it is the story of the run.
@@ -3742,10 +3911,10 @@ phase, which starts dimming every node, and the choreography only overrides that
 — one frame of nothing in between is one frame of the graph going out and coming back.
 
 **The run command goes out when the choreography ends**, not when the button is pressed. Overlapping the two
-was tried — send immediately, play the choreography over the engine's planning window (worktree preparation,
-scan, graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
-conditional on how long planning took: warm repository, no worktree, and `runStarted` arrived before the wave
-finished; cold, and it did not. The same click was sometimes animated and sometimes instant. A choreography
+was tried — send immediately, play the choreography over the engine's planning window (external update, scan,
+graph, topology, incremental) and let `runStarted` end it — and the cost was that the animation became
+conditional on how long planning took: warm repository, and `runStarted` arrived before the wave finished;
+cold, and it did not. The same click was sometimes animated and sometimes instant. A choreography
 either always plays or never does. The operation itself still begins on the first frame — the pill lights,
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
@@ -3891,8 +4060,8 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, branch, worktree choice, layer patterns, external roots (path and source) and whether to update them (§10.6), hotkey, autostart, tray-balloon-shown, last-seen release-notes version | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
-| `worktrees\` | the worktree pool | LRU pruned to 20 GiB |
+| `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, autostart, tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 Autostart additionally writes one `HKCU\...\Run` value.
 
@@ -3919,8 +4088,16 @@ files old enough that no write still in flight could own them.
 When an operation finds nothing to change in a ledger, that file is not rewritten at all — no write, no rename
 race.
 
-The Supervisor accepts `--logs` and `--worktrees` to relocate the log/cache/state root and the pool root. The
-App never passes them; they exist so the test suite never touches the user's real data.
+`build-state.json` and `run-inflight.json` share one atomic write path (`AtomicFile`): a unique
+temp file, then a rename over the target with a bounded retry for a transient sharing violation.
+
+The Supervisor accepts `--logs` to relocate the log root; the cache and state files, `run-inflight.json`
+included, live next to it, in its parent folder. The App never passes it; it exists so the test suite never
+touches the user's real data — a test that starts a real engine must isolate its cache this way, and a source
+guard pins that (§17.2), because an engine reads `run-inflight.json` the moment it starts.
+
+A pool folder at `worktrees\` may still exist from older versions. Nothing reads or writes it any more; the
+console points it out once per session (§12.1).
 
 ---
 
@@ -3973,6 +4150,9 @@ A category of tests that assert properties of the *source*, not of a run:
 | App icon background | every ICO frame's corners are transparent — the tile has not come back |
 | Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
 | "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
+| Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
+| No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
+| Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16) |
 
 ### 17.3 Determinism
 
@@ -4093,13 +4273,25 @@ do, and how the interface works around each — useful to know before attempting
 
 ## 20. Known limits
 
-- **One repository's history at a time.** External roots (§10.6) are scanned into the same graph and built
-  with everything else, but the branch, the target sha and the worktree pool all describe the repository root
-  alone. Switching branches does not move an external working copy, and an external root's own branch is
-  whatever the user left checked out there.
-- **No build-output isolation between branches.** Only `obj` is isolated, and only in worktree mode; the shared
-  `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write to the
-  same place.
+- **One repository's history at a time.** External roots (§10.4) are scanned into the same graph and built
+  with everything else, but the branch, the target sha, the HEAD watcher and the `N behind` distance all
+  describe the repository root alone. Switching branches does not move an external working copy, and an
+  external root's own branch is whatever the user left checked out there.
+- **One tree, no build-output isolation between branches.** Every run builds the working tree, and no output
+  path is changed — neither `OutDir` nor `obj` — for Visual Studio parity, so builds of different branches write
+  to the same place. Building another branch means checking it out (§10.3).
+- **An interrupt draws its line where it reaches the engine.** A branch change is noticed after git's writes
+  settle (1.5 s) and the request then travels over the IPC. A project that finishes inside that window —
+  compiled from the old tree, reported before the interrupt landed — is still trusted. The window is short and
+  the next Sync reads the new tree, but it is not zero.
+- **A rebase interrupts a run in flight.** A rebase moves HEAD once per replayed commit; the watcher folds those
+  writes into one trigger, but a run in flight is interrupted by it like any other HEAD movement that is not a
+  plain commit.
+- **The HEAD watcher needs a reflog.** It follows `logs/HEAD`; a repository that has no commit yet has no
+  reflog folder, so the watcher cannot start and says so once. Returning to the window retries it, and the
+  window-activation Sync covers changes in the meantime.
+- **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
+  repository already has; the Sync button and a pull refresh it from the network.
 - **The shared-compilation flags cost ~2.9×** and stay off for correctness (§9.2).
 - **Filling a viewport of rows costs what it costs.** Virtualization bounds the work to the visible window,
   but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
@@ -4154,12 +4346,11 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 |---|---|---|---|
 | Repository root | folder picker or Settings | working directory of the child process — not an argument | none |
 | Project / solution paths | disk scan | MSBuild command line, escaped per MSVCRT rules | none |
-| Branch name | branch list, or `ui-state.json` | `git fetch origin <branch>` argv element | theoretical (below) |
+| Branch name | git's own branch inventory (`for-each-ref`) and the checked-out HEAD; never stored | argv elements of `git fetch origin <branch>`, `git checkout <branch>` / `checkout --track origin/<name>`, and inside the `stash push -m` message | theoretical (below) |
 | Perf mode | perf chip | ordinal whitelist | none |
-| Worktree name | UI / `ui-state.json` | validated as a single safe path segment | none |
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
-| External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.6): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
+| External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.4): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
 manual string concatenation is prohibited — `UseShellExecute` is false everywhere, and neither `cmd.exe` nor
@@ -4173,17 +4364,19 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
   skipped for the remaining nodes with a warning. An empty or whitespace pattern is made inert rather than
   matching everything.
 - **NDJSON line limit** (1 MiB) is enforced on both write and read; log chunks are 64 K, far below it.
-- **Branch slug sanitization** replaces path-hostile characters, collapses repeated dashes, and **throws
-  rather than falling back** if the result is empty or `.`/`..`. A separate validator rejects absolute paths,
-  separators and `..` for any name that becomes a directory segment.
-- **Atomic state writes:** `build-state.json`, `evaluation-cache.json` and `source-hash-cache.json` are written
+- **Atomic state writes:** `build-state.json`, `run-inflight.json`, `evaluation-cache.json` and
+  `source-hash-cache.json` are written
   to a unique temp name and moved into place; readers open with `FileShare.Delete` so they cannot block the
   rename, which is retried a bounded number of times on a transient sharing violation. The temp file a killed
   write leaves behind is collected by *Optimize* (§16).
-- **The one git write is gated three ways:** it is `--ff-only` (so it can neither rewrite history nor create a
-  merge), it refuses a dirty or diverged tree, and it never runs by itself — only from the user's click on the
-  `N behind` chip (§10.7). A source guard keeps every mutating git verb inside the single file that implements
-  it.
+- **Git writes are user actions, each with its own gate, in one file.** The fast-forward is `--ff-only` (so it
+  can neither rewrite history nor create a merge), refuses a dirty or diverged tree, and runs only from the
+  user's click on the `N behind` chip or for an external root the user left on (§10.5, §10.4). The checkout
+  runs only from the user's pick on the branch chip, refuses a dirty tree unless the user turned *Stash and
+  switch branches* on — and then stashes with untracked files included, so nothing is overwritten — and is
+  locked while a run is in flight (in the App and again in the engine, `checkoutRejected`) and while git is
+  mid-operation (§10.3). Nothing writes on its own, and `reset` runs in no flow at all. A source guard keeps
+  every mutating git verb inside `Core/Git/RepositoryWriter.cs` (§17.2).
 - **Racy-file rule in the hash cache:** an entry whose file was modified within two seconds of the cache being
   written is not persisted, so a file rewritten in the same second at the same size cannot be mistaken for
   unchanged on the next run (git's own index rule).
@@ -4206,21 +4399,19 @@ An honest list, kept because omitting it would make the guarantees above read wi
    resolved to full paths without a containment check, so the graph and the signature may treat a file outside
    the repository as a source. Accepted — the repository is trusted (§21.1).
 2. **Symlinks and junctions are neither followed deliberately nor detected** during the scan. A self-referential
-   junction could produce deep recursion. (The worktree pool does have a separate junction gate before
-   `reset --hard`.)
+   junction could produce deep recursion.
 3. **`explorer` and `devenv` arguments are hand-quoted** rather than going through the MSVCRT escaper. A path
    containing a quote would break the escaping; unreachable in practice, since Windows file names cannot
    contain one and the paths come from a disk scan.
-4. **A branch name could reach git's argv as an option.** In the UI it can only be chosen from a list, but it is
-   also loaded from `ui-state.json`; a hand-edited value beginning with `-` would be passed through as-is,
-   with no `--` separator and no pre-validation. Reaching it requires already being inside the user's account.
-5. **Supervisor arguments are not validated.** `--logs`, `--worktrees` and `--debug-hooks` are taken raw. The
-   App passes none of them; only tests do.
+4. **A branch name reaches git's argv without a `--` separator or pre-validation.** It now comes only from git
+   itself — the inventory and HEAD — and is no longer stored in `ui-state.json`; git refuses to create a branch
+   whose name begins with `-`, so an option-shaped name would need a hand-edited ref inside the repository.
+   Reaching it requires already being inside the user's account.
+5. **Supervisor arguments are not validated.** `--logs` and `--debug-hooks` are taken raw. The App passes
+   neither; only tests do.
 6. **There is no field-level IPC schema validation** (§5.4). A missing field binds to `null` and surfaces at
    the point of use as `planFailed`/`runFailed`.
-7. **Manual edits inside a pool worktree are not preserved** — the next reuse resets it. The pool is the
-   application's scratch space.
-8. **The cascade guarantee has two documented exceptions** (§4.2, §4.4): processes the App starts on the user's
+7. **The cascade guarantee has two documented exceptions** (§4.2, §4.4): processes the App starts on the user's
    behalf are in no job by design, and a build step that delegates work to another parent through COM/WMI/task
    scheduler creates a process that never enters the job at all.
 
@@ -4283,8 +4474,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal | `App/Services/EngineHost.cs` |
-| Supervisor entry, argument handling, stdout redirect, planner wiring, workspace preparation | `Supervisor/Program.cs` |
-| Command dispatch, per-command input gates | `Supervisor/SupervisorHost.cs` |
+| Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
+| Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
 
 **Discovery, graph and layers**
@@ -4314,9 +4505,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Input collection, path terms and the two binding passes | `Core/Incremental/IncrementalRunBinder.cs` |
 | Will-build tri-state decision and its reason | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
-| Worktree → main-root identity rebase | `Core/Planning/ProjectIdentityRebase.cs` |
+
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
-| Build state store, duration persistence, non-convergence lookup | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+| Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+| The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
+| The one atomic write path shared by the build state and the in-flight ledger | `Core/State/AtomicFile.cs` |
 
 **Scheduling and run execution**
 
@@ -4332,7 +4525,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
@@ -4348,22 +4541,32 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
-| Isolated `obj` path derivation | `Core/MsBuild/WorktreeObjPathResolver.cs` |
+
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
 | Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
 
-**Git and worktrees**
+**Git**
 
 | Behaviour | File |
 |---|---|
 | All read-only git invocations (HEAD, status, refs, distance, fetch) | `Core/Git/GitService.cs` |
-| The only mutating git surface: dirty gate → fetch → is-ancestor → `merge --ff-only` | `Core/Git/FastForwardUpdater.cs` |
+| The only mutating git surface: the fast-forward (dirty gate → fetch → is-ancestor → `merge --ff-only`, `FastForwardUpdater`) and the branch switch (dirty gate → optional `stash push -u` → `checkout`, `BranchSwitcher`) | `Core/Git/RepositoryWriter.cs` |
+| Git directory resolution (`.git` folder or `gitdir:` file) | `Core/Git/GitDirectory.cs` |
+| HEAD and its ref read from files (loose, packed, linked-worktree common dir) | `Core/Git/HeadReader.cs` |
+| Operation markers (merge, rebase, cherry-pick, revert, `index.lock`) | `Core/Git/GitOperationProbe.cs` |
+| Tooltip, Build warning, Sync warning and stuck-lock texts for an operation in progress, and the 30 s threshold | `Core/Git/GitOperationText.cs` |
+| Reflog line classification (commit, checkout, other) and the strength order | `Core/Git/ReflogEntry.cs` |
+| The HEAD watcher on `logs/HEAD` and its 1.5 s settle window | `Core/Git/HeadWatcher.cs`, `Core/Git/SettleDebouncer.cs` |
 | Revision text shortening (only a full 40-hex sha is cut to 7) | `Core/Git/RevisionText.cs` |
 | The `N behind` chip's command handler (main repository fast-forward) | `Supervisor/SupervisorHost.cs` |
+| Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
+| The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
+| Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
+| Sync kinds and their rules (clearing, fetch, transcript, visibility) | `App/ViewModels/SyncMode.cs` |
+| Branch chip checkout, its gate, the stash setting; the checkout's answer and the pull | `App/ViewModels/RunViewModel.ActionBar.cs` (`SelectBranch`, `CanSwitchBranch`), `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `PullRepositoryAsync`) |
+| The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
-| Worktree pool: create, reuse, prune, delete, gates | `Core/Git/WorktreeManager.cs` |
-| Branch slug and path segment sanitization | `Core/Git/PathSanitizer.cs` |
-| Sync flow (fetch → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+| Sync flow (fetch or last known remote → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
@@ -4404,13 +4607,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |
-| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE`) | `App/ViewModels/OperationLabel.cs` |
+| Operation pill wording (`SYNC` · `BUILD` · `REBUILD` · `CLEAN` · `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` · `SWITCHING BRANCH`) | `App/ViewModels/OperationLabel.cs` |
 | Status counters | `App/ViewModels/RunCounters.cs` |
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
-| Settings General page catalog (groups, rows, defaults, dependencies) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
+| Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 
@@ -4428,16 +4631,16 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
 | Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
-| Action bar: sync, counters, chips, segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
+| Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |
 | Maintenance box (Clean / Optimize / Resolve cycles), amber-plus-spinner on the running job | `App/Views/MaintenanceBox.xaml(.cs)` |
 | Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
 | Maintenance-box Optimize command, the shared workspace-job gate (mutually exclusive with Clean), its request/in-flight guard and its error codes — the plan surface cleared at the click and the Sync chained on completion, through the handover it shares with Clean | `App/ViewModels/RunViewModel.cs` (`OptimizeCommand`), `RunViewModel.Workspace.cs` |
-| Hollow reset of rows and the will-build surface (branch change, root change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
-| Emptying rows, graph and the will-build surface at a Clean click | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
+| Hollow reset of rows and the will-build surface (repository change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
+| Emptying rows, graph and the will-build surface at a Clean or Optimize click and on a real repository change | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
-| Branch and worktree popovers, shared base | `App/Views/BranchPopover.xaml(.cs)`, `WorktreePopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
 | Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |

@@ -2,8 +2,8 @@ namespace BuildOrchestrator.Core.Paths;
 
 /// <summary>
 /// [spec 2026-09-18 §1-1] Eski worktree havuzunun kökü. Worktree modu kalktı; araç bu klasörü artık ne yaratır
-/// ne siler. Yolun TEK tanımı burada yaşar: tanı ekranı (About → Paths) onu gösterir, kullanıcı elle
-/// temizleyebilir.
+/// ne siler. Yolun TEK tanımı burada yaşar: klasör hâlâ diskteyse konsol bunu oturum başına bir kez söyler
+/// (<see cref="Hint"/>); temizlik kullanıcınındır.
 /// </summary>
 public static class LegacyWorktreePool
 {

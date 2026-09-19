@@ -61,7 +61,7 @@ public sealed class NoGitMutationOutsideTheWriterTests
     /// <summary>Mutasyonun MEŞRU olduğu yollar (src köküne göre) ve gerekçeleri.</summary>
     private static readonly IReadOnlyCollection<string> Allowed =
     [
-        // Kod tabanındaki TEK mutasyon dosyası: merge-base kararı + merge --ff-only (§10.6, FastForwardUpdater)
+        // Kod tabanındaki TEK mutasyon dosyası: merge-base kararı + merge --ff-only (§10.4, FastForwardUpdater)
         // VE branch checkout + stash push (§6.3/§6.6, BranchSwitcher). Hem harici kartlar hem (yalnız
         // kullanıcı chip'e/branch chip'ine bastığında) ana repo buradan geçer.
         @"BuildOrchestrator.Core\Git\RepositoryWriter.cs",
