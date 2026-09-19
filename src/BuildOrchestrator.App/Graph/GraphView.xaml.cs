@@ -491,6 +491,10 @@ public partial class GraphView : UserControl
     /// <summary>[test yüzeyi] Grafın o anki bitiş-koreografisi adımı.</summary>
     internal EndStep EndStep => _endStep;
 
+    /// <summary>[test yüzeyi] Bitiş koreografisini (filtre dönüş adımı dahil) duvar saatini beklemeden
+    /// <paramref name="atMs"/> anına dek ilerletir — bkz. <see cref="StepPlayer.AdvanceToForTest"/>.</summary>
+    internal void AdvanceEndFinaleForTest(double atMs) => _endPlayer.AdvanceToForTest(atMs);
+
     /// <summary>
     /// [design v1.13.2 §2.5] <b>Bitiş koreografisi tam görünümde oynar.</b> Koreografi doğarken (Hold'dan
     /// itibaren) VE bittikten SONRA — o sıradaki seçim hâlâ <see cref="_focusOff"/>'a eşit olduğu sürece —

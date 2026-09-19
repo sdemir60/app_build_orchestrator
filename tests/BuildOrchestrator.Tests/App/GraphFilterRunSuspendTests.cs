@@ -86,12 +86,14 @@ public class GraphFilterRunSuspendTests
         view.RunPhase = GraphRunPhase.Idle;
 
         view.PlayEndFinale([Data], runCount: 1);
-        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(8));
+        view.AdvanceEndFinaleForTest(EndFinale.TotalMs(1)); // final bitti — duvar saati beklenmez
+        Assert.Equal(EndStep.None, view.EndStep);
 
         Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6); // final görünümü bekler
+        view.AdvanceEndFinaleForTest(EndFinale.FilterReturnAtMs(1) - 1);
+        Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6); // bekleme sürüyor
 
-        DispatcherPump.PumpUntil(
-            () => view.NodeVisuals[Data].OpacityTarget.Equals(GraphNodeOpacity.Unfocused), TimeSpan.FromSeconds(3));
+        view.AdvanceEndFinaleForTest(EndFinale.FilterReturnAtMs(1));
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
         Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Base].OpacityTarget, 6);
         Assert.Equal(TimeSpan.FromMilliseconds(GraphNodeOpacity.FilterFadeMs), GlideOf(view, Data));
@@ -143,11 +145,13 @@ public class GraphFilterRunSuspendTests
         view.UpdateStatuses([new(Base, Base, 0, GraphStatus.Skipped), new(Data, Data, 1, GraphStatus.Succeeded)]);
         view.RunPhase = GraphRunPhase.Idle;
         view.PlayEndFinale([Data], runCount: 1);
-        DispatcherPump.PumpUntil(() => view.EndStep == EndStep.None, TimeSpan.FromSeconds(8));
+        view.AdvanceEndFinaleForTest(EndFinale.TotalMs(1));
+        Assert.Equal(EndStep.None, view.EndStep);
         Assert.True(view.IsFilterSuspended); // ön-koşul: bekleme penceresindeyiz
 
         view.BeginOperation(); // ikinci Build
-        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(MarkingChoreography.LightMs + 200));
+        // Dönüş adımının anı geçer: iptal edilmeseydi askıyı burada kaldırırdı.
+        view.AdvanceEndFinaleForTest(EndFinale.FilterReturnAtMs(1));
 
         Assert.True(view.IsFilterSuspended);
         Assert.Equal(GraphNodeOpacity.Full, view.NodeVisuals[Data].OpacityTarget, 6);
@@ -184,8 +188,12 @@ public class GraphFilterRunSuspendTests
             [new(Base, Data)]);
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
 
-        // Kesilen finalin kalan adımları sonradan düşmez.
-        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(EndFinale.FilterReturnAtMs(1) + 200));
+        // Kesilen finalin kalan adımları sonradan düşmez. Ara an da denetlenir: finalin son adımları EndStep'i
+        // None'a, filtreyi geri getirdiği için yalnız sona bakan bir iddia dirilen bir finali göremezdi.
+        view.AdvanceEndFinaleForTest(EndFinale.StepAtMs(EndStep.Grey, 1));
+        Assert.Equal(EndStep.None, view.EndStep);
+        Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
+        view.AdvanceEndFinaleForTest(EndFinale.FilterReturnAtMs(1));
         Assert.Equal(EndStep.None, view.EndStep);
         Assert.Equal(GraphNodeOpacity.Unfocused, view.NodeVisuals[Data].OpacityTarget, 6);
     }

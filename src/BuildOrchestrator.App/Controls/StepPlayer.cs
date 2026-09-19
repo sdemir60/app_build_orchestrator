@@ -59,6 +59,15 @@ public sealed class StepPlayer
         _onDone = null;
     }
 
+    /// <summary>[test yüzeyi] Duvar saatini beklemeden koreografiyi <paramref name="atMs"/> anına dek ilerletir:
+    /// o ana dek düşen bekleyen adımlar, gerçek tick'lerle AYNI yoldan (<see cref="OnTick"/>) ve aynı sırayla
+    /// koşar. Oynamıyorsa (durdurulmuş ya da bitmiş) hiçbir şey yapmaz — kesilen bir koreografinin adımlarının
+    /// sonradan düşmediği böyle pinlenir. Üretim bunu çağırmaz.</summary>
+    internal void AdvanceToForTest(double atMs)
+    {
+        while (_timer.IsEnabled && _steps[_next].AtMs <= atMs) OnTick(this, EventArgs.Empty);
+    }
+
     private void Schedule()
     {
         double delta = Math.Max(0, _steps[_next].AtMs - _playedMs);
