@@ -271,3 +271,19 @@ public enum CheckoutStatus
     /// <summary>Checkout (stash başarılıysa stash SONRASI) başarısız oldu.</summary>
     Failed,
 }
+
+/// <summary>[Task 7] <c>FastForwardUpdater</c>'ın (<c>Core/Git/RepositoryWriter.cs</c>, <c>FastForwardStatus</c>)
+/// REDDETME nedeni — App'e <see cref="Ipc.PullCompletedEvent"/> üzerinden taşınan kısım, bu yüzden Contracts'ta
+/// yaşar (Core → Contracts referansı, kopya YASAK; <see cref="CheckoutStatus"/>'un deseni). Yalnız reddetme
+/// dallarını kapsar: başarı (<c>Updated</c>/<c>AlreadyCurrent</c>) ve beklenmeyen hata (<c>Failed</c>) zaten
+/// <see cref="Ipc.PullCompletedEvent.Succeeded"/> ile ayrışır ve bu enum'a girmez — event stream'in KISA Warn
+/// satırı (App katmanının <c>StreamText.PullRefused</c>'u) yalnız gerçek bir redde gösterilir.</summary>
+public enum PullRefusalReason
+{
+    /// <summary>Commit'lenmemiş yerel değişiklik var.</summary>
+    Dirty,
+    /// <summary>Yerel branch ayrışmış — fast-forward mümkün değil.</summary>
+    Diverged,
+    /// <summary>HEAD bir branch'e bağlı değil.</summary>
+    Detached,
+}

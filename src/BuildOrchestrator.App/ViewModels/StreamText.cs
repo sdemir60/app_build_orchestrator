@@ -1,5 +1,6 @@
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
+using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.ViewModels;
@@ -50,6 +51,25 @@ public static class StreamText
     /// BİR kez: <c>waiting for git — {tooltip}</c>; tooltip metni <see cref="Core.Git.GitOperationText.Tooltip"/>'ten.</summary>
     public static string WaitingForGit(Core.Git.GitOperation operation) =>
         "waiting for git — " + Core.Git.GitOperationText.Tooltip(operation);
+
+    /// <summary>[Task 7] Kirli ağaçta branch-switch reddinin akış (event stream) satırı — konsolun açıklamalı
+    /// <see cref="Core.Planning.PlanProgressLines.SwitchRefusedDirty"/>'sinin KISA eşdeğeri. İkisi aynı olayı
+    /// anlatır ama ayrıntı seviyesi farklıdır (kopya YASAK ihlali değildir — biri diğerinin özeti, aynı sabit
+    /// iki yerde TANIMLANMAZ): <c>branch switch refused — {n} uncommitted files</c>.</summary>
+    public static string BranchSwitchRefused(int files) => files == 1
+        ? "branch switch refused — 1 uncommitted file"
+        : string.Format(CultureInfo.InvariantCulture, "branch switch refused — {0} uncommitted files", files);
+
+    /// <summary>[Task 7] Pull reddinin akış satırı — konsolun açıklamalı <see cref="Core.Planning.PlanProgressLines.PullRefusedDirty"/>/
+    /// <c>PullRefusedDiverged</c>/<c>PullRefusedDetached</c>'inin KISA eşdeğeri. Neden <see
+    /// cref="PullCompletedEvent.RefusalReason"/>'dan YAPILANDIRILMIŞ gelir — konsolun metnini ayrıştırmaz.</summary>
+    public static string PullRefused(PullRefusalReason reason) => reason switch
+    {
+        PullRefusalReason.Dirty => "pull refused — uncommitted changes",
+        PullRefusalReason.Diverged => "pull refused — branch diverged",
+        PullRefusalReason.Detached => "pull refused — not on a branch",
+        _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "unknown pull refusal reason"),
+    };
 
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";

@@ -480,7 +480,10 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
-    /// kararları); başarısızsa hiçbir şey değişmez — gerekçe zaten konsolda.
+    /// kararları); başarısızsa hiçbir şey değişmez — gerekçe zaten konsolda (App'in <see cref="OnSyncProgress"/>
+    /// zaten <c>warning:</c> önekli satırı yazmıştır).
+    /// <para>[Task 7] Reddetme GERÇEK bir redse (<see cref="PullCompletedEvent.RefusalReason"/> dolu — beklenmeyen
+    /// bir hata DEĞİL) akışa da KISA bir Warn satırı düşer, konsolun açıklamalı metniyle uyumlu ama kısa.</para>
     /// </summary>
     private async Task OnPullCompletedAsync(PullCompletedEvent e)
     {
@@ -488,6 +491,7 @@ public sealed partial class RunViewModel
         {
             CurrentOperation = null;
             SetPullBusy(false);
+            if (e.RefusalReason is { } reason) PushStream(StreamKind.Warn, null, StreamText.PullRefused(reason));
             return;
         }
 
@@ -567,7 +571,14 @@ public sealed partial class RunViewModel
         if (e.Status != CheckoutStatus.Switched)
         {
             CurrentOperation = null;
-            if (e.Status == CheckoutStatus.Dirty) AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
+            // [Task 7] Konsolun açıklamalı uyarısının (yukarı) yanına akışa da KISA bir Warn satırı düşer —
+            // metin StreamText'te (tek kaynak), konsolun metnini ayrıştırmaz. Checkout hatası (Failed/StashFailed)
+            // akışa satır düşürmez — yalnız konsol amber olur (brief'in kapsamı budur).
+            if (e.Status == CheckoutStatus.Dirty)
+            {
+                AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
+                PushStream(StreamKind.Warn, null, StreamText.BranchSwitchRefused(e.DirtyCount));
+            }
             bool treeChanged = e.Status == CheckoutStatus.Failed && e.StashMessage is not null;
             if (treeChanged) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(e.StashMessage!));
             if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)

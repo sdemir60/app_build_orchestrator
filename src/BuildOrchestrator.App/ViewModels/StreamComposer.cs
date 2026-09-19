@@ -2,8 +2,13 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[D3/T?] Event stream olay türü — glyph/renk eşlemesi (<see cref="StreamEventViewModel"/>) ve daktilo/
 /// instant kararı bundan türer. Prototip <c>ev.kind</c> (BuildApp.jsx:631-638) birebir: ok/fail/skip/done +
-/// sync/info (ikisi de amber <c>▸</c> glyph).</summary>
-public enum StreamKind { Ok, Fail, Skip, Sync, Info, Done }
+/// sync/info (ikisi de amber <c>▸</c> glyph).
+/// <para><b>[Task 7] <c>Warn</c> prototipte YOK</b> — git reddi (kirli ağaç branch-switch reddi, pull reddi)
+/// için eklendi. <c>sync</c>/<c>info</c> gibi glyph'siz (amber <c>▸</c>) kalır ama metin rengi ayrı bir amber
+/// tondadır (konsolun <c>warning:</c> önekiyle AYNI token — <see cref="StreamEventViewModel"/>'in renk
+/// eşlemesi) ve <see cref="Push"/>'a <c>isFail:false</c> geçilir: Fail gibi ANINDA değil, Info gibi
+/// daktiloyla gelir.</para></summary>
+public enum StreamKind { Ok, Fail, Skip, Sync, Info, Done, Warn }
 
 /// <summary>
 /// [D3/T?] Event stream'in SAF (WPF'siz, InvariantCulture-nötr) çekirdeği — design-v1 prototip motorundaki

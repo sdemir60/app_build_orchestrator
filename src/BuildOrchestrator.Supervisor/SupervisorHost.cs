@@ -198,19 +198,21 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         var result = await new FastForwardUpdater(new ProcessRunner(), cmd.RootPath).UpdateAsync(ct);
         string branch = result.Branch ?? current;
 
-        var (line, tone) = result.Status switch
+        // [Task 7] Üçüncü eleman reddetme nedenidir — App'in event stream'i konsolun açıklamalı Line'ını
+        // AYRIŞTIRMADAN kısa bir Warn satırı bileştirebilsin diye yapılandırılmış gider (kopya YASAK).
+        var (line, tone, refusal) = result.Status switch
         {
             FastForwardStatus.Updated => (
-                PlanProgressLines.Pulled(branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
-            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(branch), "info"),
-            FastForwardStatus.Dirty => (PlanProgressLines.PullRefusedDirty(), "warn"),
-            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(branch), "warn"),
-            FastForwardStatus.Detached => (PlanProgressLines.PullRefusedDetached(), "warn"),
-            _ => (PlanProgressLines.PullFailed(result.Detail ?? "unknown error"), "error"),
+                PlanProgressLines.Pulled(branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info", (PullRefusalReason?)null),
+            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(branch), "info", (PullRefusalReason?)null),
+            FastForwardStatus.Dirty => (PlanProgressLines.PullRefusedDirty(), "warn", (PullRefusalReason?)PullRefusalReason.Dirty),
+            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(branch), "warn", (PullRefusalReason?)PullRefusalReason.Diverged),
+            FastForwardStatus.Detached => (PlanProgressLines.PullRefusedDetached(), "warn", (PullRefusalReason?)PullRefusalReason.Detached),
+            _ => (PlanProgressLines.PullFailed(result.Detail ?? "unknown error"), "error", (PullRefusalReason?)null),
         };
 
         await writer.WriteAsync(new SyncProgressEvent(line, tone), ct);
-        await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated), ct);
+        await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated, refusal), ct);
     }
 
     /// <summary>

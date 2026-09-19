@@ -73,17 +73,23 @@ public static class PlanProgressLines
     public static string Pulled(string branch, string fromRevision, string toRevision)
         => $"Pulled origin/{branch} — fast-forward {fromRevision}..{toRevision}";
 
-    /// <summary>Commit'lenmemiş değişiklik var — araç kullanıcının dosyalarının üstüne çalışmaz.</summary>
+    /// <summary>Commit'lenmemiş değişiklik var — araç kullanıcının dosyalarının üstüne çalışmaz.
+    /// <para>[Task 7] <c>warning:</c> öneki — konsolun TEK renklendirme sözleşmesi (<c>ConsoleLineClassifier</c>,
+    /// ARCHITECTURE.md §13.5: metinden, <c>Level</c> alanından DEĞİL) bu satırı amber boyasın diye; App'in
+    /// <c>SyncProgressEvent.Level="warn"</c>'ı yalnız sessiz Sync'in transkripti gizleme kararını verir, rengi
+    /// değil.</para></summary>
     public static string PullRefusedDirty()
-        => "Pull refused — uncommitted changes in the working tree; commit or stash them first";
+        => "warning: pull refused — uncommitted changes in the working tree; commit or stash them first";
 
-    /// <summary>Yerel branch ayrışmış: fast-forward mümkün değil, birleştirme kararı araca ait DEĞİLDİR.</summary>
+    /// <summary>Yerel branch ayrışmış: fast-forward mümkün değil, birleştirme kararı araca ait DEĞİLDİR.
+    /// <para>[Task 7] <c>warning:</c> öneki — bkz. <see cref="PullRefusedDirty"/>'nin notu.</para></summary>
     public static string PullRefusedDiverged(string branch)
-        => $"Pull refused — local branch has diverged from origin/{branch}; reconcile it manually";
+        => $"warning: pull refused — local branch has diverged from origin/{branch}; reconcile it manually";
 
-    /// <summary>HEAD bir branch'e bağlı değil — neyin ilerletileceği belirsiz.</summary>
+    /// <summary>HEAD bir branch'e bağlı değil — neyin ilerletileceği belirsiz.
+    /// <para>[Task 7] <c>warning:</c> öneki — bkz. <see cref="PullRefusedDirty"/>'nin notu.</para></summary>
     public static string PullRefusedDetached()
-        => "Pull refused — HEAD is not on a branch; check out a branch first";
+        => "warning: pull refused — HEAD is not on a branch; check out a branch first";
 
     /// <summary>Ağ/kimlik hatası ya da beklenmeyen git hatası; çalışma ağacına DOKUNULMADI.</summary>
     public static string PullFailed(string reason) => $"Pull failed — {reason}";
@@ -104,13 +110,20 @@ public static class PlanProgressLines
     public static string StashedBeforeSwitch(string message)
         => $"Stashed uncommitted changes: \"{message}\" — restore them with git stash pop";
 
-    /// <summary>Kirli ağaç ve stash ayarı kapalı: hiçbir şey yapılmadı.</summary>
+    /// <summary>Kirli ağaç ve stash ayarı kapalı: hiçbir şey yapılmadı.
+    /// <para>[Task 7] <c>warning:</c> öneki — konsolun TEK renklendirme sözleşmesi (<c>ConsoleLineClassifier</c>,
+    /// ARCHITECTURE.md §13.5: metinden türer, <c>Level</c> alanından DEĞİL) bu satırı amber boyasın diye. Event
+    /// stream'in KISA eşdeğeri <c>StreamText.BranchSwitchRefused</c>'tadır (App katmanı, aynı olayı anlatır ama
+    /// ayrıntı seviyesi farklıdır — kopya YASAK ihlali değildir).</para></summary>
     public static string SwitchRefusedDirty(int files) => files == 1
-        ? "1 file has uncommitted changes — commit or stash them first"
-        : $"{files} files have uncommitted changes — commit or stash them first";
+        ? "warning: 1 file has uncommitted changes — commit or stash them first"
+        : $"warning: {files} files have uncommitted changes — commit or stash them first";
 
-    /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.</summary>
-    public static string SwitchFailed(string reason) => $"Switch failed — {reason}";
+    /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.
+    /// <para>[Task 7] <c>warning:</c> öneki — bkz. <see cref="SwitchRefusedDirty"/>'nin notu. Bu satırın event
+    /// stream'de KISA bir eşdeğeri YOKTUR (yalnız konsol renklenir) — checkout hatası kirli ağaç reddinden farklı
+    /// olarak akışa düşmez.</para></summary>
+    public static string SwitchFailed(string reason) => $"warning: switch failed — {reason}";
 
     /// <summary>[spec 2026-09-18 §6.2 · karar 10] Branch değişimiyle kesilen koşunun özeti — koşudan sonra açılan
     /// bölümün İLK satırı (switch satırından önce; branch değişmediyse akışa tek satır). <paramref name="built"/>

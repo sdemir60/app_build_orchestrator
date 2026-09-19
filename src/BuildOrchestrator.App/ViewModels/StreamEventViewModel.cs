@@ -75,13 +75,15 @@ public sealed partial class StreamEventViewModel : ObservableObject
     /// sync|info→null (amber ▸).</summary>
     /// <para>[design v1.20.0 §1.4] Event stream bir RUN-STORY yüzeyidir: atlama satırının — glyph'i
     /// (<see cref="VisualStatus.Skipped"/>) burada yaşamaya devam eder.</para>
+    /// <para>[Task 7] <c>warn</c> da glyph'sizdir (sync/info'yla AYNI amber ▸) — bir git reddi ne "başarı" ne
+    /// "hata" glyph'i taşır, yalnız metin rengi onu ayırır (bkz. <see cref="BrushKeyFor"/>).</para>
     private static VisualStatus? GlyphFor(StreamKind kind, bool anyFailed) => kind switch
     {
         StreamKind.Ok => VisualStatus.Succeeded,
         StreamKind.Fail => VisualStatus.Failed,
         StreamKind.Skip => VisualStatus.Skipped,
         StreamKind.Done => anyFailed ? VisualStatus.Failed : VisualStatus.Succeeded,
-        _ => null, // sync | info → ▸
+        _ => null, // sync | info | warn → ▸
     };
 
     /// <summary>
@@ -90,13 +92,18 @@ public sealed partial class StreamEventViewModel : ObservableObject
     /// <para><b>[DEĞİŞEN KURAL]</b> <c>skip</c> prototipte <c>text-faint</c> (#54545c) idi; artık
     /// <c>text-dim</c> (#76767e). Gerekçe (kullanıcı): atlananlar geri planda kalmalı ama OKUNABİLMELİ — "bu proje
     /// neden derlenmedi" en sık sorulan sorudur. Hiyerarşi korunur: skip hâlâ <c>ok</c>'un (text-secondary)
-    /// altındadır.</para></summary>
+    /// altındadır.</para>
+    /// <para><b>[Task 7] <c>warn</c> prototipte YOK.</b> Bir git reddi (kirli ağaç branch-switch reddi, pull
+    /// reddi) <c>Brush.AmberText</c> alır — konsolun <c>warning:</c> önekiyle boyadığı AYNI token (tek kaynak,
+    /// yeni renk İCAT EDİLMEZ); <c>sync</c>/<c>info</c>'nun dim tonundan bilerek AYRIŞIR, çünkü bir ret sıradan
+    /// bir ilerleme notu değildir.</para></summary>
     private static string BrushKeyFor(StreamKind kind, bool anyFailed) => kind switch
     {
         StreamKind.Fail => "Brush.StatusFailText",
         StreamKind.Skip => "Brush.TextDim",
         StreamKind.Done => anyFailed ? "Brush.StatusFailText" : "Brush.StatusSuccessText",
         StreamKind.Sync or StreamKind.Info => "Brush.TextDim",
+        StreamKind.Warn => "Brush.AmberText",
         _ => "Brush.TextSecondary", // ok
     };
 }
