@@ -61,4 +61,32 @@ public class NoProductNameInCodeTests
         Assert.Contains("ExternalOsysPlatform", only);
         Assert.Contains("Fake.cs:6", only);
     }
+
+    /// <summary>[Task 8 fix round 1] İnterpolated bir string'in <c>{…}</c> hole'u KOD taşır — literal metin
+    /// DEĞİL. Guard hole'un DIŞINDAKİ metni (ör. <c>"OSYS "</c>) yok saymalı ama İÇİNDEKİ gerçek tanımlayıcıyı
+    /// (ör. <c>OsysLegacyName</c>) YAKALAMALI. Round 1 öncesi <c>CodeOnly</c> hole'u da literalle birlikte
+    /// boşluğa çeviriyordu — bu, bir hole'daki ürün-adı sızıntısını guard'dan GİZLERDİ.</summary>
+    [Fact]
+    public void The_guard_reads_code_inside_an_interpolation_hole_but_ignores_the_literal_text_around_it()
+    {
+        const string fake = """
+            namespace Fake;
+            public class Sample
+            {
+                public enum Kind { ExternalOsysPlatform }        // <- İHLAL
+                public void Log(int x)
+                {
+                    logger.Info($"skip {OsysLegacyName}");       // <- İHLAL (hole İÇİ kod)
+                    logger.Info($"OSYS {x}");                    // literal metin öneki, ihlal DEĞİL
+                }
+            }
+            """;
+
+        var offenders = SourceGuard.ScanCodeIdentifiers("Fake.cs", fake, ProductNameInIdentifier);
+
+        Assert.Equal(2, offenders.Count);
+        Assert.Contains(offenders, o => o.Contains("ExternalOsysPlatform") && o.Contains("Fake.cs:4"));
+        Assert.Contains(offenders, o => o.Contains("OsysLegacyName") && o.Contains("Fake.cs:7"));
+        Assert.DoesNotContain(offenders, o => o.Contains("Fake.cs:8")); // "OSYS {x}" — yalnız literal metin
+    }
 }
