@@ -23,6 +23,10 @@ public sealed class InFlightLedger
     private readonly string _path;
     private readonly object _gate = new();
     private readonly HashSet<string> _ids = new(StringComparer.OrdinalIgnoreCase);
+    // [Task 10 fix I2] Açılış kurtarmasının defter yazımında PATLADIĞI satırlar. Dosya bellekteki kümeyle baştan
+    // yazıldığı için bunlar ayrıca tutulmasa bu motor ömründeki ilk Add onları dosyadan silerdi; her yazım
+    // _ids ∪ _unrecovered yazar, Clear yalnız _ids'i boşaltır. RetryRecovery başarıyla geçersizlediğini düşürür.
+    private readonly HashSet<string> _unrecovered = new(StringComparer.OrdinalIgnoreCase);
 
     public InFlightLedger(string cacheRoot) => _path = Path.Combine(cacheRoot, FileName);
 
@@ -56,25 +60,36 @@ public sealed class InFlightLedger
         }
     }
 
-    /// <summary>Koşu bitti (her çıkış) — küme boşalır, dosya silinir. Uçuşta kimse kalmadığı için "uçuşta ölen"
-    /// de kalmaz; raporlanmadan kalmış bir satır bir sonraki açılışta boşuna geçersizleme yapardı.</summary>
+    /// <summary>Koşu bitti (her çıkış) — küme boşalır; kurtarılamamış satır yoksa dosya silinir, varsa yalnız onlarla
+    /// yeniden yazılır. Uçuşta kimse kalmadığı için "uçuşta ölen" de kalmaz; raporlanmadan kalmış bir satır bir
+    /// sonraki açılışta boşuna geçersizleme yapardı.</summary>
     public void Clear()
     {
         lock (_gate)
         {
             _ids.Clear();
-            File.Delete(_path); // dosya yoksa no-op
+            WriteLocked();
         }
     }
 
     /// <summary>
-    /// Diskteki listeyi okur. Dosya yok / boş / bozuk → boş liste, ASLA fırlatmaz.
+    /// Diskteki listeyi okur (tanı ve testler için). Dosya yok / boş / bozuk / okunamıyor → boş liste, ASLA fırlatmaz.
     /// </summary>
-    public IReadOnlyList<string> ReadListed() => TryReadListed(out var ids) ? ids : [];
+    public IReadOnlyList<string> ReadListed()
+    {
+        try { return TryReadListed(out var ids) ? ids : []; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
 
     /// <summary>
     /// Açılış kurtarması: dosyadaki her proje <see cref="BuildStateStore.InvalidateWithoutEvidence"/> ile kanıtsız
     /// hata olur (kaydı olmayan için no-op), dosya silinir, listelenen id'ler döner.
+    ///
+    /// <para><b>Hata sözleşmesi [Task 10 fix M4/I2]:</b> yalnız AYRIŞTIRILAMAYAN içerik bozuktur — kurtarma
+    /// uydurulmaz, dosya silinir, boş liste döner. Dosya OKUNAMIYORSA (kilit, izin) ya da defter yazımı patlarsa
+    /// istisna çağırana (<c>Program</c>'ın uyarı dalı) yayılır ve dosya yerinde kalır: bir sonraki açılış yeniden
+    /// dener. Yazımda patlayan satırlar bellekte de tutulur (<see cref="_unrecovered"/>), bu motor ömründeki
+    /// yazımlar onları dosyadan düşürmez ve <see cref="RetryRecovery"/> koşu başında yeniden dener.</para>
     /// </summary>
     public IReadOnlyList<string> Recover(BuildStateStore stateStore, DateTimeOffset now)
     {
@@ -88,39 +103,66 @@ public sealed class InFlightLedger
                 File.Delete(_path);
                 return [];
             }
-            // Dosya ANCAK her kayıt yazıldıktan sonra silinir: defter yazımı patlarsa istisna çağırana (Program,
-            // uyarı) yayılır ve dosya yerinde kalır — bir sonraki açılış aynı listeyle yeniden dener (geçersizleme
-            // idempotenttir). Bilinen sınır: bu motor ömründe bir koşu dispatch ederse ilk Add dosyayı bellekteki
-            // kümeyle baştan yazar ve kalan satırlar gider.
-            foreach (string id in listed) stateStore.InvalidateWithoutEvidence(id, now);
-            File.Delete(_path);
+            _unrecovered.UnionWith(listed);
+            InvalidateUnrecoveredLocked(stateStore, now);
             return listed;
         }
     }
 
-    /// <summary>Kümenin TAMAMINI dosyaya yazar (kilit altında çağrılır); küme boşsa dosya silinir.</summary>
+    /// <summary>
+    /// [Task 10 fix I2] Açılışta kurtarılamamış satırları yeniden dener — koşu başında, PLANLAMADAN önce çağrılır:
+    /// kesilmiş projenin kaydı geçersizlenmeden planlanırsa yarım çıktısı "güncel" sayılabilirdi. Kurtarılacak bir
+    /// şey yoksa dosyaya dokunmaz. Hata yine çağırana yayılır; kalanlar bir sonraki denemeye kalır.
+    /// </summary>
+    public void RetryRecovery(BuildStateStore stateStore, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(stateStore);
+        lock (_gate)
+        {
+            if (_unrecovered.Count == 0) return;
+            InvalidateUnrecoveredLocked(stateStore, now);
+        }
+    }
+
+    /// <summary>Kurtarılamamışları tek tek geçersizler; her başarı kümeden düşer. Hepsi bitince dosya bellekteki
+    /// kümeyle yeniden yazılır (uçuşta kimse yoksa silinir). Yarıda patlarsa dosyaya dokunulmaz — eski liste bir
+    /// üst kümedir ve geçersizleme idempotenttir.</summary>
+    private void InvalidateUnrecoveredLocked(BuildStateStore stateStore, DateTimeOffset now)
+    {
+        foreach (string id in _unrecovered.ToList())
+        {
+            stateStore.InvalidateWithoutEvidence(id, now);
+            _unrecovered.Remove(id);
+        }
+        WriteLocked();
+    }
+
+    /// <summary>Uçuştakiler ∪ kurtarılamamışlar kümesinin TAMAMINI dosyaya yazar (kilit altında çağrılır); ikisi de
+    /// boşsa dosya silinir.</summary>
     private void WriteLocked()
     {
-        if (_ids.Count == 0) { File.Delete(_path); return; }
-        AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(_ids.ToList()),
+        var all = _ids.Union(_unrecovered, StringComparer.OrdinalIgnoreCase).ToList();
+        if (all.Count == 0) { File.Delete(_path); return; }
+        AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(all),
             RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay);
     }
 
-    /// <summary>Dosyayı ayrıştırır. <c>false</c> ⇒ dosya okunamadı ya da bozuk (içerik güvenilmez).</summary>
+    /// <summary>Dosyayı ayrıştırır. <c>false</c> ⇒ içerik bozuk (güvenilmez). Okuma hatası (kilit, izin) BOZUKLUK
+    /// DEĞİLDİR ve çağırana yayılır [Task 10 fix M4]. Okuma Delete-share'lidir (<see cref="AtomicFile"/>).</summary>
     private bool TryReadListed(out IReadOnlyList<string> ids)
     {
         ids = [];
         if (!File.Exists(_path)) return true;
+        string text = AtomicFile.ReadAllTextSharingDelete(_path);
+        if (string.IsNullOrWhiteSpace(text)) return true;
         try
         {
-            string text = File.ReadAllText(_path);
-            if (string.IsNullOrWhiteSpace(text)) return true;
             var list = JsonSerializer.Deserialize<List<string>>(text);
             if (list is null || list.Any(string.IsNullOrWhiteSpace)) return false;
             ids = list;
             return true;
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (JsonException)
         {
             return false;
         }

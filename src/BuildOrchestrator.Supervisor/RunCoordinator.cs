@@ -589,6 +589,9 @@ public sealed class RunCoordinator(
         var pump = Task.Run(() => PumpEventsAsync(events.Reader, ct), CancellationToken.None);
         try
         {
+            // [Task 10 fix I2] Açılış kurtarması defter yazımında patladıysa PLANLAMADAN önce yeniden denenir —
+            // kesilmiş projenin kaydı geçersizlenmeden planlanırsa yarım çıktısı "güncel" sayılabilirdi.
+            if (stateStore is not null) TrackInFlight(ledger => ledger.RetryRecovery(stateStore, DateTimeOffset.UtcNow));
             await RunSegmentAsync(cmd, events.Writer, ct);
         }
         catch (Exception ex)

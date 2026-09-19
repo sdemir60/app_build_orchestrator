@@ -751,6 +751,80 @@ public class RunCoordinatorTests
         Assert.False(File.Exists(Path.Combine(dir.Path, InFlightLedger.FileName)));
     }
 
+    /// <summary>[Task 10 fix I3] Döngü üyeleri de dispatch anında deftere girer: X↔Y grubunun ilk turunda Y derlenirken
+    /// X hâlâ listededir (grubun sonucu tur döngüsü bitince raporlanır). Koşu bitince defter boştur.</summary>
+    [Fact]
+    public async Task A_cycle_member_is_listed_from_its_dispatch_until_the_group_reports()
+    {
+        using var dir = new TempDir();
+        var plan = CyclePlanOf(["X", "Y"], Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true));
+        var seen = new List<(string Name, IReadOnlyList<string> Listed)>();
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            lock (seen) seen.Add((NameOf(req.ProjectId), new InFlightLedger(dir.Path).ReadListed()));
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, inFlight: new InFlightLedger(dir.Path));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var second = seen[1]; // ilk turun ikinci üyesi
+        Assert.Contains(Id("X"), second.Listed);
+        Assert.Contains(Id("Y"), second.Listed);
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+    }
+
+    /// <summary>[Task 10 fix M6] Defter yazılamazsa (dosya kilitli) koşu DURMAZ: konsola uyarı düşer, proje derlenir,
+    /// koşu tamamlanır. Bedeli yalnız o proje için eksik kalan kurtarmadır.</summary>
+    [Fact]
+    public async Task A_ledger_write_failure_warns_and_the_run_still_completes()
+    {
+        using var dir = new TempDir();
+        string path = Path.Combine(dir.Path, InFlightLedger.FileName);
+        File.WriteAllText(path, "[]");
+        var ledger = new InFlightLedger(dir.Path) { RenameRetryDelay = _ => { } };
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), inFlight: ledger);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) // rename/silme hedefi kilitli
+        {
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+        }
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(RunOutcome.Completed, done.Outcome);
+        Assert.Equal(1, done.Succeeded);
+        lock (h.ConsoleLines)
+            Assert.Contains(h.ConsoleLines, l => l.StartsWith("warning: in-flight ledger could not be updated", StringComparison.Ordinal));
+    }
+
+    /// <summary>[Task 10 fix I2] Açılış kurtarması defter yazımında patladıysa, bu motor ömründeki ilk koşu PLANLAMADAN
+    /// ÖNCE yeniden dener: kesilmiş projenin kaydı kanıtsız hataya çekilmeden planlanırsa yarım çıktısı "güncel"
+    /// sayılıp atlanabilirdi.</summary>
+    [Fact]
+    public async Task A_run_retries_a_recovery_that_failed_at_startup_before_it_plans()
+    {
+        using var dir = new TempDir();
+        var store = new BuildStateStore(dir.Path) { RenameRetryDelay = _ => { } };
+        store.Upsert(new BuildState(Id("A"), "sigA", LastResult: BuildResult.Succeeded));
+        new InFlightLedger(dir.Path).Add(Id("A"));
+        var ledger = new InFlightLedger(dir.Path);
+        using (new FileStream(Path.Combine(dir.Path, "build-state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            Assert.IsAssignableFrom<SystemException>(Record.Exception(() => ledger.Recover(store, DateTimeOffset.UtcNow))); // kilitli hedefe rename: IO ya da erişim hatası
+
+        BuildResult? atPlanning = null;
+        var plan = PlanOf(Node("A"));
+        using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())),
+            planner: (_, _) => { atPlanning = store.Load()[Id("A")].LastResult; return plan; },
+            stateStore: store, inFlight: ledger);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(BuildResult.Failed, atPlanning);
+    }
+
     // ---------------------------------------------------------------- 5) planlama penceresinde stop
 
     [Fact]

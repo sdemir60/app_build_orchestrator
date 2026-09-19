@@ -42,7 +42,7 @@ public sealed class BuildStateStore
         if (!File.Exists(_path)) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string text = ReadAllTextSharingDelete(_path);
+            string text = AtomicFile.ReadAllTextSharingDelete(_path);
             if (string.IsNullOrWhiteSpace(text)) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
             var map = JsonSerializer.Deserialize<Dictionary<string, BuildState>>(text, Json);
             if (map is null) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
@@ -258,18 +258,6 @@ public sealed class BuildStateStore
     /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
     internal Func<DateTime>? UtcNow { get; set; }
 
-    /// <summary>
-    /// <see cref="File.ReadAllText(string)"/> yerine: varsayılan <c>FileShare.Read</c> Delete-share İZİN VERMEZ,
-    /// bu da eşzamanlı bir <see cref="Upsert"/>'in atomik rename'ini (<see cref="File.Move"/> hedefte açık bir
-    /// okuma handle'ı varken silme/rename gerektirir) sharing-violation ile bloklayabilir. Nazik bir reader
-    /// Delete-share'i AÇIKÇA vererek yazıcının rename'ini asla engellememelidir.
-    /// </summary>
-    private static string ReadAllTextSharingDelete(string path)
-    {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(fs);
-        return reader.ReadToEnd();
-    }
 
     /// <summary>
     /// [B1] Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı. Ayrı bir üye olmasının

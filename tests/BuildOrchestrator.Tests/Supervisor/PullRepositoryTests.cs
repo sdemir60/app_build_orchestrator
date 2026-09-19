@@ -20,7 +20,8 @@ public class PullRepositoryTests
 {
     private static async Task<IReadOnlyList<IpcEvent>> PullAsync(string root, string branch)
     {
-        using var p = Process.Start(TestPaths.Psi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         await p.StandardInput.WriteLineAsync(
             JsonSerializer.Serialize<IpcCommand>(new PullRepositoryCommand(root, branch), IpcJson.Options));
         await p.StandardInput.WriteLineAsync("""{"type":"shutdown"}""");

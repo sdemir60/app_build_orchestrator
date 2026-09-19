@@ -307,7 +307,8 @@ public sealed class EngineSilenceWatchdogTests
     [Fact]
     public async Task Restarting_the_engine_releases_the_locked_run_state()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        using var sandbox = new SupervisorSandbox(); // [§5.5] restart gerçek bir motor başlatır — izole önbellek
+        await using var engine = sandbox.IsolatedEngineHost();
         var (vm, clock) = NewVm(engine);
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));

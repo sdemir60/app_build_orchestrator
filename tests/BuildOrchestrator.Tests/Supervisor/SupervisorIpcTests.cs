@@ -36,43 +36,32 @@ public static class TestPaths
     /// bu test AYRICA gerçek bir EngineHost başlatır.</summary>
     public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
 
-    /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).</summary>
+    /// <summary>Gerçek Supervisor process'ini stdio yönlendirmeli başlatır (RunCoordinatorTests da kullanır).
+    /// <paramref name="logsDir"/> ZORUNLUDUR: argümansız bir Supervisor kullanıcının gerçek önbelleğini
+    /// (<c>%LOCALAPPDATA%</c>) kullanır ve açılışta onun <c>run-inflight.json</c>'ını kurtarırdı (spec 2026-09-18
+    /// §5.5). Kendi klasörü olmayan testler <see cref="SupervisorSandbox"/> kullanır.</summary>
     /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar. Varsayılan <c>false</c> =
     /// ÜRETİM yolu: kanca kapalıdır ve komut <c>error(debugHooksDisabled)</c> ile reddedilir.</param>
-    public static ProcessStartInfo Psi(string? logsDir = null, bool debugHooks = false)
+    public static ProcessStartInfo Psi(string logsDir, bool debugHooks = false)
     {
+        ArgumentException.ThrowIfNullOrEmpty(logsDir);
         var psi = new ProcessStartInfo(SupervisorExe)
         { RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        if (logsDir is not null) { psi.ArgumentList.Add("--logs"); psi.ArgumentList.Add(logsDir); }
+        psi.ArgumentList.Add("--logs");
+        psi.ArgumentList.Add(logsDir);
         if (debugHooks) psi.ArgumentList.Add(SupervisorHost.DebugHooksArg);
         return psi;
     }
 
-    /// <summary>
-    /// [A13/B4] <see cref="Psi"/>'nin İKİNCİ başlatma şekli: <c>JobProcessLauncher</c> yolu
-    /// <see cref="ProcessStartInfo"/> değil ham bir komut satırı ister. Kendiliğinden argüman EKLEMEZ —
-    /// çağıran ne verdiyse o. Kancasız (üretim yolu) başlatmalar bunu doğrudan kullanır.
-    /// </summary>
-    public static string SupervisorCommandLine(params string[] args) =>
-        WindowsCommandLine.Build(SupervisorExe, args);
-
-    /// <summary>[A13/B4] <see cref="SupervisorCommandLine"/>'ın debug kancaları AÇIK varyantı. Kancayı açan
-    /// bayrak burada da AYNI tek sabitten (<see cref="SupervisorHost.DebugHooksArg"/>) gelir — testlere
-    /// kopyalanmaz.</summary>
-    /// <param name="extraArgs">Bayraktan ÖNCE eklenecek argümanlar (ör. <c>--logs &lt;dir&gt;</c>).</param>
-    public static string DebugHooksCommandLine(params string[] extraArgs) =>
-        SupervisorCommandLine([.. extraArgs, SupervisorHost.DebugHooksArg]);
 }
 
 public class SupervisorIpcTests
 {
-    private static ProcessStartInfo Psi(string? logsDir = null, bool debugHooks = false)
-        => TestPaths.Psi(logsDir, debugHooks);
-
     [Fact]
     public async Task Stdout_is_ndjson_only_even_after_garbage_command() // [D4 — It-0 kabul maddesi]
     {
-        using var p = Process.Start(Psi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         await p.StandardInput.WriteLineAsync("""{"type":"ping","seq":1}""");
         await p.StandardInput.WriteLineAsync("bu bir NDJSON degil");
         await p.StandardInput.WriteLineAsync("""{"type":"shutdown"}""");
@@ -98,7 +87,8 @@ public class SupervisorIpcTests
     [Fact]
     public async Task GetProjectLog_of_unknown_project_before_any_run_errors_and_stdout_stays_ndjson()
     {
-        using var p = Process.Start(Psi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] Gerçek Supervisor process'i başlatılıyor; 5s yük altında ölçülmüş bir flake'ti (bkz.
@@ -122,7 +112,8 @@ public class SupervisorIpcTests
     {
         // [A13/B4] Öldürülecek child'lar debugSpawnChildren ile doğuruluyor; o kanca artık VARSAYILAN OLARAK
         // KAPALI, bu yüzden bayrak AÇIKÇA geçilir (test zayıflatılmadı — yalnız kancayı istediği bildiriliyor).
-        using var p = Process.Start(Psi(debugHooks: true))!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi(debugHooks: true))!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
@@ -149,7 +140,8 @@ public class SupervisorIpcTests
     [Fact]
     public async Task SetPerfMode_is_dispatched_and_an_unparseable_mode_answers_with_badPerfMode()
     {
-        using var p = Process.Start(IsolatedPsi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
@@ -176,7 +168,8 @@ public class SupervisorIpcTests
     [Fact] // negatif — kapı KAPALI
     public async Task DebugSpawnChildren_is_rejected_when_the_supervisor_starts_without_debug_hooks_and_stdout_stays_ndjson()
     {
-        using var p = Process.Start(IsolatedPsi())!; // --debug-hooks YOK = üretimin başlattığı Supervisor
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!; // --debug-hooks YOK = üretimin başlattığı Supervisor
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] Gerçek Supervisor process'i başlatılıyor — boot beklemesinin tek sahibi WideStartupTimeout.
@@ -219,7 +212,8 @@ public class SupervisorIpcTests
         using var outer = JobObject.CreateKillOnClose();
         using var iocp = outer.AttachCompletionPort(); // Launch'tan ÖNCE — kaçırılan doğum bildirimi olmasın
 
-        using var supervisor = LaunchIsolatedSupervisorIn(outer); // --debug-hooks YOK = üretimin başlattığı Supervisor
+        using var sandbox = new SupervisorSandbox();
+        using var supervisor = LaunchIsolatedSupervisorIn(outer, sandbox); // --debug-hooks YOK = üretimin başlattığı Supervisor
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
@@ -235,7 +229,8 @@ public class SupervisorIpcTests
         // <b>Neden çıkış değil doğum randevusu:</b> hiçbir şey öldürülmediği için doğan process'lerin ADI
         // hâlâ okunabilir; Supervisor'ın çıkışını beklesek sızan çocuklar inner Job kaskadıyla çoktan ölmüş
         // ve isimleri okunamaz olurdu (iddia yanlışlıkla yeşile düşerdi).
-        using var marker = LaunchIsolatedSupervisorIn(outer);
+        using var markerSandbox = new SupervisorSandbox();
+        using var marker = LaunchIsolatedSupervisorIn(outer, markerSandbox);
 
         var births = new List<(int Pid, string Name)>();
         while (true)
@@ -264,13 +259,8 @@ public class SupervisorIpcTests
 
     /// <summary>[A13/B4 · fix-1] Verilen job'da, İZOLE logs köküyle ve <b>bayraksız</b> (üretim
     /// yolu) bir Supervisor başlatır. Kullanıcının gerçek dosyalarına dokunulmaz (brief kural 4).</summary>
-    private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job)
-    {
-        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
-        return JobProcessLauncher.Launch(job,
-            TestPaths.SupervisorCommandLine("--logs", Path.Combine(sandbox, "logs")),
-            new LaunchOptions(RedirectStdio: true));
-    }
+    private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job, SupervisorSandbox sandbox) =>
+        JobProcessLauncher.Launch(job, sandbox.CommandLine(), new LaunchOptions(RedirectStdio: true));
 
     /// <summary>Doğum ANINDA okunan process adı (hiçbir şey öldürülmediği için okunabilir); pid çoktan
     /// gitmişse ayırt edilebilir bir yer tutucu. <c>KillMidBuildTests.IsMsBuildProcess</c> ile aynı desen.</summary>
@@ -283,7 +273,8 @@ public class SupervisorIpcTests
     [Fact] // pozitif — kapı AÇIK: kanca testler için çalışmaya DEVAM ediyor
     public async Task DebugSpawnChildren_still_spawns_a_real_child_when_the_supervisor_starts_with_debug_hooks()
     {
-        using var p = Process.Start(IsolatedPsi(debugHooks: true))!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi(debugHooks: true))!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
@@ -311,16 +302,16 @@ public class SupervisorIpcTests
     [Fact]
     public async Task A_supervisor_started_after_a_crash_recovers_and_reports_the_count()
     {
-        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
+        using var sandbox = new SupervisorSandbox();
         string recorded = @"C:\r\A\A.csproj";
-        var store = new BuildOrchestrator.Core.State.BuildStateStore(sandbox); // cacheRoot = logs'un üstü
+        var store = new BuildOrchestrator.Core.State.BuildStateStore(sandbox.CacheRoot);
         store.Upsert(new BuildState(recorded, "sigA", LastResult: BuildResult.Succeeded,
             LastRunAt: DateTimeOffset.UtcNow.AddDays(-1)));
-        var crashed = new BuildOrchestrator.Core.State.InFlightLedger(sandbox);
+        var crashed = new BuildOrchestrator.Core.State.InFlightLedger(sandbox.CacheRoot);
         crashed.Add(recorded);
         crashed.Add(@"C:\r\B\B.csproj");
 
-        using var p = Process.Start(Psi(Path.Combine(sandbox, "logs")))!;
+        using var p = Process.Start(sandbox.Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         var ready = Assert.IsType<EngineReadyEvent>(
@@ -335,14 +326,6 @@ public class SupervisorIpcTests
     }
 
     // ---------------------------------------------------------------- [A5/T69] sync / branch
-
-    /// <summary>İzole bir Supervisor: kendi logs/cache kökü (kullanıcının gerçek dosyaları korunur).</summary>
-    /// <param name="debugHooks">[A13/B4] <c>debugSpawnChildren</c> kancasını açar; varsayılan KAPALI = üretim yolu.</param>
-    private static ProcessStartInfo IsolatedPsi(bool debugHooks = false)
-    {
-        string sandbox = Directory.CreateTempSubdirectory("bo-ipc-").FullName;
-        return Psi(Path.Combine(sandbox, "logs"), debugHooks);
-    }
 
     /// <summary>Tek projelik gerçek bir git repo (bir .csproj + onu içeren bir .sln).</summary>
     private static void SeedWorkspace(GitTestRepo repo)
@@ -379,7 +362,8 @@ public class SupervisorIpcTests
         SeedWorkspace(repo);
         string branch = repo.CurrentBranchName();
 
-        using var p = Process.Start(IsolatedPsi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor
@@ -423,7 +407,8 @@ public class SupervisorIpcTests
         string active = repo.CurrentBranchName();
         repo.CreateBranch("feature-x");
 
-        using var p = Process.Start(IsolatedPsi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         var writer = new NdjsonWriter(p.StandardInput.BaseStream);
         var reader = new NdjsonReader(p.StandardOutput.BaseStream);
         // [B1/F2] bkz. GetProjectLog_of_unknown_project… testindeki not — aynı kök neden (taze Supervisor

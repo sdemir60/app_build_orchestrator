@@ -24,7 +24,8 @@ public class CheckoutBranchTests
 {
     private static async Task<IReadOnlyList<IpcEvent>> CheckoutAsync(CheckoutBranchCommand cmd)
     {
-        using var p = Process.Start(TestPaths.Psi())!;
+        using var sandbox = new SupervisorSandbox();
+        using var p = Process.Start(sandbox.Psi())!;
         await p.StandardInput.WriteLineAsync(JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options));
         await p.StandardInput.WriteLineAsync("""{"type":"shutdown"}""");
 

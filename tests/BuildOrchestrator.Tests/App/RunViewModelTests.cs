@@ -861,7 +861,8 @@ public class RunViewModelTests
     [Fact]
     public async Task Stop_sends_a_graceful_stop_and_the_engine_acks_it_as_not_hard()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var stopped = new TaskCompletionSource<RunStoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -886,7 +887,8 @@ public class RunViewModelTests
     [Fact]
     public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
@@ -999,7 +1001,8 @@ public class RunViewModelTests
         // açılırdı; bu artık "send başarısız" senaryosu olur, "planlama sürüyor" değil. Event pump vm.OnEvent'e
         // bağlanmadığından Supervisor'ın gerçek yanıtı (varsa) bu testi etkilemez — yalnız elle enjekte edilen
         // RunStartedEvent state'i değiştirir.
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün ilki
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün ilki
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
@@ -1021,7 +1024,8 @@ public class RunViewModelTests
         // IsStarting GERÇEKTEN true olsun (aksi halde unstarted-engine senaryosunda gönderim zaten başarısız
         // olup IsStarting'i erkenden false yapar — test sonucu tesadüfen aynı kalır ama artık "stop-during-
         // planning" senaryosunu DOĞRULAMAZ).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1040,7 +1044,8 @@ public class RunViewModelTests
     {
         // bkz. yukarıdaki iki test — gerçek (başlatılmış) engine gerekir ki runFailed geldiğinde IsStarting
         // GERÇEKTEN true olsun (planlama-sırasında-beklenmedik-hata senaryosu).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1128,7 +1133,8 @@ public class RunViewModelTests
     [Fact] // startRun gönderildi, runStarted HENÜZ gelmedi (IsStarting=true) — engine bu pencerede ölürse butonlar açılmalı
     public async Task OnEngineExited_while_IsStarting_resets_run_state_and_reenables_Rebuild()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1259,7 +1265,8 @@ public class RunViewModelTests
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
     public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true
@@ -1293,7 +1300,8 @@ public class RunViewModelTests
                 """);
         }
 
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -2351,9 +2359,9 @@ public class RunViewModelTests
     private const string A = @"C:\p\a.csproj";
     private const string B = @"C:\p\b.csproj";
 
-    private static async Task<EngineHost> StartedEngineAsync()
+    private static async Task<EngineHost> StartedEngineAsync(SupervisorSandbox sandbox)
     {
-        var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
+        var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [§5.5] izole önbellek — bkz. SupervisorSandbox
         await engine.StartAsync();
         return engine;
     }
@@ -2388,7 +2396,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_keeps_the_console_and_stream_and_adds_one_line()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         vm.SelectProject(A);
         int streamBefore = vm.StreamEvents.Count;
@@ -2418,7 +2427,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_shows_warnings_but_not_the_transcript()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
 
@@ -2439,7 +2449,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_with_no_changes_writes_nothing_on_activation()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         int streamBefore = vm.StreamEvents.Count;
 
@@ -2453,7 +2464,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_that_changes_a_decision_names_how_many_projects_changed()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         int streamBefore = vm.StreamEvents.Count;
 
@@ -2483,7 +2495,8 @@ public class RunViewModelTests
     [Fact]
     public async Task An_external_branch_switch_opens_a_section_led_by_the_switched_line()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
@@ -2502,7 +2515,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_head_trigger_during_a_sync_runs_after_the_sync_ends()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
@@ -2527,7 +2541,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_pull_plus_the_watcher_is_one_sync()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         var posted = new Queue<Action>();
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
@@ -2588,7 +2603,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_branch_switch_mid_run_interrupts_once()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2608,7 +2624,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_commit_mid_run_does_nothing()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2628,7 +2645,8 @@ public class RunViewModelTests
     [Fact]
     public async Task After_the_interrupted_run_a_new_section_starts_with_its_summary()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2662,7 +2680,8 @@ public class RunViewModelTests
     [Fact]
     public async Task The_new_section_opens_only_after_the_interrupted_run_completed()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2689,7 +2708,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_late_run_end_event_does_not_touch_the_next_operation()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -2711,7 +2731,8 @@ public class RunViewModelTests
     [Fact]
     public async Task The_summary_counts_conditional_projects_that_were_not_built()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
@@ -2740,7 +2761,8 @@ public class RunViewModelTests
     [Fact]
     public async Task An_interrupt_during_the_opening_choreography_explains_the_build_click()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
@@ -2768,7 +2790,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_head_change_missed_by_the_watcher_is_caught_when_the_run_ends()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2787,7 +2810,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_run_that_ends_on_the_synced_head_sends_no_sync()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
         var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
@@ -2815,7 +2839,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_keeps_the_phase_and_the_pill_is_not_live()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
@@ -2841,7 +2866,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_silent_sync_keeps_a_failed_runs_error_on_the_ribbon()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
         vm.OnEvent(new ErrorEvent("runFailed", "msbuild crashed"));
@@ -2859,7 +2885,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_branch_change_sync_does_not_claim_a_fetch_on_the_ribbon()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
 
         vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
@@ -2888,7 +2915,8 @@ public class RunViewModelTests
         vm.OnEvent(new SyncProgressEvent("a later transcript line", "info"));
         Assert.Contains("a later transcript line", vm.GetRunDocumentText(), StringComparison.Ordinal);
 
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var sentVm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
         await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit);
         Assert.Equal(7000, sentVm.LastSyncStartedAtMs);
@@ -2999,7 +3027,8 @@ public class RunViewModelTests
     [Fact]
     public async Task A_head_trigger_waits_while_a_merge_is_in_progress()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
@@ -3020,7 +3049,8 @@ public class RunViewModelTests
     [Fact]
     public async Task When_the_marker_goes_the_waiting_sync_runs()
     {
-        await using var engine = await StartedEngineAsync();
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
         var posted = new Queue<Action>();
         var op = Merge;
         var timer = new FakePollTimer();

@@ -23,6 +23,13 @@ public sealed class InFlightLedgerTests : IDisposable
     private InFlightLedger NewLedger() => new(_dir.Path);
     private string LedgerPath => Path.Combine(_dir.Path, InFlightLedger.FileName);
 
+    /// <summary>Kilitli bir hedefe atomik rename Windows'ta IOException ya da UnauthorizedAccessException verir.</summary>
+    private static void AssertWriteFails(Action write)
+    {
+        var ex = Record.Exception(write);
+        Assert.True(ex is IOException or UnauthorizedAccessException, $"expected an IO failure, got {ex?.GetType().Name ?? "none"}");
+    }
+
     [Fact]
     public void Add_and_remove_mirror_the_set_on_disk_and_clear_deletes_the_file()
     {
@@ -76,6 +83,66 @@ public sealed class InFlightLedgerTests : IDisposable
         Assert.Equal("sigA", a.BuiltSignature);
         Assert.Equal(BuildResult.Succeeded, store.Load()[B].LastResult); // uçuşta olmayan dokunulmaz
         Assert.False(File.Exists(LedgerPath));
+    }
+
+    /// <summary>[Task 10 fix I2] Kurtarma defter yazımında patlarsa (build-state.json kilitli) kurtarılamayan satırlar
+    /// AYNI motor ömründe de kaybolmaz: sonraki bir koşunun Add'i ve Clear'ı dosyayı bellekteki kümeyle baştan
+    /// yazar ama kurtarılmamışları da taşır — bir sonraki açılış onları yeniden dener.</summary>
+    [Fact]
+    public void Entries_that_could_not_be_recovered_survive_a_later_run_in_the_same_engine_lifetime()
+    {
+        var store = new BuildStateStore(_dir.Path) { RenameRetryDelay = _ => { } };
+        store.Upsert(new BuildState(A, "sigA", LastResult: BuildResult.Succeeded));
+        var crashed = NewLedger();
+        crashed.Add(A);
+        crashed.Add(B);
+        var ledger = NewLedger();
+
+        using (new FileStream(Path.Combine(_dir.Path, "build-state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            AssertWriteFails(() => ledger.Recover(store, Now)); // rename hedefi kilitli → yazım düşer
+
+        const string C = @"C:\r\C\C.csproj";
+        ledger.Add(C);   // bu motor ömründe bir koşu başladı
+        ledger.Clear();  // ...ve bitti
+
+        Assert.Equal([A, B], [.. NewLedger().ReadListed().Order()]);
+    }
+
+    /// <summary>[Task 10 fix I2] Kurtarılamayanlar bir sonraki koşunun başında yeniden denenir: kilit kalkınca kayıt
+    /// kanıtsız hata olur ve satır defterden düşer.</summary>
+    [Fact]
+    public void Retrying_the_recovery_invalidates_what_a_failed_recovery_left_behind()
+    {
+        var store = new BuildStateStore(_dir.Path) { RenameRetryDelay = _ => { } };
+        store.Upsert(new BuildState(A, "sigA", LastResult: BuildResult.Succeeded));
+        NewLedger().Add(A);
+        var ledger = NewLedger();
+        using (new FileStream(Path.Combine(_dir.Path, "build-state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            AssertWriteFails(() => ledger.Recover(store, Now));
+
+        ledger.RetryRecovery(store, Now);
+
+        Assert.Equal(BuildResult.Failed, store.Load()[A].LastResult);
+        Assert.Empty(NewLedger().ReadListed());
+        Assert.False(File.Exists(LedgerPath));
+    }
+
+    /// <summary>[Task 10 fix M4] Yalnız ayrıştırılamayan içerik "bozuk"tur. Dosya OKUNAMIYORSA (kilit, izin) içerik
+    /// bilinmez ama bozuk da değildir: istisna çağırana (Program'ın uyarı dalı) yayılır ve dosya yerinde kalır — bir
+    /// sonraki açılış yeniden dener.</summary>
+    [Fact]
+    public void An_unreadable_file_is_not_treated_as_corrupt_and_stays_for_the_next_start()
+    {
+        var store = new BuildStateStore(_dir.Path);
+        NewLedger().Add(A);
+
+        // Delete paylaşılır, Read paylaşılmaz: okuma sharing-violation verir, silme ise GEÇERDİ — bozuk sayılsaydı
+        // dosya sessizce silinirdi.
+        using (new FileStream(LedgerPath, FileMode.Open, FileAccess.Read, FileShare.Delete))
+            Assert.ThrowsAny<IOException>(() => NewLedger().Recover(store, Now));
+
+        Assert.True(File.Exists(LedgerPath));
+        Assert.Equal([A], NewLedger().ReadListed());
     }
 
     /// <summary>Kaydı olmayan proje zaten derlenecektir; kurtarma defterde yeni kayıt AÇMAZ — ama listelenmiştir,

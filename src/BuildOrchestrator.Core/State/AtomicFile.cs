@@ -41,6 +41,20 @@ internal static class AtomicFile
     }
 
     /// <summary>
+    /// <see cref="File.ReadAllText(string)"/> yerine: varsayılan <c>FileShare.Read</c> Delete-share İZİN VERMEZ,
+    /// bu da eşzamanlı bir <see cref="WriteAllText"/>'in atomik rename'ini (<see cref="File.Move(string, string, bool)"/>
+    /// hedefte açık bir okuma handle'ı varken silme/rename gerektirir) sharing-violation ile bloklayabilir. Nazik bir
+    /// reader Delete-share'i AÇIKÇA vererek yazıcının rename'ini asla engellememelidir. Okuma hatası (kilit, izin)
+    /// ÇAĞIRANA yayılır — "okunamadı" ile "bozuk" ayrımı çağıranın kararıdır.
+    /// </summary>
+    internal static string ReadAllTextSharingDelete(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(fs);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
     /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma handle'ı olduğunda — Delete-share
     /// verilmiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
     /// ile başarısız olabilir (gözlemlenen Windows davranışı: handle kapanışı ile rename arasında kısa bir yarış
