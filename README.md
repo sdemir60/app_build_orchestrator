@@ -415,8 +415,8 @@ but the graph shows the whole run unfiltered, from the opening sequence to the c
 the filtered view a moment after they end — a stopped run too, when it built something (at once if nothing was
 built).
 Drag the empty background to pan (the cursor turns into a hand) and the mouse wheel zooms at the pointer;
-clicking empty background with nothing selected returns the view to its default, and a graph rebuilt by a Sync
-always starts from that default view.
+clicking empty background with nothing selected returns the view to its default, and both a graph rebuilt by
+a Sync and a build that starts bring it back to that default view.
 
 You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
 a build is running the product mark animates in the bottom-right corner of the screen — click it to bring the

@@ -3301,7 +3301,8 @@ lines.
 ### 13.6 Graph renderer
 
 The panel is a **quiet graph**: unnamed mini nodes in layer bands, no permanent edge network, and a camera
-that stays on the fitted view unless you select something or move it yourself. The point is that a 100-project workspace should read at a
+that stays on the fitted view unless you select something or move it yourself, and returns to it whenever an
+operation starts. The point is that a 100-project workspace should read at a
 glance instead of demanding to be studied.
 
 **Layout is a function of the panel.** Nodes sit in horizontal bands ordered by build sequence — layer 0 on
@@ -3610,7 +3611,10 @@ design supplies its own recovery instead: clicking empty ground with nothing sel
 default. Rebuilding the graph — a new structure, or a Sync that starts the screen over (§10.2) — also puts the
 camera back at its default, on screen as well as in its target (`SnapCameraTo`): the camera's target and its live
 transform are set together on every path, so no zoom or pan from the previous graph survives into the new one,
-and what the screen shows never disagrees with what the camera believes it shows. (§2.3 puts a mono hint line in the bottom-right corner announcing the two gestures; it was removed —
+and what the screen shows never disagrees with what the camera believes it shows. Starting an operation
+(`BeginOperation` — a Build, Rebuild, Resolve cycles or a row run) glides the camera back to its default too,
+so the opening wave and the run play on the whole graph rather than on whatever part was zoomed into; during
+the run itself the camera stays still. (§2.3 puts a mono hint line in the bottom-right corner announcing the two gestures; it was removed —
 the panel reads more quietly without it.)
 
 **Opening.** Whenever the graph is built — a Sync with a new structure, a Sync that starts the screen over, the
@@ -4943,7 +4947,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
 | Graph node identity (project id, not name) and the label that is the name | `App/Graph/GraphModels.cs`, `QuietGraphLayout.cs` |
 | Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
-| The filter set aside for a run and its return; the camera reset on rebuild | `App/Graph/GraphView.xaml.cs` (`BeginOperation`/`EndOperation`, `IsFilterSuspended`, `SnapCameraTo`), `MainWindow.xaml.cs` |
+| The filter set aside for a run and its return; the camera reset on rebuild and at the start of an operation | `App/Graph/GraphView.xaml.cs` (`BeginOperation`/`EndOperation`, `IsFilterSuspended`, `SnapCameraTo`), `MainWindow.xaml.cs` |
 | Automatic pitch, layer bands, node size | `App/Graph/QuietGraphLayout.cs` |
 | Run lifecycle opacity and its hold/fade timings | `App/Graph/GraphNodeOpacity.cs` |
 | Bead orbit geometry and timings | `App/Graph/GraphBeads.cs` |
