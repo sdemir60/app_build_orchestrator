@@ -115,7 +115,8 @@ public class AppIdentityTests
     public async Task Engine_ready_stores_the_version_and_pid_and_still_writes_the_boot_line()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1")
+            { LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // [final review M8]
 
         Assert.Null(vm.EngineVersion);
         Assert.Null(vm.EnginePid);

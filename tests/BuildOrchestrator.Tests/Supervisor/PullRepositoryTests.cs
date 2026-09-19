@@ -57,6 +57,27 @@ public class PullRepositoryTests
         Assert.Equal(second, GitTestRepo.RunGitAt(clone, "rev-parse", "HEAD").Trim());
     }
 
+    /// <summary>[final review M5] Konsol satırları ilerletilen GERÇEK branch'i adlandırır: <c>FastForwardUpdater</c> her
+    /// zaman checkout edilmiş branch'i ilerletir; komutun taşıdığı ad (App'in son bildiği) bayat olabilir — kullanıcı
+    /// terminalde branch değiştirmiş ve envanter henüz gelmemiş olabilir.</summary>
+    [Fact]
+    public async Task The_console_names_the_branch_that_was_actually_advanced_not_the_commands()
+    {
+        using var upstream = new GitTestRepo();
+        upstream.WriteFile("a.cs", "one");
+        string first = upstream.CommitAll("first");
+        string clone = upstream.CloneFull();
+        upstream.WriteFile("a.cs", "two");
+        string second = upstream.CommitAll("second");
+        string branch = upstream.CurrentBranchName();
+
+        var events = await PullAsync(clone, "stale-branch-name");
+
+        Assert.Contains($"git merge --ff-only origin/{branch}", Lines(events));
+        Assert.Contains($"Pulled origin/{branch} — fast-forward {first[..7]}..{second[..7]}", Lines(events));
+        Assert.DoesNotContain(Lines(events), l => l.Contains("stale-branch-name", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task An_up_to_date_branch_is_left_alone_and_says_so()
     {

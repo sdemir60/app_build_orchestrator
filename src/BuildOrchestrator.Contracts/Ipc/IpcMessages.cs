@@ -38,7 +38,9 @@ public abstract record IpcCommand;
 /// köküne uygular — kir kapısı, ref-only fetch, "yalnız geride miyim" kontrolü ve <c>merge --ff-only</c>.
 /// Kirli ya da ayrışmış ağaç REDDEDİLİR ve gerekçe konsola yazılır.</para>
 /// </summary>
-/// <param name="Branch">Ilerletilecek branch — App bunu YALNIZ aktif branch seçiliyken gönderir.</param>
+/// <param name="Branch">App'in son bildiği aktif branch. İlerletilen branch her zaman çalışma ağacında checkout edilmiş
+/// olandır — motor onu diskten okur ve konsol satırlarında o adı kullanır; bu alan yalnız branch okunamazsa geri
+/// düşüştür [final review M5].</param>
 public sealed record PullRepositoryCommand(string RootPath, string Branch) : IpcCommand;
 
 /// <summary>

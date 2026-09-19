@@ -485,6 +485,50 @@ public class SettingsDialogTests
         Assert.Equal(@"D:\repo", run.RootPath);     // kök değişmedi
         Assert.Empty(sent);
         Assert.Contains("Repository change deferred — run in flight", run.GetRunDocumentText()); // BİREBİR
+        Assert.Equal("Repository change deferred — run in flight", RunViewModel.RepositoryChangeDeferredLine(runInFlight: true));
+    }
+
+    /// <summary>[final review M3] Bir workspace işi (burada pull) uçuştayken Save: koşudaki kapının aynısı — katmanlar
+    /// uygulanır, kök ertelenir (konsola tek satır), İKİNCİ bir Sync GİTMEZ. Pull'un zincirlediği Sync zaten yeni
+    /// katmanları taşır. Motor gerçektir (izole) ki pull gönderimi başarılı olsun ve pull kapısı açık kalsın.</summary>
+    [Fact]
+    public async Task Applying_settings_while_a_pull_is_in_flight_defers_the_repository_change_and_sends_no_sync()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(TestPaths.WideStartupTimeout);
+        await engine.StartAsync();
+        using var root = new TempDir();
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root.Path };
+        run.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0, Behind: 2));
+        await run.PullRepositoryCommand.ExecuteAsync(null);
+        Assert.True(run.PullBusy); // ön-koşul: pull uçuşta
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, @"D:\other\repo", []);
+
+        Assert.Same(patterns, run.LayerPatterns);
+        Assert.Equal(root.Path, run.RootPath);
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Contains(RunViewModel.RepositoryChangeDeferredLine(runInFlight: false), run.GetRunDocumentText());
+    }
+
+    /// <summary>[final review M3] Choose Folder da aynı kapıdadır: bir Sync uçuştayken kök değişmez ve Sync gitmez.</summary>
+    [Fact]
+    public async Task Choosing_a_folder_while_a_sync_is_in_flight_changes_nothing()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        run.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.True(run.SyncBusy); // ön-koşul
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
+
+        await run.ChangeRepositoryAsync(@"D:\new\repo");
+
+        Assert.Equal(@"D:\repo", run.RootPath);
+        Assert.Empty(sent);
     }
 
     [Fact] // Erteleme notu YALNIZ gerçekten bekleyen bir kök değişimi varsa yazılır — sıradan (katman-only)

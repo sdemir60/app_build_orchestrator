@@ -2620,6 +2620,39 @@ public class RunViewModelTests
         vm.DisableAutoSync();
     }
 
+    /// <summary>[final review M4] Kullanıcının Stop'u onaylandı (<c>runStopped</c> geldi, <c>runCompleted</c> bekleniyor):
+    /// o arada gelen branch değişimi kesme GÖNDERMEZ, akışa "interrupted by branch change" düşmez ve koşunun özeti
+    /// yazılmaz — koşu kullanıcının isteğiyle durdu, branch değişimiyle değil. Tetik bekler ve koşu bitince bölümü
+    /// (özetsiz) açar.</summary>
+    [Fact]
+    public async Task A_branch_switch_after_the_users_stop_was_acknowledged_does_not_interrupt()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Drain(posted);
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+
+        Assert.DoesNotContain(sent.OfType<StopRunCommand>(), s => s.Kind == StopKind.Interrupt);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        Assert.NotNull(vm.AutoSync!.PendingTrigger);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
+        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory), text, StringComparison.Ordinal);
+        Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
     /// <summary>Koşu sırasında commit koşuyu kesmez ve hiçbir şey yapmaz.</summary>
     [Fact]
     public async Task A_commit_mid_run_does_nothing()
@@ -2923,6 +2956,24 @@ public class RunViewModelTests
         var sentVm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
         Assert.True(await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit));
         Assert.Equal(7000, sentVm.LastSyncStartedAtMs);
+    }
+
+    /// <summary>[final review M1] Son Sync'in bölüm açıp açmadığı kaydedilir — koordinatör, beklerken yutulan bir branch
+    /// değişimini yalnız bölümsüz bir Sync yuttuysa yeniden anlatır: Sync düğmesi bölüm açar, sessiz Sync açmaz.</summary>
+    [Fact]
+    public async Task The_last_sync_records_whether_it_opened_a_section()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+
+        await vm.SyncCommand.ExecuteAsync(null);
+        ReplySync(vm, upToDateB: false);
+        Assert.True(vm.LastSyncOpenedSection);
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+        ReplySync(vm, upToDateB: false);
+        Assert.False(vm.LastSyncOpenedSection);
     }
 
     /// <summary>Sync düğmesi (Manual) yeni bir bölüm açar: konsol ve akış temizlenir, fetch yapılır, pill yazılır.</summary>

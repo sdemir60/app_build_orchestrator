@@ -1476,7 +1476,10 @@ rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers nev
 
 *Visible as an operation* means the operation pill, the `Syncing` phase on the ribbon, the dropped selection
 and the clearing of the previous run's error text and overlay. A silent Sync does none of it: bad news on the
-screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. Its one
+screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. It is still
+a Sync, though: the engine takes one command at a time, so while it runs the workspace commands (Build, Sync,
+Clean, Optimize, pull, the branch chip) stay locked and the Sync button shows its busy state, exactly as for any
+other Sync — no pill, no ribbon change and no console clear come with it. Its one
 stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
@@ -1526,7 +1529,7 @@ default):
   leaving <branch> for <target>"` before the checkout, and the section's first line names that stash and says
   `restore them with git stash pop`. The tool never shows, applies or pops a stash; getting the work back is
   the user's. If the checkout fails after the stash, the stash line is still written, so the changes do not
-  look lost.
+  look lost, and because the tree did change a silent Sync refreshes the decisions — no section opens.
 
 The stash setting applies to the branch chip only, never to a pull (§10.5): a pull stays on the branch, and a
 stash nobody restores would look like lost work.
@@ -1535,7 +1538,9 @@ stash nobody restores would look like lost work.
 with a Windows file notification — no polling, no work while idle; the repository, the sources and `bin`/`obj`
 are not watched. Git's successive writes within one operation settle into one trigger after 1.5 s of quiet, so
 a long rebase produces one Sync. The reflog lines appended in that window are classified — commit, checkout,
-anything else (pull, merge, reset, rebase) — and the strongest wins. Visual Studio's background `fetch` and
+anything else (pull, merge, reset, rebase) — and the strongest wins. A line git is still writing when the window
+closes is not read in half: it waits, and the window opens once more on its own so the whole line is read even if
+its end brings no notification of its own. Visual Studio's background `fetch` and
 `status` do not write this file and trigger nothing. A return to the window is the second trigger: when more
 than five seconds have passed since the last Sync started or ended, it runs a silent Sync even when HEAD has not
 moved, because files may have been edited elsewhere.
@@ -1549,7 +1554,13 @@ Each trigger is weighed against the HEAD of the last Sync (§5.3, `syncCompleted
 
 Before the first Sync completes nothing is compared — the Sync at application start opens the first section.
 A trigger that arrives while a Sync, Clean, Optimize, checkout or pull is in flight is not lost: one pending
-trigger is kept, the stronger replacing the weaker, and it is weighed again when the work ends. If the watcher
+trigger is kept, the stronger replacing the weaker, and it is weighed again when the work ends. The kept
+trigger remembers the HEAD of the last Sync at the moment it was first kept: when the work that ended was a Sync
+that opened no section of its own (a silent or appended Sync that already measured the new branch), the branch
+is compared against that earlier HEAD, so the switch still opens its `Switched to …` section; after a Sync that
+did open a section — the tool's own checkout, the Sync button — it is not told twice. A trigger whose Sync could
+not be sent — the gate was closed, or the send failed because the engine is gone — stays pending the same way
+and is weighed at the next change of the gate, the engine coming back included. If the watcher
 cannot start (a network drive, a permission, a repository with no reflog yet) the console says so once per
 root and a return to the window keeps working as the safety net; the watcher is retried on each return.
 
@@ -1559,9 +1570,11 @@ project starts, the ones compiling finish, and from that moment their results ar
 stream says `interrupted by branch change`. When the run ends the pending trigger is weighed; if the branch
 changed, the new section's first line is the run's summary — `Run interrupted by a branch change — N built,
 M not built · logs: <folder>` — followed by the switch line; if the branch did not change, the summary goes to
-the event stream and a silent Sync runs. As a safety net the end of every run is itself a trigger, so a HEAD
-movement the watcher missed is still caught when the run finishes. The run logs on disk are never deleted;
-clearing is for the screen only.
+the event stream and a silent Sync runs. A run the user already stopped — the engine has acknowledged the Stop and
+only the run's end is still to come — is not interrupted: no interrupt is sent, no stream line or summary is
+written, and the trigger waits for the run's end like any other. As a safety net the end of every run is itself
+a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. The run logs on disk are
+never deleted; clearing is for the screen only.
 
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
@@ -1681,7 +1694,9 @@ rewrites no history, makes no merge decision, refuses to touch a dirty tree, and
 
 Clicking it runs the same principled sequence the external roots use (`FastForwardUpdater` in
 `Core/Git/RepositoryWriter.cs`): dirty gate → ref-only fetch → "am I strictly behind?" → `merge --ff-only`.
-Every outcome is a console line — the fast-forward range on success, and on
+What is advanced is always the branch checked out in the working tree, and the lines name the branch the engine
+reads there — the name the command carries is only what the App last knew. Every outcome is a console line — the
+fast-forward range on success, and on
 refusal the reason and the fix (`uncommitted changes … commit or stash
 them first`, `local branch has diverged … reconcile it manually`, `HEAD is not on a branch`). A refusal is not
 an error state: on a dirty or diverged tree, doing nothing is the correct behaviour. After a successful
@@ -2645,11 +2660,12 @@ external one prints only when the count actually changed — `External projects 
 repository projects`, or `External projects cleared` once it drops back to zero — so a Save that only touched
 layers stays quiet about a list it did not change.
 
-Three gates hold. While a run is in flight the layer patterns and the external project list are applied but the
-repository root is left alone and no Sync is sent, since pulling the root out from under a running build would
-be wrong; because the dialog's label has already confirmed the picked folder, a root change this gate drops is
-announced in the console as `Repository change deferred — run in flight`, while a Save that carries no root
-change stays silent.
+Three gates hold. While a run is in flight — or a workspace operation is: a Sync, Clean, Optimize, checkout or
+pull — the layer patterns and the external project list are applied but the repository root is left alone and
+no Sync is sent, since pulling the root out from under a running build or operation would be wrong and a second
+Sync behind the operation's own would be a double Sync; because the dialog's label has already confirmed the
+picked folder, a root change this gate drops is announced in the console as `Repository change deferred — run
+in flight` (or `— operation in flight`), while a Save that carries no root change stays silent.
 If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
 applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
 there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers,

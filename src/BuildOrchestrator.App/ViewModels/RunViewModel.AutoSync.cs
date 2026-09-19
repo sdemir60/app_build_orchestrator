@@ -73,6 +73,8 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     (string? Branch, string? HeadSha)? IAutoSyncPort.LastSyncHead => LastSyncHead;
 
+    bool IAutoSyncPort.LastSyncOpenedSection => LastSyncOpenedSection;
+
     long? IAutoSyncPort.LastSyncAtMs => LastSyncAtMs;
 
     long IAutoSyncPort.NowMs() => _nowMs();
@@ -150,6 +152,10 @@ public sealed partial class RunViewModel : IAutoSyncPort
             return;
         }
         if (_currentRunId is not { } runId || _interruptedRunId == runId) return;
+        // [final review M4] Kullanıcının Stop'u onaylandı (runStopped kilidi düşürdü, runCompleted bekleniyor): koşu
+        // branch değişimiyle değil kullanıcının isteğiyle durdu — kesme gitmez, akış satırı ve özet yazılmaz. Tetik
+        // koordinatörde bekler ve koşu bitince normal yoldan değerlendirilir.
+        if (!IsMidRunLocked) return;
         OpenInterruptRecord(runId);
         PushStream(StreamKind.Info, null, StreamText.InterruptedByBranchChange);
         await SendStopAsync(runId, StopKind.Interrupt);

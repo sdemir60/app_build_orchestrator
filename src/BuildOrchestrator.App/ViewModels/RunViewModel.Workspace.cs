@@ -509,6 +509,15 @@ public sealed partial class RunViewModel
     /// Pull ise yanlış branch'i ilerletir.</para></summary>
     private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
 
+    /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
+    /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in ve Choose Folder'ın kapısı; komut kapıları
+    /// bunu motor erişilebilirliğiyle birlikte sorar (<see cref="WorkspaceGateOpen"/>).</summary>
+    private bool WorkspaceIdle => !IsMidRunLocked && !WorkspaceBusy;
+
+    /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
+    /// Sync/Clean/Optimize/Pull ve branch chip'i bunu okur (kendi ek koşullarıyla) — liste beş yerde ayrı yazılmaz.</summary>
+    private bool WorkspaceGateOpen => WorkspaceIdle && !IsEngineUnavailable;
+
     /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
     /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
     /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
@@ -532,7 +541,8 @@ public sealed partial class RunViewModel
     ///
     /// <para><b>Başarısız işlem bölüm açmaz:</b> kirli ağaç reddi ve stash/checkout hatası konsolu temizlemez,
     /// uyarı altına eklenir ve işlem biter. Checkout stash'ten SONRA düştüyse stash satırı yine yazılır —
-    /// kullanıcının değişiklikleri stash'tedir ve konsol bunu söylemezse kaybolmuş gibi görünürdü.
+    /// kullanıcının değişiklikleri stash'tedir ve konsol bunu söylemezse kaybolmuş gibi görünürdü — ve ağaç değiştiği
+    /// için sessiz bir Sync (<see cref="SyncMode.Silent"/>) kararları tazeler [final review M2].
     /// <see cref="CheckoutStatus.AlreadyOn"/> hiçbir şey yazmaz (App aktif branch'e zaten komut göndermez; bu
     /// yalnız envanterin bayat olduğu yarışta gelir).</para>
     /// </summary>
@@ -540,13 +550,22 @@ public sealed partial class RunViewModel
     {
         if (e.Status != CheckoutStatus.Switched)
         {
-            SetCheckoutBusy(false);
             CurrentOperation = null;
             if (e.Status == CheckoutStatus.Dirty) AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
-            if (e.Status == CheckoutStatus.Failed && e.StashMessage is { } kept)
-                AppendRunLine(PlanProgressLines.StashedBeforeSwitch(kept));
+            bool treeChanged = e.Status == CheckoutStatus.Failed && e.StashMessage is not null;
+            if (treeChanged) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(e.StashMessage!));
             if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)
                 AppendRunLine(PlanProgressLines.SwitchFailed(e.Detail ?? "unknown error"));
+            // [final review M2] Stash'ten sonra düşen checkout ağacı DEĞİŞTİRDİ (değişiklikler stash'e gitti): bölüm
+            // açılmaz ama kararlar bayattır — sessiz bir Sync tazeler. Kilit, Sync kapıyı devraldıktan SONRA düşer.
+            if (treeChanged)
+            {
+                var refresh = SyncCoreAsync(SyncMode.Silent, SilentSyncReason.Refresh);
+                SetCheckoutBusy(false);
+                await refresh;
+                return;
+            }
+            SetCheckoutBusy(false);
             return;
         }
 
@@ -603,6 +622,11 @@ public sealed partial class RunViewModel
     /// Sync kontrolü (Task 7 — HEAD izleyicisi) bunu okur: tetik anındaki HEAD bununla aynıysa Sync atlanır.</summary>
     internal (string? Branch, string? HeadSha)? LastSyncHead { get; private set; }
 
+    /// <summary>[final review M1] Son tamamlanan Sync yeni bir konsol bölümü açtı mı (kipi <see cref="SyncModeRules.ClearsConsole"/>:
+    /// Sync düğmesi ya da checkout'un bölümü). Koordinatör, beklerken yutulan bir branch değişimini yalnız bölümsüz bir
+    /// Sync yuttuysa yeniden anlatır.</summary>
+    internal bool LastSyncOpenedSection { get; private set; }
+
     /// <summary>Son Sync isteğinin motora GİTTİĞİ an (monoton ms, <see cref="_nowMs"/>) — kipten bağımsız, yalnız
     /// başarılı gönderimde yazılır (düşen gönderimde hiçbir Sync başlamadı).</summary>
     internal long? LastSyncStartedAtMs { get; private set; }
@@ -611,17 +635,18 @@ public sealed partial class RunViewModel
     /// yenisini okur (<see cref="LastSyncAtMs"/>).</summary>
     internal long? LastSyncCompletedAtMs { get; private set; }
 
-    /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
     /// <summary>[spec 2026-09-18 §6.1] Son Sync'in HEAD'ini ve anlarını unutur — TEK yer; kök değişince
     /// (<c>ApplyRepositoryRoot</c>) çağrılır: eski kökün HEAD'i yeni kökte kıyas tabanı olsaydı ilk tetik sahte bir
     /// "Switched to" bölümü açardı.</summary>
     private void ForgetLastSync()
     {
         LastSyncHead = null;
+        LastSyncOpenedSection = false;
         LastSyncStartedAtMs = null;
         LastSyncCompletedAtMs = null;
     }
 
+    /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
     internal long? LastSyncAtMs =>
         LastSyncStartedAtMs is { } started && LastSyncCompletedAtMs is { } completed
             ? Math.Max(started, completed)
@@ -718,6 +743,7 @@ public sealed partial class RunViewModel
         Behind = e.Behind;      // [v1.16.0] chip'in sayısı; null ⇒ mesafe bilinmiyor → chip yok
         Branch = e.ActiveBranch ?? Branch; // detached HEAD'de son bilinen değer durur (OnBranchList ile aynı kural)
         LastSyncHead = (e.ActiveBranch, e.HeadSha);
+        LastSyncOpenedSection = _syncMode.ClearsConsole(); // ReleaseSyncPhase kipi bırakmadan ÖNCE
         LastSyncCompletedAtMs = _nowMs();
         _syncStreamLine = SyncStreamLine(e);
         SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir

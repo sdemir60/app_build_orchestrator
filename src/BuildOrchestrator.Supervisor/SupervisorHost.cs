@@ -189,17 +189,22 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     {
         var git = workspace.Git(cmd.RootPath);
         string? before = (await git.GetHeadCommitAsync(ct)).Value;
+        // [final review M5] İlerletilen branch checkout edilmiş olandır (FastForwardUpdater başka bir branch'e dokunmaz);
+        // komutun adı App'in son bildiğidir ve bayat olabilir. Satırlar diskten okunan adı söyler — sonuç kendi okuduğunu
+        // taşır, komutun adı yalnız branch okunamazsa (detached/hata) geri düşüştür.
+        string current = (await git.GetCurrentBranchAsync(ct)).Value ?? cmd.Branch;
 
-        await writer.WriteAsync(new SyncProgressEvent(PlanProgressLines.PullCommand(cmd.Branch), "cmd"), ct);
+        await writer.WriteAsync(new SyncProgressEvent(PlanProgressLines.PullCommand(current), "cmd"), ct);
         var result = await new FastForwardUpdater(new ProcessRunner(), cmd.RootPath).UpdateAsync(ct);
+        string branch = result.Branch ?? current;
 
         var (line, tone) = result.Status switch
         {
             FastForwardStatus.Updated => (
-                PlanProgressLines.Pulled(cmd.Branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
-            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(cmd.Branch), "info"),
+                PlanProgressLines.Pulled(branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
+            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(branch), "info"),
             FastForwardStatus.Dirty => (PlanProgressLines.PullRefusedDirty(), "warn"),
-            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(cmd.Branch), "warn"),
+            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(branch), "warn"),
             FastForwardStatus.Detached => (PlanProgressLines.PullRefusedDetached(), "warn"),
             _ => (PlanProgressLines.PullFailed(result.Detail ?? "unknown error"), "error"),
         };

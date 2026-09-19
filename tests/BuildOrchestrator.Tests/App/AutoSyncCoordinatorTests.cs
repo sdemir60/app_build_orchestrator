@@ -27,6 +27,7 @@ public sealed class AutoSyncCoordinatorTests
 
         public bool IsRunInFlight { get; set; }
         public (string? Branch, string? HeadSha)? LastSyncHead { get; set; }
+        public bool LastSyncOpenedSection { get; set; }
         public long? LastSyncAtMs { get; set; }
         public long Now { get; set; } = 100_000;
         public List<SilentSyncReason> Silent { get; } = [];
@@ -82,11 +83,13 @@ public sealed class AutoSyncCoordinatorTests
 
         public int SyncCount => Silent.Count + BranchChanges.Count;
 
-        /// <summary>Bir Sync tamamlandı: HEAD ve an kaydedilir (VM'in <c>OnSyncCompleted</c>'ının yaptığı).</summary>
-        public void Synced(string? branch, string? sha)
+        /// <summary>Bir Sync tamamlandı: HEAD, an ve bölüm açıp açmadığı kaydedilir (VM'in <c>OnSyncCompleted</c>'ının
+        /// yaptığı).</summary>
+        public void Synced(string? branch, string? sha, bool openedSection = false)
         {
             LastSyncHead = (branch, sha);
             LastSyncAtMs = Now;
+            LastSyncOpenedSection = openedSection;
         }
     }
 
@@ -239,11 +242,31 @@ public sealed class AutoSyncCoordinatorTests
         h.Head = new HeadState("feature", ShaB);
 
         await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
-        h.Port.Synced("feature", ShaB); // aracın kendi BranchChange Sync'i yeni HEAD'i ölçtü
+        h.Port.Synced("feature", ShaB, openedSection: true); // aracın kendi BranchChange Sync'i yeni HEAD'i ölçtü
         h.Port.IsWorkspaceBusy = false;
         h.Coordinator.OnWorkspaceIdle();
 
         Assert.Equal(0, h.Port.SyncCount);
+    }
+
+    /// <summary>[final review M1] Uçuştaki bölümsüz (ör. sessiz) bir Sync branch değişimini yuttu — yeni HEAD'i ölçtü:
+    /// bekleyen tetik yine "Switched to" bölümü açar. Kıyas, tetiğin saklandığı andaki son Sync HEAD'ine göredir;
+    /// yutan Sync bölüm açsaydı (aracın kendi checkout'u) ikinci bölüm açılmazdı
+    /// (<see cref="Our_own_checkout_plus_the_watcher_is_one_sync"/>).</summary>
+    [Fact]
+    public async Task A_branch_switch_absorbed_by_an_in_flight_silent_sync_still_opens_a_section()
+    {
+        var h = Harness.SyncedOnMain();
+        h.Port.IsWorkspaceBusy = true; // sessiz Sync uçuşta
+        h.Head = new HeadState("feature", ShaB);
+
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+        h.Port.Synced("feature", ShaB); // uçuştaki sessiz Sync yeni HEAD'i ölçtü, bölüm açmadı
+        h.Port.IsWorkspaceBusy = false;
+        h.Coordinator.OnWorkspaceIdle();
+
+        Assert.Equal([PlanProgressLines.SwitchedBranch("main", "feature", RevisionText.Short(ShaB))], h.Port.BranchChanges);
+        Assert.Empty(h.Port.Silent);
     }
 
     // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında

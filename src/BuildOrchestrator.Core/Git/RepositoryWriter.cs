@@ -25,7 +25,10 @@ public enum FastForwardStatus
 /// <param name="Status">Denemenin sonucu.</param>
 /// <param name="Revision">Çalışma kopyasının güncelleme SONRASI HEAD sha'sı; okunamadıysa null.</param>
 /// <param name="Detail">Kullanıcıya gösterilecek İngilizce açıklama (uyarı/hata metni); gerekmiyorsa null.</param>
-public sealed record FastForwardResult(FastForwardStatus Status, string? Revision, string? Detail);
+/// <param name="Branch">[final review M5] Denemenin üzerinde çalıştığı (checkout edilmiş) yerel branch; branch
+/// okunmadan düşen sonuçlarda (kir, detached, hata) null. Konsol satırları bu adı söyler — çağıranın bildiği ad
+/// bayat olabilir.</param>
+public sealed record FastForwardResult(FastForwardStatus Status, string? Revision, string? Detail, string? Branch = null);
 
 /// <summary>
 /// [D7][v1.16.0] Bir git çalışma kopyasını remote'una ilerletir — bu dosyanın (<c>RepositoryWriter.cs</c>)
@@ -110,10 +113,10 @@ public sealed class FastForwardUpdater
         if (!head.Success) return Failed(head.Error);
 
         if (fetch.Degraded)
-            return new FastForwardResult(FastForwardStatus.DegradedOffline, head.Value, fetch.Warning);
+            return new FastForwardResult(FastForwardStatus.DegradedOffline, head.Value, fetch.Warning, branch.Value);
 
         if (string.Equals(head.Value, fetch.TargetSha, StringComparison.Ordinal))
-            return new FastForwardResult(FastForwardStatus.AlreadyCurrent, head.Value, null);
+            return new FastForwardResult(FastForwardStatus.AlreadyCurrent, head.Value, null, branch.Value);
 
         // 4) Fast-forward mümkün mü? exit=0 → HEAD hedefin atası (ileri sarılabilir), exit=1 → ayrışmış.
         //    Karar exit kodundan okunur; stderr METNİ ASLA ayrıştırılmaz (lokalize olabilir).
@@ -124,7 +127,7 @@ public sealed class FastForwardUpdater
 
         if (ancestry.Value!.ExitCode == 1)
             return new FastForwardResult(FastForwardStatus.Diverged, head.Value,
-                $"the local branch '{branch.Value}' has diverged from origin — fast-forward is not possible");
+                $"the local branch '{branch.Value}' has diverged from origin — fast-forward is not possible", branch.Value);
 
         if (ancestry.Value.ExitCode != 0)
             return Failed(CommandLineTool.DescribeFailure(CommandLineTool.Git, ancestry.Value));
@@ -138,7 +141,7 @@ public sealed class FastForwardUpdater
         var updatedHead = await _git.GetHeadCommitAsync(ct);
         if (!updatedHead.Success) return Failed(updatedHead.Error);
 
-        return new FastForwardResult(FastForwardStatus.Updated, updatedHead.Value, null);
+        return new FastForwardResult(FastForwardStatus.Updated, updatedHead.Value, null, branch.Value);
     }
 
     private static FastForwardResult Failed(string? detail)

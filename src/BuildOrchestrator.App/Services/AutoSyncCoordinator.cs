@@ -31,6 +31,10 @@ internal interface IAutoSyncPort
     /// <summary>Son tamamlanan Sync'in ölçtüğü HEAD; hiç Sync tamamlanmadıysa <c>null</c>.</summary>
     (string? Branch, string? HeadSha)? LastSyncHead { get; }
 
+    /// <summary>[final review M1] Son tamamlanan Sync yeni bir konsol bölümü açtı mı (<see cref="SyncModeRules.ClearsConsole"/>:
+    /// Sync düğmesi ya da checkout'un bölümü). Açtıysa o Sync'in yuttuğu bir branch değişimi zaten ekranda anlatıldı.</summary>
+    bool LastSyncOpenedSection { get; }
+
     /// <summary>Son Sync'in en yeni anı (başlangıç ya da bitiş, monoton ms); hiç Sync yoksa <c>null</c>.</summary>
     long? LastSyncAtMs { get; }
 
@@ -118,7 +122,10 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// <param name="Move">İzleyicinin sınıfladığı hareket; pencereye dönüşte <c>null</c>.</param>
     /// <param name="RunEnded">[T8 · spec §6.1 güvenlik ağı] İzleyiciden değil koşunun bitişinden gelen tetik: HEAD
     /// okunamıyorsa hiçbir şey yapmaz — aksi hâlde git'siz bir kökte her koşudan sonra bir Sync koşardı.</param>
-    internal readonly record struct Trigger(HeadMove? Move, bool RunEnded = false)
+    /// <param name="Baseline">[final review M1] Tetik saklandığı andaki son Sync HEAD'i (<see cref="Remember"/> yazar);
+    /// hemen değerlendirilen tetikte <c>null</c>.</param>
+    internal readonly record struct Trigger(HeadMove? Move, bool RunEnded = false,
+        (string? Branch, string? HeadSha)? Baseline = null)
     {
         public bool IsActivation => Move is null;
 
@@ -221,7 +228,8 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// <item>Hiç Sync tamamlanmamış → hiçbir şey: kıyaslanacak HEAD yok ve ilk bölümü açılış Sync'i açar.</item>
     /// <item>Pencereye dönüş ve son Sync'ten <see cref="ActivationQuietMs"/> geçmemiş → hiçbir şey.</item>
     /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey.</item>
-    /// <item>Branch adı farklı → yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satır yeni branch.</item>
+    /// <item>Branch adı farklı → yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satır yeni branch. Kıyasın
+    /// tabanı <see cref="BranchReference"/>: beklerken bölümsüz bir Sync'in yuttuğu değişim de bölüm açar.</item>
     /// <item>HEAD (branch + commit) son Sync'tekiyle aynı ve tetik bir HEAD hareketi → hiçbir şey (çift Sync yok).</item>
     /// <item>Aksi → sessiz Sync: commit → <see cref="SilentSyncReason.Commit"/>, diğer → <see cref="SilentSyncReason.Refresh"/>.</item>
     /// </list>
@@ -255,6 +263,7 @@ internal sealed class AutoSyncCoordinator : IDisposable
             if (summary is not null) _port.AppendStreamLine(summary);
             return;
         }
+        var reference = BranchReference(trigger, last);
         if (summary is null && trigger.IsActivation && _port.LastSyncAtMs is { } at && _port.NowMs() - at < ActivationQuietMs) return;
 
         var head = _readHead(_gitDir);
@@ -265,9 +274,9 @@ internal sealed class AutoSyncCoordinator : IDisposable
             return;
         }
 
-        if (!string.Equals(head.Branch, last.Branch, StringComparison.Ordinal))
+        if (!string.Equals(head.Branch, reference.Branch, StringComparison.Ordinal))
         {
-            string switched = SwitchedLine(last, head);
+            string switched = SwitchedLine(reference, head);
             KeepIfNotSent(trigger,
                 await _port.SyncAfterExternalBranchChangeAsync(summary is null ? [switched] : [summary, switched]));
             return;
@@ -299,12 +308,25 @@ internal sealed class AutoSyncCoordinator : IDisposable
         if (!sent) Remember(trigger);
     }
 
-    /// <summary>Tek bekleyen tetik: yenisi eskisinden güçlüyse (ya da eşitse) yerini alır.</summary>
+    /// <summary>Tek bekleyen tetik: yenisi eskisinden güçlüyse (ya da eşitse) yerini alır. [final review M1] Taban
+    /// (<see cref="Trigger.Baseline"/>) İLK saklamanın anıdır: yerini alan tetik de bekleyişin başındaki son Sync
+    /// HEAD'ini taşır — arada tamamlanan bir Sync'in yuttuğu değişim böylece görünür kalır.</summary>
     private void Remember(Trigger trigger)
     {
+        var baseline = _pending?.Baseline ?? trigger.Baseline ?? _port.LastSyncHead;
         if (_pending is { } pending && pending.Weight > trigger.Weight) return;
-        _pending = trigger;
+        _pending = trigger with { Baseline = baseline };
     }
+
+    /// <summary>[final review M1] Branch kıyasının tabanı: tetik beklerken tamamlanan bölümsüz bir Sync (sessiz, Appended)
+    /// branch değişimini yutmuş olabilir — yeni HEAD'i ölçtü ama "Switched to" bölümünü açmadı. O durumda kıyas,
+    /// tetiğin saklandığı andaki HEAD'e (<see cref="Trigger.Baseline"/>) göre yapılır. Son Sync bölüm açtıysa
+    /// (aracın kendi checkout'u, Sync düğmesi) değişim zaten anlatılmıştır: taban son Sync'tir — çift bölüm yok.</summary>
+    private (string? Branch, string? HeadSha) BranchReference(Trigger trigger, (string? Branch, string? HeadSha) last) =>
+        trigger.Baseline is { } baseline && !_port.LastSyncOpenedSection
+            && !string.Equals(baseline.Branch, last.Branch, StringComparison.Ordinal)
+            ? baseline
+            : last;
 
     /// <summary>Dışarıdan branch değişiminin bölüm satırı — checkout'unkiyle AYNI metin
     /// (<see cref="PlanProgressLines.SwitchedBranch"/>). Detached HEAD'in adı kısa sha'sıdır.</summary>

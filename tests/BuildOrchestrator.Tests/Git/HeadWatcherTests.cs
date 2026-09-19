@@ -106,6 +106,45 @@ public sealed class HeadWatcherTests
         Assert.Equal(HeadMove.Commit, watcher.ReadNewMove());
     }
 
+    /// <summary>[final review M6] Pencere yarım bir satırla kapanırsa (git satırın ortasında) izleyici pencereyi YENİDEN
+    /// kurar: satırın geri kalanının yazımı ayrı bir bildirim üretmese (ya da bildirim pencereden önce birleşmiş olsa)
+    /// bile tetik kaybolmaz. Saat enjekte: kapanan pencereden sonra YENİ bir bekleyiş istenmesi, yeniden kurmanın
+    /// kanıtıdır.</summary>
+    [Fact]
+    public async Task A_window_that_closes_on_a_half_written_line_is_rearmed()
+    {
+        using var dir = new TempDir();
+        string logs = Path.Combine(dir.Path, "logs");
+        Directory.CreateDirectory(logs);
+        string headLog = Path.Combine(logs, "HEAD");
+        File.WriteAllText(headLog, "");
+        var delays = new List<TaskCompletionSource>();
+        var requested = new SemaphoreSlim(0);
+        Task Delay(TimeSpan window, CancellationToken ct)
+        {
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            ct.Register(() => tcs.TrySetCanceled(ct));
+            lock (delays) delays.Add(tcs);
+            requested.Release();
+            return tcs.Task;
+        }
+        using var watcher = new HeadWatcher(Delay);
+        Assert.True(watcher.Start(dir.Path, _ => { }), watcher.UnavailableReason);
+
+        File.AppendAllText(headLog, "0000000000000000000000000000000000000000 1111111111111111111111111111111111111111 T <t@e.com> 0 +0000\tcomm");
+        Assert.True(await requested.WaitAsync(Ceiling), "the write never opened a window");
+        await Task.Delay(Quiet); // aynı yazımın ardışık bildirimleri otursun — yalnız SON pencere tamamlanır
+        int before;
+        TaskCompletionSource last;
+        lock (delays) { before = delays.Count; last = delays[^1]; }
+        while (requested.CurrentCount > 0) await requested.WaitAsync();
+
+        last.TrySetResult(); // pencere yarım satırla kapanır
+
+        Assert.True(await requested.WaitAsync(Ceiling), "the window was not re-armed after a half-written line");
+        lock (delays) Assert.True(delays.Count > before);
+    }
+
     /// <summary>Pencere içindeki dürtmeler tek bekleyişte birleşir: öncekiler iptal edilir, yalnız sonuncusu tamamlanınca
     /// tek çağrı yapılır — saat enjekte (gerçek bekleme yok).
     /// <para>[T8 fix round 1 · I2] Çağrı, bekleyişin DEVAMINDA gelir ve devam satır içi koşmak zorunda değildir (tam

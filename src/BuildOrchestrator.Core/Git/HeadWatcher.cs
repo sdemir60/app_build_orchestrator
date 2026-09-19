@@ -40,6 +40,13 @@ public sealed class HeadWatcher : IHeadWatcher
     private string _logPath = string.Empty;
     private long _offset;
 
+    /// <summary>[final review M6] Son okuma yarım bir satırla bittiyse dosyanın o anki uzunluğu; bitmediyse <c>null</c>.</summary>
+    private long? _partialTailAt;
+
+    /// <summary>[final review M6] Pencerenin en son hangi uzunlukta yarım satır yüzünden yeniden kurulduğu — aynı yarım
+    /// kuyruk için pencere BİR kez yeniden kurulur (bozuk, hiç tamamlanmayan bir kuyruk yoklamaya dönüşmesin).</summary>
+    private long _rearmedAtLength = -1;
+
     /// <param name="delay">Sessizlik saati; verilmezse gerçek bekleme (bir debounce — yoklama DEĞİL).</param>
     public HeadWatcher(Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
@@ -86,12 +93,25 @@ public sealed class HeadWatcher : IHeadWatcher
         }
     }
 
-    /// <summary>Pencere kapandı: eklenen satırlar sınıflanır; yeni satır yoksa çağrı yapılmaz.</summary>
+    /// <summary>Pencere kapandı: eklenen satırlar sınıflanır; yeni satır yoksa çağrı yapılmaz. [final review M6] Okuma
+    /// yarım bir satırla bittiyse (git satırın ortasında) pencere yeniden kurulur: satırın geri kalanının yazımı
+    /// ayrı bir bildirim üretmese de satır bütün hâliyle bir sonraki pencerede okunur.</summary>
     private void Settle(Action<HeadMove> onSettled)
     {
-        HeadMove? move;
-        move = ReadNewMove();
+        HeadMove? move = ReadNewMove();
         if (move is { } settled) onSettled(settled);
+        if (TakeRearm()) _debouncer?.Poke();
+    }
+
+    /// <summary>Son okuma yeni bir yarım kuyrukla bittiyse <c>true</c> (kuyruk başına bir kez).</summary>
+    private bool TakeRearm()
+    {
+        lock (_gate)
+        {
+            if (_partialTailAt is not { } length || length == _rearmedAtLength) return false;
+            _rearmedAtLength = length;
+            return true;
+        }
     }
 
     /// <summary>Son okunan konumdan bu yana eklenen satırların en güçlü hareketi; yeni satır yoksa <c>null</c>.</summary>
@@ -102,6 +122,7 @@ public sealed class HeadWatcher : IHeadWatcher
 
     private HeadMove? ReadNewMoveLocked()
     {
+        _partialTailAt = null;
         try
         {
             using var stream = new FileStream(_logPath, FileMode.Open, FileAccess.Read,
@@ -118,6 +139,7 @@ public sealed class HeadWatcher : IHeadWatcher
             // [review M5] Okuma konumu yalnız son TAM satırın sonuna ilerler: git yazımın ortasındaysa yarım satır
             // bir sonraki pencerede bütün hâliyle okunur (yarısı ayrı bir "satır" gibi sınıflanmaz).
             int lastNewline = Array.LastIndexOf(bytes, (byte)'\n');
+            if (lastNewline + 1 < bytes.Length) _partialTailAt = length;
             if (lastNewline < 0)
             {
                 if (truncated) _offset = 0;

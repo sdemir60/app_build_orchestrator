@@ -23,7 +23,8 @@ public sealed class EnginePreflightTests
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // [final review M8]
 
     private static string MissingSupervisorPath =>
         SupervisorLayout.ResolveExePath(Path.Combine(AppContext.BaseDirectory, "no-such-install"));

@@ -193,12 +193,14 @@ public sealed partial class RunViewModel
     /// <para><b>Sync KOŞULSUZdur:</b> "repo mu katman mı değişti" ayrımı YAPILMAZ — Save'e basmak
     /// "senkronize et" demektir ve Sync salt-okurdur, tekrarı zararsızdır. ÜÇ kapı vardır:</para>
     ///
-    /// <para>(a) <b>Koşu uçuşta</b> (<see cref="IsMidRunLocked"/>): katmanlar yine uygulanır ama kök DEĞİŞMEZ
-    /// ve Sync GİTMEZ — koşan bir build'in kökünü altından çekmek doğru değildir
-    /// (<see cref="ChangeRepositoryAsync"/> de mid-run'da no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa
-    /// konsola TEK satır düşer: diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur (etiket taslaktan
-    /// okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır YAZILMAZ —
-    /// katman-only bir Save'de gürültü olurdu.</para>
+    /// <para>(a) <b>Koşu ya da workspace işi uçuşta</b> (<see cref="WorkspaceIdle"/> değil): katmanlar yine uygulanır
+    /// ama kök DEĞİŞMEZ ve Sync GİTMEZ — koşan bir build'in ya da uçuştaki bir Sync/Clean/Optimize/checkout/pull'un
+    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu (<see cref="ChangeRepositoryAsync"/>
+    /// de aynı kapıda no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa konsola TEK satır düşer
+    /// (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur
+    /// (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır
+    /// YAZILMAZ — katman-only bir Save'de gürültü olurdu. [final review M3] Eskiden kapı yalnız koşuyu soruyordu:
+    /// pull uçuşken Save ikinci bir Sync gönderirdi.</para>
     ///
     /// <para>(b) <b>Kök yok</b>: gidecek bir kök yoksa Sync anlamsızdır. Bu kapı <see cref="ApplyRepositoryRoot"/>
     /// çağrısından SONRA gelmek ZORUNDADIR — ilk repo Settings'ten seçildiğinde <see cref="RootPath"/> tam da
@@ -227,9 +229,9 @@ public sealed partial class RunViewModel
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
-        if (IsMidRunLocked)
+        if (!WorkspaceIdle)
         {
-            if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");
+            if (IsRepositoryChange(repositoryRoot)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
             return;
         }
         bool rootChanged = ApplyRepositoryRoot(repositoryRoot);
@@ -246,7 +248,7 @@ public sealed partial class RunViewModel
     /// seçici çağıranın enjekte ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır.</summary>
     public async Task ChangeRepositoryAsync(string path)
     {
-        if (IsMidRunLocked) return;
+        if (!WorkspaceIdle) return; // [final review M3] koşu YA DA workspace işi uçuştayken kök çekilmez
         if (!ApplyRepositoryRoot(path)) return;
         // [D3/T5 · design v1.13.2] Appended — ilk kurulumda not YOK (konsol zaten boş), sonraki bir kök
         // değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; bir temizlik onu da silerdi.
@@ -295,6 +297,12 @@ public sealed partial class RunViewModel
     /// başka bir şey anlatırdı.</summary>
     private bool IsRepositoryChange([NotNullWhen(true)] string? path) =>
         !string.IsNullOrEmpty(path) && !string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[final review M3] Save'in ertelediği kök değişiminin konsol notu — TEK yer. Koşu uçuştayken
+    /// <c>run in flight</c>, bir workspace işi (Sync, Clean, Optimize, checkout, pull) uçuştayken
+    /// <c>operation in flight</c>.</summary>
+    internal static string RepositoryChangeDeferredLine(bool runInFlight) =>
+        "Repository change deferred — " + (runInFlight ? "run in flight" : "operation in flight");
 
     /// <summary>[design v1.8.0 §2.9] Kök değişiminin konsol notu — BİREBİR metin, TEK yer.</summary>
     internal static string RepositoryRootChangedLine(string path) =>

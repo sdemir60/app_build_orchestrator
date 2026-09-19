@@ -216,7 +216,10 @@ public class BranchCheckoutTests
     }
 
     /// <summary>Stash yapıldı ama checkout düştü: kullanıcının değişiklikleri stash'tedir — konsol bunu SÖYLEMEK
-    /// zorundadır, yoksa değişiklikler kaybolmuş gibi görünür. Konsol yine temizlenmez.</summary>
+    /// zorundadır, yoksa değişiklikler kaybolmuş gibi görünür. Konsol yine temizlenmez.
+    /// <para>[final review M2] Satırlar ardışıktır ama artık sonuncu olmak zorunda değildir: ardından gelen sessiz
+    /// Sync'in (bkz. <see cref="A_failed_switch_after_a_stash_refreshes_silently"/>) bu harness'teki gönderim hatası
+    /// altlarına düşer.</para></summary>
     [Fact]
     public void A_failed_switch_after_a_stash_still_says_where_the_changes_went()
     {
@@ -227,8 +230,27 @@ public class BranchCheckoutTests
 
         var lines = Lines(vm);
         Assert.Contains("previous operation line", lines);
-        Assert.Equal([PlanProgressLines.StashedBeforeSwitch(StashMessage), PlanProgressLines.SwitchFailed("exit 1")],
-            lines.TakeLast(2));
+        int stash = Array.IndexOf(lines, PlanProgressLines.StashedBeforeSwitch(StashMessage));
+        Assert.True(stash >= 0, "stash satırı yok");
+        Assert.Equal(PlanProgressLines.SwitchFailed("exit 1"), lines[stash + 1]);
+    }
+
+    /// <summary>[final review M2] Stash yapıldı ama checkout düştü: ağaç DEĞİŞTİ (değişiklikler stash'e gitti) — kararlar
+    /// bayattır. Bölüm açılmaz; tek bir sessiz Sync (fetch'siz, konsol korunur, işlem pill'i yok) ekranı tazeler.</summary>
+    [Fact]
+    public void A_failed_switch_after_a_stash_refreshes_silently()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Failed, "main", "main", null, 2, StashMessage, "exit 1"));
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.Contains("previous operation line", Lines(vm));
+        Assert.Null(vm.CurrentOperation);
+        Assert.False(vm.CheckoutBusy);
     }
 
     /// <summary>Stash kendisi düştü: checkout hiç denenmedi, stash YOKTUR — stash satırı yazılmaz.</summary>
@@ -238,10 +260,14 @@ public class BranchCheckoutTests
         var vm = NewVm();
         vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
 
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
         vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.StashFailed, "main", "main", null, 2, StashMessage, "exit 1"));
 
         var lines = Lines(vm);
         Assert.Equal(["previous operation line", PlanProgressLines.SwitchFailed("exit 1")], lines.TakeLast(2));
+        Assert.Empty(sent); // ağaç değişmedi — Sync yok
     }
 
     // ---------------------------------------------------------------- kilit
