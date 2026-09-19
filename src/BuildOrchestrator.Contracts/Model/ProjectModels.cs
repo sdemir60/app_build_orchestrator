@@ -168,7 +168,13 @@ public sealed record BuildState(
     // (LastRunAt'tan AYRI: bir proje başarısızlıktan SONRA hiç derlenmeden imzası değişebilir, o durumda
     // FailedSignature hâlâ eski hatayı anlatır ama LastRunAt onun zamanını taşımaz — bkz. BuildStateStore.
     // FailedAtOf, LastBuiltAtOf ile aynı desen). Başarıda ya da kanıtsız hatada null.
-    DateTimeOffset? FailedAt = null)
+    DateTimeOffset? FailedAt = null,
+    // [Faz 3 — spec 2026-09-18 §5.1] Bu projenin derlemesiyle GERÇEKTEN güncellendiği öğrenilen "beslenen
+    // çıktılar": bağımlılarının HintPath hedeflerinden, başarılı derlemeden sonra var olan, boyutu derleme
+    // kanıtına eşit ve zamanı ondan en çok 2 s farklı olanlar (bkz. OutputEvidence.LearnFedOutputs). Hem defter
+    // hem zaman kipinde denetlenir: biri yoksa, boyutu farklıysa ya da kanıttan eskiyse çıktı bozuk sayılır.
+    // Alan SONA ve default'lu: eski kayıtlar null çözülür — liste yok, yalnız derleme kanıtı konuşur.
+    IReadOnlyList<string>? FedOutputs = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -188,7 +194,10 @@ public sealed record BuildState(
             ? other.DepIssueRoots is null
             : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots))
         && FailedSignature == other.FailedSignature
-        && FailedAt == other.FailedAt;
+        && FailedAt == other.FailedAt
+        && (FedOutputs is null
+            ? other.FedOutputs is null
+            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs));
 
     public override int GetHashCode()
     {
@@ -206,6 +215,7 @@ public sealed record BuildState(
         foreach (string root in DepIssueRoots ?? []) hash.Add(root);
         hash.Add(FailedSignature);
         hash.Add(FailedAt);
+        foreach (string fed in FedOutputs ?? []) hash.Add(fed);
         return hash.ToHashCode();
     }
 }
