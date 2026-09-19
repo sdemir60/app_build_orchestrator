@@ -2497,15 +2497,15 @@ public class RunViewModelTests
         Assert.DoesNotContain("previous operation line", console, StringComparison.Ordinal);
     }
 
-    /// <summary>[Faz 2/T7] Sync uçuştayken gelen HEAD tetiği bekler; Sync bitince VM'in meşguliyet bildirimi onu UI
-    /// kuyruğuna atar ve BİR sessiz Sync koşar (kök git deposu değil → HEAD okunamaz → güvenli yön: sessiz yenileme).</summary>
+    /// <summary>[Faz 2/T7] Sync uçuştayken gelen commit tetiği bekler; Sync bitince VM'in meşguliyet bildirimi onu UI
+    /// kuyruğuna atar ve BİR sessiz Sync koşar. [review M6] HEAD ve izleyici sahtedir — makineden bağımsız.</summary>
     [Fact]
     public async Task A_head_trigger_during_a_sync_runs_after_the_sync_ends()
     {
         await using var engine = await StartedEngineAsync();
         var vm = SyncedTwoRowVm(engine);
         var posted = new Queue<Action>();
-        vm.EnableAutoSync(posted.Enqueue);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
@@ -2515,9 +2515,61 @@ public class RunViewModelTests
         Assert.Empty(posted);
 
         ReplySync(vm, upToDateB: false);
-        while (posted.TryDequeue(out var action)) action();
+        Drain(posted);
 
         Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[review I1 · spec §6.1] Pull + izleyici tek Sync'tir: pull uçuştayken (motor komut döngüsünü
+    /// bloklar, başlangıç olayı yok) gelen reflog tetiği bekler; pull'un zincirli Sync'i yeni HEAD'i ölçer ve bekleyen
+    /// tetik HEAD eşit olduğu için atlanır.</summary>
+    [Fact]
+    public async Task A_pull_plus_the_watcher_is_one_sync()
+    {
+        await using var engine = await StartedEngineAsync();
+        var vm = SyncedTwoRowVm(engine);
+        var posted = new Queue<Action>();
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.PullRepositoryCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other); // pull'un reflog satırı
+        Drain(posted);
+        vm.OnEvent(new PullCompletedEvent(Succeeded: true));
+        Drain(posted);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, HeadSha: CommittedSha, ActiveBranch: "main"));
+        Drain(posted);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[review I2] Kök değişince eski kökün son Sync HEAD'i ve anları unutulur — yoksa yeni kökteki ilk
+    /// tetik eski branch'le kıyaslanıp sahte bir "Switched to" bölümü açardı.</summary>
+    [Fact]
+    public async Task A_root_change_forgets_the_last_sync_head()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
+        Assert.NotNull(vm.LastSyncHead); // ön-koşul
+
+        await vm.ChangeRepositoryAsync(@"D:\other-repo");
+
+        Assert.Null(vm.LastSyncHead);
+        Assert.Null(vm.LastSyncCompletedAtMs);
+        Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: kök değişiminin Sync'i gönderilemedi
+    }
+
+    /// <summary>Pull/commit sonrası HEAD'in sahte sha'sı — <see cref="ReplySync"/>'in ölçtüğünden farklı.</summary>
+    private const string CommittedSha = "2222222222222222222222222222222222222222";
+
+    /// <summary>UI kuyruğuna atılmış işleri sırayla koşar (sahte Dispatcher).</summary>
+    private static void Drain(Queue<Action> posted)
+    {
+        while (posted.TryDequeue(out var action)) action();
     }
 
     /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — git

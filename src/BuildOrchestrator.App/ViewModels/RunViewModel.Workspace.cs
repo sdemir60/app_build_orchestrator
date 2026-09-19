@@ -441,9 +441,14 @@ public sealed partial class RunViewModel
     private async Task PullRepositoryAsync()
     {
         CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
+        SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
-        // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill asılı kalmasın.
-        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository")) CurrentOperation = null;
+        // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill ve kilit asılı kalmasın.
+        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository"))
+        {
+            CurrentOperation = null;
+            SetPullBusy(false);
+        }
     }
 
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
@@ -457,10 +462,35 @@ public sealed partial class RunViewModel
     /// </summary>
     private async Task OnPullCompletedAsync(PullCompletedEvent e)
     {
-        if (!e.Succeeded) { CurrentOperation = null; return; }
+        if (!e.Succeeded)
+        {
+            CurrentOperation = null;
+            SetPullBusy(false);
+            return;
+        }
 
         Behind = 0;                          // ff sonrası yerel HEAD uzak uca eşitlendi
-        await SyncCoreAsync(SyncMode.Appended); // pull'un satırları kalır, Sync altına eklenir
+        // Kilit, zincirli Sync kapıyı DEVRALDIKTAN SONRA bırakılır (checkout'un ve HandOverToSyncAsync'in sırası):
+        // arada kapı bir an açılsaydı bekleyen HEAD tetiği ikinci bir Sync başlatırdı (spec §6.1 "çift Sync yok").
+        var sync = SyncCoreAsync(SyncMode.Appended); // pull'un satırları kalır, Sync altına eklenir
+        SetPullBusy(false);
+        await sync;
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Bir pull motora GÖNDERİLDİ ama <see cref="PullCompletedEvent"/> HENÜZ gelmedi.
+    /// Supervisor pull boyunca komut döngüsünü bloklar ve başlangıç olayı yayınlamaz — istek ve uçuş penceresi TEK
+    /// bayraktır (<see cref="CheckoutBusy"/> ile aynı). Pull'a ait bir hata kodu yoktur: sonuç her zaman
+    /// <see cref="PullCompletedEvent"/> ile kapanır; motor kaybı <see cref="RunViewModel.ReleaseAfterEngineLoss"/>'ta bırakır.</summary>
+    public bool PullBusy { get; private set; }
+
+    /// <summary><see cref="PullBusy"/>'nin TEK yazıcısı — <see cref="SetCheckoutBusy"/>'nin ikizi. Çağıranlar: gönderim ve
+    /// düşen gönderim (<see cref="PullRepositoryAsync"/>), cevap (<see cref="OnPullCompletedAsync"/>) ve motor kaybı.</summary>
+    private void SetPullBusy(bool busy)
+    {
+        if (PullBusy == busy) return;
+        PullBusy = busy;
+        OnPropertyChanged(nameof(PullBusy));
+        NotifySyncGatedCommands();
     }
 
     /// <summary>[spec 2026-09-18 §6.3] Bir checkout motora GÖNDERİLDİ ama cevabı (<see cref="CheckoutCompletedEvent"/>
@@ -468,12 +498,12 @@ public sealed partial class RunViewModel
     /// döngüsünü bloklar ve başlangıç olayı yayınlamaz, bu yüzden istek ve uçuş penceresi TEK bayraktır.</summary>
     public bool CheckoutBusy { get; private set; }
 
-    /// <summary>Workspace'e dokunan bir iş uçuşta mı: Sync, Clean, Optimize ya da checkout. Run/Sync/Clean/
+    /// <summary>Workspace'e dokunan bir iş uçuşta mı: Sync, Clean, Optimize, checkout ya da pull. Run/Sync/Clean/
     /// Optimize/Pull ve branch chip kapılarının ORTAK meşguliyet sorusu — liste TEK yerde durur (kopya YASAK).
     /// <para>[spec 2026-09-18 §6.3] Checkout da dahildir: Supervisor checkout boyunca komut döngüsünü bloklar;
     /// o sırada basılan bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
     /// Pull ise yanlış branch'i ilerletir.</para></summary>
-    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy;
+    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
 
     /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
     /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
@@ -578,6 +608,16 @@ public sealed partial class RunViewModel
     internal long? LastSyncCompletedAtMs { get; private set; }
 
     /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
+    /// <summary>[spec 2026-09-18 §6.1] Son Sync'in HEAD'ini ve anlarını unutur — TEK yer; kök değişince
+    /// (<c>ApplyRepositoryRoot</c>) çağrılır: eski kökün HEAD'i yeni kökte kıyas tabanı olsaydı ilk tetik sahte bir
+    /// "Switched to" bölümü açardı.</summary>
+    private void ForgetLastSync()
+    {
+        LastSyncHead = null;
+        LastSyncStartedAtMs = null;
+        LastSyncCompletedAtMs = null;
+    }
+
     internal long? LastSyncAtMs =>
         LastSyncStartedAtMs is { } started && LastSyncCompletedAtMs is { } completed
             ? Math.Max(started, completed)
@@ -589,7 +629,7 @@ public sealed partial class RunViewModel
     /// fetch yapılmaz, kalıcı işlem pill'i yazılmaz, seçim korunur; transkript gizlenir ama warn/error satırları
     /// yazılır; bitişte akışa tek satır (<paramref name="reason"/>'a göre, metinler <see cref="StreamText"/>'te).
     /// <para>Kapı Sync düğmesininkiyle AYNIdır (<see cref="CanSync"/>) + bir workspace: koşu, planlama, başka bir
-    /// workspace işi (Sync/Clean/Optimize/checkout) uçuştayken ya da motor erişilemezken hiçbir şey gönderilmez ve
+    /// workspace işi (Sync/Clean/Optimize/checkout/pull) uçuştayken ya da motor erişilemezken hiçbir şey gönderilmez ve
     /// <c>false</c> döner — çağıran (izleyici) tetiği sonra yeniden deneyebilir.</para>
     /// </summary>
     /// <returns>Sync istendi mi.</returns>

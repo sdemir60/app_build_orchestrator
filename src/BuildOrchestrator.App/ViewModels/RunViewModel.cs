@@ -2280,6 +2280,7 @@ public sealed partial class RunViewModel : ObservableObject
         ReleaseCleanSurface();
         ReleaseOptimizeSurface();
         SetCheckoutBusy(false); // [§6.3] motor checkout ortasında öldüyse cevap gelmez — chip kilidi sızmaz
+        SetPullBusy(false); // [§6.1] motor pull ortasında öldüyse pullCompleted gelmez — kapı sızmaz
         // Beklenen geçiş kalmadı → sessizlik uyarısının konusu da kalmadı. (Tick zaten aynı sonuca varırdı;
         // burada YAZILMASININ sebebi, kullanıcının Restart'a bastığı KAREde amber satırın kalkmasıdır.)
         EngineOverdueMessage = null;

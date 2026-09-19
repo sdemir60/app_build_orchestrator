@@ -90,11 +90,17 @@ public sealed class HeadWatcher : IHeadWatcher
     private void Settle(Action<HeadMove> onSettled)
     {
         HeadMove? move;
-        lock (_gate) move = ReadNewMove();
+        move = ReadNewMove();
         if (move is { } settled) onSettled(settled);
     }
 
-    private HeadMove? ReadNewMove()
+    /// <summary>Son okunan konumdan bu yana eklenen satırların en güçlü hareketi; yeni satır yoksa <c>null</c>.</summary>
+    internal HeadMove? ReadNewMove()
+    {
+        lock (_gate) return ReadNewMoveLocked();
+    }
+
+    private HeadMove? ReadNewMoveLocked()
     {
         try
         {
@@ -104,12 +110,22 @@ public sealed class HeadWatcher : IHeadWatcher
             if (length == _offset) return null;
 
             bool truncated = length < _offset;
-            if (!truncated) stream.Seek(_offset, SeekOrigin.Begin);
-            string text;
-            using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false))
-                text = reader.ReadToEnd();
-            _offset = length;
+            long start = truncated ? 0 : _offset;
+            stream.Seek(start, SeekOrigin.Begin);
+            byte[] bytes = new byte[length - start];
+            stream.ReadExactly(bytes);
 
+            // [review M5] Okuma konumu yalnız son TAM satırın sonuna ilerler: git yazımın ortasındaysa yarım satır
+            // bir sonraki pencerede bütün hâliyle okunur (yarısı ayrı bir "satır" gibi sınıflanmaz).
+            int lastNewline = Array.LastIndexOf(bytes, (byte)'\n');
+            if (lastNewline < 0)
+            {
+                if (truncated) _offset = 0;
+                return null;
+            }
+            _offset = start + lastNewline + 1;
+
+            string text = Encoding.UTF8.GetString(bytes, 0, lastNewline + 1);
             var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (lines.Length == 0) return null;
             if (truncated) return ReflogEntry.Classify(lines[^1]);

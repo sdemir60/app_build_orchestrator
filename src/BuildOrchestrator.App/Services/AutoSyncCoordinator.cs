@@ -14,7 +14,7 @@ internal interface IAutoSyncPort
     /// <summary>Bir workspace seçili mi.</summary>
     bool HasWorkspace { get; }
 
-    /// <summary>Workspace'e dokunan bir iş (Sync/Clean/Optimize/checkout) YA DA bir koşu uçuşta mı — tetik bekletilir.</summary>
+    /// <summary>Workspace'e dokunan bir iş (Sync/Clean/Optimize/checkout/pull) YA DA bir koşu uçuşta mı — tetik bekletilir.</summary>
     bool IsWorkspaceBusy { get; }
 
     /// <summary>Son tamamlanan Sync'in ölçtüğü HEAD; hiç Sync tamamlanmadıysa <c>null</c>.</summary>
@@ -72,6 +72,12 @@ internal sealed class AutoSyncCoordinator : IDisposable
     private string? _gitDir;
     private IHeadWatcher? _watcher;
 
+    /// <summary>[review M3] Güncel izleyicinin kuşağı: her bırakma artırır. UI kuyruğuna atılmış bir geri çağrı
+    /// yalnız kendi kuşağı hâlâ güncelse (ve koordinatör kapanmadıysa) tetik olur — değiştirilmiş/kapatılmış
+    /// izleyicinin gecikmiş bildirimi yeni kökte Sync üretmez.</summary>
+    private int _generation;
+    private bool _disposed;
+
     /// <summary>"İzleyici kurulamadı" satırı yazılmış kökler — satır kök başına BİR kez (spec §6.1).</summary>
     private readonly HashSet<string> _reportedRoots = new(StringComparer.OrdinalIgnoreCase);
 
@@ -103,6 +109,7 @@ internal sealed class AutoSyncCoordinator : IDisposable
     public void Attach(string root)
     {
         root ??= string.Empty;
+        if (_disposed) return;
         if (string.Equals(root, _root, StringComparison.OrdinalIgnoreCase) && _watcher is not null) return;
 
         DisposeWatcher();
@@ -112,7 +119,12 @@ internal sealed class AutoSyncCoordinator : IDisposable
         if (_gitDir is null) return;
 
         var watcher = _newWatcher();
-        if (watcher.Start(_gitDir, move => _post(() => _ = HeadTriggerAsync(move))))
+        int generation = _generation;
+        if (watcher.Start(_gitDir, move => _post(() =>
+            {
+                if (_disposed || generation != _generation) return; // bayat izleyicinin bildirimi
+                _ = HeadTriggerAsync(move);
+            })))
         {
             _watcher = watcher;
             return;
@@ -126,11 +138,17 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// <summary>İzleyicinin tetiği (UI thread'inde): <paramref name="move"/> reflog'un sınıflanmış hareketi.</summary>
     public Task HeadTriggerAsync(HeadMove move) => EvaluateAsync(new Trigger(move));
 
-    /// <summary>Pencereye dönüş (UI thread'inde) — spec karar 11.</summary>
-    public Task WindowActivatedAsync() => EvaluateAsync(new Trigger(null));
+    /// <summary>Pencereye dönüş (UI thread'inde) — spec karar 11. [review M4] Kurulamamış izleyici (ör. henüz reflog'u
+    /// olmayan depo: <c>logs</c> ilk commit'le doğar) burada yeniden denenir; ucuzdur (bir klasör kontrolü) ve
+    /// "unavailable" satırı kök başına yine BİR kez kalır.</summary>
+    public Task WindowActivatedAsync()
+    {
+        if (!_disposed && _watcher is null && _gitDir is not null) Attach(_root);
+        return EvaluateAsync(new Trigger(null));
+    }
 
     /// <summary>
-    /// VM'in TEK "meşguliyet değişti" bildirimi (Sync/Clean/Optimize/checkout bayrağı ya da koşu kilidi). Bekleyen
+    /// VM'in TEK "meşguliyet değişti" bildirimi (Sync/Clean/Optimize/checkout/pull bayrağı ya da koşu kilidi). Bekleyen
     /// bir tetik varsa ve artık meşgul değilse yeniden değerlendirme UI kuyruğuna ATILIR — senkron değil: bildirim
     /// bir durum geçişinin ortasında gelir (ör. Sync'in bitişi fazı henüz yazmadı) ve orada yeni bir Sync başlatmak
     /// o geçişin kalanını ezerdi.
@@ -225,10 +243,12 @@ internal sealed class AutoSyncCoordinator : IDisposable
     {
         _watcher?.Dispose();
         _watcher = null;
+        _generation++;
     }
 
     public void Dispose()
     {
+        _disposed = true;
         DisposeWatcher();
         _pending = null;
     }

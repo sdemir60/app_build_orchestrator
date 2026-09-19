@@ -64,9 +64,9 @@ public sealed class AutoSyncCoordinatorTests
             Coordinator = new AutoSyncCoordinator(Port, action => action(), _ => Head, newWatcher);
 
         /// <summary>Son Sync main@A'da bitti, HEAD hâlâ orada, üstünden eşik kadar zaman geçti.</summary>
-        public static Harness SyncedOnMain()
+        public static Harness SyncedOnMain(Func<IHeadWatcher>? newWatcher = null)
         {
-            var h = new Harness { Head = new HeadState("main", ShaA) };
+            var h = new Harness(newWatcher) { Head = new HeadState("main", ShaA) };
             h.Port.Synced("main", ShaA);
             h.Port.Now += AutoSyncCoordinator.ActivationQuietMs + 1;
             return h;
@@ -176,28 +176,68 @@ public sealed class AutoSyncCoordinatorTests
     [Fact]
     public void An_unavailable_watcher_is_reported_once_per_root()
     {
-        using var dir = new TempDir();
-        Directory.CreateDirectory(Path.Combine(dir.Path, ".git"));
-        var h = new Harness(() => new UnavailableWatcher());
+        using var dir = GitRoot();
+        var h = new Harness(() => new FakeHeadWatcher { Starts = false });
 
         h.Coordinator.Attach(dir.Path);
         h.Coordinator.Attach("");
         h.Coordinator.Attach(dir.Path);
 
-        Assert.Equal([PlanProgressLines.HeadWatcherUnavailable(UnavailableWatcher.Reason)], h.Port.ConsoleLines);
+        Assert.Equal([PlanProgressLines.HeadWatcherUnavailable(FakeHeadWatcher.Reason)], h.Port.ConsoleLines);
     }
 
-    private sealed class UnavailableWatcher : IHeadWatcher
+    /// <summary>[review M3] Değiştirilen ya da kapatılan izleyicinin (UI kuyruğunda bekleyen) geri çağrısı düşer;
+    /// yalnız GÜNCEL izleyicinin tetiği Sync'ler.</summary>
+    [Fact]
+    public void A_callback_from_a_replaced_or_disposed_watcher_is_dropped()
     {
-        public const string Reason = "access denied";
-        public string? UnavailableReason { get; private set; }
+        using var first = GitRoot();
+        using var second = GitRoot();
+        var watchers = new List<FakeHeadWatcher>();
+        var h = Harness.SyncedOnMain(() => { var w = new FakeHeadWatcher(); watchers.Add(w); return w; });
+        h.Head = new HeadState("main", ShaB);
 
-        public bool Start(string gitDir, Action<HeadMove> onSettled)
+        h.Coordinator.Attach(first.Path);
+        h.Coordinator.Attach(second.Path);
+        watchers[0].OnSettled!(HeadMove.Commit);
+        Assert.Equal(0, h.Port.SyncCount);
+
+        watchers[1].OnSettled!(HeadMove.Commit);
+        Assert.Equal([SilentSyncReason.Commit], h.Port.Silent);
+
+        h.Coordinator.Dispose();
+        watchers[1].OnSettled!(HeadMove.Commit);
+        Assert.Single(h.Port.Silent);
+    }
+
+    /// <summary>[review M4] Henüz reflog'u olmayan depo (ilk commit'ten önce <c>logs</c> yok): pencereye dönüş
+    /// izleyiciyi yeniden dener; ilk commit'ten sonra kurulur. Satır kök başına yine BİR kez.</summary>
+    [Fact]
+    public async Task Activation_retries_a_watcher_that_could_not_start()
+    {
+        using var dir = GitRoot();
+        var watchers = new List<FakeHeadWatcher>();
+        var h = Harness.SyncedOnMain(() =>
         {
-            UnavailableReason = Reason;
-            return false;
-        }
+            var w = new FakeHeadWatcher { Starts = watchers.Count > 0 };
+            watchers.Add(w);
+            return w;
+        });
 
-        public void Dispose() { }
+        h.Coordinator.Attach(dir.Path);
+        await h.Coordinator.WindowActivatedAsync();
+        await h.Coordinator.WindowActivatedAsync();
+
+        Assert.Equal(2, watchers.Count); // bir başarısız, bir başarılı; başarılıdan sonra yeniden denenmez
+        Assert.NotNull(watchers[1].OnSettled);
+        Assert.Single(h.Port.ConsoleLines);
+    }
+
+    /// <summary>İçinde <c>.git</c> klasörü olan geçici kök — <see cref="GitDirectory.Resolve"/> onu git deposu sayar.</summary>
+    private static TempDir GitRoot()
+    {
+        var dir = new TempDir();
+        Directory.CreateDirectory(Path.Combine(dir.Path, ".git"));
+        return dir;
     }
 }

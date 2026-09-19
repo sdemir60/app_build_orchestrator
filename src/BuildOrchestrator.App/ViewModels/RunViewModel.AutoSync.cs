@@ -26,9 +26,12 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>Kendiliğinden Sync'i açar: koordinatör kurulur ve izleyici bugünkü köke bağlanır. Kabuk bir kez
     /// çağırır; <paramref name="postToUi"/> izleyicinin thread-pool geri çağrısını UI thread'ine taşır.</summary>
-    internal void EnableAutoSync(Action<Action> postToUi, Func<Core.Git.IHeadWatcher>? newWatcher = null)
+    /// <param name="readHead">Test dikişi: HEAD okuyucusu (verilmezse diskten, <see cref="Core.Git.HeadReader"/>).</param>
+    /// <param name="newWatcher">Test dikişi: izleyici fabrikası (verilmezse gerçek <see cref="Core.Git.HeadWatcher"/>).</param>
+    internal void EnableAutoSync(Action<Action> postToUi, Func<string?, Core.Git.HeadState?>? readHead = null,
+        Func<Core.Git.IHeadWatcher>? newWatcher = null)
     {
-        _autoSync ??= new AutoSyncCoordinator(this, postToUi, newWatcher: newWatcher);
+        _autoSync ??= new AutoSyncCoordinator(this, postToUi, readHead, newWatcher);
         _autoSync.Attach(RootPath);
     }
 
@@ -49,7 +52,7 @@ public sealed partial class RunViewModel : IAutoSyncPort
     private void AttachAutoSync(string root) => _autoSync?.Attach(root);
 
     /// <summary>
-    /// "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout bayraklarının her
+    /// "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull bayraklarının her
     /// geçişi (<see cref="NotifySyncGatedCommands"/>) ve koşu kilidinin her geçişi (<see cref="PropagateRunLock"/>)
     /// buraya iner. Koordinatör bekleyen tetiği meşguliyet bitince yeniden değerlendirir.
     /// </summary>

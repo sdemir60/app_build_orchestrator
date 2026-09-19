@@ -279,6 +279,7 @@ public sealed partial class RunViewModel
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();
+        ForgetLastSync(); // [spec 2026-09-18 §6.1] eski kökün HEAD'i yeni kökte kıyas tabanı olamaz
         return true;
     }
 

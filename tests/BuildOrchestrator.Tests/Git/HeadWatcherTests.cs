@@ -84,6 +84,28 @@ public sealed class HeadWatcherTests
         Assert.False(string.IsNullOrWhiteSpace(watcher.UnavailableReason));
     }
 
+    /// <summary>[review M5] Git'in yazımı yarıdayken pencere kapanırsa yarım satır OKUNMAZ (okuma konumu son tam
+    /// satırda kalır); satır tamamlanınca bütün hâliyle sınıflanır.</summary>
+    [Fact]
+    public void A_half_written_line_is_read_only_once_it_is_complete()
+    {
+        using var dir = new TempDir();
+        string logs = Path.Combine(dir.Path, "logs");
+        Directory.CreateDirectory(logs);
+        string headLog = Path.Combine(logs, "HEAD");
+        File.WriteAllText(headLog, "");
+        using var watcher = new HeadWatcher((_, ct) => Task.Delay(Timeout.Infinite, ct)); // pencere hiç kapanmaz
+        Assert.True(watcher.Start(dir.Path, _ => { }), watcher.UnavailableReason);
+        const string Prefix = "0000000000000000000000000000000000000000 " +
+            "1111111111111111111111111111111111111111 Test User <test@example.com> 0 +0000\t";
+
+        File.AppendAllText(headLog, Prefix + "comm");
+        Assert.Null(watcher.ReadNewMove());
+
+        File.AppendAllText(headLog, "it: add feature\n");
+        Assert.Equal(HeadMove.Commit, watcher.ReadNewMove());
+    }
+
     /// <summary>Pencere içindeki dürtmeler tek bekleyişte birleşir: öncekiler iptal edilir, yalnız sonuncusu tamamlanınca
     /// tek çağrı yapılır — saat enjekte (gerçek bekleme yok).</summary>
     [Fact]
