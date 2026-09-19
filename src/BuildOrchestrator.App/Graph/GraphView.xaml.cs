@@ -557,14 +557,17 @@ public partial class GraphView : UserControl
     /// <para>Kapı bir SUSTURUCU değil ERTELEYİCİDİR: yalnız EN SON besleme tutulur (ara durumlar zaten hiç
     /// görülmedi) ve panel görünür olduğunda TOPOLOJİ ÖNCE, statüler SONRA uygulanır.</para>
     /// </summary>
-    private (IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges)? _pendingTopology;
+    private (IReadOnlyList<GraphNode> Nodes, IReadOnlyList<GraphEdge> Edges, bool ShowEmptyState)? _pendingTopology;
     private IReadOnlyList<GraphNode>? _pendingStatuses;
 
     private bool IsPanelVisible => Visibility == Visibility.Visible;
 
     /// <summary>Topolojiyi (düğüm + kenar) kurar: yerleşim, görseller ve ilk açılış dalgası. Yalnız topoloji
     /// DEĞİŞTİĞİNDE çağrılır — statü güncellemeleri için <see cref="UpdateStatuses"/> kullanılır.</summary>
-    public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    /// <param name="showEmptyState">Boş bir graf Sync-öncesi etiketini ("Graph appears after Sync") göstersin mi.
+    /// [task 3] <c>false</c> yalnız ekranı baştan başlatan Sync'in boşaltmasıdır: orada Sync zaten sürüyor ve
+    /// panel yalnız boş/sakin durur.</param>
+    public void SetGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState = true)
     {
         ArgumentNullException.ThrowIfNull(nodes);
         ArgumentNullException.ThrowIfNull(edges);
@@ -572,12 +575,12 @@ public partial class GraphView : UserControl
         if (!IsPanelVisible)
         {
             // Yeni topoloji bekleyen statüleri GEÇERSİZ kılar: o statüler ESKİ grafın düğümlerine aitti.
-            _pendingTopology = (nodes, edges);
+            _pendingTopology = (nodes, edges, showEmptyState);
             _pendingStatuses = null;
             return;
         }
 
-        ApplyGraph(nodes, edges);
+        ApplyGraph(nodes, edges, showEmptyState);
     }
 
     /// <summary>Statüleri yerinde günceller: düğüm renkleri ve building animasyonu. Topoloji ve geometri
@@ -648,7 +651,7 @@ public partial class GraphView : UserControl
         if (_pendingTopology is { } topology)
         {
             _pendingTopology = null;
-            ApplyGraph(topology.Nodes, topology.Edges);
+            ApplyGraph(topology.Nodes, topology.Edges, topology.ShowEmptyState);
         }
         if (_pendingStatuses is { } statuses)
         {
@@ -657,7 +660,7 @@ public partial class GraphView : UserControl
         }
     }
 
-    private void ApplyGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges)
+    private void ApplyGraph(IReadOnlyList<GraphNode> nodes, IReadOnlyList<GraphEdge> edges, bool showEmptyState)
     {
         _edgeLayer.Children.Clear();
         _nodeLayer.Children.Clear();
@@ -677,7 +680,7 @@ public partial class GraphView : UserControl
         // [M-4] Global Constraint: sayı biçimlemesi InvariantCulture.
         CountsText.Text = string.Format(
             CultureInfo.InvariantCulture, "{0} projects · {1} dependencies", nodes.Count, edges.Count);
-        ShowEmptyState(nodes.Count == 0);
+        ShowEmptyState(nodes.Count == 0 && showEmptyState);
         if (nodes.Count == 0)
         {
             _layout = QuietGraphLayout.Compute([], ViewportSize);

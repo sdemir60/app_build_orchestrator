@@ -1,5 +1,6 @@
 ﻿using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -261,9 +262,21 @@ public class ProjectListFilterTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Fixture'ın yapısı (<see cref="NewShellWithProjects"/>) — AYNI yapıyla cevap veren Sync'ler bunu yayınlar.</summary>
+    private static readonly (string Name, string? Layer)[] SameStructure = [("Alpha", "Core"), ("Beta", "Core"), ("Gamma", "Ui")];
+
+    /// <summary>Grafın canlı kamerasını zoom'lar (animasyon kapalı ⇒ hedef = ekran) ve ön-koşulu doğrular.</summary>
+    private static CameraTransform ZoomGraph(GraphView graph)
+    {
+        graph.HandleWheel(new System.Windows.Point(120, 120), 120);
+        Assert.NotEqual(GraphCamera.Default, graph.LiveCameraForTest); // ön-koşul: ekran zoomlu
+        return graph.LiveCameraForTest;
+    }
+
     /// <summary>
-    /// [spec 2026-09-18 §1-13 · §6.2] <b>Yapısı aynı bir Sync listeyi YERİNDE tazeler:</b> liste resetlenmez,
-    /// reveal yeniden oynamaz. Karar ve gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda.
+    /// [spec 2026-09-18 §1-13 · §6.2 · task 3] <b>Kendiliğinden (Silent) ve Appended Sync, yapı aynıyken listeyi
+    /// YERİNDE tazeler:</b> liste resetlenmez, reveal yeniden oynamaz, graf yeniden kurulmaz ve kamerası yerinde
+    /// kalır. Kural <c>SyncModeRules.RestartsPlanSurface</c>'tedir.
     ///
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia: <c>A_no_changes_sync_replays_the_reveal</c>
     /// — "no changes" bir Sync de reveal'i yeniden oynatır (design v1.13.2: prototipin <c>doSync()</c>'u
@@ -271,33 +284,151 @@ public class ProjectListFilterTests
     /// guard'ını atlıyordu). Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her
     /// biri listeyi baştan kurup başa sarıyordu; yapı aynıyken reveal hiçbir şey anlatmıyor.</para>
     ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Bu testin bir önceki hâli kipten BAĞIMSIZ
+    /// iddia ediyordu: HER Sync yapı aynıyken yerinde tazeler (Sync doğrudan olaylarla, kip seçilmeden sürülüyordu).
+    /// Değişme gerekçesi: kullanıcı Sync düğmesine (Manual) ve branch değişimine (BranchChange) "ekranı baştan
+    /// başlat" anlamını verdi — o iki kip artık yapı aynı olsa da reveal'i oynatır
+    /// (<see cref="A_restarting_sync_replays_the_reveal_and_fits_the_graph_even_with_the_same_structure"/>).
+    /// Yerinde tazeleme, ekranda iz bırakmaması gereken iki kipte kalır; test artık her kipi ÜRETİM girişinden
+    /// başlatır.</para>
+    ///
     /// <para><b>Vakum değil:</b> reveal'in taban çizgisi 0'ın ÜSTÜNDE ve yeniden yayınlanan topoloji gerçekten
     /// TÜKETİLDİ (aynı satırlar, aynı sırada). Kardeşleri: <see cref="A_sync_that_adds_a_project_replays_the_reveal"/>,
     /// <see cref="A_clean_empties_the_list_and_its_sync_replays_the_reveal"/>.</para>
     /// </summary>
-    [StaFact]
-    public void A_sync_with_the_same_structure_updates_in_place()
+    [StaTheory]
+    [InlineData(SyncMode.Silent)]
+    [InlineData(SyncMode.Appended)]
+    public async Task A_sync_with_the_same_structure_updates_in_place(SyncMode mode)
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
+        var graph = window.Shell.GraphHost;
         list.AnimationsEnabledProvider = () => true; // reveal ancak motion açıkken kuşak ilerletir
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         int afterTopology = list.RevealGeneration;
         Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+        int graphReveal = graph.RevealGeneration;
+        var zoomed = ZoomGraph(graph);
         int resets = 0;
         list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
 
-        // ÜRETİM YOLU: Sync başlar, AYNI topoloji yeniden yayınlanır, Sync biter.
-        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")],
-            [], [], []));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
+        // ÜRETİM YOLU: kipin kendi girişi, motor AYNI topolojiyle cevap verir.
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, mode);
+        MainWindowHost.ReplySync(vm, SameStructure);
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // reveal (oynasaydı) pompada ilerlerdi
 
         Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list)); // topoloji GERÇEKTEN tüketildi
         Assert.Equal(0, resets);                                                 // liste resetlenmedi
         Assert.Equal(afterTopology, list.RevealGeneration);                      // ...ve reveal OYNAMADI
+        Assert.Equal(graphReveal, graph.RevealGeneration);                       // graf yeniden kurulmadı
+        Assert.Equal(zoomed, graph.LiveCameraForTest);                           // kamera yerinde kaldı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [task 3 · kullanıcı kararı 2026-09-19] <b>Sync düğmesi ve branch değişimi ekranı baştan başlatır:</b>
+    /// tıklama anında konsol ve akışla BİRLİKTE liste ve graf da boşalır. Ekran yalnız boş/sakin durur: liste
+    /// daveti ("No projects found…") ve grafın Sync-öncesi etiketi ("Graph appears after Sync") görünmez, faz
+    /// Boot'a düşmez (Clean'in <c>ClearPlanSurface</c>'inden farkı budur).
+    /// </summary>
+    [StaTheory]
+    [InlineData(SyncMode.Manual)]
+    [InlineData(SyncMode.BranchChange)]
+    public async Task A_restarting_sync_empties_the_list_and_the_graph_at_the_click(SyncMode mode)
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        var graph = window.Shell.GraphHost;
+        Assert.Equal(3, VisibleRowNames(list).Count); // ön-koşul: liste dolu
+        Assert.Equal(3, graph.NodeCount);             // ön-koşul: graf dolu (panel görünür)
+
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, mode);
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100)); // ertelenmiş bir yeniden doldurma (olsaydı) koşardı
+
+        Assert.Empty(VisibleRowNames(list));
+        Assert.Equal(0, graph.NodeCount);
+        Assert.False(graph.IsEmptyStateVisible, "graf Sync-öncesi etiketini göstermemeli — ekran yalnız boş durur");
+        Assert.Equal(System.Windows.Visibility.Collapsed, window.Shell.PART_NoProjects.Visibility);
+        Assert.NotEqual(AppPhase.Boot, vm.Phase);
+        Assert.Equal(3, vm.Projects.Count); // VM'in bilgisi durur — boşalan yalnız ekrandır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [task 3 · kullanıcı kararı 2026-09-19] Baştan başlatan bir Sync'in topolojisi gelince liste ve graf
+    /// standart açılışla (reveal) geri gelir ve graf fit hâlde (<see cref="GraphCamera.Default"/>) oturur —
+    /// proje yapısı değişmemiş olsa da. Kardeşi (yerinde tazeleme):
+    /// <see cref="A_sync_with_the_same_structure_updates_in_place"/>.
+    /// </summary>
+    [StaTheory]
+    [InlineData(SyncMode.Manual)]
+    [InlineData(SyncMode.BranchChange)]
+    public async Task A_restarting_sync_replays_the_reveal_and_fits_the_graph_even_with_the_same_structure(SyncMode mode)
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        var graph = window.Shell.GraphHost;
+        list.AnimationsEnabledProvider = () => true;
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        Assert.True(list.RevealGeneration > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+        ZoomGraph(graph);
+
+        MainWindowHost.AcceptSends(vm);
+        await MainWindowHost.StartSync(vm, mode);
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100)); // boşalmanın kendi kuşağı (varsa) otursun
+        int listReveal = list.RevealGeneration;
+        int graphReveal = graph.RevealGeneration;
+        MainWindowHost.ReplySync(vm, SameStructure);
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != listReveal, TimeSpan.FromSeconds(3));
+
+        Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list));
+        Assert.NotEqual(listReveal, list.RevealGeneration);   // AYNI yapı, yine de liste reveal'i oynadı
+        Assert.Equal(3, graph.NodeCount);
+        Assert.NotEqual(graphReveal, graph.RevealGeneration); // graf da yeniden kuruldu
+        Assert.Equal(GraphCamera.Default, graph.LiveCameraForTest); // ...ve ekranda fit'e oturdu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [task 3] Ekran boş KALMAZ: baştan başlatan Sync'in gönderimi düşerse (motor hazır değil/ölü) ya da Sync
+    /// topoloji getirmeden biterse (<c>planFailed</c>, motor kaybı) önceki liste ve graf geri gelir.
+    /// </summary>
+    [StaTheory]
+    [InlineData(SyncMode.Manual, "sendFails")]
+    [InlineData(SyncMode.BranchChange, "sendFails")]
+    [InlineData(SyncMode.Manual, "planFailed")]
+    [InlineData(SyncMode.Manual, "engineExited")]
+    [InlineData(SyncMode.Manual, "completedWithoutTopology")]
+    public async Task A_restarting_sync_that_brings_no_topology_restores_the_previous_surface(SyncMode mode, string ending)
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        var graph = window.Shell.GraphHost;
+        if (ending != "sendFails") MainWindowHost.AcceptSends(vm);
+
+        await MainWindowHost.StartSync(vm, mode);
+        if (ending != "sendFails") Assert.Empty(VisibleRowNames(list)); // ön-koşul: yüzey gerçekten boşaldı
+        switch (ending)
+        {
+            case "planFailed":
+                vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+                vm.OnEvent(new ErrorEvent("planFailed", "disk unreadable"));
+                break;
+            case "engineExited":
+                vm.OnEngineExited(1);
+                break;
+            case "completedWithoutTopology":
+                vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+                vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
+                break;
+        }
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list));
+        Assert.Equal(3, graph.NodeCount);
         GC.KeepAlive(window);
     }
 

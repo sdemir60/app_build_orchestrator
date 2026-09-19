@@ -207,10 +207,17 @@ public sealed partial class RunViewModel
     /// <c>revealKey</c>'i her Sync'te artırır, "Sync = sıfırdan listelendi". Artık Sync kendiliğinden de koşar
     /// (commit, pencereye dönüş) ve her biri listeyi baştan kurup kullanıcının baktığı yeri başa sarıyordu. Yapı
     /// aynıysa satırlar yerinde tazelenir; proje eklendi/çıktıysa reveal oynar. Clean/Optimize tıklaması listeyi
-    /// boşaltır ve imzayı da unutturur — zincirlenen Sync aynı yapıyı getirse de reveal oynar.
+    /// boşaltır ve imzayı da unutturur — zincirlenen Sync aynı yapıyı getirse de reveal oynar.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19 · task 3]</b> "Yapı aynıysa yerinde" kuralı artık
+    /// yalnız Silent ve Appended Sync'e uygulanır. Sync düğmesi ve branch değişimi ekranı baştan başlatır
+    /// (<see cref="SyncModeRules.RestartsPlanSurface"/> → <see cref="PlanSurfaceRestarting"/>): onların topolojisi imza
+    /// aynı olsa da reveal oynatır ve grafı fit'e oturtur.
     /// Testler: <c>ProjectListFilterTests.A_sync_with_the_same_structure_updates_in_place</c> /
+    /// <c>A_restarting_sync_replays_the_reveal_and_fits_the_graph_even_with_the_same_structure</c> /
     /// <c>A_sync_that_adds_a_project_replays_the_reveal</c> / <c>A_clean_empties_the_list_and_its_sync_replays_the_reveal</c>,
-    /// <c>StickyRevealTriggerTests.A_sync_with_the_same_structure_updates_in_place</c>.</para></summary>
+    /// <c>StickyRevealTriggerTests.A_sync_with_the_same_structure_updates_in_place</c> /
+    /// <c>A_restarting_sync_with_the_same_structure_returns_the_list_to_the_top</c>.</para></summary>
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
@@ -437,6 +444,7 @@ public sealed partial class RunViewModel
     {
         _syncRequested = false;
         EndSyncMode(); // [review M1] hiçbir Sync başlamadı — kip sonraki satırları yanlış süzmesin
+        EndPlanSurfaceRestart(); // [task 3] boşaltılan ekran geri gelir — topoloji gelmeyecek
         NotifySyncGatedCommands();
     }
 
@@ -767,6 +775,8 @@ public sealed partial class RunViewModel
         // [Sync guard] İstek bayrağı da bırakılır: motor Sync'e HİÇ başlayamadan ölmüş olabilir (istek
         // penceresinde), o hâlde uçuş bayrağı hiç kurulmamıştır ve yalnız onu temizlemek kapıyı açmazdı.
         _syncRequested = false;
+        // [task 3] Sync topoloji getirmeden bittiyse (motor kaybı, topolojisiz tamamlanma) ekran boş kalmaz.
+        EndPlanSurfaceRestart();
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         // [Fix wave 1, C2 review Finding 1] OnSyncStarted'ın simetriği: hem normal syncCompleted hem
         // engine-ölümü-mid-sync (OnEngineExited) yolu BURADAN geçer — Sync/Rebuild/Cycles'ı tek yerden geri açar.
@@ -813,6 +823,7 @@ public sealed partial class RunViewModel
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
         EndSyncMode();
         _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
+        EndPlanSurfaceRestart();      // [task 3] düşen Sync'in boşalttığı ekran geri gelir
         SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
         // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, Sync yüzeyini serbest
         // bırakan 4. geçiştir (diğer üçü OnSyncStarted/ReleaseSyncPhase'in iki çağrı yeri) — Fix wave 1 bunu
@@ -926,12 +937,13 @@ public sealed partial class RunViewModel
         // VisibleProjects bildirimi guard'a çarpıp NO-OP olur. Sayaç tüketicileri sıradan etkilenmez:
         // TopologyChanged abonelerinden (RefreshProjectGroups/RebuildGraph) hiçbiri Counters okumaz.
         // [spec 2026-09-18 §1-13] Reveal YALNIZ yapı değişince oynar — Sync'in yayını da bu kapıdan geçer
-        // (bkz. _lastTopologySignature).
+        // (bkz. _lastTopologySignature). [task 3] Tek istisna: ekranı baştan başlatan bir Sync'in (Sync düğmesi,
+        // branch değişimi — PlanSurfaceRestarting) topolojisi yapı aynı olsa da yüzeyi yeniden kurar.
         string signature = TopologySignature(e.Nodes);
-        if (signature != _lastTopologySignature)
+        if (signature != _lastTopologySignature || PlanSurfaceRestarting)
         {
             _lastTopologySignature = signature;
-            TopologyChanged?.Invoke(this, EventArgs.Empty);
+            ReplayPlanSurface();
         }
 
         // [topoloji kapısı] Run komutlarının kapısı <see cref="HasTopology"/>'dir ve o BU olayda açılır/kapanır

@@ -339,7 +339,8 @@ public sealed partial class RunViewModel
     /// [clean · kullanıcı kararı 2026-09-12] Plan yüzeyini TAMAMEN boşaltır: satırlar, topoloji (yani graf),
     /// döngü haritası ve will-build kümesi. Çağıranlar Clean ve Optimize'ın tıklama anı (çıktılar siliniyor/
     /// onarılıyor, ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor) ve Sync'e giden gerçek bir
-    /// kök değişimidir (<see cref="SyncAfterRootChangeAsync"/>). Sync'in kendisi boşaltmaz (spec 2026-09-18 §1-13).
+    /// kök değişimidir (<see cref="SyncAfterRootChangeAsync"/>). Sync'in kendisi VM'i boşaltmaz (spec 2026-09-18
+    /// §1-13); Sync düğmesi ve branch değişimi yalnız EKRANI baştan başlatır (<see cref="BeginPlanSurfaceRestart"/>).
     /// Liste yeniden Sync'in yayınladığı topolojiyle — imza unutulduğu için reveal'le — dolar.
     ///
     /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
@@ -366,5 +367,49 @@ public sealed partial class RunViewModel
         _lastTopologySignature = null;
         TopologyChanged?.Invoke(this, EventArgs.Empty);
         RefreshRunSurface();
+    }
+
+    /// <summary>
+    /// [task 3 · kullanıcı kararı 2026-09-19] Plan yüzeyi EKRANDA baştan başlıyor: liste ve graf görünümde boştur,
+    /// bir sonraki <see cref="TopologyChanged"/> onları standart açılışla (reveal, graf fit) geri getirir. Yazıcısı
+    /// yalnız <see cref="BeginPlanSurfaceRestart"/> (kurar) ve <see cref="ReplayPlanSurface"/> (bırakır).
+    ///
+    /// <para><b>Neden <see cref="ClearPlanSurface"/> DEĞİL:</b> o VM'i boşaltır (satırlar, topoloji, faz
+    /// <see cref="AppPhase.Boot"/>) ve boş liste davetini, grafın "Sync'ten sonra" etiketini getirir; burada ise
+    /// yalnız EKRAN boşalır — satırlar, kararları, filtre ve topoloji VM'de durur. Sync düşerse geri getirilecek
+    /// yüzey budur ve ekran hiçbir yolda boş kalmaz.</para>
+    /// </summary>
+    public bool PlanSurfaceRestarting { get; private set; }
+
+    /// <summary>[task 3] Sync isteği anında (<see cref="SyncCoreAsync"/>, kip <see cref="SyncModeRules.RestartsPlanSurface"/>)
+    /// ekranı boşaltır — konsol ve akışın temizlendiği AYNI anda. Kabuk bayrağı görünce liste ve grafı boş gösterir;
+    /// VM'e dokunulmaz.</summary>
+    private void BeginPlanSurfaceRestart()
+    {
+        PlanSurfaceRestarting = true;
+        OnPropertyChanged(nameof(PlanSurfaceRestarting));
+    }
+
+    /// <summary>[task 3] Yüzeyi yeniden kurdurur: bayrak düşer ve <see cref="TopologyChanged"/> ateşlenir — liste ve
+    /// graf reveal'le, graf fit hâlde gelir. İki çağıranı var: yeni topoloji (<see cref="OnWorkspaceTopology"/>) ve
+    /// topolojisiz biten Sync (<see cref="EndPlanSurfaceRestart"/>). Bayrak ateşlemeden ÖNCE düşer: aboneler
+    /// (liste tazelemesi) bayrak açıkken kendini susturur.</summary>
+    private void ReplayPlanSurface()
+    {
+        if (PlanSurfaceRestarting)
+        {
+            PlanSurfaceRestarting = false;
+            OnPropertyChanged(nameof(PlanSurfaceRestarting));
+        }
+        TopologyChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>[task 3] Sync topoloji getirmeden bitti (gönderim düştü, <c>planFailed</c>, motor kaybı, topolojisiz
+    /// tamamlanma): ekran boş KALMAZ — önceki liste ve graf geri gelir. Yüzey zaten yeniden kurulduysa no-op.
+    /// Çağıranlar Sync'i serbest bırakan geçişlerdir: <see cref="ReleaseSyncRequest"/>, <see cref="ReleaseSyncPhase"/>,
+    /// <see cref="TryConsumeSyncFailure"/>.</summary>
+    private void EndPlanSurfaceRestart()
+    {
+        if (PlanSurfaceRestarting) ReplayPlanSurface();
     }
 }

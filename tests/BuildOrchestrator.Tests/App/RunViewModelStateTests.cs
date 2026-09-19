@@ -347,10 +347,11 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [spec 2026-09-18 §1-13 · §6.2] <b>Sync düğmesi plan yüzeyine tıklamada DOKUNMAZ:</b> graf yeniden
-    /// kurulmaz (<see cref="RunViewModel.TopologyChanged"/> yok), plan (will-build) durur, faz Boot'a düşmez.
-    /// Satırlar yapı aynıysa motorun topolojisiyle yerinde tazelenir
-    /// (<c>OperationPipelineTests.A_sync_click_keeps_the_list_and_the_graph</c> listeyi pinler).
+    /// [spec 2026-09-18 §1-13 · §6.2 · task 3] <b>Sync düğmesi ekranı baştan başlatır ama VM'in plan verisine
+    /// DOKUNMAZ:</b> tıklamada satırlar, topoloji ve plan (will-build) durur, faz Boot'a düşmez, graf yeniden
+    /// kurulmaz (<see cref="RunViewModel.TopologyChanged"/> yok) — yalnız <see cref="RunViewModel.PlanSurfaceRestarting"/>
+    /// kabuğa "liste ve grafı boş göster" der. AYNI yapıdaki topoloji gelince yüzey TEK KEZ yeniden kurulur ve
+    /// bayrak düşer. Ekran tarafı <c>ProjectListFilterTests.A_restarting_sync_*</c>'tedir.
     ///
     /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
     /// <c>Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does</c> — kullanıcı kararı 2026-09-12:
@@ -358,21 +359,28 @@ public class RunViewModelStateTests
     /// Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her Sync'te listenin
     /// boşalıp dolması yapı aynıyken hiçbir bilgi taşımadan ekranı sarsıyordu. Boşaltma Clean/Optimize
     /// tıklamasında ve gerçek bir kök değişiminde kaldı.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19 · task 3]</b> Bir önceki ad/iddia:
+    /// <c>A_sync_click_leaves_the_plan_surface_alone</c> — Sync düğmesi yüzeye hiç dokunmaz, yapı aynı topoloji
+    /// de grafı yeniden kurmaz. Değişme gerekçesi: kullanıcı Sync düğmesini (ve branch değişimini) "ekranı baştan
+    /// başlat" olarak okuyor; yerinde kalan ekran Sync'in bir şey yapıp yapmadığını belirsiz bırakıyordu. Bu kez
+    /// Clean'in yolu (VM'i boşaltmak, faz Boot) DEĞİL, yalnız ekran baştan başlar — veri ve faz iddiaları aynen
+    /// korunur. Gönderim başarılı kurulur: düşen gönderim yüzeyi hemen geri getirir (ayrı pin).</para>
     /// </summary>
     [Fact]
-    public async Task A_sync_click_leaves_the_plan_surface_alone()
+    public async Task A_sync_click_restarts_the_screen_but_keeps_the_plan_data()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null)],
-            [], [], []));
+        var node = new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null);
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         Assert.Single(vm.Projects);   // ön-koşul: ekranda bir proje ve bir plan var
         Assert.True(vm.HasTopology);
         Assert.Equal(1, vm.WillBuildCount);
         int topologyChanges = 0;
         vm.TopologyChanged += (_, _) => topologyChanges++;
+        MainWindowHost.AcceptSends(vm);
 
         var phaseBefore = vm.Phase;
 
@@ -380,9 +388,16 @@ public class RunViewModelStateTests
 
         Assert.Single(vm.Projects);
         Assert.True(vm.HasTopology);
-        Assert.Equal(0, topologyChanges);   // graf yeniden kurulmadı
+        Assert.Equal(0, topologyChanges);   // graf yeniden kurulmadı — ekran yalnız boş gösterilir
         Assert.Equal(1, vm.WillBuildCount); // plan durur — motorun önizlemesi gelince tazelenir
         Assert.Equal(phaseBefore, vm.Phase);
+        Assert.True(vm.PlanSurfaceRestarting);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent([node], [], [], [])); // AYNI yapı
+
+        Assert.Equal(1, topologyChanges);   // yapı aynı olsa da yüzey yeniden kuruldu
+        Assert.False(vm.PlanSurfaceRestarting);
     }
 
     [Fact]

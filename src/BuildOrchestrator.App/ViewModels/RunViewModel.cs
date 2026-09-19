@@ -1197,6 +1197,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// aynıysa topoloji satırları yerinde uzlaştırır; yapısal imza değişirse reveal oynar
     /// (<see cref="OnWorkspaceTopology"/>). Boşaltma yalnız Clean/Optimize tıklamasında ve gerçek bir kök
     /// değişiminde kalır (<see cref="SyncAfterRootChangeAsync"/>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19 · task 3]</b> Yukarıdaki "yerinde" kuralı artık yalnız
+    /// Silent ve Appended kiplerde geçerlidir. Sync düğmesi (Manual) ve branch değişimi (BranchChange) ekranı baştan
+    /// başlatır (<see cref="SyncModeRules.RestartsPlanSurface"/>): konsol ve akışla AYNI ANDA liste ve graf da
+    /// ekranda boşalır (<see cref="BeginPlanSurfaceRestart"/> — VM'e dokunmaz; ClearPlanSurface'in faz Boot'u,
+    /// boş-durum daveti ve grafın "Sync'ten sonra" etiketi YOK), topoloji gelince yapı aynı olsa da reveal'le ve
+    /// graf fit hâlde geri gelir. Gerekçe: kullanıcı bu iki eylemi "baştan başla" olarak okuyor; ekranın yerinde
+    /// kalması Sync'in bir şey yapıp yapmadığını belirsiz bırakıyordu. Sync topoloji getirmezse (gönderim
+    /// düştü, <c>planFailed</c>, motor kaybı) önceki yüzey geri gelir (<see cref="EndPlanSurfaceRestart"/>).</para>
     /// </summary>
     /// <param name="mode">Konsol ilişkisi, fetch ve pill kararı.</param>
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
@@ -1216,6 +1225,8 @@ public sealed partial class RunViewModel : ObservableObject
             ClearConsoleForNewOperation();
             ClearStreamForNewOperation();
         }
+        // [task 3] Liste + graf konsolla AYNI anda ekranda boşalır (Manual, BranchChange) — topoloji geri getirir.
+        if (mode.RestartsPlanSurface()) BeginPlanSurfaceRestart();
         foreach (string line in sectionLines ?? []) AppendRunLine(line);
         BeginSyncMode(mode, silentReason);
         if (mode.IsVisible())
@@ -1655,7 +1666,7 @@ public sealed partial class RunViewModel : ObservableObject
     private async Task<bool> TrySendAsync(IpcCommand cmd, string what)
     {
         DebugOnCommandSent?.Invoke(cmd);
-        try { await _engine.SendAsync(cmd); return true; }
+        try { await (DebugSendOverride?.Invoke(cmd) ?? _engine.SendAsync(cmd)); return true; }
         catch (Exception ex) { AppendRunLine($"[error] failed to send {what}: {ex.Message}"); return false; }
     }
 
@@ -1664,6 +1675,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// workspace argümanlarını (Mode/RootPath/Configuration/LayerPatterns) gerçek Supervisor'a
     /// ihtiyaç duymadan gözlemlemeye yarar. Üretimde hep null — sıfır maliyet.</summary>
     internal Action<IpcCommand>? DebugOnCommandSent;
+
+    /// <summary>[task 3 testleri] YALNIZ testler ayarlar: gönderimi motorun yerine bu yapar. Başlatılmamış bir
+    /// motorla gönderim hep düşer; gerçek bir Supervisor ise kendi cevabını pencereye ASENKRON akıtıp testle
+    /// yarışır. Bu seam "gönderim başarılı, cevabı test verir" yolunu motorsuz kurar. Üretimde hep null.</summary>
+    internal Func<IpcCommand, Task>? DebugSendOverride;
 
     // ---------------------------------------------------------------- elapsed
 
