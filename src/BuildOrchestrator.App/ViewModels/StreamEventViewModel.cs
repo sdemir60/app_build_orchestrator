@@ -42,7 +42,7 @@ public sealed partial class StreamEventViewModel : ObservableObject
     [ObservableProperty] private bool _isSelected;
 
     /// <summary>Statü glyph'i (12px) — <c>null</c> ise amber <c>▸</c> çizilir (sync/info). BuildApp.jsx:631-632/653.</summary>
-    public GraphStatus? GlyphStatus { get; }
+    public VisualStatus? GlyphStatus { get; }
 
     /// <summary>Metin rengi token anahtarı (BuildApp.jsx:635-638).</summary>
     public string TextBrushKey { get; }
@@ -73,12 +73,14 @@ public sealed partial class StreamEventViewModel : ObservableObject
 
     /// <summary>BuildApp.jsx:631-632 — ok→succeeded, fail→failed, skip→skipped, done→(failed?failed:succeeded),
     /// sync|info→null (amber ▸).</summary>
-    private static GraphStatus? GlyphFor(StreamKind kind, bool anyFailed) => kind switch
+    /// <para>[design v1.20.0 §1.4] Event stream bir RUN-STORY yüzeyidir: atlama satırının — glyph'i
+    /// (<see cref="VisualStatus.Skipped"/>) burada yaşamaya devam eder.</para>
+    private static VisualStatus? GlyphFor(StreamKind kind, bool anyFailed) => kind switch
     {
-        StreamKind.Ok => GraphStatus.Succeeded,
-        StreamKind.Fail => GraphStatus.Failed,
-        StreamKind.Skip => GraphStatus.Skipped,
-        StreamKind.Done => anyFailed ? GraphStatus.Failed : GraphStatus.Succeeded,
+        StreamKind.Ok => VisualStatus.Succeeded,
+        StreamKind.Fail => VisualStatus.Failed,
+        StreamKind.Skip => VisualStatus.Skipped,
+        StreamKind.Done => anyFailed ? VisualStatus.Failed : VisualStatus.Succeeded,
         _ => null, // sync | info → ▸
     };
 

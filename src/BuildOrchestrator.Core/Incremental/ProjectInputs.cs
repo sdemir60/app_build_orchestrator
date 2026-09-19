@@ -3,14 +3,10 @@ using BuildOrchestrator.Core.Discovery;
 namespace BuildOrchestrator.Core.Incremental;
 
 /// <summary>
-/// Bir projenin TEK bir girdi dosyası — iki yolu vardır ve ikisi de gereklidir.
+/// Bir projenin TEK bir girdi dosyası — imzanın yol terimi de içerik terimi de bu yoldan türetilir.
 /// </summary>
-/// <param name="LogicalPath">Kimlik yolu: imzanın yol terimi buradan türetilir. Worktree koşusunda da ANA
-/// köke aittir (bkz. <see cref="BuildOrchestrator.Core.Planning.ProjectIdentityRebase"/>) — aynı içerik iki
-/// modda AYNI imzayı üretsin diye.</param>
-/// <param name="PhysicalPath">Diskte GERÇEKTEN okunacak yol. In-place koşuda <see cref="LogicalPath"/> ile
-/// aynıdır; worktree koşusunda havuzdaki kopyayı gösterir.</param>
-public readonly record struct ProjectInput(string LogicalPath, string PhysicalPath);
+/// <param name="Path">Dosyanın tam yolu (çalışma ağacında; okunan dosya da budur).</param>
+public readonly record struct ProjectInput(string Path);
 
 /// <summary>
 /// [D2] Bir projenin İÇERİK KARARINA giren dosyalarının TAM kümesi. Karar diskten verildiği için bu küme
@@ -40,25 +36,34 @@ public static class ProjectInputs
     public static readonly IReadOnlyList<string> DirectoryLevelFileNames =
         ["Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props"];
 
-    /// <param name="projectFile">Projenin KİMLİK yolu (tam csproj yolu).</param>
+    /// <param name="projectFile">Projenin kimlik yolu (tam csproj yolu).</param>
     /// <param name="evaluated">Bu projenin değerlendirmesi; yoksa yalnız klasör taraması ve csproj kalır.</param>
     /// <param name="workspaceRoot">Çalışma alanı kökü — yukarı yürüme burada durur (proje kökün altındaysa).</param>
-    /// <param name="toPhysical">Kimlik yolu → diskteki gerçek yol. <c>null</c> ⇒ in-place (birebir).</param>
-    /// <returns>Kimlik yoluna göre tekilleştirilmiş, sıralı (deterministik) girdi listesi.</returns>
-    public static IReadOnlyList<ProjectInput> Collect(
-        string projectFile, EvaluatedProject? evaluated, string workspaceRoot, Func<string, string>? toPhysical = null)
+    /// <returns>Yola göre tekilleştirilmiş, sıralı (deterministik) girdi listesi.</returns>
+    public static IReadOnlyList<ProjectInput> Collect(string projectFile, EvaluatedProject? evaluated, string workspaceRoot) =>
+        CollectWithFolders(projectFile, evaluated, workspaceRoot).Files;
+
+    /// <summary>
+    /// [Task 2] <see cref="Collect"/> ile TAM AYNI yürüyüşü yapar (ikinci bir tarama YOKTUR), ayrıca gezilen
+    /// klasörleri de döner. "Zaman modu"nda bir klasörün mtime'ı bir dosya silme/yeniden adlandırmayı
+    /// yakalar — içerik imzasına giren <see cref="Files"/> Collect'in döndüğüyle birebir aynıdır.
+    /// </summary>
+    /// <returns><c>Files</c>: Collect ile aynı küme. <c>Folders</c>: proje klasörü dahil, <c>obj</c>/<c>bin</c>
+    /// hariç, gezilen tüm klasörler — tam yol, sıralı, harf büyüklüğünden bağımsız tekilleştirilmiş.</returns>
+    public static (IReadOnlyList<ProjectInput> Files, IReadOnlyList<string> Folders) CollectWithFolders(
+        string projectFile, EvaluatedProject? evaluated, string workspaceRoot)
     {
         ArgumentNullException.ThrowIfNull(projectFile);
         ArgumentNullException.ThrowIfNull(workspaceRoot);
 
-        Func<string, string> physical = toPhysical ?? (p => p);
-        var byLogical = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var paths = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        var folders = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void Add(string logical)
+        void Add(string path)
         {
-            string full = Path.GetFullPath(logical);
+            string full = Path.GetFullPath(path);
             if (!BuildSignature.IsBuildAffecting(full) || WorkspaceScanner.IsTransientBuildArtifact(full)) return;
-            byLogical[full] = Path.GetFullPath(physical(full));
+            paths.Add(full);
         }
 
         string project = Path.GetFullPath(projectFile);
@@ -70,50 +75,43 @@ public static class ProjectInputs
             foreach (string f in evaluated.ResourceFiles) Add(f);
         }
 
-        string logicalDir = Path.GetDirectoryName(project)!;
-        SweepFolder(logicalDir, Path.GetFullPath(physical(logicalDir)), physical, byLogical);
-        WalkUp(logicalDir, workspaceRoot, physical, byLogical);
+        string projectDir = Path.GetDirectoryName(project)!;
+        SweepFolder(projectDir, paths, folders);
+        WalkUp(projectDir, workspaceRoot, paths);
 
-        return [.. byLogical.Select(kv => new ProjectInput(kv.Key, kv.Value))];
+        return ([.. paths.Select(p => new ProjectInput(p))], [.. folders]);
     }
 
     /// <summary>
-    /// Proje klasörünün altındaki derleme-etkileyen dosyalar — FİZİKSEL ağaç taranır, kimlikler mantıksal
-    /// klasörle yeniden kurulur (worktree koşusunda derlenen ağaç odur).
+    /// Proje klasörünün altındaki derleme-etkileyen dosyalar; AYNI yürüyüşte gezilen klasörleri de
+    /// <paramref name="intoFolders"/>'a toplar (proje klasörü dahil, <c>obj</c>/<c>bin</c> hariç — onlar hiç
+    /// yığına girmediği için zaten toplanmazlar).
     ///
     /// <para>Yürüyüş elle yapılır çünkü <c>obj</c>/<c>bin</c> dizinlerine HİÇ GİRİLMEMELİDİR: onları
     /// enumerate edip sonra elemek, bir derleme çıktısındaki binlerce dosyayı boşuna gezmek olurdu.</para>
     /// </summary>
-    private static void SweepFolder(
-        string logicalDir, string physicalDir, Func<string, string> physical, SortedDictionary<string, string> into)
+    private static void SweepFolder(string projectDir, SortedSet<string> into, SortedSet<string> intoFolders)
     {
-        // (mantıksal, fiziksel) çiftleri birlikte yürür — iki ağaç aynı göreli yapıdadır.
-        var pending = new Stack<(string Logical, string Physical)>();
-        pending.Push((logicalDir, physicalDir));
+        var pending = new Stack<string>();
+        pending.Push(projectDir);
 
         while (pending.Count > 0)
         {
-            var (logical, disk) = pending.Pop();
+            string dir = pending.Pop();
+            intoFolders.Add(Path.GetFullPath(dir));
 
             try
             {
-                foreach (string file in Directory.EnumerateFiles(disk))
+                foreach (string file in Directory.EnumerateFiles(dir))
                 {
                     if (!BuildSignature.IsBuildAffecting(file) || WorkspaceScanner.IsTransientBuildArtifact(file)) continue;
-                    // Dosyanın FİZİKSEL yolunu da eşleyici söyler (taramanın bulduğu yol DEĞİL): eşleyici
-                    // "bu kimlik diskte nerede yaşıyor" sorusunun TEK yetkilisidir. Üretimdeki iki eşleyici de
-                    // (in-place birebir, worktree önek takası) burada taramanın bulduğu yolun aynısını verir;
-                    // kural tekliği, tek bir dosyayı yeniden yönlendiren çağıranların da (ör. OSYS kabul
-                    // koşusunun sentetik değişikliği) aynı kapıdan geçmesini sağlar.
-                    string logicalFile = Path.Combine(logical, Path.GetFileName(file));
-                    into[logicalFile] = Path.GetFullPath(physical(logicalFile));
+                    into.Add(Path.GetFullPath(file));
                 }
 
-                foreach (string sub in Directory.EnumerateDirectories(disk))
+                foreach (string sub in Directory.EnumerateDirectories(dir))
                 {
-                    string name = Path.GetFileName(sub);
-                    if (IsBuildOutputFolder(name)) continue;
-                    pending.Push((Path.Combine(logical, name), sub));
+                    if (IsBuildOutputFolder(Path.GetFileName(sub))) continue;
+                    pending.Push(sub);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -124,22 +122,20 @@ public static class ProjectInputs
         }
     }
 
-    /// <summary>Directory.Build.* araması: mantıksal ve fiziksel ağaçta AYNI ADIMLARLA yukarı yürünür.</summary>
-    private static void WalkUp(
-        string logicalDir, string workspaceRoot, Func<string, string> physical, SortedDictionary<string, string> into)
+    /// <summary>Directory.Build.* araması: proje klasöründen köke doğru yukarı yürünür.</summary>
+    private static void WalkUp(string projectDir, string workspaceRoot, SortedSet<string> into)
     {
         string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspaceRoot));
         var remaining = new List<string>(DirectoryLevelFileNames);
-        var dir = new DirectoryInfo(logicalDir);
+        var dir = new DirectoryInfo(projectDir);
 
         while (dir is not null && remaining.Count > 0)
         {
             foreach (string name in remaining.ToList())
             {
-                string logical = Path.Combine(dir.FullName, name);
-                string onDisk = Path.GetFullPath(physical(logical));
-                if (!File.Exists(onDisk)) continue;
-                into[logical] = onDisk;
+                string candidate = Path.Combine(dir.FullName, name);
+                if (!File.Exists(candidate)) continue;
+                into.Add(candidate);
                 remaining.Remove(name);
             }
 

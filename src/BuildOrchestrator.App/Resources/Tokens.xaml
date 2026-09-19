@@ -99,7 +99,6 @@
     <!-- Statü: skipped -->
     <SolidColorBrush x:Key="Brush.StatusSkipped" Color="#6a6a73" />
     <SolidColorBrush x:Key="Brush.StatusSkippedText" Color="#888890" />
-    <SolidColorBrush x:Key="Brush.StatusSkippedSoft" Color="#1A787880" />
     <SolidColorBrush x:Key="Brush.StatusSkippedBorder" Color="#3D787880" />
 
     <!-- Statü: cycle (warn / bağımlılık döngüsü) -->

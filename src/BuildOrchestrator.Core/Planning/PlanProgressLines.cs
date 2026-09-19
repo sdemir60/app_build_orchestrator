@@ -13,8 +13,8 @@ namespace BuildOrchestrator.Core.Planning;
 /// adını görürdü.</para>
 ///
 /// <para><b>Neden run tarafında da yayınlanır:</b> Build'e basıldığında motor planlamayı yeniden koşar
-/// (Sync'ten bu yana çalışma ağacı değişmiş olabilir; ayrıca worktree hazırlığı ve <c>MSBuild.exe</c>
-/// çözümü YALNIZ burada vardır). O pencere eskiden TEK SATIR bile yazmıyordu: App konsolu temizliyor,
+/// (Sync'ten bu yana çalışma ağacı değişmiş olabilir; ayrıca <c>MSBuild.exe</c> çözümü YALNIZ burada
+/// vardır). O pencere eskiden TEK SATIR bile yazmıyordu: App konsolu temizliyor,
 /// şerit önceki metinde donuyordu — tıklamanın kaydedildiğine dair hiçbir kanıt yoktu.</para>
 ///
 /// <para>Metin İngilizce (uygulama İngilizce-only). Sayılar çağıranın elindeki gerçek plandan gelir;
@@ -22,12 +22,6 @@ namespace BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class PlanProgressLines
 {
-    /// <summary>Worktree hazırlığı (git) — planlamanın İLK adımı ve tek başına saniyeler sürebilir, bu yüzden
-    /// satır işin ÖNCESİNDE yazılır. Yalnız run yolunda görülür (Sync worktree hazırlamaz).</summary>
-    /// <param name="branch">Seçili branch; boşsa (aktif branch'in worktree'si) adsız biçim kullanılır.</param>
-    public static string PreparingWorktree(string? branch)
-        => string.IsNullOrWhiteSpace(branch) ? "Preparing worktree" : $"Preparing worktree for '{branch}'";
-
     /// <summary>Tarama bitti — sayı taramanın SONUCUDUR, bu yüzden satır işin ardından yazılır.</summary>
     public static string ScanningSolutions(int solutions) => $"Scanning solutions ({solutions})";
 
@@ -96,6 +90,48 @@ public static class PlanProgressLines
 
     /// <summary>Uzak uç zaten yakalanmıştı — ilerletilecek bir şey yok.</summary>
     public static string PullAlreadyCurrent(string branch) => $"Already up to date with origin/{branch}";
+
+    // --- Ana repo: branch chip'inden checkout (spec 2026-09-18 §6.3) ------------------------------
+    // Satırları Supervisor DEĞİL App yazar (CheckoutCompletedEvent'ten): başarıda konsol ÖNCE temizlenir, bu
+    // satırlar yeni bölümün İLK satırlarıdır. Reddetme/hata satırları ise temizlenmeyen konsolun altına eklenir.
+
+    /// <summary>Checkout başarılı: yeni branch, yeni HEAD'in kısa sha'sı ve nereden gelindiği.</summary>
+    public static string SwitchedBranch(string from, string to, string revision)
+        => $"Switched to {to} ({revision}) — from {from}";
+
+    /// <summary>Kirli ağaç stash'lendi — mesaj <c>git stash list</c>'te görünen metnin aynısıdır; geri
+    /// uygulama kullanıcınındır, araç stash'i ne gösterir ne geri uygular.</summary>
+    public static string StashedBeforeSwitch(string message)
+        => $"Stashed uncommitted changes: \"{message}\" — restore them with git stash pop";
+
+    /// <summary>Kirli ağaç ve stash ayarı kapalı: hiçbir şey yapılmadı.</summary>
+    public static string SwitchRefusedDirty(int files) => files == 1
+        ? "1 file has uncommitted changes — commit or stash them first"
+        : $"{files} files have uncommitted changes — commit or stash them first";
+
+    /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.</summary>
+    public static string SwitchFailed(string reason) => $"Switch failed — {reason}";
+
+    /// <summary>[spec 2026-09-18 §6.2 · karar 10] Branch değişimiyle kesilen koşunun özeti — koşudan sonra açılan
+    /// bölümün İLK satırı (switch satırından önce; branch değişmediyse akışa tek satır). <paramref name="built"/>
+    /// kesmeden önce güvenilir biçimde derlenenler, <paramref name="notBuilt"/> koşu kapsamının kalanı. Log klasörü
+    /// bilinmiyorsa yazılmaz; diskteki loglar hiçbir durumda silinmez.</summary>
+    public static string RunInterruptedByBranchChange(int built, int notBuilt, string? logDirectory)
+        => logDirectory is null
+            ? $"Run interrupted by a branch change — {built} built, {notBuilt} not built"
+            : $"Run interrupted by a branch change — {built} built, {notBuilt} not built · logs: {logDirectory}";
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Önceki motor koşu ortasında öldü: açılış kurtarması uçuştaki
+    /// <paramref name="projects"/> projeyi kanıtsız hata olarak geçersizledi, bir sonraki Build onları derler.
+    /// Satırı App yazar (<c>EngineReadyEvent.InterruptedProjects</c> &gt; 0).</summary>
+    public static string PreviousRunInterrupted(int projects) => projects == 1
+        ? "previous run was interrupted; 1 project will rebuild"
+        : $"previous run was interrupted; {projects} projects will rebuild";
+
+    /// <summary>[spec 2026-09-18 §6.1] HEAD izleyicisi kurulamadı (ağ sürücüsü, izin, reflog klasörü yok) — kök
+    /// başına BİR kez yazılır; pencereye dönüş Sync'i güvenlik ağı olarak kalır.</summary>
+    public static string HeadWatcherUnavailable(string reason)
+        => $"HEAD watcher unavailable ({reason}) — switching back to the window still syncs";
 
     // --- Harici projeler ------------------------------------------------------------------------
     // Aynı metinler iki yüzeyde görünür: Sync transkripti ve koşu planlaması. Bu yüzden onlar da burada, tek

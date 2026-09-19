@@ -70,6 +70,33 @@ public class GraphSkippedProjectTests
         Assert.Equal(GraphNodeOpacity.RunDim, view.NodeVisuals["OSYS.Data"].OpacityTarget, 6);
     }
 
+    /// <summary>[design v1.20.0 §2.3 · §1.4] <b>Atlanan düğüm kendi çıktı durumunun rengindedir</b> — güncel
+    /// bir proje atlandığında yeşil kalır; gri "atlandı" çerçevesi ve — yoktur (atlanmak bir renk değildir).
+    /// Opaklık kuralı AYNEN durur: atlanan düğüm kuyruktakiyle aynı soluklukta kalır.
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski hâl: atlanan düğüm <c>skipped</c> griyle
+    /// (<c>Brush.StatusSkippedBorder</c>/<c>StatusSkippedSoft</c>) boyanırdı. Değişme gerekçesi: renk çıktının
+    /// kümülatif durumudur; "N skipped" özeti ribbon'da yaşar.</para></summary>
+    [StaFact]
+    public void A_skipped_node_wears_its_standing_colour_and_keeps_the_run_dim()
+    {
+        var view = Running();
+        var row = new BuildOrchestrator.App.ViewModels.ProjectRowViewModel(
+            "OSYS.Data", "OSYS.Data", BuildOrchestrator.App.ViewModels.ProjectRowState.Skipped)
+        {
+            WillBuild = false,
+            WillBuildReason = BuildOrchestrator.Contracts.Model.WillBuildReason.UpToDate,
+        };
+        Assert.Equal(GraphStatus.Skipped, row.Status); // ön-koşul: motor "atladım" dedi
+
+        view.UpdateStatuses([
+            new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building),
+            new("OSYS.Data", "OSYS.Data", 1, row.Status, row.VisualStatus)]);
+
+        Assert.Equal(VisualStatus.Current, row.VisualStatus);
+        Assert.Same(view.FindResource("Brush.StatusSuccess"), view.NodeVisuals["OSYS.Data"].Square.Stroke);
+        Assert.Equal(GraphNodeOpacity.RunDim, view.NodeVisuals["OSYS.Data"].OpacityTarget, 6);
+    }
+
     /// <summary>AYIRT EDİCİ — atlanan düğümde yörünge HİÇ kurulmaz. Yörünge yalnız DERLENEN düğümün
     /// işaretidir.</summary>
     [StaFact]
@@ -110,7 +137,6 @@ public class GraphSkippedProjectTests
     [Theory]
     [InlineData(GraphStatus.Succeeded, true)]
     [InlineData(GraphStatus.Failed, true)]
-    [InlineData(GraphStatus.Cycle, true)]
     [InlineData(GraphStatus.Skipped, false)]
     [InlineData(GraphStatus.Queued, false)]
     [InlineData(GraphStatus.Building, false)]

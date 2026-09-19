@@ -112,23 +112,7 @@ public class ExternalRunTests
         Assert.Equal(1, completed.DepIssueCount);
     }
 
-    // ---------------------------------------------------------------- rozetin karar verdiği iki nokta
-
-    [Fact]
-    public async Task A_worktree_run_does_not_redirect_an_external_projects_obj()
-    {
-        // obj izolasyonu worktree havuzuna aittir; harici çalışma kopyası orada yaşamaz ve yerinde derlenir.
-        var plan = PlanOf(ExternalNode("Mail"), Node("A"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker, worktreeObjRootResolver: _ => @"D:\pool\wt-1");
-
-        await h.Sut.StartAsync(
-            Start() with { UseWorktree = true }, default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        Assert.Null(invoker.Requests.Single(r => r.ProjectId == ExternalId("Mail")).BaseIntermediateOutputPath);
-        Assert.NotNull(invoker.Requests.Single(r => r.ProjectId == Id("A")).BaseIntermediateOutputPath);
-    }
+    // ---------------------------------------------------------------- rozetin karar verdiği nokta
 
     [Fact]
     public async Task A_successful_external_records_its_own_revision_not_the_repositorys()
@@ -196,7 +180,7 @@ public class ExternalRunTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(2, h.Events.OfType<RunStartedEvent>().Single().TotalProjects);
-        Assert.All(invoker.Requests, r => Assert.Null(r.BaseIntermediateOutputPath));
+        Assert.Equal(2, invoker.Requests.Count);
     }
 
     /// <summary>HARİCİ bir projeye bağımlı ana repo düğümü — <see cref="RunCoordinatorTests.Node"/> bağımlılık

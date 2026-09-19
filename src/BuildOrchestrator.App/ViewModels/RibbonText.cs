@@ -61,6 +61,13 @@ public static class RibbonText
     /// yönlendirdi: eksik olan bir SEÇİM değil bir AYARDIR.</para></summary>
     public const string NotConfigured = "Not configured — repository root not set";
 
+    /// <summary>Fetch'li bir Sync uçuştayken (Sync düğmesi, açılış, pull, bakım devri, Settings Save).</summary>
+    public const string SyncingWithFetch = "▸ Sync — git fetch origin…";
+
+    /// <summary>[spec 2026-09-18 §6.2] Fetch'siz bir Sync uçuştayken (branch değişimi) — şerit ağa çıkıldığını
+    /// iddia etmez.</summary>
+    public const string SyncingWithoutFetch = "▸ Sync…";
+
     /// <summary>[T38] 11 koşulun her biri için TEK satır (design-v1 <c>BuildApp.jsx:752-770</c> birebir).</summary>
     /// <param name="phase">Uygulama fazı.</param>
     /// <param name="hasWorkspace">Repo seçili mi (prototip <c>workspace</c>).</param>
@@ -76,12 +83,15 @@ public static class RibbonText
     /// <param name="etaMs">Yumuşatılmış ETA (ms) — yoksa <c>null</c>.</param>
     /// <param name="checkDurMs">All-clean check koşusunun süresi (done+allClean satırında; <c>fmtDur</c> biçimi).</param>
     /// <param name="warnings">Derleyici warning sayısı (done satırlarında, dep-uyarıları HARİÇ).</param>
+    /// <param name="syncFetches">[spec 2026-09-18 §6.2] Uçuştaki Sync fetch ediyor mu — Syncing satırını seçer
+    /// (<see cref="SyncingWithFetch"/> / <see cref="SyncingWithoutFetch"/>).</param>
     public static RibbonLine Compose(AppPhase phase, bool hasWorkspace, bool allClean, RunCounters c,
                                      int willBuild, int finishedOfWillBuild, int totalProjects,
                                      long elapsedMs, long? etaMs, long? checkDurMs, int warnings,
                                      string? engineDiedMessage = null, string? syncError = null,
                                      string? runError = null, string? engineOverdue = null,
-                                     bool resolvingCycles = false, int cycleRound = 0, int cycleRoundCap = 0)
+                                     bool resolvingCycles = false, int cycleRound = 0, int cycleRoundCap = 0,
+                                     bool syncFetches = true)
     {
         // [E2/T37 · EngineDiedMessage ÖNCELİĞİ] Engine process öldüyse şerit, HANGİ Phase'de olursa olsun (F3:
         // mid-run ölümde Phase kozmetik olarak Stopped'a çekilse de) bu KALICI KIRMIZI hata metnini gösterir —
@@ -122,7 +132,7 @@ public static class RibbonText
                 return new RibbonLine("▸ Waiting for Sync — project states appear after Sync", "Brush.TextDim", null);
 
             case AppPhase.Syncing:
-                return new RibbonLine("▸ Sync — git fetch origin…", "Brush.TextSecondary", null);
+                return new RibbonLine(syncFetches ? SyncingWithFetch : SyncingWithoutFetch, "Brush.TextSecondary", null);
 
             case AppPhase.Idle:
                 if (totalProjects == 0) // [E2/T10] repo Sync'lendi ama hiç proje yok (0-proje state)

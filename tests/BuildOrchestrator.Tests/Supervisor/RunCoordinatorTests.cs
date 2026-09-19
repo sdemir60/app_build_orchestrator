@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -11,6 +13,8 @@ using BuildOrchestrator.Core.ProcessControl;
 using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Supervisor;
+using BuildOrchestrator.Tests.Incremental;
+using BuildOrchestrator.Tests.MsBuild;
 
 namespace BuildOrchestrator.Tests.Supervisor;
 
@@ -169,8 +173,8 @@ public class RunCoordinatorTests
         public IReadOnlyList<RunLogWriter> LogWriters { get { lock (_logWriters) return [.. _logWriters]; } }
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
-            Func<StartRunCommand, string?>? worktreeObjRootResolver = null, BuildStateStore? stateStore = null,
-            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null)
+            BuildStateStore? stateStore = null,
+            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -186,12 +190,12 @@ public class RunCoordinatorTests
                 innerJob: Job,
                 nowMs: () => Volatile.Read(ref _now),
                 console: line => { lock (ConsoleLines) ConsoleLines.Add(line); },
-                worktreeObjRootResolver: worktreeObjRootResolver,
                 stateStore: stateStore,
                 cpuGovernor: cpuGovernor, // [T20-b] null ⇒ gerçek inner Job (mevcut testlerin davranışı)
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
                 // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
-                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; });
+                retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; },
+                inFlight: inFlight);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
@@ -355,7 +359,7 @@ public class RunCoordinatorTests
     }
 
     /// <summary>
-    /// [planlama görünürlüğü] Taze bir segmentte planlama (worktree hazırlığı → tarama → graf → topo →
+    /// [planlama görünürlüğü] Taze bir segmentte planlama (tarama → graf → topo →
     /// incremental) <c>runStarted</c>'tan ÖNCE koşar ve 177 projelik bir workspace'te saniyeler sürer. O
     /// pencere eskiden TEK event bile üretmiyordu: App konsolu temizleyip <c>IsStarting</c>'e giriyor,
     /// şerit önceki metinde donuyordu — "Build'e bastım hiçbir şey olmadı".
@@ -447,6 +451,162 @@ public class RunCoordinatorTests
         Assert.Equal(3, done.Queued);                          // B, C, D — kısıt 4: snapshot in-flight tükendikten sonra
     }
 
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.1 · karar 10] branch kesmesi
+
+    /// <summary>Tek proje uçuştayken kesme isteyen koşu: <paramref name="result"/> uçuştakinin sonucu. Kesme, sonuç
+    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan".</summary>
+    private static async Task<IReadOnlyList<IpcEvent>> InterruptWhileAIsInFlight(MsBuildInvokeResult result,
+        BuildStateStore? store = null, IncrementalPlan? incremental = null)
+    {
+        var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return result; });
+        using var h = new Harness(plan, invoker, stateStore: store);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        return h.Events;
+    }
+
+    /// <summary>Kesme Graceful gibidir: yeni proje başlamaz, uçuştaki biter; koşu Stopped biter (runStopped graceful).</summary>
+    [Fact]
+    public async Task An_interrupt_starts_nothing_new_and_lets_the_in_flight_finish()
+    {
+        var events = await InterruptWhileAIsInFlight(Ok());
+
+        Assert.Single(events.OfType<ProjectStartedEvent>());
+        Assert.Single(events.OfType<ProjectSucceededEvent>());
+        Assert.Equal("runStopped:graceful", Describe(events[^2]));
+        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+        Assert.Equal(RunOutcome.Stopped, done.Outcome);
+        Assert.Equal(1, done.Queued);
+    }
+
+    /// <summary>Kesmeden sonra biten başarı deftere başarı olarak YAZILMAZ: kanıtsız hata (gri <c>never built</c>) —
+    /// çökme kurtarmasıyla aynı defter hâli (spec §5.5). Olay da güvenilmez der.</summary>
+    [Fact]
+    public async Task A_project_that_succeeds_after_an_interrupt_is_not_recorded_as_built()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "old", "c0", BuildResult.Succeeded, DateTimeOffset.UtcNow.AddHours(-1), "main"));
+
+            var events = await InterruptWhileAIsInFlight(Ok(), store, Incremental("A", "B"));
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Equal("old", a.BuiltSignature); // taze imza ("sig") yazılmadı
+            Assert.False(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>Kesmeden sonra derleyici hatasıyla biten proje kanıt DEĞİLDİR: derlediği kaynak artık diskteki değil.</summary>
+    [Fact]
+    public async Task A_project_that_fails_after_an_interrupt_is_not_evidence()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "old", "c0", BuildResult.Succeeded, DateTimeOffset.UtcNow.AddHours(-1), "main"));
+
+            var events = await InterruptWhileAIsInFlight(Exit(1), store, Incremental("A", "B"));
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
+            Assert.False(Assert.Single(events.OfType<ProjectFailedEvent>()).Evidence);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>Kesmeden sonra gelen Hard stop kazanır (bugünkü kural: Hard geri alınmaz).</summary>
+    [Fact]
+    public async Task A_later_hard_stop_wins_over_an_interrupt()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Exit(1); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("stopped", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+        Assert.Equal("runStopped:hard", Describe(h.Events[^2]));
+    }
+
+    /// <summary>Kullanıcının Graceful Stop'undan SONRA gelen kesme de koşuyu kesilmiş sayar: drain'de biten başarı
+    /// artık güvenilmez.</summary>
+    [Fact]
+    public async Task An_interrupt_after_a_graceful_stop_still_marks_the_run_interrupted()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.False(Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).Trusted);
+        Assert.Equal("runStopped:graceful", Describe(h.Events[^2]));
+    }
+
+    /// <summary>Kesme koşuya aittir: sonraki koşunun başarısı yine güvenilir.</summary>
+    [Fact]
+    public async Task An_interrupt_does_not_leak_into_the_next_run()
+    {
+        var plan = PlanOf(Node("A"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1, runId: "r1"), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        await h.Sut.StartAsync(Start(parallelism: 1, runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var second = h.Events.OfType<ProjectSucceededEvent>().Where(e => e.RunId == "r2");
+        Assert.True(Assert.Single(second).Trusted);
+    }
+
+    /// <summary>runStarted koşunun disk log klasörünü taşır — kesilen koşunun özet satırı onu anar (spec §6.2).</summary>
+    [Fact]
+    public async Task Run_started_names_its_log_directory()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(h.LogWriters[^1].RunDirectory, Assert.Single(h.Events.OfType<RunStartedEvent>()).LogDirectory);
+    }
+
     // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
     // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
     // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje
@@ -526,6 +686,149 @@ public class RunCoordinatorTests
         Assert.Equal(3, done.Queued);
     }
 
+    // ---------------------------------------------------------------- [spec 2026-09-18 §5.5] uçuş defteri
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Bir proje dispatch edildiği andan sonucu raporlanana dek
+    /// <c>run-inflight.json</c>'da durur — motor bu aralıkta ölürse bir sonraki açılış onu geçersizler. Zincirin
+    /// ikinci halkası derlenirken birincisi listede OLMAMALI: sonucu raporlandı, arkasında durulabilir.</summary>
+    [Fact]
+    public async Task A_project_in_flight_is_listed_until_its_result_is_reported()
+    {
+        using var dir = new TempDir();
+        var plan = PlanOf(Node("A"), Node("B", deps: ["A"]));
+        var seen = new Dictionary<string, IReadOnlyList<string>>();
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            // Sonraki açılışın göreceği tek şey dosyadır — iddia diskten, yeni bir örnekle okunur.
+            seen[NameOf(req.ProjectId)] = new InFlightLedger(dir.Path).ReadListed();
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, inFlight: new InFlightLedger(dir.Path));
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([Id("A")], seen["A"]);
+        Assert.Equal([Id("B")], seen["B"]); // A'nın sonucu raporlandı → listeden düştü
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+    }
+
+    public enum RunExit { Normal, GracefulStop, HardStop, PlanFailed }
+
+    /// <summary>[spec 2026-09-18 §5.5] Koşunun HER çıkışında defter boşalır — kalan bir satır bir sonraki açılışta
+    /// derlenmemiş bir projeyi "uçuşta ölmüş" sayıp boşuna geçersizlerdi. Defter koşu başlamadan önce elle
+    /// kirletilir (raporlanmadan kalmış bir satır): çıkışın kendisi onu da süpürmeli, yalnız Remove yetmez.</summary>
+    [Theory]
+    [InlineData(RunExit.Normal)]
+    [InlineData(RunExit.GracefulStop)]
+    [InlineData(RunExit.HardStop)]
+    [InlineData(RunExit.PlanFailed)]
+    public async Task The_ledger_is_empty_after_every_run_exit(RunExit exit)
+    {
+        using var dir = new TempDir();
+        var ledger = new InFlightLedger(dir.Path);
+        ledger.Add(Id("Leftover"));
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            inFlight.TrySetResult();
+            await release.Task;
+            return exit == RunExit.HardStop ? Exit(1) : Ok();
+        });
+        Func<StartRunCommand, Action<string>, RunPlan>? planner =
+            exit == RunExit.PlanFailed ? (_, _) => throw new IOException("disk okunamadı") : null;
+        using var h = new Harness(plan, invoker, planner, inFlight: ledger);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        if (exit != RunExit.PlanFailed)
+        {
+            await inFlight.Task.WaitAsync(Limit);
+            if (exit == RunExit.GracefulStop) Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+            if (exit == RunExit.HardStop) Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+            release.SetResult();
+        }
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+        Assert.False(File.Exists(Path.Combine(dir.Path, InFlightLedger.FileName)));
+    }
+
+    /// <summary>[Task 10 fix I3] Döngü üyeleri de dispatch anında deftere girer: X↔Y grubunun ilk turunda Y derlenirken
+    /// X hâlâ listededir (grubun sonucu tur döngüsü bitince raporlanır). Koşu bitince defter boştur.</summary>
+    [Fact]
+    public async Task A_cycle_member_is_listed_from_its_dispatch_until_the_group_reports()
+    {
+        using var dir = new TempDir();
+        var plan = CyclePlanOf(["X", "Y"], Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true));
+        var seen = new List<(string Name, IReadOnlyList<string> Listed)>();
+        var invoker = new FakeInvoker((req, _, _) =>
+        {
+            lock (seen) seen.Add((NameOf(req.ProjectId), new InFlightLedger(dir.Path).ReadListed()));
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, inFlight: new InFlightLedger(dir.Path));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var second = seen[1]; // ilk turun ikinci üyesi
+        Assert.Contains(Id("X"), second.Listed);
+        Assert.Contains(Id("Y"), second.Listed);
+        Assert.Empty(new InFlightLedger(dir.Path).ReadListed());
+    }
+
+    /// <summary>[Task 10 fix M6] Defter yazılamazsa (dosya kilitli) koşu DURMAZ: konsola uyarı düşer, proje derlenir,
+    /// koşu tamamlanır. Bedeli yalnız o proje için eksik kalan kurtarmadır.</summary>
+    [Fact]
+    public async Task A_ledger_write_failure_warns_and_the_run_still_completes()
+    {
+        using var dir = new TempDir();
+        string path = Path.Combine(dir.Path, InFlightLedger.FileName);
+        File.WriteAllText(path, "[]");
+        var ledger = new InFlightLedger(dir.Path) { RenameRetryDelay = _ => { } };
+        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), inFlight: ledger);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read)) // rename/silme hedefi kilitli
+        {
+            await h.Sut.StartAsync(Start(parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+        }
+
+        var done = Assert.IsType<RunCompletedEvent>(h.Events[^1]);
+        Assert.Equal(RunOutcome.Completed, done.Outcome);
+        Assert.Equal(1, done.Succeeded);
+        lock (h.ConsoleLines)
+            Assert.Contains(h.ConsoleLines, l => l.StartsWith("warning: in-flight ledger could not be updated", StringComparison.Ordinal));
+    }
+
+    /// <summary>[Task 10 fix I2] Açılış kurtarması defter yazımında patladıysa, bu motor ömründeki ilk koşu PLANLAMADAN
+    /// ÖNCE yeniden dener: kesilmiş projenin kaydı kanıtsız hataya çekilmeden planlanırsa yarım çıktısı "güncel"
+    /// sayılıp atlanabilirdi.</summary>
+    [Fact]
+    public async Task A_run_retries_a_recovery_that_failed_at_startup_before_it_plans()
+    {
+        using var dir = new TempDir();
+        var store = new BuildStateStore(dir.Path) { RenameRetryDelay = _ => { } };
+        store.Upsert(new BuildState(Id("A"), "sigA", LastResult: BuildResult.Succeeded));
+        new InFlightLedger(dir.Path).Add(Id("A"));
+        var ledger = new InFlightLedger(dir.Path);
+        using (new FileStream(Path.Combine(dir.Path, "build-state.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+            Assert.IsAssignableFrom<SystemException>(Record.Exception(() => ledger.Recover(store, DateTimeOffset.UtcNow))); // kilitli hedefe rename: IO ya da erişim hatası
+
+        BuildResult? atPlanning = null;
+        var plan = PlanOf(Node("A"));
+        using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())),
+            planner: (_, _) => { atPlanning = store.Load()[Id("A")].LastResult; return plan; },
+            stateStore: store, inFlight: ledger);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(BuildResult.Failed, atPlanning);
+    }
+
     // ---------------------------------------------------------------- 5) planlama penceresinde stop
 
     [Fact]
@@ -557,32 +860,6 @@ public class RunCoordinatorTests
         Assert.Empty(events.OfType<RunStartedEvent>());   // run hiç başlamadı
         Assert.Empty(events.OfType<RunCompletedEvent>()); // ...bu yüzden runCompleted da yok
     }
-
-    [Fact]
-    public async Task worktree_preparation_failure_on_a_different_branch_ends_the_run_as_planFailed_and_never_starts_it()
-    {
-        // [Fix wave 1 — Finding 3] Seçili branch aktif branch'ten FARKLIYSA worktree ZORUNLUDUR (K1): hazırlık
-        // başarısız olursa in-place'e DÜŞÜLEMEZ — aksi halde "X'i derle" denmişken sessizce kullanıcının kirli
-        // aktif branch'i derlenirdi. Program.PrepareAsync bunu WorktreePreparationException ile bildirir; burada
-        // kanıtlanan, koordinatörün onu MEVCUT run-bitiren hata kanalına (planFailed — App'in
-        // RunEndingErrorCodes kümesindeki kod) çevirdiği ve run'ın HİÇ başlamadığıdır.
-        const string message = "Cannot build branch 'feature-x': it is not the branch checked out in the workspace, "
-            + "so it must be built in an isolated worktree (the active branch is never checked out). "
-            + "Worktree preparation failed: fatal: 'C:/pool/feature-x-1' already exists";
-        Func<StartRunCommand, Action<string>, RunPlan> failingPlanner = (_, _) => throw new WorktreePreparationException(message);
-        using var h = new Harness(PlanOf(Node("A")), new FakeInvoker((_, _, _) => Task.FromResult(Ok())), failingPlanner);
-
-        await h.Sut.StartAsync(Start(), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var err = Assert.Single(h.Events.OfType<ErrorEvent>());
-        Assert.Equal("planFailed", err.Code); // "runFailed" (beklenmeyen iç hata) DEĞİL — kasıtlı, tanımlı red
-        Assert.Equal(message, err.Message);   // kullanıcı hangi branch'in ve NEDEN derlenmediğini görür
-        Assert.Empty(h.Events.OfType<RunStartedEvent>());   // run hiç başlamadı → yanlış branch DERLENMEDİ
-        Assert.Empty(h.Events.OfType<RunCompletedEvent>());
-    }
-
-
 
     // ---------------------------------------------------------------- 6) tek seferde tek run
 
@@ -631,7 +908,7 @@ public class RunCoordinatorTests
         Assert.Equal([1, 2, 3, 4], logs.Select(l => l.LineNumber)); // komut satırı + 3 çıktı satırı, ardışık
 
         string expectedCommandLine = WindowsCommandLine.Build(FakeMsBuildExe,
-            [.. MsBuildArguments.Build(Id("A"), "Debug", baseIntermediateOutputPath: null)]);
+            [.. MsBuildArguments.Build(Id("A"), "Debug")]);
         Assert.Equal(expectedCommandLine, logs[0].Text);
 
         string[] diskLines = File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id("A")));
@@ -741,8 +1018,7 @@ public class RunCoordinatorTests
         Assert.Empty(received.OfType<ProjectSkippedEvent>()); // pre-skip YOK
         Assert.Equal(["X", "Y"], received.OfType<ProjectStartedEvent>().Select(e => NameOf(e.ProjectId)).Distinct());
         // Satırlar PAYLAŞILAN kaynaktan (PlanProgressLines — Sync ile aynı) ve GERÇEK sayılarla gelir:
-        // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur. Worktree satırı YOK: komut
-        // UseWorktree=false + Branch="" taşır, yani hazırlık in-place erken-dönüşüyle hiç koşmaz.
+        // workspace'te 0 .sln, 2 .csproj var ve X↔Y tek bir SCC oluşturur.
         Assert.Equal(
         [
             PlanProgressLines.ScanningSolutions(0),
@@ -797,108 +1073,10 @@ public class RunCoordinatorTests
         Assert.True(a.NeedsRestore);                                  // packages.config yanında
         Assert.Equal(root, a.SolutionDir);                            // SolutionDirResolver: sln'in dizini
         Assert.Equal("Release", a.Configuration);
-        Assert.Null(a.BaseIntermediateOutputPath);                    // I2-K2: It-2'de obj izolasyonu YOK
 
         var b = Assert.Single(invoker.Requests, r => r.ProjectId == bId);
         Assert.False(b.NeedsRestore);
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
-        Assert.Null(b.BaseIntermediateOutputPath);
-    }
-
-    // ---------------------------------------------------------------- 11) worktree obj-izolasyonu (Task 10 / I2-K2)
-
-    [Fact]
-    public async Task worktree_run_with_a_supplied_resolver_gets_per_project_isolated_obj_paths()
-    {
-        // [I2-K2/Task 10] worktree'nin GERÇEK hazırlanması (WorktreeManager.PrepareWorktreeAsync) üretimde
-        // Program.cs'in planner'ında yapılır (A4) — burada koordinatörün kendi sözleşmesi izole test edilir:
-        // "worktree kökü biliniyorsa proje başına izole obj".
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-obj-" + Guid.NewGuid());
-        var plan = PlanOf(Node("A"), Node("B"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "A");
-        var b = Assert.Single(invoker.Requests, r => NameOf(r.ProjectId) == "B");
-        Assert.NotNull(a.BaseIntermediateOutputPath);
-        Assert.NotNull(b.BaseIntermediateOutputPath);
-        Assert.NotEqual(a.BaseIntermediateOutputPath, b.BaseIntermediateOutputPath); // farklı proje → farklı izole path
-        Assert.Equal(WorktreeObjPathResolver.Resolve(worktreeRoot, a.ProjectId), a.BaseIntermediateOutputPath); // deterministik şema
-        Assert.StartsWith(worktreeRoot, a.BaseIntermediateOutputPath!, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public async Task worktree_run_without_a_resolver_still_passes_null_obj_path() // resolver opsiyoneldir: yoksa in-place obj
-    {
-        var plan = PlanOf(Node("A"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker); // worktreeObjRootResolver verilmedi
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests);
-        Assert.Null(a.BaseIntermediateOutputPath); // resolver yoksa UseWorktree=true bile null'a düşer
-    }
-
-    [Fact]
-    public async Task in_place_run_ignores_a_supplied_resolver_and_stays_null() // UseWorktree=false her zaman kazanır
-    {
-        var plan = PlanOf(Node("A"));
-        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-        using var h = new Harness(plan, invoker,
-            worktreeObjRootResolver: _ => @"c:\should-not-be-used"); // UseWorktree=false olduğu için hiç ÇAĞRILMAMALI
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default); // UseWorktree varsayılan false
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        var a = Assert.Single(invoker.Requests);
-        Assert.Null(a.BaseIntermediateOutputPath);
-    }
-
-    [Fact]
-    public async Task Every_run_resolves_its_own_worktree_obj_root_from_its_own_command()
-    {
-        // [A4 · DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resolver YALNIZ taze run'da çağrılır,
-        // Continue segmenti 1. segmentin kökünü MİRAS ALIR" — miras, App'in Continue'yu UseWorktree=false ile
-        // yollamasından doğan bir yarım-run riskini kapatıyordu. Continue kaldırıldı: her koşu tazedir ve
-        // kendi komutundaki bayraktan kendi kökünü çözer, dolayısıyla bir koşunun yarısı asla farklı bir obj
-        // köküne düşemez. Bu test artık bunu pinler.
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-wt-continue-" + Guid.NewGuid().ToString("N"));
-        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"));
-        var resolverCalls = new List<StartRunCommand>();
-        var inFlight = Signal();
-        var release = Signal();
-        var invoker = new FakeInvoker(async (req, _, _) =>
-        {
-            if (NameOf(req.ProjectId) != "A") return Ok();
-            inFlight.TrySetResult();
-            await release.Task; // 1. segment A'da duruyorken Stop → B/C/D Queued kalır
-            return Ok();
-        });
-        using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd =>
-        {
-            lock (resolverCalls) resolverCalls.Add(cmd);
-            return worktreeRoot;
-        });
-
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await inFlight.Task.WaitAsync(Limit);
-        h.Sut.TryRequestStop(StopKind.Graceful);
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        // İkinci koşu da worktree ister → kendi kökünü kendi çözer.
-        await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, PlanRoot, "Debug", 1, UseWorktree: true), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-
-        Assert.All(invoker.Requests,
-            r => Assert.StartsWith(worktreeRoot, r.BaseIntermediateOutputPath!, StringComparison.Ordinal));
-        Assert.Equal(2, resolverCalls.Count);                   // her koşu resolver'a kendi komutuyla gider
-        Assert.All(resolverCalls, c => Assert.True(c.UseWorktree));
     }
 
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
@@ -1023,7 +1201,7 @@ public class RunCoordinatorTests
             var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
             var plan = PlanOf(node);
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-            using var h = new Harness(plan, invoker); // worktreeObjRootResolver YOK → in-place
+            using var h = new Harness(plan, invoker);
 
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -1072,13 +1250,19 @@ public class RunCoordinatorTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>
+    /// Bayat-obj teşhisi incremental Build koşusunda da çalışır: her koşu projenin KENDİ (varsayılan) obj'inde
+    /// derlendiği için teşhis her koşuda anlamlıdır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "worktree koşusu, projenin varsayılan
+    /// obj'i bayat olsa bile UYARMAZ" idi (<c>worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale</c>):
+    /// worktree koşusu obj'i havuza yönlendirdiği için varsayılan obj hiç okunmuyordu. Worktree modu kalktı;
+    /// artık her koşu varsayılan obj'dedir, dolayısıyla muafiyetin konusu da kalmadı.</para>
+    /// </summary>
     [Fact]
-    public async Task worktree_run_does_not_warn_even_when_the_project_s_default_obj_is_stale()
+    public async Task A_run_warns_about_a_stale_default_obj()
     {
-        // [I2-K2/Task 10] worktree run izole obj kullanır (BaseIntermediateOutputPath worktree altına yönlenir) —
-        // projenin KENDİ (default) obj'i hiç okunmaz/derlenmez, bu yüzden bayat-obj teşhisi anlamsızdır.
         string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
-        string worktreeRoot = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-wt-" + Guid.NewGuid().ToString("N"));
         try
         {
             string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
@@ -1086,12 +1270,12 @@ public class RunCoordinatorTests
             var node = new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null);
             var plan = PlanOf(node);
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
-            using var h = new Harness(plan, invoker, worktreeObjRootResolver: cmd => cmd.UseWorktree ? worktreeRoot : null);
+            using var h = new Harness(plan, invoker);
 
-            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1, UseWorktree: true), default);
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Single(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1226,39 +1410,249 @@ public class RunCoordinatorTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    // ---------------------------------------------------------------- 16) beslenen çıktılar (Faz 3/Task 4)
 
     /// <summary>
-    /// AYIRT EDİCİ — worktree koşusunda <b>App'e giden her şey ANA KÖK kimliğini taşır; yalnız MSBuild
-    /// worktree'deki dosyayı açar.</b>
-    ///
-    /// <para>Kimlik bu kod tabanında tam csproj yoludur, dolayısıyla farklı bir branch'e build alındığında
-    /// tarama worktree'de yapılır ve aynı proje bambaşka bir kimlik kazanırdı. Sonuç: önizleme worktree
-    /// id'leriyle yayılıp App'te KOPYA satırlar üretiyor, build-state kayıtları worktree yoluyla yazılıp bir
-    /// sonraki in-place Sync tarafından bulunamıyordu. Kimlik artık planlamada ana köke taşınır
-    /// (<see cref="ProjectIdentityRebase"/>) ve fiziksel yol ayrı bir haritada durur.</para>
+    /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] Başarılı bir derleme, havuzdaki (ör. <c>C:\OSYS\Server\bin</c>)
+    /// kopyanın GERÇEKTEN kendisini beslediğini öğrenir ve deftere yazar: kopya var, boyutu derleme kanıtıyla
+    /// aynı ve zamanı ondan <see cref="OutputEvidence.FedOutputWindow"/> içinde ⇒ <see
+    /// cref="BuildState.FedOutputs"/>'a girer (bkz. <see cref="OutputEvidence.LearnFedOutputs"/>).
     /// </summary>
     [Fact]
-    public async Task A_worktree_run_reports_main_root_identities_and_builds_the_worktree_file()
+    public async Task A_success_records_the_shared_copies_it_fed()
     {
-        string mainId = Path.Combine(Path.GetTempPath(), "bo-main", "A", "A.csproj");
-        string treeId = Path.Combine(Path.GetTempPath(), "bo-tree", "A", "A.csproj");
-        var plan = new RunPlan(
-            new BuildPlan([Node("A") with { Id = mainId, ProjectPath = mainId }], Cycles: [], Configuration: "Debug"),
-            EmptyRefs(),
-            BuildPathById: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [mainId] = treeId });
+        string cacheRoot = NewCacheRoot();
+        string outputsRoot = NewCacheRoot();
+        try
+        {
+            Directory.CreateDirectory(outputsRoot);
+            string evidence = Path.Combine(outputsRoot, "A.dll");
+            string copy = Path.Combine(outputsRoot, "shared", "A.dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+            var writtenAt = new DateTime(2026, 9, 19, 10, 0, 0, DateTimeKind.Utc);
+            File.WriteAllBytes(evidence, new byte[10]);
+            File.SetLastWriteTimeUtc(evidence, writtenAt);
+            File.WriteAllBytes(copy, new byte[10]); // AYNI boyut
+            File.SetLastWriteTimeUtc(copy, writtenAt); // AYNI an (pencere içi)
 
-        string? invokedPath = null;
-        var invoker = new FakeInvoker((req, _, _) => { invokedPath = req.ProjectId; return Task.FromResult(Ok()); });
-        using var h = new Harness(plan, invoker);
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"), EmptyRefs(),
+                Incremental("A") with
+                {
+                    OutputsById = new Dictionary<string, ProjectOutputs>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Id("A")] = new ProjectOutputs(evidence, [copy]),
+                    },
+                });
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await h.Sut.RunCompletion.WaitAsync(Limit);
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(treeId, invokedPath);                                   // derlenen dosya worktree'de
-        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectStartedEvent>()).ProjectId);
-        Assert.Equal(mainId, Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
-        Assert.All(h.Events.OfType<BuildPreviewEvent>().SelectMany(e => e.Items),
-            item => Assert.Equal(mainId, item.ProjectId));                   // App worktree yolunu HİÇ görmez
+            Assert.Equal([copy], store.Load()[Id("A")].FedOutputs);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true);
+            if (Directory.Exists(outputsRoot)) Directory.Delete(outputsRoot, recursive: true);
+        }
+    }
+
+    /// <summary>Boyutu derleme kanıtından FARKLI bir kopya beslenmiş SAYILMAZ — repo'ya check-in edilmiş ya da
+    /// başka bir sürümün kopyası olabilir (bkz. <see cref="OutputEvidence.LearnFedOutputs"/>).</summary>
+    [Fact]
+    public async Task A_copy_of_another_size_is_not_recorded()
+    {
+        string cacheRoot = NewCacheRoot();
+        string outputsRoot = NewCacheRoot();
+        try
+        {
+            Directory.CreateDirectory(outputsRoot);
+            string evidence = Path.Combine(outputsRoot, "A.dll");
+            string copy = Path.Combine(outputsRoot, "shared", "A.dll");
+            Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+            var writtenAt = new DateTime(2026, 9, 19, 10, 0, 0, DateTimeKind.Utc);
+            File.WriteAllBytes(evidence, new byte[10]);
+            File.SetLastWriteTimeUtc(evidence, writtenAt);
+            File.WriteAllBytes(copy, new byte[3]); // FARKLI boyut
+            File.SetLastWriteTimeUtc(copy, writtenAt);
+
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"), EmptyRefs(),
+                Incremental("A") with
+                {
+                    OutputsById = new Dictionary<string, ProjectOutputs>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Id("A")] = new ProjectOutputs(evidence, [copy]),
+                    },
+                });
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Empty(store.Load()[Id("A")].FedOutputs!);
+        }
+        finally
+        {
+            if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true);
+            if (Directory.Exists(outputsRoot)) Directory.Delete(outputsRoot, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// KANITLI bir başarısızlık kaydı KISMİ birleştirir (bkz. <see cref="InvalidateBuildStateOnFailure"/>):
+    /// önceki başarının öğrendiği beslenen kopyalar dokunulmadan kalır — bir sonraki zaman kipi kontrolü onları
+    /// hâlâ okuyabilmeli.
+    /// </summary>
+    [Fact]
+    public async Task A_failure_keeps_the_recorded_copies()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "sig", LastResult: BuildResult.Succeeded,
+                FedOutputs: [@"C:\shared\A.dll"]));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var after = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, after.LastResult);
+            Assert.Equal([@"C:\shared\A.dll"], after.FedOutputs); // önceki başarının öğrendiği kopyalar KORUNUR
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[tek proje · Clean] Clean'in sildiği KAYDIN TAMAMI — beslenen kopyalar listesi de onunla gider,
+    /// zaten çıktı yok sayıldığı için hiçbir alanın anlamı kalmaz.</summary>
+    [Fact]
+    public async Task A_clean_forgets_them_with_the_record()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "sig", LastResult: BuildResult.Succeeded,
+                FedOutputs: [@"C:\shared\A.dll"]));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Clean), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.DoesNotContain(Id("A"), store.Load());
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- 17) dışarıdan derleme kredisi (Faz 3/Task 6)
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.2, karar "Zaman kipi"] GERÇEK Supervisor process'i — planlayıcı (<c>Program.
+    /// ComputeIncremental</c>) yalnız orada koşar. Kaydı olmayan ama derleme kanıtı her girdisinden yeni legacy
+    /// <c>X</c> (VS'te derlenmiş) Build'de <see cref="WillBuildReason.BuiltOutside"/> ile planlanır, pre-skip yolu
+    /// onu <see cref="SkipReasons.UpToDate"/> ile atlar (MSBuild çağrılmaz) ve deftere HİÇBİR ŞEY yazılmaz —
+    /// zaman kipi deftersiz kalır, bir sonraki koşu yine kanıttan karar verir. Eski karar kaydı olmayanı
+    /// <c>NeverBuilt</c> sayıp derler ve kaydederdi.
+    /// </summary>
+    [SkippableFact]
+    public async Task A_project_built_elsewhere_is_skipped_as_up_to_date_and_not_recorded()
+    {
+        // Cache/defter logs klasörünün EBEVEYNİNDE durur (Program.Main) — kendi sandbox'ı, kullanıcınınki değil.
+        string sandbox = Directory.CreateTempSubdirectory("bo-sup-credit-").FullName;
+        string logsDir = Path.Combine(sandbox, "logs");
+        string root = Path.Combine(sandbox, "ws");
+        try
+        {
+            string xId = LegacyFixture.CreateClassLib(Path.Combine(root, "X"), "X");
+            EvidenceTimes.Stamp(root, [LegacyFixture.WriteBuiltOutput(Path.Combine(root, "X"), "X")]);
+
+            var received = new List<IpcEvent>();
+            using (var p = Process.Start(TestPaths.Psi(logsDir))!)
+            {
+                var ipcWriter = new NdjsonWriter(p.StandardInput.BaseStream);
+                var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
+                Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
+                await ipcWriter.WriteAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1));
+                while (true)
+                {
+                    var e = await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit)
+                            ?? throw new InvalidOperationException("Supervisor stdout beklenmedik şekilde kapandı.");
+                    if (e is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
+                    received.Add(e);
+                    if (e is RunCompletedEvent) break;
+                }
+                await ipcWriter.WriteAsync(new ShutdownCommand());
+                await p.StandardOutput.ReadToEndAsync().WaitAsync(Limit);
+                await p.WaitForExitAsync(new CancellationTokenSource(5000).Token);
+            }
+
+            var x = Assert.Single(Assert.Single(received.OfType<BuildPreviewEvent>()).Items);
+            Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+            var skipped = Assert.Single(received.OfType<ProjectSkippedEvent>());
+            Assert.Equal((Path.GetFullPath(xId), SkipReasons.UpToDate), (skipped.ProjectId, skipped.Reason));
+            Assert.Empty(received.OfType<ProjectStartedEvent>()); // MSBuild çağrılmadı
+            Assert.Equal(1, Assert.IsType<RunCompletedEvent>(received[^1]).Skipped);
+            Assert.DoesNotContain(Path.GetFullPath(xId), new BuildStateStore(sandbox).Load()); // defter yazılmadı
+        }
+        finally { try { Directory.Delete(sandbox, recursive: true); } catch { /* test temizliği */ } }
+    }
+
+    /// <summary>
+    /// [karar "modified ↔ affected zaman kipinde" + P8] Koşu önizlemesi <c>OwnFilesChanged</c>'ı ve
+    /// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan, planın taşıdığı kontrollerden
+    /// (<see cref="IncrementalPlan.ChecksById"/>) yazar. Plan GERÇEK bir binder'dan kurulur (geçici legacy csproj,
+    /// elle yazılmış taze kanıt): defter kaydı yok (defterin cevabı <c>null</c>) ama zaman kipi kanıttan
+    /// "kendi dosyası değişmedi" der ve kanıtın zamanı satıra taşınır.
+    /// </summary>
+    [Fact]
+    public async Task The_run_preview_carries_the_output_time()
+    {
+        string root = Directory.CreateTempSubdirectory("bo-coord-credit-").FullName;
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            string xId = Path.GetFullPath(LegacyFixture.CreateClassLib(Path.Combine(root, "X"), "X"));
+            EvidenceTimes.Stamp(root, [LegacyFixture.WriteBuiltOutput(Path.Combine(root, "X"), "X")]);
+
+            var noState = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
+            var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)
+            {
+                [xId] = new CsprojEvaluator().Evaluate(xId),
+            };
+            var binder = new IncrementalRunBinder(
+                new BuildPlan([new ProjectNode(xId, "X", xId, [], [], 0, null, null, false, null)], [], "Debug"),
+                evaluated, root, new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName)));
+            var checks = binder.ChecksFor(noState);
+            var (bound, signatures) = binder.Bind(noState, buildCycles: false, DependentMode.Safe, checks);
+            var plan = new RunPlan(bound, EmptyRefs(),
+                new IncrementalPlan(signatures, "headsha", "main", ContentById: binder.ContentById, ChecksById: checks));
+            using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())),
+                stateStore: new BuildStateStore(cacheRoot));
+
+            await h.Sut.StartAsync(Start(RunMode.Build), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var x = Assert.Single(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items);
+            Assert.Equal(WillBuildReason.BuiltOutside, x.Reason);
+            Assert.Equal(new DateTimeOffset(EvidenceTimes.EvidenceAt), x.OutputBuiltAt);
+            Assert.False(x.OwnFilesChanged); // defterin cevabı null olurdu — kanıt "değişmedi" der
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* test temizliği */ }
+            if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -1301,6 +1695,35 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.All(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => Assert.Null(i.BuiltCommit));
+    }
+
+    /// <summary>
+    /// [Task 3] Koşu önizlemesi <c>FailedAt</c>'ı AYNI yardımcıdan (<see cref="BuildStateStore.FailedAtOf"/>)
+    /// taşır — <c>BuiltCommit</c> ile aynı desen (W1): Sync'in doldurup run'ın boş bırakması, run başlar
+    /// başlamaz kartın hata yaşını sıfırlardı. Kanıtsız kayıt (<c>FailedSignature</c> boş, kayıt yok) null kalır.
+    /// </summary>
+    [Fact]
+    public async Task The_run_start_preview_carries_each_projects_failure_time_from_the_state_store()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("Known"), "sig", FailedSignature: "sig", FailedAt: failedAt));
+
+            var plan = PlanOf(Node("Known"), Node("Fresh"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+            Assert.Equal(failedAt, Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Known").FailedAt);
+            Assert.Null(Assert.Single(preview.Items, i => NameOf(i.ProjectId) == "Fresh").FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
     [Fact]
@@ -1356,9 +1779,10 @@ public class RunCoordinatorTests
         // project.assets.json/*.nuget.g.props artığı): Up dün YEŞİLDİ (Succeeded + imza persist edildi), bugün
         // AYNI imzayla FAIL ediyor. Başarısızlık build-state'e yazılmazsa kayıt hâlâ "Succeeded + eşleşen imza"
         // der ve bir sonraki Build projeyi "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk bir
-        // proje "güncel" olarak raporlanır. §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayabilecek
-        // başka mekanizma YOKTUR. Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
-        // → BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
+        // proje "güncel" olarak raporlanır. Dünkü çıktı aracın kendisinin olduğundan defter kipinde okunur ve
+        // orada çıktının tarihi hatayı göremez (ARCHITECTURE §7.6): bunu yakalayabilecek başka mekanizma YOKTUR.
+        // Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder →
+        // BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
         string cacheRoot = NewCacheRoot();
         try
         {
@@ -1394,6 +1818,9 @@ public class RunCoordinatorTests
             Assert.Equal(BuildResult.Failed, upAfterFailure.LastResult);   // artık "bilinen iyi" DEĞİL
             Assert.Equal("sig", upAfterFailure.BuiltSignature);            // son BAŞARILI imza KORUNUR (Fast frozen-upstream)
             Assert.Equal(7, upAfterFailure.LastDurationMs);                // ETA: iyi süre (Ok=7ms) fail süresiyle (9ms) EZİLMEZ
+            // [Task 2] Exit(1) bu koşuda tek projedir (trustedResult daima true) ⇒ KANITLI hata: imza + zaman yazılır.
+            Assert.Equal("sig", upAfterFailure.FailedSignature);
+            Assert.NotNull(upAfterFailure.FailedAt);
 
             // ---- Run 3: incremental Build → Up PRE-SKIP EDİLEMEZ, GERÇEK bir MSBuild invoke'u olmalı.
             upFails = false;
@@ -1408,7 +1835,138 @@ public class RunCoordinatorTests
             Assert.Equal(Id("Solo"), skipped.ProjectId);
             // [DEĞİŞEN KURAL/Task 2] bkz. yukarıdaki not — reason artık YALIN, tek kaynak SkipReasons.
             Assert.Equal(SkipReasons.UpToDate, skipped.Reason);
-            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("Up")].LastResult); // yeşile dönünce kayıt düzelir
+            var upAfterRecovery = store.Load()[Id("Up")];
+            Assert.Equal(BuildResult.Succeeded, upAfterRecovery.LastResult); // yeşile dönünce kayıt düzelir
+            // [Task 2] Taze başarı FailedSignature/FailedAt'i doğal olarak null'a döndürür (PersistBuildStateOnSuccess taze kayıt kurar).
+            Assert.Null(upAfterRecovery.FailedSignature);
+            Assert.Null(upAfterRecovery.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §1-14 / Task 2] hata nedene göre yazılır
+
+    /// <summary>
+    /// KANITLI kırmızı: hiç derlenmemiş bir proje derleyici hatasıyla (exit != 0) patlarsa <see
+    /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
+    /// yazılır — <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c> gerekçesi BUNA bakar.
+    /// </summary>
+    [Fact]
+    public async Task A_compiler_failure_records_the_failed_signature_and_time()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Equal("sig", a.FailedSignature);
+            Assert.NotNull(a.FailedAt);
+            // [R-M4b] Olay defterle AYNI kapıdan kanıt der — App metni yeniden sınıflandırmaz.
+            Assert.True(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Yukarıdaki testin AYRIMI: hiç build-state kaydı OLMAYAN bir proje derleyici hatasıyla patladığında da
+    /// kanıt kaybolmamalı — <see cref="InvalidateBuildStateOnFailure"/> kayıt yoksa <c>BuiltSignature: null</c>
+    /// ile YENİ bir kayıt açar ve bu kez hata imzası (kanıt) da yazılır — kanıtsız yolun açtığı kayıt
+    /// (<c>BuildStateStore.InvalidateWithoutEvidence</c>) imzasızdır.
+    /// </summary>
+    [Fact]
+    public async Task A_compiler_failure_opens_a_record_for_a_never_built_project()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            Assert.Empty(store.Load()); // sanity: hiç kayıt yok
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var state = store.Load();
+            var a = Assert.Contains(Id("A"), state); // kayıt AÇILDI
+            Assert.Null(a.BuiltSignature);            // hiç BAŞARIYLA derlenmedi
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Equal("sig", a.FailedSignature);
+            Assert.NotNull(a.FailedAt);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// KANITSIZ: timeout ortam hatasıdır, derleyicinin kendi kararı DEĞİL. <see cref="BuildState.FailedSignature"/>
+    /// yazılmaz (eskisi varsa null'a ÇEKİLİR) — <c>LastFailed</c> bunun için kanıtsız kırmızı ÜRETMEMELİDİR.
+    /// </summary>
+    [Fact]
+    public async Task A_timeout_records_no_failed_signature()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            // "dün" kanıtlı bir hatayla yeşile hiç dönmemiş kayıt: eski kanıt bu koşuda DÜŞMELİ.
+            store.Upsert(new BuildState(Id("A"), BuiltSignature: null, LastResult: BuildResult.Failed,
+                LastRunAt: DateTimeOffset.UtcNow.AddHours(-1), FailedSignature: "old-sig",
+                FailedAt: DateTimeOffset.UtcNow.AddHours(-1)));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) =>
+                Task.FromResult(new MsBuildInvokeResult(ExitCode: -1, DurationMs: 9, TimedOut: true, Killed: false)));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature); // kanıtsız — eski kanıt DÜŞER
+            Assert.Null(a.FailedAt);
+            Assert.False(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence); // [R-M4b] olay da kanıtsız
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// Taze bir başarı <see cref="BuildState.FailedSignature"/>/<see cref="BuildState.FailedAt"/>'i doğal olarak
+    /// null'a döndürür: <see cref="PersistBuildStateOnSuccess"/> taze bir kayıt kurar, eski alanlar taşınmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_success_clears_the_failed_signature()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), BuiltSignature: null, LastResult: BuildResult.Failed,
+                LastRunAt: DateTimeOffset.UtcNow.AddHours(-1), FailedSignature: "sig",
+                FailedAt: DateTimeOffset.UtcNow.AddHours(-1)));
+            var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
+                EmptyRefs(), Incremental: Incremental("A"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Succeeded, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

@@ -42,14 +42,13 @@ public static class GraphBinder
             rows.TryGetValue(node.Id, out var row);
             // Elde topoloji varsa Sync yapılmıştır (bu metot yalnız o zaman çağrılır) → synced: true.
             var status = StatusOf(row, synced: true);
-            // [design v1.11.0 §2.3] TEK renk kanalı: satırın görsel durumu grafa AYNEN taşınır — iki yüzey
+            // [design v1.20.0 §2.3] TEK renk kanalı: satırın görsel durumu grafa AYNEN taşınır — iki yüzey
             // (liste + graf) tek durumdan beslenir ve ikinci bir eşleme YAZILMAZ. Satır henüz yoksa
-            // (topoloji düğümünün satırı kurulmamış — savunmacı) başlangıç modu varsayılır: Sync'ten sonraki
-            // temiz hâl budur.
-            var visual = row is { } r
-                ? VisualStatuses.For(status, r.Fresh, r.Marked, r.InCycle)
-                : VisualStatus.Fresh;
-            result.Add(new GraphNode(node.Id, node.Name, LayerOf(node, depth), status, visual));
+            // (topoloji düğümünün satırı kurulmamış — savunmacı) durum bilinmez: karar satırla gelir.
+            // Döngü üyeliği ayrı taşınır — yalnız küpü boyar, rengi ezmez.
+            var visual = row?.VisualStatus ?? VisualStatus.Unknown;
+            bool inCycle = row?.InCycle ?? node.InCycle;
+            result.Add(new GraphNode(node.Id, node.Name, LayerOf(node, depth), status, visual, inCycle));
         }
         return result;
     }

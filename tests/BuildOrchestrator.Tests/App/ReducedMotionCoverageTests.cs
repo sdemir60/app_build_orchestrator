@@ -76,7 +76,7 @@ public class ReducedMotionCoverageTests
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz sahip: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
         var host = DsResources.NewHost();
-        var glyph = new StatusGlyph { Status = GraphStatus.Building };
+        var glyph = new StatusGlyph { Status = VisualStatus.Building };
         var window = DsResources.Realize(host, glyph);
 
         Assert.False(glyph.HasAnimatedProperties);                    // glyph'in kendi opaklık saati YOK

@@ -28,7 +28,8 @@ internal static class AboutDialogHost
         FrameworkElement? backgroundSibling = null)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot }; // [final review M8]
         configure?.Invoke(run);
 
         var host = DsResources.NewHost();

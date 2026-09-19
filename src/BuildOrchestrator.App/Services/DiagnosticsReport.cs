@@ -22,8 +22,7 @@ public sealed record DiagnosticsInput(
     string MsBuild,
     string RepositoryRoot,
     string StateFile,
-    string LogsRoot,
-    string WorktreePool);
+    string LogsRoot);
 
 /// <summary>
 /// [design v1.19.0 §2.10] Tanı modelinin gruplu hâli. About sekmesi <see cref="Identity"/>'yi, Environment sekmesi
@@ -91,7 +90,6 @@ public static class DiagnosticsReport
                 new("Repository root", Or(input.RepositoryRoot, NoRepository)),
                 new("State file", input.StateFile),
                 new("Logs", input.LogsRoot),
-                new("Worktree pool", input.WorktreePool),
             ]);
     }
 

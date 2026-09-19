@@ -146,7 +146,7 @@ public class ProjectRowTests
     [StaFact]
     public void The_status_dot_follows_the_stripe_colour_and_carries_no_tooltip()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true, Fresh = true };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { WillBuild = true };
         var (row, window, host) = Realize(vm);
 
         Assert.Null(row.Dot.ToolTip);
@@ -157,8 +157,7 @@ public class ProjectRowTests
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Dot.Ring.Stroke));
         Assert.NotEmpty(row.Dot.Ring.StrokeDashArray);
 
-        // İşlem başladı (başlangıç modu düştü) ve satır kapsamda: nokta AMBER — şeridin ta kendisi.
-        vm.Fresh = false;
+        // Satır kapsamda (dalga yaktı): nokta AMBER — şeridin ta kendisi.
         vm.Marked = true;
         row.UpdateLayout();
         var dot = row.Dot.Fill;
@@ -644,15 +643,17 @@ public class ProjectRowTests
     [StaFact]
     public void The_fresh_start_mode_draws_the_stripe_fully_opaque()
     {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { Fresh = true };
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending); // karar yok → başlangıç modu
         var (row, window, host) = Realize(vm);
 
         Assert.IsNotType<System.Windows.Media.DrawingBrush>(row.Stripe.Fill);   // kesikli desen YOK (v1.12.0)
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
         Assert.Equal(1.0, row.Stripe.Opacity);                                  // v1.13.2: silik değil, TAM opak
 
-        // İşlem başlayınca (fresh düşünce) opaklık zaten 1'di — değişmez, rengi de değişmez.
-        vm.Fresh = false;
+        // Karar gelince (derlenecek → düz gri; design v1.20.0 §2.3) opaklık zaten 1'di — değişmez, rengi de
+        // değişmez: bilinmiyor ile derlenecek AYNI gridir.
+        vm.WillBuild = true;
+        vm.WillBuildReason = WillBuildReason.SignatureChanged;
         row.UpdateLayout();
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(row.Stripe.Fill));
         Assert.Equal(1.0, row.Stripe.Opacity);
@@ -698,6 +699,29 @@ public class ProjectRowTests
 
 
 
+    /// <summary>[spec 2026-09-18 §1-15 · design v1.20.0 §2.4-6] Üçgen kümülatiftir: koşu listesi boşken
+    /// defterdeki bekleyen bağımlılık notunun kökleri gösterilir (tooltip koşunun diliyle AYNI); not düşünce
+    /// üçgen de düşer. Kök seçimi VM'dedir (<see cref="ProjectRowViewModel.WarningRoots"/>) — kart yalnız okur.</summary>
+    [StaFact]
+    public void The_ledger_note_shows_the_triangle_without_a_run_list()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending) { NamePrefix = "OSYS." };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility); // ön-koşul
+
+        vm.WillBuild = true;
+        vm.DependencyRoots = ["OSYS.Sales.Core"];
+        vm.WillBuildReason = WillBuildReason.WaitingForDependency;
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal("Dependency issue: Sales.Core", row.DepTooltip);
+
+        vm.WillBuildReason = WillBuildReason.UpToDate; // not düştü (kök sağlıklı)
+        row.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, row.DepIcon.Visibility);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[review fix Minor] Dep-slot'ta gösterilecek hiçbir sinyal kalmayınca <c>PART_DepTip.Content</c>
     /// DEFANSİF olarak temizlenir — slot bugün sıfır yükseklikte çöktüğü için zararsız, ama slot'un layout'u
     /// yarın değişirse hayalet bir tooltip metni kalmasın.</summary>
@@ -723,7 +747,11 @@ public class ProjectRowTests
     /// uyarı üçgeni) ve aynı şey iki yerde okunuyordu. Listede tooltip taşıyan TEK öğe uyarı üçgenidir.</para>
     ///
     /// <para>Ekran okuyucu KAYBETMEZ: statü metni glyph'in UIA adına yazılır (eşleme
-    /// <see cref="StatusGlyph.LabelFor"/> — kopya YASAK).</para></summary>
+    /// <see cref="StatusGlyph.LabelFor(VisualStatus)"/> — kopya YASAK).</para>
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4]</b> Ad eskiden KOŞU statüsünü söylüyordu: atlanan
+    /// satır "Skipped" duyuruluyordu. Değişme gerekçesi: satır bir durum yüzeyidir ve atlanan satır kendi
+    /// durumunun glyph'ini/rengini gösterir (güncel ✓) — ekran okuyucu da GÖSTERİLENİ duyar, filtre chip'iyle AYNI
+    /// sözcükle ("Up to date" · "To build" · "Failed"). "Skipped" yalnız run-story yüzeylerinde kalır.</para></summary>
     [StaFact]
     public void The_status_glyph_has_no_tooltip_and_announces_its_status_through_the_automation_name()
     {
@@ -732,29 +760,55 @@ public class ProjectRowTests
         var (row, window, _) = Realize(vm);
 
         Assert.Null(row.Glyph.ToolTip);
-        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Building),
-            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+        Assert.Equal("Building", System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
 
         vm.State = ProjectRowState.Skipped;
+        vm.WillBuild = false;
+        vm.WillBuildReason = WillBuildReason.UpToDate;
         vm.CycleUnconverged = true;
         row.UpdateLayout();
         Assert.Null(row.Glyph.ToolTip);
-        Assert.Equal(StatusGlyph.LabelFor(GraphStatus.Skipped),
-            System.Windows.Automation.AutomationProperties.GetName(row.Glyph));
+        Assert.Equal("Up to date", System.Windows.Automation.AutomationProperties.GetName(row.Glyph)); // "Skipped" DEĞİL
         // ...gerekçe uyarı üçgeninde, TEK satır.
         Assert.Equal(RowWarning.CycleUnconverged, row.DepTooltip);
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.20.0 §1.4 · §2.4-5] <b>Satır glyph'i çıktı durumunu çizer; — tire satırda YOKTUR.</b>
+    /// Güncel bir proje atlandığında glyph ✓ ve şerit yeşil kalır; kararı sonradan değişen satırın rengi de
+    /// ANINDA değişir (Sync renk verir).
+    /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §1.4]</b> Eski hâl: glyph koşu statüsünü (<c>GraphStatus</c>)
+    /// çizerdi — atlanan satır — tire ve gri gösterirdi. Değişme gerekçesi: atlanmak bir durum değildir; tire
+    /// yalnız run-story yüzeylerinde (event stream, konsol başlığı) yaşar.</para></summary>
+    [StaFact]
+    public void A_skipped_row_draws_its_standing_glyph_and_follows_a_new_decision()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Skipped)
+        { WillBuild = false, WillBuildReason = WillBuildReason.UpToDate };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(VisualStatus.Current, row.Glyph.Status);
+        Assert.Same(row.FindResource("Brush.StatusSuccess"), row.Stripe.Fill);
+
+        vm.WillBuild = true;                                  // yeni karar: derlenecek
+        vm.WillBuildReason = WillBuildReason.SignatureChanged;
+        row.UpdateLayout();
+
+        Assert.Equal(VisualStatus.Stale, row.Glyph.Status);
+        Assert.Same(row.FindResource("Brush.StatusSkippedBorder"), row.Stripe.Fill);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
-    /// [design v1.16.0 §2.4 · Task 4] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
+    /// [design v1.16.0 §2.4 · Task 6] Karar etiketi GERÇEKTEN çizilir ve yuvasına sığar.
     ///
-    /// <para><b>DEĞİŞEN KURAL (iki kez).</b> Bu yerde beş test vardı ve hepsi commit ÇİFTİNİ pinliyordu; sonra
-    /// yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu). Task 4 kullanıcı onaylı
-    /// koşullu yeniden derleme etiketini ekledi: <c>affected · up to date · just now</c> üç parçalıdır ve
-    /// ondan daha UZUNDUR — o artık en uzun etiket, yuva bunu sığdıracak kadar YENİDEN ölçülüp büyütüldü (bkz.
-    /// <c>.claude/outputs/…run-scope-queue-and-conditional-rebuild-plan.md</c>, "Hedef davranış" — 134px'ten
-    /// BİLİNÇLİ sapma, kullanıcı kararı). Ölçüm iddiası KALIR, yalnız metin ve sınır büyür.</para>
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Bu yerde beş test vardı ve hepsi commit
+    /// ÇİFTİNİ pinliyordu; sonra yuva 118px'ten 134px'e büyüdü (en uzun etiket "up to date · just now" oldu).
+    /// Task 4 kullanıcı onaylı koşullu yeniden derleme etiketini ekleyip yuvayı 204px'e büyütmüştü
+    /// (<c>affected · up to date · just now</c>, üç parçalı). O üçlü design v1.20.0 ile TAMAMEN kalktı:
+    /// <c>WaitingForDependency</c> artık <c>UpToDate</c> ile BİREBİR okunur (bkz. <see cref="DecisionLabel"/>'in
+    /// sınıf özeti) — hangi kökün beklendiğini yalnız uyarı üçgeni söyler, yuvanın etiketi asla üç parça
+    /// olmaz. Yuva 134px'e DÖNDÜ, en uzun etiket yeniden "up to date · just now".</para>
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
@@ -765,59 +819,73 @@ public class ProjectRowTests
     /// test kendi sabit kopyasına karşı yeşil kalırdı, kırılan gerçek yuvayı YAKALAMAZDI.</para>
     /// </summary>
     [StaFact]
-    public void The_longest_decision_label_fits_inside_the_right_block()
+    public void The_decision_slot_is_134px_wide()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = true,
-            WillBuildReason = WillBuildReason.WaitingForDependency,
-            Conditional = true,
-            DependencyRoots = ["Up"],
+            WillBuild = false,
+            WillBuildReason = WillBuildReason.UpToDate,
             LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
         };
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
         row.UpdateLayout();
 
-        Assert.Equal("affected · up to date · just now", row.DecisionText.Text);
+        // [Task 6 review round 1] Eski test yalnız "genişlik <= XAML'ın GERÇEK MinWidth'i" diyordu — XAML 204'te
+        // kalsaydı da YEŞİL kalırdı, 134'e küçülmeyi hiç PİNLEMİYORDU. Sayı burada da tekrarlanmaz (kopya YASAK
+        // demek "ikinci bir 134 sabiti YAZMA" demektir); XAML'ın gerçek değeri bu TEK satırda somut sayıya karşı
+        // sınanır, geri kalan assertion'lar o okunan değeri kullanır.
+        Assert.Equal(134, row.RightBlock.MinWidth);
+
+        Assert.Equal("up to date · just now", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
         double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
         Assert.True(width <= slotMinWidth, $"en uzun karar etiketi {slotMinWidth}px yuvaya sığmadı: {width}px");
-
-        // Kontrol grubu: eski 134px'lik yuva bu YENİ etiketi GERÇEKTEN taşımıyordu — genişletme kozmetik değildi.
-        Assert.True(width > 134, $"etiket eski 134px yuvaya sığdı — genişletmenin gerekçesi yanlış: {width}px");
         GC.KeepAlive(window);
     }
 
-    /// <summary>[final review — I2] Etiketi besleyen olgular <c>WillBuild</c>/<c>WillBuildReason</c> ile
-    /// BİTMEZ: <c>Conditional</c> ve <c>DependencyRoots</c> da <see cref="DecisionLabel.For"/>'a girer. Satırın
-    /// property-changed anahtarında bu iki ad YOKTU ve <c>[ObservableProperty]</c> yalnız DEĞİŞİMDE bildirim
-    /// yayar; önizleme üçlüyü sırayla (WillBuild → Reason → Conditional) yazdığı için WillBuild ve gerekçe AYNI
-    /// kalıp yalnız <c>Conditional</c> dönen bir önizleme (Resolve cycles'ta kapsam dışı koşullu satır, ya da
-    /// satırdan tetiklenen tek proje koşusu) etiketi HİÇ tazelemiyordu — satır koşu boyunca bayat soluk
-    /// "affected · up to date · 2h" gösteriyordu.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eskiden bu test <c>Conditional</c> bayrağının TEK BAŞINA
+    /// (WillBuild/Reason SABİT kalırken) etiketi tazelediğini pinliyordu. <see cref="DecisionLabel"/> artık
+    /// <c>Conditional</c>'ı hiç okumuyor (bkz. o sınıfın özeti), o senaryo ANLAMSIZLAŞTI. Yerini
+    /// <c>FailedAt</c> aldı: <see cref="DecisionLabel.For"/>'a giren YENİ bir olgu (kanıtın yaşı) ve
+    /// property-changed anahtarında (<c>ProjectRow.OnVmPropertyChanged</c>) Conditional'ınkiyle AYNI riski
+    /// taşır — WillBuild/Reason SABİT kalıp yalnız FailedAt değişen bir önizleme (kanıt tazelenir, "failed"
+    /// kalır) listede olmasaydı satır bayat kalırdı.</summary>
     [StaFact]
-    public void Flipping_only_the_conditional_flag_repaints_the_decision_label()
+    public void Flipping_only_the_failed_at_flag_repaints_the_decision_label()
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
             WillBuild = true,
-            WillBuildReason = WillBuildReason.WaitingForDependency,
-            OwnFilesChanged = false,
-            LastBuiltAt = DateTimeOffset.Now.AddHours(-2),
-            Conditional = true,
-            DependencyRoots = ["OSYS.Up"],
+            WillBuildReason = WillBuildReason.LastFailed,
+            FailedAt = DateTimeOffset.Now.AddHours(-2),
         };
         var (row, window, _) = Realize(vm);
-        Assert.Equal("affected · up to date · 2h", row.DecisionText.Text); // koşullu: söz tutulur, soluk
-        var waiting = row.DecisionText.Inlines.OfType<Run>().First().Foreground;
+        Assert.Equal("failed · 2h", row.DecisionText.Text);
 
-        vm.Conditional = false; // bu koşu ZORLUYOR (satırdan Build / Rebuild / SCC üyesi) — söz yok
+        vm.FailedAt = DateTimeOffset.Now.AddDays(-3); // yalnız kanıtın yaşı değişti, gerekçe AYNI kaldı
         row.UpdateLayout();
 
-        Assert.Equal("affected", row.DecisionText.Text);
-        Assert.NotEqual(waiting, row.DecisionText.Inlines.OfType<Run>().First().Foreground); // bekleyen iş: belirgin
+        Assert.Equal("failed · 3d", row.DecisionText.Text);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Task 6] <c>LocalEdits</c> de <see cref="DecisionLabel.For"/>'a giren YENİ bir olgudur
+    /// (<c>modified · local</c> kuyruğu) — AYNI property-changed riski, ayrı bir test.</summary>
+    [StaFact]
+    public void Flipping_only_the_local_edits_flag_repaints_the_decision_label()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
+        { WillBuild = true, WillBuildReason = WillBuildReason.SignatureChanged, OwnFilesChanged = true };
+        var (row, window, _) = Realize(vm);
+        Assert.Equal("modified", row.DecisionText.Text);
+
+        vm.LocalEdits = true; // yalnız kirli girdi bayrağı değişti
+        row.UpdateLayout();
+
+        Assert.Equal("modified · local", row.DecisionText.Text);
         GC.KeepAlive(window);
     }
 

@@ -7,8 +7,9 @@ namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
 /// [T62/T35] Pencere kabuğunun KALICI kullanıcı durumu (küçük ve sürüm-toleranslı bir JSON). Kabuk bayrakları
-/// (K5 balloon, v7Δ-5 hotkey) + [T35] 2×2 yerleşim (mod + üç split) ve iş akışı tercihleri (repo/config/branch/
-/// worktree/layer patterns/autostart). Eksik alan → varsayılan (JSON sürüm-toleranslıdır).
+/// (K5 balloon, v7Δ-5 hotkey) + [T35] 2×2 yerleşim (mod + üç split) ve iş akışı tercihleri (repo/config/perf/
+/// layer patterns/autostart). Eksik alan → varsayılan; tanınmayan alan (eski dosyalardaki <c>Branch</c>,
+/// <c>UseWorktree</c>, <c>WorktreeName</c>) okunurken yok sayılır ve bir sonraki kayıtta yazılmaz.
 /// </summary>
 public sealed class UiState
 {
@@ -39,10 +40,6 @@ public sealed class UiState
     /// çözer; kalan alanlar korunur ve bir sonraki Save yeni (string) şemayı yazar.</summary>
     [JsonConverter(typeof(LegacyTolerantStringConverter))]
     public string? PerfMode { get; set; }
-
-    public string? Branch { get; set; }
-    public bool UseWorktree { get; set; }
-    public string? WorktreeName { get; set; }
 
     /// <summary>[design v1.9.0 §2.10] Kullanıcının What is new sekmesinde EN SON gördüğü sürüm. Bu değer
     /// çalışan sürümden farklıysa title bar in ⓘ düğmesinde 5px amber bir nokta durur ve About doğrudan o
@@ -87,6 +84,11 @@ public sealed class UiState
     /// yazılmamış" ile "false yazılmış" ayrımı burada taşınmak zorundadır: bayrak öncesi kaydedilmiş bir
     /// dosya, özelliğin bugünkü davranışını (güncelle) korumalıdır.</para></summary>
     public bool? UpdateExternals { get; set; }
+
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi.
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi
+    /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
+    public bool? StashOnBranchSwitch { get; set; }
 
     public bool Autostart { get; set; }
 }

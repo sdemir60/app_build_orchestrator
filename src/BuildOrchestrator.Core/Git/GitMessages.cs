@@ -5,8 +5,8 @@ namespace BuildOrchestrator.Core.Git;
 /// <c>AccessibilityNames</c> deseni). Uygulama İngilizce-only'dir: buradaki metinler exception mesajı ya da
 /// <c>GitResult.Fail</c> gerekçesi olarak yüzeye çıkar, bu yüzden Türkçe olamaz.
 ///
-/// <para>Gerekçe: boş/whitespace argüman reddi <see cref="GitService"/> ve <see cref="WorktreeManager"/>
-/// içinde altı ayrı çağrı noktasında aynı cümleyi kuruyordu (ikisi birebir aynı literaldi). Şablon tek
+/// <para>Gerekçe: boş/whitespace argüman reddi git sarmalayıcılarında altı ayrı çağrı noktasında aynı
+/// cümleyi kuruyordu (ikisi birebir aynı literaldi). Şablon tek
 /// yerde durursa metin ile parametre adı bir daha ayrışamaz.</para>
 /// </summary>
 internal static class GitMessages

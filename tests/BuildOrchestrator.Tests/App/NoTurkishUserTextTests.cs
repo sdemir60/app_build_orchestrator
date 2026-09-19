@@ -5,7 +5,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [A13/B2 · E3] <b>Uygulama İngilizce-only'dir.</b> Bu guard, kullanıcıya ulaşan bir metinde Türkçe kalırsa
-/// süiti KIRAR — UI metinleri · git/worktree mesajları · planlama mesajları · run/decision.log satırları ·
+/// süiti KIRAR — UI metinleri · git mesajları · planlama mesajları · run/decision.log satırları ·
 /// exception mesajları · MSBuild build-error metinleri · script çıktıları.
 ///
 /// <para><b>Neden kalıcı bir guard:</b> It-5'te bir tur süpürme yapılmış (77 Türkçe metin) ama guard

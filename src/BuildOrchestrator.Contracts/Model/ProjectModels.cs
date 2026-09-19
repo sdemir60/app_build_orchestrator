@@ -4,9 +4,9 @@ namespace BuildOrchestrator.Contracts.Model;
 
 // It-1 domain DTO'ları — A9 şeklini sabitler. Core → Contracts referansı üzerinden Core bu tipleri üretir.
 // It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
-// DependentMode) artık IpcMessages.cs'de sabit; BranchRef/Worktree git-yüzeyi DTO'ları burada.
+// DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
 
-public enum HintPathClass { Edge, ExternalThirdParty, ExternalOsysPlatform, Unclassified }
+public enum HintPathClass { Edge, ExternalThirdParty, ExternalPlatformBin, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
 
 public sealed record SolutionRef(string Name, string Path);
@@ -119,6 +119,18 @@ public enum WillBuildReason
     /// geldiğinde değerlendirir: köklerden en az biri artık başarılıysa derlenir, hepsi hâlâ hatalıysa atlanır
     /// (<c>ConditionalRebuild</c>). Alan SONA eklendi: sayısal değeri eskilerini kaydırmaz.</summary>
     WaitingForDependency,
+    /// <summary>[Faz 3 — spec 2026-09-18 §5.4] Derlenmeyecek: çıktı bu araç dışında (VS, komut satırı) derlendi —
+    /// zaman kipi, derleme kanıtı her girdiden ve HintPath hedefinden yeni, beslenen kopyalar sağlam. Yeşildir.</summary>
+    BuiltOutside,
+    /// <summary>[§5.4] Zaman kipi: kendi girdisi (dosya ya da taranan klasör) ya da bir HintPath hedefi derleme
+    /// kanıtından yeni — çıktı bayat (<c>modified</c> ya da <c>affected</c>).</summary>
+    OutputStale,
+    /// <summary>[§5.3/§5.4] Derleme kanıtı (projenin kendi çıktı dosyası) diskte yok — defterde kayıt olsa bile
+    /// çıktı ortada değildir (<c>never built</c> gibi okunur).</summary>
+    OutputMissing,
+    /// <summary>[§5.3/§5.4] Öğrenilmiş beslenen kopya (paylaşılan klasördeki DLL) eksik, boyutu farklı ya da
+    /// derleme kanıtından eski — bağımlılar başka bir çıktıya link'lenir (<c>affected</c>).</summary>
+    OutputReplaced,
 }
 
 public sealed record BuildState(
@@ -156,7 +168,25 @@ public sealed record BuildState(
     // (WaitingForDependency) ve koşu, köklerden biri düzelince derler (ConditionalRebuild). Alan SONA ve
     // default'lu: bu alandan önce yazılmış kayıtlar null çözülür ve kök bilinmediği için eski davranış
     // (her Build'de derlenir) sürer — güvenli yön.
-    IReadOnlyList<string>? DepIssueRoots = null)
+    IReadOnlyList<string>? DepIssueRoots = null,
+    // [spec 2026-09-18 §1-14] Bu projenin KENDİ MSBuild çağrısı exit != 0 ile bittiği andaki bileşik imza —
+    // kırmızının KANITI. Yalnız derleyici hatası bunu yazar (ortam hatası/timeout/durdurma DEĞİL, bkz. Task 2);
+    // başarıda null'a döner. WillBuildEvaluator bunu bugünkü imzayla karşılaştırır: eşitse gerekçe LastFailed
+    // (kanıtlı kırmızı), aksi hâlde (imza yok ya da farklı) hata kanıt SAYILMAZ ve karar NeverBuilt'e düşer —
+    // kanıtsız kırmızı YASAK. Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null
+    // çözülür (hiçbir eski kayıt yanlışlıkla "kanıtlı" sayılmaz).
+    string? FailedSignature = null,
+    // [spec 2026-09-18 §1-14] FailedSignature'ın YAZILDIĞI an — `failed · 2h` etiketinin yaşı buradan okunur
+    // (LastRunAt'tan AYRI: bir proje başarısızlıktan SONRA hiç derlenmeden imzası değişebilir, o durumda
+    // FailedSignature hâlâ eski hatayı anlatır ama LastRunAt onun zamanını taşımaz — bkz. BuildStateStore.
+    // FailedAtOf, LastBuiltAtOf ile aynı desen). Başarıda ya da kanıtsız hatada null.
+    DateTimeOffset? FailedAt = null,
+    // [Faz 3 — spec 2026-09-18 §5.1] Bu projenin derlemesiyle GERÇEKTEN güncellendiği öğrenilen "beslenen
+    // çıktılar": bağımlılarının HintPath hedeflerinden, başarılı derlemeden sonra var olan, boyutu derleme
+    // kanıtına eşit ve zamanı ondan en çok 2 s farklı olanlar (bkz. OutputEvidence.LearnFedOutputs). Hem defter
+    // hem zaman kipinde denetlenir: biri yoksa, boyutu farklıysa ya da kanıttan eskiyse çıktı bozuk sayılır.
+    // Alan SONA ve default'lu: eski kayıtlar null çözülür — liste yok, yalnız derleme kanıtı konuşur.
+    IReadOnlyList<string>? FedOutputs = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -174,7 +204,12 @@ public sealed record BuildState(
         && DepIssue == other.DepIssue
         && (DepIssueRoots is null
             ? other.DepIssueRoots is null
-            : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots));
+            : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots))
+        && FailedSignature == other.FailedSignature
+        && FailedAt == other.FailedAt
+        && (FedOutputs is null
+            ? other.FedOutputs is null
+            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs));
 
     public override int GetHashCode()
     {
@@ -190,6 +225,9 @@ public sealed record BuildState(
         hash.Add(BuiltContent);
         hash.Add(DepIssue);
         foreach (string root in DepIssueRoots ?? []) hash.Add(root);
+        hash.Add(FailedSignature);
+        hash.Add(FailedAt);
+        foreach (string fed in FedOutputs ?? []) hash.Add(fed);
         return hash.ToHashCode();
     }
 }
@@ -217,6 +255,19 @@ public sealed record ExternalProject(string Path);
 /// <summary>Bir git branch/ref bilgisi (GitService.ListBranches / BranchListEvent). [It-3]</summary>
 public sealed record BranchRef(string Name, string Sha, bool IsActive, bool IsRemoteTracking);
 
-/// <summary>Bir git worktree bilgisi (GitService.ListWorktrees). IPC yüzeyi minimal — bu DTO It-3'te yalnız
-/// GitService tarafında kullanılır; tam listWorktrees/deleteWorktree komutları It-4 UI'a ertelendi. [It-3]</summary>
-public sealed record Worktree(string Name, string Branch, string Path, bool IsActive, long? DiskSizeBytes);
+/// <summary>[Faz 2/Task 2] <c>BranchSwitcher.SwitchAsync</c>'in (<c>Core/Git/RepositoryWriter.cs</c>) sonucu —
+/// Task 5'in IPC üzerinden App'e taşıyacağı checkout durumu, bu yüzden Contracts'ta yaşar (Core → Contracts
+/// referansı, kopya YASAK).</summary>
+public enum CheckoutStatus
+{
+    /// <summary>Checkout başarıyla yapıldı; çalışma ağacı artık hedef branch'te.</summary>
+    Switched,
+    /// <summary>Hedef zaten aktif branch'ti — git'e hiç dokunulmadı.</summary>
+    AlreadyOn,
+    /// <summary>Commit'lenmemiş yerel değişiklik var ve stash istenmedi — hiçbir şey yapılmadı.</summary>
+    Dirty,
+    /// <summary><c>stash push</c> başarısız oldu — checkout hiç denenmedi.</summary>
+    StashFailed,
+    /// <summary>Checkout (stash başarılıysa stash SONRASI) başarısız oldu.</summary>
+    Failed,
+}

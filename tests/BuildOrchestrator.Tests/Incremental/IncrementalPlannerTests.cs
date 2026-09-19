@@ -461,7 +461,7 @@ public class IncrementalPlannerTests
     // Yeni fonksiyon aynı şekli (sıra bağımsız, ayraç-güvenli, boş küme -> null) diskten okunan içerikle korur.
 
     private static IReadOnlyList<ProjectInput> Inputs(params string[] paths) =>
-        [.. paths.Select(p => new ProjectInput(p, p))];
+        [.. paths.Select(p => new ProjectInput(p))];
 
     private static Func<string, string> Term(string root) => path => IncrementalRunBinder.PathTerm(root, path);
 
@@ -757,5 +757,160 @@ public class IncrementalPlannerTests
         Assert.NotEqual(before[SccE], after[SccE]);  // ... ve component'in TÜM üyelerine yazılıyor
         Assert.NotEqual(before[CycA], after[CycA]);  // SCC1 kompoziti SCC-DIŞI upstream'i (SCC2) üzerinden değişti
         Assert.NotEqual(before[CycD], after[CycD]);  // cycle DIŞINDAKİ downstream'e ULAŞTI (under-build yok)
+    }
+
+    // ---- [Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtı yalnız karara girer, imzaya ASLA -----------------
+
+    /// <summary>§5: kanıt (zaman kipinin hükmü) kararı değiştirir ama imzayı değiştirmez — imza içerikten gelir,
+    /// deftere o yazılır; kanıt imzaya girseydi aracın kendi derlemesinden sonra bile imza "değişmiş" görünürdü.</summary>
+    [Fact]
+    public void The_evidence_never_enters_the_signature()
+    {
+        var a = Node("A", 0, inCycle: false);
+        var b = Node("B", 1, inCycle: false, "A");
+        var plan = new BuildPlan([a, b], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("A", "fpA"), ("B", "fpB")));
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new(EvidenceMode.Time, false, true, TimeVerdict.OwnNewer, null),
+            ["B"] = new(EvidenceMode.Ledger, true, true, null, null),
+        };
+
+        var without = IncrementalPlanner.ComputeWillBuildWithSignatures(plan, fp, NoState, buildCycles: false);
+        var withEvidence = IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan, fp, NoState, buildCycles: false, outputs: outputs);
+
+        Assert.Equal(without.SignatureById, withEvidence.SignatureById);
+        Assert.Equal(WillBuildReason.NeverBuilt, without.Plan.Nodes[0].WillBuildReason);
+        Assert.Equal(WillBuildReason.OutputStale, withEvidence.Plan.Nodes[0].WillBuildReason);
+        // Defter kipinde NeverBuilt vetoyla ezilmez.
+        Assert.Equal(WillBuildReason.NeverBuilt, withEvidence.Plan.Nodes[1].WillBuildReason);
+    }
+
+    /// <summary>§5.6: zaman kipindeki döngü grubu tek karar verir — kontroller <see
+    /// cref="OutputEvidence.ApplyCycleGroups"/>'tan gelir, planlayıcı yalnız aktarır. A dışarıda taze derlendi,
+    /// B'nin kendi dosyası yeni ⇒ grup bayat: A <c>OutputStale</c> (bağımlılık), B <c>OutputStale</c> (kendi);
+    /// ikisi birden derlenir. Grubun hepsi tazeyse ikisi birden <c>BuiltOutside</c>.</summary>
+    [Fact]
+    public void A_cycle_group_in_time_mode_is_decided_as_one()
+    {
+        var a = Node("A", 0, inCycle: true, "B");
+        var b = Node("B", 1, inCycle: true, "A");
+        var plan = new BuildPlan([a, b], [["A", "B"]], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("A", "fpA"), ("B", "fpB")));
+        string composite = IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan, fp, NoState, buildCycles: true).SignatureById["A"];
+        var built = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new BuildState("A", composite, LastResult: BuildResult.Succeeded),
+            ["B"] = new BuildState("B", composite, LastResult: BuildResult.Succeeded),
+        };
+        OutputCheck TimeOf(TimeVerdict verdict) => new(EvidenceMode.Time, false, true, verdict, null);
+        var ledger = new OutputCheck(EvidenceMode.Ledger, false, true, null, null);
+
+        var stale = OutputEvidence.ApplyCycleGroups(
+            new Dictionary<string, OutputCheck> { ["A"] = TimeOf(TimeVerdict.Fresh), ["B"] = ledger },
+            plan.Cycles, id => TimeOf(id == "A" ? TimeVerdict.Fresh : TimeVerdict.OwnNewer));
+        var fresh = OutputEvidence.ApplyCycleGroups(
+            new Dictionary<string, OutputCheck> { ["A"] = TimeOf(TimeVerdict.Fresh), ["B"] = ledger },
+            plan.Cycles, _ => TimeOf(TimeVerdict.Fresh));
+
+        var stalePlan = IncrementalPlanner.ComputeWillBuild(plan, fp, built, buildCycles: true, outputs: stale);
+        var freshPlan = IncrementalPlanner.ComputeWillBuild(plan, fp, built, buildCycles: true, outputs: fresh);
+
+        Assert.All(stalePlan.Nodes, n => Assert.Equal((true, WillBuildReason.OutputStale), (n.WillBuild, n.WillBuildReason)));
+        Assert.All(freshPlan.Nodes, n => Assert.Equal((false, WillBuildReason.BuiltOutside), (n.WillBuild, n.WillBuildReason)));
+    }
+
+    // ---- [Faz 3 final review — ruling R10, spec 2026-09-18 §5.4 son cümle] kirli upstream zaman kipini de derletir
+
+    /// <summary>
+    /// <c>D</c> aracın kaydıyla derlenmiş ve kendi dosyası değişti (defter kipi, <c>SignatureChanged</c>). <c>P</c>
+    /// ona, <c>P2</c> <c>P</c>'ye bağlı; ikisinin de kaydı yok ve dışarıda derlenmiş çıktıları girdilerinden yeni
+    /// (zaman kipi, <see cref="TimeVerdict.Fresh"/>). <c>D</c> bu Build'de yeniden derlenecek, ortak kopyası henüz
+    /// eski — zaman kontrolü bunu göremez. Safe'te bağımlılar imzayla değerlendirilir (§5.4): <c>P</c> ve (transitive)
+    /// <c>P2</c> <c>OutputStale</c> ile AYNI Build'de derlenir; kendi dosyaları değişmediği için etiket
+    /// <c>affected</c>'tır. Kirli bir upstream'in arkasında olmayan <c>Q</c> <c>BuiltOutside</c> kalır. Plan bilerek
+    /// topolojik sırada DEĞİLDİR [A1]. Eskiden <c>P</c>/<c>P2</c> <c>BuiltOutside</c> okunup pre-skip edilirdi ve ağaç
+    /// ancak N Sync+Build turunda tutarlı olurdu.
+    /// </summary>
+    [Fact]
+    public void A_time_mode_project_behind_a_dirty_upstream_is_rebuilt_in_safe_mode()
+    {
+        var (plan, fp, state, outputs) = DirtyUpstreamFixture(TimeVerdict.Fresh);
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((true, WillBuildReason.SignatureChanged), Of("D"));
+        Assert.Equal((true, WillBuildReason.OutputStale), Of("P"));
+        Assert.Equal((true, WillBuildReason.OutputStale), Of("P2"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("Q"));
+        // Kendi dosyası değişmedi ⇒ affected (modified DEĞİL) — Sync ve koşu önizlemesinin TEK cevabı.
+        Assert.False(OutputEvidence.OwnFilesChanged(outputs["P"], state, "P", "fpP"));
+        Assert.False(OutputEvidence.OwnFilesChanged(outputs["P2"], state, "P2", "fpP2"));
+    }
+
+    /// <summary>Kendi zaman hükmü daha ağır olan bağımlı kendi gerekçesini korur: kanıtı yok ⇒ <c>OutputMissing</c>,
+    /// kendi girdisi yeni ⇒ <c>OutputStale</c> (<c>modified</c>). Beslenen kopyası bozuk olan ise zaman kipinin
+    /// sırasında "bağımlılık yeni"nin arkasındadır ⇒ <c>OutputStale</c>.</summary>
+    [Theory]
+    [InlineData(TimeVerdict.Missing, WillBuildReason.OutputMissing, false)]
+    [InlineData(TimeVerdict.OwnNewer, WillBuildReason.OutputStale, true)]
+    [InlineData(TimeVerdict.FedBroken, WillBuildReason.OutputStale, false)]
+    public void A_dependent_whose_own_time_verdict_is_worse_keeps_it(
+        TimeVerdict own, WillBuildReason expected, bool ownChanged)
+    {
+        var (plan, fp, state, outputs) = DirtyUpstreamFixture(own);
+
+        var p = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs)
+            .Nodes.Single(n => n.Id == "P");
+
+        Assert.Equal((true, expected), (p.WillBuild, p.WillBuildReason));
+        Assert.Equal(ownChanged, OutputEvidence.OwnFilesChanged(outputs["P"], state, "P", "fpP"));
+    }
+
+    /// <summary>Fast "yalnız dirty"dir, cascade yapmaz — zaman kipindeki bağımlı da kendi kanıtıyla kalır.</summary>
+    [Fact]
+    public void A_time_mode_project_behind_a_dirty_upstream_is_not_cascaded_in_fast_mode()
+    {
+        var (plan, fp, state, outputs) = DirtyUpstreamFixture(TimeVerdict.Fresh);
+
+        var result = IncrementalPlanner.ComputeWillBuild(
+            plan, fp, state, buildCycles: false, DependentMode.Fast, outputs);
+
+        Assert.True(result.Nodes.Single(n => n.Id == "D").WillBuild);
+        Assert.All(result.Nodes.Where(n => n.Id != "D"),
+            n => Assert.Equal((false, WillBuildReason.BuiltOutside), (n.WillBuild, n.WillBuildReason)));
+    }
+
+    /// <summary>Kirli upstream fixture'ı: <c>D</c> kayıtlı ve imzası değişmiş (defter kipi); <c>P → D</c>,
+    /// <c>P2 → P</c>, bağımsız <c>Q</c> kayıtsız ve zaman kipinde; <c>P</c>'nin hükmü <paramref name="pVerdict"/>.
+    /// Düğümler bilerek ters (topolojik olmayan) sıradadır.</summary>
+    private static (BuildPlan Plan, Func<ProjectNode, string?> Fp, Dictionary<string, BuildState> State,
+        Dictionary<string, OutputCheck> Outputs) DirtyUpstreamFixture(TimeVerdict pVerdict)
+    {
+        var d = Node("D", 0, inCycle: false);
+        var p = Node("P", 1, inCycle: false, "D");
+        var p2 = Node("P2", 2, inCycle: false, "P");
+        var q = Node("Q", 0, inCycle: false);
+        var plan = new BuildPlan([p2, q, p, d], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("D", "fpD-v2"), ("P", "fpP"), ("P2", "fpP2"), ("Q", "fpQ")));
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["D"] = new BuildState("D", BuildSignature.Compute(d, "Debug", "fpD-v1", _ => null),
+                LastResult: BuildResult.Succeeded),
+        };
+        OutputCheck TimeOf(TimeVerdict verdict) => new(EvidenceMode.Time, verdict == TimeVerdict.Missing,
+            verdict != TimeVerdict.FedBroken, verdict, null);
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["D"] = new(EvidenceMode.Ledger, false, true, null, null),
+            ["P"] = TimeOf(pVerdict),
+            ["P2"] = TimeOf(TimeVerdict.Fresh),
+            ["Q"] = TimeOf(TimeVerdict.Fresh),
+        };
+        return (plan, fp, state, outputs);
     }
 }

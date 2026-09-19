@@ -13,9 +13,16 @@ namespace BuildOrchestrator.Core.Discovery;
 /// </summary>
 public sealed class EvaluationCache(string cachePath)
 {
-    private sealed record Entry(long MtimeTicks, long Length, string Hash, EvaluatedProject Project);
+    private sealed record Entry(long MtimeTicks, long Length, string Hash, EvaluatedProject Project, int Schema = 0);
     private readonly Dictionary<string, Entry> _entries = Load(cachePath);
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
+
+    /// <summary>
+    /// [Faz 3/Task 1] Güncel önbellek şeması. Eski (şemasız/daha düşük şemalı) kayıtlar isabet SAYILMAZ —
+    /// <see cref="EvaluatedProject"/>'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayıtta boş
+    /// kalmasın diye proje her karşılaşıldığında bir kez yeniden değerlendirilir.
+    /// </summary>
+    internal const int CurrentSchema = 1;
 
     /// <summary>
     /// Canlı build ↔ scan yarışı [Task 0/It-4a]: scanner bir .csproj'u bulduktan sonra bu çağrı
@@ -44,14 +51,14 @@ public sealed class EvaluationCache(string cachePath)
             long mtime = info.LastWriteTimeUtc.Ticks;
             long length = info.Length;
 
-            if (_entries.TryGetValue(csprojPath, out var e))
+            if (_entries.TryGetValue(csprojPath, out var e) && e.Schema == CurrentSchema)
             {
                 if (e.MtimeTicks == mtime && e.Length == length) return e.Project; // hızlı yol: mtime+size eşit
                 if (Hash(csprojPath) is var h && h == e.Hash)                      // mtime/size farklı ama içerik aynı
                 { _entries[csprojPath] = e with { MtimeTicks = mtime, Length = length }; return e.Project; }
             }
             var proj = evaluate(csprojPath);
-            _entries[csprojPath] = new Entry(mtime, length, Hash(csprojPath), proj);
+            _entries[csprojPath] = new Entry(mtime, length, Hash(csprojPath), proj, CurrentSchema);
             return proj;
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException

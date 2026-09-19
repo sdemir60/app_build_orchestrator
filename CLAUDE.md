@@ -20,7 +20,7 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 | Proje | Target | Sorumluluk |
 |---|---|---|
 | `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray, single-instance, IPC client. **Outer Job Object** sahibi. |
-| `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek: discovery, graph, incremental karar, scheduler, git/worktree, MSBuild sözleşmesi, job primitifleri, state. |
+| `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek: discovery, graph, incremental karar, scheduler, git, MSBuild sözleşmesi, job primitifleri, state. |
 | `src/BuildOrchestrator.Supervisor` | net10.0-windows | Motor process: build kuyruğu, **inner Job Object**, per-project `MSBuild.exe`, IPC server. Planlamaz, yürütür. |
 | `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor sözleşmesi: command/event, DTO, JSON, NDJSON framing. |
 | `tests/BuildOrchestrator.Tests` | net10.0-windows (xUnit, `UseWPF`) | Core + process-control + IPC + integration + WPF realize/STA testleri + kaynak guard'ları. |
@@ -31,17 +31,18 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   child process'i — `dotnet build` DEĞİL.
 - **Nested Job Object:** App outer job sahibi, Supervisor içinde, `MSBuild.exe` inner job'da. Managed
   parent-watcher / PID heuristiği yok.
-- **OutDir'e dokunulmaz.** Yalnız `obj` (worktree modunda, proje Id anahtarıyla) izole edilir. "Değişti mi"
-  kararı sadece kaynak sinyalinden; DLL/bin timestamp asla okunmaz. Karar DİSKTEKİ kaynak İÇERİĞİNDEN verilir
-  ve sürüm kontrolü karara girmez (git yalnız fetch, branch, worktree ve harici güncelleme içindir);
-  kaynak dosyanın boyut+mtime bilgisi yalnız özet önbelleğinin anahtarıdır, karar terimi değildir. Harici
-  köklerden gelen projeler sıradan projelerdir (aynı argümanlar, aynı graf, aynı karar) — tek farkları worktree
-  modunda bile obj izolasyonu ALMAMALARIDIR: izolasyon havuza aittir, onlar orada yaşamaz.
-- **Git'e araç KENDİLİĞİNDEN yazmaz:** `checkout`/`switch`/`pull`/`reset` hiçbir akışta çalıştırılmaz. İki
-  istisna da kullanıcının açık kararıdır: (a) kayıtlı **harici kökler** — build anında, yalnız kullanıcı
-  güncellemeyi açık bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`);
-  (b) **ana repo** — yalnız kullanıcı alt bardaki `N behind` chip'ine bastığında, yalnız aktif
-  branch'te, yalnız ff-only. Mutasyon yüzeyi TEK dosyadır: `Core/Git/FastForwardUpdater.cs` (kaynak guard'ı).
+- **OutDir'e dokunulmaz.** Hiçbir çıktı yolu değiştirilmez (ne `OutDir` ne `obj`); her koşu çalışma ağacında
+  derlenir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
+  derlediği çıktıda tarihlere bakılır; çıktının tarihi tek başına "güncel" demeye asla yetmez. Sürüm kontrolü
+  karara girmez (git yalnız fetch, branch, checkout ve harici güncelleme içindir); kaynak dosyanın boyut+mtime
+  bilgisi içerik kararında yalnız özet önbelleğinin anahtarıdır. Harici köklerden gelen projeler sıradan
+  projelerdir (aynı argümanlar, aynı graf, aynı karar).
+- **Git'e araç KENDİLİĞİNDEN yazmaz:** `pull`/`reset`/`switch` hiçbir akışta çalıştırılmaz. Üç istisna da
+  kullanıcının açık kararıdır: (a) kayıtlı **harici kökler** — build anında, yalnız kullanıcı güncellemeyi açık
+  bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`); (b) **ana repo pull** — yalnız
+  `N behind` chip'i, yalnız aktif branch, yalnız ff-only, kirli ağaçta ret; (c) **branch chip'inden checkout**
+  — kirli ağaçta ayar karar verir (Stop varsayılan; Stash and switch'te `git stash push -u`). Mutasyon yüzeyi
+  TEK dosyadır: `Core/Git/RepositoryWriter.cs` (kaynak guard'ı).
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
 - **Kopya YASAK / tek doğruluk kaynağı:** aynı değer, metin veya primitif iki yerde tanımlanmaz — ne kodda

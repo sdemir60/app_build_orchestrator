@@ -4,6 +4,7 @@ using System.Windows.Shapes;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -25,6 +26,12 @@ namespace BuildOrchestrator.Tests.App;
 /// çiziliyordu; ikisi de kaldırıldı — <b>ikisi de artık TAM OPAK (1.0)</b>. Çapraz-sönümün KENDİSİ
 /// (<see cref="StartMode.CrossFadeMs"/>, geometrisi) DEĞİŞMEDİ; ayrıntı <see cref="StartMode"/>'tadır.</para>
 ///
+/// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Başlangıç modundan çıkış eskiden "bir işlem başladı"
+/// (<c>Fresh=false</c>, <c>_neutralize</c>) anıydı. Değişme gerekçesi: Sync artık renk verir — başlangıç modu
+/// yalnız KARARIN yokluğudur. Yeni tetik: satıra önizleme kararı gelir (<c>WillBuild</c> + gerekçe →
+/// <see cref="ProjectRowViewModel.Standing"/>). Aşağıdaki testler yardımcıyı bu yüzden bayrakla değil çıktı
+/// durumuyla kurar; çapraz-sönümün kendisi ve ölçüleri DEĞİŞMEDİ.</para>
+///
 /// <para>Statü glyph'inin kesikli çemberi de DEĞİŞMEDİ — o da SVG stroke'tur ve building spinner'ı onun dönen
 /// hâlidir.</para>
 /// </summary>
@@ -32,12 +39,26 @@ namespace BuildOrchestrator.Tests.App;
 public class StartModeContinuousTests
 {
     // Motion KAPALI: opaklık hedefe ANINDA oturur, böylece ölçülen şey animasyonun ara karesi değil KURALDIR.
-    private static (ProjectRow row, ProjectRowViewModel vm, Window window) Realize(bool fresh)
+    private static (ProjectRow row, ProjectRowViewModel vm, Window window) Realize(StandingStatus standing)
     {
         var host = DsResources.NewHost();
-        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending) { Fresh = fresh };
+        var vm = new ProjectRowViewModel("a", "A", ProjectRowState.Pending);
+        Decide(vm, standing);
         var row = new ProjectRow { DataContext = vm, AnimationsEnabledProvider = () => false };
         return (row, vm, DsResources.Realize(host, row));
+    }
+
+    /// <summary>Satıra, istenen çıktı durumunu veren önizleme kararını yazar (Sync'in yaptığı gibi).</summary>
+    private static void Decide(ProjectRowViewModel vm, StandingStatus standing)
+    {
+        (vm.WillBuild, vm.WillBuildReason) = standing switch
+        {
+            StandingStatus.Current => (false, WillBuildReason.UpToDate),
+            StandingStatus.Stale => (true, WillBuildReason.SignatureChanged),
+            StandingStatus.Failed => (true, WillBuildReason.LastFailed),
+            _ => ((bool?)null, (WillBuildReason?)null),
+        };
+        Assert.Equal(standing, vm.Standing); // ön-koşul: karar istenen durumu verdi
     }
 
     private static StatusDot RealizeDot(VisualStatus state, out Window window)
@@ -57,12 +78,12 @@ public class StartModeContinuousTests
     [StaFact]
     public void The_stripe_is_solid_and_always_fully_opaque()
     {
-        var (row, vm, window) = Realize(fresh: true);
+        var (row, vm, window) = Realize(StandingStatus.Unknown);
 
         Assert.IsType<SolidColorBrush>(row.Stripe.Fill);            // tile'lanmış kesikli fırça YOK (v1.12.0)
         Assert.Equal(1.0, row.Stripe.Opacity);                      // v1.13.2: başlangıç modunda da TAM opak
 
-        vm.Fresh = false;                                           // bir işlem başladı (_neutralize)
+        Decide(vm, StandingStatus.Stale);                           // Sync kararı geldi (v1.20.0)
         Assert.IsType<SolidColorBrush>(row.Stripe.Fill);
         Assert.Equal(1.0, row.Stripe.Opacity);
         GC.KeepAlive(window);
@@ -78,7 +99,7 @@ public class StartModeContinuousTests
     [StaFact]
     public void The_dot_cross_fades_between_a_four_arc_ring_and_a_filled_circle()
     {
-        var dot = RealizeDot(VisualStatus.Fresh, out var window);
+        var dot = RealizeDot(VisualStatus.Unknown, out var window);
 
         double ringWidth = dot.Ring.Width, fillWidth = dot.Fill.Width;
 
@@ -86,10 +107,10 @@ public class StartModeContinuousTests
         Assert.Equal(1.0, dot.Ring.Opacity);
         Assert.Equal(0.0, dot.Fill.Opacity);
 
-        dot.State = VisualStatus.Discovered;
+        dot.State = VisualStatus.Stale;
         dot.UpdateLayout();
 
-        // İşlem başladı: çapraz-sönüm — halka gitti, dolu daire geldi. Ölçüler DEĞİŞMEDİ.
+        // Karar geldi (v1.20.0; eskiden "işlem başladı"): çapraz-sönüm — halka gitti, dolu daire geldi. Ölçüler DEĞİŞMEDİ.
         Assert.Equal(0.0, dot.Ring.Opacity);
         Assert.Equal(1.0, dot.Fill.Opacity);
         Assert.Equal(ringWidth, dot.Ring.Width);
@@ -107,7 +128,7 @@ public class StartModeContinuousTests
     [StaFact]
     public void The_ring_is_drawn_as_four_equal_arcs()
     {
-        var dot = RealizeDot(VisualStatus.Fresh, out var window);
+        var dot = RealizeDot(VisualStatus.Unknown, out var window);
 
         double drawnRadius = dot.Ring.RenderedGeometry.Bounds.Width / 2;   // stroke'un MERKEZ çizgisi
         double circumference = Math.PI * drawnRadius * 2;
@@ -133,11 +154,11 @@ public class StartModeContinuousTests
     [StaFact]
     public void A_recycled_row_lands_on_its_new_data_without_animating()
     {
-        var (row, _, window) = Realize(fresh: true);
+        var (row, _, window) = Realize(StandingStatus.Unknown);
         var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
         row.AnimationsEnabledProvider = () => true;    // ön-koşul: motion AÇIK, yine de oynamamalı
 
-        row.DataContext = new ProjectRowViewModel("b", "B", ProjectRowState.Succeeded) { Fresh = false };
+        row.DataContext = new ProjectRowViewModel("b", "B", ProjectRowState.Succeeded);
         row.UpdateLayout();
 
         Assert.False(stripe.HasAnimatedProperties, "geri dönüştürülen satırda şerit animasyonu kurulmamalı");
@@ -158,7 +179,7 @@ public class StartModeContinuousTests
     [StaFact]
     public void A_status_tick_never_re_arms_the_cross_fade()
     {
-        var (row, vm, window) = Realize(fresh: false);
+        var (row, vm, window) = Realize(StandingStatus.Current);
         var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
         row.AnimationsEnabledProvider = () => true;
 
@@ -177,11 +198,11 @@ public class StartModeContinuousTests
     [StaFact]
     public void Leaving_the_start_mode_really_does_cross_fade()
     {
-        var (row, vm, window) = Realize(fresh: true);
+        var (row, vm, window) = Realize(StandingStatus.Unknown);
         var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
         row.AnimationsEnabledProvider = () => true;
 
-        vm.Fresh = false;                               // bir işlem başladı
+        Decide(vm, StandingStatus.Current);             // Sync kararı geldi (v1.20.0; eskiden "işlem başladı")
         row.UpdateLayout();
 
         Assert.True(row.Dot.Ring.HasAnimatedProperties, "başlangıç modundan çıkarken halka SÖNMELİ");

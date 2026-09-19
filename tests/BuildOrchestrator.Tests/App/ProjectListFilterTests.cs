@@ -262,41 +262,95 @@ public class ProjectListFilterTests
     }
 
     /// <summary>
-    /// [design v1.13.2 §2.4 · §9] <b>"No changes" bir Sync de reveal'i yeniden oynatır.</b> Sync "sıfırdan
-    /// listelendi" demektir: prototipte <c>doSync()</c> (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER
-    /// Sync'te KOŞULSUZ artırır — üretim aynı kuralı izler. Karar ve gerekçesi
-    /// <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda.
+    /// [spec 2026-09-18 §1-13 · §6.2] <b>Yapısı aynı bir Sync listeyi YERİNDE tazeler:</b> liste resetlenmez,
+    /// reveal yeniden oynamaz. Karar ve gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'unda.
     ///
-    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüldü]</b> ESKİ İDDİA (A13/B3 · E4): "no changes bir Sync listeyi ne
-    /// resetler ne de reveal'i yeniden oynatır" — imza guard'ı her yayına uygulanıyordu, gerekçesi "gereksiz churn"
-    /// (mid-run bir Sync koşan grafı yeniden-reveal etmesin). Kullanıcı testinde ölçülen: aynı repoda ikinci
-    /// Sync'te kartlar yeniden belirmiyor, liste başa DÖNMÜYORDU. Mid-run Sync zaten ulaşılamaz (Sync koşarken
-    /// kilitli), guard yalnız Sync DIŞI yayınlar için kaldı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia: <c>A_no_changes_sync_replays_the_reveal</c>
+    /// — "no changes" bir Sync de reveal'i yeniden oynatır (design v1.13.2: prototipin <c>doSync()</c>'u
+    /// <c>revealKey</c>'i her Sync'te koşulsuz artırır; <c>OnWorkspaceTopology</c> <c>_syncInFlight</c> iken imza
+    /// guard'ını atlıyordu). Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her
+    /// biri listeyi baştan kurup başa sarıyordu; yapı aynıyken reveal hiçbir şey anlatmıyor.</para>
     ///
-    /// <para><b>Vakum değil:</b> (a) reveal'in taban çizgisi 0'ın ÜSTÜNDE olduğu ayrıca assert edilir,
-    /// (b) yeniden yayınlanan topolojinin gerçekten TÜKETİLDİĞİ (aynı satırlar, aynı sırada) assert edilir.
-    /// Scroll'un başa dönüşü <c>StickyRevealTriggerTests.A_no_changes_sync_returns_the_list_to_the_top</c>'ta.</para>
+    /// <para><b>Vakum değil:</b> reveal'in taban çizgisi 0'ın ÜSTÜNDE ve yeniden yayınlanan topoloji gerçekten
+    /// TÜKETİLDİ (aynı satırlar, aynı sırada). Kardeşleri: <see cref="A_sync_that_adds_a_project_replays_the_reveal"/>,
+    /// <see cref="A_clean_empties_the_list_and_its_sync_replays_the_reveal"/>.</para>
     /// </summary>
     [StaFact]
-    public void A_no_changes_sync_replays_the_reveal()
+    public void A_sync_with_the_same_structure_updates_in_place()
     {
         using var temp = new TempDir();
         var (window, vm, list) = NewShellWithProjects(temp);
-        list.AnimationsEnabledProvider = () => true; // reveal ancak motion açıkken kuşak ilerletir (kardeş testle AYNI)
+        list.AnimationsEnabledProvider = () => true; // reveal ancak motion açıkken kuşak ilerletir
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         int afterTopology = list.RevealGeneration;
         Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+        int resets = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => resets++;
 
-        // ÜRETİM YOLU: Sync başlar, AYNI topoloji yeniden yayınlanır ("no changes"), Sync biter.
+        // ÜRETİM YOLU: Sync başlar, AYNI topoloji yeniden yayınlanır, Sync biter.
         vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
         vm.OnEvent(new WorkspaceTopologyEvent(
             [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")],
             [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
-        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterTopology, TimeSpan.FromSeconds(3));
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // reveal (oynasaydı) pompada ilerlerdi
 
         Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list)); // topoloji GERÇEKTEN tüketildi
-        Assert.NotEqual(afterTopology, list.RevealGeneration);              // ...ve reveal YENİDEN OYNADI
+        Assert.Equal(0, resets);                                                 // liste resetlenmedi
+        Assert.Equal(afterTopology, list.RevealGeneration);                      // ...ve reveal OYNAMADI
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec 2026-09-18 §1-13] Yapı değişen bir Sync (bir proje eklendi) reveal'i yeniden oynatır.</summary>
+    [StaFact]
+    public void A_sync_that_adds_a_project_replays_the_reveal()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        list.AnimationsEnabledProvider = () => true;
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int afterTopology = list.RevealGeneration;
+        Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"),
+             MainWindowHost.Node("Gamma", 2, "Ui"), MainWindowHost.Node("Delta", 3, "Ui")],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 4, 0));
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterTopology, TimeSpan.FromSeconds(3));
+
+        Assert.Equal(new[] { "Alpha", "Beta", "Gamma", "Delta" }, VisibleRowNames(list));
+        Assert.NotEqual(afterTopology, list.RevealGeneration);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Clean tıklamada listeyi boşaltır; zincirlenen Sync AYNI yapıyı getirse de
+    /// reveal yeniden oynar — boşaltma imzayı da unutturur (<c>ClearPlanSurface</c>).</summary>
+    [StaFact]
+    public async Task A_clean_empties_the_list_and_its_sync_replays_the_reveal()
+    {
+        using var temp = new TempDir();
+        var (window, vm, list) = NewShellWithProjects(temp);
+        list.AnimationsEnabledProvider = () => true;
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int afterTopology = list.RevealGeneration;
+        Assert.True(afterTopology > 0, "topoloji reveal'i hiç oynamadı — bu testin taban çizgisi YOK (vakum)");
+
+        await vm.CleanCommand.ExecuteAsync(null);
+        Assert.Empty(vm.Projects); // tıklamada boşaldı
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // boşalmanın kendi kuşağı (varsa) otursun
+        int afterClean = list.RevealGeneration;
+
+        vm.OnEvent(new SyncStartedEvent(vm.RootPath, "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [MainWindowHost.Node("Alpha", 0, "Core"), MainWindowHost.Node("Beta", 1, "Core"), MainWindowHost.Node("Gamma", 2, "Ui")],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != afterClean, TimeSpan.FromSeconds(3));
+
+        Assert.Equal(new[] { "Alpha", "Beta", "Gamma" }, VisibleRowNames(list));
+        Assert.NotEqual(afterClean, list.RevealGeneration); // AYNI yapı, yine de reveal oynadı
         GC.KeepAlive(window);
     }
 

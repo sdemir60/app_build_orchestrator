@@ -285,6 +285,19 @@ public class RibbonTextTests
         Assert.Equal("failed", line.Glyph);
     }
 
+    /// <summary>[design v1.20.0 §2.7 · §2.2] Sayaç chip'leri artık DURUMU sayar (Current/Stale/Broken), ama şeridin
+    /// koşu özeti koşunun HİKÂYESİDİR ve değişmez: "N skipped" ile "(N dependency-affected)" koşu kovalarından
+    /// okunur. Durum kovaları koşu kovalarından farklıyken metin koşu kovalarını söyler.</summary>
+    [Fact]
+    public void The_completed_line_still_reads_the_run_table_not_the_state_buckets()
+    {
+        var c = new RunCounters(Total: 14, Building: 0, Queued: 0, Succeeded: 4, Failed: 5, Skipped: 2,
+            DepAffected: 4, StuckCycles: 0, Current: 9, Stale: 3, Broken: 2);
+        var line = RibbonText.Compose(AppPhase.Done, true, allClean: false, c,
+            willBuild: 11, finishedOfWillBuild: 11, totalProjects: 14, elapsedMs: 65_000, etaMs: null, checkDurMs: null, warnings: 3);
+        Assert.Equal("Completed — 5 failed · 4 succeeded (4 dependency-affected) · 2 skipped · 3 warnings · 1m 05s", line.Text);
+    }
+
     [Fact]
     public void Done_clean_line_lists_succeeded_skipped_and_elapsed_with_success_glyph()
     {

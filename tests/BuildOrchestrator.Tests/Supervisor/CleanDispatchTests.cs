@@ -58,7 +58,6 @@ public class CleanDispatchTests : IDisposable
             new GitService(new ProcessRunner(), root), new BuildStateStore(_sandbox),
             new SourceHashCache(Path.Combine(_sandbox, SourceHashCache.FileName))),
         root => new GitService(new ProcessRunner(), root),
-        root => new WorktreeManager(new ProcessRunner(), root, Path.Combine(_sandbox, "worktrees")),
         clean ?? (_ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(_sandbox))
         {
             DeleteRetryDelay = _ => { }, // [D8] testte gerçek bekleme yok

@@ -85,7 +85,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// to tray</c>, <c>Close to tray</c> ve <c>Show notifications</c> yalnız bu taslakta yaşar — <see cref="CommitAsync"/>
     /// onları yazmaz, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşımaz, konsola not düşmez; diyalog her açılışta
     /// yeni bir taslak kurduğu için varsayılana dönerler. <see cref="ClearAll"/> onları da varsayılanına döndürür
-    /// (prototip parity). Yalnız <c>Pull before build</c> gerçektir: <see cref="PullExternalsBeforeBuild"/>.</para></summary>
+    /// (prototip parity). Yalnız <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>) ve <c>Stash and switch
+    /// branches</c> (<see cref="StashOnBranchSwitch"/>) gerçektir.</para></summary>
     public IReadOnlyList<GeneralSettingGroupViewModel> GeneralGroups { get; }
 
     private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];
@@ -102,6 +103,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.PullBeforeBuild).IsOn = value;
     }
 
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'ta kirli ağaç stash'lenip geçilsin mi — General
+    /// sayfasının BRANCHES grubundaki <c>Stash and switch branches</c> satırının KENDİSİ (iki yüz tek değer,
+    /// <see cref="PullExternalsBeforeBuild"/> deseni). Varsayılan KAPALI; Save'e kadar yalnız taslaktır.</summary>
+    public bool StashOnBranchSwitch
+    {
+        get => GeneralRow(GeneralSetting.StashOnBranchSwitch).IsOn;
+        set => GeneralRow(GeneralSetting.StashOnBranchSwitch).IsOn = value;
+    }
+
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
@@ -114,12 +124,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <paramref name="initialExternals"/> harici proje listesinin AYNI kuralla gelen taslağıdır (K5) — boşsa
     /// taslak da boş kalır.</summary>
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
+    /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
-        IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true)
+        IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
+        bool stashOnBranchSwitch = false)
     {
         _repositoryRoot = repositoryRoot;
         GeneralGroups = BuildGeneralGroups();
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
+        StashOnBranchSwitch = stashOnBranchSwitch;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -169,7 +182,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar.</summary>
     public SettingsFile ToFile() =>
-        SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild);
+        SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch);
 
     /// <summary>Bir ayar dosyasını <b>FORMA</b> yükler. Hiçbir şey UYGULANMAZ: Save'e kadar ne
     /// <see cref="RunViewModel"/> ne UiState değişir (§2.9 — onay dialogu da yoktur).
@@ -195,6 +208,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         // [design v1.15.0] Bayrak dosyada YOKSA (eski/yalnız-katman dosyası) taslaktaki değer KORUNUR — harici
         // liste kuralının aynısı: bir dosyanın taşımadığı ayarı sıfırlamak sessiz bir karar olurdu.
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
+        // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
+        if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
         // else: anahtar dosyada yok — mevcut harici liste KORUNUR (yukarıdaki XML doc).
     }
 
@@ -244,8 +259,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.LayerPatterns = patterns.ToList();
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
+        state.StashOnBranchSwitch = StashOnBranchSwitch;
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -270,6 +286,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.PullBeforeBuild].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(PullExternalsBeforeBuild));
+        };
+        _generalRows[GeneralSetting.StashOnBranchSwitch].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(StashOnBranchSwitch));
         };
         return groups;
     }

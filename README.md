@@ -1,8 +1,9 @@
 # Build Orchestrator
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
-for projects, derives the dependency graph, decides which projects actually changed (from git, never from
-output timestamps), and builds only those — in parallel, under a supervisor process it owns.
+for projects, derives the dependency graph, decides which projects actually changed (from source content on
+disk — an output's date alone never makes it current), and builds only those — in parallel, under a supervisor
+process it owns.
 
 It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
 with your own privileges.
@@ -19,8 +20,9 @@ source signature against the stored build state to mark each project as "will bu
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
 N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
 stopped (in-flight projects are allowed to finish their post-build copy) or retried for just the failed
-projects and their dependents. Building a branch other than the checked-out one
-happens in a detached git worktree from a pool — your working tree is never checked out, reset or switched.
+projects and their dependents. There is one tree: every build compiles your working tree as it is, on whatever
+branch is checked out. Picking another branch on the branch chip checks it out for real; the tool never writes
+to git on its own, and changes you make in git outside the tool are picked up automatically.
 
 ## Architecture
 
@@ -55,14 +57,15 @@ Key consequences of that layout:
 - Builds are **shelled out**, never done in-process. `MSBuild.exe` is located through `vswhere` (VS or Build
   Tools), and every project is invoked with `-p:UseSharedCompilation=false -nodeReuse:false` so that no
   compiler server survives outside the job.
-- The shared `OutDir` is never touched: no `-p:OutDir` / `-p:OutputPath` is ever passed, so output lands
-  exactly where Visual Studio would put it. Only `BaseIntermediateOutputPath` (`obj`) is isolated, and only in
-  worktree mode, keyed by the project's full path.
+- No output path is ever changed: no `-p:OutDir` / `-p:OutputPath` and no intermediate-path redirect is passed,
+  so output — and `obj` — lands exactly where Visual Studio would put it.
 - "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
-  it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No DLL
-  or `bin` timestamp is ever read, and no version-control command takes part: git is used for
-  fetching, branches and worktrees, never for deciding. Hashes are cached by size and modification time, so a
-  normal run only stats those files.
+  it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No
+  version-control command takes part: git is used for fetching, branches, checkout and updating external
+  working copies, never for deciding. Hashes are cached by size and modification time, so a normal run only
+  stats those files. An output's date never makes the tool's own output current; it is compared with the
+  inputs only for an output built elsewhere — in Visual Studio, say — which counts as current when no input is
+  newer than it (ARCHITECTURE.md §7.6).
 
 ## Requirements
 
@@ -151,8 +154,9 @@ the running instance first — tray icon → Exit).
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
    form — nothing is applied until you press *Save*.
-2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. Until it
-   has run, *Build*, *Rebuild* and *Resolve cycles* are disabled: a run before the first Sync would compile for
+2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
+   first Sync runs by itself when the application starts. Until it has run, *Build*, *Rebuild* and *Resolve
+   cycles* are disabled: a run before the first Sync would compile for
    real while the list and the graph stayed empty. While a Sync is *running*, those three and *Sync* itself are
    disabled too — the engine handles one at a time, and anything started in that window would land in the
    middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
@@ -161,25 +165,52 @@ the running instance first — tray icon → Exit).
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
    drop one of the roots that contributes it.
 
-   **Sync colours nothing.** Which operation is coming is not known yet, so no plan is shown: every row sits
-   in the start mode — a faint stripe, a four-arc ring in place of the dot, a dashed glyph — and every graph
-   node draws a dashed border. What is stale is still readable, from the **decision label** at the right end of
-   each row: `modified` (its own files changed), `affected` (only a dependency changed), `never built`,
-   `failed · retry`, or `up to date · 2h` — the tail being how long ago it was last built successfully. A
-   project that built successfully against a dependency that was failing, and has not changed since, reads
-   `affected · up to date · <age>` instead: a later Build leaves it alone until that dependency is healthy
-   again, and its native tooltip names which one. Colour arrives when you press something.
+   **You rarely need to press Sync yourself.** The tool watches the repository's HEAD: a commit, a pull, a
+   reset or a branch change made in Visual Studio or a terminal is picked up about a second and a half after
+   git finishes, and switching back to the window refreshes the decisions too (at most once every five seconds).
+   These automatic Syncs are quiet: they do not clear the console, do not scroll the list, and add at most one
+   line to the event stream (`synced after commit`, `synced · 3 projects changed`). They do not go to the
+   network either, so the `N behind` count they show is against the last remote state you fetched; the *Sync*
+   button fetches. The list and the graph are only rebuilt with their opening animation when a project was
+   added or removed — otherwise the rows simply change colour in place.
+
+   **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
+   will be built, red when its last build failed with a compiler error. A project you built in Visual Studio is
+   green too, as long as none of its inputs is newer than that output. In a cycle member the graph node's cube
+   is always amber. Before the first Sync nothing is known, so every row sits in the start mode — a four-arc
+   ring in place of the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build
+   is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
+   `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed,
+   or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
+   its output file is gone), `failed · 2h` (failed at this source — the tail is how long ago), or
+   `up to date · 2h` — the tail being how long ago it was last built successfully (or, for a project built
+   outside this tool, how old that output is). A project that built successfully against a dependency that was
+   failing, and has not changed since, reads the same `up to date` — a later Build leaves it
+   alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 
    The Sync line in the console also says where you stand against the remote:
    `HEAD a3f81c2 · 3 commits behind origin/main`. When you are behind, a small **`3 behind`** chip appears next
    to the branch chip; clicking it fast-forwards the repository (`merge --ff-only` — never a merge commit, never
-   a rebase, and never on a dirty or diverged tree) and runs a Sync afterwards. Nothing else in the tool ever
-   writes to your repository. Offline, the distance is unknown and the chip is not drawn.
-3. **Branch / worktree** — picking a branch other than the checked-out one forces worktree mode: the build runs
-   in a detached worktree from the pool. Project rows reset to pending, the ribbon goes back to
-   *"▸ Waiting for Sync — project states appear after Sync"* and the console gets a
-   `Branch changed: <branch> — Sync required` line. Worktrees are created with `--detach` and live under
-   `%LOCALAPPDATA%\BuildOrchestrator\worktrees\`.
+   a rebase, and never on a dirty or diverged tree; stashing does not apply here) and runs a Sync afterwards. The
+   chip is locked while a build, a Sync or another git action is running, and while git itself is in the middle
+   of an operation. Offline, the distance is unknown and the chip is not drawn. The tool writes to your
+   repository only when you click: this chip, the branch chip below, and the external working copies of step 4.
+3. **Branch** — the branch chip shows the branch checked out in your working tree. Picking another branch from
+   its list checks it out (`git checkout`; a remote branch gets a local tracking branch), then the console
+   starts over with a `Switched to <branch> (<sha>) — from <previous>` line and a Sync follows. If the working
+   tree has uncommitted changes, *Settings → General → Stash and switch branches* decides:
+   - **off** (default) — nothing happens, and the console says `N files have uncommitted changes — commit or
+     stash them first`;
+   - **on** — the changes, untracked files included, are stashed first (`build-orchestrator: leaving <branch>
+     for <target>`) and the console tells you to restore them with `git stash pop`. The tool never pops a
+     stash for you.
+
+   Branch changes you make outside the tool are reflected the same way: the chip follows HEAD and the console
+   opens a new section. If one happens while a build is running, the build stops gracefully — nothing new
+   starts, what is compiling finishes, and those results are not trusted — and the new section's first line
+   says how many projects were built, how many were not, and where the run's logs are. While git is in the
+   middle of a merge, rebase, cherry-pick or revert, the branch chip carries an amber dot, checkout and pull
+   are locked, and automatic Syncs wait until git is done; *Build* and *Sync* still work, with a warning line.
 4. **External projects** *(optional)* — some projects a build depends on may live outside the repository. Add
    them under *Settings → External projects*: type or paste the path — a folder, a `.sln` or a `.csproj`.
    That path is the whole card; the git working copy above it is found for you.
@@ -239,8 +270,8 @@ the running instance first — tray icon → Exit).
    Nothing compiles the moment you click, and *Stop* is available throughout. While the opening sequence is
    playing the engine has not been asked for anything yet, so a stop there cancels the run outright — the
    console says `Cancelled — build not started` and nothing is sent. Once the sequence ends the engine works
-   out what to build — preparing the worktree if one is in use, scanning, building the graph, then computing
-   what changed — which on a large repository takes seconds; the ribbon reads
+   out what to build — updating external working copies if that is on, scanning, building the graph, then
+   computing what changed — which on a large repository takes seconds; the ribbon reads
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
@@ -250,12 +281,17 @@ the running instance first — tray icon → Exit).
    The elapsed clock starts from zero — it is a new run.
 
 **Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
-glyph and the graph node all carry the same status, so there is nothing to cross-reference. A single amber
-triangle in the fixed slot on the right means something is off with this project's dependencies — a cycle, or
+glyph and the graph node all carry the same status, so there is nothing to cross-reference. Green does not
+say who built the output: hover the decision label and its tooltip says `built outside this tool` when it was
+not this tool. A single amber triangle in the fixed slot on the right means something is off with this project's
+dependencies — a cycle, or
 a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
-project log. The counter chips in the bottom bar are filters and they **combine**: press the tick and the
-cross together to see what this run built, and type in the filter box (`Ctrl+F`) to narrow that further. Each
-active chip lights in its own colour, and the chip in the PROJECTS header lists what is on.
+project log. The counter chips in the bottom bar count state — `✓` up to date, `○` to build, `✗` failed, plus
+what is building right now — and each is a filter; they **combine**: press the tick and the circle together to
+see everything that is green or grey, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
+project is not a state of its own: it keeps its colour and is counted under the chip it shows, while the run's
+*N skipped* stays in the ribbon's summary. Each active chip lights in its own colour, and the chip in the
+PROJECTS header lists what is on.
 
 **Per-project actions** live on the row: hover it for a play button and a ⋯ menu — Build and Rebuild for
 that one project — and right-clicking the row opens the same menu. A run started this way compiles that
@@ -319,7 +355,9 @@ build icons — green, red, the spinner — and carry a single amber warning tri
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
-answers "why was this one not built?". A member the run actually compiled wears its result colour alone.
+answers "why was this one not built?". A member the run actually compiled wears its result colour alone —
+except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
+because nothing it produced is kept.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
@@ -412,7 +450,7 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
 - **About** — a short description of what the app does, then the application version, the engine version (or
   `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
 - **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS) and *Paths* (the resolved
-  `MSBuild.exe` and its version, the repository root, and the state, log and worktree-pool paths).
+  `MSBuild.exe` and its version, the repository root, and the state and log paths).
 - **Shortcuts** — the table above in two groups, *Build* and *Application*, rendered from the same source the
   app binds its keys from, so a rebound key can never drift from what the screen claims.
 
@@ -444,8 +482,15 @@ survives a stray keypress.
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
 and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
-and the `worktrees\` pool (capped at 20 GiB with LRU pruning). Autostart, when enabled, writes to
+and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
+dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
+as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
+never taken for a finished one. Autostart, when enabled, writes to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service.
+
+Older versions kept a pool of git worktrees under `worktrees\`. Nothing uses it any more; if the folder is
+still there, the console says so once per session. Delete it to reclaim the space, then run
+`git worktree prune` in the repository.
 
 ## Performance modes
 
@@ -481,10 +526,16 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
 
 ## Known limits (v1)
 
-- **One repository at a time.** External projects are updated and compiled ahead of the main work, but they never enter its graph — no edges, no dependents, no incremental cascade.
-- **No build-output isolation for worktrees.** Only `obj` is isolated (per project id, in worktree mode); the
-  shared `OutDir` is intentionally left alone for Visual Studio parity, so builds of different branches write
-  their output to the same place.
+- **One repository's history at a time.** External projects join the same graph — real dependency edges,
+  the same incremental decision — but the branch, the HEAD watcher and the `N behind` count describe the
+  repository root alone. Switching branches does not move an external working copy.
+- **One tree, no build-output isolation between branches.** Every build compiles the working tree, and no
+  output path is changed — neither `OutDir` nor `obj` — for Visual Studio parity, so builds of different
+  branches write their output to the same place. To build another branch, check it out.
+- **Automatic Syncs do not fetch.** Their `N behind` count is against the last remote state you fetched; press
+  *Sync* or pull to refresh it.
+- **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
+  appears with the first commit; until then, switching back to the window keeps the list current.
 - **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — roughly 2.9× the
   flags-on build, essentially all of it from shared compilation. They stay because with a compiler server the
   emit happens outside the job, which brings back the risk of a torn DLL when a run is stopped.

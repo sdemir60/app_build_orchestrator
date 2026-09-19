@@ -1,5 +1,6 @@
 ﻿using System.Collections.Specialized;
 using System.IO;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -253,9 +254,13 @@ public class RunViewModelTests
     // modu da okur): kapsam İÇİNDEKİ bayat bir upstream bağımlılık WillBuild=true olsa da gri bekler,
     // projectStarted'la normal yoldan Building'e geçer. Kapsam DIŞI bir proje motorun kendi pre-skip'ini
     // (SkipReasons.OutOfCycleScope) State'e hiç TAŞIMAZ: state boyunca ve run bitince de Pending/Discovered
-    // kalır, atlandı sayacı onu SAYMAZ, atlandı filtresi onu LİSTELEMEZ — [review fix I-1] SkipReason'ı YİNE DE
+    // kalır, atlandı sayacı onu SAYMAZ — [review fix I-1] SkipReason'ı YİNE DE
     // taşır (ConsoleEmptyStateTests bunun neden gerekli olduğunu ayrıca pinler). Kapsam içi GERÇEK bir "up to
     // date" skip (SkipReasons.UpToDate) ise normal yoldan Skipped'a geçmeye ve sayılmaya devam eder.
+    // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Burada ayrıca "atlandı filtresi kapsam dışını listelemez, kapsam içi
+    // gerçek skip'i listeler" pinleniyordu; atlandı filtresi (chip'iyle birlikte) kalktı — chip'ler artık durum
+    // filtreleridir ve satırı koşu statüsüyle değil gösterdiği durumla listeler (ProjectFilterTests). Koşu
+    // tablosunun "N skipped"i (şerit) aşağıda pinlenmeye devam eder.
     [Fact]
     public async Task A_cycles_run_queues_only_members_and_leaves_out_of_scope_rows_untouched()
     {
@@ -331,11 +336,7 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 1, 0, 200));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, outOfScope.Status); // run sonunda da Discovered
-
-        // Atlandı filtresi kapsam dışını listelemez; kapsam içi gerçek skip'i listeler.
-        var skippedFilter = new HashSet<string>([ProjectFilter.Skipped], StringComparer.Ordinal);
-        Assert.False(ProjectFilter.Matches(outOfScope, null, skippedFilter));
-        Assert.True(ProjectFilter.Matches(upToDateDep, null, skippedFilter));
+        Assert.Equal(1, vm.Counters.Skipped); // run sonunda da yalnız kapsam içi skip
     }
 
     // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası
@@ -860,7 +861,8 @@ public class RunViewModelTests
     [Fact]
     public async Task Stop_sends_a_graceful_stop_and_the_engine_acks_it_as_not_hard()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var stopped = new TaskCompletionSource<RunStoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -880,12 +882,13 @@ public class RunViewModelTests
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
     /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
     /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
-    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/worktree/configuration
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration
     /// açılmamalı ve split-button geri gelmemeli.</summary>
     [Fact]
     public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout);
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
@@ -998,7 +1001,8 @@ public class RunViewModelTests
         // açılırdı; bu artık "send başarısız" senaryosu olur, "planlama sürüyor" değil. Event pump vm.OnEvent'e
         // bağlanmadığından Supervisor'ın gerçek yanıtı (varsa) bu testi etkilemez — yalnız elle enjekte edilen
         // RunStartedEvent state'i değiştirir.
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün ilki
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün ilki
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
@@ -1020,7 +1024,8 @@ public class RunViewModelTests
         // IsStarting GERÇEKTEN true olsun (aksi halde unstarted-engine senaryosunda gönderim zaten başarısız
         // olup IsStarting'i erkenden false yapar — test sonucu tesadüfen aynı kalır ama artık "stop-during-
         // planning" senaryosunu DOĞRULAMAZ).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. yukarıdaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1039,7 +1044,8 @@ public class RunViewModelTests
     {
         // bkz. yukarıdaki iki test — gerçek (başlatılmış) engine gerekir ki runFailed geldiğinde IsStarting
         // GERÇEKTEN true olsun (planlama-sırasında-beklenmedik-hata senaryosu).
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] bkz. sınıf başındaki sabit — aynı üçlünün üçüncüsü
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1127,7 +1133,8 @@ public class RunViewModelTests
     [Fact] // startRun gönderildi, runStarted HENÜZ gelmedi (IsStarting=true) — engine bu pencerede ölürse butonlar açılmalı
     public async Task OnEngineExited_while_IsStarting_resets_run_state_and_reenables_Rebuild()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] yük altında ÖLÇÜLEN kırmızı — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
@@ -1258,7 +1265,8 @@ public class RunViewModelTests
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
     public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         await vm.RebuildCommand.ExecuteAsync(null); // IsStarting=true
@@ -1292,7 +1300,8 @@ public class RunViewModelTests
                 """);
         }
 
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1621,6 +1630,45 @@ public class RunViewModelTests
         Assert.NotNull(row.LastBuiltAt);
     }
 
+    /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5, P8] <c>OutputBuiltAt</c> önizlemenin BuiltOutside kanıtıdır
+    /// ve satıra AYNEN diğer önizleme alanları (LastBuiltAt, OwnFilesChanged) gibi ulaşır — kopya YASAK, aynı
+    /// atama noktası.</summary>
+    [Fact]
+    public async Task A_preview_with_an_output_time_reaches_the_row()
+    {
+        const string id = @"C:\p.csproj";
+        var outputBuiltAt = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside, OutputBuiltAt: outputBuiltAt)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(outputBuiltAt, row.OutputBuiltAt);
+    }
+
+    /// <summary>[Task 7 — Faz 3] Bu araç bir projeyi başarıyla derlediği an, önceki "bu araç dışında derlendi"
+    /// kanıtı ARTIK GEÇERSİZDİR — çıktı şimdi aracın kendi eseri. <c>FailedAt</c>'in aynı satırda sıfırlanmasıyla
+    /// AYNI kural (kopya YASAK: tek atama noktası, başarı bloğu).</summary>
+    [Fact]
+    public async Task A_successful_build_clears_the_output_time()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside,
+                OutputBuiltAt: new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero))]));
+        var row = Assert.Single(vm.Projects);
+        Assert.NotNull(row.OutputBuiltAt); // ön koşul
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        Assert.Null(row.OutputBuiltAt);
+    }
+
     /// <summary>
     /// [Task 4 — kök neden C] Bu koşuda dep-issue'lu biten bir başarı "succeeded→clean" (UpToDate) geçişine
     /// GİRMEZ: bağımlılığı hâlâ hatalıydı, çıktı bayat bir bağımlılığa link'li. Satır <c>WaitingForDependency</c>
@@ -1650,12 +1698,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review — C1] Bu koşuda dep-issue'lu biten bir satırın etiketi bir SONRAKİ Sync'te AYNI kalmalı:
-    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu. Sync'in kendi önizlemesi ARTIK
-    /// <c>Conditional</c>'ı da taşıdığı için (bkz. <c>SyncWorkspaceServiceTests.
-    /// The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency</c> — DEĞİŞEN KURAL)
-    /// satır Sync'ten sonra da soluk "affected · up to date · just now" der; eski kural (Sync'in önizlemesi hep
-    /// <c>Conditional=false</c> gönderirdi) etiketi belirgin "affected"e düşürürdü — kullanıcı hiçbir şey
-    /// yapmadığı hâlde ekranın "değişti" görünmesi.
+    /// disk hâli değişmedi (kayıtlı kökler, imza), yalnız defter yeniden okundu.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected · up to date ·
+    /// just now" dediğiydi (Task 4'ün <c>conditional</c> ayrımı: motor bu koşuyu gerçekten bekletiyorsa yuva
+    /// kökleri tooltip'inde tekrarlardı). O ayrım <see cref="DecisionLabel"/>'den TAMAMEN kalktı:
+    /// <see cref="WillBuildReason.WaitingForDependency"/> artık <see cref="WillBuildReason.UpToDate"/> ile
+    /// BİREBİR okunur — satır düz "up to date" der, hangi kökün beklendiğini yalnız uyarı üçgeni söyler. Testin
+    /// ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ, yalnız beklenen sözcük değişti.</para>
     /// </summary>
     [Fact]
     public async Task A_dep_issue_wait_label_survives_a_sync_without_flipping()
@@ -1670,12 +1720,12 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        Assert.Equal("affected", beforeSync.Word);
+        Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
 
-        // Run biter, sonra bir Sync koşar — NeutralizeRows(fresh:true) State'i Pending'e döndürür (IsRunning
+        // Run biter, sonra bir Sync koşar — NeutralizeRows() State'i Pending'e döndürür (IsRunning
         // false olmalı), Sync'in kendi önizlemesi disk hâlini (değişmemiş) aynen yansıtır.
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
@@ -1723,8 +1773,14 @@ public class RunViewModelTests
 
     /// <summary>
     /// [Task 4 review round 2 — I1] Bir sonraki Sync (post-round-2) bu üye için AYNEN bu üçlüyü üretir — etiket
-    /// TİTREMEMELİ. Bilinçli olarak eski (round 1) <c>UpToDate</c> tahminiyle de çalıştırılıp KIRMIZI gösterildi
-    /// (bkz. yorum satırı), sonra doğru değere geri alındı.
+    /// TİTREMEMELİ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Eski iddia satırın "affected"/soluk-değil
+    /// (<c>Stale=true</c>) dediğiydi: <c>Conditional=false</c> (üye tek başına asla koşullu değil, grup
+    /// mekanizmasına tabi) olduğu için eski <c>DecisionLabel</c> genel default dalına düşüyordu.
+    /// <c>DecisionLabel</c> artık <c>Conditional</c>'ı hiç okumuyor (bkz. sınıf özeti) — reason
+    /// <see cref="WillBuildReason.WaitingForDependency"/> olduğu sürece kapsamın zorlayıp zorlamadığından
+    /// bağımsız düz "up to date" yazar. Testin ASIL iddiası (Sync'ten sonra etiket TİTREMEZ) DEĞİŞMEDİ.</para>
     /// </summary>
     [Fact]
     public async Task A_converged_cycle_member_wait_label_survives_a_sync_without_flipping()
@@ -1738,12 +1794,12 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, DateTimeOffset.Now, row.InCycle, row.Conditional, row.DependencyRoots, row.NamePrefix);
+            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
         var beforeSync = Label();
-        // Reason bir disk olgusudur ve Conditional=false olduğu için DecisionLabel default'a düşer — sıradan
-        // affected/modified, "waiting" sözü VERİLMEZ (üye tek başına asla koşullu değil).
-        Assert.Equal("affected", beforeSync.Word);
-        Assert.True(beforeSync.Stale);
+        // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
+        // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
+        Assert.Equal("up to date", beforeSync.Word);
+        Assert.False(beforeSync.Stale);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
@@ -1757,13 +1813,18 @@ public class RunViewModelTests
     }
 
     /// <summary>
-    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi de (<c>CycleUnsettled=true</c> — arkasında
-    /// durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) aynı kuralın altındadır: canlı geçiş
-    /// onu koşullu SANMAZ. <c>CycleUnsettled</c> zaten yalnız döngü üyeleri için doğru olabildiğinden bu, (i)'in
-    /// aynı korumasının farklı bir teline dokunduğunu doğrular.
+    /// [Task 4 review — I1 (ii)] Yakınsamayan bir grubun üyesi (<c>CycleUnsettled=true</c>, <c>Trusted=false</c> —
+    /// arkasında durulamayan bir başarı, <c>RunCoordinator</c> onu PERSIST ETMEZ) canlı geçişte koşullu SANILMAZ.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eski iddia: satır <c>UpToDate</c> okur ("defter bu
+    /// başarıdan hiçbir şey öğrenmedi, bugünkü olguya dön"). Yanlıştı: motor aynı anda defterine
+    /// <c>LastResult=Failed</c>, <c>FailedSignature=null</c> yazar (<c>InvalidateBuildStateOnFailure</c>) ve bir
+    /// sonraki Sync'in <c>WillBuildEvaluator</c>'ı bunu <c>NeverBuilt</c> okur — satır canlıda yeşil ✓
+    /// ("Up to date", ✓ sayacında), Sync'ten sonra gri ○ idi. Karar artık motorundur ve olayla gelir
+    /// (<c>ProjectSucceededEvent.Trusted</c>); satır Sync'in diyeceğini şimdiden der: gri, "To build".</para>
     /// </summary>
     [Fact]
-    public async Task An_unsettled_cycle_member_success_with_a_dep_issue_does_not_individually_wait()
+    public async Task An_untrusted_cycle_member_success_reads_never_built_like_the_next_sync()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1771,12 +1832,42 @@ public class RunViewModelTests
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
 
-        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120, DepIssues: ["Up"], CycleUnsettled: true, Trusted: false));
 
         var row = Assert.Single(vm.Projects);
         Assert.False(row.Conditional);
-        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
         Assert.Null(row.DependencyRoots);
+        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; kapsam dışı üye ⇒ WillBuild=false.
+        Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
+        Assert.False(row.WillBuild);
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);                  // gri, yeşil ✓ DEĞİL
+        Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));  // ekran okuyucu da aynı şeyi duyar
+        Assert.Equal((0, 1), (vm.Counters.Current, vm.Counters.Stale));    // ✓ değil ○ sayılır
+        Assert.Equal(1, vm.Counters.Succeeded);                              // koşunun tablosu yine "başarılı" der
+
+        // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme — satır titremez.
+        var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.NeverBuilt)]));
+        Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
+    }
+
+    /// <summary>[final review I1] Kontrol grubu: güvenilir (varsayılan) bir döngü üyesi başarısı yeşil kalır.</summary>
+    [Fact]
+    public async Task A_trusted_cycle_member_success_stays_green()
+    {
+        const string id = @"C:\p\a.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
+        Assert.Equal("Up to date", StatusGlyph.LabelFor(row.VisualStatus));
+        Assert.Equal((1, 0), (vm.Counters.Current, vm.Counters.Stale));
     }
 
     /// <summary>Dep-issue'suz bir başarı canlı geçişte bugünkü gibi kalır — carried item'in ETKİLEMEDİĞİ satır.</summary>
@@ -1799,7 +1890,10 @@ public class RunViewModelTests
         Assert.Null(row.DependencyRoots);
     }
 
-    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.</summary>
+    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
+    /// <para>[R-M4b] Fixture motorun GERÇEK olayını taşır: <c>"exit N"</c> (<c>RunCoordinator.ReasonFor</c>) ve
+    /// motorun kanıt kararı (<c>Evidence: true</c> — defter yazımıyla aynı kapı). Eski fixture uydurma bir metin
+    /// (<c>"CS0103"</c>) veriyordu ve kanıt bayrağı yoktu; kanıtsız hatanın yolu RunViewModelStateTests'te.</para></summary>
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()
     {
@@ -1810,7 +1904,7 @@ public class RunViewModelTests
             [new BuildPreviewItem(id, "A", true, null, WillBuildReason.SignatureChanged)]));
 
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
-        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "CS0103", null));
+        vm.OnEvent(new ProjectFailedEvent("r1", id, 90, "exit 1", null, Evidence: true));
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);
@@ -1823,7 +1917,7 @@ public class RunViewModelTests
     /// hedefi ata ağaçtan ÇEKSEYDİ satır onu null'ken okur ve bir daha tazelenmezdi. Satırda artık hedef sha
     /// YOK — sağ yuvada kararın kendisi duruyor ve hedef commit motorda kalıyor (konsol satırı + pull).
     /// Yerini alan iddia, aynı olay sırası sorusunun YENİ hâlidir: <c>syncCompleted</c>'ın taşıdığı MESAFE
-    /// (<c>Behind</c>) alt bardaki chip'e ulaşmalı ve worktree modunda chip ÇİZİLMEMELİDİR.
+    /// (<c>Behind</c>) alt bardaki chip'e ulaşmalı.
     /// </summary>
     [Fact]
     public async Task Sync_completed_carries_the_distance_from_the_remote_to_the_action_bar()
@@ -1846,23 +1940,6 @@ public class RunViewModelTests
         // Çevrimdışı: mesafe BİLİNMEZ → chip yine yok (uydurma sayı gösterilmez).
         vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: true, 1, 0));
         Assert.Null(vm.Behind);
-        Assert.False(vm.CanShowBehind);
-    }
-
-    /// <summary>Worktree modunda (aktif olmayan branch seçili) chip HİÇ çizilmez: derleme worktree'den
-    /// yapılıyor, ana ağacı ilerletmenin o koşuya etkisi olmazdı.</summary>
-    [Fact]
-    public async Task The_behind_chip_stays_hidden_while_another_branch_is_selected()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
-        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
-        Assert.True(vm.CanShowBehind);
-
-        vm.SelectBranch(new BranchRef("feature/x", "bbb", IsActive: false, IsRemoteTracking: false));
-
-        Assert.True(vm.IsWorktreeForced);
         Assert.False(vm.CanShowBehind);
     }
 
@@ -1992,7 +2069,7 @@ public class RunViewModelTests
         Assert.Equal("· almost done", vm.EtaText);
     }
 
-    // ---------------------------------------------------------------- [A5/T69] sync / branch / worktree / topoloji
+    // ---------------------------------------------------------------- [A5/T69] sync / branch / topoloji
 
     private static ProjectNode Node(string id, string name, int buildOrder, bool? willBuild = null,
         IReadOnlyList<string>? deps = null, string? layerName = null) =>
@@ -2277,17 +2354,6 @@ public class RunViewModelTests
         Assert.Equal(["feature-x"], vm.Branches.Select(b => b.Name));
     }
 
-    [Fact]
-    public async Task Worktree_list_event_fills_worktrees()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-
-        vm.OnEvent(new WorktreeListEvent([new Worktree("main-1", "main", @"C:\pool\main-1", true, 4096)]));
-
-        Assert.Equal("main-1", Assert.Single(vm.Worktrees).Name);
-    }
-
     // [D8] Gerçek 50ms beklenmez — tick tamamen kontrol edilir (ConsoleBatcherTests deseni).
     [Fact]
     public async Task Sync_progress_lines_reach_the_console_batcher()
@@ -2320,5 +2386,990 @@ public class RunViewModelTests
             flushes);
         // Konsol dokümanına da düşer (run dokümanı aktifken)
         Assert.Contains("git fetch origin main", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.2] Sync kipleri
+    //
+    // Sessiz Sync testleri BAŞLATILMIŞ bir motor kullanır: gönderim BAŞARILI olmalıdır — düşen bir gönderim
+    // Sync'in kipini bırakır (bkz. A_silent_sync_whose_send_fails_leaves_no_mode_or_start_time). VM motorun
+    // EventReceived'ına bağlanmaz; motorun cevabı vm.OnEvent(...) ile verilir (Stop testlerinin deseni). D8:
+    // sleep/poll yok.
+
+    private const string A = @"C:\p\a.csproj";
+    private const string B = @"C:\p\b.csproj";
+
+    private static async Task<EngineHost> StartedEngineAsync(SupervisorSandbox sandbox)
+    {
+        var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [§5.5] izole önbellek — bkz. SupervisorSandbox
+        await engine.StartAsync();
+        return engine;
+    }
+
+    /// <summary>İki satırlı, Sync'lenmiş bir workspace: A güncel, B derlenecek; akışta ilk Sync'in satırı, konsolda
+    /// önceki bir işlemin satırı durur.</summary>
+    private static RunViewModel SyncedTwoRowVm(EngineHost engine)
+    {
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        ReplySync(vm, upToDateB: false);
+        vm.OnEvent(new SyncProgressEvent("previous operation line", "info"));
+        return vm;
+    }
+
+    /// <summary>Motorun bir Sync'e verdiği cevap: başlangıç, transkript, topoloji, önizleme, tamamlanma.</summary>
+    private static void ReplySync(RunViewModel vm, bool upToDateB, params SyncProgressEvent[] transcript)
+    {
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        foreach (var line in transcript) vm.OnEvent(line);
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(A, "A", 0), Node(B, "B", 1)], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(B, "B", !upToDateB, Reason: upToDateB ? WillBuildReason.UpToDate : WillBuildReason.SignatureChanged,
+                OwnFilesChanged: !upToDateB),
+        ]));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, ToBuildCount: upToDateB ? 0 : 1,
+            UpToDateCount: upToDateB ? 2 : 1, HeadSha: "1111111111111111111111111111111111111111", ActiveBranch: "main"));
+    }
+
+    /// <summary>Commit'in sessiz Sync'i konsolu ve olay akışını KORUR, fetch yapmaz, kalıcı işlem pill'i yazmaz,
+    /// seçimi düşürmez; bitince akışa tek satır düşer: <c>synced after commit</c> — hiçbir şey değişmemiş olsa da.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_the_console_and_stream_and_adds_one_line()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        vm.SelectProject(A);
+        int streamBefore = vm.StreamEvents.Count;
+        Assert.True(streamBefore > 0, "ön-koşul: akışta önceki Sync'in satırı yok — vakum");
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+
+        var cmd = Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.False(cmd.Fetch);
+        Assert.Null(vm.CurrentOperation);
+        Assert.Equal(A, vm.SelectedProjectId);
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal(A, vm.SelectedProjectId);
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
+        Assert.Equal(StreamText.SyncedAfterCommit, vm.StreamEvents[^1].Text);
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Sessiz Sync'in transkripti (dim/info/cmd) konsola yazılmaz; uyarı ve hata satırları yazılır —
+    /// sessizlik kötü haberi gizlemez.</summary>
+    [Fact]
+    public async Task A_silent_sync_shows_warnings_but_not_the_transcript()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+
+        ReplySync(vm, upToDateB: false,
+            new SyncProgressEvent("HEAD 1111111 · up to date with origin/main", "info"),
+            new SyncProgressEvent("Scanning 1 solutions", "dim"),
+            new SyncProgressEvent("warning: 2 projects produce a.dll", "warn"),
+            new SyncProgressEvent("error: something broke", "error"));
+
+        string console = vm.GetRunDocumentText();
+        Assert.DoesNotContain("HEAD 1111111", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("Scanning 1 solutions", console, StringComparison.Ordinal);
+        Assert.Contains("warning: 2 projects produce a.dll", console, StringComparison.Ordinal);
+        Assert.Contains("error: something broke", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>Pencereye dönüşün sessiz Sync'i hiçbir kararı değiştirmediyse akışa HİÇBİR şey yazmaz.</summary>
+    [Fact]
+    public async Task A_silent_sync_with_no_changes_writes_nothing_on_activation()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        int streamBefore = vm.StreamEvents.Count;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+    }
+
+    /// <summary>Pencereye dönüşün sessiz Sync'i kararı değişen satırları sayar: B derlenecekken güncel oldu.</summary>
+    [Fact]
+    public async Task A_silent_sync_that_changes_a_decision_names_how_many_projects_changed()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        int streamBefore = vm.StreamEvents.Count;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
+        ReplySync(vm, upToDateB: true);
+
+        Assert.Equal(streamBefore + 1, vm.StreamEvents.Count);
+        Assert.Equal(StreamText.SyncedProjectsChanged(1), vm.StreamEvents[^1].Text);
+    }
+
+    /// <summary>Sessiz Sync kapı kapalıyken (başka bir Sync uçuşta) hiçbir şey göndermez.</summary>
+    [Fact]
+    public async Task A_silent_sync_does_not_start_while_another_sync_is_in_flight()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.False(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+        Assert.Empty(sent);
+    }
+
+    /// <summary>[Faz 2/T7 · spec §6.2] Dışarıdan gelen branch değişimi yeni bölüm açar: konsol temizlenir, ilk satır
+    /// koordinatörün verdiği switch satırıdır, fetch yapılmaz (checkout'un cevabıyla aynı yol).</summary>
+    [Fact]
+    public async Task An_external_branch_switch_opens_a_section_led_by_the_switched_line()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        string line = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+
+        Assert.True(await vm.SyncAfterExternalBranchChangeAsync(line));
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string console = vm.GetRunDocumentText();
+        Assert.StartsWith(line, console, StringComparison.Ordinal);
+        Assert.DoesNotContain("previous operation line", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>[Faz 2/T7] Sync uçuştayken gelen commit tetiği bekler; Sync bitince VM'in meşguliyet bildirimi onu UI
+    /// kuyruğuna atar ve BİR sessiz Sync koşar. [review M6] HEAD ve izleyici sahtedir — makineden bağımsız.</summary>
+    [Fact]
+    public async Task A_head_trigger_during_a_sync_runs_after_the_sync_ends()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        var posted = new Queue<Action>();
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        Assert.Empty(sent);
+        Assert.Empty(posted);
+
+        ReplySync(vm, upToDateB: false);
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[review I1 · spec §6.1] Pull + izleyici tek Sync'tir: pull uçuştayken (motor komut döngüsünü
+    /// bloklar, başlangıç olayı yok) gelen reflog tetiği bekler; pull'un zincirli Sync'i yeni HEAD'i ölçer ve bekleyen
+    /// tetik HEAD eşit olduğu için atlanır.</summary>
+    [Fact]
+    public async Task A_pull_plus_the_watcher_is_one_sync()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        var posted = new Queue<Action>();
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.PullRepositoryCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other); // pull'un reflog satırı
+        Drain(posted);
+        vm.OnEvent(new PullCompletedEvent(Succeeded: true));
+        Drain(posted);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, HeadSha: CommittedSha, ActiveBranch: "main"));
+        Drain(posted);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[review I2] Kök değişince eski kökün son Sync HEAD'i ve anları unutulur — yoksa yeni kökteki ilk
+    /// tetik eski branch'le kıyaslanıp sahte bir "Switched to" bölümü açardı.</summary>
+    [Fact]
+    public async Task A_root_change_forgets_the_last_sync_head()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
+        Assert.NotNull(vm.LastSyncHead); // ön-koşul
+
+        await vm.ChangeRepositoryAsync(@"D:\other-repo");
+
+        Assert.Null(vm.LastSyncHead);
+        Assert.Null(vm.LastSyncCompletedAtMs);
+        Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: kök değişiminin Sync'i gönderilemedi
+    }
+
+    // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında branch
+
+    private const string RunLogDirectory = @"D:\logs\2026-09-19_10-00-00";
+
+    /// <summary>Sync'lenmiş iki satırlı workspace'te B'yi derleyen bir koşu uçuşta; HEAD sahte ve <paramref name="head"/>
+    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.</summary>
+    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head)
+    {
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => head(), () => new FakeHeadWatcher());
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0, LogDirectory: RunLogDirectory));
+        vm.OnEvent(new BuildPreviewEvent([ // motor runStarted'ın hemen ardından önizlemeyi yayınlar: kapsam = B
+            new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
+        ]));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        Drain(posted);
+        return vm;
+    }
+
+    /// <summary>Koşu sırasında dışarıdan branch değişimi koşuyu BİR kez keser (<c>StopKind.Interrupt</c>) ve akışa
+    /// "interrupted by branch change" düşer; Sync koşu bitene dek bekler.</summary>
+    [Fact]
+    public async Task A_branch_switch_mid_run_interrupts_once()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+
+        var stop = Assert.Single(sent.OfType<StopRunCommand>());
+        Assert.Equal(new StopRunCommand("r1", StopKind.Interrupt), stop);
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Single(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[final review M4] Kullanıcının Stop'u onaylandı (<c>runStopped</c> geldi, <c>runCompleted</c> bekleniyor):
+    /// o arada gelen branch değişimi kesme GÖNDERMEZ, akışa "interrupted by branch change" düşmez ve koşunun özeti
+    /// yazılmaz — koşu kullanıcının isteğiyle durdu, branch değişimiyle değil. Tetik bekler ve koşu bitince bölümü
+    /// (özetsiz) açar.</summary>
+    [Fact]
+    public async Task A_branch_switch_after_the_users_stop_was_acknowledged_does_not_interrupt()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Drain(posted);
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+
+        Assert.DoesNotContain(sent.OfType<StopRunCommand>(), s => s.Kind == StopKind.Interrupt);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        Assert.NotNull(vm.AutoSync!.PendingTrigger);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        string text = vm.GetRunDocumentText().ReplaceLineEndings("\n");
+        Assert.DoesNotContain(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory), text, StringComparison.Ordinal);
+        Assert.StartsWith(Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222"), text, StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Koşu sırasında commit koşuyu kesmez ve hiçbir şey yapmaz.</summary>
+    [Fact]
+    public async Task A_commit_mid_run_does_nothing()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        Drain(posted);
+
+        Assert.Empty(sent);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Kesilen koşu bitince yeni bölüm açılır: konsolun ilk satırı koşunun özeti (kaç proje bitti, kaçı
+    /// derlenmedi, log klasörü), ardından switch satırı; Sync fetch etmez (spec §6.2). Kesmeden sonra biten B
+    /// (Trusted=false) "built" sayılmaz.</summary>
+    [Fact]
+    public async Task After_the_interrupted_run_a_new_section_starts_with_its_summary()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory);
+        string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+        Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Motor her Sync isteğine hemen başlangıçla cevap verir (<c>syncStarted</c>) — gönderilen her yeni
+    /// <see cref="SyncWorkspaceCommand"/> için bir kez.</summary>
+    private static void AnswerNewSyncs(RunViewModel vm, IEnumerable<IpcCommand> sent, ref int answered)
+    {
+        int syncs = sent.OfType<SyncWorkspaceCommand>().Count();
+        for (; answered < syncs; answered++) vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+    }
+
+    /// <summary>[T8 fix round 1 · I1] <c>runStopped</c> ile <c>runCompleted</c> ayrı flush'larla, ayrı UI
+    /// kuyruğu işleriyle gelir. Koşu <c>runCompleted</c>'a dek uçuşta sayılır: arada kuyruğa düşen değerlendirme
+    /// Sync başlatmaz; yeni bölüm <c>runCompleted</c>'tan SONRA açılır — bölümde eski koşunun "Stopped" satırı yok,
+    /// faz Sync'e aittir.</summary>
+    [Fact]
+    public async Task The_new_section_opens_only_after_the_interrupted_run_completed()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+        int answered = 0;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Drain(posted);
+        AnswerNewSyncs(vm, sent, ref answered);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+        AnswerNewSyncs(vm, sent, ref answered);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.Stopped(0));
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · I1] Host'un geç <c>runStopped</c> onayı (kesme, koşu kapanırken gitti) ya da başka
+    /// bir koşunun olayı, bitmiş koşunun ardından başlamış Sync'in fazına ve akışına dokunmaz.</summary>
+    [Fact]
+    public async Task A_late_run_end_event_does_not_touch_the_next_operation()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.Equal(AppPhase.Syncing, vm.Phase); // ön-koşul
+        int streamBefore = vm.StreamEvents.Count;
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunStoppedEvent("r0", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Stopped, 0, 0, 0, 3, 500));
+
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.Equal(streamBefore, vm.StreamEvents.Count);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · M3] Özetin kapsamı koşullu projeleri de sayar: A kesin, C koşullu derlenecekti;
+    /// A kesmeden önce güvenilir bitti, C hiç başlamadı → "1 built, 1 not built".</summary>
+    [Fact]
+    public async Task The_summary_counts_conditional_projects_that_were_not_built()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
+            new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.WaitingForDependency, Conditional: true),
+        ]));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 300));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 1, 500));
+        Drain(posted);
+
+        Assert.StartsWith(Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(1, 1, null),
+            vm.GetRunDocumentText(), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>[T8 fix round 1 · M5] Açılış koreografisi oynarken branch değişirse Build isteği geri alınır ve yeni
+    /// bölümün ilk satırı bunu açıklar: "0 built, N not built" (log klasörü yok — koşu başlamadı).</summary>
+    [Fact]
+    public async Task An_interrupt_during_the_opening_choreography_explains_the_build_click()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        var build = vm.BuildCommand.ExecuteAsync(null);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        choreography.SetResult();
+        await build;
+        Drain(posted);
+
+        Assert.Empty(sent.OfType<StartRunCommand>());
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, null);
+        string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+        Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır — aynı branch'te yeni commit
+    /// sessiz Sync'tir; kesme yoktu, özet yok.</summary>
+    [Fact]
+    public async Task A_head_change_missed_by_the_watcher_is_caught_when_the_run_ends()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.Empty(sent.OfType<StopRunCommand>());
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Güvenlik ağı her koşudan sonra Sync üretmez: HEAD son Sync'tekiyle aynıysa hiçbir şey gönderilmez.</summary>
+    [Fact]
+    public async Task A_run_that_ends_on_the_synced_head_sends_no_sync()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<IpcCommand>(); // gönderim devamları paralel koşabilir
+        vm.DebugOnCommandSent = sent.Enqueue;
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.Empty(sent);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Pull/commit sonrası HEAD'in sahte sha'sı — <see cref="ReplySync"/>'in ölçtüğünden farklı.</summary>
+    private const string CommittedSha = "2222222222222222222222222222222222222222";
+
+    /// <summary>UI kuyruğuna atılmış işleri sırayla koşar (sahte Dispatcher).</summary>
+    private static void Drain(Queue<Action> posted)
+    {
+        while (posted.TryDequeue(out var action)) action();
+    }
+
+    /// <summary>[review I1] Sessiz Sync şeritte de görünmez: faz <c>Syncing</c>'e geçmez (şerit "▸ Sync — git
+    /// fetch…" demez), önceki işlemin pill'i canlanmaz; bitince faz olduğu yerde kalır.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_the_phase_and_the_pill_is_not_live()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+        Assert.Equal(AppPhase.Done, vm.Phase); // ön-koşul
+        string? opBefore = vm.CurrentOperation;
+        Assert.NotNull(opBefore);
+        string ribbonBefore = vm.RibbonLine.Text;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+
+        Assert.Equal(AppPhase.Done, vm.Phase); // pill canlı değil: faz Syncing değil, koşu kilidi yok
+        Assert.False(vm.IsMidRunLocked);
+        Assert.Equal(opBefore, vm.CurrentOperation);
+        Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
+
+        ReplySync(vm, upToDateB: false);
+        Assert.Equal(AppPhase.Done, vm.Phase);
+    }
+
+    /// <summary>[review I2] Sessiz Sync kötü haberi silmez: düşen bir koşunun şeritteki "Run failed — …" metni
+    /// Sync boyunca ve sonrasında durur.</summary>
+    [Fact]
+    public async Task A_silent_sync_keeps_a_failed_runs_error_on_the_ribbon()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new ErrorEvent("runFailed", "msbuild crashed"));
+        Assert.Equal("msbuild crashed", vm.RunErrorMessage); // ön-koşul
+        string ribbonBefore = vm.RibbonLine.Text;
+
+        await vm.SyncSilentlyAsync(SilentSyncReason.Commit);
+        ReplySync(vm, upToDateB: false);
+
+        Assert.Equal("msbuild crashed", vm.RunErrorMessage);
+        Assert.Equal(ribbonBefore, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[review I1] Branch değişiminin Sync'i fetch etmez — şerit de fetch iddia etmez.</summary>
+    [Fact]
+    public async Task A_branch_change_sync_does_not_claim_a_fetch_on_the_ribbon()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+
+        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
+            "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));
+
+        Assert.Equal(AppPhase.Syncing, vm.Phase);
+        Assert.DoesNotContain("git fetch", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal(RibbonText.SyncingWithoutFetch, vm.RibbonLine.Text);
+    }
+
+    /// <summary>[review M1] Gönderimi düşen bir Sync kipini bırakır (sonraki transkript satırı gizlenmez) ve
+    /// başlangıç zamanı YAZMAZ — hiçbir Sync başlamadı; başarılı gönderim yazar.
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden düşen gönderimde de <c>true</c> dönerdi (yalnız kapı
+    /// soruluyordu) ve koordinatör tetiği kaybederdi. Artık dönüş "motora gitti mi"dir: düşen gönderim <c>false</c>
+    /// verir ve tetik bekler.</para></summary>
+    [Fact]
+    public async Task A_silent_sync_whose_send_fails_leaves_no_mode_or_start_time()
+    {
+        long now = 7000;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            RootPath = @"D:\repo",
+        };
+
+        Assert.False(await vm.SyncSilentlyAsync(SilentSyncReason.Commit)); // gönderim senkron düşer
+
+        Assert.Null(vm.LastSyncStartedAtMs);
+        vm.OnEvent(new SyncProgressEvent("a later transcript line", "info"));
+        Assert.Contains("a later transcript line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var sentVm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now) { RootPath = @"D:\repo" };
+        Assert.True(await sentVm.SyncSilentlyAsync(SilentSyncReason.Commit));
+        Assert.Equal(7000, sentVm.LastSyncStartedAtMs);
+    }
+
+    /// <summary>[final review M1] Son Sync'in bölüm açıp açmadığı kaydedilir — koordinatör, beklerken yutulan bir branch
+    /// değişimini yalnız bölümsüz bir Sync yuttuysa yeniden anlatır: Sync düğmesi bölüm açar, sessiz Sync açmaz.</summary>
+    [Fact]
+    public async Task The_last_sync_records_whether_it_opened_a_section()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var vm = SyncedTwoRowVm(engine);
+
+        await vm.SyncCommand.ExecuteAsync(null);
+        ReplySync(vm, upToDateB: false);
+        Assert.True(vm.LastSyncOpenedSection);
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Commit));
+        ReplySync(vm, upToDateB: false);
+        Assert.False(vm.LastSyncOpenedSection);
+    }
+
+    /// <summary>Sync düğmesi (Manual) yeni bir bölüm açar: konsol ve akış temizlenir, fetch yapılır, pill yazılır.</summary>
+    [Fact]
+    public async Task The_sync_button_still_clears_the_console()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = SyncedTwoRowVm(engine);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.DoesNotContain("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Empty(vm.StreamEvents);
+        Assert.Equal(OperationLabel.Sync, vm.CurrentOperation);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2 "Uygulama açılışı"] Motorun İLK hazır oluşu, bir workspace varken, fetch'li bir
+    /// Sync başlatır ve boot satırları kalır (transkript altına eklenir); workspace yoksa gidecek bir kök yoktur.</summary>
+    [Fact]
+    public async Task The_first_engine_ready_syncs_with_the_transcript()
+    {
+        var noRepo = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            { LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
+        var noRepoSent = new List<IpcCommand>();
+        noRepo.DebugOnCommandSent = noRepoSent.Add;
+        noRepo.OnEngineReady("1.0.0", 42);
+        Assert.Empty(noRepoSent);
+
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            { RootPath = @"D:\repo", LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEngineReady("1.0.0", 42);
+        await Task.Yield();
+
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.Contains("Engine ready — v1.0.0", vm.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>[final review I1 · spec 2026-09-18 §5.5 · §6.2] Çökmeden sonra "Restart engine": yeniden başlatılan motor
+    /// ilk açılışla AYNI hazır yolundan geçer — konsola "Engine ready — v…" düşer, PID/sürüm yenilenir — ve bir
+    /// workspace açıkken TEK bir Appended Sync koşar: kurtarılan projelerin satırları gri "never built" okunur.
+    /// Test gerçek restart yolunu (<c>RestartEngineCommand</c>, izole motor, elle yazılmış uçuş defteri) sürer.
+    /// <para><b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden bu test <c>OnEngineReady</c>'yi iki kez çağırır ve ikinci
+    /// hazır oluşun Sync BAŞLATMADIĞINI pinlerdi ("restart dünyayı değiştirmez"). Oysa üretimde restart yolu
+    /// <c>OnEngineReady</c>'yi hiç çağırmıyordu (ne satır ne PID) ve motor çökmeden sonra kurtarma yaptığında ekran
+    /// eski kararları gösteriyordu — kurtarmanın tam da gerektiği an.</para></summary>
+    [Fact]
+    public async Task A_restarted_engine_prints_its_ready_line_and_syncs_once()
+    {
+        using var sandbox = new SupervisorSandbox();
+        new BuildOrchestrator.Core.State.InFlightLedger(sandbox.CacheRoot).Add(@"C:\r\A\A.csproj"); // koşu ortasında ölmüş motor
+        await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
+        using var root = new TempDir();
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+            { RootPath = root.Path, LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot };
+        vm.OnEngineExited(3);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.RestartEngineCommand.ExecuteAsync(null);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Contains("Engine ready — v", vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.NotNull(vm.EnginePid);
+        Assert.True(vm.SyncBusy); // Sync kapıyı tutuyor — restart'ın temizliği onu geri açmadı
+    }
+
+    /// <summary>[Task 11] Eski worktree havuzu klasörü hâlâ diskteyse motorun bu oturumdaki İLK hazır oluşunda
+    /// konsola tek satırlık bir ipucu yazılır; motorun yeniden hazır oluşu (restart) bunu TEKRARLAMAZ — aynı
+    /// ilk-kez kapısı (<c>_engineWasReady</c>) açılış Sync'iyle paylaşılır. Kök testte gerçek %LOCALAPPDATA%'a
+    /// değil, enjekte edilen <see cref="RunViewModel.LegacyWorktreePoolRoot"/>'a bakar.</summary>
+    [Fact]
+    public void The_first_engine_ready_hints_at_a_leftover_legacy_pool_and_a_restart_does_not()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-legacy-pool-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+            {
+                LegacyWorktreePoolRoot = root,
+            };
+            string hint = BuildOrchestrator.Core.Paths.LegacyWorktreePool.Hint(root)!;
+
+            vm.OnEngineReady("1.0.0", 42);
+            Assert.Contains(hint, vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+            vm.OnEngineReady("1.0.0", 43);
+            Assert.Equal(1, vm.GetRunDocumentText().Split(hint, StringSplitOptions.None).Length - 1);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>[spec 2026-09-18 §5.5 · karar 12] Motor açılışta kesilmiş bir koşu kurtardıysa konsol bunu söyler —
+    /// metin Core'daki tek kaynaktan. Kurtarılacak bir şey yoksa satır yoktur. Satır <c>engineReady</c> OLAYINDAN
+    /// yazılır: olay hem ilk açılışta hem motor yeniden başlatılınca aynı akıştan gelir.</summary>
+    [Fact]
+    public void An_engine_that_recovered_an_interrupted_run_says_how_many_projects_will_rebuild()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1");
+        string line = BuildOrchestrator.Core.Planning.PlanProgressLines.PreviousRunInterrupted(3);
+
+        vm.OnEvent(new EngineReadyEvent(42, "1.0.0"));
+        Assert.DoesNotContain("previous run was interrupted", vm.GetRunDocumentText(), StringComparison.Ordinal);
+
+        // engineReady olay akışından gelir — ilk açılışta da, Restart engine'de de aynı dal.
+        vm.OnEvent(new EngineReadyEvent(43, "1.0.0", InterruptedProjects: 3));
+        Assert.Contains(line, vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal("previous run was interrupted; 3 projects will rebuild", line);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Tamamlanan Sync branch değerini checkout edilmiş branch'e hizalar ve son
+    /// Sync'in HEAD'ini + zamanını kaydeder (çift Sync kontrolünün kaynağı).</summary>
+    [Fact]
+    public void A_completed_sync_aligns_the_branch_and_records_the_head()
+    {
+        long now = 1000;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            RootPath = @"D:\repo",
+        };
+
+        now = 5000;
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", ""));
+        vm.OnEvent(new SyncCompletedEvent("feature/x", "sha1234", false, 0, 0,
+            HeadSha: "2222222222222222222222222222222222222222", ActiveBranch: "feature/x"));
+
+        Assert.Equal("feature/x", vm.Branch);
+        Assert.Equal(("feature/x", "2222222222222222222222222222222222222222"), vm.LastSyncHead);
+        Assert.Equal(5000, vm.LastSyncCompletedAtMs);
+        Assert.Equal(5000, vm.LastSyncAtMs); // [review M3] başlangıç hiç yazılmadıysa da tamamlanma okunur
+    }
+
+    // ---------------------------------------------------------------- [T9 · spec §6.4 · karar 22] git işlemi yarıdayken
+
+    private const Core.Git.GitOperation Merge = Core.Git.GitOperation.Merge;
+
+    /// <summary>Sync'lenmiş iki satırlı workspace; git işlemi <paramref name="op"/>'tan okunur (sahte probe), yoklama
+    /// zamanlayıcısı <paramref name="timer"/>'dır.</summary>
+    private static RunViewModel GitGatedVm(EngineHost engine, Func<Core.Git.GitOperation> op, FakePollTimer timer)
+    {
+        var vm = SyncedTwoRowVm(engine);
+        vm.InspectGitOperation = _ => op();
+        vm.GitOperationPollTimer = timer;
+        return vm;
+    }
+
+    /// <summary>Kendiliğinden Sync merge yarıdayken koşmaz: tetik bekler ve akışa işlem başına BİR kez
+    /// <c>waiting for git — Merge in progress — finish or abort it in git</c> düşer.</summary>
+    [Fact]
+    public async Task A_head_trigger_waits_while_a_merge_is_in_progress()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Other);
+        Drain(posted);
+
+        Assert.Empty(sent);
+        Assert.Equal(Merge, vm.GitOperation);
+        Assert.Single(vm.StreamEvents, e => e.Text == "waiting for git — Merge in progress — finish or abort it in git");
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>İşaret kalkınca (yoklamanın tıkı) bekleyen tetik normal yoldan değerlendirilir: BİR sessiz Sync.</summary>
+    [Fact]
+    public async Task When_the_marker_goes_the_waiting_sync_runs()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var engine = await StartedEngineAsync(sandbox);
+        var posted = new Queue<Action>();
+        var op = Merge;
+        var timer = new FakePollTimer();
+        var vm = GitGatedVm(engine, () => op, timer);
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        timer.Tick(); // işaret hâlâ duruyor
+        Drain(posted);
+        Assert.Empty(sent);
+
+        op = Core.Git.GitOperation.None;
+        timer.Tick();
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary><c>index.lock</c> 30 s kesintisiz durursa konsola BİR kez takılı kilit uyarısı düşer; araç kilidi
+    /// silmez. Gerçek bir git dizini ve gerçek probe — kilit dosyası testin sonunda hâlâ yerindedir.</summary>
+    [Fact]
+    public void A_lock_held_for_30_seconds_warns_once_and_is_never_deleted()
+    {
+        using var root = new TempDir();
+        string lockFile = Path.Combine(root.Path, ".git", "index.lock");
+        Directory.CreateDirectory(Path.GetDirectoryName(lockFile)!);
+        File.WriteAllText(lockFile, "");
+        long now = 1000;
+        var timer = new FakePollTimer();
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            GitOperationPollTimer = timer,
+        };
+        vm.RootPath = root.Path;
+        static int Warnings(RunViewModel vm) => vm.GetRunDocumentText().Split('\n')
+            .Count(l => l.Contains(Core.Git.GitOperationText.StuckLock, StringComparison.Ordinal));
+
+        Assert.Equal(Core.Git.GitOperation.CommandRunning, vm.GitOperation);
+        now += 29_999;
+        timer.Tick();
+        Assert.Equal(0, Warnings(vm));
+
+        now += 1;
+        timer.Tick();
+        now += 10_000;
+        timer.Tick();
+        vm.OnWindowActivated();
+
+        Assert.Equal(1, Warnings(vm));
+        Assert.True(File.Exists(lockFile));
+        Assert.True(timer.IsRunning);
+    }
+
+    /// <summary>Merge yarıdayken checkout ve pull kilitlidir; kilitli chip'lerin tooltip'i nedeni söyler. Kapı
+    /// gönderimden önce yeniden yoklanır: bayat bir "boşta" değeriyle bile komut gitmez.</summary>
+    [Fact]
+    public async Task Checkout_and_pull_are_locked_mid_merge()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var op = Core.Git.GitOperation.None;
+        var vm = GitGatedVm(engine, () => op, new FakePollTimer());
+        vm.OnEvent(new BranchListEvent([
+            new BranchRef("main", "aaaaaaaaaaaa", true, false),
+            new BranchRef("feature/x", "bbbbbbbbbbbb", false, false),
+        ]));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 0, Behind: 2, ActiveBranch: "main"));
+        vm.OnWindowActivated();
+        Assert.True(vm.CanSwitchBranch);                           // ön-koşul: kilit yalnız git işleminden
+        Assert.True(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.Null(vm.GitOperationTooltip);
+
+        op = Merge; // bayat: henüz yoklanmadı
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbbbbbb", false, false));
+        await vm.PullRepositoryCommand.ExecuteAsync(null);
+
+        Assert.Empty(sent);
+        Assert.False(vm.CanSwitchBranch);
+        Assert.False(vm.PullRepositoryCommand.CanExecute(null));
+        Assert.Equal("Merge in progress — finish or abort it in git", vm.GitOperationTooltip);
+    }
+
+    /// <summary>Build merge yarıdayken engellenmez: konsol temizlendikten sonra planlamanın başında TEK uyarı satırı,
+    /// komut yine gider.</summary>
+    [Fact]
+    public async Task Build_mid_merge_warns_once_and_still_runs()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        const string warning = "a merge is in progress — files with conflict markers will not compile";
+        Assert.Contains("previous operation line", vm.GetRunDocumentText(), StringComparison.Ordinal); // ön-koşul: tohum satırı
+
+        Assert.True(vm.BuildCommand.CanExecute(null));
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Single(sent.OfType<StartRunCommand>());
+        var lines = vm.GetRunDocumentText().Split('\n');
+        Assert.DoesNotContain(lines, l => l.Contains("previous operation line", StringComparison.Ordinal)); // temizlendi
+        Assert.Single(lines, l => l.Contains(warning, StringComparison.Ordinal));
+        int requested = Array.IndexOf(lines, RunViewModel.RunRequestedLine(RunMode.Build));
+        Assert.True(requested >= 0, "ön-koşul: build requested satırı yok");
+        Assert.Equal(warning, lines[requested + 1]); // planlamanın başı: istek satırının hemen ardından
+    }
+
+    /// <summary>[T9 fix round 1 · M2] Zamanlayıcı kök uygulandıktan SONRA verilse de (kabuğun sırası: kayıtlı kök
+    /// seed'i, sonra zamanlayıcı) atama anında yoklanır — tepsiden merge yarıdayken açılış da yoklar.</summary>
+    [Fact]
+    public void A_poll_timer_assigned_after_the_root_starts_polling_mid_merge()
+    {
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        {
+            RootPath = @"D:\repo",
+        };
+        vm.InspectGitOperation = _ => Merge;
+        var timer = new FakePollTimer();
+
+        vm.GitOperationPollTimer = timer;
+
+        Assert.True(timer.IsRunning);
+        Assert.Equal(Merge, vm.GitOperation);
+    }
+
+    /// <summary>Sync düğmesi merge yarıdayken de çalışır; temizlikten sonra ilk satır ağacın yarım olduğunu söyler.</summary>
+    [Fact]
+    public async Task The_sync_button_still_runs_mid_merge_and_says_so()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = GitGatedVm(engine, () => Merge, new FakePollTimer());
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Assert.True(vm.SyncCommand.CanExecute(null));
+        await vm.SyncCommand.ExecuteAsync(null);
+
+        Assert.Single(sent.OfType<SyncWorkspaceCommand>());
+        string console = vm.GetRunDocumentText();
+        Assert.StartsWith("the working tree is mid-merge — results may change once it finishes", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("previous operation line", console, StringComparison.Ordinal);
+    }
+
+    /// <summary>Yoklama YALNIZ bir işaret dururken çalışır (2 s): işaret yokken ve git dizini olmayan kökte kurulmaz,
+    /// işaret kalkınca durur.</summary>
+    [Fact]
+    public void Polling_runs_only_while_a_marker_exists()
+    {
+        using var noGit = new TempDir();
+        var timer = new FakePollTimer();
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1")
+        {
+            GitOperationPollTimer = timer,
+        };
+        vm.RootPath = noGit.Path; // gerçek probe: git dizini yok
+        vm.OnWindowActivated();
+        Assert.Equal(Core.Git.GitOperation.None, vm.GitOperation);
+        Assert.False(timer.IsRunning);
+
+        var op = Core.Git.GitOperation.Rebase;
+        vm.InspectGitOperation = _ => op;
+        vm.OnWindowActivated();
+        Assert.True(timer.IsRunning);
+        Assert.Equal(TimeSpan.FromSeconds(2), timer.Interval);
+        timer.Tick();
+        Assert.True(timer.IsRunning);
+
+        op = Core.Git.GitOperation.None;
+        timer.Tick();
+        Assert.False(timer.IsRunning);
+        Assert.Equal(Core.Git.GitOperation.None, vm.GitOperation);
     }
 }

@@ -16,10 +16,6 @@ public sealed class BuildStateStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
-    /// <summary>Atomik rename'in retry bütçesi: 20 deneme x <see cref="RenameRetryBackoff"/> ≈ 100ms üst sınır
-    /// (bkz. <see cref="MoveAtomicWithRetry"/>).</summary>
-    private const int RenameAttempts = 20;
-
     /// <summary>Rename retry'ının ÜRETİM backoff'u — <see cref="DefaultRenameRetryDelay"/>'in tek kaynağı.</summary>
     private static readonly TimeSpan RenameRetryBackoff = TimeSpan.FromMilliseconds(5);
 
@@ -46,7 +42,7 @@ public sealed class BuildStateStore
         if (!File.Exists(_path)) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            string text = ReadAllTextSharingDelete(_path);
+            string text = AtomicFile.ReadAllTextSharingDelete(_path);
             if (string.IsNullOrWhiteSpace(text)) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
             var map = JsonSerializer.Deserialize<Dictionary<string, BuildState>>(text, Json);
             if (map is null) return new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase);
@@ -107,6 +103,18 @@ public sealed class BuildStateStore
         && found.LastResult == BuildResult.Succeeded ? found.LastRunAt : null;
 
     /// <summary>
+    /// [spec 2026-09-18 §1-14] Bir projenin KANITLI son hatasının zamanı — satırın <c>failed · 2h</c>
+    /// etiketindeki göreli yaş bunu okur. Kayıt yoksa ya da <see cref="BuildState.FailedSignature"/> boşsa
+    /// (hiç hata yaşanmamış temiz kayıt, ya da kanıtsız/kesilmiş bir deneme — bkz. <see
+    /// cref="BuildOrchestrator.Core.Planning.WillBuildEvaluator"/>) <c>null</c>: gösterilecek bir hata yaşı yoktur. <see
+    /// cref="LastBuiltAtOf"/> ile AYNI desen — tek arama yeri, "imzalı kanıt var mı" sorusunu ikinci kez
+    /// yazmaz.
+    /// </summary>
+    public static DateTimeOffset? FailedAtOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
+        state is not null && state.TryGetValue(projectId, out var found)
+        && found.FailedSignature is not null ? found.FailedAt : null;
+
+    /// <summary>
     /// [Task 7] Bir SCC üyesinin, PLANLANAN (şu anki) bileşik imzada DAHA ÖNCE turlarla yakınsAMADIĞI hafızası —
     /// <see cref="BuildState.NonConvergentSignature"/>'ın TEK okuyucusu. Plan aşaması (RunCoordinator) ve
     /// (ileride) Sync/önizleme yolu aynı aramayı iki kez YAZMAZ — <see cref="BuiltCommitOf"/> ile aynı desen.
@@ -135,16 +143,50 @@ public sealed class BuildStateStore
     /// [tek proje · Clean] Bir projenin kaydını defterden SİLER — kayıt yoksa dosyaya hiç dokunulmaz.
     ///
     /// <para>Tek çağıranı başarılı bir <c>Clean</c> koşusudur: çıktılar gittiğinde defter de onları bilmemeli.
-    /// §4 gereği DLL/bin timestamp'i asla okunmaz, yani "diskte çıktı var mı" sorusunun tek cevabı bu
-    /// defterdir; kayıt kalsaydı bir sonraki <c>Build</c> projeyi "güncel" sayıp atlar ve kullanıcı silinmiş
-    /// çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed) yerine SİLMEK
-    /// doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor — <c>WillBuildEvaluator</c>
-    /// da kayıtsız projeyi tam olarak böyle okur.</para>
+    /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
+    /// (SDK-style'da göremez); kayıt kalsaydı bir sonraki <c>Build</c> böyle bir projeyi "güncel" sayıp atlar ve
+    /// kullanıcı silinmiş çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed)
+    /// yerine SİLMEK doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor —
+    /// <c>WillBuildEvaluator</c> da kayıtsız projeyi tam olarak böyle okur.</para>
     /// </summary>
     public void Remove(string projectId)
     {
         ArgumentNullException.ThrowIfNull(projectId);
         Write(map => map.Remove(projectId));
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.5 · karar 12] <b>Kanıtsız geçersizlemenin TEK yeri.</b> Projenin mevcut kaydı "son deneme
+    /// başarısız, ama bu kaynağın patladığına dair kanıt yok" hâline çekilir: <c>LastResult=Failed</c>,
+    /// <c>LastRunAt=</c><paramref name="now"/>, <c>FailedSignature=null</c>, <c>FailedAt=null</c>. İmza, commit ve
+    /// süre KORUNUR (Fast modda dependent'ların tabanı, ETA'nın ölçümü). Satır bir sonraki Sync'te gri
+    /// <c>never built</c> olur: derleme kanıtı <c>LastRunAt</c>'tan eski kalır, zaman kipine giremez.
+    ///
+    /// <para>Kayıt yoksa aynı hâlde bir kayıt AÇILIR: <c>BuiltSignature: null</c>, <c>LastResult=Failed</c>,
+    /// <c>LastRunAt=</c><paramref name="now"/> (yakınsamama hafızasının kayıtsız projeye açtığı kayıtla aynı biçim).
+    /// Kaydı olmayan proje zaman kipindedir (<see cref="Incremental.OutputEvidence.Inspect"/>): kayıt açılmasaydı
+    /// kesilen derlemenin bıraktığı yarım ama girdilerinden yeni çıktı <c>BuiltOutside</c> okunup atlanabilirdi.
+    /// Açılan kayıtla derleme kanıtı <c>LastRunAt</c>'tan eski kalır, proje defter kipine geçer ve karar
+    /// <c>NeverBuilt</c>'tır. İki çağıran: koşu içinde kanıtsız biten proje
+    /// (<c>RunCoordinator.InvalidateBuildStateOnFailure</c>) ve açılıştaki çökme kurtarması (<see
+    /// cref="InFlightLedger.Recover"/>). Okuma ile yazma aynı kilit altındadır: eşzamanlı bir <see cref="Upsert"/>
+    /// araya giremez.</para>
+    /// </summary>
+    public void InvalidateWithoutEvidence(string projectId, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(projectId);
+        Write(map =>
+        {
+            var existing = map.GetValueOrDefault(projectId) ?? new BuildState(projectId, BuiltSignature: null);
+            map[existing.ProjectId] = existing with
+            {
+                LastResult = BuildResult.Failed,
+                LastRunAt = now,
+                FailedSignature = null,
+                FailedAt = null,
+            };
+            return true;
+        });
     }
 
     /// <summary>Defterin TEK yazma yolu: kilit → oku → değiştir → geçici dosya → atomik rename. <paramref
@@ -158,20 +200,7 @@ public sealed class BuildStateStore
             // kopya sadece ilgili anahtarı merge eder, ayrıca bir case-collision riski taşımaz.
             var map = new Dictionary<string, BuildState>(Load(), StringComparer.OrdinalIgnoreCase);
             if (!mutate(map)) return;
-            Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-            string tmp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
-            {
-                File.WriteAllText(tmp, JsonSerializer.Serialize(map, Json));
-                MoveAtomicWithRetry(tmp, _path);
-            }
-            catch
-            {
-                // [Review Minor 4] rename retry bütçesini aşarsa (veya yazım sonrası başka bir şey fırlarsa) tmp
-                // dosyası diskte öksüz kalmasın — best-effort temizlik, orijinal exception önceliklidir.
-                try { File.Delete(tmp); } catch { /* best-effort, temizlik başarısızlığı orijinal hatayı gölgelemez */ }
-                throw;
-            }
+            AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(map, Json), EffectiveRenameRetryDelay);
         }
         finally
         {
@@ -234,38 +263,6 @@ public sealed class BuildStateStore
     /// <summary>[D8] Süpürme eşiğinin okuduğu saat — testte ileri alınır, üretimde <c>null</c>.</summary>
     internal Func<DateTime>? UtcNow { get; set; }
 
-    /// <summary>
-    /// <see cref="File.ReadAllText(string)"/> yerine: varsayılan <c>FileShare.Read</c> Delete-share İZİN VERMEZ,
-    /// bu da eşzamanlı bir <see cref="Upsert"/>'in atomik rename'ini (<see cref="File.Move"/> hedefte açık bir
-    /// okuma handle'ı varken silme/rename gerektirir) sharing-violation ile bloklayabilir. Nazik bir reader
-    /// Delete-share'i AÇIKÇA vererek yazıcının rename'ini asla engellememelidir.
-    /// </summary>
-    private static string ReadAllTextSharingDelete(string path)
-    {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(fs);
-        return reader.ReadToEnd();
-    }
-
-    /// <summary>
-    /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma handle'ı olduğunda — Delete-share
-    /// verilmiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
-    /// ile başarısız olabilir (gözlemlenen Windows davranışı: handle kapanışı ile rename arasında kısa bir yarış
-    /// penceresi kalıyor). Bu GERÇEK VERİ KAYBI değildir — tmp dosya hâlâ diskte durur; kısa, sınırlı bir retry
-    /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni; gecikme
-    /// orada olduğu gibi burada da ENJEKTE EDİLEBİLİR — <see cref="RenameRetryDelay"/>).
-    /// </summary>
-    private void MoveAtomicWithRetry(string tmp, string target)
-        // [B2] Döngünün kendisi ortak (SyncRetry) — burada yalnız BU yolun kararları durur: kaç deneme, hangi
-        // istisna geçici, gecikme nereden gelir, bütçe tükenince ne olur (burada: orijinal istisna yayılır).
-        => SyncRetry.Run(
-            () => File.Move(tmp, target, overwrite: true),
-            RenameAttempts,
-            ex => ex is IOException or UnauthorizedAccessException,
-            // [fix round 2] SyncRetry 0-based index verir; bu yolun dikişi ortaklaştırmadan ÖNCE de 1-based
-            // deneme no alıyordu — uyarlama burada, davranış birebir korunur.
-            failedAttemptIndex => EffectiveRenameRetryDelay(failedAttemptIndex + 1),
-            rethrowWhenExhausted: true);
 
     /// <summary>
     /// [B1] Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı. Ayrı bir üye olmasının

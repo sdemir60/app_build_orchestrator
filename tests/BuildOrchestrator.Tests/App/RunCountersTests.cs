@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -111,5 +112,95 @@ public class RunCountersTests
         Assert.Equal(1, c.Building);
         Assert.Equal(3, c.Queued);   // A + B + D
         Assert.Equal(4, c.Total);    // hiçbir satır kaybolmaz
+    }
+
+    // ------------------------------------------------------------------ durum kovaları (design v1.20.0 §2.7)
+
+    /// <summary>Satıra önizleme kararı yazar (<see cref="ProjectRowViewModel.Standing"/>'in TEK girdisi).</summary>
+    private static ProjectRowViewModel Decided(string name, ProjectRowState state, WillBuildReason? reason)
+    {
+        var r = new ProjectRowViewModel($@"C:\p\{name}.csproj", name, state);
+        if (reason is { } why)
+        {
+            r.WillBuild = why is not (WillBuildReason.UpToDate or WillBuildReason.WaitingForDependency);
+            r.WillBuildReason = why;
+        }
+        return r;
+    }
+
+    /// <summary>[design v1.20.0 §2.7] ✓ chip'i DURUMU sayar: güncel çıktı (atlansa da, hiç koşu olmasa da) ∪ bu
+    /// koşunun başarıları. Kova satırın GÖSTERDİĞİ görsel durumdan okunur — satır yeşilse ✓'dadır.
+    /// <para><b>[DEĞİŞEN KURAL — final review I2]</b> Eski fixture "bu koşu derledi" satırını <c>NeverBuilt</c>
+    /// gerekçesiyle kuruyor ve ✓'da sayıyordu: başarı her çıktı durumunu eziyordu. Canlı geçiş gerçekte başarıya
+    /// <c>UpToDate</c> yazar (B artık öyle); <c>NeverBuilt</c> bırakan başarı — Clean ya da motorun arkasında
+    /// durmadığı SCC üyesi — gri görünür ve ○'da sayılır (G). Koşu tablosu (<c>Succeeded</c>) ikisini de sayar.</para></summary>
+    [Fact]
+    public void Current_counts_standing_current_and_this_runs_successes()
+    {
+        var rows = new[]
+        {
+            Decided("A", ProjectRowState.Skipped, WillBuildReason.UpToDate),             // atlandı, çıktısı güncel
+            Decided("B", ProjectRowState.Succeeded, WillBuildReason.UpToDate),           // bu koşu derledi
+            Decided("C", ProjectRowState.Pending, WillBuildReason.UpToDate),             // koşu yok, güncel
+            Decided("D", ProjectRowState.Pending, WillBuildReason.WaitingForDependency), // bekliyor ama çıktısı sağlam
+            Decided("E", ProjectRowState.Succeeded, null),                               // karar yok, koşu derledi
+            Decided("F", ProjectRowState.Pending, WillBuildReason.SignatureChanged),     // derlenecek → ✓ DEĞİL
+            Decided("G", ProjectRowState.Succeeded, WillBuildReason.NeverBuilt),         // temizlendi → ○, ✓ DEĞİL
+        };
+
+        var c = RunCounters.From(rows);
+
+        Assert.Equal(5, c.Current);
+        Assert.Equal(2, c.Stale);
+        Assert.Equal(0, c.Broken);
+        Assert.Equal(1, c.Skipped); // koşu tablosu (şeridin "N skipped"i) DEĞİŞMEDİ
+        Assert.Equal(3, c.Succeeded);
+    }
+
+    /// <summary>[design v1.20.0 §2.7 · §5] ✗ chip'i kırmızıyı sayar: kanıtlı bozuk çıktı ∪ bu koşunun hataları —
+    /// ama yalnız satır KIRMIZI görünüyorsa. Kanıtsız hata (timeout · Stop · invoke hatası) çıktıyı bayat bırakır
+    /// ve satır gri görünür (R-M4b); o satır ○'dadır, ✗'de DEĞİL. Koşu tablosunun <c>Failed</c> kovası ise onu
+    /// hâlâ sayar — şeridin "N failed"i koşunun hikâyesidir.</summary>
+    [Fact]
+    public void Broken_counts_evidence_and_this_runs_failures()
+    {
+        var rows = new[]
+        {
+            Decided("A", ProjectRowState.Pending, WillBuildReason.LastFailed), // koşu yok, kanıtlı bozuk
+            Decided("B", ProjectRowState.Failed, WillBuildReason.LastFailed),  // bu koşu, kanıtlı
+            Decided("C", ProjectRowState.Failed, null),                        // karar yok → koşunun sonucu tek bilgi
+            Decided("D", ProjectRowState.Failed, WillBuildReason.NeverBuilt),  // kanıtsız hata → gri
+        };
+
+        var c = RunCounters.From(rows);
+
+        Assert.Equal(3, c.Broken);
+        Assert.Equal(1, c.Stale);   // D
+        Assert.Equal(0, c.Current);
+        Assert.Equal(3, c.Failed);  // koşu tablosu: B + C + D
+    }
+
+    /// <summary>[design v1.20.0 §2.7] Koşu bindirmesi (kuyruk · derleme), işaretleme dalgası ve karar yokluğu
+    /// hiçbir DURUM kovasına girmez — satır o an ne yeşil, ne gri, ne kırmızıdır. Kuyruktaki satır building
+    /// sayacına da girmez: o yalnız ŞU AN derleneni sayar. Her satır en çok BİR kovadadır.</summary>
+    [Fact]
+    public void Building_never_counts_a_pending_row()
+    {
+        var queued = Decided("A", ProjectRowState.Pending, WillBuildReason.NeverBuilt);
+        queued.IsRunActive = true;
+        queued.InRunQueue = true;                                                  // kuyrukta (amber)
+        var compiling = Decided("B", ProjectRowState.Started, WillBuildReason.LastFailed); // derleniyor
+        var marked = Decided("C", ProjectRowState.Pending, WillBuildReason.UpToDate);
+        marked.Marked = true;                                                      // dalgada amber
+        var unknown = Decided("D", ProjectRowState.Pending, null);                 // hiç Sync yok
+
+        var c = RunCounters.From([queued, compiling, marked, unknown]);
+
+        Assert.Equal(1, c.Building);
+        Assert.Equal(3, c.Queued);   // koşu tablosu: HER Pending satır (A · C · D) — bkz. sınıf yorumu
+        Assert.Equal(0, c.Current);
+        Assert.Equal(0, c.Stale);
+        Assert.Equal(0, c.Broken);
+        Assert.Equal(4, c.Total);
     }
 }

@@ -27,14 +27,7 @@ public sealed class PlanProgressLinesTests
         Assert.Equal("Dependency graph — 0 cycles", PlanProgressLines.DependencyGraph(0));
         Assert.Equal("Build order resolved (177)", PlanProgressLines.BuildOrderResolved(177));
         Assert.Equal("Computing incremental state (177 projects)", PlanProgressLines.ComputingIncremental(177));
-        Assert.Equal("Preparing worktree for 'release/1.2'", PlanProgressLines.PreparingWorktree("release/1.2"));
     }
-
-    /// <summary>Branch adı yoksa (toggle açık ama seçim yok — aktif branch'in worktree'si) satır yine
-    /// anlamlıdır: hazırlık koşuyor ve kullanıcı bunu görmeli.</summary>
-    [Fact]
-    public void The_worktree_line_survives_a_missing_branch_name()
-        => Assert.Equal("Preparing worktree", PlanProgressLines.PreparingWorktree(null));
 
     /// <summary>
     /// [v1.16.0] Sync'in mesafe satırı. Uzak uçtaki commit'in KİMLİĞİ yazılmaz — kullanıcı onu pull etmedikçe
@@ -47,6 +40,35 @@ public sealed class PlanProgressLinesTests
     [InlineData(3, "HEAD a3f81c2 · 3 commits behind origin/main")]
     public void The_head_line_reports_the_distance_from_the_remote(int? behind, string expected)
         => Assert.Equal(expected, PlanProgressLines.HeadDistance("a3f81c2", behind, "main"));
+
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout'un satırları: App onları
+    /// <c>CheckoutCompletedEvent</c>'ten kurar — başarıda temizlenen konsolun ilk satırları, reddetmede
+    /// korunan konsolun altına eklenen uyarı.</summary>
+    [Fact]
+    public void The_branch_switch_lines_say_what_happened_and_what_to_do()
+    {
+        Assert.Equal("Switched to feature/x (b7e91d4) — from main",
+            PlanProgressLines.SwitchedBranch("main", "feature/x", "b7e91d4"));
+        Assert.Equal(
+            "Stashed uncommitted changes: \"build-orchestrator: leaving main for feature/x\" — restore them with git stash pop",
+            PlanProgressLines.StashedBeforeSwitch("build-orchestrator: leaving main for feature/x"));
+        Assert.Equal("3 files have uncommitted changes — commit or stash them first",
+            PlanProgressLines.SwitchRefusedDirty(3));
+        Assert.Equal("1 file has uncommitted changes — commit or stash them first",
+            PlanProgressLines.SwitchRefusedDirty(1));
+        Assert.Equal("Switch failed — pathspec 'x' did not match", PlanProgressLines.SwitchFailed("pathspec 'x' did not match"));
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Kesilen koşunun özeti: kaç proje bitti, kaçı derlenmedi, log klasörü —
+    /// klasör bilinmiyorsa ek yazılmaz.</summary>
+    [Fact]
+    public void The_interrupted_run_summary_names_the_counts_and_the_log_folder()
+    {
+        Assert.Equal(@"Run interrupted by a branch change — 3 built, 5 not built · logs: D:\logs\run",
+            PlanProgressLines.RunInterruptedByBranchChange(3, 5, @"D:\logs\run"));
+        Assert.Equal("Run interrupted by a branch change — 0 built, 1 not built",
+            PlanProgressLines.RunInterruptedByBranchChange(0, 1, null));
+    }
 
     /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
     /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>

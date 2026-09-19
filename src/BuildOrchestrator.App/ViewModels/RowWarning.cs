@@ -21,10 +21,16 @@ public static class RowWarning
     /// <summary>[review R1 finding 3 — kopya YASAK] "Dependency issue: " önce satırın <see cref="For"/>'unda
     /// İKİ, sonra başlığın <see cref="DepIssueDetail"/>'inde bir kez daha literal olarak yazılıyordu — üçü de
     /// AYNI sözcüğü taşıdığı için tek kaynağa indirildi. <b>[Task 4 review — M3]</b> <c>internal</c>: <see
-    /// cref="DecisionLabel"/>'in <c>WaitingForDependency</c> tooltip'i de AYNI kelimeyi kullanır — kayıtlı
-    /// kökler her zaman "FAILED" değildir (tek-proje koşusunun bayat bıraktığı bir bağımlılık da kök olabilir,
-    /// bkz. <c>ProjectRunScope</c>), "Built against a FAILED dependency" iddiası orada yanlıştı.</summary>
+    /// cref="WaitingForDependencyText"/> de AYNI kelimeyi kullanır — kayıtlı kökler her zaman "FAILED" değildir
+    /// (tek-proje koşusunun bayat bıraktığı bir bağımlılık da kök olabilir, bkz. <c>ProjectRunScope</c>),
+    /// "Built against a FAILED dependency" iddiası orada yanlıştı.</summary>
     internal const string DepIssuePrefix = "Dependency issue: ";
+
+    /// <summary>[Task 6 review round 1 — kopya YASAK] <see cref="WaitingForDependencyText"/>'in İKİ çıkışı
+    /// (kök varken kuyruk, kök yokken tek başına cümle) bu tek cümlenin İKİ ayrı yazımıydı — kökler varken
+    /// küçük harfle kuyruk, yokken büyük harfle tek cümle. Artık İKİSİ de bu TEK sabitten türer. Brief metni
+    /// "…once it is healthy again" öneriyordu; MEVCUT ifade korundu (kullanıcı kararı — anlam değişmiyor).</summary>
+    private const string HealthyAgainClause = "rebuilds once that dependency is healthy again";
 
     /// <summary>Sıradan döngü üyeliği (prototip <c>warnText</c>, BuildApp.jsx:583).</summary>
     public const string InCycle = "In a dependency cycle";
@@ -55,6 +61,29 @@ public static class RowWarning
         return depIssues.Count == 1
             ? DepIssuePrefix + first
             : string.Format(CultureInfo.InvariantCulture, "{0}{1} +{2}", DepIssuePrefix, first, depIssues.Count - 1);
+    }
+
+    /// <summary>[Task 6 — design v1.20.0 §2.4] Proje sayfasının "bekliyor" cümlesi: <see cref="DepIssuePrefix"/>
+    /// + kökler (virgülle, ortak önek kısaltılarak) + sabit kuyruk. TEK kaynak: <see cref="Console.ConsoleEmptyState"/>'in
+    /// hem <c>Pending</c> hem <c>Skipped</c> dalı buradan okur (kopya YASAK) — eskiden bu cümleyi
+    /// <c>DecisionLabel.For</c>'un <c>WaitingForDependency</c> dalı üretiyordu, o dal artık <c>UpToDate</c> ile
+    /// birleşti (bkz. <see cref="DecisionLabel"/>'in sınıf özeti).
+    ///
+    /// <para><b>[Task 6 review round 1 — DÜZELTME]</b> Bu cümle üçgenin (<see cref="For"/>) tooltip'iyle AYNI
+    /// DEĞİLDİR — yalnız kök adlandırma DİLİ ortak (<see cref="DepIssuePrefix"/> + <see cref="GraphNode.ShortLabel"/>
+    /// ile kısaltma). Üçgen daraltılmış slot için kısaltır (<c>Dependency issue: Sales.Core +2</c>, ilk ad + kalan
+    /// sayısı); bu metin geniş sayfa alanında TÜM kökleri virgülle yazar ve bekleme kuyruğunu ekler — biri
+    /// diğerinin kopyası değil, ikisi de aynı üç parçadan (önek, kısaltma, kuyruk) farklı BİÇİMLER üretir.</para>
+    /// </summary>
+    /// <param name="dependencyRoots">Bekleyen kök adları; boş/null ise (savunmacı) parantezsiz nötr cümle.</param>
+    /// <param name="namePrefix">Kök adlarının kısaltılacağı ortak önek.</param>
+    public static string WaitingForDependencyText(IReadOnlyList<string>? dependencyRoots, string namePrefix)
+    {
+        if (dependencyRoots is not { Count: > 0 })
+            return char.ToUpperInvariant(HealthyAgainClause[0]) + HealthyAgainClause[1..];
+
+        string names = string.Join(", ", dependencyRoots.Select(r => GraphNode.ShortLabel(r, namePrefix)));
+        return DepIssuePrefix + names + " — " + HealthyAgainClause;
     }
 
     /// <summary>[v1.18.0 §9] Konsol başlığının dep-issue rozeti — satırın "+N" kısaltmasının AKSİNE tam

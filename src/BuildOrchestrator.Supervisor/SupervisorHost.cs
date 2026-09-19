@@ -20,21 +20,20 @@ namespace BuildOrchestrator.Supervisor;
 /// <summary>
 /// [A5/T69] Kök-yola (<c>RootPath</c>) bağlı Core servislerinin fabrikaları. Bu tipler kök başına kurulur
 /// çünkü komutlar kökü BERABERİNDE taşır — Supervisor tek bir repo'ya sabitlenmiş değildir. Kompozisyon kökü
-/// (<see cref="Program"/>) doldurur; testler izole cache/havuz kökleriyle kendi örneğini verir.
+/// (<see cref="Program"/>) doldurur; testler izole cache kökleriyle kendi örneğini verir.
 /// </summary>
 public sealed record WorkspaceServices(
     Func<string, SyncWorkspaceService> Sync,
     Func<string, GitService> Git,
-    Func<string, WorktreeManager> Worktree,
     Func<string, CleanWorkspaceService> Clean,
     Func<string, OptimizeWorkspaceService> Optimize)
 {
     /// <summary>Üretim bağlaması: gerçek <see cref="ProcessRunner"/>, <paramref name="cacheRoot"/>'taki
-    /// evaluation-cache + build-state + source-hash, <paramref name="poolRoot"/>'taki worktree havuzu.</summary>
+    /// evaluation-cache + build-state + source-hash.</summary>
     /// <param name="msbuildInvoker">[optimize] Restore child'ı için MSBuild toolset'ini LAZY çözen fabrika —
     /// koordinatörün kullandığı memoize edilmiş çözümle AYNI kaynaktan gelir (ikinci bir vswhere araması
     /// yapılmaz). Çözüm başarısız olursa Optimize düşmez, yalnız restore adımı atlanır (K-6).</param>
-    public static WorkspaceServices Default(string cacheRoot, string poolRoot,
+    public static WorkspaceServices Default(string cacheRoot,
         Func<CancellationToken, Task<IMsBuildInvoker>> msbuildInvoker)
     {
         // Defter yolları TEK yerde kurulur: iki servis de aynı dosyaları açar, adlar ikinci kez yazılmaz.
@@ -48,7 +47,6 @@ public sealed record WorkspaceServices(
                 new GitService(new ProcessRunner(), root), new BuildStateStore(cacheRoot),
                 new SourceHashCache(sourceHashPath)),
             root => new GitService(new ProcessRunner(), root),
-            root => new WorktreeManager(new ProcessRunner(), root, poolRoot),
             // Clean git'e hiç dokunmaz ve csproj DEĞERLENDİRMEZ: bin/obj csproj'un yanındadır.
             _ => new CleanWorkspaceService(new WorkspaceScanner(), new BuildStateStore(cacheRoot)),
             // Optimize git'e hiç dokunmaz ama csproj DEĞERLENDİRİR (HintPath'ler needy tespitini besler) ve
@@ -63,11 +61,14 @@ public sealed record WorkspaceServices(
 /// <param name="debugHooks">[A13/B4] Test kancalarının (bugün yalnız <c>debugSpawnChildren</c>) AÇIK olup
 /// olmadığı. <b>Varsayılan KAPALI</b> — üretim ikilisi bu kancayı dinlemez; yalnız Supervisor'ı
 /// <see cref="SupervisorHost.DebugHooksArg"/> ile başlatan testlerde canlıdır.</param>
+/// <param name="interruptedProjects">[spec 2026-09-18 §5.5] Açılıştaki çökme kurtarmasının sayısı —
+/// <c>Program.Main</c> host'u kurmadan ÖNCE <see cref="BuildOrchestrator.Core.State.InFlightLedger.Recover"/>'ı
+/// koşar ve sonucu buraya verir; host dosya okumaz, yalnız <see cref="EngineReadyEvent"/>'e taşır.</param>
 public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, JobObject innerJob,
-    RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false)
+    RunCoordinator coordinator, WorkspaceServices workspace, bool debugHooks = false, int interruptedProjects = 0)
 {
     /// <summary>[A13/B4] Test kancalarını açan Supervisor argümanı. <b>Değer almaz</b> (varlığı yeterlidir),
-    /// bu yüzden <c>--logs</c>/<c>--worktrees</c>'in isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
+    /// bu yüzden <c>--logs</c>'un isim+değer sözleşmesine (<c>Program.GetArg</c>) girmez.
     /// <para>Bayrağın adının TEK sahibi burasıdır: <see cref="Program"/> onu ayrıştırırken, testler
     /// Supervisor'ı başlatırken ve aşağıdaki reddetme metni onu adlandırırken hep BU sabiti okur.</para></summary>
     public const string DebugHooksArg = "--debug-hooks";
@@ -89,7 +90,7 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             typeof(SupervisorHost).Assembly
                 .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(SupervisorHost).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
-        await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version), ct);
+        await writer.WriteAsync(new EngineReadyEvent(Environment.ProcessId, version, interruptedProjects), ct);
         while (_running)
         {
             IpcCommand? cmd;
@@ -128,14 +129,12 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
                 await OptimizeWorkspaceAsync(o, ct); break;
             case ListBranchesCommand b:
                 await ListBranchesAsync(b, ct); break;
-            case ListWorktreesCommand w:
-                await WriteWorktreeListAsync(w.RootPath, ct); break;
-            case DeleteWorktreeCommand d:
-                await DeleteWorktreeAsync(d, ct); break;
             case SetPerfModeCommand p:
                 await ApplyPerfModeAsync(p, ct); break;
             case PullRepositoryCommand p:
                 await PullRepositoryAsync(p, ct); break;
+            case CheckoutBranchCommand c:
+                await CheckoutBranchAsync(c, ct); break;
             default:
                 await writer.WriteAsync(new ErrorEvent("unknownCommand", cmd.GetType().Name), ct); break;
         }
@@ -190,23 +189,75 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
     {
         var git = workspace.Git(cmd.RootPath);
         string? before = (await git.GetHeadCommitAsync(ct)).Value;
+        // [final review M5] İlerletilen branch checkout edilmiş olandır (FastForwardUpdater başka bir branch'e dokunmaz);
+        // komutun adı App'in son bildiğidir ve bayat olabilir. Satırlar diskten okunan adı söyler — sonuç kendi okuduğunu
+        // taşır, komutun adı yalnız branch okunamazsa (detached/hata) geri düşüştür.
+        string current = (await git.GetCurrentBranchAsync(ct)).Value ?? cmd.Branch;
 
-        await writer.WriteAsync(new SyncProgressEvent(PlanProgressLines.PullCommand(cmd.Branch), "cmd"), ct);
+        await writer.WriteAsync(new SyncProgressEvent(PlanProgressLines.PullCommand(current), "cmd"), ct);
         var result = await new FastForwardUpdater(new ProcessRunner(), cmd.RootPath).UpdateAsync(ct);
+        string branch = result.Branch ?? current;
 
         var (line, tone) = result.Status switch
         {
             FastForwardStatus.Updated => (
-                PlanProgressLines.Pulled(cmd.Branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
-            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(cmd.Branch), "info"),
+                PlanProgressLines.Pulled(branch, RevisionText.Short(before), RevisionText.Short(result.Revision)), "info"),
+            FastForwardStatus.AlreadyCurrent => (PlanProgressLines.PullAlreadyCurrent(branch), "info"),
             FastForwardStatus.Dirty => (PlanProgressLines.PullRefusedDirty(), "warn"),
-            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(cmd.Branch), "warn"),
+            FastForwardStatus.Diverged => (PlanProgressLines.PullRefusedDiverged(branch), "warn"),
             FastForwardStatus.Detached => (PlanProgressLines.PullRefusedDetached(), "warn"),
             _ => (PlanProgressLines.PullFailed(result.Detail ?? "unknown error"), "error"),
         };
 
         await writer.WriteAsync(new SyncProgressEvent(line, tone), ct);
         await writer.WriteAsync(new PullCompletedEvent(result.Status is FastForwardStatus.Updated), ct);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Branch chip'inden seçim: çalışma ağacında gerçek bir checkout. Yürütme
+    /// <see cref="BranchSwitcher"/>'dır (kir kapısı → isteğe bağlı <c>stash push -u</c> → <c>checkout</c>);
+    /// mutasyon yüzeyi o dosyada kalır.
+    ///
+    /// <para><b>Konsol satırı YAZILMAZ</b> (Pull'dan farkı budur): başarılı bir checkout yeni bir bölüm açar ve
+    /// App konsolu ÖNCE temizleyip stash/switch satırlarını SONRA yazar. Supervisor satır yayınlasaydı App'e
+    /// temizlikten ÖNCE ulaşır ve temizlikle silinirdi. Tek çıktı <see cref="CheckoutCompletedEvent"/>'tir;
+    /// satırlar <c>PlanProgressLines</c>'tan App'te kurulur.</para>
+    ///
+    /// <para><b>Kapı:</b> bir koşu uçuştaysa <c>checkoutRejected</c> — derlenmekte olan ağacı altından
+    /// değiştirmek koşunun kaynağını yarıda değiştirirdi. App'in kendi kapısı chip'i zaten kapatır; bu ikinci
+    /// katman komut yoldayken başlayan bir koşunun yarışını kapatır. Sync gibi komut döngüsünü BLOKLAR:
+    /// hemen ardından gelen bir <c>startRun</c> yarı değişmiş bir ağaçta başlamamalıdır.</para>
+    /// </summary>
+    private async Task CheckoutBranchAsync(CheckoutBranchCommand cmd, CancellationToken ct)
+    {
+        if (coordinator.IsRunActive)
+        {
+            await writer.WriteAsync(
+                new ErrorEvent("checkoutRejected", "A run is in flight — stop it before switching branches."), ct);
+            return;
+        }
+
+        try
+        {
+            // "from" checkout'tan ÖNCE okunur: sonrasında aktif branch zaten hedeftir. Detached HEAD'de kısa sha.
+            var git = workspace.Git(cmd.RootPath);
+            var current = await git.GetCurrentBranchAsync(ct);
+            string? from = current.Value;
+            if (current.Success && from is null)
+                from = (await git.GetHeadCommitAsync(ct)).Value is { } head ? RevisionText.Short(head) : null;
+
+            var result = await new BranchSwitcher(new ProcessRunner(), cmd.RootPath)
+                .SwitchAsync(cmd.Branch, cmd.IsRemote, cmd.StashIfDirty, ct);
+
+            await writer.WriteAsync(new CheckoutCompletedEvent(result.Status, from, result.Branch, result.Revision,
+                result.DirtyCount, result.StashMessage, result.Detail), ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // BranchSwitcher git hatalarını zaten tipli sonuca çevirir; buraya yalnız GERÇEKTEN beklenmeyen bir
+            // hata düşer. IPC sınırını exception ASLA geçmemeli — App bu kodla chip kilidini açar.
+            await writer.WriteAsync(new ErrorEvent("checkoutFailed", ex.Message), ct);
+        }
     }
 
     /// <summary>
@@ -283,30 +334,6 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
             .Select(b => new BranchRef(b.Name, b.Sha, b.IsActive, b.IsRemote))
             .ToList();
         await writer.WriteAsync(new BranchListEvent(branches), ct);
-    }
-
-    /// <summary>[A5/T69] Havuz envanteri → <see cref="WorktreeListEvent"/>. <c>deleteWorktree</c> de silme
-    /// sonrası BUNU yeniden yayınlar, böylece App'in listesi ek bir komut gerekmeden tazelenir.</summary>
-    private async Task WriteWorktreeListAsync(string rootPath, CancellationToken ct)
-    {
-        var result = await workspace.Worktree(rootPath).ListWorktreesAsync(ct);
-        if (!result.Success)
-        { await writer.WriteAsync(new ErrorEvent("worktreeListFailed", result.Error!), ct); return; }
-
-        var worktrees = result.Value!
-            .Select(w => new Worktree(w.Name, w.Branch ?? "", w.Path, w.IsActive, w.SizeBytes))
-            .ToList();
-        await writer.WriteAsync(new WorktreeListEvent(worktrees), ct);
-    }
-
-    private async Task DeleteWorktreeAsync(DeleteWorktreeCommand cmd, CancellationToken ct)
-    {
-        // Ad doğrulaması (path traversal) Core'da: WorktreeManager.DeleteAsync → PathSanitizer.IsSafeSegment.
-        var result = await workspace.Worktree(cmd.RootPath).DeleteAsync(cmd.Name, ct);
-        if (!result.Success)
-        { await writer.WriteAsync(new ErrorEvent("worktreeDeleteFailed", result.Error!), ct); return; }
-
-        await WriteWorktreeListAsync(cmd.RootPath, ct);
     }
 
     /// <summary>

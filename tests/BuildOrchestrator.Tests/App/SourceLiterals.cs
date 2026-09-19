@@ -91,8 +91,15 @@ internal static class SourceLiterals
     ///
     /// <para>Interpolated biçimde <c>{…}</c> hole'ları içindeki <b>iç içe string ve char literalleri</b>
     /// özyinelemeli olarak atlanır — kapanış tırnağının doğru yerde bulunması bunu gerektirir.</para>
+    ///
+    /// <para>[Task 8 fix round 1] <paramref name="holes"/> verilirse, BU çağrının TEK-seviye (üst)
+    /// hole'larının İÇERİK aralığını (açılış <c>{</c>'den SONRA, kapanış <c>}</c>'den ÖNCE — iç içe
+    /// <c>{}</c>'ler dahil TEK parça) doldurur. Sınır tespiti burada TEK yerde yaşar (kopya YASAK): <see
+    /// cref="CodeOnly"/> hole İÇİNİ kod, dışını literal metin sayarken bunu KENDİ regex'iyle YENİDEN
+    /// bulmaz, bu listeyi okur. Ham (<c>"""…"""</c>) dalı bu listeyi HİÇ doldurmaz — o dalda hole tespiti
+    /// yoktur (bilinen sınır, bu kod tabanında raw+interpolated birleşimi kullanılmıyor).</para>
     /// </summary>
-    private static int ReadCSharpString(string text, int start)
+    private static int ReadCSharpString(string text, int start, List<(int Start, int End)>? holes = null)
     {
         int n = text.Length, i = start;
         bool interpolated = false, verbatim = false;
@@ -116,6 +123,7 @@ internal static class SourceLiterals
 
         i++;                                                          // açılış tırnağını geç
         int depth = 0;                                                // interpolation hole derinliği
+        int holeStart = -1;                        // [Task 8 fix round 1] açık ÜST hole'un içerik başlangıcı
         while (i < n)
         {
             char c = text[i];
@@ -130,12 +138,22 @@ internal static class SourceLiterals
             if (interpolated && c == '{')
             {
                 if (depth == 0 && i + 1 < n && text[i + 1] == '{') { i += 2; continue; } // {{ = düz '{'
-                depth++; i++; continue;
+                depth++;
+                if (depth == 1) holeStart = i + 1;         // [Task 8] hole İÇERİĞİ '{' HEMEN sonrasında başlar
+                i++; continue;
             }
             if (interpolated && c == '}')
             {
                 if (depth == 0 && i + 1 < n && text[i + 1] == '}') { i += 2; continue; } // }} = düz '}'
-                if (depth > 0) depth--;
+                if (depth > 0)
+                {
+                    depth--;
+                    if (depth == 0 && holeStart >= 0)      // [Task 8] ÜST hole kapandı — tek parça olarak kaydet
+                    {
+                        holes?.Add((holeStart, i));
+                        holeStart = -1;
+                    }
+                }
                 i++; continue;
             }
 
@@ -243,4 +261,107 @@ internal static class SourceLiterals
     }
 
     private static int LineOf(string text, int index) => text.AsSpan(0, index).Count('\n') + 1;
+
+    /// <summary>
+    /// [Faz 3/Task 8] <see cref="FromCSharp"/>'ın TERSİ: yorumları (<c>//</c>/<c>///</c>/<c>/* */</c>) ve
+    /// string/char literallerinin METİN kısımlarını, satır sonlarını KORUYARAK boşluğa çevirir — geri kalan
+    /// KOD olduğu gibi durur. Kaynak-tanımlayıcı guard'ları (ör. ürün adı sızıntısı) buradan beslenir: kural
+    /// yalnız KODA uygulanmalı, yorum ve literal veriye DEĞİL.
+    ///
+    /// <para>Sınır tespiti (yorum/string/char nerede başlar-biter, iç içe interpolation dahil) <see
+    /// cref="ReadCSharpString"/> ile AYNI tarayıcıdan gelir — bu tespit iki ayrı yerde YAZILMAZ (kopya YASAK).
+    /// Naif bir regex bu ayrımı YAPAMAZ: <c>$"…{x ?? "iç"}…"</c> gibi bir interpolation hole'undaki iç string,
+    /// dış literalin kapanışını erken sanıp geri kalan dosyayı kaydırırdı — <see cref="ReadCSharpString"/>'in
+    /// var oluş sebebi tam olarak bu (bkz. sınıf özeti, fix-1 · C1).</para>
+    ///
+    /// <para>[Task 8 fix round 1] İnterpolated bir string'in <c>{…}</c> hole'u KOD taşır, literal metin
+    /// DEĞİL (ör. <c>$"skip {OsysLegacyName}"</c> — <c>OsysLegacyName</c> gerçek bir tanımlayıcı kullanımıdır).
+    /// Round 1 öncesi <see cref="ReadCSharpString"/>'in döndürdüğü TÜM aralık (hole dahil) boşluğa çevriliyordu
+    /// ve bu, hole'daki bir ürün-adı sızıntısını guard'dan GİZLERDİ. Artık <see cref="ReadCSharpString"/>'in
+    /// bildirdiği hole aralıkları (iç içe seviyeler dahil, <see cref="AppendStringWithCodeHoles"/> her hole
+    /// içeriğini ÖZYİNELEMELİ olarak yeniden <see cref="CodeOnly"/>'den geçirir) KOD sayılıp OLDUĞU GİBİ
+    /// bırakılır; yalnız hole'ların ARASINDAKİ/DIŞINDAKİ literal metin (ve ham string'ler — hole tespiti
+    /// olmayan tek dal, bkz. <see cref="ReadCSharpString"/>) boşluğa çevrilir.</para>
+    /// </summary>
+    public static string CodeOnly(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length);
+        int i = 0, n = text.Length;
+        while (i < n)
+        {
+            char c = text[i];
+
+            if (c == '/' && i + 1 < n && text[i + 1] == '/')
+            {
+                int start = i;
+                while (i < n && text[i] != '\n') i++;
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            if (c == '/' && i + 1 < n && text[i + 1] == '*')
+            {
+                int start = i;
+                i += 2;
+                while (i + 1 < n && !(text[i] == '*' && text[i + 1] == '/')) i++;
+                i = Math.Min(n, i + 2);
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            if (c is '"' or '@' or '$')
+            {
+                var holes = new List<(int Start, int End)>();
+                int end = ReadCSharpString(text, i, holes);
+                if (end > i)
+                {
+                    AppendStringWithCodeHoles(sb, text, i, end, holes);
+                    i = end;
+                    continue;
+                }
+            }
+            if (c == '\'')
+            {
+                int start = i;
+                i++;
+                while (i < n && text[i] != '\'' && text[i] != '\n') { if (text[i] == '\\') i++; i++; }
+                i = Math.Min(n, i + 1);
+                sb.Append(Blanked(text, start, i));
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>[Task 8 fix round 1] [<paramref name="start"/>, <paramref name="end"/>) aralığındaki bir
+    /// string literalini yazar: <paramref name="holes"/>'un DIŞINDAKİ (hole'lar arası/öncesi/sonrası) metin
+    /// <see cref="Blanked"/> ile boşluğa çevrilir, İÇİNDEKİ ise KOD sayılıp <see cref="CodeOnly"/>'den
+    /// ÖZYİNELEMELİ geçirilir (bir hole'un içinde iç içe bir string/yorum olabilir — nested seviyeler böyle
+    /// çözülür, ikinci bir parser YAZILMAZ). <paramref name="holes"/> boşsa (interpolated olmayan ya da ham
+    /// string) davranış ESKİSİYLE AYNIDIR: tüm aralık literal metin sayılır.</summary>
+    private static void AppendStringWithCodeHoles(
+        System.Text.StringBuilder sb, string text, int start, int end, List<(int Start, int End)> holes)
+    {
+        int cursor = start;
+        foreach (var (holeStart, holeEnd) in holes)
+        {
+            sb.Append(Blanked(text, cursor, holeStart));       // hole ÖNCESİ metin (açılış '{' dahil)
+            sb.Append(CodeOnly(text[holeStart..holeEnd]));     // hole İÇERİĞİ: KOD, özyinelemeli
+            cursor = holeEnd;
+        }
+        sb.Append(Blanked(text, cursor, end));                 // son hole SONRASI metin (kapanış '}' + kapanış tırnağı)
+    }
+
+    /// <summary>[<paramref name="start"/>, <paramref name="end"/>) aralığını, satır sonlarını KORUYARAK
+    /// boşluğa çevirir.</summary>
+    private static string Blanked(string text, int start, int end)
+    {
+        char[] blanked = new char[end - start];
+        for (int k = 0; k < blanked.Length; k++)
+        {
+            char ch = text[start + k];
+            blanked[k] = ch is '\n' or '\r' ? ch : ' ';
+        }
+        return new string(blanked);
+    }
 }

@@ -57,7 +57,7 @@ public class MsBuildArgumentsTests
     public void Shared_compilation_and_node_reuse_can_not_be_re_enabled_on_the_build_path() // [T33]
     {
         string[] reEnabling = ["UseSharedCompilation=true", "nodeReuse:true", "-m:", "MSBUILDDISABLENODEREUSE=0"];
-        var build = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", @"c:\wt\obj\c__r_p");
+        var build = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug");
 
         foreach (string flag in reEnabling)
             Assert.DoesNotContain(build, a => a.Contains(flag, StringComparison.OrdinalIgnoreCase));
@@ -143,18 +143,20 @@ public class MsBuildArgumentsTests
         Assert.DoesNotContain("MsBuildArguments.Build(", text);  // ...ve hedefi kendisi seçmiyor
     }
 
+    /// <summary>
+    /// [VS-parity] Proje daima kendi varsayılan obj'inde derlenir: argüman listesi obj'i hiçbir yere
+    /// yönlendirmez.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski kural iki testle pinliydi: "obj izolasyonu
+    /// verilirse <c>BaseIntermediateOutputPath</c> sonda ters bölüyle yazılır" ve "verilmezse yazılmaz"
+    /// (<c>Build_with_obj_isolation_has_trailing_backslash</c>,
+    /// <c>Build_with_null_obj_isolation_emits_no_BaseIntermediateOutputPath_arg</c>). İzolasyon yalnız worktree
+    /// havuzu içindi; worktree modu kalkınca parametre de kalktı — geriye yalnız "yönlendirme yok" kalır.</para>
+    /// </summary>
     [Fact]
-    public void Build_with_obj_isolation_has_trailing_backslash() // [SPIKE S2 şart-2 — bayat obj zehri]
+    public void Build_never_redirects_the_obj_folder()
     {
-        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", @"c:\wt\obj\c__r_p");
-        Assert.Contains(@"-p:BaseIntermediateOutputPath=c:\wt\obj\c__r_p\", args);
-    }
-
-    [Fact]
-    public void Build_with_null_obj_isolation_emits_no_BaseIntermediateOutputPath_arg() // [I2-K2] in-place = VS-parity, projenin kendi obj'i
-    {
-        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", baseIntermediateOutputPath: null);
-        Assert.DoesNotContain(args, a => a.StartsWith("-p:BaseIntermediateOutputPath=", StringComparison.Ordinal));
+        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug");
+        Assert.DoesNotContain(args, a => a.Contains("IntermediateOutputPath", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

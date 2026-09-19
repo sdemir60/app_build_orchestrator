@@ -231,7 +231,7 @@ public class DsControlTemplateTests
         var style = (Style)host.FindResource("Ds.Switch");
         Assert.Equal(typeof(CheckBox), style.TargetType);
 
-        var toggle = new CheckBox { Content = "worktree", Style = style };
+        var toggle = new CheckBox { Content = "stash", Style = style };
         var window = DsResources.Realize(host, toggle);
 
         var track = (Border)toggle.Template.FindName("Track", toggle);
@@ -261,7 +261,7 @@ public class DsControlTemplateTests
     public void Switch_track_is_a_capsule_not_an_ellipse()
     {
         var host = DsResources.NewHost();
-        var toggle = new CheckBox { Content = "worktree", Style = (Style)host.FindResource("Ds.Switch") };
+        var toggle = new CheckBox { Content = "stash", Style = (Style)host.FindResource("Ds.Switch") };
         var window = DsResources.Realize(host, toggle);
 
         var track = (Border)toggle.Template.FindName("Track", toggle);
@@ -528,13 +528,13 @@ public class DsControlTemplateTests
         Assert.Equal(0.6, ring.Opacity);             // _ds_bundle.js:1452
 
         glyph.SetValue(BuildOrchestrator.App.Controls.StatusGlyph.StatusProperty,
-            BuildOrchestrator.App.Controls.GraphStatus.Discovered);
+            BuildOrchestrator.App.Controls.VisualStatus.Unknown); // DS `discovered` çizimi
         glyph.UpdateLayout();
         Assert.NotEmpty(ring.StrokeDashArray);       // _ds_bundle.js:1517 dasharray "2.3 2.5"
         Assert.Equal(0.9, ring.Opacity);
 
         glyph.SetValue(BuildOrchestrator.App.Controls.StatusGlyph.StatusProperty,
-            BuildOrchestrator.App.Controls.GraphStatus.Building);
+            BuildOrchestrator.App.Controls.VisualStatus.Building);
         glyph.UpdateLayout();
         var spinner = DsResources.Descendants(glyph).OfType<BuildOrchestrator.App.Controls.BuildingSpinner>().Single();
         Assert.Equal(Visibility.Visible, spinner.Visibility);
@@ -563,12 +563,12 @@ public class DsControlTemplateTests
         var window = DsResources.Realize(host, dot);
 
         Assert.Equal((double)host.FindResource("Size.DotSize"), dot.Fill.Width);
-        // Varsayılan `discovered`: düz gri DOLU, halka görünmez.
+        // Varsayılan `stale` (eski `discovered`'ın düz grisi): düz gri DOLU, halka görünmez.
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Fill.Fill));
         Assert.Equal(1.0, dot.Fill.Opacity);
         Assert.Equal(0.0, dot.Ring.Opacity);
 
-        dot.State = BuildOrchestrator.App.Controls.VisualStatus.Fresh;
+        dot.State = BuildOrchestrator.App.Controls.VisualStatus.Unknown;
         dot.UpdateLayout();
         Assert.Equal(0.0, dot.Fill.Opacity);                        // başlangıç modunda dolu daire GÖRÜNMEZ
         Assert.Equal(DsResources.TokenColor(host, "Brush.StatusSkippedBorder"), DsResources.ColorOf(dot.Ring.Stroke));

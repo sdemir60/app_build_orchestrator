@@ -14,6 +14,8 @@ using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Core.Workspace;
 using BuildOrchestrator.Tests.Git;
+using BuildOrchestrator.Tests.Incremental;
+using BuildOrchestrator.Tests.MsBuild;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Workspace;
@@ -255,7 +257,10 @@ public class SyncWorkspaceServiceTests
     /// <summary>Her projeyi "en son bu imzayla başarıyla derlendi" diye işaretler — servisin will-build pass'inin
     /// hesapladığı imzanın AYNISI kullanılır (<see cref="IncrementalRunBinder.Bind"/>), böylece sonraki Sync
     /// gerçekten all-clean görür (sayaçlar uydurulmaz).</summary>
-    private static async Task PrimeBuildStateAsUpToDateAsync(string root, string cacheRoot)
+    /// <returns>Binder'ın hesapladığı bugünkü içerik özetleri (<see cref="IncrementalRunBinder.ContentById"/>) —
+    /// deftere YAZILMAZ; bir testin <c>BuiltContent</c>'i kendisi kurması içindir.</returns>
+    private static async Task<IReadOnlyDictionary<string, string?>> PrimeBuildStateAsUpToDateAsync(
+        string root, string cacheRoot)
     {
         var scanner = new WorkspaceScanner();
         var evaluator = new CsprojEvaluator();
@@ -278,6 +283,7 @@ public class SyncWorkspaceServiceTests
         var store = new BuildStateStore(cacheRoot);
         foreach (var (projectId, signature) in signatures)
             store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
+        return binder.ContentById;
     }
 
     /// <summary>
@@ -308,22 +314,130 @@ public class SyncWorkspaceServiceTests
         Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
     }
 
-    /// <summary>Başka bir branch seçiliyken mesafe ÖLÇÜLMEZ: derleme worktree'den yapılır ve ana ağacın uzak
-    /// uçla mesafesi kullanıcıya bir şey söylemez (chip de çizilmez).</summary>
+    /// <summary>Sync fetch'i ve mesafeyi komutun adlandırdığı branch'e değil, CHECKOUT EDİLMİŞ branch'e göre
+    /// yapar: araç yalnız çalışma ağacında derler, ölçülecek tek branch odur.
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §6.5]</b> Eski ad/iddia:
+    /// <c>No_distance_is_reported_when_the_selected_branch_is_not_the_active_one</c> — komut aktif olmayan bir
+    /// branch adlandırırsa o branch fetch edilir ve mesafe ÖLÇÜLMEZ (chip çizilmez). Gerekçe worktree'ydi: seçili
+    /// branch çalışma ağacından farklı olabiliyordu. Worktree kalktı; komuttaki ad yalnız detached HEAD'de yedektir
+    /// ve bayat bir ad (açılış Sync'inin boş adı, envanterden önceki değer) chip'i yanlışlıkla gizliyordu.</para></summary>
     [Fact]
-    public async Task No_distance_is_reported_when_the_selected_branch_is_not_the_active_one()
+    public async Task Sync_fetches_the_checked_out_branch_whatever_the_command_names()
     {
         using var origin = new GitTestRepo();
         WriteWorkspace(origin);
         origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
         string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
 
         var events = new List<IpcEvent>();
         await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(
             new SyncWorkspaceCommand(cloneRoot, "some-other-branch"), events.Add);
 
-        Assert.Null(Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
-        Assert.DoesNotContain(Progress(events), e => e.Line.Contains("behind origin/", StringComparison.Ordinal));
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(1, done.Behind);
+        Assert.Equal(branch, done.Branch);
+    }
+
+    /// <summary>[Task 4 review] Açılış Sync'i henüz envanter gelmeden gider ve komutta boş bir branch adı taşır —
+    /// fetch yine checkout edilmiş branch'le yapılır ve mesafe ölçülür (chip açılışta da doğru çıkar).</summary>
+    [Fact]
+    public async Task A_sync_command_with_an_empty_branch_fetches_the_checked_out_branch_and_measures_behind()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int y; }");
+        origin.CommitAll("c3");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, ""), events.Add);
+
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        Assert.Equal(2, Assert.IsType<SyncCompletedEvent>(events[^1]).Behind);
+    }
+
+    /// <summary>[review M2] Detached HEAD'de izlenen bir branch yoktur: fetch komuttaki yedek adla yine yapılır
+    /// ama mesafe ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir, bayat bir adla sayılan "N behind" yalan olurdu.</summary>
+    [Fact]
+    public async Task A_detached_head_fetches_the_fallback_but_reports_no_distance()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        GitTestRepo.RunGitAt(cloneRoot, "checkout", "--detach");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        Assert.Equal($"git fetch origin {branch}", LineStartingWith(events, "git fetch origin ").Line);
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Null(done.Behind);
+        Assert.Null(done.ActiveBranch);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Fetch'siz Sync (kendiliğinden Sync, branch değişimi) ağa çıkmaz: fetch
+    /// satırı yok, git fetch çağrısı yok; <c>N behind</c> son bilinen uzak uca göre yerelde hesaplanır. Uzak uç,
+    /// son fetch'ten SONRA bir commit daha ilerledi — o commit bilinmediği için sayılmaz (2, 3 değil).</summary>
+    [Fact]
+    public async Task A_sync_without_fetch_runs_no_fetch_and_measures_behind_from_the_known_remote()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int x; }");
+        origin.CommitAll("c2");
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int y; }");
+        origin.CommitAll("c3");
+        GitTestRepo.RunGitAt(cloneRoot, "fetch", "origin");   // son bilinen uzak uç: c3
+        origin.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { int z; }");
+        origin.CommitAll("c4");                               // bilinmeyen: fetch edilmedi
+
+        var recorder = new RecordingProcessRunner();
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), recorder).RunAsync(
+            new SyncWorkspaceCommand(cloneRoot, branch, Fetch: false), events.Add);
+
+        Assert.DoesNotContain(recorder.Calls, call => call.Contains("fetch"));
+        Assert.DoesNotContain(Progress(events), e => e.Line.StartsWith("git fetch", StringComparison.Ordinal));
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.False(done.FetchDegraded);
+        Assert.Equal(2, done.Behind);
+        Assert.Contains(Progress(events), e => e.Line.EndsWith($"· 2 commits behind origin/{branch}", StringComparison.Ordinal));
+        Assert.Single(events.OfType<WorkspaceTopologyEvent>()); // analiz yine tam koşar
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Tamamlanma olayı yerel HEAD'i ve checkout edilmiş branch'i taşır — App'in
+    /// çift Sync kontrolü ve branch değeri buradan okunur.</summary>
+    [Fact]
+    public async Task The_completed_event_carries_head_and_active_branch()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string localHead = GitTestRepo.RunGitAt(cloneRoot, "rev-parse", "HEAD").Trim();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot()).RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add);
+
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(localHead, done.HeadSha);
+        Assert.Equal(branch, done.ActiveBranch);
     }
 
     [Fact]
@@ -394,7 +508,12 @@ public class SyncWorkspaceServiceTests
         string idB = Path.Combine(cloneRoot, "src", "B", "B.csproj");
         var store = new BuildStateStore(cacheRoot);
         var primed = store.Load();
-        store.Upsert(primed[idA] with { LastResult = BuildResult.Failed });
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §1-14] Eski iddia: LastResult=Failed TEK BAŞINA A'yı kırmızı
+        // ("LastFailed") gösterirdi, hangi imzada patladığı önemsizdi. Artık kırmızı KANITLIDIR: hata anındaki
+        // imza (FailedSignature) deftere yazılır ve bugünkü imzayla eşleşmedikçe gerekçe NeverBuilt'e düşer.
+        // A burada kendi ANINDAki (primed) imzasında patlıyor — kaynağı bu Sync'e kadar değişmedi, yani
+        // FailedSignature = primed[idA].BuiltSignature bugünkü imzayla AYNI kalır ve kanıt gerçekten geçerlidir.
+        store.Upsert(primed[idA] with { LastResult = BuildResult.Failed, FailedSignature = primed[idA].BuiltSignature });
         store.Upsert(primed[idB] with { DepIssue = true, DepIssueRoots = [idA] });
 
         var events = new List<IpcEvent>();
@@ -413,6 +532,93 @@ public class SyncWorkspaceServiceTests
 
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil
+    }
+
+    /// <summary>
+    /// [Task 3] Önizlemenin <c>FailedAt</c> alanı <see cref="BuildStateStore.FailedAtOf"/>'un AYNI defterden
+    /// okuduğu değeri taşır — <c>BuiltCommit</c>/<c>LastBuiltAt</c> ile aynı desen (W1). A kendi ANINDAki
+    /// imzasında patlıyor (kaynağı bu Sync'e kadar değişmedi) yani <c>FailedSignature</c> bugünkü imzayla
+    /// AYNI kalır ve kanıt geçerli olur; B hiç patlamadı, <c>FailedAt</c> null kalmalı.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_carries_the_failure_time_from_the_ledger()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string idA = Path.Combine(cloneRoot, "src", "A", "A.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        store.Upsert(primed[idA] with
+        {
+            LastResult = BuildResult.Failed,
+            FailedSignature = primed[idA].BuiltSignature,
+            FailedAt = failedAt,
+        });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.Equal(failedAt, a.FailedAt);
+        Assert.Null(b.FailedAt); // hiç patlamamış → uydurulmaz
+    }
+
+    /// <summary>
+    /// [Task 3] <c>LocalEdits</c>: sahte git bir tek dirty yol raporlar (<c>src/A/A.cs</c>, A'nın girdi kümesinde)
+    /// — yalnız A'nın kartı <c>LocalEdits=true</c> gelmeli, B ETKİLENMEMELİ (karşılaştırma proje BAZINDA,
+    /// binder'ın girdi kümesiyle kesişimle yapılır).
+    /// </summary>
+    [Fact]
+    public async Task A_dirty_file_marks_only_the_project_that_owns_it()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var runner = new PorcelainStubProcessRunner(" M src/A/A.cs\n");
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), runner)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        Assert.True(a.LocalEdits);
+        Assert.False(b.LocalEdits);
+    }
+
+    /// <summary>
+    /// [Task 3] <c>git status --porcelain</c> hata verirse (repo bozuk/erişim yok) sorgu YUTULUR ve HİÇBİR
+    /// proje işaretlenmez — belirsiz bir sinyal "temiz" olarak gösterilmez ama "kesin dirty" de UYDURULMAZ.
+    /// </summary>
+    [Fact]
+    public async Task A_failing_dirty_query_marks_nothing()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var runner = new PorcelainStubProcessRunner(stdout: null, exitCode: 128);
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot(), runner)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.False(i.LocalEdits));
     }
 
     // ---------------------------------------------------------------- 2) offline degrade
@@ -525,6 +731,232 @@ public class SyncWorkspaceServiceTests
         Assert.Empty(events.OfType<SyncCompletedEvent>());
     }
 
+    /// <summary>
+    /// [Faz 3/Task 9 fix round 2 — kullanıcı kararı I1] Defter kipinde önizlemenin <c>OwnFilesChanged</c>'ı
+    /// koşu önizlemesiyle AYNI kaynaktan gelir: deftere yazılmış içerik özeti ile bugünkünün karşılaştırması
+    /// (<see cref="BuildStateStore.OwnFilesChanged"/>), Fast geçişinden DEĞİL. B'nin kendi dosyalarına
+    /// dokunulmadı (<c>BuiltContent</c> bugünküyle aynı) ama kaydındaki imza bayat — Fast geçişi B'yi "değişti"
+    /// bulur. Satır <c>affected</c> okumalı (Build'in kendi önizlemesi gibi), <c>modified</c> değil. "N changed"
+    /// sayacı ise Fast semantiğinde kalır (ruling R9, ARCHITECTURE §5.3) — B orada sayılır.
+    /// </summary>
+    [Fact]
+    public async Task The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string idB = Path.Combine(cloneRoot, "src", "B", "B.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        store.Upsert(store.Load()[idB] with { BuiltSignature = "stale-signature", BuiltContent = content[idB] });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var b = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items, i => i.Name == "B");
+        Assert.Equal((true, WillBuildReason.SignatureChanged), (b.WillBuild, b.Reason)); // sanity: B derlenecek
+        Assert.False(b.OwnFilesChanged);                                                 // affected, modified DEĞİL
+        Assert.Equal(1, Assert.Single(events.OfType<SyncCompletedEvent>()).ChangedCount); // R9: sayaç Fast
+    }
+
+    // ---------------------------------------------------------------- [Faz 3/Task 6] dışarıdan derleme kredisi
+
+    /// <summary>Repo'ya <c>src\{ad}</c> altında gerçek legacy class library'ler yazar (<see
+    /// cref="LegacyFixture.CreateClassLib"/> — <c>Debug|AnyCPU</c> grubunda <c>bin\Debug\</c>, yani derleme kanıtının
+    /// yolu türetilebilir) ve commit'ler.</summary>
+    private static void CommitLegacyWorkspace(GitTestRepo repo, params string[] names)
+    {
+        foreach (string name in names) LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        repo.CommitAll("legacy");
+    }
+
+    /// <summary><c>src\{ad}</c> projesinin elle yazılmış derleme kanıtı (<see cref="LegacyFixture.WriteBuiltOutput"/>).</summary>
+    private static string WriteBuiltOutput(GitTestRepo repo, string name) =>
+        LegacyFixture.WriteBuiltOutput(Path.Combine(repo.RootPath, "src", name), name);
+
+    /// <summary>Ağa çıkmayan bir Sync (<c>Fetch: false</c>) — bu testlerin konusu kararın kendisidir.</summary>
+    private static async Task<List<IpcEvent>> SyncWithoutFetchAsync(GitTestRepo repo, string cacheRoot)
+    {
+        var events = new List<IpcEvent>();
+        await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
+            new SyncWorkspaceCommand(repo.RootPath, repo.CurrentBranchName(), Fetch: false),
+            events.Add, CancellationToken.None);
+        return events;
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.2/§5.4, P8] Defterde kaydı olmayan ama derleme kanıtı her girdisinden yeni olan proje
+    /// (VS'te derlenmiş) zaman kipindedir: Sync onu <see cref="WillBuildReason.BuiltOutside"/> ile güncel sayar ve
+    /// önizleme kanıtın zamanını <c>OutputBuiltAt</c> olarak taşır. Eski karar kaydı olmayanı <c>NeverBuilt</c>
+    /// sayıp derletirdi.
+    /// </summary>
+    [Fact]
+    public async Task A_project_built_elsewhere_reads_built_outside_with_its_output_time()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [WriteBuiltOutput(repo, "X")]);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        Assert.Equal(new DateTimeOffset(EvidenceTimes.EvidenceAt), x.OutputBuiltAt);
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 1), (done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [karar "Sync'in Fast geçişi" + "modified ↔ affected zaman kipinde"] "N changed" sayacı ve satırın
+    /// <c>OwnFilesChanged</c>'ı zaman kipinde kanıttan gelir: dışarıda derlenmiş ve güncel <c>X</c> değişmiş
+    /// SAYILMAZ (kaydı yok diye Fast geçişi onu "derlenecek" bulsa da); kendi kaynağı çıktısından yeni <c>Y</c>
+    /// değişmiştir (<c>OutputStale</c>, <c>modified</c>). Sayaç ve satır AYNI cevaptan sayılır.
+    /// </summary>
+    [Fact]
+    public async Task A_project_built_elsewhere_is_not_counted_as_changed()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X", "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
+            [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
+        File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "Y", "Class1.cs"), EvidenceTimes.EditedAt);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside, false), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        Assert.Null(y.OutputBuiltAt); // yaş yalnız taze kanıtta
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((1, 1, 1), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+        Assert.Equal("Sync complete — 1 changed projects, 1 to build", LineStartingWith(events, "Sync complete — ").Line);
+    }
+
+    /// <summary>
+    /// [Faz 3 final review — ruling R10, spec 2026-09-18 §5.4 son cümle] <c>Y</c>, <c>X</c>'e ProjectReference ile
+    /// bağlı; ikisi de dışarıda derlenmiş. <c>X</c>'in kaynağı çıktısından yeni (<c>modified</c>), <c>Y</c>'nin
+    /// kanıtı kendi girdilerinden yeni. <c>X</c> bu Build'de derlenecek ve kopyası henüz eski olduğundan <c>Y</c>'nin
+    /// zaman kontrolü bunu göremez: Safe geçişi <c>Y</c>'yi de <c>OutputStale</c> ile derler, etiket
+    /// <c>affected</c>'tır ve "built outside" yaşı taşınmaz (yalnız <c>BuiltOutside</c>'ta dolar). "N changed"
+    /// sayacı yalnız <c>X</c>'i sayar. Eskiden <c>Y</c> <c>BuiltOutside</c> okunurdu.
+    /// </summary>
+    [Fact]
+    public async Task A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected()
+    {
+        using var repo = new GitTestRepo();
+        foreach (string name in new[] { "X", "Y" })
+            LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        string yProject = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
+        File.WriteAllText(yProject, File.ReadAllText(yProject).Replace(
+            "<Compile Include=\"Class1.cs\" />",
+            "<Compile Include=\"Class1.cs\" /><ProjectReference Include=\"..\\X\\X.csproj\" />"));
+        repo.CommitAll("legacy");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
+            [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
+        File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "X", "Class1.cs"), EvidenceTimes.EditedAt);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+        Assert.Equal((true, WillBuildReason.OutputStale, false), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        Assert.Null(y.OutputBuiltAt);
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((1, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.5 · Faz 3 final review, kullanıcı kararı 2026-09-19] Kaydı olmayan bir proje kanıtsız
+    /// biterse (çökme, timeout, stop, invoke hatası) diskte yarım yazılmış ama girdilerinden yeni bir çıktı
+    /// kalabilir. Kanıtsız geçersizleme kayıt AÇAR (<c>LastResult=Failed</c>, <c>LastRunAt=şimdi</c>): kanıt
+    /// <c>LastRunAt</c>'tan eski kalır, proje defter kipindedir ve bir sonraki Sync onu gri <c>never built</c>
+    /// okur. Kayıt açılmasaydı proje zaman kipinde kalır ve yarım çıktı <c>BuiltOutside</c> okunurdu.
+    /// </summary>
+    [Fact]
+    public async Task An_unrecorded_project_that_failed_without_evidence_reads_never_built_not_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [WriteBuiltOutput(repo, "X")]);
+        string cacheRoot = NewCacheRoot();
+        new BuildStateStore(cacheRoot).InvalidateWithoutEvidence(
+            Path.GetFullPath(Path.Combine(repo.RootPath, "src", "X", "X.csproj")),
+            new DateTimeOffset(EvidenceTimes.ToolRunAt));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.NeverBuilt), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.3] Aracın kendisinin derlediği (kaydı güncel, <c>LastRunAt</c> dolu) ama derleme
+    /// kanıtı diskten silinmiş proje defter kipindedir ve <see cref="WillBuildReason.OutputMissing"/> ile
+    /// derlenir. Eski karar yalnız imzaya bakıp <c>UpToDate</c> derdi — çıktısı olmayan bir projeyi atlardı.
+    /// </summary>
+    [Fact]
+    public async Task A_recorded_project_whose_output_was_deleted_reads_output_missing()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []); // kanıt YOK
+        string cacheRoot = NewCacheRoot();
+        await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        var store = new BuildStateStore(cacheRoot);
+        var primed = Assert.Single(store.Load().Values);
+        store.Upsert(primed with { LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt) });
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputMissing), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+        Assert.Equal(1, Assert.Single(events.OfType<SyncCompletedEvent>()).ToBuildCount);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.2 "kanıtsız"] Derleme kanıtının yolu türetilemeyen proje (SDK-style) bugünkü kararla
+    /// karar verir: diskte ondan yeni bir DLL dursa bile hiç derlenmemiş sayılır (<c>NeverBuilt</c>), yaşı
+    /// taşınmaz ve "changed" sayılır. Kanıt yalnız yolu bilinen projelere kredi verir.
+    /// <para><b>[DEĞİŞEN KURAL — Task 9 fix round 2, kullanıcı kararı I1]</b> Eski iddia
+    /// <c>OwnFilesChanged == true</c> idi (defter kipinde cevap Fast geçişinden geliyordu). Cevap artık koşu
+    /// önizlemesiyle aynı kaynaktan, defterdeki içerik özetinden gelir; kaydı olmayan projede özet yoktur ve cevap
+    /// <c>null</c>dır (bilinmiyor — etiket zaten <c>never built</c>). "N changed" sayacı Fast semantiğinde kalır
+    /// (ruling R9), iki proje orada sayılmaya devam eder.</para>
+    /// </summary>
+    [Fact]
+    public async Task A_project_without_derivable_output_is_decided_as_today()
+    {
+        using var repo = new GitTestRepo();
+        WriteWorkspace(repo);
+        repo.CommitAll("c1");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[16]);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i =>
+        {
+            Assert.Equal((true, WillBuildReason.NeverBuilt, (bool?)null), (i.WillBuild, i.Reason, i.OwnFilesChanged));
+            Assert.Null(i.OutputBuiltAt);
+        });
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((2, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
     // ---------------------------------------------------------------- yardımcı
 
     /// <summary>Çalıştırılan git argüman listelerini kaydeder, çağrıyı gerçek <see cref="ProcessRunner"/>'a geçirir (K1 kanıtı).</summary>
@@ -538,6 +970,25 @@ public class SyncWorkspaceServiceTests
         public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
         {
             lock (_gate) Calls.Add(spec.Arguments);
+            return await _inner.RunAsync(spec, ct);
+        }
+    }
+
+    /// <summary>[Task 3] Yalnız <c>git status --porcelain</c> çağrısını sahteler (LocalEdits testleri için
+    /// deterministik dirty-path çıktısı ya da başarısızlık) — geri kalan HER git çağrısı gerçek <see
+    /// cref="ProcessRunner"/>'a geçer (fetch/rev-parse/symbolic-ref gerçek repo'ya karşı çalışmaya devam eder).</summary>
+    private sealed class PorcelainStubProcessRunner(string? stdout, int exitCode = 0) : IProcessRunner
+    {
+        private readonly ProcessRunner _inner = new();
+
+        public async Task<ProcessResult> RunAsync(ProcessSpec spec, CancellationToken ct = default)
+        {
+            // Fixture satırları okunur olsun diye '\n' ile yazılır; GitService '-z' ister ve git o zaman girdileri
+            // NUL ile bitirir — stub, gerçek git'in bu argümanlara vereceği biçimi üretir.
+            if (spec.Arguments.Contains("status") && spec.Arguments.Contains("--porcelain"))
+                return new ProcessResult(exitCode,
+                    spec.Arguments.Contains("-z") ? (stdout ?? "").Replace('\n', '\0') : stdout ?? "",
+                    exitCode == 0 ? "" : "fake porcelain failure", TimeSpan.Zero, TimedOut: false);
             return await _inner.RunAsync(spec, ct);
         }
     }

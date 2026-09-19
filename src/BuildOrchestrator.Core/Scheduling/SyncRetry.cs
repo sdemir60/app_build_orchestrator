@@ -3,7 +3,7 @@ namespace BuildOrchestrator.Core.Scheduling;
 /// <summary>
 /// [T49 fix round 1 · B2] SENKRON, sınırlı, GEÇİCİ-HATA retry döngüsünün TEK tanımı.
 ///
-/// <para><b>Neden burada:</b> aynı döngü iki yerde BİREBİR kopyalanmıştı — <c>BuildStateStore.MoveAtomicWithRetry</c>
+/// <para><b>Neden burada:</b> aynı döngü iki yerde BİREBİR kopyalanmıştı — <c>AtomicFile.MoveAtomicWithRetry</c>
 /// (atomik rename'in sharing-violation penceresi) ve <c>ClipboardRetry.TrySet</c> (pano kilidi, dotnet/wpf#9901).
 /// İkisi de "N deneme · yalnız BELLİ bir istisna sınıfını retry et · denemeler arasında ENJEKTE EDİLMİŞ bir
 /// gecikme (D8) · başkasını olduğu gibi yay" diyordu; yalnız bütçe tükenince ne olacağı ayrışıyordu. Kopya YASAK

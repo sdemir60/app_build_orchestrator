@@ -57,7 +57,8 @@ public sealed class EngineStderrDrainTests
     [Fact]
     public async Task Starting_the_engine_also_starts_the_stderr_drain()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe, TimeSpan.FromSeconds(30));
+        using var sandbox = new SupervisorSandbox(); // [§5.5] izole önbellek
+        await using var engine = sandbox.IsolatedEngineHost(TimeSpan.FromSeconds(30));
         await engine.StartAsync();
 
         Assert.NotNull(engine.StderrDrain);

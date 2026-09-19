@@ -11,6 +11,8 @@ public class CascadeKillTests
     [Fact]
     public async Task App_death_cascades_through_supervisor_and_inner_children_within_2s_zero_orphans() // §3 kabul
     {
+        // Sandbox job'dan ÖNCE bildirilir: klasör ancak supervisor öldükten (outer.Dispose) sonra silinir.
+        using var sandbox = new SupervisorSandbox();
         var livePids = new HashSet<int>();
         List<Process> handles;
         var outer = JobObject.CreateKillOnClose(); // using DEĞİL — kill anını biz seçiyoruz
@@ -20,7 +22,7 @@ public class CascadeKillTests
             // [A13/B4] Bu testin sentetik ağacını debugSpawnChildren doğuruyor; o kanca artık VARSAYILAN
             // OLARAK KAPALI, bu yüzden Supervisor bayrakla başlatılır (bayrağın adı TestPaths'te tek yerde).
             var supervisor = JobProcessLauncher.Launch(outer,
-                TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
+                sandbox.CommandLine(debugHooks: true), new LaunchOptions(RedirectStdio: true));
             livePids.Add(supervisor.Pid);
             var writer = new NdjsonWriter(supervisor.StandardInput!);
             var reader = new NdjsonReader(supervisor.StandardOutput!);
@@ -59,10 +61,12 @@ public class CascadeKillTests
     [Fact]
     public async Task Breakaway_from_inside_job_is_denied_err5() // D1 probe — no-breakaway garantisi
     {
+        // Sandbox job'dan ÖNCE bildirilir: ters sırada önce job (supervisor ölür), sonra klasör gider.
+        using var sandbox = new SupervisorSandbox();
         using var outer = JobObject.CreateKillOnClose();
         // [A13/B4] breakaway probe'u da debugSpawnChildren üzerinden koşar — bkz. yukarıdaki test.
         var supervisor = JobProcessLauncher.Launch(outer,
-            TestPaths.DebugHooksCommandLine(), new LaunchOptions(RedirectStdio: true));
+            sandbox.CommandLine(debugHooks: true), new LaunchOptions(RedirectStdio: true));
         var writer = new NdjsonWriter(supervisor.StandardInput!);
         var reader = new NdjsonReader(supervisor.StandardOutput!);
         // [B1/F2 · fix-1] bkz. yukarıdaki test — aynı kök (Supervisor boot'unu bekleyen sabit 5 sn),

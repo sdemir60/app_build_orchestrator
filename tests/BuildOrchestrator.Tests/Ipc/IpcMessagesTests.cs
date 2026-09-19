@@ -16,6 +16,17 @@ public class IpcMessagesTests
         Assert.Equal(StopKind.Hard, back.Kind);
     }
 
+    /// <summary>[spec 2026-09-18 §6.1] Branch kesmesi tel üzerinde metin olarak yazılır (enum'lar camelCase metin).</summary>
+    [Fact]
+    public void An_interrupt_stop_is_written_as_text()
+    {
+        string json = JsonSerializer.Serialize<IpcCommand>(new StopRunCommand("run-1", StopKind.Interrupt), IpcJson.Options);
+
+        Assert.Contains("\"kind\":\"interrupt\"", json);
+        Assert.Equal(StopKind.Interrupt,
+            Assert.IsType<StopRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)).Kind);
+    }
+
     [Fact]
     public void Event_roundtrip_all_types()
     {
@@ -87,11 +98,8 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_roundtrip()
     {
         var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 6,
-            Branch: "feature/x", UseWorktree: true, WorktreeName: "wt-1", DependentMode: DependentMode.Fast);
+            DependentMode: DependentMode.Fast);
         string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
-        Assert.Contains("\"branch\":\"feature/x\"", json);
-        Assert.Contains("\"useWorktree\":true", json);
-        Assert.Contains("\"worktreeName\":\"wt-1\"", json);
         Assert.Contains("\"dependentMode\":\"fast\"", json); // camelCase enum
         var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
         Assert.Equal(cmd, back);
@@ -101,12 +109,31 @@ public class IpcMessagesTests
     public void StartRunCommand_new_fields_default_to_safe_backward_compatible_shape()
     {
         var cmd = new StartRunCommand("r1", RunMode.Rebuild, @"D:\repo", "Debug", 6);
-        Assert.Equal("", cmd.Branch);
-        Assert.False(cmd.UseWorktree);
-        Assert.Null(cmd.WorktreeName);
         Assert.Equal(DependentMode.Safe, cmd.DependentMode);
         Assert.Null(cmd.LayerPatterns); // [A1] katman ataması varsayılan olarak KAPALI (mevcut davranış)
         Assert.Null(cmd.ScopeProjectId); // [tek proje] varsayılan: kapsam yok, tam koşu
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §1-1] Worktree modu kalktı ve <c>StartRunCommand</c>'ın <c>branch</c>/<c>useWorktree</c>/
+    /// <c>worktreeName</c> alanları silindi. Bu alanları taşıyan ESKİ bir NDJSON satırı (eski bir App ya da
+    /// kaydedilmiş bir komut) yine çözülür: fazla alanlar yok sayılır, kalan alanlar aynen okunur.
+    /// </summary>
+    [Fact]
+    public void An_old_start_run_line_with_worktree_fields_still_parses()
+    {
+        const string oldLine = """
+            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug",
+             "parallelism":4,"branch":"feature/x","useWorktree":true,"worktreeName":"wt-1","dependentMode":"fast"}
+            """;
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(oldLine, IpcJson.Options));
+
+        Assert.Equal("r1", back.RunId);
+        Assert.Equal(RunMode.Build, back.Mode);
+        Assert.Equal(@"D:\repo", back.RootPath);
+        Assert.Equal(4, back.Parallelism);
+        Assert.Equal(DependentMode.Fast, back.DependentMode);
     }
 
     // [tek proje · design §3.8] Satırdan tetiklenen koşu kapsamını proje KİMLİĞİYLE taşır (tam csproj yolu —
@@ -190,6 +217,37 @@ public class IpcMessagesTests
         Assert.Contains("\"depIssues\":[\"dep C broken\",\"dep D broken\"]", jsonWithIssues);
         var backWithIssues = Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(jsonWithIssues, IpcJson.Options));
         Assert.Equal(["dep C broken", "dep D broken"], backWithIssues.DepIssues);
+    }
+
+    /// <summary>[R-M4b] <c>Evidence</c> IPC sınırını geçer; alansız eski bir satır KANITSIZ (false) okunur —
+    /// eski bir motorun hatası satırı kırmızıya boyamaz.</summary>
+    [Fact]
+    public void ProjectFailedEvent_carries_the_engines_evidence_verdict_and_old_lines_read_as_no_evidence()
+    {
+        var ev = new ProjectFailedEvent("r1", "b", 900, "exit 1", Evidence: true);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"evidence\":true", json, StringComparison.Ordinal);
+        Assert.True(Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Evidence);
+
+        var legacy = Assert.IsType<ProjectFailedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectFailed","runId":"r1","projectId":"b","durationMs":900,"reason":"exit 1"}""",
+            IpcJson.Options));
+        Assert.False(legacy.Evidence);
+    }
+
+    /// <summary>[final review I1] <c>Trusted</c> IPC sınırını geçer; alansız eski bir satır GÜVENİLİR başarı
+    /// (true) okunur — eski bir motorun başarısı bugünkü anlamını korur.</summary>
+    [Fact]
+    public void ProjectSucceededEvent_carries_the_engines_trust_verdict_and_old_lines_read_as_trusted()
+    {
+        var ev = new ProjectSucceededEvent("r1", "a", 900, Trusted: false);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+        Assert.Contains("\"trusted\":false", json, StringComparison.Ordinal);
+        Assert.False(Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options)).Trusted);
+
+        var legacy = Assert.IsType<ProjectSucceededEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"projectSucceeded","runId":"r1","projectId":"a","durationMs":900}""", IpcJson.Options));
+        Assert.True(legacy.Trusted);
     }
 
     // [cycle rounds] Tur göstergesinin sözleşmesi: bir SCC'nin kaçıncı turunun başladığı. Task 8 bunu konsol
@@ -401,6 +459,97 @@ public class IpcMessagesTests
         Assert.Null(legacy.Items[0].DependencyRoots);
     }
 
+    /// <summary>[Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtının dört gerekçesi IPC sınırını METİN olarak geçer
+    /// (camelCase) ve geri okunur — sayısal değer değil, bu yüzden enum'a sona eklemek eski satırları kaydırmaz.</summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_output_evidence_reasons_as_text()
+    {
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", false, null, WillBuildReason.BuiltOutside),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true, null, WillBuildReason.OutputStale),
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", true, null, WillBuildReason.OutputMissing),
+            new BuildPreviewItem(@"C:\p\d.csproj", "D", true, null, WillBuildReason.OutputReplaced),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        foreach (string text in new[] { "builtOutside", "outputStale", "outputMissing", "outputReplaced" })
+            Assert.Contains($"\"reason\":\"{text}\"", json, StringComparison.Ordinal);
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+    }
+
+    /// <summary>
+    /// [Task 3] <c>FailedAt</c>/<c>LocalEdits</c> IPC sınırını geçer: (a) kanıtlı hata anı TAM gider, kanıtsız
+    /// satırda alan HİÇ yazılmaz (DefaultIgnoreCondition.WhenWritingNull); (b) <c>LocalEdits</c> her zaman
+    /// yazılır (bool, default <c>false</c> — <c>Conditional</c> ile aynı desen, JSON'da hep görünür).
+    /// Alansız eski bir NDJSON satırı (W1 öncesi kalıp) da hâlâ çözülür — ikisi de varsayılana düşer.
+    /// </summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_failure_time_and_local_edits_flag_across_the_wire()
+    {
+        var failedAt = new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero);
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true, FailedAt: failedAt, LocalEdits: true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true), // kanıtsız/hiç patlamamış → alan yok, LocalEdits=false
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Contains("\"failedAt\"", json, StringComparison.Ordinal);
+        Assert.Equal(1, json.Split("\"failedAt\"").Length - 1); // B için alan hiç yazılmadı
+        Assert.Contains("\"localEdits\":true", json, StringComparison.Ordinal);
+        Assert.Contains("\"localEdits\":false", json, StringComparison.Ordinal); // her iki satır da yazar
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(failedAt, back.Items[0].FailedAt);
+        Assert.True(back.Items[0].LocalEdits);
+        Assert.Null(back.Items[1].FailedAt);
+        Assert.False(back.Items[1].LocalEdits);
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":true}]}""",
+            IpcJson.Options));
+        var legacyItem = Assert.Single(legacy.Items);
+        Assert.Null(legacyItem.FailedAt);
+        Assert.False(legacyItem.LocalEdits);
+    }
+
+    /// <summary>
+    /// [Faz 3/Task 6 — spec 2026-09-18 §5, P8] <c>OutputBuiltAt</c> IPC sınırını geçer: "built outside" satırında
+    /// kanıtın zamanı TAM gider, diğer satırda alan HİÇ yazılmaz. Alan eşitliğe girer (elle yazılmış
+    /// <c>Equals</c>/<c>GetHashCode</c>) — yalnız bu alanı farklı iki satır eşit sayılsaydı App'in değişiklik
+    /// kontrolü yeni yaşı yutardı. Alansız eski NDJSON satırı hâlâ çözülür ve <c>null</c>'a düşer.
+    /// </summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_output_time_across_the_wire()
+    {
+        var builtAt = new DateTimeOffset(2026, 9, 19, 9, 30, 0, TimeSpan.Zero);
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", false, null, WillBuildReason.BuiltOutside, OutputBuiltAt: builtAt),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true, null, WillBuildReason.OutputStale),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Equal(1, json.Split("\"outputBuiltAt\"").Length - 1); // B için alan hiç yazılmadı
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(builtAt, back.Items[0].OutputBuiltAt);
+        Assert.Null(back.Items[1].OutputBuiltAt);
+
+        var other = ev.Items[0] with { OutputBuiltAt = builtAt.AddMinutes(1) };
+        Assert.NotEqual(ev.Items[0], other);
+        Assert.NotEqual(ev.Items[0].GetHashCode(), other.GetHashCode());
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":false}]}""",
+            IpcJson.Options));
+        Assert.Null(Assert.Single(legacy.Items).OutputBuiltAt);
+    }
+
     [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {
@@ -460,22 +609,52 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
-    // ---------------------------------------------------------------- [A5/T69] Sync / branch / worktree / topoloji
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.3] branch checkout
 
-    // App'in branch seçici, worktree havuzu ve "worktree sil" akışlarını besleyen üç komut: hepsi RootPath
-    // taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR — kök her komutta gelir).
+    /// <summary>Branch chip'inin komutu: hedef, uzak mı, kirli ağaçta stash'lensin mi — kendi ayrımcısıyla.</summary>
     [Fact]
-    public void ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators()
+    public void CheckoutBranchCommand_roundtrips_with_its_own_discriminator()
     {
-        IpcCommand[] commands = [new ListBranchesCommand(@"D:\repo"), new ListWorktreesCommand(@"D:\repo"),
-            new DeleteWorktreeCommand(@"D:\repo", "main-1")];
-        string[] expectedDiscriminators = ["\"type\":\"listBranches\"", "\"type\":\"listWorktrees\"", "\"type\":\"deleteWorktree\""];
-        for (int i = 0; i < commands.Length; i++)
+        IpcCommand cmd = new CheckoutBranchCommand(@"D:\repo", "origin/feature/x", IsRemote: true, StashIfDirty: true);
+        string json = JsonSerializer.Serialize(cmd, IpcJson.Options);
+        Assert.Contains("\"type\":\"checkoutBranch\"", json);
+        Assert.Contains("\"stashIfDirty\":true", json);
+        Assert.Equal(cmd, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+    }
+
+    /// <summary>Checkout sonucu: durum camelCase METİN olarak gider (yeni değer sona eklenebilir), boş alanlar
+    /// yazılmaz ve geri okunduğunda aynı kayıt çıkar.</summary>
+    [Fact]
+    public void CheckoutCompletedEvent_roundtrips_with_its_own_discriminator_and_camelCase_status()
+    {
+        IpcEvent[] events =
+        [
+            new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x", "b7e91d4aa", 2,
+                "build-orchestrator: leaving main for feature/x", null),
+            new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "main", null, 3, null, null),
+        ];
+        foreach (var ev in events)
         {
-            string json = JsonSerializer.Serialize(commands[i], IpcJson.Options);
-            Assert.Contains(expectedDiscriminators[i], json);
-            Assert.Equal(commands[i], JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+            string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+            Assert.Contains("\"type\":\"checkoutCompleted\"", json);
+            Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
         }
+        Assert.Contains("\"status\":\"switched\"", JsonSerializer.Serialize(events[0], IpcJson.Options));
+        Assert.DoesNotContain("\"revision\"", JsonSerializer.Serialize(events[1], IpcJson.Options));
+    }
+
+    // ---------------------------------------------------------------- [A5/T69] Sync / branch / topoloji
+
+    // App'in branch seçicisini besleyen komut RootPath taşır (Supervisor tek bir repo'ya sabitlenmiş DEĞİLDİR —
+    // kök her komutta gelir). [spec 2026-09-18 §1-1] Worktree havuzunun iki komutu da burada round-trip
+    // edilirdi (ad: ListBranches_listWorktrees_deleteWorktree_roundtrip_with_discriminators); komutlar kalktı.
+    [Fact]
+    public void ListBranches_roundtrips_with_discriminator()
+    {
+        IpcCommand command = new ListBranchesCommand(@"D:\repo");
+        string json = JsonSerializer.Serialize(command, IpcJson.Options);
+        Assert.Contains("\"type\":\"listBranches\"", json);
+        Assert.Equal(command, JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
     }
 
     // [A5/T69] Graf paneli (D5), katman gruplaması (D1) ve Open-in-VS (E1) için gereken TÜM veri tek event'te
@@ -508,19 +687,6 @@ public class IpcMessagesTests
         Assert.Equal([@"C:\p\a.csproj"], back.Nodes[1].Dependencies);
         Assert.Equal("UiLayer", back.Nodes[1].LayerName);
         Assert.Equal(@"C:\p\Osys.sln", back.Solutions[0].Path);
-    }
-
-    [Fact]
-    public void WorktreeList_roundtrips_with_discriminator()
-    {
-        var ev = new WorktreeListEvent([
-            new Worktree("main-1", "main", @"C:\pool\main-1", true, 1234),
-            new Worktree("feature-x-1", "feature/x", @"C:\pool\feature-x-1", false, null),
-        ]);
-        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
-        Assert.Contains("\"type\":\"worktreeList\"", json);
-        var back = Assert.IsType<WorktreeListEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
-        Assert.Equal(ev.Worktrees, back.Worktrees);
     }
 
     // [A5/T69] Sync de katman pattern'lerini taşır (StartRunCommand ile aynı gerekçe): topoloji event'indeki

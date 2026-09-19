@@ -128,7 +128,7 @@ public partial class SettingsDialog : ModalDialog
         _store = store;
         _pickFolder = pickFolder;
         _draft = new SettingsDraftViewModel(
-            run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals);
+            run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch);
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();

@@ -321,8 +321,8 @@ public class MainWindowRealizeTests
 
         Assert.Equal(VisualStatus.Marked,
             window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("A")].Model.Visual);
-        // B dalgaya girmedi: fixture Sync'ten geldiği için başlangıç modunda kalır — ama İŞARETLİ DEĞİL.
-        Assert.Equal(VisualStatus.Fresh,
+        // B dalgaya girmedi: fixture'ın kararı yok (WillBuild null) — başlangıç modunda kalır, İŞARETLİ DEĞİL.
+        Assert.Equal(VisualStatus.Unknown,
             window.Shell.GraphHost.NodeVisuals[MainWindowHost.IdOf("B")].Model.Visual);
     }
 }

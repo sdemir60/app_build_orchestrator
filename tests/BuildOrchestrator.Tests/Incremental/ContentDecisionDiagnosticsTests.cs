@@ -91,13 +91,13 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         var state = new BuildStateStore(cacheRoot).Load();
         var hashes = new SourceHashCache(Path.Combine(scratch, SourceHashCache.FileName));
 
-        // --- Sync'in yaptığı bağlama (eşleyicisiz) ve Build'in yaptığı bağlama (in-place eşleyiciyle):
+        // --- Sync'in yaptığı bağlama ve Build'in yaptığı bağlama (iki bağımsız binder, aynı kök):
         // ikisi AYNI imzayı üretmeli. Üretmiyorsa kusur buradadır.
         var syncBinder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
         syncBinder.Prefill();
         var (syncPlan, syncSignatures) = syncBinder.Bind(state, buildCycles: false, DependentMode.Safe);
 
-        var buildBinder = new IncrementalRunBinder(plan, evaluatedById, root, hashes, logical => logical);
+        var buildBinder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
         var (_, buildSignatures) = buildBinder.Bind(state, buildCycles: false, DependentMode.Safe);
 
         int pathDisagreements = syncSignatures.Count(kv =>
@@ -147,7 +147,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             var decision = BuildOrchestrator.App.ViewModels.DecisionLabel.For(
                 node.WillBuild, node.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, node.Id, content.GetValueOrDefault(node.Id)),
-                BuildStateStore.LastBuiltAtOf(state, node.Id), DateTimeOffset.Now);
+                BuildStateStore.LastBuiltAtOf(state, node.Id), failedAt: null, localEdits: false, DateTimeOffset.Now);
             string key = decision.IsEmpty ? "(BOŞ)" : decision.Word;
             labels[key] = labels.GetValueOrDefault(key) + 1;
         }
@@ -166,7 +166,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         foreach (var node in syncPlan.Nodes.Where(n =>
             BuildOrchestrator.App.ViewModels.DecisionLabel.For(n.WillBuild, n.WillBuildReason,
                 BuildStateStore.OwnFilesChanged(state, n.Id, content.GetValueOrDefault(n.Id)),
-                BuildStateStore.LastBuiltAtOf(state, n.Id), DateTimeOffset.Now).IsEmpty).Take(10))
+                BuildStateStore.LastBuiltAtOf(state, n.Id), failedAt: null, localEdits: false, DateTimeOffset.Now).IsEmpty).Take(10))
         {
             var r = state.GetValueOrDefault(node.Id);
             output.WriteLine(Inv($"- {node.Name} · inCycle={node.InCycle} · will={node.WillBuild} · reason={node.WillBuildReason} · kayıt={(r is null ? "yok" : r.LastResult.ToString())}"));
@@ -197,7 +197,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             // NOT: "LastRunAt'ten sonra" filtresi kusurluydu — derlemenin ÜRETTİĞİ dosyaların mtime'ı
             // kaydın yazıldığı andan bir tık ÖNCEDİR. Bu yüzden en yeni girdiler doğrudan listelenir.
             var newest = syncBinder.InputsOf(node.Id)
-                .Select(i => new FileInfo(i.PhysicalPath))
+                .Select(i => new FileInfo(i.Path))
                 .Where(f => f.Exists)
                 .OrderByDescending(f => f.LastWriteTimeUtc)
                 .ToList();
@@ -213,7 +213,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
             var record = state[node.Id];
             foreach (var input in syncBinder.InputsOf(node.Id))
             {
-                var f = new FileInfo(input.PhysicalPath);
+                var f = new FileInfo(input.Path);
                 // Derlemenin ürettiği dosyalar: mtime'ı kaydın yazıldığı ana ÇOK yakın (öncesi de olabilir).
                 if (!f.Exists || record.LastRunAt is not { } at
                     || (at.UtcDateTime - f.LastWriteTimeUtc).TotalMinutes > 30) continue;

@@ -153,15 +153,13 @@ public partial class MainWindow : Window
         // [D6 fold — C2] İş akışı tercihlerini kalıcı durumdan SEED et; sonra değişimlerini persist et. Seed ÖNCE,
         // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
         // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
-        // [D7 M3] Son repo'yu SEED et — açılışta hatırlanır ama SEED-BUT-IDLE: DOĞRUDAN RootPath set'i yalnız
-        // OnRootPathChanged'i (Empty→Boot) sürer, otomatik Sync YOKtur (ChangeRepositoryAsync DEĞİL — o SyncAsync
-        // tetikler). Repo bilinir, kullanıcı hazır olunca Sync/Build'e basar. İlk-koşuda (kayıtlı repo yok →
+        // [D7 M3] Son repo'yu SEED et — DOĞRUDAN RootPath set'i yalnız OnRootPathChanged'i (Empty→Boot) sürer,
+        // komut göndermez (ChangeRepositoryAsync DEĞİL). [spec 2026-09-18 §6.2] Açılışın Sync'i motor İLK kez
+        // hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır. İlk-koşuda (kayıtlı repo yok →
         // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
-        if (saved.Branch is { } br) _vm.Branch = br;
-        _vm.UseWorktree = saved.UseWorktree;
-        _vm.WorktreeName = saved.WorktreeName;
+        // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
         if (saved.PerfMode is { } perf) _vm.SetPerfMode(perf);
         // [D7] Kalıcı katman tanımlarını seed et (D7 bu alanın ilk yazıcısı — diskte bugüne dek hep boş). Boşsa
         // LayerPatterns null kalır (motor Count==0'ı "katman yok" olarak ele alır); Settings Save bunu doldurur.
@@ -177,6 +175,8 @@ public partial class MainWindow : Window
         // [design v1.14.0 §9] Bayrak hiç yazılmamışsa (ya da bayat bir null token'sa) varsayılan GÜNCELLE:
         // bayrak öncesi kaydedilmiş bir dosya özelliğin bugünkü davranışını korumalıdır.
         _vm.UpdateExternals = saved.UpdateExternals ?? true;
+        // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
+        _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -199,9 +199,12 @@ public partial class MainWindow : Window
         // bir işaret zaten kalmaz.
         _vm.BuildPreviewApplied += (_, _) =>
         {
-            PushGraphStatuses();
+            // Graf itişi RowDecisionsChanged'dedir (hemen önce, AYNI sırayla yayılır) — burada tekrar edilmez.
             if (_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
         };
+        // [design v1.20.0 §2.3 · Task 4 review I-1] Satırların karar girdisi (standing) toplu değişti —
+        // önizleme ya da branch/repo değişiminin hollow reset'i. Grafın renk girdisini öğrendiği TEK sinyal.
+        _vm.RowDecisionsChanged += (_, _) => PushGraphStatuses();
         RefreshProjectGroups();
         RebuildGraph();
 
@@ -305,6 +308,13 @@ public partial class MainWindow : Window
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
             else Dispatcher.InvokeAsync(() => _vm.OnEvent(ev));
         };
+        // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
+        // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş
+        // dahil — ShowFromTray Activate çağırır) koordinatöre gider.
+        // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
+        _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
+        _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
+        Activated += (_, _) => _vm.OnWindowActivated();
 
         _elapsedTimer.Tick += (_, _) =>
         {
@@ -609,7 +619,7 @@ public partial class MainWindow : Window
     /// <summary>Başlığı etkileyen alanlar: motor durumu (statü adı), görsel statü (glyph — final review I-2:
     /// <see cref="ProjectRowViewModel.Status"/> State değişmeden de değişir, ör. döngü sırası üyeye geçince),
     /// dependency-issue listesi, döngü üyeliği. Diğer her <see cref="ProjectRowViewModel"/> bildirimi
-    /// (Fresh/Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
+    /// (Marked/Fade/CyclePath/…) başlığı ilgilendirmez ve görmezden gelinir — ProjectRow.OnVmPropertyChanged'in
     /// switch deseniyle AYNI (kopya değil, aynı idiom).</summary>
     private void OnHeaderTrackedRowChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -800,10 +810,9 @@ public partial class MainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Counters):
-            // [design v1.11.0 §3.1 · §9-3] Başlangıç modu grafın da RENK kanalıdır (kesikli node çerçevesi) ve
-            // bir işlem başlarken düşer. Bu geçiş <c>Counters</c>'ı DEĞİŞTİRMEZ (statüler aynı kalır), yani
-            // yukarıdaki kapı onu KAÇIRIRDI. İşlem etiketi, başlangıç modunun düştüğü ANIN gözlemlenebilir
-            // sinyalidir (BeginRunAsync ikisini birlikte yazar).
+            // [design v1.20.0 §2.3] İşlem etiketi, yeni bir işlemin satırları nötrlediği ANIN gözlemlenebilir
+            // sinyalidir (BeginRunAsync onu nötrlemeden SONRA yazar). Yukarıdaki kapı tek başına yetmez:
+            // RunCounters yalnız sayıları taşır ve sayılar aynı kalırken düğümlerin görsel durumu değişebilir.
             case nameof(RunViewModel.CurrentOperation):
                 PushGraphStatuses();
                 break;
@@ -814,7 +823,7 @@ public partial class MainWindow : Window
                 //
                 // ...ya da hiç başlamadı: gönderim düştü / motor cevap vermedi (IsStarting geri kapandı, IsRunning
                 // hiç açılmadı). İşaret o zaman HEMEN silinir — aksi halde başlamayan bir işlemin amber kapsamı
-                // ekranda kalıcı asılı kalır ve "renk yalnız son işlemin hikâyesini anlatır" ilkesi yalan olur.
+                // ekranda kalıcı asılı kalır ve düğümler çıktı durumu yerine var olmayan bir işlemin kapsamını gösterir.
                 // Koşu SONA ERDİĞİNDE de (IsRunning true'dan false'a düşerken, Stop/engine ölümü/tamamlanma —
                 // hepsi IsRunning'i false yapar) aynı dal işaretin silinmesini garanti eder.
                 //
@@ -1034,7 +1043,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/Branch/UseWorktree/WorktreeName/PerfMode)
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1044,19 +1053,15 @@ public partial class MainWindow : Window
         {
             case nameof(RunViewModel.RootPath):
             case nameof(RunViewModel.Configuration):
-            case nameof(RunViewModel.Branch):
-            case nameof(RunViewModel.UseWorktree):
-            case nameof(RunViewModel.WorktreeName):
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
+            case nameof(RunViewModel.StashOnBranchSwitch):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
-                s.Branch = _vm.Branch;
-                s.UseWorktree = _vm.UseWorktree;
-                s.WorktreeName = _vm.WorktreeName;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
+                s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
                 _uiState.Save(s);
                 break;
         }
@@ -1234,6 +1239,8 @@ public partial class MainWindow : Window
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
         _hotkey?.Dispose();
         _tray?.Dispose();
+        _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
+        _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın
         // [tray indicator] Overlay AYRI bir top-level penceredir: kapatılmazsa uygulama kapanmaz.
         if (App.Motion is { } motion) motion.AnimationsEnabledChanged -= OnTrayIndicatorMotionChanged;
         _trayOverlay?.Close();

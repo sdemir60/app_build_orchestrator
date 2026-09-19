@@ -32,7 +32,8 @@ namespace BuildOrchestrator.Core.Workspace;
 /// projelerle sınırlıdır: kartı verilmemiş bir dizine dokunulmaz.</para>
 ///
 /// <para><b>Dokunulmayanlar:</b> global NuGet cache'leri, <c>NuGet.config</c>, git (tek bir git komutu bile
-/// koşulmaz), worktree havuzu, <c>bin</c>/OutDir, run logları. <b>Build kararlarını değiştirmez:</b> imza
+/// koşulmaz), <c>bin</c>/OutDir, run logları — worktree havuzu zaten YOK, dokunacak bir şey kalmadı.
+/// <b>Build kararlarını değiştirmez:</b> imza
 /// kaynak-tabanlıdır, ne restore ne artık temizliği bir projeyi dirty yapar.</para>
 ///
 /// <para><b>Hata modeli:</b> exception IPC sınırını GEÇMEZ. Kilitli dosya hata DEĞİLDİR (warn +
@@ -268,7 +269,7 @@ public sealed class OptimizeWorkspaceService(
     /// <summary>
     /// Restore DENENDİKTEN SONRA hâlâ diskte olmayan HintPath hedefleri: NuGet <c>packages</c> hedefleri
     /// (sürüm drift'i — <c>HintPath</c> ≠ <c>packages.config</c> sürümü) ve üreticisi olmayan
-    /// <c>bin</c> hedefleri (eksik OSYS platform DLL'i). Bugün bunlar run ortasında kriptik bir derleme
+    /// <c>bin</c> hedefleri (eksik havuzdaki platform DLL'i). Bugün bunlar run ortasında kriptik bir derleme
     /// hatası olarak patlıyor; burada tık anında isimli, eyleme dönük bir listeye dönüşürler.
     /// </summary>
     private static void ReportUnresolvedReferences(IReadOnlyList<EvaluatedProject> projects, Tally tally, Action<IpcEvent> emit)

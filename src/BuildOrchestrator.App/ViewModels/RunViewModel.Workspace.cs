@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Scheduling;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -10,7 +11,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [A5/T69 · Fix wave 1 — Finding 6] <see cref="RunViewModel"/>'in <b>workspace yüzeyi</b>: Sync fazı, hedef
-/// commit, branch/worktree envanteri ve topoloji. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA
+/// commit, branch envanteri ve topoloji. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA
 /// yüzeyini taşır ve bu iki sorumluluk aynı dosyada birbirine karışıyordu (sonraki UI task'ları bu yüzeye
 /// sayaç/filtre/seçim ekleyecek). <b>Davranış değişikliği YOKTUR</b> — kod aynen taşınmıştır; tek istisna
 /// bu dosyada açıkça işaretlenen Finding 2 ayrımıdır.
@@ -84,8 +85,8 @@ public sealed partial class RunViewModel
 
     /// <summary>
     /// [design v1.16.0 §2.7-6a] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
-    /// alt bardaki <c>N behind</c> chip'inin sayısı. <c>null</c> ⇒ MESAFE BİLİNMİYOR (fetch degrade oldu ya da
-    /// aktif olmayan bir branch seçili): chip çizilmez, uydurma sayı gösterilmez.
+    /// alt bardaki <c>N behind</c> chip'inin sayısı. <c>null</c> ⇒ MESAFE BİLİNMİYOR (fetch degrade oldu): chip
+    /// çizilmez, uydurma sayı gösterilmez.
     /// </summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanShowBehind))]
@@ -93,10 +94,10 @@ public sealed partial class RunViewModel
     private int? _behind;
 
     /// <summary>
-    /// Chip GÖRÜNÜR mü: geride ve mesafe biliniyor <b>ve</b> aktif branch seçili. Worktree modunda chip YOK —
-    /// derleme worktree'den yapılıyor, ana ağacı ilerletmenin o koşuya bir etkisi olmazdı.
+    /// Chip GÖRÜNÜR mü: mesafe biliniyor ve sıfırdan büyük. [spec 2026-09-18 §6.5] Koşu her zaman çalışma
+    /// ağacında derlendiği için chip, ağaç geride olduğu HER an görünür.
     /// </summary>
-    public bool CanShowBehind => Behind is > 0 && !IsWorktreeForced;
+    public bool CanShowBehind => Behind is > 0;
 
     /// <summary>[Fix wave 1 — Finding 2] <c>syncStarted</c> geldi ama <c>syncCompleted</c> (ya da Sync'i bitiren
     /// bir hata) HENÜZ gelmedi. Bir run-bitiren hata kodunun KAYNAĞINI ayırt etmek için gerekir — bkz.
@@ -180,9 +181,6 @@ public sealed partial class RunViewModel
     /// değişmemişse HİÇ — gerekçesi (ölçülen O(n²) donma) o tipin özetindedir.</summary>
     public SnapshotCollection<BranchRef> Branches { get; } = [];
 
-    /// <summary>Worktree envanteri — <see cref="Branches"/> ile birebir aynı yayın sözleşmesi.</summary>
-    public SnapshotCollection<Worktree> Worktrees { get; } = [];
-
     /// <summary>Son <c>workspaceTopology</c>'nin düğümleri (build-order) — bağımlılık, katman ve solution
     /// bilgisinin TEK kaynağı; graf paneli (D5) ve katman gruplaması (D1) bunu okur.</summary>
     public IReadOnlyList<ProjectNode> Topology { get; private set; } = [];
@@ -199,30 +197,20 @@ public sealed partial class RunViewModel
     public event EventHandler? TopologyChanged;
 
     /// <summary>[E2/§5-b] Son yayınlanan topolojinin YAPI imzası (düğüm Id/Ad/katman + kenarlar).
-    /// <see cref="OnWorkspaceTopology"/> <see cref="TopologyChanged"/>'ı iki durumda ateşler: imza değiştiğinde
-    /// ya da yayın bir <b>Sync'e</b> aitse (<see cref="_syncInFlight"/>) — imza aynı olsa bile. <c>null</c> =
-    /// henüz hiç topoloji gelmedi → ilk topoloji her zaman ateşler (graf ilk kez kurulur). Statü değişimleri
-    /// (InCycle/WillBuild) imzaya GİRMEZ — onlar <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar.
+    /// <see cref="OnWorkspaceTopology"/> <see cref="TopologyChanged"/>'ı (→ graf reveal'i, liste kademeli beliriş
+    /// ve — seçim yokken — başa dönüş) YALNIZ imza değiştiğinde ateşler. <c>null</c> = henüz hiç topoloji gelmedi
+    /// ya da plan yüzeyi boşaltıldı (<see cref="ClearPlanSurface"/>) → sıradaki topoloji her zaman ateşler. Statü
+    /// değişimleri (InCycle/WillBuild) imzaya GİRMEZ — onlar <c>UpdateStatuses</c> (PushGraphStatuses) yoluyla akar.
     ///
-    /// <para><b>Sync = "sıfırdan listelendi" (design v1.13.2 §2.4 · §9).</b> Prototipte <c>doSync()</c>
-    /// (<c>BuildApp.jsx:1186-1193</c>) <c>revealKey</c>'i HER Sync'te KOŞULSUZ artırır: graf reveal'ini
-    /// yeniden oynar, liste kademeli belirir ve — seçim yokken — başa döner (<c>StickyLayerList.PlayRevealStagger</c>).
-    /// <c>TopologyChanged</c> bu yolu sürer (<c>MainWindow.RefreshProjectGroups</c> + <c>RebuildGraph</c>), bu
-    /// yüzden bir Sync'in topolojisi imzadan bağımsız ateşler. Bedeli <c>SetGroups</c>'un <c>ItemsSource</c>
-    /// ataması (tam reset) — Sync bilinçli bir "yeniden listele" olduğundan bu reset gereksiz churn değil,
-    /// tasarımın istediği belirişin kendisidir (A13.2'nin dar okuması: seçim satır VM'lerinde yaşar ve Sync
-    /// seçimi zaten düşürür).</para>
-    ///
-    /// <para><b>[DEĞİŞEN KURAL — v1.13.2, ölçüldü]</b> Guard eskiden HER yayın için imzaya bakıyordu; aynı
-    /// repoda ikinci bir Sync ("no changes") <c>TopologyChanged</c> ateşlemiyor, reveal oynamıyor ve liste
-    /// başa DÖNMÜYORDU — kullanıcı testinde "Sync'te scroll başa gelmiyor" diye görülen buydu. Gerekçe "gereksiz
-    /// churn" idi (mid-run bir Sync koşan grafı yeniden-reveal etmesin); ama Sync koşarken zaten kilitlidir
-    /// (<c>SyncCommand</c> CanExecute, <c>ApplySettingsAsync</c>/<c>ChangeRepositoryAsync</c>'in
-    /// <c>IsMidRunLocked</c> kapıları) ve motor topolojiyi YALNIZ Sync içinde yayınlar
-    /// (<c>SyncWorkspaceService</c>) — guard'ın koruduğu durum ulaşılabilir değildi. İmza karşılaştırması
-    /// Sync dışı bir yayın için savunma olarak durur.
-    /// Karakterizasyon testi: <c>ProjectListFilterTests.A_no_changes_sync_replays_the_reveal</c> ve
-    /// <c>StickyRevealTriggerTests.A_no_changes_sync_returns_the_list_to_the_top</c>.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eskiden (design v1.13.2 §2.4 · §9) bir Sync'in
+    /// yayını imzadan bağımsız ateşlerdi (<c>|| _syncInFlight</c>): prototipin <c>doSync()</c>'u
+    /// <c>revealKey</c>'i her Sync'te artırır, "Sync = sıfırdan listelendi". Artık Sync kendiliğinden de koşar
+    /// (commit, pencereye dönüş) ve her biri listeyi baştan kurup kullanıcının baktığı yeri başa sarıyordu. Yapı
+    /// aynıysa satırlar yerinde tazelenir; proje eklendi/çıktıysa reveal oynar. Clean/Optimize tıklaması listeyi
+    /// boşaltır ve imzayı da unutturur — zincirlenen Sync aynı yapıyı getirse de reveal oynar.
+    /// Testler: <c>ProjectListFilterTests.A_sync_with_the_same_structure_updates_in_place</c> /
+    /// <c>A_sync_that_adds_a_project_replays_the_reveal</c> / <c>A_clean_empties_the_list_and_its_sync_replays_the_reveal</c>,
+    /// <c>StickyRevealTriggerTests.A_sync_with_the_same_structure_updates_in_place</c>.</para></summary>
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
@@ -239,11 +227,17 @@ public sealed partial class RunViewModel
     private void OnSyncStarted()
     {
         _syncInFlight = true;
-        SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
-        // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
-        // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
-        RunErrorMessage = null;
-        Phase = AppPhase.Syncing;
+        // [spec 2026-09-18 §6.2 · review I1/I2] Sessiz Sync ekranda bir işlem olarak GÖRÜNMEZ: faz Syncing'e
+        // geçmez (şerit Sync ilerlemesi göstermez, önceki işlemin pill'i canlanmaz) ve kötü haber silinmez —
+        // önceki koşunun "Run failed — …" metni ve Sync hatası durur (Sync hatası başarıyla bitince kalkar).
+        if (_syncMode.IsVisible())
+        {
+            SyncErrorMessage = null; // [E2/T10] retry başladı — önceki Sync hatası şeritten kalkar
+            // [runFailed] Önceki run'ın hata gerekçesi de kalkar: aksi halde KIRMIZI "Run failed — …" satırı, Sync
+            // ilerlemesini ("▸ Sync — git fetch origin…") kullanıcı yeni bir run başlatana kadar gizlerdi.
+            RunErrorMessage = null;
+            Phase = AppPhase.Syncing;
+        }
         ClearPreviewSets(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
         // [Sync guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. İkisi birden açık
         // bırakılsaydı kapıyı kapatan iki ayrı bayrak olurdu ve biri sızdığında ötekinin temizlenmesi
@@ -277,6 +271,10 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(CleanBusy));
         OnPropertyChanged(nameof(OptimizeBusy));
         OnPropertyChanged(nameof(SyncBusy));
+        // [spec 2026-09-18 §6.3] Branch chip'inin kapısı da bu üç meşgul yüzeyi okur — aynı geçişte duyurulur.
+        OnPropertyChanged(nameof(CanSwitchBranch));
+        // [spec 2026-09-18 §6.1] Meşgulken bekletilen kendiliğinden Sync tetiği aynı geçişte yeniden sorulur.
+        NotifyAutoSyncGate();
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
@@ -299,7 +297,7 @@ public sealed partial class RunViewModel
     /// <c>Build</c> zaten sıfırdan planlar (defter boş → her şey <c>NeverBuilt</c>). Ama
     /// <see cref="OnCleanStarted"/> satırların kararlarını düşürmüştür ve onları geri getirecek tek yer
     /// motorun kendi analizidir — kullanıcıya elle Sync bastırmak, uygulamanın zaten yapabildiği bir işi ona
-    /// yüklemek olurdu. <c>clearBuffers: false</c>: kullanıcı kendi tetiklediği Clean'in transkriptini görmeye
+    /// yüklemek olurdu. <see cref="SyncMode.Appended"/>: kullanıcı kendi tetiklediği Clean'in transkriptini görmeye
     /// devam etmeli (<see cref="OnPullCompletedAsync"/> ile AYNI gerekçe ve AYNI desen).</para>
     ///
     /// <para>Sıra: ÖNCE bırakma. <c>CleanBusy</c> açıkken Sync'in kapısı kapalıdır
@@ -326,11 +324,24 @@ public sealed partial class RunViewModel
         await HoldAsync(MaintenanceStepGapMs);
         // [ölçülen kusur] Yüzey burada, Sync kapıyı DEVRALDIKTAN SONRA bırakılır. Önce bırakılıyordu ve o
         // pencerede Sync/Clean tıklanabilir haldeydi, düğmeler de sönük → canlı → sönük kırpışıyordu; iki
-        // işlem tek bir meşgul pencere olarak okunmalıdır. Devralma SENKRONDUR: SyncCoreAsync ilk await'ine
-        // varmadan `_syncRequested`'ı kurar, yani Task'ı beklemeden başlatmak kapıyı kesintisiz tutar.
-        // Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve aşağıdaki bırakma doğru sonucu verir.
-        var sync = SyncCoreAsync(clearBuffers: false);
-        releaseSurface();
+        // işlem tek bir meşgul pencere olarak okunmalıdır (sıra SyncThenReleaseAsync'te).
+        await SyncThenReleaseAsync(releaseSurface, SyncMode.Appended);
+    }
+
+    /// <summary>
+    /// [final review O3] Bir workspace işinden Sync'e DEVRİN TEK yeri — checkout, pull, Clean/Optimize aynı sırayı oynar:
+    /// Sync kapıyı DEVRALIR, SONRA önceki işin yüzeyi bırakılır; arada Build/Sync düğmeleri bir kare bile açılmaz ve
+    /// bekleyen bir HEAD tetiği ikinci bir Sync başlatamaz (spec §6.1 "çift Sync yok"). Devralma SENKRONDUR:
+    /// <see cref="SyncCoreAsync"/> ilk await'ine varmadan <c>_syncRequested</c>'ı kurar, yani Task'ı beklemeden başlatmak
+    /// kapıyı kesintisiz tutar. Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve ardından gelen bırakma
+    /// doğru sonucu verir.
+    /// </summary>
+    /// <param name="release">Önceki işin yüzeyini bırakan adım.</param>
+    private async Task SyncThenReleaseAsync(Action release, SyncMode mode,
+        SilentSyncReason silentReason = SilentSyncReason.Refresh, IReadOnlyList<string>? sectionLines = null)
+    {
+        var sync = SyncCoreAsync(mode, silentReason, sectionLines);
+        release();
         await sync;
     }
 
@@ -425,6 +436,7 @@ public sealed partial class RunViewModel
     private void ReleaseSyncRequest()
     {
         _syncRequested = false;
+        EndSyncMode(); // [review M1] hiçbir Sync başlamadı — kip sonraki satırları yanlış süzmesin
         NotifySyncGatedCommands();
     }
 
@@ -436,20 +448,27 @@ public sealed partial class RunViewModel
     /// ayrışmış bir ağaç reddedilir ve gerekçe konsola yazılır (satırlar <c>syncProgress</c> olarak akar).</para>
     ///
     /// <para>Konsol TIKLAMA ANINDA TEMİZLENMEZ: kullanıcının kendi tetiklediği işin sonucunu görmesi gerekir
-    /// ve pull sonrası otomatik Sync de aynı gerekçeyle geçmişi korur (<c>clearBuffers: false</c>).</para>
+    /// ve pull sonrası otomatik Sync de aynı gerekçeyle geçmişi korur (<see cref="SyncMode.Appended"/>).</para>
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanPullRepository))]
     private async Task PullRepositoryAsync()
     {
+        if (!RefreshGitWritesAllowed()) return; // [spec 2026-09-18 §6.4] yoklama bayat olabilir
         CurrentOperation = OperationLabel.Sync;   // ilerletme + ardından gelen Sync tek bir işlemdir
+        SetPullBusy(true); // [spec 2026-09-18 §6.1] kapı GÖNDERİMDEN önce kapanır (checkout'un deseni)
         ArmEngineWatchdog();
-        await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository");
+        // Gönderim SENKRON düştüyse hiçbir pullCompleted gelmez — pill ve kilit asılı kalmasın.
+        if (!await TrySendAsync(new PullRepositoryCommand(RootPath, Branch), "pullRepository"))
+        {
+            CurrentOperation = null;
+            SetPullBusy(false);
+        }
     }
 
     /// <summary>Chip'in tıklanabilirliği: görünür olmasıyla aynı koşullar + bar kilidi (koşu/bakım görevi —
-    /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).</summary>
-    private bool CanPullRepository() =>
-        CanShowBehind && !IsRunning && !IsStarting && !IsEngineUnavailable && !SyncBusy && !CleanBusy && !OptimizeBusy;
+    /// uçuştaki bir Clean de bakım görevidir: başarılı pull'un otomatik Sync'i silinmekte olan bin/obj'i okurdu).
+    /// [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de kapalıdır (<see cref="GitOperationTooltip"/>).</summary>
+    private bool CanPullRepository() => CanShowBehind && WorkspaceGateOpen && GitWritesAllowed;
 
     /// <summary>
     /// [design v1.16.0 §3.9] Pull bitti. Başarılıysa chip düşer ve plan yeniden hesaplanır (yeni HEAD'in
@@ -457,22 +476,283 @@ public sealed partial class RunViewModel
     /// </summary>
     private async Task OnPullCompletedAsync(PullCompletedEvent e)
     {
-        if (!e.Succeeded) { CurrentOperation = null; return; }
+        if (!e.Succeeded)
+        {
+            CurrentOperation = null;
+            SetPullBusy(false);
+            return;
+        }
 
         Behind = 0;                          // ff sonrası yerel HEAD uzak uca eşitlendi
-        await SyncCoreAsync(clearBuffers: false);
+        // Kilit, zincirli Sync kapıyı DEVRALDIKTAN SONRA bırakılır (SyncThenReleaseAsync); pull'un satırları kalır,
+        // Sync altına eklenir.
+        await SyncThenReleaseAsync(() => SetPullBusy(false), SyncMode.Appended);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1] Bir pull motora GÖNDERİLDİ ama <see cref="PullCompletedEvent"/> HENÜZ gelmedi.
+    /// Supervisor pull boyunca komut döngüsünü bloklar ve başlangıç olayı yayınlamaz — istek ve uçuş penceresi TEK
+    /// bayraktır (<see cref="CheckoutBusy"/> ile aynı). Pull'a ait bir hata kodu yoktur: sonuç her zaman
+    /// <see cref="PullCompletedEvent"/> ile kapanır; motor kaybı <see cref="RunViewModel.ReleaseAfterEngineLoss"/>'ta bırakır.</summary>
+    public bool PullBusy { get; private set; }
+
+    /// <summary><see cref="PullBusy"/>'nin TEK yazıcısı — <see cref="SetCheckoutBusy"/>'nin ikizi. Çağıranlar: gönderim ve
+    /// düşen gönderim (<see cref="PullRepositoryAsync"/>), cevap (<see cref="OnPullCompletedAsync"/>) ve motor kaybı.</summary>
+    private void SetPullBusy(bool busy)
+    {
+        if (PullBusy == busy) return;
+        PullBusy = busy;
+        OnPropertyChanged(nameof(PullBusy));
+        NotifySyncGatedCommands();
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Bir checkout motora GÖNDERİLDİ ama cevabı (<see cref="CheckoutCompletedEvent"/>
+    /// ya da <see cref="CheckoutErrorCodes"/>'tan bir hata) HENÜZ gelmedi. Supervisor checkout boyunca komut
+    /// döngüsünü bloklar ve başlangıç olayı yayınlamaz, bu yüzden istek ve uçuş penceresi TEK bayraktır.</summary>
+    public bool CheckoutBusy { get; private set; }
+
+    /// <summary>Workspace'e dokunan bir iş uçuşta mı: Sync, Clean, Optimize, checkout ya da pull. Run/Sync/Clean/
+    /// Optimize/Pull ve branch chip kapılarının ORTAK meşguliyet sorusu — liste TEK yerde durur (kopya YASAK).
+    /// <para>[spec 2026-09-18 §6.3] Checkout da dahildir: Supervisor checkout boyunca komut döngüsünü bloklar;
+    /// o sırada basılan bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
+    /// Pull ise yanlış branch'i ilerletir.</para></summary>
+    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
+
+    /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
+    /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in ve Choose Folder'ın kapısı; komut kapıları
+    /// bunu motor erişilebilirliğiyle birlikte sorar (<see cref="WorkspaceGateOpen"/>).</summary>
+    private bool WorkspaceIdle => !IsMidRunLocked && !WorkspaceBusy;
+
+    /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
+    /// Sync/Clean/Optimize/Pull ve branch chip'i bunu okur (kendi ek koşullarıyla) — liste beş yerde ayrı yazılmaz.</summary>
+    private bool WorkspaceGateOpen => WorkspaceIdle && !IsEngineUnavailable;
+
+    /// <summary>[spec 2026-09-18 §6.3] <see cref="CheckoutBusy"/>'nin TEK yazıcısı: değer değiştiğinde chip'in
+    /// kapısını (<see cref="CanSwitchBranch"/>) duyurur. Çağıranlar: gönderim (<see cref="SelectBranch"/>),
+    /// cevap (<see cref="OnCheckoutCompletedAsync"/>, <see cref="TryConsumeCheckoutFailure"/>) ve motor kaybı
+    /// (<see cref="RunViewModel.ReleaseAfterEngineLoss"/> — motor checkout ortasında ölürse kilit sızmaz).</summary>
+    private void SetCheckoutBusy(bool busy)
+    {
+        if (CheckoutBusy == busy) return;
+        CheckoutBusy = busy;
+        OnPropertyChanged(nameof(CheckoutBusy));
+        NotifySyncGatedCommands(); // run/Sync/Clean/Optimize/Pull kapıları + chip (WorkspaceBusy) tek listeden
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.2 · §6.3] Checkout'un cevabı — konsol satırlarını App kurar, metinler
+    /// <see cref="PlanProgressLines"/>'tan (tek kaynak).
+    ///
+    /// <para><b>Başarı yeni bir BÖLÜM açar:</b> konsol ve olay akışı ÖNCE temizlenir, stash satırı (varsa) ve
+    /// switch satırı SONRA yazılır — yeni bölümün ilk satırları onlardır ("temizlik önce, not sonra"). Üçünü de
+    /// <see cref="SyncMode.BranchChange"/> Sync'i yapar (satırlar <c>sectionLines</c> ile gider): temizlik tek
+    /// yerde kalır, ikinci bir temizlik bu satırları silemez; ardından fetch'siz transkript akar.</para>
+    ///
+    /// <para><b>Başarısız işlem bölüm açmaz:</b> kirli ağaç reddi ve stash/checkout hatası konsolu temizlemez,
+    /// uyarı altına eklenir ve işlem biter. Checkout stash'ten SONRA düştüyse stash satırı yine yazılır —
+    /// kullanıcının değişiklikleri stash'tedir ve konsol bunu söylemezse kaybolmuş gibi görünürdü — ve ağaç değiştiği
+    /// için sessiz bir Sync (<see cref="SyncMode.Silent"/>) kararları tazeler [final review M2].
+    /// <see cref="CheckoutStatus.AlreadyOn"/> hiçbir şey yazmaz (App aktif branch'e zaten komut göndermez; bu
+    /// yalnız envanterin bayat olduğu yarışta gelir).</para>
+    /// </summary>
+    private async Task OnCheckoutCompletedAsync(CheckoutCompletedEvent e)
+    {
+        if (e.Status != CheckoutStatus.Switched)
+        {
+            CurrentOperation = null;
+            if (e.Status == CheckoutStatus.Dirty) AppendRunLine(PlanProgressLines.SwitchRefusedDirty(e.DirtyCount));
+            bool treeChanged = e.Status == CheckoutStatus.Failed && e.StashMessage is not null;
+            if (treeChanged) AppendRunLine(PlanProgressLines.StashedBeforeSwitch(e.StashMessage!));
+            if (e.Status is CheckoutStatus.Failed or CheckoutStatus.StashFailed)
+                AppendRunLine(PlanProgressLines.SwitchFailed(e.Detail ?? "unknown error"));
+            // [final review M2] Stash'ten sonra düşen checkout ağacı DEĞİŞTİRDİ (değişiklikler stash'e gitti): bölüm
+            // açılmaz ama kararlar bayattır — sessiz bir Sync tazeler. Kilit, Sync kapıyı devraldıktan SONRA düşer.
+            if (treeChanged) await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.Silent, SilentSyncReason.Refresh);
+            else ReleaseCheckout();
+            return;
+        }
+
+        // [spec 2026-09-18 §6.2] Yeni bölüm: temizliği ve bölümün ilk satırlarını (stash, switch) BranchChange
+        // Sync'i yapar — temizlik önce, not sonra, tek yerde; ardından fetch'siz transkript. Kilit, Sync kapıyı
+        // DEVRALDIKTAN SONRA bırakılır (SyncThenReleaseAsync).
+        List<string> section = [];
+        if (e.StashMessage is { } stashed) section.Add(PlanProgressLines.StashedBeforeSwitch(stashed));
+        section.Add(PlanProgressLines.SwitchedBranch(e.FromBranch ?? "HEAD", e.Branch ?? "HEAD", ShortSha(e.Revision)));
+        await SyncThenReleaseAsync(ReleaseCheckout, SyncMode.BranchChange, sectionLines: section);
+    }
+
+    /// <summary>Checkout kilidini bırakır — <see cref="SyncThenReleaseAsync"/>'e verilen adım.</summary>
+    private void ReleaseCheckout() => SetCheckoutBusy(false);
+
+    /// <summary>[spec 2026-09-18 §6.3] Dönüş değeri = "bu hata checkout'a aittir, run/Sync state'ine DOKUNMA".
+    /// <see cref="TryConsumeCleanFailure"/>'ın ikizi: motorun reddi (koşu uçuşta) reddedilen bir checkout gibi
+    /// ele alınır — hata satırı <see cref="RunViewModel.OnError"/>'ın ilk satırı olarak konsolun ALTINA düşer
+    /// (temizlik yok), kilit açılır, işlem pill'i düşer. Reddetme KOŞAN bir run'ın ortasında gelebilir ve o
+    /// run'ı YIKMAMALIDIR.</summary>
+    private bool TryConsumeCheckoutFailure(string code)
+    {
+        if (!CheckoutErrorCodes.Contains(code) || !CheckoutBusy) return false;
+        SetCheckoutBusy(false);
+        CurrentOperation = null;
+        return true;
+    }
+
+    /// <summary>[spec 2026-09-18 §6.3] Checkout'un yayınlayabildiği hata kodları: <c>checkoutRejected</c>
+    /// (Supervisor'da bir koşu uçuşta) ve <c>checkoutFailed</c> (beklenmeyen hata). Run-bitiren kodlarla KESİŞMEZ.</summary>
+    private static readonly HashSet<string> CheckoutErrorCodes = new(StringComparer.Ordinal) { "checkoutFailed", "checkoutRejected" };
+
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.2] Sync kipleri
+
+    /// <summary>Uçuştaki (ya da en son istenen) Sync'in kipi — <see cref="OnSyncProgress"/> ve
+    /// <see cref="OnSyncCompleted"/> okur. Sync bitince (ya da düşünce) <see cref="SyncMode.Manual"/>'a döner:
+    /// kipten bağımsız gelen bir <c>syncProgress</c> satırı sessizce yutulmasın.</summary>
+    private SyncMode _syncMode = SyncMode.Manual;
+
+    /// <summary>Sessiz Sync'in nedeni — bitişteki tek akış satırını seçer.</summary>
+    private SilentSyncReason _silentReason;
+
+    /// <summary>Sessiz Sync'in başındaki karar anlık görüntüsü (satır Id → karar anahtarı) ve o anki saat — bitişte
+    /// aynı saatle alınan ikinci görüntüyle karşılaştırılır (<see cref="CountChangedDecisions"/>). Saat SABİT
+    /// tutulur: etiketin yaş kuyruğu ("2h") iki görüntü arasında akmasın.</summary>
+    private (Dictionary<string, string> Keys, DateTimeOffset Now)? _silentBaseline;
+
+    /// <summary>Tamamlanan Sync'in olay akışı satırı — <see cref="OnSyncCompleted"/> kipe göre yazar,
+    /// <see cref="AppendStreamFor"/> okur (<c>null</c> ⇒ satır yok: sessiz Sync'te değişen bir şey yoktu).</summary>
+    private string? _syncStreamLine;
+
+    /// <summary>[spec 2026-09-18 §6.1] Son tamamlanan Sync'in ölçtüğü HEAD: checkout edilmiş branch + yerel HEAD
+    /// commit'i (<see cref="SyncCompletedEvent.ActiveBranch"/>/<see cref="SyncCompletedEvent.HeadSha"/>). Çift
+    /// Sync kontrolü (Task 7 — HEAD izleyicisi) bunu okur: tetik anındaki HEAD bununla aynıysa Sync atlanır.</summary>
+    internal (string? Branch, string? HeadSha)? LastSyncHead { get; private set; }
+
+    /// <summary>[final review M1] Son tamamlanan Sync yeni bir konsol bölümü açtı mı (kipi <see cref="SyncModeRules.ClearsConsole"/>:
+    /// Sync düğmesi ya da checkout'un bölümü). Koordinatör, beklerken yutulan bir branch değişimini yalnız bölümsüz bir
+    /// Sync yuttuysa yeniden anlatır.</summary>
+    internal bool LastSyncOpenedSection { get; private set; }
+
+    /// <summary>Son Sync isteğinin motora GİTTİĞİ an (monoton ms, <see cref="_nowMs"/>) — kipten bağımsız, yalnız
+    /// başarılı gönderimde yazılır (düşen gönderimde hiçbir Sync başlamadı).</summary>
+    internal long? LastSyncStartedAtMs { get; private set; }
+
+    /// <summary>Son Sync'in TAMAMLANDIĞI an (monoton ms). Pencereye dönüşün 5 s eşiği (spec §1-11) ikisinden
+    /// yenisini okur (<see cref="LastSyncAtMs"/>).</summary>
+    internal long? LastSyncCompletedAtMs { get; private set; }
+
+    /// <summary>[spec 2026-09-18 §6.1] Son Sync'in HEAD'ini ve anlarını unutur — TEK yer; kök değişince
+    /// (<c>ApplyRepositoryRoot</c>) çağrılır: eski kökün HEAD'i yeni kökte kıyas tabanı olsaydı ilk tetik sahte bir
+    /// "Switched to" bölümü açardı.</summary>
+    private void ForgetLastSync()
+    {
+        LastSyncHead = null;
+        LastSyncOpenedSection = false;
+        LastSyncStartedAtMs = null;
+        LastSyncCompletedAtMs = null;
+    }
+
+    /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
+    internal long? LastSyncAtMs =>
+        LastSyncStartedAtMs is { } started && LastSyncCompletedAtMs is { } completed
+            ? Math.Max(started, completed)
+            : LastSyncStartedAtMs ?? LastSyncCompletedAtMs;
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.2] <b>Kendiliğinden Sync'in TEK girişi</b> — commit, pencereye dönüş ve HEAD'in branch
+    /// değişimi dışındaki hareketi buradan Sync'ler (<see cref="SyncMode.Silent"/>): konsol ve akış temizlenmez,
+    /// fetch yapılmaz, kalıcı işlem pill'i yazılmaz, seçim korunur; transkript gizlenir ama warn/error satırları
+    /// yazılır; bitişte akışa tek satır (<paramref name="reason"/>'a göre, metinler <see cref="StreamText"/>'te).
+    /// <para>Kapı Sync düğmesininkiyle AYNIdır (<see cref="CanSync"/>) + bir workspace: koşu, planlama, başka bir
+    /// workspace işi (Sync/Clean/Optimize/checkout/pull) uçuştayken ya da motor erişilemezken hiçbir şey gönderilmez ve
+    /// <c>false</c> döner — çağıran (izleyici) tetiği sonra yeniden deneyebilir. Gönderim düştüyse de (motor ölü)
+    /// <c>false</c>.</para>
+    /// </summary>
+    /// <returns>Sync motora gitti mi.</returns>
+    internal async Task<bool> SyncSilentlyAsync(SilentSyncReason reason) =>
+        HasWorkspace && CanSync() && await SyncCoreAsync(SyncMode.Silent, reason);
+
+    /// <summary>Bir Sync istenirken kipini kurar (<see cref="SyncCoreAsync"/>): sessiz kipte karar anlık görüntüsü
+    /// ALINIR (istek anı — motorun cevabından önceki ekran), başlangıç saati her kipte yazılır.</summary>
+    private void BeginSyncMode(SyncMode mode, SilentSyncReason reason)
+    {
+        _syncMode = mode;
+        _silentReason = reason;
+        _silentBaseline = null;
+        if (mode == SyncMode.Silent)
+        {
+            var now = WallClock();
+            _silentBaseline = (DecisionKeys(now), now);
+        }
+    }
+
+    /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.</summary>
+    private void EndSyncMode()
+    {
+        _syncMode = SyncMode.Manual;
+        _silentBaseline = null;
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Sync transkripti satırı. Sessiz kipte yalnız sorun satırları (warn/error)
+    /// konsola yazılır — sessizlik kötü haberi gizlemez; dim/info/cmd satırları yazılmaz.</summary>
+    private void OnSyncProgress(SyncProgressEvent e)
+    {
+        if (!_syncMode.ShowsTranscript() && e.Level is not ("warn" or "error")) return;
+        AppendRunLine(e.Line);
+    }
+
+    /// <summary>Satır başına karar anahtarı: çıktı durumu (<see cref="ProjectRowViewModel.Standing"/>) + karar
+    /// etiketi (<see cref="DecisionLabel"/>, satırın gördüğü AYNI sözcük ve kuyruk). "Değişti" = bu anahtar farklı.</summary>
+    private Dictionary<string, string> DecisionKeys(DateTimeOffset now)
+    {
+        var keys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in Projects)
+        {
+            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
+                row.FailedAt, row.LocalEdits, now, row.InCycle, row.OutputBuiltAt);
+            keys[row.Id] = $"{row.Standing}|{d.Word}|{d.Tail}";
+        }
+        return keys;
+    }
+
+    /// <summary>Sessiz Sync'in başındaki görüntüyle bugünkü arasında kararı değişen satır sayısı — eklenen ve
+    /// çıkan satırlar da değişmiş sayılır.</summary>
+    private int CountChangedDecisions((Dictionary<string, string> Keys, DateTimeOffset Now) baseline)
+    {
+        var after = DecisionKeys(baseline.Now);
+        int changed = after.Count(kv => !baseline.Keys.TryGetValue(kv.Key, out var before) || before != kv.Value);
+        changed += baseline.Keys.Keys.Count(id => !after.ContainsKey(id));
+        return changed;
+    }
+
+    /// <summary>Tamamlanan Sync'in akış satırı: sessiz kipte commit → her zaman <see cref="StreamText.SyncedAfterCommit"/>,
+    /// yenileme → kararı değişen satır varsa <see cref="StreamText.SyncedProjectsChanged"/>, yoksa hiç; diğer
+    /// kiplerde bugünkü özet (<see cref="StreamText.Sync"/>).</summary>
+    private string? SyncStreamLine(SyncCompletedEvent e)
+    {
+        if (_syncMode.IsVisible()) return StreamText.Sync(e.ToBuildCount, e.UpToDateCount);
+        if (_silentReason == SilentSyncReason.Commit) return StreamText.SyncedAfterCommit;
+        int changed = _silentBaseline is { } baseline ? CountChangedDecisions(baseline) : 0;
+        return changed > 0 ? StreamText.SyncedProjectsChanged(changed) : null;
     }
 
     /// <summary>[A5/T69] Sync bitti: hedef commit + degrade bayrağı kaydedilir, faz <c>Idle</c>'a geçer
-    /// (proje durumları artık bilinir — hollow değil).</summary>
+    /// (proje durumları artık bilinir — hollow değil).
+    /// <para>[spec 2026-09-18 §1-7 · §6.1] <see cref="Branch"/> checkout edilmiş branch'e hizalanır (envanteri
+    /// beklemeden — chip Sync biter bitmez doğru), son Sync'in HEAD'i ve tamamlanma anı kaydedilir, akış satırı
+    /// kipe göre seçilir (<see cref="SyncStreamLine"/>).</para></summary>
     private void OnSyncCompleted(SyncCompletedEvent e)
     {
+        bool visible = _syncMode.IsVisible(); // ReleaseSyncPhase kipi bırakmadan ÖNCE okunur
         TargetSha = e.TargetSha;
         FetchDegraded = e.FetchDegraded;
         Behind = e.Behind;      // [v1.16.0] chip'in sayısı; null ⇒ mesafe bilinmiyor → chip yok
+        Branch = e.ActiveBranch ?? Branch; // detached HEAD'de son bilinen değer durur (OnBranchList ile aynı kural)
+        LastSyncHead = (e.ActiveBranch, e.HeadSha);
+        LastSyncOpenedSection = _syncMode.ClearsConsole(); // ReleaseSyncPhase kipi bırakmadan ÖNCE
+        LastSyncCompletedAtMs = _nowMs();
+        _syncStreamLine = SyncStreamLine(e);
         SyncErrorMessage = null; // [E2/T10] Sync başarıyla bitti — varsa önceki hata metni temizlenir
         ReleaseSyncPhase();    // [C2 fold] uçuş bayrağını normal yoldan da BURADAN temizle (tek yer)
-        Phase = AppPhase.Idle; // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil)
+        // Sync başarıyla bitti: durumlar kesin bilinir (degrade dahil). [review I2] Sessiz Sync fazı olduğu yerde
+        // bırakır (Done/Stopped özeti "Ready"ye dönmez); yalnız Boot (henüz hiç Sync'lenmemiş) Idle'a çıkar.
+        if (visible || Phase == AppPhase.Boot) Phase = AppPhase.Idle;
     }
 
     /// <summary>[C2 fold — A5 review] Uçuştaki Sync'i serbest bırakır: <see cref="_syncInFlight"/> temizlenir ve
@@ -483,6 +763,7 @@ public sealed partial class RunViewModel
     private void ReleaseSyncPhase()
     {
         _syncInFlight = false;
+        EndSyncMode(); // [spec 2026-09-18 §6.2] kip de bu Sync'le biter (motor kaybında da)
         // [Sync guard] İstek bayrağı da bırakılır: motor Sync'e HİÇ başlayamadan ölmüş olabilir (istek
         // penceresinde), o hâlde uçuş bayrağı hiç kurulmamıştır ve yalnız onu temizlemek kapıyı açmazdı.
         _syncRequested = false;
@@ -530,6 +811,7 @@ public sealed partial class RunViewModel
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
         if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
+        EndSyncMode();
         _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
         SyncErrorMessage = message;   // [E2/T10] şerit KIRMIZI "Sync failed — {reason}" gösterir (retry = Sync)
         // [re-review C2, Finding 4] OnSyncStarted'ın simetriği burada da gerekir: bu, Sync yüzeyini serbest
@@ -596,9 +878,8 @@ public sealed partial class RunViewModel
                     IsRunTarget = string.Equals(node.Id, RunTargetId, StringComparison.OrdinalIgnoreCase),
                     // [Harici projeler] Rozet topolojiden gelir; satır ömrü boyunca değişmez.
                     IsExternal = node.IsExternal,
-                    // [design v1.11.0 §3.1] Yeni doğan satır BAŞLANGIÇ MODUNDADIR: bir koşu ortasında gelen
-                    // topoloji hariç (orada koşan işlem zaten renk yazıyor).
-                    Fresh = !IsRunning,
+                    // [design v1.20.0 §2.3] Yeni doğan satırın kararı YOKTUR — başlangıç modu bundan gelir;
+                    // çıktı durumu hemen ardından gelen önizlemeyle yazılır (ayrı bir bayrak taşınmaz).
                 });
             else
             {
@@ -608,12 +889,13 @@ public sealed partial class RunViewModel
             }
         }
 
-        // Sync = yeni taban: önceki run'ın sonuçları artık geçmiştir. Sıfırlama bir İŞLEMİN nötrlemesiyle
-        // AYNIdir (bkz. NeutralizeRows) — ayrıştıkları tek nokta inilen zemindir.
-        // [design v1.11.0 §3.1 · §9-3] BAŞLANGIÇ MODU: Sync ve açılış hiçbir şeyi RENKLENDİRMEZ — hangi
-        // işlemin geleceği belli değildir, bu yüzden plan da gösterilmez. Satır kesikli griye, graf node'u
-        // kesikli çerçeveye döner; neyin bayat olduğu çift SHA metninden okunur.
-        if (!IsRunning) NeutralizeRows(fresh: true);
+        // Sync = yeni taban: önceki run'ın KOŞU alanları artık geçmiştir. Sıfırlama bir İŞLEMİN nötrlemesiyle
+        // AYNI metottur (bkz. NeutralizeRows) ve yalnız koşu alanlarını siler.
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eskiden Sync herkesi başlangıç moduna indirirdi (hiçbir şey
+        // renklenmezdi). Artık satır kendi çıktı durumunda kalır ve önizleme onu tazeler — Sync renk verir.
+        // [review I2] Sessiz Sync koşu bindirmesini SİLMEZ: bitmiş/düşmüş koşunun sonucu (şeridin özeti, satırların
+        // statüsü) bir sonraki işleme kadar kalır; sessiz Sync yalnız çıktı durumunu (önizleme) tazeler.
+        if (!IsRunning && _syncMode.IsVisible()) NeutralizeRows();
 
         // [D5] Kısa-ad öneki her satıra itilir (IsRunActive deseni) — koşarken de: mid-run Sync öneki değiştirmiş olabilir.
         foreach (var row in Projects) row.NamePrefix = _graphNamePrefix;
@@ -643,12 +925,10 @@ public sealed partial class RunViewModel
         // Yeni sırada reveal:true dalı listeyi kurar ve İMZAYI yazar; hemen sonra gelen RefreshRunSurface'in
         // VisibleProjects bildirimi guard'a çarpıp NO-OP olur. Sayaç tüketicileri sıradan etkilenmez:
         // TopologyChanged abonelerinden (RefreshProjectGroups/RebuildGraph) hiçbiri Counters okumaz.
-        // [design v1.13.2 §2.4 · §9] Bir Sync'in yayınladığı topoloji imza AYNI olsa da TopologyChanged
-        // ateşler: Sync = "sıfırdan listelendi" (prototipte revealKey her Sync'te artar) — graf reveal'ini
-        // yeniden oynar, liste kademeli belirir ve başa döner. İmza guard'ı yalnız Sync DIŞI yayınlar için
-        // kalır (bkz. _lastTopologySignature).
+        // [spec 2026-09-18 §1-13] Reveal YALNIZ yapı değişince oynar — Sync'in yayını da bu kapıdan geçer
+        // (bkz. _lastTopologySignature).
         string signature = TopologySignature(e.Nodes);
-        if (signature != _lastTopologySignature || _syncInFlight)
+        if (signature != _lastTopologySignature)
         {
             _lastTopologySignature = signature;
             TopologyChanged?.Invoke(this, EventArgs.Empty);
@@ -688,58 +968,29 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>
-    /// [A13/T2 · 2.2] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/> HENÜZ BOŞSA aktif
-    /// branch'e SEED edilir.
+    /// [A13/T2 · 2.2 · spec 2026-09-18 §1-7] Branch envanteri geldi: liste tazelenir ve <see cref="Branch"/>
+    /// checkout edilmiş branch'e eşitlenir — <c>Branch = ActiveBranchName ?? Branch</c>.
     ///
-    /// <para><b>Neden seed gerekli:</b> <see cref="Branch"/> boş başlar ve ona yazan yalnız iki yol vardır —
-    /// kullanıcının popover seçimi (<see cref="SelectBranch"/>) ve diskteki UiState seed'i. <c>syncCompleted</c>
-    /// yazmaz ve zaten bir ECHO'dur (App ne gönderdiyse o döner). Dolayısıyla ilk kurulumda branch chip'i
-    /// SONSUZA DEK boş kalıyordu.</para>
+    /// <para><b>Değer bir tercih değil, okunan bir gerçektir.</b> Araç yalnız çalışma ağacında derler; kullanıcı
+    /// terminalde <c>git checkout</c> yaparsa bir sonraki envanter değeri kendiliğinden hizaya sokar.
+    /// <b>Aktif branch yoksa</b> (detached HEAD / boş envanter) son bilinen değer durur: uydurma değer YOK.</para>
     ///
-    /// <para><b>Neden YALNIZ boşken:</b> seed bir varsayılan doldurmadır, bir kullanıcı kararı DEĞİL. Kullanıcı
-    /// aktif-olmayan bir branch seçtiyse (ya da UiState'ten öyle geldiyse), her Sync'in envanteri onu aktif
-    /// branch'e geri çekerdi — seçim kaybolur, worktree zorlaması sessizce düşerdi.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-7/8]</b> Eskiden kullanıcının popover'dan yaptığı AÇIK seçim
+    /// korunurdu (worktree'de derlenecek bir niyet olarak); worktree kalktığı için o dal da kalktı.</para>
     ///
-    /// <para><b>Aktif branch yoksa</b> (detached HEAD / boş envanter) hiçbir şey yazılmaz: uydurma değer YOK.</para>
+    /// <para><c>origin/HEAD</c> listeye ALINMAZ (<see cref="IsRemoteHead"/>): bir branch değil, uzak deponun
+    /// varsayılan branch'ine işaret eden sembolik bir ref'tir ve checkout hedefi olarak sunulmamalıdır.</para>
     /// </summary>
     private void OnBranchList(BranchListEvent e)
     {
-        Branches.ReplaceAll(e.Branches);
-        ReconcileBranchWithInventory();
-        // [T2 fix-1 · C1/I-G] Aktif branch DEĞİŞMİŞ olabilir (kullanıcı terminalde `git checkout` yaptı) →
-        // IsWorktreeForced/EffectiveUseWorktree TÜRETİLMİŞ değerleri de değişmiştir ama kendi bildirimlerini
-        // yayınlamazlar. Bağlı görünümler (açık bir WorktreePopover, ActionBar chip'i) tazelensin diye
-        // AÇIKÇA duyurulur.
+        Branches.ReplaceAll([.. e.Branches.Where(b => !IsRemoteHead(b))]);
+        // Türetilmiş değerin kendi bildirimi yok — bağlı görünümler tazelensin diye AÇIKÇA duyurulur.
         OnPropertyChanged(nameof(ActiveBranchName));
-        OnPropertyChanged(nameof(IsWorktreeForced));
-        OnPropertyChanged(nameof(EffectiveUseWorktree));
-        NotifyBehindChip();   // [v1.16.0] chip worktree modunda çizilmez — o karar da buradan tazelenir
+        Branch = ActiveBranchName ?? Branch;
     }
 
-    /// <summary>
-    /// [T2 fix-1 · C1] Envanter geldi: <see cref="Branch"/>'i gerçekle uzlaştırır.
-    ///
-    /// <para><b>Kullanıcının AÇIK seçimi korunur</b> — o bir niyettir, bir varsayılan değil. TEK istisna:
-    /// seçilen branch envanterde ARTIK YOKSA (silinmiş/yeniden adlandırılmış) seçim düşürülür ve değer aktif
-    /// branch'e döner; aksi halde uygulama var olmayan bir branch'i hedeflemeye çalışır ve build zorunlu
-    /// worktree yolunda "no commit could be resolved" ile ölürdü.</para>
-    ///
-    /// <para><b>Açık olmayan her değer TAZELENİR</b> (boş olsun, diskteki bayat <c>UiState</c> seed'i olsun,
-    /// önceki bir envanter seed'i olsun) → aktif branch. C1'in tam olarak kapattığı yol budur: kullanıcı
-    /// terminalde branch değiştirince bir sonraki Sync uygulamayı kendiliğinden hizaya sokar.</para>
-    /// </summary>
-    private void ReconcileBranchWithInventory()
-    {
-        if (ActiveBranchName is not { } active) return; // detached HEAD / boş envanter → uydurma değer YOK
-
-        if (_branchChosenByUser)
-        {
-            bool stillExists = Branches.Any(b => string.Equals(b.Name, Branch, StringComparison.Ordinal));
-            if (stillExists) return;    // açık seçim GEÇERLİ → dokunma
-            _branchChosenByUser = false; // seçilen branch yok olmuş → seçim düşer, aşağıda aktife dönülür
-        }
-
-        Branch = active;
-    }
+    /// <summary>Uzak deponun sembolik <c>HEAD</c> ref'i mi (<c>origin/HEAD</c>) — branch listesinde sunulmaz.</summary>
+    private static bool IsRemoteHead(BranchRef branch) =>
+        branch.IsRemoteTracking && branch.Name.EndsWith("/HEAD", StringComparison.Ordinal);
 
 }

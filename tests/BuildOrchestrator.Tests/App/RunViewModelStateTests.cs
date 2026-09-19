@@ -11,7 +11,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync vs Build/Retry
-/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/worktree/
+/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
 /// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
@@ -347,21 +347,20 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
-    /// [kullanıcı kararı 2026-09-12] <b>Sync de plan yüzeyini TIKLAMA ANINDA boşaltır</b> — Clean'in birebir
-    /// simetriği (<c>CleanCommandTests.Clean_empties_the_project_list_and_the_graph_at_click</c>).
+    /// [spec 2026-09-18 §1-13 · §6.2] <b>Sync düğmesi plan yüzeyine tıklamada DOKUNMAZ:</b> graf yeniden
+    /// kurulmaz (<see cref="RunViewModel.TopologyChanged"/> yok), plan (will-build) durur, faz Boot'a düşmez.
+    /// Satırlar yapı aynıysa motorun topolojisiyle yerinde tazelenir
+    /// (<c>OperationPipelineTests.A_sync_click_keeps_the_list_and_the_graph</c> listeyi pinler).
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> Sync eskiden yalnız konsolu ve event stream'i tıklamada temizliyordu; liste
-    /// ve graf ekranda ESKİ topolojiyle duruyor, ancak motorun cevabı gelince yenileniyordu. Kullanıcının
-    /// gördüğü şey tek bir işlemin iki ayrı sarsıntısıydı: konsol anında boşalıyor, liste bir süre bayat
-    /// kalıyor, sonra yerine yenisi geliyordu. Clean'in kuralı buraya da taşındı — aynı karede her şey boşalır,
-    /// Sync'in yayınladığı topoloji hepsini birden geri getirir.</para>
-    ///
-    /// <para>Bedeli Clean'inkiyle AYNI ve bilerek kabul edildi: gönderim düşerse liste boş kalır (burada motor
-    /// hiç başlatılmamıştır, yani gönderim SENKRON düşer) — geri getiren şey bir sonraki Sync'tir. Panel yanlış
-    /// konuşmaz: faz <see cref="AppPhase.Boot"/>'a döner ve davet hiçbir şey söylemez.</para>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-13]</b> Eski ad/iddia:
+    /// <c>Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does</c> — kullanıcı kararı 2026-09-12:
+    /// Sync de Clean gibi tıklamada liste + grafı boşaltır, faz Boot'a döner, topoloji hepsini geri getirir.
+    /// Değişme gerekçesi: Sync artık kendiliğinden de koşar (commit, pencereye dönüş) ve her Sync'te listenin
+    /// boşalıp dolması yapı aynıyken hiçbir bilgi taşımadan ekranı sarsıyordu. Boşaltma Clean/Optimize
+    /// tıklamasında ve gerçek bir kök değişiminde kaldı.</para>
     /// </summary>
     [Fact]
-    public async Task Sync_empties_the_project_list_and_the_graph_at_click_like_clean_does()
+    public async Task A_sync_click_leaves_the_plan_surface_alone()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -375,15 +374,15 @@ public class RunViewModelStateTests
         int topologyChanges = 0;
         vm.TopologyChanged += (_, _) => topologyChanges++;
 
+        var phaseBefore = vm.Phase;
+
         await vm.SyncCommand.ExecuteAsync(null);
 
-        Assert.Empty(vm.Projects);
-        Assert.False(vm.HasTopology);   // graf da boşalır — kabuk TopologyChanged ile yeniden kurar
-        Assert.Equal(1, topologyChanges);
-        Assert.Equal(0, vm.WillBuildCount);
-        Assert.Equal(AppPhase.Boot, vm.Phase);
-        Assert.Equal(ListInviteState.None,
-            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+        Assert.Single(vm.Projects);
+        Assert.True(vm.HasTopology);
+        Assert.Equal(0, topologyChanges);   // graf yeniden kurulmadı
+        Assert.Equal(1, vm.WillBuildCount); // plan durur — motorun önizlemesi gelince tazelenir
+        Assert.Equal(phaseBefore, vm.Phase);
     }
 
     [Fact]
@@ -451,8 +450,14 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)
 
+    /// <summary>
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1]</b> Eski iddia "Build komutu seçili branch'i,
+    /// <c>UseWorktree</c>'yi ve worktree adını da taşır" idi (ad: <c>..._with_branch_worktree_and_layer_patterns</c>).
+    /// Motor artık yalnız çalışma ağacında derler; <c>StartRunCommand</c> bu alanları taşımaz
+    /// (<c>NoWorktreeSurfaceTests</c>). Kalan iddia: mod, kök, configuration ve katman pattern'leri.</para>
+    /// </summary>
     [Fact]
-    public async Task Build_command_sends_RunMode_Build_with_branch_worktree_and_layer_patterns()
+    public async Task Build_command_sends_RunMode_Build_with_workspace_arguments_and_layer_patterns()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var layers = new List<LayerPattern> { new(0, "^Core", "Core") };
@@ -460,19 +465,8 @@ public class RunViewModelStateTests
         {
             RootPath = @"D:\repo",
             Configuration = "Release",
-            UseWorktree = true,
             LayerPatterns = layers,
         };
-        // [T2 fix-1 · C1/I4] Branch ARTIK doğrudan atanamaz: StartRunCommand.Branch bir NİYETtir ve yalnız
-        // kullanıcının AÇIK seçimi oraya gider (bkz. RunViewModel.RunBranchIntent). Doğrudan atama bir
-        // görüntüleme/seed değeridir ve komuta GİTMEZ — bu testin konusu komutun ALANLARININ doğru
-        // taşındığı olduğundan, branch de üretimdeki gerçek yoldan (popover seçimi) kurulur.
-        vm.OnEvent(new BranchListEvent([
-            new BranchRef("main", "aaaaaaaaaaaa", true, false),
-            new BranchRef("feature/x", "bbbbbbbccccc", false, false),
-        ]));
-        vm.SelectBranch(new BranchRef("feature/x", "bbbbbbbccccc", false, false));
-        vm.WorktreeName = "wt-1"; // SelectBranch hedefi auto'ya (null) döndürür → seçimden SONRA verilir
         StartRunCommand? sent = null;
         vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
 
@@ -482,9 +476,6 @@ public class RunViewModelStateTests
         Assert.Equal(RunMode.Build, sent!.Mode);
         Assert.Equal(@"D:\repo", sent.RootPath);
         Assert.Equal("Release", sent.Configuration);
-        Assert.Equal("feature/x", sent.Branch);
-        Assert.True(sent.UseWorktree);
-        Assert.Equal("wt-1", sent.WorktreeName);
         Assert.Same(layers, sent.LayerPatterns);
     }
 
@@ -522,7 +513,7 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- T12 kilit / T43 configuration
 
     [Fact]
-    public async Task Branch_worktree_and_configuration_are_locked_while_running_but_perf_stays_live()
+    public async Task Branch_and_configuration_are_locked_while_running_but_perf_stays_live()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
@@ -533,7 +524,7 @@ public class RunViewModelStateTests
         };
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
         Assert.True(vm.IsRunning);
-        Assert.True(vm.IsMidRunLocked); // branch/worktree/configuration kontrolleri KİLİTLİ
+        Assert.True(vm.IsMidRunLocked); // branch/configuration kontrolleri KİLİTLİ
 
         vm.SetConfiguration("Release"); // koşarken kilitli → no-op
         Assert.Equal("Debug", vm.Configuration);
@@ -803,8 +794,8 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- [Sync guard] Sync'in kendisi de çift tetiklenemez
     //
     // Ölçülen kusur: Sync düğmesi, Sync sürerken basılabilir kalıyordu. İkinci basış motora ikinci bir TAM
-    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış ÜÇ komut gönderir
-    // (sync + listBranches + listWorktrees) — konsolda aynı transkript iki kez akıyor, şerit
+    // analiz kuyruklatır (tarama + graf + topo + iki incremental geçiş) ve her basış İKİ komut gönderir
+    // (sync + listBranches) — konsolda aynı transkript iki kez akıyor, şerit
     // Syncing → Idle → Syncing yapıyordu. Kapı iki pencereyi de kapsar: tıklama→syncStarted arası
     // (_syncRequested) ve syncStarted→syncCompleted arası (_syncInFlight).
 
@@ -1186,5 +1177,392 @@ public class RunViewModelStateTests
         // Grup KOŞARKEN de aynı terim: tahmin 6000'de kalır. Kusurlu hâlde üçü building kovasına düşer ve
         // 4'e bölünürdü — ham tahmin 3000/4 + 400 = 1150, EMA ile 4788.
         Assert.Equal(6000, vm.EtaMs);
+    }
+
+    // ---------------------------------------------------------------- [Task 5] kümülatif renk · defter üçgeni · nötrleme
+
+    private static string P(string name) => $@"C:\p\{name}.csproj";
+
+    private static BuildPreviewItem Item(string name, bool? willBuild, WillBuildReason? reason,
+        bool conditional = false, IReadOnlyList<string>? roots = null, DateTimeOffset? failedAt = null,
+        bool localEdits = false) =>
+        new(P(name), name, willBuild, Reason: reason, Conditional: conditional, DependencyRoots: roots,
+            FailedAt: failedAt, LocalEdits: localEdits);
+
+    /// <summary>Sync'in olay sırası: topoloji → önizleme → tamamlandı. Koşu yok (<c>IsRunning=false</c>).</summary>
+    private static void SyncWith(RunViewModel vm, params BuildPreviewItem[] items)
+    {
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [.. items.Select((it, i) => Node(it.ProjectId, it.Name, i))], [], [], []));
+        vm.OnEvent(new BuildPreviewEvent(items));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, items.Length, 0));
+    }
+
+    private static RunViewModel T5Vm() =>
+        new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+
+    private static ProjectRowViewModel RowOf(RunViewModel vm, string name) => vm.Projects.Single(r => r.Name == name);
+
+    /// <summary>[design v1.20.0 §2.3 · spec 2026-09-18 §1-2] Sync renk verir: her satır önizlemenin
+    /// gerekçesinden kendi çıktı durumuna iner — güncel yeşil, değişmiş gri, kanıtlı hata kırmızı; kararı
+    /// olmayan satır başlangıç modunda kalır.</summary>
+    [Fact]
+    public void Sync_paints_every_row_from_its_reason()
+    {
+        var vm = T5Vm();
+        SyncWith(vm,
+            Item("Up", false, WillBuildReason.UpToDate),
+            Item("Mod", true, WillBuildReason.SignatureChanged),
+            Item("Bad", true, WillBuildReason.LastFailed),
+            Item("Unk", null, null));
+
+        Assert.Equal(VisualStatus.Current, RowOf(vm, "Up").VisualStatus);
+        Assert.Equal(VisualStatus.Stale, RowOf(vm, "Mod").VisualStatus);
+        Assert.Equal(VisualStatus.Failed, RowOf(vm, "Bad").VisualStatus);
+        Assert.Equal(VisualStatus.Unknown, RowOf(vm, "Unk").VisualStatus);
+    }
+
+    /// <summary>[spec 2026-09-18 §1-2 "kümülatif"] Satırdan tek proje derlemek diğer satırların rengine
+    /// DOKUNMAZ: tıklama anındaki nötrleme yalnız koşu alanlarını siler, çıktı durumunu değil.</summary>
+    [Fact]
+    public async Task A_row_build_leaves_every_other_rows_colour_untouched()
+    {
+        var vm = T5Vm();
+        var items = Enumerable.Range(0, 50).Select(i => Item($"G{i}", false, WillBuildReason.UpToDate))
+            .Append(Item("T", true, WillBuildReason.SignatureChanged)).ToArray();
+        SyncWith(vm, items);
+
+        await vm.BuildProjectCommand.ExecuteAsync(P("T"));
+
+        Assert.All(vm.Projects.Where(r => r.Name != "T"), r => Assert.Equal(VisualStatus.Current, r.VisualStatus));
+
+        // Koşu yalnız hedefi taşır ve biter — 50 yeşil yine yeşil.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("T", true, WillBuildReason.SignatureChanged)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("T"), "T"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("T"), 900));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 900));
+
+        Assert.All(vm.Projects.Where(r => r.Name != "T"), r => Assert.Equal(VisualStatus.Current, r.VisualStatus));
+        Assert.Equal(VisualStatus.Succeeded, RowOf(vm, "T").VisualStatus);
+    }
+
+    /// <summary>[spec 2026-09-18 §1-2] İkinci Build, birincinin yeşillerini ve kanıtlı kırmızılarını
+    /// korur: sonuç bir sonraki koşuya kadar durumda yazılı kalır, nötrleme onu silmez.</summary>
+    [Fact]
+    public async Task A_second_build_keeps_the_greens_of_the_first()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("B", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("B", true, WillBuildReason.SignatureChanged)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("B"), "B"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("B"), 900, "exit 1", Evidence: true));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1800));
+
+        await vm.BuildCommand.ExecuteAsync(null); // ikinci işlemin tıklama anı — nötrleme
+
+        Assert.Equal(VisualStatus.Current, RowOf(vm, "A").VisualStatus);
+        Assert.Equal(VisualStatus.Failed, RowOf(vm, "B").VisualStatus);
+    }
+
+    /// <summary>[R-M2 · design v1.20.0 §5] Koşunun atladığı güncel satır koşu bittikten sonra da
+    /// <c>Skipped</c> durumunda KALIR (koşu hikâyesi: şerit "N skipped", konsolun "Up to date — nothing to
+    /// compile in this run." cümlesi) — ama rengi ve glyph'i çıktı durumundandır: yeşil ✓.</summary>
+    [Fact]
+    public void A_skipped_up_to_date_row_reads_current_with_a_tick_after_the_run()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("U", false, WillBuildReason.UpToDate));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("U", false, WillBuildReason.UpToDate)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("U"), SkipReasons.UpToDate));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 900));
+
+        var u = RowOf(vm, "U");
+        Assert.Equal(ProjectRowState.Skipped, u.State);                 // koşu hikâyesi durur
+        Assert.Equal(1, vm.Counters.Skipped);
+        Assert.Contains("1 skipped", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Contains("Up to date — nothing to compile in this run.", ConsoleEmptyState.ForEmptyLog(u));
+        Assert.Equal(VisualStatus.Current, u.VisualStatus);             // renk çıktı durumundan
+        Assert.Equal("Icon.StatusCheck", StatusGlyph.InnerIconKeyFor(u.VisualStatus));
+    }
+
+    /// <summary>[spec 2026-09-18 §1-15 · design v1.20.0 §2.4-6] Üçgen kümülatiftir: defterdeki bağımlılık
+    /// notu (<see cref="WillBuildReason.WaitingForDependency"/> + kökleri) Sync'ten gelir ve satır koşu
+    /// görmeden de üçgeni taşır; tooltip koşu listesiyle AYNI dili konuşur.</summary>
+    [Fact]
+    public void A_waiting_row_carries_the_triangle_after_sync()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("Up", true, WillBuildReason.SignatureChanged),
+            Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]));
+
+        var w = RowOf(vm, "W");
+        Assert.True(w.HasDepIssue);
+        Assert.Equal(["Up"], w.WarningRoots);
+        Assert.Equal("Dependency issue: Up", RowWarning.For(false, false, false, w.WarningRoots, w.NamePrefix));
+        Assert.Equal(VisualStatus.Current, w.VisualStatus); // kendi çıktısı sağlam — bekleyiş üçgende
+        Assert.Equal(1, vm.Counters.Warn);
+    }
+
+    /// <summary>[spec 2026-09-18 §1-15] Bir sonraki işlemin nötrlemesi defter üçgenini SİLMEZ — yalnız
+    /// koşu alanlarını (<c>DepIssues</c>) siler; not düşene kadar üçgen durur.</summary>
+    [Fact]
+    public async Task The_next_operation_does_not_clear_a_ledger_triangle()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("Up", true, WillBuildReason.SignatureChanged),
+            Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]));
+
+        await vm.BuildCommand.ExecuteAsync(null);
+
+        var w = RowOf(vm, "W");
+        Assert.Null(w.DepIssues);   // koşu alanı silindi
+        Assert.True(w.HasDepIssue); // defter notu durur
+        Assert.Equal(["Up"], w.WarningRoots);
+    }
+
+    /// <summary>[design v1.20.0 §5] Başlangıç modu yalnız KARARIN yokluğudur: hiç Sync yokken ya da karar
+    /// düşürülmüşken; kararı olan her satır (hangi durumda olursa olsun) kendi renginde.</summary>
+    [Fact]
+    public void Only_a_row_without_a_decision_is_in_start_mode()
+    {
+        var vm = T5Vm();
+        vm.OnEvent(new WorkspaceTopologyEvent([Node(P("A"), "A", 0), Node(P("B"), "B", 1)], [], [], []));
+        Assert.All(vm.Projects, r => Assert.True(VisualStatuses.IsStartMode(r.VisualStatus))); // Sync yok
+
+        vm.OnEvent(new BuildPreviewEvent([Item("A", false, WillBuildReason.UpToDate), Item("B", null, null)]));
+
+        Assert.False(VisualStatuses.IsStartMode(RowOf(vm, "A").VisualStatus));
+        Assert.True(VisualStatuses.IsStartMode(RowOf(vm, "B").VisualStatus));
+    }
+
+    /// <summary>[T4 review ledger (a)] Configuration değişince konsol "all projects will rebuild" der — satır
+    /// da aynı şeyi söylemelidir: güncel ya da kanıtlı kırmızı satır bayat griye düşer. Gerekçe motorun bir
+    /// sonraki önizlemesiyle AYNIDIR: configuration imzaya girer (<c>BuildSignature</c>), yani kaydı olan
+    /// her proje <see cref="WillBuildReason.SignatureChanged"/>'dir; kaydı hiç olmayan
+    /// <see cref="WillBuildReason.NeverBuilt"/> kalır.</summary>
+    [Fact]
+    public void Switching_configuration_drops_every_decided_row_to_stale()
+    {
+        var vm = T5Vm();
+        SyncWith(vm,
+            Item("Up", false, WillBuildReason.UpToDate),
+            // Kaydında bir başarı olan kanıtlı hata (BuiltCommit dolu) — hiç başarısı olmayanı alttaki test sınar.
+            new BuildPreviewItem(P("Bad"), "Bad", true, BuiltCommit: "abc1234", Reason: WillBuildReason.LastFailed),
+            Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]),
+            Item("New", true, WillBuildReason.NeverBuilt));
+
+        vm.SetConfiguration("Release");
+
+        Assert.All(vm.Projects, r => Assert.Equal(VisualStatus.Stale, r.VisualStatus));
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "Up").WillBuildReason);
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "Bad").WillBuildReason);
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "W").WillBuildReason);
+        Assert.False(RowOf(vm, "W").Conditional);   // imza değişti: artık kesin derlenir
+        Assert.False(RowOf(vm, "W").HasDepIssue);   // not imza değişince karar terimi değil
+        Assert.Equal(WillBuildReason.NeverBuilt, RowOf(vm, "New").WillBuildReason);
+    }
+
+    /// <summary>[R-Config] Configuration değişimi koşu alanlarını da siler (nötrleme — aynı metot): az önce
+    /// başarıyla biten satır koşunun yeşilinde KALMAZ, herkes gibi yeni bayat durumuna iner; kararı olmayan
+    /// satır kararsız (bilinmiyor) kalır. Koşu hikâyesi de biter: şerit bitmiş koşunun özetini (artık sıfır
+    /// sayaçlarla) okumaz, "Ready" satırına döner.</summary>
+    [Fact]
+    public void Switching_configuration_after_a_run_drops_the_run_overlay_too()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("U", false, WillBuildReason.UpToDate),
+            Item("Unk", null, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("U", false, WillBuildReason.UpToDate)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("U"), SkipReasons.UpToDate));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 900));
+        Assert.Equal(VisualStatus.Succeeded, RowOf(vm, "A").VisualStatus); // ön-koşul
+
+        vm.SetConfiguration("Release");
+
+        Assert.All(vm.Projects, r => Assert.Equal(ProjectRowState.Pending, r.State));
+        Assert.Equal(VisualStatus.Stale, RowOf(vm, "A").VisualStatus);
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "A").WillBuildReason);
+        Assert.Equal(VisualStatus.Stale, RowOf(vm, "U").VisualStatus);
+        Assert.Equal(VisualStatus.Unknown, RowOf(vm, "Unk").VisualStatus); // karar yok → bilinmiyor
+        Assert.Null(RowOf(vm, "Unk").WillBuildReason);
+        Assert.Equal(0, vm.Counters.Succeeded);                            // koşu alanları silindi
+        Assert.Equal(AppPhase.Idle, vm.Phase);                             // bitmiş koşunun özeti kalkar
+        Assert.Equal("▸ Ready — 3 to build · 0 up to date", vm.RibbonLine.Text);
+    }
+
+    /// <summary>[R-Config · fix round 2] Configuration değişimi DURDURULMUŞ bir koşunun hikâyesini de kapatır:
+    /// durdurulan koşunun planı eski configuration'a aittir, yeni configuration altında onu sürdürmenin anlamı
+    /// yoktur. Faz <c>Stopped</c>'dan <c>Idle</c>'a döner (Done ile AYNI yol) ve şerit artık
+    /// "▸ Stopped — 0/N · N not built" değil yeni planı okur.</summary>
+    [Fact]
+    public void Switching_configuration_after_a_stopped_run_closes_its_story()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged), Item("B", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("B", true, WillBuildReason.SignatureChanged)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        Assert.Equal(AppPhase.Stopped, vm.Phase); // ön-koşul
+        Assert.StartsWith("▸ Stopped", vm.RibbonLine.Text, StringComparison.Ordinal);
+
+        vm.SetConfiguration("Release");
+
+        Assert.Equal(AppPhase.Idle, vm.Phase);
+        Assert.Equal("▸ Ready — 2 to build · 0 up to date", vm.RibbonLine.Text);
+    }
+
+    /// <summary>[R-Config · M6] <see cref="WillBuildReason.LastFailed"/> bir satır configuration değişince motorun
+    /// bir sonraki önizlemesinin diyeceğini der: kaydında bir BAŞARI varsa (<c>BuiltSignature</c> dolu)
+    /// <c>SignatureChanged</c>, hiç başarı yoksa <c>NeverBuilt</c> (<c>WillBuildEvaluator</c>). App
+    /// <c>BuiltSignature</c>'ı görmez; başarı izi olarak önizlemenin <c>BuiltCommit</c>'i (satırda
+    /// <c>CurrentSha</c>) okunur — defterde onu yalnız başarı yazar. <c>LastBuiltAt</c> ayırıcı OLAMAZ: son koşu
+    /// başarısızsa her LastFailed satırında null'dır (<c>BuildStateStore.LastBuiltAtOf</c>).</summary>
+    [Fact]
+    public void A_failed_row_drops_to_never_built_only_when_it_never_succeeded()
+    {
+        var vm = T5Vm();
+        SyncWith(vm,
+            new BuildPreviewItem(P("Once"), "Once", true, BuiltCommit: "abc1234", Reason: WillBuildReason.LastFailed),
+            new BuildPreviewItem(P("Never"), "Never", true, Reason: WillBuildReason.LastFailed));
+
+        vm.SetConfiguration("Release");
+
+        Assert.Equal(WillBuildReason.SignatureChanged, RowOf(vm, "Once").WillBuildReason);
+        Assert.Equal(WillBuildReason.NeverBuilt, RowOf(vm, "Never").WillBuildReason);
+    }
+
+    /// <summary>[R-M3 · spec 2026-09-18 §1-18] <c>LocalEdits</c> yalnız koşu DIŞINDAKİ bir önizlemeden
+    /// (Sync ve bakım sonrası zincirlenen Sync) yazılır; koşu önizlemesi alanı hep <c>false</c> gönderdiği için
+    /// onu DEĞİŞTİRMEZ. Koşu bittikten sonraki yeni Sync ise iki yönde de günceller.</summary>
+    [Fact]
+    public void Local_edits_come_only_from_a_preview_outside_a_run()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged, localEdits: true),
+            Item("B", false, WillBuildReason.UpToDate));
+        Assert.True(RowOf(vm, "A").LocalEdits);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("B", false, WillBuildReason.UpToDate)])); // koşu önizlemesi: LocalEdits=false
+        Assert.True(RowOf(vm, "A").LocalEdits);             // korunur
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("A"), 900));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 900));
+        Assert.True(RowOf(vm, "A").LocalEdits);
+
+        SyncWith(vm, Item("A", false, WillBuildReason.UpToDate),
+            Item("B", true, WillBuildReason.SignatureChanged, localEdits: true));
+        Assert.False(RowOf(vm, "A").LocalEdits); // true → false
+        Assert.True(RowOf(vm, "B").LocalEdits);  // false → true
+    }
+
+    /// <summary>[R-M4b · spec 2026-09-18 §1-14 · design v1.20.0 §5] Koşudaki hata, MOTORUN kanıt kararıyla
+    /// boyanır (<see cref="ProjectFailedEvent.Evidence"/> — defter yazımıyla aynı kapı): kanıt kırmızıdır
+    /// (<c>failed · just now</c>); kanıt olmayan hata hemen gridir (<c>never built</c>) — timeout, stop, invoke
+    /// hatası VE yakınsamayan bir SCC'nin <c>exit N</c> ile biten üyesi (metin kanıt gibi görünür, defter kanıt
+    /// saymaz). Başarı hata zamanını düşürür; Sync'in getirdiği hata zamanı satıra taşınır.
+    /// <para><b>[DEĞİŞEN KURAL — R-M4b]</b> İlk hâl App'te <c>Reason</c> metnini sınıflandırıyordu; SCC üyesinde
+    /// satır ile bir sonraki Sync ayrışıyordu (review I1).</para></summary>
+    [Fact]
+    public void A_run_failure_is_painted_by_the_same_evidence_rule_the_ledger_uses()
+    {
+        var vm = T5Vm();
+        var earlier = new DateTimeOffset(2026, 9, 17, 10, 0, 0, TimeSpan.Zero);
+        SyncWith(vm,
+            Item("Exit", true, WillBuildReason.SignatureChanged),
+            Item("Slow", true, WillBuildReason.SignatureChanged),
+            Item("Stop", true, WillBuildReason.SignatureChanged),
+            Item("Invoke", true, WillBuildReason.SignatureChanged),
+            Item("Cyc", true, WillBuildReason.SignatureChanged),
+            Item("Fixed", true, WillBuildReason.LastFailed, failedAt: earlier));
+        Assert.Equal(earlier, RowOf(vm, "Fixed").FailedAt); // Sync'in hata zamanı satırda
+
+        var before = DateTimeOffset.Now;
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug", 0));
+        foreach (var n in new[] { "Exit", "Slow", "Stop", "Invoke", "Cyc", "Fixed" })
+            vm.OnEvent(new ProjectStartedEvent("r1", P(n), n));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Exit"), 900, "exit 1", Evidence: true));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Slow"), 900, "timeout"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Stop"), 900, "stopped"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Invoke"), 900, "invoke error: file not found"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Cyc"), 900, "exit 1", Evidence: false)); // yakınsamayan SCC
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("Fixed"), 900));
+
+        var exit = RowOf(vm, "Exit");
+        Assert.Equal(WillBuildReason.LastFailed, exit.WillBuildReason);
+        Assert.NotNull(exit.FailedAt);
+        Assert.True(exit.FailedAt >= before);
+        Assert.Equal(VisualStatus.Failed, exit.VisualStatus);
+        foreach (var n in new[] { "Slow", "Stop", "Invoke", "Cyc" })
+        {
+            var row = RowOf(vm, n);
+            Assert.Equal(ProjectRowState.Failed, row.State);            // koşu hikâyesi: bu koşuda patladı
+            Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
+            Assert.Null(row.FailedAt);
+            Assert.Equal(VisualStatus.Stale, row.VisualStatus);         // ama kanıt değil: gri
+        }
+        Assert.Null(RowOf(vm, "Fixed").FailedAt);
+        Assert.Equal(5, vm.Counters.Failed);                             // şerit/konsol koşu hikâyesi değişmez
+    }
+
+    /// <summary>[R-D144] İki soru ayrıdır: DURUM yüzeyleri (⚠ chip'i, <c>warn</c> filtresi) defter üçgenini
+    /// de sayar; şeridin koşu özeti "(N dependency-affected)" ise yalnız BU koşunun <c>DepIssues</c>'ını.</summary>
+    [Fact]
+    public void The_ribbons_dependency_affected_counts_only_this_run_while_the_warn_chip_is_cumulative()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("Up", true, WillBuildReason.SignatureChanged),
+            Item("Down", true, WillBuildReason.SignatureChanged),
+            Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Old"]));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("Up"), "Up"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("Up"), 900, "exit 1"));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("Down"), "Down"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", P("Down"), 900, ["Up"]));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1800));
+
+        Assert.Equal(1, vm.Counters.DepAffected);  // yalnız Down (bu koşu)
+        Assert.Contains("(1 dependency-affected)", vm.RibbonLine.Text, StringComparison.Ordinal);
+        Assert.Equal(2, vm.Counters.Warn);         // Down (koşu) ∪ W (defter)
+        Assert.True(ProjectFilter.Matches(RowOf(vm, "W"), null, new HashSet<string> { ProjectFilter.Warn }));
+    }
+
+    /// <summary>[design v1.20.0 §5] Karar düşünce (repo değişimi) defter notu da düşer: bilinmiyor
+    /// modundaki satır üçgen taşımaz — not, düşürülen kararın parçasıdır.
+    /// <para>[spec 2026-09-18 §1-1/8] Tetik eskiden aktif olmayan bir branch'in seçimiydi; o seçim artık
+    /// kararları düşürmez (checkout gelene dek hiçbir şey yapmaz). Kararları satırları KORUYARAK düşüren tek yol
+    /// Settings'ten repo değişimidir ve ardından gelen Sync'in listeyi boşaltmadığı durum motorun erişilemez
+    /// olduğu durumdur — iddia aynı, tetik o.</para></summary>
+    [Fact]
+    public async Task Dropping_the_decisions_drops_the_ledger_triangle_too()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("W", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["Up"]));
+        Assert.True(RowOf(vm, "W").HasDepIssue); // ön-koşul
+        vm.OnEngineUnavailable(@"D:\missing\BuildOrchestrator.Supervisor.exe"); // Sync gitmez, liste kalır
+
+        await vm.ApplySettingsAsync([], @"D:\other-repo", []);
+
+        Assert.Equal(VisualStatus.Unknown, RowOf(vm, "W").VisualStatus);
+        Assert.False(RowOf(vm, "W").HasDepIssue);
+        Assert.Equal(0, vm.Counters.Warn);
     }
 }

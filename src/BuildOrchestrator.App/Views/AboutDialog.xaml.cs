@@ -10,7 +10,6 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Logs;
 
 namespace BuildOrchestrator.App.Views;
@@ -156,8 +155,7 @@ public partial class AboutDialog : Controls.ModalDialog
             MsBuild: _msBuild,
             RepositoryRoot: run.RootPath,
             StateFile: JsonUiStateStore.DefaultPath,
-            LogsRoot: RunLogPaths.DefaultLogsRoot,
-            WorktreePool: WorktreeManager.DefaultPoolRoot));
+            LogsRoot: RunLogPaths.DefaultLogsRoot));
         Diagnostics = diagnostics;
         IdentityRows.ItemsSource = diagnostics.Identity;
         RuntimeRows.ItemsSource = diagnostics.Runtime;

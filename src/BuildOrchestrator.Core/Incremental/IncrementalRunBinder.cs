@@ -15,8 +15,10 @@ namespace BuildOrchestrator.Core.Incremental;
 /// aynı ikiliyi satır etiketleri için ister. Girdi toplama (klasör taraması) ve fingerprint hesabı bu
 /// geçişler arasında PAYLAŞILIR; statik bir metot her çağrıda diski yeniden tarardı.</para>
 ///
-/// <para><b>§4:</b> DLL/bin/obj timestamp'ı ASLA okunmaz. Okunan tek şey KAYNAK dosyaların içeriğidir; stat
-/// bilgisi yalnız <see cref="SourceHashCache"/>'in "yeniden özetlemeye gerek var mı" kapısıdır.</para>
+/// <para><b>İmza:</b> DLL/bin/obj timestamp'ı imzaya ASLA girmez. İmza için okunan tek şey KAYNAK dosyaların
+/// içeriğidir; stat bilgisi yalnız <see cref="SourceHashCache"/>'in "yeniden özetlemeye gerek var mı" kapısıdır.
+/// Çıktı dosyalarının zamanı ve boyutu yalnız <see cref="ChecksFor"/>'da (çıktı kanıtı, <see
+/// cref="OutputEvidence"/>) okunur ve imzaya değil yalnız karara girer.</para>
 ///
 /// <para><b>Kök varsayımı:</b> <c>workspaceRoot</c> kullanıcının çalışma alanı köküdür ve imzanın yol
 /// terimleri ona göredir. Kökün DIŞINDA kalan girdiler (harici köklerden gelen projeler, kökün üstündeki bir
@@ -27,24 +29,24 @@ public sealed class IncrementalRunBinder
     private readonly BuildPlan _plan;
     private readonly string _workspaceRoot;
     private readonly SourceHashCache _hashes;
+    private readonly IReadOnlyDictionary<string, EvaluatedProject> _evaluatedById;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<ProjectInput>> _inputsById;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _foldersById;
     // Fingerprint'ler Prefill'de PARALEL ısıtılır (aşağıda) ve DFS'ten tek tek okunur — eşzamanlı sözlük şart.
     private readonly ConcurrentDictionary<string, string?> _fingerprintById = new(StringComparer.OrdinalIgnoreCase);
+    // [Faz 3/Task 4] OutputsById TEMBEL hesaplanır — yalnız istenirse (başarılı derlemeler için Supervisor okur).
+    private IReadOnlyDictionary<string, ProjectOutputs>? _outputsById;
 
-    /// <param name="plan">Bağlanacak plan (kimlikleri ana köke taşınmış olmalıdır — bkz. <see
-    /// cref="BuildOrchestrator.Core.Planning.ProjectIdentityRebase"/>).</param>
+    /// <param name="plan">Bağlanacak plan.</param>
     /// <param name="evaluatedById">projectId (tam csproj yolu) → değerlendirme; eksik proje yalnız kendi
     /// klasörünün taramasıyla temsil edilir.</param>
     /// <param name="workspaceRoot">Çalışma alanı kökü — imzanın yol terimleri buna göredir.</param>
     /// <param name="hashes">Kaynak içerik özetlerinin önbelleği (koşu boyunca TEK örnek).</param>
-    /// <param name="physicalPathOf">Kimlik yolu → diskteki gerçek yol. Worktree koşusunda havuzdaki kopyayı
-    /// gösterir; <c>null</c> ⇒ in-place.</param>
     public IncrementalRunBinder(
         BuildPlan plan,
         IReadOnlyDictionary<string, EvaluatedProject> evaluatedById,
         string workspaceRoot,
-        SourceHashCache hashes,
-        Func<string, string>? physicalPathOf = null)
+        SourceHashCache hashes)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(evaluatedById);
@@ -54,18 +56,26 @@ public sealed class IncrementalRunBinder
         _plan = plan;
         _workspaceRoot = Path.GetFullPath(workspaceRoot);
         _hashes = hashes;
+        _evaluatedById = evaluatedById;
         // Girdi toplama proje başına BAĞIMSIZDIR ve büyük kısmı klasör taramasıdır (IO). Gerçek OSYS'te 177
         // projenin toplamı seri koşuşta ölçülebilir bir gecikmeydi; paralel toplamak sonucu değiştirmez.
-        var collected = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        // [Task 2] Klasörler de AYNI taramadan (CollectWithFolders) toplanır — ikinci bir yürüyüş yapılmaz.
+        var collectedInputs = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
+        var collectedFolders = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
-            collected[node.Id] = ProjectInputs.Collect(
-                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot, physicalPathOf));
-        _inputsById = collected;
+        {
+            var (files, folders) = ProjectInputs.CollectWithFolders(
+                node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot);
+            collectedInputs[node.Id] = files;
+            collectedFolders[node.Id] = folders;
+        });
+        _inputsById = collectedInputs;
+        _foldersById = collectedFolders;
     }
 
-    /// <summary>Bu koşuda özeti gerekecek TÜM fiziksel dosyalar (tekil).</summary>
-    public IReadOnlyList<string> PhysicalPaths =>
-        [.. _inputsById.Values.SelectMany(i => i).Select(i => i.PhysicalPath).Distinct(StringComparer.OrdinalIgnoreCase)];
+    /// <summary>Bu koşuda özeti gerekecek TÜM girdi dosyaları (tekil).</summary>
+    public IReadOnlyList<string> InputPaths =>
+        [.. _inputsById.Values.SelectMany(i => i).Select(i => i.Path).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Önbellekte olmayan dosyaların özetlerini PARALEL hesaplar (bkz. <see cref="SourceHashCache.Prefill"/>).
@@ -75,7 +85,7 @@ public sealed class IncrementalRunBinder
     /// <param name="announce">Okunacak dosya sayısı, okuma başlamadan önce (konsol satırı için).</param>
     public int Prefill(Action<int>? announce = null, CancellationToken ct = default)
     {
-        int read = _hashes.Prefill(PhysicalPaths, announce, ct);
+        int read = _hashes.Prefill(InputPaths, announce, ct);
 
         // Fingerprint'ler de BURADA, proje başına paralel ısıtılır. Ölçüldü: sıcak önbellekte bile bedelin
         // yarısı stat geçişiydi ve bağlama DFS'i tek iş parçacığında ilerlediği için o geçiş seri koşuyordu
@@ -98,12 +108,48 @@ public sealed class IncrementalRunBinder
     /// <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını açıkça yazar, yoksa o yüzeydeki önizleme
     /// motorla ayrışır.</param>
     /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>
+    /// <param name="outputs">[Faz 3/Task 5] Çıktı kanıtı kontrolleri (<see cref="ChecksFor"/>) — yalnız karara
+    /// girer, imzaya ASLA. <c>null</c> ⇒ kanıtsız bağlama (bugünkü karar).</param>
     public (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
-        IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode)
+        IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode,
+        IReadOnlyDictionary<string, OutputCheck>? outputs = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         return IncrementalPlanner.ComputeWillBuildWithSignatures(
-            _plan, FingerprintOf, state, buildCycles, mode);
+            _plan, FingerprintOf, state, buildCycles, mode, outputs);
+    }
+
+    /// <summary>
+    /// [Faz 3/Task 5 — spec 2026-09-18 §5.2-§5.6] Her düğümün çıktı kanıtı kontrolü (<see
+    /// cref="OutputEvidence.Inspect"/>), ardından döngü grupları (<see cref="OutputEvidence.ApplyCycleGroups"/>) —
+    /// sonuç <see cref="Bind"/>'ın <c>outputs</c>'una verilir. Girdiler binder'ın ZATEN topladığı kümedir
+    /// (<see cref="InputsOf"/>, <see cref="FoldersOf"/>, değerlendirmenin HintPath hedefleri): ikinci bir tarama yok.
+    ///
+    /// <para><b>Maliyet:</b> girdi zamanları yalnız zaman kolunda okunur (<see cref="OutputEvidence.TimeCheck"/>);
+    /// defter kipindeki proje için yalnız derleme kanıtı ve beslenen kopyalar stat edilir. Projeler bağımsız
+    /// olduğundan kontroller paralel yapılır (girdi toplamayla aynı desen).</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, OutputCheck> ChecksFor(IReadOnlyDictionary<string, BuildState> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var outputsById = OutputsById; // tembel alan paralel döngüden ÖNCE bir kez kurulur
+
+        OutputCheck CheckOf(string id, bool timeOnly)
+        {
+            var outputs = outputsById.GetValueOrDefault(id);
+            var record = state.GetValueOrDefault(id);
+            IReadOnlyList<string> inputFiles = [.. InputsOf(id).Select(i => i.Path)];
+            IReadOnlyList<string> hintTargets =
+                _evaluatedById.TryGetValue(id, out var evaluated) ? evaluated.HintPathTargets() : [];
+            return timeOnly
+                ? OutputEvidence.TimeCheck(outputs, record, inputFiles, FoldersOf(id), hintTargets)
+                : OutputEvidence.Inspect(outputs, record, inputFiles, FoldersOf(id), hintTargets);
+        }
+
+        var checks = new ConcurrentDictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            node => checks[node.Id] = CheckOf(node.Id, timeOnly: false));
+        return OutputEvidence.ApplyCycleGroups(checks, _plan.Cycles, id => CheckOf(id, timeOnly: true));
     }
 
     /// <summary>
@@ -117,9 +163,52 @@ public sealed class IncrementalRunBinder
     public IReadOnlyDictionary<string, string?> ContentById =>
         _plan.Nodes.ToDictionary(n => n.Id, FingerprintOf, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Bir projenin girdi dosyaları (kimlik + fiziksel yol) — tanı ve test içindir.</summary>
+    /// <summary>Bir projenin girdi dosyaları — tanı ve test içindir.</summary>
     public IReadOnlyList<ProjectInput> InputsOf(string projectId) =>
         _inputsById.TryGetValue(projectId, out var inputs) ? inputs : [];
+
+    /// <summary>[Task 2] Bir projenin gezilen klasörleri (proje klasörü dahil, <c>obj</c>/<c>bin</c> hariç)
+    /// — "zaman modu"nda bir dosya silme/yeniden adlandırmayı klasör mtime'ından yakalamak içindir; bkz.
+    /// <see cref="ProjectInputs.CollectWithFolders"/>.</summary>
+    public IReadOnlyList<string> FoldersOf(string projectId) =>
+        _foldersById.TryGetValue(projectId, out var folders) ? folders : [];
+
+    /// <summary>
+    /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] Her düğüm için çıktı kanıtı + beslenen aday kopyalar (<see
+    /// cref="OutputEvidence.Locate"/>) — ikinci bir hesap YOK, Supervisor başarılı bir derlemeden sonra bunu
+    /// okuyup <see cref="OutputEvidence.LearnFedOutputs"/> ile <see cref="Contracts.Model.BuildState.FedOutputs"/>'a
+    /// yazar. Kanıt yolu türetilemeyen (SDK-style, belirsiz OutputPath) düğümler haritada YOKTUR — <see
+    /// cref="OutputEvidence.Locate"/>'in <c>null</c> dönüşü.
+    /// </summary>
+    public IReadOnlyDictionary<string, ProjectOutputs> OutputsById => _outputsById ??= ComputeOutputsById();
+
+    private IReadOnlyDictionary<string, ProjectOutputs> ComputeOutputsById()
+    {
+        // Ters kenar: her düğümün ÜRETİCİLERİ (Dependencies) için "beni tüketen" listesine kendini ekler —
+        // graf zaten kurulu, ikinci bir DFS/tarama YOK.
+        var dependentsById = new Dictionary<string, List<EvaluatedProject>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _plan.Nodes)
+        {
+            if (!_evaluatedById.TryGetValue(node.Id, out var dependentProject)) continue;
+            foreach (string producerId in node.Dependencies)
+            {
+                if (!dependentsById.TryGetValue(producerId, out var list))
+                    dependentsById[producerId] = list = [];
+                list.Add(dependentProject);
+            }
+        }
+
+        var result = new Dictionary<string, ProjectOutputs>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _plan.Nodes)
+        {
+            var project = _evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null;
+            IReadOnlyList<EvaluatedProject> dependents =
+                dependentsById.TryGetValue(node.Id, out var list) ? list : [];
+            if (OutputEvidence.Locate(project, _plan.Configuration, dependents) is { } outputs)
+                result[node.Id] = outputs;
+        }
+        return result;
+    }
 
     /// <summary>
     /// Fingerprint koşu boyunca proje başına BİR KEZ hesaplanır: iki bağlama geçişi (Safe/Fast) ve SCC
@@ -127,26 +216,25 @@ public sealed class IncrementalRunBinder
     /// </summary>
     private string? FingerprintOf(ProjectNode node) =>
         _fingerprintById.GetOrAdd(node.Id, _ => IncrementalPlanner.ComputeContentFingerprint(
-            InputsOf(node.Id), logical => PathTerm(_workspaceRoot, logical), _hashes.HashOf));
+            InputsOf(node.Id), path => PathTerm(_workspaceRoot, path), _hashes.HashOf));
 
     /// <summary>
     /// [D5] Bir girdi dosyasının imzaya giren YOL terimi: çalışma alanı kökünün altındaysa köke göreli ve
     /// <c>/</c>-normalize, değilse tam yol (yine <c>/</c>-normalize).
     ///
-    /// <para>Köke göreli olmak zorunludur: worktree koşusunda dosyalar başka bir kökün altında yaşar ve tam
-    /// yol kullanılsaydı aynı içerik iki modda FARKLI imza üretirdi — worktree ile alınan tek bir Build'den
-    /// sonra her şey yeniden "derlenecek" görünürdü.</para>
+    /// <para>Köke göreli olmak zorunludur: aynı içerik, reponun başka bir klonunda (başka bir kökün altında)
+    /// da AYNI imzayı üretmelidir — tam yol kullanılsaydı imza içeriği değil konumu ölçerdi.</para>
     ///
     /// <para>Kök DIŞINDAKİ girdiler (harici köklerden gelen projeler, kökün üstündeki bir
     /// <c>Directory.Build.props</c>) tam yolla temsil edilir: onların köke göreli bir kimliği yoktur ve
     /// bulundukları yer koşudan koşuya değişmez.</para>
     /// </summary>
-    public static string PathTerm(string workspaceRoot, string logicalPath)
+    public static string PathTerm(string workspaceRoot, string path)
     {
         ArgumentNullException.ThrowIfNull(workspaceRoot);
-        ArgumentNullException.ThrowIfNull(logicalPath);
+        ArgumentNullException.ThrowIfNull(path);
 
-        string full = Path.GetFullPath(logicalPath);
+        string full = Path.GetFullPath(path);
         string relative = Path.GetRelativePath(workspaceRoot, full);
         bool outside = Path.IsPathRooted(relative)
             || relative.StartsWith("..", StringComparison.Ordinal);

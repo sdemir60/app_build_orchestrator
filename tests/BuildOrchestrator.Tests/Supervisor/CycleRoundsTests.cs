@@ -151,8 +151,9 @@ public class CycleRoundsTests
     /// <para><b>Neden upstream kapsamda:</b> üye kirli bir X'in bir önceki nesil DLL'ine karşı derlenseydi
     /// derleme yeşil olur, çıktı bayat olurdu — ve koşu sonunda üyenin imzası (X'in KAYNAK terimini zaten
     /// içerir) persist edildiği için bir sonraki Build onu "güncel" sayıp bir daha derlemezdi. Proje kalıcı
-    /// olarak bayat bir binary'e link'li kalırdı; §4 gereği DLL timestamp'i okunmadığından bunu yakalayacak
-    /// başka bir mekanizma yok.</para>
+    /// olarak bayat bir binary'e link'li kalırdı; çıktı aracın kendisinin olduğundan defter kipinde okunur ve
+    /// orada çıktının tarihi eşleşen imzayı bozmaz (ARCHITECTURE §7.6) — bunu yakalayacak başka bir mekanizma
+    /// yok.</para>
     ///
     /// <para><b>Neden downstream DEĞİL:</b> Z'yi de almak kapsamı sessizce tüm repoya genişletirdi (bir
     /// çekirdek kütüphanenin dependent kümesi pratikte her şeydir). Z'yi Build derler — düğmenin sırası
@@ -416,6 +417,10 @@ public class CycleRoundsTests
             var store = new BuildStateStore(cacheRoot);
             SeedGreen(store, "A");   // "dün" ikisi de yeşildi, "old" imzasıyla kaydedildi
             SeedGreen(store, "B");
+            // [spec 2026-09-18 §1-14/Task 2] A'ya ÖNCEDEN kanıtlı bir hata yazılmış olsun (başka bir eski
+            // koşudan kalma): bu koşuda A yeşil görünse BİLE grup yakınsamadığı için trustedResult=false —
+            // eski kanıt da bugünkü koşudan kanıt DEVRALAMAZ, düşürülmeli.
+            store.Upsert(store.Load()[Id("A")] with { FailedSignature = "stale", FailedAt = DateTimeOffset.UtcNow.AddDays(-1) });
             var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok()); // NoProgress
@@ -426,14 +431,34 @@ public class CycleRoundsTests
 
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
             // A HER TURDA YEŞİLDİ ama grup yakınsamadı: turlar bir bütündür. Taze imza yazılsaydı bir sonraki
-            // Build A'yı "güncel" sayıp atlar, grup yarım kalmış hâlde TEMİZ görünürdü (§4: DLL/bin timestamp
-            // okunmadığı için bunu yakalayacak başka mekanizma yok).
+            // Build A'yı "güncel" sayıp atlar, grup yarım kalmış hâlde TEMİZ görünürdü (defter kipinde çıktının
+            // tarihi eşleşen imzayı bozmaz — ARCHITECTURE §7.6; bunu yakalayacak başka mekanizma yok).
             var a = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yeşil görünen üye bile GEÇERSİZLEŞTİRİLİR
             Assert.Equal("old", a.BuiltSignature);            // taze imza ("sig") YAZILMADI ⇒ persist YOK
-            Assert.Equal(BuildResult.Failed, store.Load()[Id("B")].LastResult);
+            // [spec 2026-09-18 §1-14/Task 2] A_green_member_of_an_unconverged_group_records_no_failed_signature:
+            // A'nın sonucu Succeeded'tir (trustedResult=false yüzünden invalidate edilir) — reason zaten null,
+            // ama KANIT KAPISININ İKİNCİ yarısı (trustedResult) burada asıl testtir: grup yakınsamadığı için A
+            // KANITLI sayılmaz — önceden yazılmış "stale" kanıt da BU koşudan devralınamaz, düşürülmeli
+            // (kanıtsız kırmızı YASAK).
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
+            var b = store.Load()[Id("B")];
+            Assert.Equal(BuildResult.Failed, b.LastResult);
+            // [R-M4b] B derleyici hatasıyla ("exit 1") patladı ama grup yakınsamadı: sonuç arkasında durulabilir
+            // DEĞİL — defter kanıt yazmaz VE olay da kanıt demez (aynı kapı). Metinden sınıflandıran bir App
+            // burada kırmızı boyardı, bir sonraki Sync griye çevirirdi.
+            Assert.Null(b.FailedSignature);
+            var bFailed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.Equal(Id("B"), bFailed.ProjectId);
+            Assert.StartsWith("exit ", bFailed.Reason, StringComparison.Ordinal);
+            Assert.False(bFailed.Evidence);
             // Kontrol: A kullanıcıya yine Succeeded raporlanır — invalidasyon SONUCU maskelemez.
-            Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).ProjectId);
+            var aSucceeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.Equal(Id("A"), aSucceeded.ProjectId);
+            // [final review I1] ...ama olay defterle AYNI kararı taşır: motor bu başarının arkasında DURMUYOR
+            // (defter "kanıtsız hata" yazdı) — App satırı yeşil bıraksaydı bir sonraki Sync onu griye çevirirdi.
+            Assert.False(aSucceeded.Trusted);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -470,6 +495,8 @@ public class CycleRoundsTests
             }
             // Yakınsama tavana dayanmak DEĞİLDİR: "oturmamış döngü" bayrağı taşınmaz.
             Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.CycleUnsettled));
+            // [final review I1] Kontrol grubu: yakınsayan grubun başarısı GÜVENİLİRDİR (defter imzayı yazdı).
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -649,6 +676,48 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §6.1 · karar 10] Branch kesmesi SCC üyelerine de uygulanır — üyeler aynı tek kapıdan
+    /// (<c>ReportProjectResult</c>) geçer. Kesme tur 2'nin SON üyesi derlenirken düşer: tur tamamlanır ve
+    /// <c>Decide(2, {}, {})</c> Converged verir; kapı olmasaydı grup güvenilir sayılır ve "sig" persist edilirdi.
+    /// </summary>
+    [Fact]
+    public async Task a_cycle_member_finishing_after_an_interrupt_is_not_recorded_as_built()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            // [fix round 1 · M4] Eski bir yakınsamama hafızası: kesilen koşunun "Converged" kararı onu SİLMEMELİ.
+            store.Upsert(store.Load()[Id("A")] with { NonConvergentSignature = "mem" });
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            RunCoordinator? sut = null;
+            var invoker = rec.Invoker((name, round) =>
+            {
+                if (name == "B" && round == 2) Assert.True(sut!.TryRequestStop(StopKind.Interrupt));
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store);
+            sut = h.Sut;
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls); // tur 2 tamamlandı (yakınsama kararı verildi)
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.Trusted));
+            Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
+            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature); // "sig" YAZILMADI
+            Assert.Equal("old", store.Load()[Id("B")].BuiltSignature);
+            // [M4] Kesilen koşunun tur kararı yayılmaz ve hafızaya yazılmaz — Stop'un "Continue" kuralıyla aynı.
+            Assert.DoesNotContain(h.Events, e => e is CycleCompletedEvent);
+            Assert.Equal("mem", store.Load()[Id("A")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     [Fact]
     public async Task a_stop_mid_group_publishes_no_success_even_for_the_members_that_finished_green()
     {
@@ -714,6 +783,9 @@ public class CycleRoundsTests
             var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], succeeded.Select(e => e.ProjectId));
             Assert.All(succeeded, e => Assert.True(e.CycleUnsettled));
+            // [final review I1] Tavan da yakınsama DEĞİLDİR: olay "güvenilmez başarı" der — aşağıdaki
+            // invalidate ile AYNI karar.
+            Assert.All(succeeded, e => Assert.False(e.Trusted));
             // Dep-issue listesine SAHTE isim enjekte EDİLMEZ: o liste "hangi bağımlılık patladı" sorusunun
             // cevabıdır — ikinci bir anlam yüklenirse ▲ N sayacı ile filtre chip'i yanlış sayar.
             Assert.All(succeeded, e => Assert.Null(e.DepIssues));

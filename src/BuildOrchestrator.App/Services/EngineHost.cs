@@ -37,7 +37,12 @@ public sealed class EngineUnavailableException(string exePath, EngineUnavailable
     public EngineUnavailableReason Reason { get; } = reason;
 }
 
-public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeout = null) : IAsyncDisposable
+/// <param name="supervisorArgs">Supervisor'a geçilecek ek argümanlar. <b>Üretim HİÇ geçmez</b> (Supervisor
+/// argümansız başlar, önbellek kullanıcının <c>%LOCALAPPDATA%</c>'sındadır). Yalnız testler kullanır: gerçek bir motor
+/// başlatan her test <c>--logs &lt;sandbox&gt;</c> ile izole bir önbellek verir — aksi hâlde motorun açılış
+/// kurtarması (spec 2026-09-18 §5.5) kullanıcının gerçek <c>run-inflight.json</c>'ını işlerdi.</param>
+public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeout = null,
+    IReadOnlyList<string>? supervisorArgs = null) : IAsyncDisposable
 {
     /// <summary>[B1/F1] <see cref="StartAsync"/>'in <c>engineReady</c>'yi beklerken vazgeçme süresi.
     /// <b>Üretim varsayılanı 5s'de KALIR</b> — donmuş bir supervisor'da uygulama sonsuza dek asılı kalmasın
@@ -98,7 +103,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
 
         int gen = Interlocked.Increment(ref _generation);
         _ready = new TaskCompletionSource<EngineReadyEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
-        string cmdLine = WindowsCommandLine.Build(supervisorExePath);
+        string cmdLine = WindowsCommandLine.Build(supervisorExePath, [.. supervisorArgs ?? []]);
         // [D1 review · A2] Pre-flight'ı GEÇEN ama başlatılamayan exe (bozuk/geçersiz binary, erişim reddi,
         // TOCTOU) de AYNI görünür yüzeye düşer: ham Win32Exception generic catch'te yutulurdu. Child hiç
         // doğmadığı için burada da EngineExited ateşlenmez → tek sinyal.

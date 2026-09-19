@@ -248,14 +248,19 @@ public partial class ProjectRow : UserControl
                 ApplyBreathing();
                 ApplyDuration();
                 break;
-            // [design v1.11.0 §9-2] Görsel durumun İKİ ek girdisi: başlangıç modu ve işaretlilik. Statü
-            // değişimi zaten yukarıdan geçer (VisualStatus onunla birlikte tazelenir); bu iki bayrak statüyü
-            // DEĞİŞTİRMEDEN de görünümü çevirir.
-            case nameof(ProjectRowViewModel.Fresh):
+            // [design v1.11.0 §9-2 · v1.20.0 §2.3] Görsel durumun statü dışındaki girdileri: işaretlilik (burada)
+            // ve çıktı durumu (aşağıda, Standing). Statü değişimi zaten yukarıdan geçer (VisualStatus onunla
+            // birlikte tazelenir); bu ikisi statüyü DEĞİŞTİRMEDEN de görünümü çevirir. Başlangıç modu ayrı bir
+            // girdi DEĞİLDİR — kararın yokluğudur (Standing == Unknown) ve Standing case'inden gelir.
             case nameof(ProjectRowViewModel.Marked):
                 // [design v1.11.0 §2.3] İşaretlilik = işaretleme DALGASI. Bu tek kanalda renk AKAR (200ms),
                 // çakmaz — satır node'la senkron yanmalıdır. Diğer tüm yollarda renk anında oturur.
                 ApplyStatusVisuals(lighting: true);
+                break;
+            // [design v1.20.0 §2.3] Görsel durumun taban katmanı: önizleme kararı (WillBuild/Reason)
+            // değişince satırın rengi de değişir — Sync artık renk verir. Renk ANINDA oturur (dalga değil).
+            case nameof(ProjectRowViewModel.Standing):
+                ApplyStatusVisuals();
                 break;
             case nameof(ProjectRowViewModel.InCycle):
                 ApplyDep();           // [cycles] topoloji üyeliği değiştirmiş olabilir
@@ -267,8 +272,9 @@ public partial class ProjectRow : UserControl
                 // ApplyRightBlock görünürlüğü ayarlayıp ApplyDecision'ı zaten çağırır.
                 ApplyRightBlock();
                 break;
-            case nameof(ProjectRowViewModel.DepIssues):
-            case nameof(ProjectRowViewModel.HasDepIssue):
+            // [spec 2026-09-18 §1-15] Üçgenin kökleri WarningRoots'tur (koşu listesi ∪ defter notu); o hem
+            // DepIssues'tan hem gerekçe/köklerden bildirilir — gerekçe ve kökler etikete de gider (aşağıda).
+            case nameof(ProjectRowViewModel.WarningRoots):
             case nameof(ProjectRowViewModel.NamePrefix): // [D5] önek sonradan değişirse dep-tooltip'i tazele
             case nameof(ProjectRowViewModel.CycleUnsettled):   // [cycle rounds/Task 9] üçgen tooltip dalı
             case nameof(ProjectRowViewModel.CycleUnconverged): // [cycle rounds/Task 9] dep-slot rozeti
@@ -293,14 +299,17 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.LastBuiltAt):
             case nameof(ProjectRowViewModel.OwnFilesChanged):
             case nameof(ProjectRowViewModel.WillBuildReason):
-            // [final review — I2] Etiketin girdileri burada BİTER: Conditional ve DependencyRoots da
-            // DecisionLabel.For'a girer (koşullu satır "affected · up to date · 2h" der, zorlanan satır düz
-            // "affected"). [ObservableProperty] yalnız DEĞİŞİMDE bildirir ve önizleme üçlüyü sırayla yazar
-            // (WillBuild → Reason → Conditional), yani ilk ikisi AYNI kalıp yalnız Conditional dönen bir
-            // önizlemenin (kapsam dışı koşullu satır, satırdan tetiklenen tek proje koşusu) tek bildirimi
-            // bunlardır — listede olmadıkları için etiket koşu boyunca bayat kalıyordu.
-            case nameof(ProjectRowViewModel.Conditional):
-            case nameof(ProjectRowViewModel.DependencyRoots):
+            // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Etiketin girdileri burada BİTER: FailedAt (failed
+            // kuyruğunun yaşı) ve LocalEdits (modified · local) da DecisionLabel.For'a girer. Conditional ve
+            // DependencyRoots BURADAN kalktı — etiket artık ikisini de okumuyor (WaitingForDependency, UpToDate
+            // ile birleşti; hangi kök bekleniyor sorusunu yalnız uyarı üçgeni cevaplar, bkz. ApplyDep/WarningRoots
+            // case'i aşağıda — DependencyRoots'un değişimi zaten NotifyPropertyChangedFor(WarningRoots) ile oraya
+            // düşer, burada ikinci bir dinleyiciye gerek yok).
+            case nameof(ProjectRowViewModel.FailedAt):
+            case nameof(ProjectRowViewModel.LocalEdits):
+            // [Faz 3 — Task 7] BuiltOutside'ın kuyruğu (yaş) buradan — LastBuiltAt'in listede zaten olması bu
+            // alanı GEREKSİZ KILMAZ: iki gerekçe ayrı zaman kaynağı okur (bkz. DecisionLabel.For'un parametresi).
+            case nameof(ProjectRowViewModel.OutputBuiltAt):
                 ApplyDecision();
                 break;
         }
@@ -329,16 +338,18 @@ public partial class ProjectRow : UserControl
     /// nokta. Hepsi <see cref="ProjectRowViewModel.VisualStatus"/>'ten beslenir — kart kendi eşlemesini YAPMAZ
     /// (tablo <see cref="VisualStatuses"/>'tedir; graf de aynı tablodan okur).</summary>
     /// <param name="lighting">[design v1.11.0 §2.3] Renk geçişle mi otursun — yalnız işaretleme dalgası
-    /// (<see cref="ProjectRowViewModel.Marked"/>/<see cref="ProjectRowViewModel.Fresh"/> kanalı) true verir.</param>
+    /// (<see cref="ProjectRowViewModel.Marked"/> kanalı) true verir.</param>
     private void ApplyStatusVisuals(bool lighting = false)
     {
-        GraphStatus status = _vm?.Status ?? GraphStatus.Discovered;
-        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
+        var visual = _vm?.VisualStatus ?? VisualStatus.Unknown;
 
-        PART_Glyph.Status = status;
+        // [design v1.20.0 §2.4-5] Glyph görsel durumu çizer (çıktı durumu + koşu): atlanan satır — değil,
+        // kendi durumunun glyph'ini gösterir (güncel ✓, bozuk ✗, derlenecek kesikli daire).
+        PART_Glyph.Status = visual;
         // [design v1.11.0 §2.4-5] Glyph TOOLTIP TAŞIMAZ; ekran okuyucunun duyacağı statü metni UIA adına
-        // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK).
-        System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(status));
+        // yazılır (eşleme StatusGlyph.LabelFor — kopya YASAK). [design v1.20.0 §2.7] Ad GÖSTERİLENİ söyler (görsel
+        // durum): atlanan güncel satır "Up to date" duyurulur, "Skipped" değil.
+        System.Windows.Automation.AutomationProperties.SetName(PART_Glyph, StatusGlyph.LabelFor(visual));
 
         // [design v1.11.0 §2.4-3] Ad TEK kurala bağlıdır: bu İŞLEMDE işi olan satır (marked · queued ·
         // building · succeeded · failed) primary beyaz, geri kalanı secondary gri.
@@ -398,7 +409,7 @@ public partial class ProjectRow : UserControl
     /// </summary>
     private void SetStripeFill(bool lighting = false)
     {
-        var visual = _vm?.VisualStatus ?? VisualStatus.Discovered;
+        var visual = _vm?.VisualStatus ?? VisualStatus.Unknown;
         string key = VisualStatuses.StripeBrushKey(visual);
         // Renk geçişinin TEK yolu (kopya YASAK): dalgada akar, diğer her yolda token referansına oturur.
         Controls.MotionTokens.TransitionTokenBrush(this, PART_Stripe, Shape.FillProperty, key,
@@ -453,13 +464,17 @@ public partial class ProjectRow : UserControl
     ///
     /// <para>Satır building iken slot GİZLİDİR — dönen spinner'la yarışmaz. Statü glyph'i bundan
     /// ETKİLENMEZ: o daima gerçek statüyü gösterir.</para>
+    ///
+    /// <para>[spec 2026-09-18 §1-15] Üçgen KÜMÜLATİFTİR: kökler <see cref="ProjectRowViewModel.WarningRoots"/>'tan
+    /// gelir (bu koşunun listesi, yoksa defterdeki bekleyen bağımlılık notu) — seçim VM'dedir, burada
+    /// yalnız okunur.</para>
     /// </summary>
     private void ApplyDep()
     {
         bool building = _vm?.IsCompiling ?? false;
         string? warn = building ? null : RowWarning.For(
             _vm?.InCycle ?? false, _vm?.CycleUnsettled ?? false, _vm?.CycleUnconverged ?? false,
-            _vm?.DepIssues, _vm?.NamePrefix ?? "");
+            _vm?.WarningRoots, _vm?.NamePrefix ?? "");
 
         PART_DepIcon.Visibility = warn is null ? Visibility.Collapsed : Visibility.Visible;
         PART_DepTip.Content = warn;
@@ -482,7 +497,7 @@ public partial class ProjectRow : UserControl
         var decision = _vm is null
             ? RowDecision.None
             : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                DateTimeOffset.Now, _vm.InCycle, _vm.Conditional, _vm.DependencyRoots, _vm.NamePrefix);
+                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle, _vm.OutputBuiltAt);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

@@ -23,16 +23,13 @@ namespace BuildOrchestrator.Core.Workspace;
 /// akış YEREL HEAD ile devam eder. Degrade yolu topoloji ve will-build pass'ini ATLAMAZ: offline'da da tam,
 /// kullanılabilir bir Sync üretilir (yalnız hedef SHA yerel HEAD'e düşer).</para>
 ///
-/// <para><b>Will-build pass'in kapsamı (bilinen seam):</b> pass IN-PLACE, yani kullanıcının O ANKİ ÇALIŞMA
-/// AĞACINA karşı koşar — Sync anında kullanıcının baktığı ağaç budur ve imzanın local-diff terimini anlamlı
-/// kılan da odur. Sonuç olarak <see cref="SyncWorkspaceCommand.Branch"/> AKTİF branch'ten farklı bir branch'i
-/// adlandırıyorsa, üretilen önizleme adlandırılan branch'i DEĞİL aktif branch'i tarif eder (fetch yine de o
-/// branch'in ref'ini günceller ve <see cref="SyncCompletedEvent.TargetSha"/> onu taşır). Bu seam'in
-/// kapatılması branch seçimini UI'a bağlayan task'ın (D6) işidir; burada kasıtlı olarak YALNIZ gerçekten
-/// hesaplanan şey raporlanır — önizlemenin adlandırılan branch'i tarif ettiği İMA EDİLMEZ.</para>
+/// <para><b>Tek ağaç [spec 2026-09-18 §6.5]:</b> pass IN-PLACE, yani kullanıcının O ANKİ ÇALIŞMA AĞACINA karşı
+/// koşar; fetch ve <c>N behind</c> de AYNI ağacın checkout edilmiş branch'ine göre yapılır.
+/// <see cref="SyncWorkspaceCommand.Branch"/> yalnız detached HEAD'de yedektir — önizleme, fetch ve mesafe hep
+/// aynı branch'i tarif eder.</para>
 /// </summary>
 /// <param name="git">Kökü <see cref="SyncWorkspaceCommand.RootPath"/>'e BAĞLI bir <see cref="GitService"/> —
-/// worktree değil, KULLANICININ REPO KÖKÜ (Sync, Supervisor'ın build-anı worktree hazırlığıyla yarışmaz).</param>
+/// KULLANICININ REPO KÖKÜ.</param>
 /// <param name="hashes">[D1/D3] Kaynak içerik özetlerinin önbelleği — kararın tek kaynağı budur ve Build ile
 /// AYNI dosyada paylaşılır (iki yüzey aynı özetleri iki kez hesaplamaz).</param>
 public sealed class SyncWorkspaceService(
@@ -46,8 +43,18 @@ public sealed class SyncWorkspaceService(
     /// <summary>Will-build pass'inin sonucu: bağlanmış plan + §3.1 konsol satırlarının/D2 şeridinin okuduğu sayaçlar.</summary>
     /// <param name="Known">false ⇒ anlamlı bir taban yok (repo'da hiç commit yok ya da pass hata verdi) — TÜM
     /// düğümler hollow (<c>WillBuild=null</c>) kalır ve sayaçlar RAPORLANMAZ (0 yazmak "hepsi güncel" yalanı olurdu).</param>
-    /// <param name="OwnChanged">[v1.16.0] KENDİ dosyaları değişmiş projeler (Fast geçişi) — satırın karar
-    /// etiketi <c>modified</c> ile <c>affected</c> ayrımını buradan okur.</param>
+    /// <param name="OwnFilesChanged">[v1.16.0] Proje → "KENDİ dosyaları değişti mi" — önizlemenin
+    /// <c>OwnFilesChanged</c>'ı, satırın <c>modified</c> ↔ <c>affected</c> ayrımı. Koşu önizlemesiyle AYNI çağrı
+    /// (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>): zaman kipinde
+    /// kanıttan, diğer kiplerde defterdeki içerik özeti ile bugünkünün karşılaştırmasından. [Faz 3/Task 9 fix
+    /// round 2 — kullanıcı kararı I1] Eskiden defter kipinde Fast geçişinden gelirdi; Fast, kaydındaki imzası
+    /// bayat ama dosyalarına dokunulmamış bir projeyi de "değişti" bulur ve satır Build'in göstereceği
+    /// <c>affected</c> yerine <c>modified</c> yazardı.</param>
+    /// <param name="Changed">"N changed" sayacı — Fast semantiği (ARCHITECTURE §5.3, ruling R9): Fast geçişinin
+    /// derlenecek bulduğu projeler, zaman kipinde kanıtın cevabıyla (<see
+    /// cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>).</param>
+    /// <param name="Checks">[Faz 3/Task 6 — spec 2026-09-18 §5] Safe geçişinin kararına giren çıktı kontrolleri
+    /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — önizlemenin <c>OutputBuiltAt</c>'ı buradan yazılır.</param>
     /// <param name="ConditionalIds">[Task 4 review — C1 · DEĞİŞEN KURAL] Sync'in <c>WillBuild</c> zaten bir
     /// sonraki DÜZ Build'in kararını önceden söylediği için (§10.2, "Sync = örtük Build'in ucuz hâli") bu küme de
     /// o Build'in <c>ConditionalRebuild.AppliesTo</c>'sudur — hesap TEK BURADA yapılır, hem <see cref="ToBuild"/>
@@ -55,9 +62,19 @@ public sealed class SyncWorkspaceService(
     /// Conditional yazılmaz" idi; ölçülen kusur: önizleme her zaman <c>false</c> gönderdiği için Sync'ten hemen
     /// sonra tıklanan bir Build'de dalga bir an koşullu projeyi de yakıyor, motorun kendi önizlemesi gelince
     /// (gerçek <c>Conditional=true</c>) satır griye düşüyordu — hem renk hem etiket bir kare titriyordu.</param>
+    /// <param name="LocalEditsIds">[Task 3] <see cref="Workspace.LocalEdits.ProjectsWithLocalEdits"/>'in
+    /// döndürdüğü küme — Sync anında girdi kümesinde işlenmemiş yerel değişikliği olan projeler. Git sorgusu
+    /// başarısızsa (repo yok, hata) ya da pass hiç koşmadıysa (hollow) boş küme: hiçbir proje işaretlenmez.</param>
     private readonly record struct WillBuildOutcome(
-        BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known,
-        IReadOnlySet<string> ConditionalIds);
+        BuildPlan Plan, IReadOnlyDictionary<string, bool?> OwnFilesChanged, int Changed, int ToBuild, int UpToDate, bool Known,
+        IReadOnlySet<string> ConditionalIds, IReadOnlySet<string> LocalEditsIds,
+        IReadOnlyDictionary<string, OutputCheck> Checks);
+
+    private static readonly IReadOnlyDictionary<string, bool?> NoOwnFilesChanged =
+        new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly IReadOnlyDictionary<string, OutputCheck> NoChecks =
+        new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
 
     private static readonly IReadOnlySet<string> EmptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -88,32 +105,16 @@ public sealed class SyncWorkspaceService(
             return;
         }
 
-        // --- 1) ref-only fetch (K1). §3.1 satır 1.
-        emit(Cmd($"git fetch origin {cmd.Branch}"));
-        var fetch = await git.FetchRefOnlyAsync(cmd.Branch, ct);
-        if (fetch.Degraded)
-        {
-            // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam
-            // eder. Mesafe de bilinemez; bunu söylemek chip'in NEDEN çıkmadığını da açıklar.
-            emit(Warn($"warning: git fetch failed — continuing against the local HEAD; "
-                + $"distance from origin/{cmd.Branch} is unknown ({fetch.Warning})"));
-        }
-
-        // §3.1 satır 2 [v1.16.0]: yerel HEAD + uzak uçtan mesafe. Mesafe YALNIZ fetch başarılıyken ve seçili
-        // branch AKTİF branch iken hesaplanır — başka bir branch seçiliyken derleme worktree'den yapılır ve
-        // ana ağacın uzak uçla mesafesi kullanıcıya bir şey söylemez.
-        string? targetSha = fetch.TargetSha;
+        // [spec 2026-09-18 §6.5] Ölçülen branch CHECKOUT EDİLMİŞ branch'tir: araç yalnız çalışma ağacında
+        // derler. Komuttaki ad yalnız detached HEAD'de yedektir (orada izlenecek bir branch yoktur).
         string? activeBranch = (await git.GetCurrentBranchAsync(ct)).Value;
-        int? behind = null;
-        if (!fetch.Degraded && targetSha is not null && head.Value is not null
-            && string.Equals(activeBranch, cmd.Branch, StringComparison.Ordinal))
-        {
-            behind = (await git.CountBehindAsync(targetSha, ct)).Value;
-        }
+        string branch = activeBranch ?? cmd.Branch;
+        var (targetSha, degraded, behind) = await MeasureRemoteAsync(
+            cmd.Fetch, branch, measureBehind: activeBranch is not null, head.Value, emit, ct);
 
         // Hedef hiç çözülemediyse (commit'siz repo) satır BASILMAZ — yarım bir satır üretmek yerine sessiz kalınır.
         if (head.Value is not null)
-            emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, cmd.Branch)));
+            emit(Info(PlanProgressLines.HeadDistance(RevisionText.Short(head.Value), behind, branch)));
 
         // --- 2) tarama + plan. [v7 A5/N1] granular adım satırları fetch satırından SONRA, dim/info tonunda.
         // [planlama görünürlüğü] Adım metinleri PlanProgressLines'tan gelir: AYNI satırları Supervisor'ın
@@ -149,7 +150,12 @@ public sealed class SyncWorkspaceService(
         // yarısı). Pass'in İÇİNDE kalsaydı hollow/hata dallarında (pass hiç koşmaz) elde state olmazdı ve
         // "durumu bilinmeyen ama daha önce derlenmiş" satır sha'sını kaybederdi. SALT-OKUR: yalnız Load.
         var state = stateStore.Load();
-        var outcome = ComputeWillBuild(cmd, plan, scan, state, emit);
+        // [Task 3] LocalEdits kararının kaynağı: SALT-OKUR `git status --porcelain` (K1 — hiçbir mutasyon
+        // komutu yok). Sorgu başarısızsa (repo yok, hata) hata YUTULUR — Sync'i öldürmez, yalnız hiçbir
+        // proje işaretlenmez (aşağıdaki LocalEdits.ProjectsWithLocalEdits boş listede zaten boş küme döner).
+        var dirtyPathsResult = await git.GetDirtyPathsAsync(ct);
+        IReadOnlyList<string> dirtyPaths = dirtyPathsResult.Success ? dirtyPathsResult.Value! : [];
+        var outcome = ComputeWillBuild(cmd, plan, scan, state, dirtyPaths, emit);
 
         // --- 4) topoloji + önizleme. Önizleme AYRI bir will-build yolu DEĞİLDİR: App'in mevcut
         // BuildPreviewEvent handler'ı satırların WillBuild'ini zaten bu event'ten kurar (ikinci bir yol açılmaz).
@@ -171,11 +177,14 @@ public sealed class SyncWorkspaceService(
             outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason,
-                    OwnFilesChanged: outcome.Known ? outcome.OwnChanged.Contains(n.Id) : null,
+                    OwnFilesChanged: outcome.Known ? outcome.OwnFilesChanged.GetValueOrDefault(n.Id) : null,
                     LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id),
                     Conditional: outcome.ConditionalIds.Contains(n.Id),
                     DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
-                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id))))
+                        state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
+                    FailedAt: BuildStateStore.FailedAtOf(state, n.Id),
+                    LocalEdits: outcome.LocalEditsIds.Contains(n.Id),
+                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -199,10 +208,54 @@ public sealed class SyncWorkspaceService(
             emit(Info($"Sync complete — {outcome.Plan.Nodes.Count} projects, project states unknown"));
         }
 
-        emit(new SyncCompletedEvent(cmd.Branch, targetSha, fetch.Degraded,
+        emit(new SyncCompletedEvent(branch, targetSha, degraded,
             ProjectCount: outcome.Plan.Nodes.Count, CycleCount: outcome.Plan.Cycles.Count,
             ChangedCount: outcome.Changed, ToBuildCount: outcome.ToBuild, UpToDateCount: outcome.UpToDate,
-            Behind: behind));
+            Behind: behind, HeadSha: head.Value, ActiveBranch: activeBranch));
+    }
+
+    /// <summary>
+    /// §3.1 satır 1-2: uzak uç ve yerel HEAD'in ondan mesafesi.
+    /// <para><b><paramref name="fetch"/>=true:</b> ref-only fetch (K1) — ağ yoksa hata YUTULUR, uyarı basılır,
+    /// hedef yerel HEAD'e düşer ve mesafe bilinmez.</para>
+    /// <para><b><paramref name="fetch"/>=false</b> [spec 2026-09-18 §6.2]: ağa çıkılmaz ve fetch satırı yazılmaz;
+    /// mesafe son bilinen uzak uca (<c>refs/remotes/origin/&lt;branch&gt;</c>) göre yerelde hesaplanır. Uzak ref
+    /// yoksa hedef yerel HEAD'dir ve mesafe bilinmez — bu bir hata değildir, degrade bayrağı kurulmaz.</para>
+    /// <para>Boş <paramref name="branch"/> (detached HEAD ve komutta ad yok): izlenecek uzak branch yoktur —
+    /// fetch denenmez, hedef yerel HEAD, mesafe bilinmez.</para>
+    /// <para><paramref name="measureBehind"/>=false (detached HEAD): fetch yedek adla yine yapılır ama mesafe
+    /// ÖLÇÜLMEZ — HEAD o branch'in üzerinde değildir; bayat bir adla sayılan <c>N behind</c> yalan olurdu.</para>
+    /// </summary>
+    private async Task<(string? TargetSha, bool Degraded, int? Behind)> MeasureRemoteAsync(
+        bool fetch, string branch, bool measureBehind, string? head, Action<IpcEvent> emit, CancellationToken ct)
+    {
+        if (branch.Length == 0) return (head, false, null);
+
+        string? targetSha;
+        if (fetch)
+        {
+            emit(Cmd($"git fetch origin {branch}"));
+            var result = await git.FetchRefOnlyAsync(branch, ct);
+            if (result.Degraded)
+            {
+                // Ağ yok/remote geçersiz: AKIŞ DURMAZ — uyarı basılır, hedef yerel HEAD'e düşer ve analiz devam
+                // eder. Mesafe de bilinemez; bunu söylemek chip'in NEDEN çıkmadığını da açıklar.
+                emit(Warn($"warning: git fetch failed — continuing against the local HEAD; "
+                    + $"distance from origin/{branch} is unknown ({result.Warning})"));
+                return (result.TargetSha, true, null);
+            }
+            targetSha = result.TargetSha;
+        }
+        else
+        {
+            targetSha = (await git.GetRemoteTrackingShaAsync(branch, ct)).Value;
+            if (targetSha is null) return (head, false, null);
+        }
+
+        int? behind = measureBehind && targetSha is not null && head is not null
+            ? (await git.CountBehindAsync(targetSha, ct)).Value
+            : null;
+        return (targetSha, false, behind);
     }
 
     /// <summary>
@@ -224,8 +277,12 @@ public sealed class SyncWorkspaceService(
     /// </summary>
     /// <param name="state">[W1] Çağıranın okuduğu build-state map'i — burada AYRICA <c>Load()</c> ÇAĞRILMAZ
     /// (aynı Sync'te iki disk okuması olurdu; bkz. <see cref="RunAsync"/>).</param>
+    /// <param name="dirtyPaths">[Task 3] Çağıranın AYRICA (async) okuduğu <c>git status --porcelain</c> sonucu
+    /// — kök-göreli yollar. Burada AYRICA sorgulanmaz (binder'ın girdi kümesiyle TEK yerde, <see
+    /// cref="Workspace.LocalEdits.ProjectsWithLocalEdits"/>'te kesiştirilir).</param>
     private WillBuildOutcome ComputeWillBuild(SyncWorkspaceCommand cmd, BuildPlan plan,
-        ScanResult scan, IReadOnlyDictionary<string, BuildState> state, Action<IpcEvent> emit)
+        ScanResult scan, IReadOnlyDictionary<string, BuildState> state, IReadOnlyList<string> dirtyPaths,
+        Action<IpcEvent> emit)
     {
         try
         {
@@ -249,15 +306,21 @@ public sealed class SyncWorkspaceService(
             // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
             // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
-            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe);
+            // [Faz 3/Task 6 — karar "Sync'in Fast geçişi"] Çıktı kanıtı YALNIZ Safe geçişine girer — Build'in planı
+            // da aynı kontrollerle bağlanır, dolayısıyla Sync'in WillBuild'i bir sonraki düz Build'in kararıdır.
+            // Fast geçişi yalnız "N changed" sayacını besler (satırın modified ↔ affected cevabı ondan DEĞİL, aşağıda
+            // içerik özetinden gelir) ve kanıtsız bağlanır: kanıtla bağlansaydı havuzdaki kopyası bozulmuş
+            // (OutputReplaced) ya da kanıtı silinmiş (OutputMissing) bir proje dosyasına dokunulmadığı hâlde
+            // "changed" sayılırdı.
+            var checks = binder.ChecksFor(state);
+            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, checks);
             var (fastPlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Fast);
             hashes.Flush();
 
-            // [v1.16.0 satır etiketi] "Kendi dosyası değişti mi" olgusu Fast geçişinden gelir: Safe true +
-            // Fast false = bağımlılığından etkilenmiş (affected), ikisi de true = kendi dosyası değişmiş
-            // (modified). İki geçiş zaten sayaçlar için koşuyordu; etiket ikinci bir kaynak AÇMAZ.
-            var ownChanged = fastPlan.Nodes
-                .Where(n => n.WillBuild == true)
+            // "N changed" sayacı Fast semantiğindedir (ARCHITECTURE §5.3, ruling R9): Fast geçişinin derlenecek
+            // bulduğu projeler; zaman kipinde cevap kanıttandır (kendi girdisi çıktıdan yeni ⇒ changed).
+            var changedForCounter = fastPlan.Nodes
+                .Where(n => OutputEvidence.OwnFilesChanged(checks.GetValueOrDefault(n.Id), n.WillBuild == true) == true)
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -274,21 +337,43 @@ public sealed class SyncWorkspaceService(
                 .Where(n => ConditionalRebuild.AppliesTo(n, RunMode.Build, scopedRun: false, cycleGroupMember: false))
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // [Task 3] LocalEdits: girdi kümesi zaten binder'da toplu (Prefill öncesi) hazırlandı — burada
+            // yeniden diske inilmez, yalnız proje başına InputsOf ile o kümeye erişilir. Hesap TEK yerde
+            // (LocalEdits.ProjectsWithLocalEdits) — kopya YASAK.
+            var inputsById = plan.Nodes.ToDictionary(
+                n => n.Id, n => binder.InputsOf(n.Id), StringComparer.OrdinalIgnoreCase);
+            var localEditsIds = LocalEdits.ProjectsWithLocalEdits(dirtyPaths, inputsById, cmd.RootPath);
+
+            // [v1.16.0 satır etiketi · Faz 3/Task 9 fix round 2 — kullanıcı kararı I1] "Kendi dosyası değişti mi"
+            // koşu önizlemesiyle (RunCoordinator) AYNI çağrıdan: zaman kipinde kanıttan, diğer kiplerde defterdeki
+            // içerik özeti ile binder'ın ZATEN hesapladığı bugünkü özetin karşılaştırmasından — Fast'ten DEĞİL (bkz.
+            // WillBuildOutcome.OwnFilesChanged). Sync'in satırı ile Build'in satırı böylece ayrışamaz.
+            var contentById = binder.ContentById;
+            var ownFilesChanged = plan.Nodes.ToDictionary(
+                n => n.Id,
+                n => OutputEvidence.OwnFilesChanged(
+                    checks.GetValueOrDefault(n.Id), state, n.Id, contentById.GetValueOrDefault(n.Id)),
+                StringComparer.OrdinalIgnoreCase);
+
             return new WillBuildOutcome(
                 Plan: safePlan,
-                OwnChanged: ownChanged,
-                Changed: ownChanged.Count,
+                OwnFilesChanged: ownFilesChanged,
+                Changed: changedForCounter.Count,
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true,
-                ConditionalIds: conditionalIds);
+                ConditionalIds: conditionalIds,
+                LocalEditsIds: localEditsIds,
+                Checks: checks);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Tanı KULLANICIYA gider (Core'un konsola doğrudan yazması gerekmez — [D4] zaten stdout'u yalnız
             // NDJSON'a ayırır): pass atlandığında will-dot'lar sessizce hollow kalacağı için sebebin görünmesi şart.
             emit(Warn($"warning: change detection was skipped — project states stay unknown ({ex.Message})"));
-            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false, ConditionalIds: EmptySet);
+            return new WillBuildOutcome(plan, NoOwnFilesChanged, 0, 0, 0, Known: false, ConditionalIds: EmptySet,
+                LocalEditsIds: EmptySet, Checks: NoChecks);
         }
     }
 

@@ -27,8 +27,8 @@ public sealed class ProjectInputsTests : IDisposable
         return full;
     }
 
-    private IReadOnlyList<string> LogicalPathsOf(string csproj, EvaluatedProject? evaluated = null) =>
-        [.. ProjectInputs.Collect(csproj, evaluated, _root).Select(i => i.LogicalPath)];
+    private IReadOnlyList<string> PathsOf(string csproj, EvaluatedProject? evaluated = null) =>
+        [.. ProjectInputs.Collect(csproj, evaluated, _root).Select(i => i.Path)];
 
     [Fact]
     public void the_project_file_and_every_build_affecting_file_under_its_folder_are_inputs()
@@ -38,7 +38,7 @@ public sealed class ProjectInputsTests : IDisposable
         string xaml = Write(@"src\A\Views\Main.xaml", "<Window/>");
         string resx = Write(@"src\A\Properties\Strings.resx", "<root/>");
 
-        var inputs = LogicalPathsOf(csproj);
+        var inputs = PathsOf(csproj);
 
         Assert.Contains(csproj, inputs);
         Assert.Contains(cs, inputs);
@@ -54,7 +54,7 @@ public sealed class ProjectInputsTests : IDisposable
         Write(@"src\A\notes.txt", "notes");
         Write(@"src\A\Assets\logo.png", "binary-ish");
 
-        var inputs = LogicalPathsOf(csproj);
+        var inputs = PathsOf(csproj);
 
         Assert.Single(inputs);
         Assert.Equal(csproj, inputs[0]);
@@ -68,7 +68,7 @@ public sealed class ProjectInputsTests : IDisposable
         Write(@"src\A\bin\Debug\Something.cs", "// copied");
         string real = Write(@"src\A\Real.cs", "class Real {}");
 
-        var inputs = LogicalPathsOf(csproj);
+        var inputs = PathsOf(csproj);
 
         Assert.Equal([csproj, real], [.. inputs.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)]);
     }
@@ -84,7 +84,7 @@ public sealed class ProjectInputsTests : IDisposable
             ResourceFiles = [sharedXaml],
         };
 
-        var inputs = LogicalPathsOf(csproj, evaluated);
+        var inputs = PathsOf(csproj, evaluated);
 
         Assert.Contains(sharedCs, inputs);
         Assert.Contains(sharedXaml, inputs);
@@ -101,7 +101,7 @@ public sealed class ProjectInputsTests : IDisposable
 
         foreach (string csproj in new[] { a, b })
         {
-            var inputs = LogicalPathsOf(csproj);
+            var inputs = PathsOf(csproj);
             Assert.Contains(props, inputs);
             Assert.Contains(targets, inputs);
             Assert.Contains(packages, inputs);
@@ -117,7 +117,7 @@ public sealed class ProjectInputsTests : IDisposable
         string inner = Write(@"src\Directory.Build.props", "<Project/>");
         string csproj = Write(@"src\A\A.csproj", "<Project/>");
 
-        var inputs = LogicalPathsOf(csproj);
+        var inputs = PathsOf(csproj);
 
         Assert.Contains(inner, inputs);
         Assert.DoesNotContain(outer, inputs);
@@ -134,7 +134,7 @@ public sealed class ProjectInputsTests : IDisposable
             if (!File.Exists(outside)) { File.WriteAllText(outside, "<Project/>"); created = true; }
             string csproj = Write(@"src\A\A.csproj", "<Project/>");
 
-            Assert.DoesNotContain(outside, LogicalPathsOf(csproj));
+            Assert.DoesNotContain(outside, PathsOf(csproj));
         }
         finally { if (created) File.Delete(outside); }
     }
@@ -147,8 +147,8 @@ public sealed class ProjectInputsTests : IDisposable
         // AYNI dosya hem Compile öğesi hem klasör taramasında görünür — tek kez girmeli.
         var evaluated = new EvaluatedProject(csproj, "A", [cs], [], [], IsSdkStyle: false);
 
-        var first = LogicalPathsOf(csproj, evaluated);
-        var second = LogicalPathsOf(csproj, evaluated);
+        var first = PathsOf(csproj, evaluated);
+        var second = PathsOf(csproj, evaluated);
 
         Assert.Equal(first, second);
         Assert.Equal(first.Count, first.Distinct(StringComparer.OrdinalIgnoreCase).Count());
@@ -162,54 +162,39 @@ public sealed class ProjectInputsTests : IDisposable
         string csproj = Write(@"src\A\A.csproj", "<Project/>");
         Write(@"src\A\A_wpftmp.csproj", "<Project/>");
 
-        Assert.DoesNotContain(LogicalPathsOf(csproj), p => p.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(PathsOf(csproj), p => p.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// Eşleyici, klasör taramasının BULDUĞU dosyalar için de tek yetkilidir: "bu kimlik diskte nerede yaşıyor"
-    /// sorusunu yalnız o cevaplar. Üretimdeki iki eşleyici (in-place birebir, worktree önek takası) taramanın
-    /// bulduğu yolun aynısını verir; kuralın tek olması, tek bir dosyayı yeniden yönlendiren çağıranların
-    /// (ör. OSYS kabul koşusunun sentetik değişikliği) da aynı kapıdan geçmesini sağlar.
-    /// </summary>
     [Fact]
-    public void the_mapper_also_decides_where_a_swept_file_is_read_from()
+    public void The_swept_folders_include_the_project_folder_and_subfolders_but_not_bin_or_obj()
     {
         string csproj = Write(@"src\A\A.csproj", "<Project/>");
-        string swept = Write(@"src\A\Model.cs", "class Model {}");
-        string decoy = Write(@"decoy\Model.cs", "class Model { int changed; }");
+        Write(@"src\A\Views\Main.xaml", "<Window/>");
+        Write(@"src\A\obj\Debug\A.AssemblyInfo.cs", "// generated");
+        Write(@"src\A\bin\Debug\Something.cs", "// copied");
+        string projectDir = Path.Combine(_root, "src", "A");
+        string viewsDir = Path.Combine(projectDir, "Views");
+        string objDir = Path.Combine(projectDir, "obj");
+        string binDir = Path.Combine(projectDir, "bin");
 
-        var inputs = ProjectInputs.Collect(csproj, null, _root,
-            logical => string.Equals(logical, swept, StringComparison.OrdinalIgnoreCase) ? decoy : logical);
+        var (_, folders) = ProjectInputs.CollectWithFolders(csproj, null, _root);
 
-        var input = inputs.Single(i => string.Equals(i.LogicalPath, swept, StringComparison.OrdinalIgnoreCase));
-        Assert.Equal(decoy, input.PhysicalPath);   // kimlik projede kalır, okuma yönlendirilir
+        Assert.Contains(projectDir, folders);
+        Assert.Contains(viewsDir, folders);
+        Assert.DoesNotContain(folders, f => f.StartsWith(objDir, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(folders, f => f.StartsWith(binDir, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public void the_physical_path_follows_the_mapper_while_the_identity_stays_on_the_main_root()
+    public void Collect_still_returns_the_same_files()
     {
-        // [D5] Worktree koşusu: kimlik ana kökte kalır, okuma havuzdaki kopyadan yapılır.
-        string tree = Directory.CreateTempSubdirectory("bo-tree-").FullName;
-        try
-        {
-            Write(@"src\A\A.csproj", "<Project/>");
-            Write(@"src\A\Model.cs", "class Model {}");
-            Directory.CreateDirectory(Path.Combine(tree, "src", "A"));
-            File.WriteAllText(Path.Combine(tree, "src", "A", "A.csproj"), "<Project/>");
-            File.WriteAllText(Path.Combine(tree, "src", "A", "Model.cs"), "class Model { int worktree; }");
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        Write(@"src\A\Model.cs", "class Model {}");
+        Write(@"src\A\obj\Debug\Generated.cs", "// generated");
 
-            string mainCsproj = Path.Combine(_root, "src", "A", "A.csproj");
-            string ToPhysical(string logical) =>
-                logical.StartsWith(_root, StringComparison.OrdinalIgnoreCase)
-                    ? Path.Combine(tree, logical[(_root.Length + 1)..])
-                    : logical;
+        var viaCollect = ProjectInputs.Collect(csproj, null, _root);
+        var (viaCollectWithFolders, _) = ProjectInputs.CollectWithFolders(csproj, null, _root);
 
-            var inputs = ProjectInputs.Collect(mainCsproj, null, _root, ToPhysical);
-
-            Assert.All(inputs, i => Assert.StartsWith(_root, i.LogicalPath, StringComparison.OrdinalIgnoreCase));
-            Assert.All(inputs, i => Assert.StartsWith(tree, i.PhysicalPath, StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(inputs, i => i.LogicalPath.EndsWith("Model.cs", StringComparison.OrdinalIgnoreCase));
-        }
-        finally { try { Directory.Delete(tree, recursive: true); } catch { /* test temizliği */ } }
+        Assert.Equal(viaCollect, viaCollectWithFolders);
     }
 }

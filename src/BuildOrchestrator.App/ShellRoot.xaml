@@ -214,7 +214,7 @@
     </Grid>
 
     <!-- ==================================== ACTION BAR (42px) ==================================== -->
-    <!-- [D6/T40] Sync · sayaç chip'leri · branch/worktree popover'ları · Debug|Release · perf · Build split-button.
+    <!-- [D6/T40] Sync · sayaç chip'leri · branch popover'ı · behind · Debug|Release · perf · Build split-button.
          DataContext (RunViewModel) MainWindow → ShellRoot → buraya miras kalır. -->
     <!-- Yükseklik token'dan KONTROLDE verilir (FrameworkElement.Height = Double → geçerli DynamicResource;
          PanelHeader.xaml deseni). RowDefinition.Height (GridLength) bir Double token'ı ALAMAZDI → satır Auto. -->

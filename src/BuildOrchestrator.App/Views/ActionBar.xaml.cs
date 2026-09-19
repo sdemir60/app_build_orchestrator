@@ -20,7 +20,7 @@ namespace BuildOrchestrator.App.Views;
 ///
 /// <para><b>Enable kuralları:</b> repo yokken (<see cref="RunViewModel.HasWorkspace"/>=false) Sync/Build + TÜM chip'ler
 /// disabled (README §3.1; prototipin canlı sayaç chip'leri gözden kaçmadır). Koşarken (<see cref="RunViewModel.IsMidRunLocked"/>)
-/// branch/worktree/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Build split-button ayrıca
+/// branch/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Build split-button ayrıca
 /// Syncing'de disabled (BuildApp.jsx:1594).</para>
 ///
 /// <para><b>Motion:</b> popover/menü pop-in'i <see cref="PopIn"/> (kod-tarafı, AnimationsEnabled taze). Chip renk
@@ -32,6 +32,7 @@ public partial class ActionBar : UserControl
     private const double LabelIconSize = 14;    // branch/tree/sync/stop/play ikonları ~14px
     private const double ChevronSize = 12;
     private const double DotSizePx = 8;         // BuildApp.jsx:1553 boş building noktası 8px
+    private const double GitDotSizePx = 6;      // [spec 2026-09-18 §6.4] branch chip'inin git-işlemi noktası 6px
     private const double ChipContentGap = 6;    // _ds_bundle.js:166 chip gap 6
     private const double ChipStripGap = 8;      // BuildApp.jsx:1544 bar gap 8
 
@@ -44,13 +45,15 @@ public partial class ActionBar : UserControl
     private StackPanel _syncIcon = null!;
 
     // sayaç chip'leri + değer TextBlock'ları (StickyRibbon deseni — kod-tarafı kurulur, refresh'te güncellenir)
-    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _succeededChip = null!, _failedChip = null!, _skippedChip = null!, _warnChip = null!;
+    private ToggleButton _sigmaChip = null!, _buildingChip = null!, _currentChip = null!, _staleChip = null!, _failedChip = null!, _warnChip = null!;
     private TextBlock _behindValue = null!;
-    private TextBlock _sigmaValue = null!, _buildingValue = null!, _succeededValue = null!, _failedValue = null!, _skippedValue = null!, _warnValue = null!;
+    private TextBlock _sigmaValue = null!, _buildingValue = null!, _currentValue = null!, _staleValue = null!, _failedValue = null!, _warnValue = null!;
     private BuildingSpinner _buildingSpinner = null!;
     private Ellipse _buildingDot = null!;
+    /// <summary>[spec 2026-09-18 §6.4] Branch chip'indeki amber nokta — yarıda bir git işlemi varken görünür.</summary>
+    private Ellipse _gitOperationDot = null!;
     private Path _warnTriangle = null!;
-    private TextBlock _branchValue = null!, _worktreeValue = null!, _perfValue = null!;
+    private TextBlock _branchValue = null!, _perfValue = null!;
 
     public ActionBar()
     {
@@ -64,15 +67,12 @@ public partial class ActionBar : UserControl
         PART_BranchPopover.BranchPicked += () => PART_BranchChip.IsChecked = false; // seçince popover kapanır
         // [E5/T46] Esc popover içinde → kapat + odağı tetikleyici chip'e döndür (return-to-trigger).
         PART_BranchPopover.CloseRequested += () => { PART_BranchChip.IsChecked = false; PART_BranchChip.Focus(); };
-        PART_WorktreePopover.CloseRequested += () => { PART_WorktreeChip.IsChecked = false; PART_WorktreeChip.Focus(); };
         PART_BuildMenu.ItemInvoked += () => PART_Split.IsMenuOpen = false;
         // Açık bir popover'ın chip'ine basmak onu KAPATIR (BuildApp.jsx:2399/:2404 `set…(!…)`); WPF'in
         // StaysOpen=False capture yolu tek başına bırakılırsa aynı jest onu yeniden açardı. Kapı tek yerde.
         PopoverToggle.Bind(PART_BranchChip, PART_BranchPopup);
-        PopoverToggle.Bind(PART_WorktreeChip, PART_WorktreePopup);
         // perf momentary; [T20-b] chip artık koşan run'a setPerfMode gönderdiği için VM tarafı async —
-        // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli
-        // (WorktreePopover'ın `_ = _vm.DeleteWorktreeAsync(...)` deseniyle aynı).
+        // gönderim hataları VM içinde run dokümanına düşer (TrySendAsync), bu yüzden fire-and-forget güvenli.
         PART_PerfChip.Click += (_, _) => { _ = _vm?.CyclePerfAsync(); PART_PerfChip.IsChecked = false; };
         DependencyPropertyDescriptor.FromProperty(SplitButton.IsMenuOpenProperty, typeof(SplitButton))
             .AddValueChanged(PART_Split, (_, _) => { if (PART_Split.IsMenuOpen) PART_BuildMenu.PlayPopIn(); });
@@ -85,15 +85,16 @@ public partial class ActionBar : UserControl
     // ---------------------------------------------------------------- test yüzeyi
     internal ToggleButton SigmaChip => _sigmaChip;
     internal ToggleButton BuildingChip => _buildingChip;
-    internal ToggleButton SucceededChip => _succeededChip;
+    internal ToggleButton CurrentChip => _currentChip;
+    internal ToggleButton StaleChip => _staleChip;
     internal ToggleButton FailedChip => _failedChip;
-    internal ToggleButton SkippedChip => _skippedChip;
     /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i (döngü ∪ dep-issue) — eski ⚠ cycle ve ▲ dep
     /// chip'lerinin yerini alır.</summary>
     internal ToggleButton WarnChip => _warnChip;
     internal ToggleButton BranchChip => PART_BranchChip;
     internal Button BehindChip => PART_BehindChip;
-    internal ToggleButton WorktreeChip => PART_WorktreeChip;
+    /// <summary>[spec 2026-09-18 §6.4] Branch chip'inin amber git-işlemi noktası.</summary>
+    internal Ellipse GitOperationDot => _gitOperationDot;
     internal ToggleButton PerfChip => PART_PerfChip;
     internal ItemsControl Segment => PART_Segment;
     /// <summary>[design v1.11.0 §2.7-5a] Branch chip'inin solundaki mono workspace etiketi.</summary>
@@ -104,29 +105,25 @@ public partial class ActionBar : UserControl
     internal SplitButton Split => PART_Split;
     internal BuildMenu BuildMenuControl => PART_BuildMenu;
     internal BranchPopover BranchPopoverControl => PART_BranchPopover;
-    internal WorktreePopover WorktreePopoverControl => PART_WorktreePopover;
-    /// <summary>[A13/T4 · m6] Branch/worktree popover kabuklarının <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
-    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml:27,:40 VerticalOffset="-8"</c>).</summary>
+    /// <summary>[A13/T4 · m6] Branch popover kabuğunun <c>Popup</c>'ı — README §2.8/BuildApp.jsx:821
+    /// (<c>bottom: calc(100% + 8px)</c>) 8px boşluğunun test yüzeyi (<c>ActionBar.xaml VerticalOffset="-8"</c>).</summary>
     internal Popup BranchPopup => PART_BranchPopup;
-    internal Popup WorktreePopup => PART_WorktreePopup;
 
     // ---------------------------------------------------------------- [E5/T46] Esc zinciri: popover katmanı
-    /// <summary>Açık bir branch/worktree popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
-    /// BuildApp.jsx:1313 <c>branchPop || wtPop || buildMenu</c>).</summary>
+    /// <summary>Açık bir branch popover'ı ya da build menüsü var mı (Esc'in popover katmanı,
+    /// BuildApp.jsx:1313 <c>branchPop || buildMenu</c>).</summary>
     public bool AnyPopoverOpen =>
-        PART_BranchChip.IsChecked == true || PART_WorktreeChip.IsChecked == true || PART_Split.IsMenuOpen;
+        PART_BranchChip.IsChecked == true || PART_Split.IsMenuOpen;
 
-    /// <summary>Açık tüm popover/menüleri kapatır (BuildApp.jsx:1313 <c>setBranchPop(false); setWtPop(false);
-    /// setBuildMenu(false)</c>). Chip'lerin IsChecked'ı popup'ların IsOpen'ına iki-yönlü bağlı → false yapmak kapatır.
+    /// <summary>Açık tüm popover/menüleri kapatır (BuildApp.jsx:1313 <c>setBranchPop(false);
+    /// setBuildMenu(false)</c>). Chip'in IsChecked'ı popup'ın IsOpen'ına iki-yönlü bağlı → false yapmak kapatır.
     /// [E5/T47] Kapanınca odak TETİKLEYİCİYE döner (açık olan chip / build split-button'a).</summary>
     public void CloseAllPopovers()
     {
         Control? trigger = PART_BranchChip.IsChecked == true ? PART_BranchChip
-            : PART_WorktreeChip.IsChecked == true ? PART_WorktreeChip
             : PART_Split.IsMenuOpen ? PART_Split
             : null;
         PART_BranchChip.IsChecked = false;
-        PART_WorktreeChip.IsChecked = false;
         PART_Split.IsMenuOpen = false;
         trigger?.Focus();
     }
@@ -136,7 +133,7 @@ public partial class ActionBar : UserControl
     {
         if (_built) { RefreshAll(); return; }
         BuildCounterChips();
-        BuildBranchWorktreeChips();
+        BuildBranchChips();
         BuildPerfChip();
         BuildButtons();
         _built = true;
@@ -145,37 +142,33 @@ public partial class ActionBar : UserControl
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
+        // Chip değeri yalnız vm.Branch'i okur ve o PropertyChanged yayınlar — envanter aboneliği gerekmez.
         if (_vm is not null)
         {
             _vm.PropertyChanged -= OnVmPropertyChanged;
-            _vm.Branches.CollectionChanged -= OnBranchesChanged;
-            _vm.Worktrees.CollectionChanged -= OnWorktreesChanged;
+            _vm.PullRepositoryCommand.CanExecuteChanged -= OnPullGateChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
         PART_BranchPopover.DataContext = _vm;
-        PART_WorktreePopover.DataContext = _vm;
         PART_BuildMenu.DataContext = _vm;
         if (_vm is not null)
         {
             _vm.PropertyChanged += OnVmPropertyChanged;
-            _vm.Branches.CollectionChanged += OnBranchesChanged;
-            _vm.Worktrees.CollectionChanged += OnWorktreesChanged;
+            // [T9 fix round 1 · M4] Behind chip'inin kapısı pull komutunun kapısıdır — her geçişi buradan gelir.
+            _vm.PullRepositoryCommand.CanExecuteChanged += OnPullGateChanged;
         }
         RefreshAll();
     }
 
-    private void OnBranchesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => RefreshBranchWorktree();
+    private void OnPullGateChanged(object? sender, EventArgs e) => RefreshBehindGate();
 
-    /// <summary>[T2 fix-3 · round-3 bulgu 1] <c>EffectiveWorktreeName</c>'in auto-ad dalı (<c>AutoWorktreeName</c>)
-    /// mevcut worktree SAYISINI sayar (<see cref="RunViewModel.Worktrees"/>'ten) — envanter I-G ile canlı
-    /// doldurulduğundan (<c>ListWorktreesCommand</c>) gösterilen ad envanter gelince değişebilir
-    /// (<c>main-1</c> → <c>main-2</c>). <see cref="OnBranchesChanged"/> ile BİREBİR aynı desen: bu abonelik
-    /// olmadan chip bayat adı göstermeye devam ediyordu (title bar ve <c>WorktreePopover</c> zaten
-    /// dinliyordu — üç yüzey iki farklı ad söylüyordu).</summary>
-    private void OnWorktreesChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
-        => RefreshBranchWorktree();
+    /// <summary>[T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği = pull komutunun kapısı (CanPullRepository:
+    /// koşu, workspace işi, motor, git kilidi) — bar kapıyı yeniden türetmez.</summary>
+    private void RefreshBehindGate()
+    {
+        if (_built) PART_BehindChip.IsEnabled = _vm?.PullRepositoryCommand.CanExecute(null) ?? false;
+    }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -201,15 +194,24 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.SyncBusy):
                 RefreshSyncBusy();
                 break;
+            // [spec 2026-09-18 §6.3] Branch chip'inin kapısı: VM tüm girdilerinin değişimini (koşu, repo, motor,
+            // meşgul yüzeyler, uçuştaki checkout) TEK bu bildirimle duyurur.
+            case nameof(RunViewModel.CanSwitchBranch):
+                RefreshEnabled();
+                break;
             case nameof(RunViewModel.Branch):
-            case nameof(RunViewModel.UseWorktree):
-            case nameof(RunViewModel.WorktreeName):
-                RefreshBranchWorktree();
-                RefreshBehindChip();   // [v1.16.0] chip branch'e bağlıdır (tooltip + worktree modu)
+                RefreshBranch();
+                RefreshBehindChip();   // [v1.16.0] chip'in tooltip'i branch adını söyler
                 break;
             case nameof(RunViewModel.Behind):
             case nameof(RunViewModel.CanShowBehind):
                 RefreshBehindChip();
+                break;
+            // [spec 2026-09-18 §6.4] Yarıdaki git işlemi: nokta + tooltip; behind chip'inin kilidi ve tooltip'i
+            // (RefreshEnabled → RefreshBehindChip). Branch chip'inin kapısı CanSwitchBranch bildirimiyle gelir.
+            case nameof(RunViewModel.GitOperationTooltip):
+                RefreshGitOperation();
+                RefreshEnabled();
                 break;
             case nameof(RunViewModel.Configuration):
                 RefreshConfig();
@@ -225,7 +227,8 @@ public partial class ActionBar : UserControl
         if (!_built) return;
         RefreshChips();
         RefreshWorkspaceLabel();
-        RefreshBranchWorktree();
+        RefreshBranch();
+        RefreshGitOperation();
         RefreshPerf();
         RefreshConfig();
         RefreshBuildArea();
@@ -248,17 +251,12 @@ public partial class ActionBar : UserControl
         _buildingChip = AddCounterChip(_ => BuildingIcon(), out _buildingValue, AccessibilityNames.FilterBuilding);
         _buildingChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Building);
 
-        _succeededChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Succeeded, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _succeededValue, AccessibilityNames.FilterSucceeded);
-        _succeededChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Succeeded);
-
-        _failedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _failedValue, AccessibilityNames.FilterFailed);
-        _failedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Failed);
-
-        _skippedChip = AddCounterChip(_ => new StatusGlyph { Status = GraphStatus.Skipped, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
-            out _skippedValue, AccessibilityNames.FilterSkipped);
-        _skippedChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Skipped);
+        // [design v1.20.0 §2.7 · §1.4] Üç DURUM chip'i: güncel ✓ · derlenecek ○ (kesikli daire) · bozuk ✗ — satırın
+        // kendi glyph'leri. [DEĞİŞEN KURAL] Eskiden koşu sonucu chip'leriydi (succeeded ✓ · failed ✗ · skipped —);
+        // "atlanmak" bir durum değildir ve — yalnız run-story yüzeylerinin glyph'idir, bu yüzden o chip kalktı.
+        _currentChip = AddStateChip(VisualStatus.Current, out _currentValue, AccessibilityNames.FilterCurrent, ProjectFilter.Current);
+        _staleChip = AddStateChip(VisualStatus.Stale, out _staleValue, AccessibilityNames.FilterStale, ProjectFilter.Stale);
+        _failedChip = AddStateChip(VisualStatus.Failed, out _failedValue, AccessibilityNames.FilterFailed, ProjectFilter.Failed);
 
         // [design v1.11.0 §2.7-4] Son chip İSTİSNAİ durumu anlatır ve YALNIZ listede karşılığı varken görünür —
         // boş/gri hâliyle barda durması sinyali zayıflatıyordu (v1.5.2 kararı).
@@ -267,6 +265,15 @@ public partial class ActionBar : UserControl
         // iki ayrı filtre iki ayrı renk ima ediyordu. Chip artık tek ve amberdir.
         _warnChip = AddCounterChip(_ => WarnIcon(), out _warnValue, AccessibilityNames.FilterWarn);
         _warnChip.Click += (_, _) => _vm?.ToggleFilter(ProjectFilter.Warn);
+    }
+
+    /// <summary>[design v1.20.0 §2.7] Durum chip'i: satırın glyph'i + rozet; tık o durumun filtresini açıp kapar.</summary>
+    private ToggleButton AddStateChip(VisualStatus shown, out TextBlock value, string label, string filter)
+    {
+        var chip = AddCounterChip(_ => new StatusGlyph { Status = shown, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center },
+            out value, label);
+        chip.Click += (_, _) => _vm?.ToggleFilter(filter);
+        return chip;
     }
 
     // [E5/T47] AYNI metin hem tooltip hem UIA-adı (ikon-yalnız chip'in görsel içeriği ekran okuyucuya bir şey
@@ -336,9 +343,10 @@ public partial class ActionBar : UserControl
         var c = _vm?.Counters ?? default;
         _sigmaValue.Text = Inv(c.Total);
         _buildingValue.Text = Inv(c.Building);
-        _succeededValue.Text = Inv(c.Succeeded);
-        _failedValue.Text = Inv(c.Failed);
-        _skippedValue.Text = Inv(c.Skipped);
+        // [design v1.20.0 §2.7] DURUM kovaları — koşu tablosu (Succeeded/Failed/Skipped) şeridindir.
+        _currentValue.Text = Inv(c.Current);
+        _staleValue.Text = Inv(c.Stale);
+        _failedValue.Text = Inv(c.Broken);
         _warnValue.Text = Inv(c.Warn);
 
         // İstisnai chip: sayı 0 ise chip HİÇ YOKTUR (gri/boş hâli taşınmaz).
@@ -350,9 +358,9 @@ public partial class ActionBar : UserControl
         var f = _vm?.ActiveFilters ?? ProjectFilter.None;
         _sigmaChip.IsChecked = false; // Σ hiç aktif olmaz (her zaman temizler)
         SetChipActive(_buildingChip, _buildingValue, ProjectFilter.Building, f);
-        SetChipActive(_succeededChip, _succeededValue, ProjectFilter.Succeeded, f);
+        SetChipActive(_currentChip, _currentValue, ProjectFilter.Current, f);
+        SetChipActive(_staleChip, _staleValue, ProjectFilter.Stale, f);
         SetChipActive(_failedChip, _failedValue, ProjectFilter.Failed, f);
-        SetChipActive(_skippedChip, _skippedValue, ProjectFilter.Skipped, f);
         SetChipActive(_warnChip, _warnValue, ProjectFilter.Warn, f);
         _sigmaValue.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextPrimary");
     }
@@ -367,14 +375,45 @@ public partial class ActionBar : UserControl
             on ? ProjectFilter.ActiveBrushKey(filter) : "Brush.TextPrimary");
     }
 
-    // ---------------------------------------------------------------- branch / worktree / perf chip'leri
-    private void BuildBranchWorktreeChips()
+    // ---------------------------------------------------------------- branch / behind / perf chip'leri
+    private void BuildBranchChips()
     {
         _branchValue = LabelChipContent(PART_BranchChip, "Icon.Branch", "branch", chevron: true);
+        BuildGitOperationDot();
         BuildBehindChip();
-        _worktreeValue = LabelChipContent(PART_WorktreeChip, "Icon.Tree", "worktree", chevron: true);
         AutomationProperties.SetName(PART_BranchChip, AccessibilityNames.BranchChip);
-        AutomationProperties.SetName(PART_WorktreeChip, AccessibilityNames.WorktreeChip);
+        // [spec 2026-09-18 §6.4] Git kilidinde iki chip de pasiftir ve nedeni tooltip'lerindedir — WPF pasif bir
+        // öğenin tooltip'ini varsayılan olarak saklar.
+        ToolTipService.SetShowOnDisabled(PART_BranchChip, true);
+        ToolTipService.SetShowOnDisabled(PART_BehindChip, true);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §6.4 · karar 22] Branch chip'inin içeriğine eklenen amber nokta: çalışma ağacında yarıda bir git
+    /// işlemi varken görünür. Renk mevcut <c>Brush.Amber</c> token'ı (yeni renk yok); boyu <see cref="GitDotSizePx"/>.
+    /// </summary>
+    private void BuildGitOperationDot()
+    {
+        _gitOperationDot = new Ellipse
+        {
+            Width = GitDotSizePx,
+            Height = GitDotSizePx,
+            Margin = new Thickness(ChipContentGap, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+        _gitOperationDot.SetResourceReference(Shape.FillProperty, "Brush.Amber");
+        ((StackPanel)PART_BranchChip.Content).Children.Add(_gitOperationDot);
+    }
+
+    /// <summary>[spec §6.4] Noktanın görünürlüğü ve branch chip'inin tooltip'i — ikisi de VM'in tek kararından
+    /// (<see cref="RunViewModel.GitOperationTooltip"/>): işlem yoksa nokta yok, tooltip yok.</summary>
+    private void RefreshGitOperation()
+    {
+        if (!_built) return;
+        string? tooltip = _vm?.GitOperationTooltip;
+        _gitOperationDot.Visibility = tooltip is null ? Visibility.Collapsed : Visibility.Visible;
+        PART_BranchChip.ToolTip = tooltip;
     }
 
     /// <summary>
@@ -402,7 +441,7 @@ public partial class ActionBar : UserControl
 
     /// <summary>
     /// Chip'in görünürlüğü, sayısı ve tooltip'i. <b>Görünme kuralı motorun olgusudur:</b> sayı biliniyor
-    /// (fetch başarılı), sıfırdan büyük ve aktif branch seçili. Çevrimdışıyken sayı bilinmez ⇒ chip HİÇ
+    /// (fetch başarılı) ve sıfırdan büyük. Çevrimdışıyken sayı bilinmez ⇒ chip HİÇ
     /// çizilmez — uydurma bir sayı göstermektense susmak doğrudur.
     /// </summary>
     private void RefreshBehindChip()
@@ -415,7 +454,8 @@ public partial class ActionBar : UserControl
         int behind = _vm!.Behind ?? 0;
         _behindValue.Text = Inv(behind);
         AutomationProperties.SetName(PART_BehindChip, Inv(behind) + " behind");
-        PART_BehindChip.ToolTip = InteractionText.BehindChipTooltip(behind, _vm.Branch);
+        // [spec 2026-09-18 §6.4] Git kilidinde chip pasiftir; tooltip daveti değil kilidin nedenini söyler.
+        PART_BehindChip.ToolTip = _vm.GitOperationTooltip ?? InteractionText.BehindChipTooltip(behind, _vm.Branch);
     }
 
     private void BuildPerfChip()
@@ -476,14 +516,10 @@ public partial class ActionBar : UserControl
         PART_Workspace.Visibility = name.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    private void RefreshBranchWorktree()
+    private void RefreshBranch()
     {
         if (!_built) return;
         _branchValue.Text = _vm?.Branch ?? "";
-        // [T2 fix-1 · C1] ETKİN değer (forced || kullanıcı toggle'ı) — ham UseWorktree DEĞİL. Aksi halde
-        // zorunlu worktree ile derlenirken chip "off" gösteriyordu.
-        bool on = _vm?.EffectiveUseWorktree ?? false;
-        _worktreeValue.Text = on ? (_vm?.EffectiveWorktreeName ?? "") : "off";
     }
 
     private void RefreshPerf()
@@ -609,16 +645,16 @@ public partial class ActionBar : UserControl
         bool syncing = _vm?.Phase == AppPhase.Syncing;
 
         // repo yokken sayaç chip'leri de disabled (README §3.1 — prototip hatası düzeltilir).
-        foreach (var chip in new[] { _sigmaChip, _buildingChip, _succeededChip, _failedChip, _skippedChip, _warnChip })
+        foreach (var chip in new[] { _sigmaChip, _buildingChip, _currentChip, _staleChip, _failedChip, _warnChip })
             chip.IsEnabled = hasWs;
 
-        // T12: koşarken branch/worktree/Debug|Release görünür şekilde disabled; perf CANLI.
-        PART_BranchChip.IsEnabled = hasWs && !midRun;
-        PART_WorktreeChip.IsEnabled = hasWs && !midRun;
+        // T12: koşarken branch/Debug|Release görünür şekilde disabled; perf CANLI. [spec 2026-09-18 §6.3] Branch
+        // chip'i artık checkout eder: kapısı VM'in TEK predicate'idir (koşu + Sync/Clean/Optimize + motor + uçuştaki checkout).
+        PART_BranchChip.IsEnabled = _vm?.CanSwitchBranch ?? false;
         PART_Segment.IsEnabled = hasWs && !midRun;
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.
-        PART_BehindChip.IsEnabled = hasWs && !midRun;
+        RefreshBehindGate(); // [T9 fix round 1 · M4] komutun kapısı; geçişleri CanExecuteChanged aboneliği de duyurur
         RefreshBehindChip();
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.

@@ -8,8 +8,7 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [D6/T40+T12+T43-UI] <see cref="RunViewModel"/>'in <b>aksiyon-barı yüzeyi</b>: statü chip'i filtre toggle'ı,
-/// K3 branch seçimi (worktree zorlama + niyet satırları — <c>git switch</c> DEĞİL), worktree auto-ad üretimi/silme
-/// ve perf profili seed'i. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA yüzeyini, Workspace.cs Sync/
+/// branch popover seçimi ve perf profili seed'i. Ayrı bir partial dosyada, çünkü ana dosya run/log/ETA yüzeyini, Workspace.cs Sync/
 /// topoloji yüzeyini taşır; bu üçüncü sorumluluk (alt bar) onlardan ayrı durur. SAF mantık: view'siz test edilir.
 /// </summary>
 public sealed partial class RunViewModel
@@ -22,7 +21,7 @@ public sealed partial class RunViewModel
     /// kilitler ve konsolu o projenin loguna alır; filtre ise "bu kümeye bak" der. İkisi aynı anda açıkken
     /// kullanıcı filtrelenmiş listeye bakarken graf ilgisiz bir düğüme odaklı kalıyordu.</para>
     /// <para><b>[DEĞİŞEN KURAL — design v1.11.0 §2.7-4]</b> Chip'ler ARTIK birbirini düşürmez: küme çoklu ve
-    /// VEYA'lıdır (✓ + ✗ = "bu koşuda derlenenler"). Yeni küme her seferinde YENİ bir örnektir — yerinde
+    /// VEYA'lıdır (design v1.20.0 §2.7: durum filtreleri — ✓ + ✗ = "güncel ya da bozuk"). Yeni küme her seferinde YENİ bir örnektir — yerinde
     /// mutasyon <c>PropertyChanged</c> yaymaz ve liste bayat kalırdı.</para></summary>
     public void ToggleFilter(string? filter)
     {
@@ -34,115 +33,60 @@ public sealed partial class RunViewModel
         ActiveFilters = next.Count == 0 ? ProjectFilter.None : next;
     }
 
-    // ---------------------------------------------------------------- [K3] branch seçimi + worktree "forced"
+    // ---------------------------------------------------------------- branch (checkout edilmiş olan)
 
-    /// <summary>Aktif branch'in adı (<see cref="Branches"/> içinde <c>IsActive</c> olan) — <see cref="IsWorktreeForced"/>
-    /// türetimi bunu kullanır. Envanter henüz gelmediyse (IPC öncesi) <c>null</c>.</summary>
+    /// <summary>Aktif branch'in adı (<see cref="Branches"/> içinde <c>IsActive</c> olan) — <see cref="Branch"/>
+    /// değeri envanterden buradan okunur. Envanter henüz gelmediyse (IPC öncesi) ya da HEAD detached ise
+    /// <c>null</c>.</summary>
     public string? ActiveBranchName => Branches.FirstOrDefault(b => b.IsActive)?.Name;
 
-    /// <summary>[T40 · K3] Aktif-OLMAYAN bir branch seçili mi → worktree ZORUNLUdur (worktree popover'ında switch
-    /// disabled + on; branch chip'in worktree değeri de zorunlu olarak worktree adını gösterir). Aktif branch
-    /// (ya da envanter yokken) <c>false</c>. Branch adları git'te büyük/küçük harfe DUYARLIdır → <c>Ordinal</c>.</summary>
-    public bool IsWorktreeForced =>
-        ActiveBranchName is { } active && !string.Equals(Branch, active, StringComparison.Ordinal);
-
-    /// <summary>[v1.16.0] <see cref="CanShowBehind"/> <see cref="IsWorktreeForced"/>'a bağlıdır ve o da
-    /// türetilmiş bir özelliktir — branch seçimi ya da envanter değiştiğinde chip'in tazelenmesi için bildirim
-    /// ELLE atılır (türetilmiş özellikler kendiliğinden PropertyChanged üretmez).</summary>
-    private void NotifyBehindChip()
-    {
-        OnPropertyChanged(nameof(CanShowBehind));
-        PullRepositoryCommand.NotifyCanExecuteChanged();
-    }
-
-    // ---------------------------------------------------------------- [T2 fix-1 · C1] açık seçim ↔ bayat seed
-
     /// <summary>
-    /// [T2 fix-1 · C1] Kullanıcı branch'i POPOVER'DAN AÇIKÇA seçti mi. <see cref="Branch"/> tek başına bunu
-    /// SÖYLEYEMEZ: aynı alan hem açık seçimle hem diskteki <c>UiState</c> seed'iyle hem de envanter seed'iyle
-    /// (<see cref="OnBranchList"/>) dolar.
+    /// [spec 2026-09-18 §6.3] Branch popover'ından seçim = çalışma ağacında GERÇEK bir checkout. Aktif branch'i
+    /// seçmek ya da kilitliyken seçmek hiçbir şey yapmaz. Aksi hâlde <see cref="CheckoutBranchCommand"/> gider
+    /// (uzak bir hedef <c>origin/x</c> olarak; izleyen yerel branch'i motor kurar) ve kirli ağaçta ne
+    /// yapılacağını Settings → General'ın <see cref="StashOnBranchSwitch"/> ayarı söyler.
     ///
-    /// <para><b>Neden ayrım ZORUNLU (ölçülen kusur):</b> T2'nin ilk hâlinde seed YALNIZ <c>Branch</c> boşken
-    /// koşuyordu, yani ilk Sync <c>"main"</c> yazıp diske persist ediyordu. Kullanıcı terminalde
-    /// <c>git checkout feature/y</c> yapınca uygulama kendini ASLA düzeltemiyordu: <c>Branch</c> <c>"main"</c>
-    /// kalıyor, <see cref="IsWorktreeForced"/> true oluyor ve build <c>main</c>'in committed HEAD'ini
-    /// derliyordu — kullanıcı <c>feature/y</c> üzerindeyken. Ayrım sayesinde AÇIK OLMAYAN her değer
-    /// envanterle birlikte TAZELENİR.</para>
+    /// <para>Ekran motorun cevabına kadar DEĞİŞMEZ: <see cref="Branch"/> yine yalnız envanterden yazılır
+    /// (<see cref="OnBranchList"/>), konsol TIKLAMADA temizlenmez — bölümü yalnız başarılı bir checkout'un
+    /// cevabı açar (<see cref="OnCheckoutCompletedAsync"/>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — spec 2026-09-18 §1-1 → §6.3]</b> Worktree döneminde seçim onu worktree'de
+    /// derlenecek HEDEF yapardı; worktree kalkınca (Task 4) seçim bir süre HİÇBİR ŞEY yapmadı. Artık checkout
+    /// eder.</para>
     /// </summary>
-    private bool _branchChosenByUser;
-
-    /// <summary>[test yüzeyi] Bkz. <see cref="_branchChosenByUser"/>.</summary>
-    internal bool BranchChosenByUser => _branchChosenByUser;
-
-    /// <summary>
-    /// [T2 fix-1 · C1/I4] <see cref="StartRunCommand.Branch"/>'e giden değer — <see cref="Branch"/>'ten
-    /// KASITLI olarak farklıdır.
-    ///
-    /// <para><b>Karar:</b> <c>Branch</c> bir <b>görüntüleme</b> değeridir (chip · title bar · popover source
-    /// satırı). Supervisor içinse bu alan bir <b>NİYET</b>tir: dolu gelmesi (a) worktree'yi ZORUNLU kılan
-    /// 3-durum matrisini devreye sokar (<c>Supervisor/Program.cs:215-216</c>) ve (b) "aktif branch çözülemedi"
-    /// (detached HEAD / bozuk git) durumunu <c>warn + in-place</c> yerine <b>run'ı hiç başlatmayan</b> bir
-    /// hataya çevirir (<c>:207-208</c>). Bir seed değerini niyet diye göndermek tam da C1/I4'ün kök nedenidir.
-    /// Bu yüzden komuta YALNIZ kullanıcının açık seçimi gider; aksi halde boş — ve Supervisor'ın zaten yazılı
-    /// olan sözleşmesi devreye girer: <i>"Branch boş gelirse niyet aktif branch'in COMMITTED hâlidir"</i>
-    /// (<c>Program.cs:214</c>), <c>UseWorktree</c> kapalıysa tek bir git çağrısı bile yapılmadan in-place
-    /// (<c>:183</c>). Yani açık seçim yapmamış kullanıcı için davranış T2 ÖNCESİYLE birebir aynıdır.</para>
-    ///
-    /// <para><b>Sync BUNU KULLANMAZ</b> ve kullanmamalıdır: <c>SyncWorkspaceCommand.Branch</c> yalnız
-    /// <c>git fetch origin &lt;ref&gt;</c>'in ref'ini ve <c>syncCompleted</c> echo'sunu besler, worktree
-    /// matrisini DEĞİL. Orada görüntüleme değeri doğru olandır (aksi halde fetch boş ref'e giderdi).</para>
-    /// </summary>
-    internal string RunBranchIntent => _branchChosenByUser ? Branch : "";
-
-    /// <summary>
-    /// [T2 fix-1 · C1] <b>Worktree'nin ETKİN durumu</b> — <c>forced || kullanıcının toggle'ı</c>. Kullanıcıya
-    /// gösterilen ve motora giden TEK doğruluk kaynağı budur; <see cref="UseWorktree"/> yalnız kullanıcının
-    /// KENDİ tercihini taşır (kalıcı duruma yazılan da odur).
-    ///
-    /// <para><b>Ölçülen kusur:</b> zorlamayı yalnız <see cref="SelectBranch"/> uyguluyordu (<c>UseWorktree</c>'yi
-    /// mutasyona uğratarak); seed yolu uygulamıyordu. Sonuç <b>forced + <c>UseWorktree=false</c></b>
-    /// kombinasyonuydu: build worktree'yi ZORUNLU açıp başka bir branch'in committed HEAD'ini derlerken chip
-    /// <c>"off"</c>, popover switch'i işaretsiz-ve-disabled ve source satırı "working directory — local changes
-    /// included" diyordu — UI motorun yapacağının TERSİNİ gösteriyordu. Türetilmiş değerle o kombinasyon
-    /// ÜRETİLEMEZ hâle gelir.</para>
-    ///
-    /// <para><b>Neden mutasyon DEĞİL türetim:</b> prototipin semantiği de budur (<c>BuildApp.jsx:1153</c>
-    /// <c>wtActive = forced || wtOn</c>) — zorlama bir KATMANDIR, kullanıcının tercihini KALICI olarak
-    /// ezmez. Mutasyon denendi ve ölçüldü: aktif-olmayan bir branch'ten aktife DÖNÜNCE kullanıcının
-    /// <c>false</c> tercihi geri gelmiyordu (<c>ActionBarTests.Selecting_the_active_branch_…</c> kırmızı
-    /// verdi) ve zorlama diske persist ediliyordu.</para>
-    /// </summary>
-    public bool EffectiveUseWorktree => UseWorktree || IsWorktreeForced;
-
-    /// <summary>
-    /// [T40 · K3 — prototipten SAPMA, plan kazanır (BuildApp.jsx:1336-1353)] Branch seçimi. Aktif-OLMAYAN bir branch
-    /// seçilince: worktree ZORUNLU ON, proje durumları Pending'e sıfırlanır, faz <see cref="AppPhase.Boot"/>'a düşer
-    /// ve konsola İKİ niyet satırı yazılır — <c>git switch --detach …</c> satırı <b>YAZILMAZ</b> (prototipteki o
-    /// satır App'te yanıltıcı olurdu: gerçek switch Build anında worktree kurulumunda olur). Aktif branch seçilince:
-    /// yalnız <see cref="Branch"/> set edilir (worktree zorlaması/reset YOK).
-    /// </summary>
-    public void SelectBranch(BranchRef branch)
+    public async Task SelectBranch(BranchRef branch)
     {
         ArgumentNullException.ThrowIfNull(branch);
-        // [T2 fix-1 · C1] AÇIK seçim: bundan sonra envanter seed'i bu değeri EZMEZ ve StartRunCommand'a
-        // gerçek bir NİYET olarak gider (bkz. RunBranchIntent).
-        _branchChosenByUser = true;
-        Branch = branch.Name;
-        NotifyBehindChip();   // [v1.16.0] seçim aktif branch'ten ayrılınca (ya da ona dönünce) chip değişir
-        if (branch.IsActive) return; // aktif branch: worktree zorlaması/reset/niyet-satırı YOK
+        if (branch.IsActive) return;
+        if (!RefreshGitWritesAllowed() || !CanSwitchBranch) return; // [spec §6.4] yoklama bayat olabilir
 
-        WorktreeName = null;  // seçili hedef worktree'yi auto'ya döndür (BuildApp.jsx:1340)
-        UseWorktree = true;   // aktif-olmayan branch → kullanıcının toggle'ı da açılır (BuildApp.jsx:1342)
-        // BuildApp.jsx:1345-1346 status='discovered' → Pending, will='unknown' → hollow, eng.willBuild = new Set()
-        ResetRowsToHollow();
-        Phase = AppPhase.Boot;       // BuildApp.jsx:1347
-        string sha7 = Short7(branch.Sha);
-        AppendRunLine($"branch target: {branch.Name} ({sha7}) — worktree will be used at Build");
-        AppendRunLine($"Branch changed: {branch.Name} — Sync required"); // BuildApp.jsx:1350
+        CurrentOperation = OperationLabel.Checkout;
+        SetCheckoutBusy(true); // kapı GÖNDERİMDEN ÖNCE kapanır — ikinci tık ikinci bir checkout kuyruklatırdı
+        ArmEngineWatchdog();
+        bool sent = await TrySendAsync(
+            new CheckoutBranchCommand(RootPath, branch.Name, branch.IsRemoteTracking, StashOnBranchSwitch), "checkoutBranch");
+        // Gönderim SENKRON düştüyse (motor hazır değil/ölü) hiçbir cevap GELMEYECEK — kilit burada açılmazsa
+        // chip kalıcı pasif kalırdı.
+        if (!sent)
+        {
+            SetCheckoutBusy(false);
+            CurrentOperation = null; // pill "SWITCHING BRANCH"ta asılı kalmasın
+        }
     }
 
-    /// <summary>Branch popover'daki mono SHA + niyet satırındaki <c>{sha7}</c> için 7-haneli kısaltma (uzunsa kırp,
-    /// zaten kısaysa olduğu gibi) — brief 7-hane pinler.</summary>
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Branch chip'inin TEK kapısı — chip'in <c>IsEnabled</c>'ı bunu okur. Koşu
+    /// uçuştayken (derlenen ağaç altından değişmemeli), bir Sync/Clean/Optimize sürerken (onlar ağacı okur ya da
+    /// değiştirir), motor erişilemezken ve bir checkout zaten uçuştayken kapalıdır.
+    /// <para>BİLDİRİMLİDİR: meşgul yüzeylerin geçişleri <see cref="NotifySyncGatedCommands"/>'dan, checkout'unki
+    /// <see cref="SetCheckoutBusy"/>'den duyurulur; koşu ve motor durumunu bar kendi abonelikleriyle izler.</para>
+    /// <para>[spec 2026-09-18 §6.4] Git dizininde yarıda bir işlem (merge, rebase, cherry-pick, revert, çalışan bir git
+    /// komutu) varken de kapalıdır; nedeni <see cref="GitOperationTooltip"/> söyler.</para>
+    /// </summary>
+    public bool CanSwitchBranch => HasWorkspace && WorkspaceGateOpen && GitWritesAllowed;
+
+    /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
+    /// brief 7-hane pinler.</summary>
     internal static string Short7(string sha) => sha.Length > 7 ? sha[..7] : sha;
 
     /// <summary>
@@ -151,31 +95,6 @@ public sealed partial class RunViewModel
     /// gösterilir — 7 haneye kırpmak yalnız tam sha için anlamlıdır.
     /// </summary>
     internal static string ShortSha(string? revision) => Core.Git.RevisionText.Short(revision);
-
-    // ---------------------------------------------------------------- [T40] worktree auto-ad + silme
-
-    /// <summary>[T40] Worktree otomatik adı (BuildApp.jsx:1154-1155): slug = branch'te <c>/</c>→<c>-</c>; ek sayı =
-    /// (aynı slug önekiyle başlayan mevcut worktree sayısı) + 1. Saf/statik — WPF'siz test edilir.</summary>
-    public static string AutoWorktreeName(string branch, IEnumerable<Worktree> worktrees)
-    {
-        string slug = branch.Replace('/', '-');
-        int existing = worktrees.Count(w => w.Name.StartsWith(slug, StringComparison.Ordinal));
-        return string.Create(CultureInfo.InvariantCulture, $"{slug}-{existing + 1}");
-    }
-
-    /// <summary>[T40] Seçili worktree adı; auto (<c>null</c>) ise türetilen ada döner (worktree chip değeri + popover
-    /// hedef satırı bunu okur).</summary>
-    public string EffectiveWorktreeName => WorktreeName ?? AutoWorktreeName(Branch, Worktrees);
-
-    /// <summary>[T40] Havuzdan bir worktree sil (BuildApp.jsx:1582): <see cref="DeleteWorktreeCommand"/> gönderilir ve
-    /// konsola dim satır yazılır. Silinen worktree seçiliyse seçim auto'ya döner. Supervisor silince güncel envanteri
-    /// (<see cref="WorktreeListEvent"/>) yayınlar — liste ORADAN uzlaşır (yerel <see cref="Worktrees"/> reset'i YOK).</summary>
-    public async Task DeleteWorktreeAsync(string name)
-    {
-        if (string.Equals(WorktreeName, name, StringComparison.Ordinal)) WorktreeName = null;
-        AppendRunLine($"worktree removed: {name}");
-        await TrySendAsync(new DeleteWorktreeCommand(RootPath, name), "deleteWorktree");
-    }
 
     // ---------------------------------------------------------------- [D6 persistence] perf seed
 
@@ -247,6 +166,21 @@ public sealed partial class RunViewModel
             : "Pull before build off — external working copies are used as they are");
     }
 
+    /// <summary>
+    /// [spec 2026-09-18 §6.3] Settings Save: "Stash and switch branches" switch'ini uygular. Değer bir sonraki
+    /// <see cref="CheckoutBranchCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
+    /// (<see cref="ApplyPullExternals"/> deseni) — değişmeyen bir ayar her Save'de gürültü olurdu. Harici proje
+    /// koşulunun karşılığı yoktur: bu ayar her repoda anlamlıdır.
+    /// </summary>
+    private void ApplyStashOnBranchSwitch(bool stash)
+    {
+        if (stash == StashOnBranchSwitch) return;
+        StashOnBranchSwitch = stash;
+        AppendRunLine(stash
+            ? "Stash and switch branches on — uncommitted changes are stashed before a branch switch"
+            : "Stash and switch branches off — a branch switch stops while there are uncommitted changes");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -256,12 +190,14 @@ public sealed partial class RunViewModel
     /// <para><b>Sync KOŞULSUZdur:</b> "repo mu katman mı değişti" ayrımı YAPILMAZ — Save'e basmak
     /// "senkronize et" demektir ve Sync salt-okurdur, tekrarı zararsızdır. ÜÇ kapı vardır:</para>
     ///
-    /// <para>(a) <b>Koşu uçuşta</b> (<see cref="IsMidRunLocked"/>): katmanlar yine uygulanır ama kök DEĞİŞMEZ
-    /// ve Sync GİTMEZ — koşan bir build'in kökünü altından çekmek doğru değildir
-    /// (<see cref="ChangeRepositoryAsync"/> de mid-run'da no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa
-    /// konsola TEK satır düşer: diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur (etiket taslaktan
-    /// okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır YAZILMAZ —
-    /// katman-only bir Save'de gürültü olurdu.</para>
+    /// <para>(a) <b>Koşu ya da workspace işi uçuşta</b> (<see cref="WorkspaceIdle"/> değil): katmanlar yine uygulanır
+    /// ama kök DEĞİŞMEZ ve Sync GİTMEZ — koşan bir build'in ya da uçuştaki bir Sync/Clean/Optimize/checkout/pull'un
+    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu (<see cref="ChangeRepositoryAsync"/>
+    /// de aynı kapıda no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa konsola TEK satır düşer
+    /// (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur
+    /// (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır
+    /// YAZILMAZ — katman-only bir Save'de gürültü olurdu. [final review M3] Eskiden kapı yalnız koşuyu soruyordu:
+    /// pull uçuşken Save ikinci bir Sync gönderirdi.</para>
     ///
     /// <para>(b) <b>Kök yok</b>: gidecek bir kök yoksa Sync anlamsızdır. Bu kapı <see cref="ApplyRepositoryRoot"/>
     /// çağrısından SONRA gelmek ZORUNDADIR — ilk repo Settings'ten seçildiğinde <see cref="RootPath"/> tam da
@@ -281,24 +217,26 @@ public sealed partial class RunViewModel
     /// (motora dokunmaz, mid-run kilidinden ETKİLENMEZ — <see cref="ApplyLayerPatterns"/> ile AYNI gerekçe:
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
     /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
+    /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true)
+        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false)
     {
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
-        if (IsMidRunLocked)
+        ApplyStashOnBranchSwitch(stashOnBranchSwitch);
+        if (!WorkspaceIdle)
         {
-            if (IsRepositoryChange(repositoryRoot)) AppendRunLine("Repository change deferred — run in flight");
+            if (IsRepositoryChange(repositoryRoot)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
             return;
         }
-        ApplyRepositoryRoot(repositoryRoot);
+        bool rootChanged = ApplyRepositoryRoot(repositoryRoot);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
-        // [D3/T5 · design v1.13.2] clearBuffers:false — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten
-        // HEMEN ÖNCE KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); ikinci bir clear onu da silerdi.
-        await SyncCoreAsync(clearBuffers: false);
+        // [D3/T5 · design v1.13.2] Appended — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE
+        // KENDİ notunu yazdı (bkz. SyncCoreAsync XML doc'u); bir temizlik onu da silerdi.
+        await SyncAfterRootChangeAsync(rootChanged);
     }
 
     /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
@@ -307,12 +245,26 @@ public sealed partial class RunViewModel
     /// seçici çağıranın enjekte ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır.</summary>
     public async Task ChangeRepositoryAsync(string path)
     {
-        if (IsMidRunLocked) return;
+        if (!WorkspaceIdle) return; // [final review M3] koşu YA DA workspace işi uçuştayken kök çekilmez
         if (!ApplyRepositoryRoot(path)) return;
-        // [D3/T5 · design v1.13.2] clearBuffers:false — ilk kurulumda not YOK (konsol zaten boş), sonraki bir
-        // kök değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; ikinci bir clear onu
-        // da silerdi (bkz. SyncCoreAsync XML doc'u).
-        await SyncCoreAsync(clearBuffers: false);
+        // [D3/T5 · design v1.13.2] Appended — ilk kurulumda not YOK (konsol zaten boş), sonraki bir kök
+        // değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; bir temizlik onu da silerdi.
+        await SyncAfterRootChangeAsync(rootChanged: true);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Settings Save ve Choose Folder'ın Sync'i (<see cref="SyncMode.Appended"/>).
+    /// Kök GERÇEKTEN değiştiyse plan yüzeyi önce boşaltılır (<see cref="ClearPlanSurface"/>): Sync artık listeyi
+    /// kendisi boşaltmaz ve eski reponun (kararsız) satırları yeni reponun topolojisi gelene dek ekranda kalırdı.
+    /// <para>İki çağıran: <see cref="ApplySettingsAsync"/> bayrağı <see cref="ApplyRepositoryRoot"/>'un sonucundan
+    /// geçer (katman-only bir Save'de <c>false</c> — yüzey boşalmaz) ve motor erişilemezken buraya hiç gelmez: o
+    /// yolda satırlar yalnız kararları düşmüş hâlde kalır (<see cref="ResetRowsToHollow"/>), çünkü onları geri
+    /// getirecek bir topoloji gelmeyecektir. <see cref="ChangeRepositoryAsync"/> yalnız kök gerçekten değiştiyse
+    /// buraya iner ve her zaman <c>true</c> geçer; motor erişilemezlik kapısı YOKTUR — gönderim düşer, yüzey boş
+    /// ve faz Boot kalır, yeni kök bir sonraki Sync'le dolar.</para></summary>
+    private Task SyncAfterRootChangeAsync(bool rootChanged)
+    {
+        if (rootChanged) ClearPlanSurface();
+        return SyncCoreAsync(SyncMode.Appended);
     }
 
     /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
@@ -331,6 +283,7 @@ public sealed partial class RunViewModel
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();
+        ForgetLastSync(); // [spec 2026-09-18 §6.1] eski kökün HEAD'i yeni kökte kıyas tabanı olamaz
         return true;
     }
 
@@ -341,6 +294,12 @@ public sealed partial class RunViewModel
     /// başka bir şey anlatırdı.</summary>
     private bool IsRepositoryChange([NotNullWhen(true)] string? path) =>
         !string.IsNullOrEmpty(path) && !string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[final review M3] Save'in ertelediği kök değişiminin konsol notu — TEK yer. Koşu uçuştayken
+    /// <c>run in flight</c>, bir workspace işi (Sync, Clean, Optimize, checkout, pull) uçuştayken
+    /// <c>operation in flight</c>.</summary>
+    internal static string RepositoryChangeDeferredLine(bool runInFlight) =>
+        "Repository change deferred — " + (runInFlight ? "run in flight" : "operation in flight");
 
     /// <summary>[design v1.8.0 §2.9] Kök değişiminin konsol notu — BİREBİR metin, TEK yer.</summary>
     internal static string RepositoryRootChangedLine(string path) =>
@@ -354,34 +313,39 @@ public sealed partial class RunViewModel
     /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel
     /// "<c>No projects found under this folder.</c>" derdi ve bu YANLIŞ olurdu.</para>
     ///
-    /// <para>İki çağıranı vardır ve ikisi de "elimizdeki kararlar artık geçerli değil" demenin ayrı bir
-    /// biçimidir: branch değişimi (<see cref="SelectBranch"/>) ve repo değişimi
-    /// (<see cref="ApplyRepositoryRoot"/>). İkili blok TEK yerde durur (kopya YASAK); çağıranların kendine ait
-    /// olan tek şey konsol notu ve faz seçimidir. <b>Clean bundan DAHA İLERİ gider</b> —
-    /// <see cref="ClearPlanSurface"/>: orada satırlar da düğümler de kalkar.</para></summary>
+    /// <para>Tek çağıranı repo değişimidir (<see cref="ApplyRepositoryRoot"/>): elimizdeki kararlar yeni kök
+    /// için geçerli değildir. <b>Clean bundan DAHA İLERİ gider</b> — <see cref="ClearPlanSurface"/>: orada
+    /// satırlar da düğümler de kalkar.</para></summary>
     private void ResetRowsToHollow()
     {
         foreach (var row in Projects)
         {
             row.State = ProjectRowState.Pending;
             row.WillBuild = null;
+            // [spec 2026-09-18 §1-15] Karar düşünce defter notu da düşer: üçgen artık gerekçeden de okunur
+            // (ProjectRowViewModel.WarningRoots) ve bilinmiyor modundaki bir satır bekleyen bir bağımlılık
+            // iddia edemez. Gerekçe + kökler kararla birlikte gider.
+            row.WillBuildReason = null;
+            row.DependencyRoots = null;
             row.DepIssues = null;
             row.DurationMs = 0;
         }
         ClearPreviewSets();     // kümeler ADD-ONLY'dir: temizlenmezse şeritteki wb sayacı bayat kalır
         RefreshRunSurface();    // sayaç/görünür-liste + willBuild yüzeyi
+        RaiseRowDecisionsChanged(); // [Task 4 review I-1] graf da başlangıç moduna AYNI anda düşer
     }
 
     /// <summary>
     /// [clean · kullanıcı kararı 2026-09-12] Plan yüzeyini TAMAMEN boşaltır: satırlar, topoloji (yani graf),
-    /// döngü haritası ve will-build kümesi. Tek çağıranı Clean'in tıklama anıdır — çıktılar siliniyor,
-    /// dolayısıyla ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor. Liste yeniden Sync'in
-    /// yayınladığı topolojiyle dolar.
+    /// döngü haritası ve will-build kümesi. Çağıranlar Clean ve Optimize'ın tıklama anı (çıktılar siliniyor/
+    /// onarılıyor, ekranda duran hiçbir şey artık diskte bir şeye karşılık gelmiyor) ve Sync'e giden gerçek bir
+    /// kök değişimidir (<see cref="SyncAfterRootChangeAsync"/>). Sync'in kendisi boşaltmaz (spec 2026-09-18 §1-13).
+    /// Liste yeniden Sync'in yayınladığı topolojiyle — imza unutulduğu için reveal'le — dolar.
     ///
     /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
     /// (<c>ListInvite.Resolve</c>) boş listeyi <c>Idle</c> fazında "klasörde proje yok" diye okur ve bu YANLIŞ
-    /// olurdu. Boot, "henüz bilinmiyor" demenin mevcut yoludur — <see cref="SelectBranch"/> aynı gerekçeyle aynı
-    /// şeyi yapar. Ardından gelen Sync fazı zaten <c>Syncing</c>'e taşır.</para>
+    /// olurdu. Boot, "henüz bilinmiyor" demenin mevcut yoludur. Ardından gelen Sync fazı zaten
+    /// <c>Syncing</c>'e taşır.</para>
     ///
     /// <para><see cref="TopologyChanged"/> AÇIKÇA ateşlenir: grafı kuran tek sinyal odur, yoksa liste boşalırken
     /// düğümler ekranda kalırdı.</para>
@@ -397,6 +361,9 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(HasTopology));
         Phase = AppPhase.Boot;
         ClearPreviewSets();
+        // [spec 2026-09-18 §6.2] İmza da unutulur: boşalan liste, zincirlenen Sync AYNI yapıyı getirse de
+        // reveal'le dolmalıdır (OnWorkspaceTopology yalnız imza değişince ateşler).
+        _lastTopologySignature = null;
         TopologyChanged?.Invoke(this, EventArgs.Empty);
         RefreshRunSurface();
     }

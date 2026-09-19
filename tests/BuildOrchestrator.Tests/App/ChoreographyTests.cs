@@ -296,9 +296,10 @@ public class ChoreographyTests
     [StaFact]
     public void The_wave_fades_a_node_into_amber_instead_of_snapping_it()
     {
-        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        // [design v1.20.0] Eski düz gri `Discovered` kalktı; aynı gri artık `Stale`'dir (derlenecek).
+        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Stale));
         var square = view.NodeVisuals["a"].Square;
-        var greyToken = TokenBrush(view, VisualStatus.Discovered);
+        var greyToken = TokenBrush(view, VisualStatus.Stale);
         var amberToken = TokenBrush(view, VisualStatus.Marked);
         Assert.Same(greyToken, square.Stroke);       // ön-koşul: normalde PAYLAŞILAN token fırçası
         Assert.NotEqual(greyToken.Color, amberToken.Color);
@@ -318,7 +319,7 @@ public class ChoreographyTests
     [StaFact]
     public void Outside_the_choreography_a_node_keeps_the_shared_token_brush()
     {
-        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Discovered));
+        var view = Graph(new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Stale));
         var square = view.NodeVisuals["a"].Square;
 
         view.SetMarking(MarkStep.Wave, new HashSet<string>(["a"], StringComparer.Ordinal), NoOrder);
@@ -343,7 +344,7 @@ public class ChoreographyTests
             new GraphNode("a", "a", 0, GraphStatus.Discovered, VisualStatus.Marked),
             new GraphNode("b", "b", 1, GraphStatus.Discovered, VisualStatus.Marked),
             new GraphNode("c", "c", 2, GraphStatus.Discovered, VisualStatus.Marked),
-            new GraphNode("env", "env", 3, GraphStatus.Discovered, VisualStatus.Discovered));
+            new GraphNode("env", "env", 3, GraphStatus.Discovered, VisualStatus.Stale));
 
         var marked = new HashSet<string>(["a", "b", "c"], StringComparer.Ordinal);
         var order = new Dictionary<string, int> { ["a"] = 0, ["b"] = 1, ["c"] = 2 };
@@ -456,7 +457,7 @@ public class ChoreographyTests
         var window = DsResources.Realize(host, row);
 
         var stripe = (System.Windows.Shapes.Shape)row.FindName("PART_Stripe");
-        var greyToken = (SolidColorBrush)row.FindResource(VisualStatuses.StripeBrushKey(VisualStatus.Discovered));
+        var greyToken = (SolidColorBrush)row.FindResource(VisualStatuses.StripeBrushKey(VisualStatus.Unknown));
         var amberToken = (SolidColorBrush)row.FindResource(VisualStatuses.StripeBrushKey(VisualStatus.Marked));
         Assert.Same(greyToken, stripe.Fill); // ön-koşul: paylaşılan token fırçası
 
@@ -592,10 +593,12 @@ public class ChoreographyTests
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node("A", 0), Node("B", 1), Node("C", 2)], [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 1));
+        // [T4 review ledger (b)] Önizleme GEREKÇELİDİR (Sync'in gerçek çıktısı): renk iddiaları gerçek bir
+        // çıktı durumu üzerinde sınanır — gerekçesiz karar Unknown→Unknown'dan başka bir şey ölçemezdi.
         vm.OnEvent(new BuildPreviewEvent([
-            new BuildPreviewItem(@"C:\p\A.csproj", "A", true),
-            new BuildPreviewItem(@"C:\p\B.csproj", "B", true),
-            new BuildPreviewItem(@"C:\p\C.csproj", "C", false),
+            new BuildPreviewItem(@"C:\p\A.csproj", "A", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(@"C:\p\B.csproj", "B", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(@"C:\p\C.csproj", "C", false, Reason: WillBuildReason.UpToDate),
         ]));
         return (vm, new OperationChoreographer(() => animations));
     }
@@ -697,8 +700,6 @@ public class ChoreographyTests
     {
         var (vm, driver) = Driven();
 
-        // Üretim sırası: önce  (başlangıç modu düşer — RunViewModel.BeginRunAsync), sonra .
-        foreach (var row in vm.Projects) row.Fresh = false;
         foreach (var row in vm.Projects) row.Fade = StaleFade; // koreografi ÖNCESİ kir
 
         driver.Play(vm.Projects, vm.ScopeFor(RunMode.Build));
@@ -707,7 +708,9 @@ public class ChoreographyTests
         // Dalga: kapsam tek tek amber'a yanar.
         DispatcherPump.PumpUntil(() => vm.Projects.Count(r => r.Marked) == 2, TimeSpan.FromSeconds(3));
         Assert.Equal(VisualStatus.Marked, vm.Projects.Single(r => r.Name == "A").VisualStatus);
-        Assert.Equal(VisualStatus.Discovered, vm.Projects.Single(r => r.Name == "C").VisualStatus);
+        // [DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski: kapsam dışı C nötr griye (Discovered) düşer. Discovered
+        // kalktı; C kendi çıktı durumunu korur (güncel → yeşil). Amber DEĞİL.
+        Assert.Equal(VisualStatus.Current, vm.Projects.Single(r => r.Name == "C").VisualStatus);
 
         // Veda: grafta kapsam dışı satır (node) ÖNCE söner — ama LİSTEDE satır opaklığı sabit 1 kalır.
         DispatcherPump.PumpUntil(() => driver.Step == MarkStep.DimEnv, TimeSpan.FromSeconds(4));

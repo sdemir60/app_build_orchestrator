@@ -39,7 +39,10 @@ internal static class MainWindowHost
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        {
+            LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
+        };
         beforeVm?.Invoke(vm);
         var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);

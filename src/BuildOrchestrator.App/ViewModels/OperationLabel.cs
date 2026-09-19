@@ -36,6 +36,9 @@ public static class OperationLabel
     /// (yalnız <c>/t:Clean</c>) ile karıştırılmasın diye ayrı sözcük (prototip: <c>DEEP CLEAN</c>).</summary>
     public const string DeepClean = "DEEP CLEAN";
     public const string Optimize = "OPTIMIZE";
+    /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout (<c>RunViewModel.SelectBranch</c>). Başarıda
+    /// zincirlenen Sync pill'i <see cref="Sync"/>'e çevirir; ret/hata pill'i düşürür.</summary>
+    public const string Checkout = "SWITCHING BRANCH";
 
     /// <summary>Bir <c>RunMode</c>'un pill etiketi. Motor modu ile pill sözcüğü arasındaki TEK eşleme yeri —
     /// hedefli (satırdan tetiklenen) bir koşu da dahil, pill'in TEK üreticisi budur (v1.13.2).</summary>

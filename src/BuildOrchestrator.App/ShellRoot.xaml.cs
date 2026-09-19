@@ -76,7 +76,7 @@ public partial class ShellRoot : UserControl
     /// <summary>[E5/T46] Ctrl+F → proje filtre input'una odak (BuildApp.jsx:1306-1309). Odak başarılıysa true.</summary>
     public bool FocusProjectFilter() => _projectFilter.Focus();
 
-    /// <summary>[E5/T46] Açık bir branch/worktree popover'ı ya da build menüsü var mı — Esc zincirinin popover
+    /// <summary>[E5/T46] Açık bir branch popover'ı ya da build menüsü var mı — Esc zincirinin popover
     /// katmanı (MainWindow bunu <see cref="Shell.KeyboardShortcuts.ResolveEsc"/>'e verir).</summary>
     public bool AnyPopoverOpen => PART_ActionBar.AnyPopoverOpen;
 

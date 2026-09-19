@@ -14,15 +14,23 @@ public static class AccessibilityNames
 {
     // ---- Action bar: durum/filtre sayaç chip'leri (AYNI metin tooltip + UIA-adı) ----
     public const string FilterAll = "All projects — clear filters";
-    public const string FilterBuilding = "Building now — filter";
-    public const string FilterSucceeded = "Succeeded — filter";
-    public const string FilterFailed = "Failed — filter";
-    public const string FilterSkipped = "Skipped — filter";
+    /// <summary>Derleniyor chip'i — sözcük DURUM chip'leriyle aynı kaynaktan (<see cref="StateFilter"/>), satırın
+    /// koşu bindirmesi "Building" duyurusuyla ve filtre etiketiyle AYNI.</summary>
+    public static readonly string FilterBuilding = StateFilter(Controls.VisualStatus.Building);
+    /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ DURUM chip'leri. Sözcük, filtre etiketi ve satırın ekran-okuyucu
+    /// adıyla AYNI kaynaktandır (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>).
+    /// <b>[DEĞİŞEN KURAL]</b> Eskiden koşu sonucu chip'leri vardı: <c>FilterSucceeded</c> ("Succeeded — filter") ve
+    /// <c>FilterSkipped</c> ("Skipped — filter"); chip'ler artık durumu sayar ve atlandı chip'i kalktı.</summary>
+    public static readonly string FilterCurrent = StateFilter(Controls.VisualStatus.Current);
+    public static readonly string FilterStale = StateFilter(Controls.VisualStatus.Stale);
+    public static readonly string FilterFailed = StateFilter(Controls.VisualStatus.Failed);
+    private static string StateFilter(Controls.VisualStatus shown) => Controls.StatusGlyph.LabelFor(shown) + " — filter";
     /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i. <b>[DEĞİŞEN KURAL]</b> Burada eskiden İKİ ad
     /// vardı — <c>FilterDep</c> ("Dependency-affected — filter") ve <c>FilterCycle</c> ("In a dependency cycle
     /// — filter"). v1.11.0 turuncuyu UI'dan çıkardı ve iki uyarıyı TEK amber üçgende birleştirdi; filtre de
-    /// tekleşti.</summary>
-    public const string FilterWarn = "Warnings — dependency cycle or dependency issue";
+    /// tekleşti. <b>[DEĞİŞEN KURAL — design v1.20.0 §2.7]</b> Ad "Warnings — dependency cycle or dependency issue"
+    /// idi; ⚠ artık defterdeki bekleyen bağımlılık notunu da sayar ve tasarımın tooltip metnini taşır.</summary>
+    public const string FilterWarn = "In a dependency cycle or waiting on a dependency — filter";
 
     // ---- Action bar: birincil kontroller ----
     public const string SyncButton = "Sync";
@@ -105,12 +113,12 @@ public static class AccessibilityNames
     }
 
     public const string StopButton = "Stop build";
-    public const string BranchChip = "Branch — choose build target";
+    /// <summary>[spec 2026-09-18 §6.3] Chip bir hedef seçmez, çalışma ağacının branch'ini değiştirir (checkout).</summary>
+    public const string BranchChip = "Branch — switch the checked-out branch";
 
     /// <summary>[design v1.16.0 §2.7-6a] <c>N behind</c> chip'i. Sayı bilindiğinde ad SAYIYLA yeniden
     /// yazılır (<c>"3 behind"</c>) — burada duran, chip henüz hiç veri görmemişken geçerli olan addır.</summary>
     public const string BehindChip = "Behind the remote — click to fast-forward";
-    public const string WorktreeChip = "Worktree — build isolation";
     public const string PerfChip = "Performance profile";
     public const string BuildOptions = "Build options";
 
@@ -120,7 +128,6 @@ public static class AccessibilityNames
     /// ekran okuyucuya bir şey söylemez — işlev burada tarif edilir).</summary>
     public const string ClearFilterChip = "Clear the active filter";
     public const string BranchFilter = "Filter branches";
-    public const string WorktreeSwitch = "Build in worktree";
 
     // ---- [About] Title bar ----
     /// <summary>Title bar'daki ikon-yalnız info butonu. Tooltip'ten AYRIDIR: tooltip, kısayolu da anlatan
@@ -196,16 +203,8 @@ public static class AccessibilityNames
     /// kısa etiketi değil, ne güncellendiğini söyleyen bu adı duyar (GeneralSettingsCatalog).</summary>
     public const string PullExternalsBeforeBuild = "Pull external working copies before build";
 
-    // ---- [A13/T5] Worktree popover: hedef satırı ----
-    /// <summary>Hedef satırındaki çöp kutusunun tooltip'i (satır başına AYNI metin).</summary>
-    public const string DeleteWorktree = "Delete worktree";
-
-    /// <summary>Çöp kutusunun UIA adı: liste birden çok satır taşır ve hepsinde AYNI ikon durur — ad HANGİ
-    /// worktree'nin silineceğini söylemelidir (tooltip kısa kalır, ekran okuyucu tam bilgiyi alır).</summary>
-    public static string DeleteWorktreeNamed(string worktreeName) => $"{DeleteWorktree} {worktreeName}";
-
     /// <summary>[A13/T5] Graf düğümü — ad DÜĞÜM BAŞINA anlamlıdır: sabit bir "graph node" metni ekran
-    /// okuyucuya hiçbir şey söylemez. Tam proje adı + statü etiketi (<see cref="Controls.StatusGlyph.LabelFor"/>,
-    /// design-v1 EN_STATUS) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
+    /// okuyucuya hiçbir şey söylemez. Tam proje adı + düğümün GÖSTERDİĞİ durumun sözcüğü
+    /// (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>) birleşir; ayraç, uygulamanın diğer birleşik adlarıyla aynı em-dash'tır.</summary>
     public static string GraphNode(string projectName, string statusLabel) => $"{projectName} — {statusLabel}";
 }

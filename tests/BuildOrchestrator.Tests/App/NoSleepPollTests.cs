@@ -80,6 +80,11 @@ public sealed class NoSleepPollTests
         // enjekte edilebilir bir dikiştir (TrayBuildIndicatorController.ExitBreath), yani testte gerçek bekleme
         // oluşmaz.
         [@"BuildOrchestrator.App\MainWindow.xaml.cs"] = 1,
+        // [Faz 2/T7] HEAD izleyicisinin sessizlik penceresinin (debounce, spec §6.1 — 1,5 s) üretim varsayılanı.
+        // POLL DEĞİLDİR: bekleme yalnız bir dosya bildirimiyle başlar ve her yeni bildirim onu İPTAL edip yeniden
+        // kurar; boştayken hiçbir bekleme yoktur. Beklenen şey bir handle değil bir SESSİZLİKTİR. Gecikme enjekte
+        // edilebilir (HeadWatcher ctor'u), saf test enjekte saatle koşar.
+        [@"BuildOrchestrator.Core\Git\HeadWatcher.cs"] = 1,
         // MSB302x contention retry'ının üretim varsayılanı — RunCoordinator'ın retryDelay dikişi.
         [@"BuildOrchestrator.Supervisor\RunCoordinator.cs"] = 1,
         // Test fixture'ı olarak SPAWN EDİLEN child process'in KENDİ komutu (powershell Start-Sleep); bizim

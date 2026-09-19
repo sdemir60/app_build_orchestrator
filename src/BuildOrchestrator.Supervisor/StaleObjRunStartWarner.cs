@@ -5,8 +5,7 @@ using BuildOrchestrator.Core.Discovery;
 namespace BuildOrchestrator.Supervisor;
 
 /// <summary>
-/// [T72/Task 14] SPIKE S2 (OSYS.Types.NewSales.Print vakası) — run başında IN-PLACE (worktree-izole OLMAYAN)
-/// projeler için <see cref="StaleObjDetector.Inspect"/>'i tetikler: bayat obj (yabancı-TFM restore artığı)
+/// [T72/Task 14] SPIKE S2 (OSYS.Types.NewSales.Print vakası) — run başında her proje için <see cref="StaleObjDetector.Inspect"/>'i tetikler: bayat obj (yabancı-TFM restore artığı)
 /// bulunan her proje için TEK bir warn satırı üretir. <see cref="StaleObjDetector"/> gibi hiçbir dosyaya
 /// DOKUNMAZ/silmez ve ASLA fırlatmaz — csproj okunamazsa (yok/bozuk/erişilemez, ör. bu sınıfın testlerindeki
 /// fake node'lar ya da RunCoordinatorTests'in gerçek dosyası olmayan Node() fixture'ları) ya da TFM
