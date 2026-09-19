@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using BuildOrchestrator.Core.Discovery;
 
 namespace BuildOrchestrator.Tests.Discovery;
@@ -180,6 +181,292 @@ public class CsprojEvaluatorTests
             Assert.Equal(2, ev.ProjectReferences.Count);
             Assert.Contains(ev.ProjectReferences, r => r.EndsWith("C.csproj", StringComparison.OrdinalIgnoreCase));
             Assert.Contains(ev.ProjectReferences, r => r.EndsWith("D.csproj", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [Faz 3/Task 1] OutputPath / OutputType / HintPathTargets
+
+    private static string WriteRealisticProj(string dir, string extraPropertyGroups)
+    {
+        Directory.CreateDirectory(dir);
+        string proj = Path.Combine(dir, "A.csproj");
+        File.WriteAllText(proj, $$"""
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <PropertyGroup>
+                <AssemblyName>OSYS.A</AssemblyName>
+                <OutputType>Library</OutputType>
+                <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+              </PropertyGroup>
+              {{extraPropertyGroups}}
+            </Project>
+            """);
+        return proj;
+    }
+
+    [Fact]
+    public void A_legacy_debug_group_gives_bin_debug_dll()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                  <OutputPath>bin\Debug\</OutputPath>
+                </PropertyGroup>
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+                  <OutputPath>bin\Release\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(Path.Combine(dir, "bin", "Debug", "OSYS.A.dll"), ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void The_release_group_is_picked_for_release()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                  <OutputPath>bin\Debug\</OutputPath>
+                </PropertyGroup>
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+                  <OutputPath>bin\Release\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(Path.Combine(dir, "bin", "Release", "OSYS.A.dll"), ev.OutputFileFor("Release"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void An_unconditional_output_path_applies()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup>
+                  <OutputPath>bin\Whatever\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(Path.Combine(dir, "bin", "Whatever", "OSYS.A.dll"), ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void A_later_matching_group_wins()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                  <OutputPath>bin\First\</OutputPath>
+                </PropertyGroup>
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                  <OutputPath>bin\Second\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(Path.Combine(dir, "bin", "Second", "OSYS.A.dll"), ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void No_output_path_falls_back_to_bin_configuration()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, "");
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Equal(Path.Combine(dir, "bin", "Debug", "OSYS.A.dll"), ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void A_platform_other_than_the_default_is_ignored()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x64' ">
+                  <OutputPath>bin\x64Debug\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            // Varsayilan platform AnyCPU'dur (Platform elemani AnyCPU verir); x64 grubu eslesmemeli, fallback kullanilir.
+            Assert.Equal(Path.Combine(dir, "bin", "Debug", "OSYS.A.dll"), ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Exe_and_WinExe_give_an_exe()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dirExe = Path.Combine(root, "Exe");
+            Directory.CreateDirectory(dirExe);
+            string projExe = Path.Combine(dirExe, "A.csproj");
+            File.WriteAllText(projExe, """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>OSYS.A</AssemblyName>
+                    <OutputType>Exe</OutputType>
+                  </PropertyGroup>
+                </Project>
+                """);
+            var evExe = new CsprojEvaluator().Evaluate(projExe);
+            Assert.Equal(Path.Combine(dirExe, "bin", "Debug", "OSYS.A.exe"), evExe.OutputFileFor("Debug"));
+
+            string dirWinExe = Path.Combine(root, "WinExe");
+            Directory.CreateDirectory(dirWinExe);
+            string projWinExe = Path.Combine(dirWinExe, "A.csproj");
+            File.WriteAllText(projWinExe, """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>OSYS.A</AssemblyName>
+                    <OutputType>WinExe</OutputType>
+                  </PropertyGroup>
+                </Project>
+                """);
+            var evWinExe = new CsprojEvaluator().Evaluate(projWinExe);
+            Assert.Equal(Path.Combine(dirWinExe, "bin", "Debug", "OSYS.A.exe"), evWinExe.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void No_output_type_gives_no_evidence()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            Directory.CreateDirectory(dir);
+            string proj = WriteProj(dir, "A.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup>
+                    <AssemblyName>OSYS.A</AssemblyName>
+                  </PropertyGroup>
+                  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+                    <OutputPath>bin\Debug\</OutputPath>
+                  </PropertyGroup>
+                </Project>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Null(ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Sdk_style_gives_no_evidence()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "S");
+            Directory.CreateDirectory(dir);
+            string proj = Path.Combine(dir, "S.csproj");
+            File.WriteAllText(proj, """
+                <Project Sdk="Microsoft.NET.Sdk">
+                  <PropertyGroup>
+                    <TargetFramework>net10.0</TargetFramework>
+                    <OutputType>Library</OutputType>
+                  </PropertyGroup>
+                </Project>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Null(ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void An_unreadable_condition_carrying_an_output_path_gives_no_evidence()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup Condition=" '$(Configuration)' != 'Release' ">
+                  <OutputPath>bin\NotRelease\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.True(ev.OutputPathUndecidable);
+            Assert.Null(ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void A_property_in_the_output_path_gives_no_evidence()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            string proj = WriteRealisticProj(dir, """
+                <PropertyGroup>
+                  <OutputPath>$(SolutionDir)bin\Debug\</OutputPath>
+                </PropertyGroup>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            Assert.Null(ev.OutputFileFor("Debug"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void Hint_path_targets_resolve_relative_and_skip_properties()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string dir = Path.Combine(root, "A");
+            Directory.CreateDirectory(dir);
+            string proj = WriteProj(dir, "A.csproj", """
+                <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+                  <PropertyGroup><AssemblyName>OSYS.A</AssemblyName></PropertyGroup>
+                  <ItemGroup>
+                    <Reference Include="OSYS.B"><HintPath>..\B\bin\OSYS.B.dll</HintPath></Reference>
+                    <Reference Include="OSYS.B.Dup"><HintPath>..\B\bin\OSYS.B.dll</HintPath></Reference>
+                    <Reference Include="Absolute"><HintPath>C:\Absolute\Foo.dll</HintPath></Reference>
+                    <Reference Include="WithProperty"><HintPath>$(SolutionDir)packages\X\X.dll</HintPath></Reference>
+                  </ItemGroup>
+                </Project>
+                """);
+            var ev = new CsprojEvaluator().Evaluate(proj);
+            var targets = ev.HintPathTargets();
+
+            Assert.Equal(2, targets.Count); // tekil: dup collapsed; property atlandi
+            Assert.DoesNotContain(targets, t => t.Contains("SolutionDir", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(targets, t => string.Equals(
+                t, Path.GetFullPath(Path.Combine(dir, "..", "B", "bin", "OSYS.B.dll")), StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(targets, t => string.Equals(t, @"C:\Absolute\Foo.dll", StringComparison.OrdinalIgnoreCase));
+            Assert.True(targets.SequenceEqual(targets.OrderBy(t => t, StringComparer.OrdinalIgnoreCase))); // sirali
         }
         finally { Directory.Delete(root, recursive: true); }
     }
