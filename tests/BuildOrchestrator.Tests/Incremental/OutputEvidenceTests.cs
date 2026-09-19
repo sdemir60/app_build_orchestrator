@@ -92,11 +92,15 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Equal(new OutputCheck(EvidenceMode.Ledger, false, true, null, At(ToolBuilt)), check);
         Assert.False(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: false));
         Assert.True(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: true));
-        Assert.Null(OutputEvidence.OutputBuiltAt(check));
+        Assert.Null(OutputEvidence.OutputBuiltAt(check, WillBuildReason.UpToDate));
     }
 
     /// <summary>§7-3, §7-4: değiştirip (ya da değiştirmeden) VS'de derledim — kanıt defterden ve girdilerden yeni,
-    /// havuz kopyası da yeni ⇒ zaman kipi, taze; "built outside" yaşı kanıtın zamanından.</summary>
+    /// havuz kopyası da yeni ⇒ zaman kipi, taze; "built outside" yaşı kanıtın zamanından.
+    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, ruling R10]</b> Eski iddia: taze kontrol ⇒ yaş her zaman
+    /// taşınır. Taze kontrollü proje kirli bir upstream'in arkasındaysa artık <c>OutputStale</c> ile derlenir
+    /// (§5.4 son cümle) ve yaş yalnız son gerekçe <c>BuiltOutside</c> iken taşınır — aksi hâlde derlenecek bir
+    /// satır "built outside 5m ago" derdi.</para></summary>
     [Fact]
     public void Built_elsewhere_after_the_tool_is_time_mode_and_fresh()
     {
@@ -107,7 +111,8 @@ public sealed class OutputEvidenceTests : IDisposable
         var check = Check(Record(ToolRun, fed: FedRel), folderAt: Later);
 
         Assert.Equal(new OutputCheck(EvidenceMode.Time, false, true, TimeVerdict.Fresh, At(ElsewhereBuilt)), check);
-        Assert.Equal(At(ElsewhereBuilt), OutputEvidence.OutputBuiltAt(check));
+        Assert.Equal(At(ElsewhereBuilt), OutputEvidence.OutputBuiltAt(check, WillBuildReason.BuiltOutside));
+        Assert.Null(OutputEvidence.OutputBuiltAt(check, WillBuildReason.OutputStale));
         // Zaman kipinde "kendi dosyası değişti mi" kanıttan gelir — defterin cevabı okunmaz.
         Assert.False(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: true));
     }
@@ -125,7 +130,7 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Equal(EvidenceMode.Time, check.Mode);
         Assert.Equal(TimeVerdict.OwnNewer, check.Time);
         Assert.True(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: false));
-        Assert.Null(OutputEvidence.OutputBuiltAt(check));
+        Assert.Null(OutputEvidence.OutputBuiltAt(check, WillBuildReason.OutputStale));
     }
 
     /// <summary>§7-15: VS'de derleme patladı — csc çıktı üretmez, eski çıktı değişen girdiden eski kalır ⇒
@@ -265,7 +270,7 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Equal(new OutputCheck(EvidenceMode.None, false, true, null, null), check);
         Assert.True(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: true));
         Assert.Null(OutputEvidence.OwnFilesChanged(check, ledgerAnswer: null));
-        Assert.Null(OutputEvidence.OutputBuiltAt(check));
+        Assert.Null(OutputEvidence.OutputBuiltAt(check, WillBuildReason.NeverBuilt));
     }
 
     /// <summary>§5.2: kaydın <c>LastRunAt</c>'ı yok ⇒ aracın derlediği bilinmiyor ⇒ zaman kipi.</summary>

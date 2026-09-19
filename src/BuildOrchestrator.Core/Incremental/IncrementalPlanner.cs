@@ -78,8 +78,9 @@ public static class IncrementalPlanner
     /// olarak "güncel" görünür. <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını AÇIKÇA yazar.</param>
     /// <param name="mode">Safe (varsayılan, dirty+transitive) veya Fast (yalnız dirty, cascade yok).</param>
     /// <param name="outputs">[Faz 3 — spec 2026-09-18 §5] projectId → çıktı kanıtı kontrolü (<see
-    /// cref="IncrementalRunBinder.ChecksFor"/>). Yalnız <see cref="WillBuildEvaluator"/>'a aktarılır; imza hesabı
-    /// onu OKUMAZ. <c>null</c> ya da eksik proje ⇒ bugünkü karar.</param>
+    /// cref="IncrementalRunBinder.ChecksFor"/>). Yalnız karara girer — <see cref="WillBuildEvaluator"/>'a aktarılır,
+    /// Safe'te kirli upstream'in arkasındaki zaman kipi düğümünü de derletir (<c>BehindDirtyUpstream</c>); imza
+    /// hesabı onu OKUMAZ. <c>null</c> ya da eksik proje ⇒ bugünkü karar.</param>
     /// <returns><paramref name="plan"/> ile aynı düğümler, her birinin <see cref="ProjectNode.WillBuild"/> alanı doldurulmuş.</returns>
     public static BuildPlan ComputeWillBuild(
         BuildPlan plan,
@@ -212,9 +213,66 @@ public static class IncrementalPlanner
         foreach (var node in plan.Nodes) Compute(node);
 
         // [Faz 3/Task 5] Kanıt YALNIZ karara aktarılır — yukarıdaki imza hesabı onu hiç görmez (§5).
-        Func<string, OutputCheck?>? outputOf = outputs is null ? null : id => outputs.GetValueOrDefault(id);
-        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup, buildCycles, outputOf),
-            computedMemo);
+        BuildPlan Decide(IReadOnlyDictionary<string, OutputCheck>? checks) => BuildPreview.ComputeWillBuild(
+            plan, node => computedMemo[node.Id], StateLookup, buildCycles,
+            checks is null ? null : id => checks.GetValueOrDefault(id));
+
+        var decided = Decide(outputs);
+        // [Faz 3 final review — ruling R10] Safe'te bağımlılar imzayla değerlendirilir (§5.4): kirli upstream'in
+        // arkasındaki zaman kipi düğümü de derlenir. Fast "yalnız dirty"dir, cascade yapmaz.
+        if (mode == DependentMode.Safe && outputs is not null
+            && BehindDirtyUpstream(decided, outputs) is { Count: > 0 } cascaded)
+            decided = Decide(cascaded);
+        return (decided, computedMemo);
+    }
+
+    /// <summary>
+    /// [Faz 3 final review — ruling R10, spec 2026-09-18 §5.4 "Bağımlı projeler her zaman imzayla değerlendirilir"]
+    /// Zaman kontrolü yalnız dosya zamanlarını okur: bağımlılığı <c>D</c> bu Build'de yeniden derlenecekken
+    /// (<c>WillBuild == true</c>) <c>D</c>'nin ortak kopyası henüz eskidir ve zaman kipindeki bağımlısı taze
+    /// (<c>BuiltOutside</c>) okunup pre-skip edilirdi — ağaç ancak N Sync+Build turunda tutarlı olurdu. Defter
+    /// kipindeki bağımlıda bu sorun yoktur: upstream'in imzası onun imzasına girer.
+    ///
+    /// <para>Kural: plan içindeki (transitive) upstream'lerinden biri <c>WillBuild == true</c> biten zaman kipi
+    /// düğümünün kontrolü <see cref="TimeVerdict.DependencyNewer"/>'a çekilir — değerlendirici onu
+    /// <c>OutputStale</c> ile derlenecek okur, kendi dosyası değişmediği için etiket <c>affected</c>'tır
+    /// (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>). Yalnız <see cref="TimeVerdict.Fresh"/>
+    /// ve <see cref="TimeVerdict.FedBroken"/> çekilir: zaman kipinin sırasında "bağımlılık yeni" beslenen kopyanın
+    /// önündedir; kanıtı olmayan (<see cref="TimeVerdict.Missing"/>) ya da kendi girdisi yeni
+    /// (<see cref="TimeVerdict.OwnNewer"/>) düğüm kendi hükmünü korur. Kapsam dışı döngü üyesi yine
+    /// derlenmez — onu değerlendirici söyler, burada tekrarlanmaz.</para>
+    ///
+    /// <para>Sıradan bağımsızdır (plan topolojik sıralı olmak zorunda değil [A1]) ve döngüye dayanıklıdır: kirli
+    /// düğümlerden ters kenarlar boyunca TEK bir genişlik-öncelikli gezinti (ziyaret kümesiyle). Bu geçişte kirli
+    /// olan düğümün bütün aşağı akışı zaten o gezintidedir, bu yüzden ikinci tur gerekmez.</para>
+    /// </summary>
+    /// <returns>Kontrolü çekilen düğüm varsa güncellenmiş kontrol haritası, yoksa boş.</returns>
+    private static IReadOnlyDictionary<string, OutputCheck> BehindDirtyUpstream(
+        BuildPlan decided, IReadOnlyDictionary<string, OutputCheck> outputs)
+    {
+        var dependents = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in decided.Nodes)
+            foreach (string dep in node.Dependencies)
+            {
+                if (!dependents.TryGetValue(dep, out var list)) dependents[dep] = list = [];
+                list.Add(node.Id);
+            }
+
+        var behind = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var queue = new Queue<string>(decided.Nodes.Where(n => n.WillBuild == true).Select(n => n.Id));
+        while (queue.TryDequeue(out string? id))
+            foreach (string dependent in dependents.GetValueOrDefault(id) ?? [])
+                if (behind.Add(dependent)) queue.Enqueue(dependent);
+
+        var pulled = behind
+            .Where(id => outputs.GetValueOrDefault(id) is
+                { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh or TimeVerdict.FedBroken })
+            .ToList();
+        if (pulled.Count == 0) return new Dictionary<string, OutputCheck>();
+
+        var result = new Dictionary<string, OutputCheck>(outputs, StringComparer.OrdinalIgnoreCase);
+        foreach (string id in pulled) result[id] = outputs[id] with { Time = TimeVerdict.DependencyNewer };
+        return result;
     }
 
     /// <summary>

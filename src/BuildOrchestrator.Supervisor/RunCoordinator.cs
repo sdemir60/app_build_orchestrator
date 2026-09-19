@@ -47,7 +47,7 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// öğrenme yapılmaz (<c>null</c> ⇒ <see cref="BuildState.FedOutputs"/> null kalır).</param>
 /// <param name="ChecksById">[Faz 3/Task 6 — spec 2026-09-18 §5] Planın kararına giren çıktı kontrolleri
 /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — koşu önizlemesi <c>OwnFilesChanged</c>'ı ve
-/// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan (<see cref="OutputEvidence.OwnFilesChanged"/>,
+/// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>,
 /// <see cref="OutputEvidence.OutputBuiltAt"/>) bundan yazar. <c>null</c> (testlerdeki basit planner) ⇒ kanıtsız.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
@@ -926,8 +926,8 @@ public sealed class RunCoordinator(
                 BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
                 // [Faz 3/Task 6] modified ↔ affected ve "built outside" yaşı Sync ile AYNI yardımcılardan: zaman
                 // kipinde kanıttan, diğer kiplerde defterin cevabı (kontrol yoksa bugünkü cevap aynen).
-                OwnFilesChanged: OutputEvidence.OwnFilesChanged(CheckOf(n.Id), BuildStateStore.OwnFilesChanged(
-                    builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id))),
+                OwnFilesChanged: OutputEvidence.OwnFilesChanged(
+                    CheckOf(n.Id), builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
                 LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id),
                 Conditional: conditionalIds.Contains(n.Id),
                 DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
@@ -937,7 +937,7 @@ public sealed class RunCoordinator(
                 // TAŞINMAZ (default false): o Sync'in "o anki çalışma ağacı" işaretidir, bir koşunun kendi
                 // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
                 FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id),
-                OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id))))]));
+                OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id), n.WillBuildReason)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi

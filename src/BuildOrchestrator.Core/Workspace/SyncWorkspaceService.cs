@@ -45,13 +45,14 @@ public sealed class SyncWorkspaceService(
     /// düğümler hollow (<c>WillBuild=null</c>) kalır ve sayaçlar RAPORLANMAZ (0 yazmak "hepsi güncel" yalanı olurdu).</param>
     /// <param name="OwnFilesChanged">[v1.16.0] Proje → "KENDİ dosyaları değişti mi" — önizlemenin
     /// <c>OwnFilesChanged</c>'ı, satırın <c>modified</c> ↔ <c>affected</c> ayrımı. Koşu önizlemesiyle AYNI çağrı
-    /// (<see cref="OutputEvidence.OwnFilesChanged"/> + <see cref="BuildStateStore.OwnFilesChanged"/>): zaman kipinde
+    /// (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>): zaman kipinde
     /// kanıttan, diğer kiplerde defterdeki içerik özeti ile bugünkünün karşılaştırmasından. [Faz 3/Task 9 fix
     /// round 2 — kullanıcı kararı I1] Eskiden defter kipinde Fast geçişinden gelirdi; Fast, kaydındaki imzası
     /// bayat ama dosyalarına dokunulmamış bir projeyi de "değişti" bulur ve satır Build'in göstereceği
     /// <c>affected</c> yerine <c>modified</c> yazardı.</param>
     /// <param name="Changed">"N changed" sayacı — Fast semantiği (ARCHITECTURE §5.3, ruling R9): Fast geçişinin
-    /// derlenecek bulduğu projeler, zaman kipinde kanıtın cevabıyla (<see cref="OutputEvidence.OwnFilesChanged"/>).</param>
+    /// derlenecek bulduğu projeler, zaman kipinde kanıtın cevabıyla (<see
+    /// cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>).</param>
     /// <param name="Checks">[Faz 3/Task 6 — spec 2026-09-18 §5] Safe geçişinin kararına giren çıktı kontrolleri
     /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — önizlemenin <c>OutputBuiltAt</c>'ı buradan yazılır.</param>
     /// <param name="ConditionalIds">[Task 4 review — C1 · DEĞİŞEN KURAL] Sync'in <c>WillBuild</c> zaten bir
@@ -183,7 +184,7 @@ public sealed class SyncWorkspaceService(
                         state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
                     FailedAt: BuildStateStore.FailedAtOf(state, n.Id),
                     LocalEdits: outcome.LocalEditsIds.Contains(n.Id),
-                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id))))
+                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -307,9 +308,10 @@ public sealed class SyncWorkspaceService(
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
             // [Faz 3/Task 6 — karar "Sync'in Fast geçişi"] Çıktı kanıtı YALNIZ Safe geçişine girer — Build'in planı
             // da aynı kontrollerle bağlanır, dolayısıyla Sync'in WillBuild'i bir sonraki düz Build'in kararıdır.
-            // Fast geçişi yalnız "kendi dosyası değişti mi" ölçümüdür ve kanıtsız bağlanır: kanıtla bağlansaydı
-            // havuzdaki kopyası bozulmuş (OutputReplaced) ya da kanıtı silinmiş (OutputMissing) bir proje
-            // dosyasına dokunulmadığı hâlde "changed" sayılırdı.
+            // Fast geçişi yalnız "N changed" sayacını besler (satırın modified ↔ affected cevabı ondan DEĞİL, aşağıda
+            // içerik özetinden gelir) ve kanıtsız bağlanır: kanıtla bağlansaydı havuzdaki kopyası bozulmuş
+            // (OutputReplaced) ya da kanıtı silinmiş (OutputMissing) bir proje dosyasına dokunulmadığı hâlde
+            // "changed" sayılırdı.
             var checks = binder.ChecksFor(state);
             var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, checks);
             var (fastPlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Fast);
@@ -317,7 +319,7 @@ public sealed class SyncWorkspaceService(
 
             // "N changed" sayacı Fast semantiğindedir (ARCHITECTURE §5.3, ruling R9): Fast geçişinin derlenecek
             // bulduğu projeler; zaman kipinde cevap kanıttandır (kendi girdisi çıktıdan yeni ⇒ changed).
-            var ownChanged = fastPlan.Nodes
+            var changedForCounter = fastPlan.Nodes
                 .Where(n => OutputEvidence.OwnFilesChanged(checks.GetValueOrDefault(n.Id), n.WillBuild == true) == true)
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -350,14 +352,14 @@ public sealed class SyncWorkspaceService(
             var contentById = binder.ContentById;
             var ownFilesChanged = plan.Nodes.ToDictionary(
                 n => n.Id,
-                n => OutputEvidence.OwnFilesChanged(checks.GetValueOrDefault(n.Id),
-                    BuildStateStore.OwnFilesChanged(state, n.Id, contentById.GetValueOrDefault(n.Id))),
+                n => OutputEvidence.OwnFilesChanged(
+                    checks.GetValueOrDefault(n.Id), state, n.Id, contentById.GetValueOrDefault(n.Id)),
                 StringComparer.OrdinalIgnoreCase);
 
             return new WillBuildOutcome(
                 Plan: safePlan,
                 OwnFilesChanged: ownFilesChanged,
-                Changed: ownChanged.Count,
+                Changed: changedForCounter.Count,
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true,

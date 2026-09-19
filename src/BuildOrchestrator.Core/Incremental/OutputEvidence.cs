@@ -1,5 +1,6 @@
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -174,9 +175,24 @@ public static class OutputEvidence
     public static bool? OwnFilesChanged(OutputCheck? check, bool? ledgerAnswer) =>
         check?.Mode == EvidenceMode.Time ? check.Time == TimeVerdict.OwnNewer : ledgerAnswer;
 
-    /// <summary>"Built outside this tool" yaşının kaynağı — yalnız zaman kipinde ve taze iken kanıtın zamanı.</summary>
-    public static DateTimeOffset? OutputBuiltAt(OutputCheck? check) =>
-        check is { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh } ? check.EvidenceAt : null;
+    /// <summary>
+    /// Önizleme satırının <c>OwnFilesChanged</c>'ı — Sync ve koşu önizlemesinin çağırdığı TEK bileşim: defterin
+    /// cevabı kayıttaki içerik özeti ile bugünkünün karşılaştırmasıdır (<see cref="BuildStateStore.OwnFilesChanged"/>),
+    /// zaman kipinde kanıt onu ezer (<see cref="OwnFilesChanged(OutputCheck?, bool?)"/>).
+    /// </summary>
+    public static bool? OwnFilesChanged(
+        OutputCheck? check, IReadOnlyDictionary<string, BuildState>? state, string projectId, string? currentContent) =>
+        OwnFilesChanged(check, BuildStateStore.OwnFilesChanged(state, projectId, currentContent));
+
+    /// <summary>
+    /// "Built outside this tool" yaşının kaynağı — yalnız son gerekçe <see cref="WillBuildReason.BuiltOutside"/>
+    /// iken (zaman kipinde ve taze) kanıtın zamanı. Gerekçe de okunur çünkü taze bir kontrol tek başına yetmez:
+    /// kirli bir upstream'in arkasındaki düğüm (<c>IncrementalPlanner</c>, §5.4 son cümle) kontrolü taze olsa da
+    /// <c>OutputStale</c> ile derlenir ve yaşı yoktur.
+    /// </summary>
+    public static DateTimeOffset? OutputBuiltAt(OutputCheck? check, WillBuildReason? reason) =>
+        reason == WillBuildReason.BuiltOutside && check is { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh }
+            ? check.EvidenceAt : null;
 
     private static readonly OutputCheck NoEvidence = new(EvidenceMode.None, false, true, null, null);
 
@@ -198,8 +214,7 @@ public static class OutputEvidence
             var info = new FileInfo(path);
             return info.Exists ? new FileStat(info.Length, info.LastWriteTimeUtc) : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
-                                       or NotSupportedException)
+        catch (Exception ex) when (IsUnreadable(ex))
         {
             return null;
         }
@@ -215,12 +230,16 @@ public static class OutputEvidence
         {
             return Directory.Exists(path) ? Directory.GetLastWriteTimeUtc(path) : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
-                                       or NotSupportedException)
+        catch (Exception ex) when (IsUnreadable(ex))
         {
             return null;
         }
     }
+
+    /// <summary>Okunamayan yolun istisnaları (erişim, geçersiz yol, desteklenmeyen biçim) — dosya ve klasör
+    /// okumasının TEK filtresi: böyle bir yol yok sayılır ya da "kanıt yok"tur.</summary>
+    private static bool IsUnreadable(Exception ex) =>
+        ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
 
     private static DateTimeOffset? AtOf(FileStat? stat) =>
         stat is { } s ? new DateTimeOffset(DateTime.SpecifyKind(s.At, DateTimeKind.Utc)) : null;
