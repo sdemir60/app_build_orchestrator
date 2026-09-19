@@ -894,8 +894,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// <param name="scopeProjectId">[tek proje · design §3.8] Satırdan tetiklenen koşunun hedefi; <c>null</c> =
     /// tam koşu. Dolu iken kapsam yalnız o satırdır (koreografi de yalnız onu işaretler), komut
     /// <see cref="StartRunCommand.ScopeProjectId"/> taşır ve <see cref="RunTargetId"/> tıklama anında yazılır.
-    /// Satırdan tetiklemek satıra tıklamak DEĞİLDİR: seçim + filtre tam koşudaki gibi düşer — graf odaktan fit
-    /// görünüme, konsol ana loga döner; pill hedef adı taşımaz (v1.13.2).</param>
+    /// Satırdan tetiklemek satıra tıklamak DEĞİLDİR: seçim tam koşudaki gibi düşer — graf odaktan fit
+    /// görünüme, konsol ana loga döner; filtre korunur (kullanıcı kararı 2026-09-19); pill hedef adı taşımaz
+    /// (v1.13.2).</param>
     private async Task BeginRunAsync(RunMode mode, bool clearBuffers, string? scopeProjectId = null)
     {
         string runId = _newRunId();
@@ -923,11 +924,14 @@ public sealed partial class RunViewModel : ObservableObject
         RunTargetId = scopeProjectId;
         IsStarting = true;
         if (clearBuffers) ClearConsoleForNewOperation();
-        // [design doBuild — BuildApp.jsx:1199-1200] Tam koşu: seçim + filtre sıfırlanır. SIRA ÖNEMLİ: konsol
-        // temizliğinden SONRA — seçim düşünce kabuk anlatı belgesini yeniden kurar (ShowRunConsole →
-        // SeedRunDocument); temizlik ondan sonra gelseydi o kurulum bir önceki koşunun metnini tilt'le
-        // getirir, temizlik onu hemen silerdi (görünür bir kırpışma). SyncCoreAsync aynı sırayı izler.
-        ClearSelectionAndFilter();
+        // [design doBuild — BuildApp.jsx:1199-1200] Seçim sıfırlanır. SIRA ÖNEMLİ: konsol temizliğinden SONRA
+        // — seçim düşünce kabuk anlatı belgesini yeniden kurar (ShowRunConsole → SeedRunDocument); temizlik
+        // ondan sonra gelseydi o kurulum bir önceki koşunun metnini tilt'le getirir, temizlik onu hemen silerdi
+        // (görünür bir kırpışma). SyncCoreAsync aynı sırayı izler.
+        // [kullanıcı kararı 2026-09-19] Filtre (chip'ler + arama) artık DÜŞMEZ: liste koşu boyunca filtreli
+        // kalır. Eskiden prototip gibi filtre de sıfırlanıyordu; grafın koşu boyunca filtreyi yok sayması
+        // kabuğun işidir (GraphView.IsFilterSuspended), VM'in değil.
+        SelectedProjectId = null;
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
         // bir not düşer. Motor runStarted'a kadar (taze segmentte: tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
@@ -1104,7 +1108,7 @@ public sealed partial class RunViewModel : ObservableObject
     };
 
     [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild, clearBuffers: true); // seçim + filtre orada düşer
+    private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild, clearBuffers: true); // seçim orada düşer (filtre korunur)
     // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
@@ -1125,7 +1129,7 @@ public sealed partial class RunViewModel : ObservableObject
     // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
     // (gerekçe CanRebuildOrRetry'ın yorumundadır).
     [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task BuildAsync() => BeginRunAsync(RunMode.Build, clearBuffers: true); // seçim + filtre orada düşer
+    private Task BuildAsync() => BeginRunAsync(RunMode.Build, clearBuffers: true); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
     /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
@@ -1140,7 +1144,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
-    private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim + filtre orada düşer
+    private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim orada düşer (filtre korunur)
 
     /// <summary>[tek proje · design v1.11.0 §3.8] Satırın play düğmesi ve ⋯ menüsünün <i>Build</i> maddesi:
     /// YALNIZ o projeyi derler — bağımlılıklar derlenmez, kapsam dışına dokunulmaz. Hedef tam koşuyla aynı
@@ -1543,12 +1547,6 @@ public sealed partial class RunViewModel : ObservableObject
     /// düğümün <c>LayerName</c>'i yoksa tek isimsiz grup = düz build-order.</summary>
     public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
         LayerGrouping.Build(VisibleProjects, Topology);
-
-    private void ClearSelectionAndFilter()
-    {
-        SelectedProjectId = null;
-        ActiveFilters = ProjectFilter.None;
-    }
 
     /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
     /// no-op. Workspace varsa ve faz Boot/Empty değilse: her proje dirty işaretlenir ve uyarı satırı yazılır.

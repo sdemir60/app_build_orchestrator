@@ -444,23 +444,33 @@ public class RunViewModelStateTests
         Assert.Equal(0, vm.StreamEventCount); // TrySendAsync hatası yalnız konsola yazar, stream'e dokunmaz
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Eski ad/iddia:
+    /// <c>Build_and_retry_clear_both_selection_and_filter</c> — Build/Rebuild tıklaması seçimi VE statü
+    /// chip'lerini düşürüyordu (prototip <c>doBuild</c>, BuildApp.jsx:1199-1200). Değişme gerekçesi (kullanıcı
+    /// testi): filtreyle çalışırken Build'e basmak listeyi her seferinde filtresiz hâle döndürüyordu. Yeni kural:
+    /// seçim düşer (graf fit görünüme döner), filtre — chip'ler ve arama metni — korunur; liste koşu boyunca
+    /// filtreli kalır. Grafın koşu boyunca filtreyi YOK SAYMASI ayrı bir kuraldır (GraphFilterRunSuspendTests).
+    /// </summary>
     [Fact]
-    public async Task Build_and_retry_clear_both_selection_and_filter()
+    public async Task Build_and_retry_clear_the_selection_but_keep_the_filter_and_the_search()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
         vm.SelectProject(@"C:\p\a.csproj");
         vm.ToggleFilter(ProjectFilter.Building);
+        vm.ProjectQuery = "osys";
         await vm.BuildCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
-        Assert.Empty(vm.ActiveFilters);
+        Assert.Equal([ProjectFilter.Building], vm.ActiveFilters.Order());
+        Assert.Equal("osys", vm.ProjectQuery);
 
         vm.SelectProject(@"C:\p\b.csproj");
-        vm.ToggleFilter(ProjectFilter.Failed);
         await vm.RebuildCommand.ExecuteAsync(null);
         Assert.Null(vm.SelectedProjectId);
-        Assert.Empty(vm.ActiveFilters);
+        Assert.Equal([ProjectFilter.Building], vm.ActiveFilters.Order());
+        Assert.Equal("osys", vm.ProjectQuery);
     }
 
     // ---------------------------------------------------------------- komut gönderimi (workspace argümanları)

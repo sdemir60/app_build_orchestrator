@@ -73,6 +73,13 @@ public static class EndFinale
     public static double TotalMs(int builtCount) =>
         HoldMs + ChainMs(builtCount) + NeonMs + BreathMs + GreyMs + 420;
 
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Filtre açıkken koşulan Build'de grafın filtreye DÖNÜŞ anı: final görünüm
+    /// (hepsi tam opak) çok kısa bir bekleme boyunca durur, sonra graf filtreli görünüme döner. Bekleme yeni bir
+    /// sayı değildir — tasarımın kısa vuruşu (<see cref="MarkingChoreography.LightMs"/>).
+    /// </summary>
+    public static double FilterReturnAtMs(int builtCount) => TotalMs(builtCount) + MarkingChoreography.LightMs;
+
     /// <summary>Adımlar, oynatılma sırasıyla.</summary>
     public static readonly IReadOnlyList<EndStep> Steps = [EndStep.Hold, EndStep.Neon, EndStep.Breath, EndStep.Grey];
 

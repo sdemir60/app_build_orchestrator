@@ -100,14 +100,32 @@ public class GraphNodeOpacityTests
     public void The_exception_requires_the_run_to_still_be_active()
         => Assert.Equal(0.1, Op(GraphStatus.Building, GraphRunPhase.Idle, selection: true, focus: false), 6);
 
-    /// <summary>Kontrol: istisna YALNIZ <c>hasSelection</c> dalına aittir — filtre dalında building için
-    /// muafiyet YOK (prototipte filtre satırında <c>live</c> istisnası yok, BuildApp.jsx:563).</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Eski ad/iddia:
+    /// <c>The_filter_branch_does_not_grant_the_live_building_exception</c> — "filtre açıkken koşuda derlenen ama
+    /// filtre dışı kalan düğümün gövdesi 0.1'e iner" (prototipte filtre satırında <c>live</c> istisnası yok,
+    /// BuildApp.jsx:563). Değişme gerekçesi (kullanıcı testi): Build'e basıldığı andan koşunun bitişi
+    /// tamamlanana dek graf filtreyi YOK SAYAR — standart açılış, koşu ve final oynar, sonra filtreye döner.
+    ///
+    /// <para>Yeni kural iki katmanda pinlenir. Burada saf taraf: koşu sırasında Resolve'a filtre GEÇMEZ (graf
+    /// askıdadır), dolayısıyla filtre dışı derlenen düğüm koşu kuralıyla tam opaktır; filtre dalı kendi
+    /// başına istisnasız kalır (askı olmadan geçilen filtre hâlâ 0.1 verir — karar görsel taraftadır).
+    /// Görsel taraf: <c>GraphFilterRunSuspendTests</c>.</para>
+    /// </summary>
     [Fact]
-    public void The_filter_branch_does_not_grant_the_live_building_exception()
-        => Assert.Equal(0.1, GraphNodeOpacity.Resolve(
+    public void During_a_run_the_filter_is_not_passed_so_a_building_node_outside_it_follows_the_run_rule()
+    {
+        // Askıdaki graf: filtre geçmez → koşu kuralı.
+        Assert.Equal(1.0, GraphNodeOpacity.Resolve(
+            GraphStatus.Building, GraphRunPhase.Running,
+            hasSelection: false, inFocus: false, hovered: false,
+            hasFilter: false, inFilter: false), 6);
+        // Filtre dalı kendi başına istisnasızdır — askının yeri burası değil.
+        Assert.Equal(0.1, GraphNodeOpacity.Resolve(
             GraphStatus.Building, GraphRunPhase.Running,
             hasSelection: false, inFocus: false, hovered: false,
             hasFilter: true, inFilter: false), 6);
+    }
 
     /// <summary>Hover her şeyi ezer — soluk moddayken bile opaklık 1 (§2.3 "Hover").</summary>
     [Fact]

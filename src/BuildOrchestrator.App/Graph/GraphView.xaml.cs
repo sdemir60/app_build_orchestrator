@@ -166,6 +166,8 @@ public partial class GraphView : UserControl
     private GraphRunPhase _runPhase = GraphRunPhase.Idle;
     /// <summary>[design v1.7.0 — Filtreleme] Listenin görünür kümesinin proje ADLARI; null = filtre yok.</summary>
     private IReadOnlySet<string>? _filterMatches;
+    /// <summary>[kullanıcı kararı 2026-09-19] Graf filtreyi ASKIYA aldı mı — bkz. <see cref="IsFilterSuspended"/>.</summary>
+    private bool _filterSuspended;
 
     // ---- [design v1.11.0 §9-4/§9-5] koreografiler: açılış (marking) ve bitiş (neon) ----
     private MarkStep _markStep = MarkStep.None;
@@ -402,8 +404,60 @@ public partial class GraphView : UserControl
     /// [design v1.11.0 §9-4 <c>_beginOp</c>] Yeni bir işlem başladı — bir önceki koşunun bitiş koreografisi
     /// ANINDA kesilir. Bu, işaretleme dalgasından AYRI bir kapıdır: kapsamı boş bir işlem (ör. Sync'in hemen
     /// ardından "Everything up to date" ile biten Build) hiç dalga oynatmaz ama yine de bir işlemdir.
+    ///
+    /// <para><b>[kullanıcı kararı 2026-09-19]</b> İşlemin başı aynı zamanda grafın filtreyi ASKIYA aldığı andır
+    /// (açılış dalgasından ÖNCE): bkz. <see cref="IsFilterSuspended"/>.</para>
     /// </summary>
-    public void BeginOperation() => StopEndFinale();
+    public void BeginOperation()
+    {
+        StopEndFinale();
+        SuspendFilter();
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] Koşu bitti (ya da hiç başlamadı): Stop, motor ölümü, düşen gönderim,
+    /// tamamlanma — hepsi. Final oynuyorsa filtreye dönüş finalin KENDİ son adımıdır
+    /// (<see cref="EndFinale.FilterReturnAtMs"/>), burada bir şey yapılmaz; oynamıyorsa filtre ŞİMDİ döner.
+    /// <para>Çağıran koşunun bitiş sinyallerinin sırasına güvenmez: faz (<c>Done</c>/<c>Stopped</c> →
+    /// <see cref="PlayEndFinale"/>) ile kilidin düşmesi (bu metot) VM'de yola göre farklı sırada gelir.
+    /// Kilit önce düşerse filtre döner, hemen ardından doğan final onu yeniden askıya alır — ikisi aynı
+    /// dispatcher turundadır, arada kare çizilmez.</para>
+    /// </summary>
+    public void EndOperation()
+    {
+        if (_endPlayer.IsPlaying) return;
+        ResumeFilter();
+    }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19] <b>Filtre açıkken Build: graf koşu boyunca filtreyi yok sayar.</b> Build
+    /// tıklamasından (<see cref="BeginOperation"/>) koşunun bitişi tamamlanana dek (final + kısa bekleme, ya da
+    /// final yoksa koşu bitince) opaklık kararı filtre YOKMUŞ gibi verilir: açılış dalgası, koşu opaklıkları ve
+    /// neon finali standart hâliyle oynar. Proje LİSTESİ filtreli kalır — askı yalnız grafındır.
+    ///
+    /// <para>Askı sürerken değişen filtre (<see cref="FilterMatches"/>) saklanır ve askı kalkınca uygulanır.
+    /// Dönüş filtrenin kendi geçiş süresiyle (<see cref="GraphNodeOpacity.FilterFadeMs"/>) oynar. Filtre yokken
+    /// askının hiçbir görünür etkisi yoktur (opaklık kararı zaten filtresizdir).</para>
+    /// </summary>
+    internal bool IsFilterSuspended => _filterSuspended;
+
+    /// <summary>Opaklık kararının gördüğü filtre — askıdayken <c>null</c>. <see cref="ApplyNodeOpacity"/>
+    /// <see cref="_filterMatches"/> yerine BUNU okur (tek kaynak).</summary>
+    private IReadOnlySet<string>? EffectiveFilter => _filterSuspended ? null : _filterMatches;
+
+    private void SuspendFilter()
+    {
+        if (_filterSuspended) return;
+        _filterSuspended = true;
+        ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs);
+    }
+
+    private void ResumeFilter()
+    {
+        if (!_filterSuspended) return;
+        _filterSuspended = false;
+        ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs); // filtre geri gelir — kullanıcı filtresinin kendi süresi
+    }
 
     /// <summary>
     /// [design v1.11.0 §9-4 · §2.3 · v1.18.0] Açılış koreografisinin adımını ve kapsamını grafa iter: node
@@ -471,7 +525,14 @@ public partial class GraphView : UserControl
     {
         ArgumentNullException.ThrowIfNull(builtNodeNames);
         StopEndFinale();
-        if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider()) return;
+        if (builtNodeNames.Count == 0 || !AnimationsEnabledProvider())
+        {
+            ResumeFilter(); // [kullanıcı kararı 2026-09-19] final yok → koşunun bitişi tamamlandı, filtre döner
+            return;
+        }
+        // [kullanıcı kararı 2026-09-19] Final filtresiz oynar ve dönüşü kendi son adımı yapar (aşağıda). Askı
+        // burada da kurulur: bitiş sinyallerinin sırası yola göre değişir (bkz. EndOperation).
+        SuspendFilter();
 
         // [design v1.13.2 §2.5] Koreografi doğarken o anki seçim "bırakılmış odak" olarak hatırlanır — bkz.
         // IsFinale. Hemen aşağıdaki _endPlayer.Play ilk adımı (Hold) SENKRON tetikler (StepPlayer.Play);
@@ -489,6 +550,7 @@ public partial class GraphView : UserControl
             .Select(s => (EndFinale.StepAtMs(s, builtNodeNames.Count), (Action)(() => SetEndStep(s))))
             .ToList();
         steps.Add((EndFinale.TotalMs(builtNodeNames.Count), () => SetEndStep(EndStep.None)));
+        steps.Add((EndFinale.FilterReturnAtMs(builtNodeNames.Count), ResumeFilter));
         _endPlayer.Play(steps);
     }
 
@@ -1412,8 +1474,8 @@ public partial class GraphView : UserControl
             EffectiveSelection is not null,
             _focusSet.Contains(visual.Model.Id),
             string.Equals(_hoveredNode, visual.Model.Id, StringComparison.OrdinalIgnoreCase),
-            _filterMatches is not null,
-            _filterMatches?.Contains(visual.Model.Id) ?? true);
+            EffectiveFilter is not null,
+            EffectiveFilter?.Contains(visual.Model.Id) ?? true);
 
         if (target.Equals(visual.OpacityTarget)) return;
         visual.OpacityTarget = target;

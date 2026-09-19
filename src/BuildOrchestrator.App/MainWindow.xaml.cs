@@ -875,6 +875,10 @@ public partial class MainWindow : Window
                     // HEMEN silinir: hiçbir preview asla gelmeyecektir.
                     if (!_vm.IsRunning) _choreographer.ClearMarks(_vm.Projects);
                 }
+                // [kullanıcı kararı 2026-09-19] Koşu bitti ya da hiç başlamadı (tamamlanma, Stop, motor ölümü,
+                // düşen gönderim, koreografide iptal — hepsi kilidi düşürür): graf filtreye döner — final
+                // oynuyorsa dönüşü finalin kendisi yapar (GraphView.EndOperation).
+                if (!_vm.IsMidRunLocked) Shell.GraphHost.EndOperation();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
