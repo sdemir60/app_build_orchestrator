@@ -119,6 +119,18 @@ public enum WillBuildReason
     /// geldiğinde değerlendirir: köklerden en az biri artık başarılıysa derlenir, hepsi hâlâ hatalıysa atlanır
     /// (<c>ConditionalRebuild</c>). Alan SONA eklendi: sayısal değeri eskilerini kaydırmaz.</summary>
     WaitingForDependency,
+    /// <summary>[Faz 3 — spec 2026-09-18 §5.4] Derlenmeyecek: çıktı bu araç dışında (VS, komut satırı) derlendi —
+    /// zaman kipi, derleme kanıtı her girdiden ve HintPath hedefinden yeni, beslenen kopyalar sağlam. Yeşildir.</summary>
+    BuiltOutside,
+    /// <summary>[§5.4] Zaman kipi: kendi girdisi (dosya ya da taranan klasör) ya da bir HintPath hedefi derleme
+    /// kanıtından yeni — çıktı bayat (<c>modified</c> ya da <c>affected</c>).</summary>
+    OutputStale,
+    /// <summary>[§5.3/§5.4] Derleme kanıtı (projenin kendi çıktı dosyası) diskte yok — defterde kayıt olsa bile
+    /// çıktı ortada değildir (<c>never built</c> gibi okunur).</summary>
+    OutputMissing,
+    /// <summary>[§5.3/§5.4] Öğrenilmiş beslenen kopya (paylaşılan klasördeki DLL) eksik, boyutu farklı ya da
+    /// derleme kanıtından eski — bağımlılar başka bir çıktıya link'lenir (<c>affected</c>).</summary>
+    OutputReplaced,
 }
 
 public sealed record BuildState(

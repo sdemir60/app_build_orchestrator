@@ -77,14 +77,18 @@ public static class IncrementalPlanner
     /// <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
     /// olarak "güncel" görünür. <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını AÇIKÇA yazar.</param>
     /// <param name="mode">Safe (varsayılan, dirty+transitive) veya Fast (yalnız dirty, cascade yok).</param>
+    /// <param name="outputs">[Faz 3 — spec 2026-09-18 §5] projectId → çıktı kanıtı kontrolü (<see
+    /// cref="IncrementalRunBinder.ChecksFor"/>). Yalnız <see cref="WillBuildEvaluator"/>'a aktarılır; imza hesabı
+    /// onu OKUMAZ. <c>null</c> ya da eksik proje ⇒ bugünkü karar.</param>
     /// <returns><paramref name="plan"/> ile aynı düğümler, her birinin <see cref="ProjectNode.WillBuild"/> alanı doldurulmuş.</returns>
     public static BuildPlan ComputeWillBuild(
         BuildPlan plan,
         Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
         bool buildCycles,
-        DependentMode mode = DependentMode.Safe)
-        => ComputeWillBuildWithSignatures(plan, contentFingerprintForNode, state, buildCycles, mode).Plan;
+        DependentMode mode = DependentMode.Safe,
+        IReadOnlyDictionary<string, OutputCheck>? outputs = null)
+        => ComputeWillBuildWithSignatures(plan, contentFingerprintForNode, state, buildCycles, mode, outputs).Plan;
 
     /// <summary>
     /// [Task 19 wiring] <see cref="ComputeWillBuild"/> ile AYNI hesap, ek olarak her düğüm için hesaplanan
@@ -97,7 +101,8 @@ public static class IncrementalPlanner
         Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
         bool buildCycles,
-        DependentMode mode = DependentMode.Safe)
+        DependentMode mode = DependentMode.Safe,
+        IReadOnlyDictionary<string, OutputCheck>? outputs = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(contentFingerprintForNode);
@@ -206,7 +211,10 @@ public static class IncrementalPlanner
 
         foreach (var node in plan.Nodes) Compute(node);
 
-        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup, buildCycles), computedMemo);
+        // [Faz 3/Task 5] Kanıt YALNIZ karara aktarılır — yukarıdaki imza hesabı onu hiç görmez (§5).
+        Func<string, OutputCheck?>? outputOf = outputs is null ? null : id => outputs.GetValueOrDefault(id);
+        return (BuildPreview.ComputeWillBuild(plan, node => computedMemo[node.Id], StateLookup, buildCycles, outputOf),
+            computedMemo);
     }
 
     /// <summary>

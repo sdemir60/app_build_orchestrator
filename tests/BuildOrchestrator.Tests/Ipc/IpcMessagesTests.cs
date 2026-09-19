@@ -459,6 +459,27 @@ public class IpcMessagesTests
         Assert.Null(legacy.Items[0].DependencyRoots);
     }
 
+    /// <summary>[Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtının dört gerekçesi IPC sınırını METİN olarak geçer
+    /// (camelCase) ve geri okunur — sayısal değer değil, bu yüzden enum'a sona eklemek eski satırları kaydırmaz.</summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_output_evidence_reasons_as_text()
+    {
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", false, null, WillBuildReason.BuiltOutside),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true, null, WillBuildReason.OutputStale),
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", true, null, WillBuildReason.OutputMissing),
+            new BuildPreviewItem(@"C:\p\d.csproj", "D", true, null, WillBuildReason.OutputReplaced),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        foreach (string text in new[] { "builtOutside", "outputStale", "outputMissing", "outputReplaced" })
+            Assert.Contains($"\"reason\":\"{text}\"", json, StringComparison.Ordinal);
+
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+    }
+
     /// <summary>
     /// [Task 3] <c>FailedAt</c>/<c>LocalEdits</c> IPC sınırını geçer: (a) kanıtlı hata anı TAM gider, kanıtsız
     /// satırda alan HİÇ yazılmaz (DefaultIgnoreCondition.WhenWritingNull); (b) <c>LocalEdits</c> her zaman

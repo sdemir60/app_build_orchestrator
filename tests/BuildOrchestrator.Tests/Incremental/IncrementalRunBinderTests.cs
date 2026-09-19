@@ -311,4 +311,131 @@ public sealed class IncrementalRunBinderTests : IDisposable
         Assert.Contains(projDir, binder.FoldersOf(id));
         Assert.Empty(binder.FoldersOf("unknown"));
     }
+
+    // ---- [Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtı: gerçek legacy csproj'larla uçtan uca -----------
+
+    private static readonly DateTime InputsAt = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime EvidenceAt = InputsAt.AddMinutes(10);
+    private static readonly DateTime ToolRunAt = InputsAt.AddMinutes(11);
+    private static readonly DateTime EditedAt = InputsAt.AddMinutes(20);
+
+    /// <summary>
+    /// İki gerçek legacy proje: üretici <c>Prod</c> ve HintPath'i paylaşılan klasördeki kopyayı
+    /// (<c>lib\Prod.dll</c>, üreticinin çıktısıyla aynı ad) gösteren bağımlı <c>Dep</c>. Girdiler ve klasörler
+    /// <see cref="InputsAt"/>'ta, iki derleme kanıtı (<c>bin\Debug</c>) ve kopya <see cref="EvidenceAt"/>'ta —
+    /// zamanlar açıkça yazılır (D8). Dosya oluşturmak klasör zamanını ilerlettiği için klasörler EN SONDA damgalanır.
+    /// </summary>
+    private (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> Evaluated, string Prod, string Dep)
+        TwoLegacyProjects(string root)
+    {
+        const string Legacy = """
+            <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+              <PropertyGroup><AssemblyName>{0}</AssemblyName><OutputType>Library</OutputType></PropertyGroup>
+              <ItemGroup>
+                <Compile Include="{0}.cs" />
+                {1}
+              </ItemGroup>
+            </Project>
+            """;
+        string prod = Write(Path.Combine(root, "Prod"), "Prod.csproj", string.Format(Legacy, "Prod", ""));
+        string dep = Write(Path.Combine(root, "Dep"), "Dep.csproj", string.Format(Legacy, "Dep",
+            """<Reference Include="Prod"><HintPath>..\lib\Prod.dll</HintPath></Reference>"""));
+        string[] inputs =
+        [
+            prod, dep, Write(Path.Combine(root, "Prod"), "Prod.cs", "class Prod {}"),
+            Write(Path.Combine(root, "Dep"), "Dep.cs", "class Dep {}"),
+        ];
+        string[] outputs =
+        [
+            Write(Path.Combine(root, "Prod", "bin", "Debug"), "Prod.dll", "prod-binary"),
+            Write(Path.Combine(root, "Dep", "bin", "Debug"), "Dep.dll", "dep-binary"),
+            Write(Path.Combine(root, "lib"), "Prod.dll", "prod-binary"),
+        ];
+        foreach (string input in inputs) File.SetLastWriteTimeUtc(input, InputsAt);
+        foreach (string output in outputs) File.SetLastWriteTimeUtc(output, EvidenceAt);
+        foreach (string dir in Directory.GetDirectories(root, "*", SearchOption.AllDirectories).Append(root))
+            Directory.SetLastWriteTimeUtc(dir, InputsAt);
+
+        var evaluator = new CsprojEvaluator();
+        var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)
+        {
+            [prod] = evaluator.Evaluate(prod),
+            [dep] = evaluator.Evaluate(dep),
+        };
+        var plan = new BuildPlan(
+        [
+            new ProjectNode(prod, "Prod", prod, [], [], 0, null, null, InCycle: false, WillBuild: null),
+            new ProjectNode(dep, "Dep", dep, [], [prod], 1, null, null, InCycle: false, WillBuild: null),
+        ], [], "Debug");
+        return (plan, evaluated, prod, dep);
+    }
+
+    /// <summary><c>Dep</c> aracın kendi derlemesi: imzası güncel, <c>LastRunAt</c> kanıttan sonra ⇒ defter kipi.
+    /// <c>Prod</c>'un kaydı yok ⇒ zaman kipi.</summary>
+    private Dictionary<string, BuildState> DepBuiltByTheTool(
+        BuildPlan plan, IReadOnlyDictionary<string, EvaluatedProject> evaluated, string root, string dep)
+    {
+        var (_, signatures) = new IncrementalRunBinder(plan, evaluated, root, FreshCache())
+            .Bind(NoState, buildCycles: false, DependentMode.Safe);
+        return new(StringComparer.OrdinalIgnoreCase)
+        {
+            [dep] = new BuildState(dep, signatures[dep], LastResult: BuildResult.Succeeded,
+                LastRunAt: new DateTimeOffset(ToolRunAt)),
+        };
+    }
+
+    /// <summary>§5.1/§5.2 uçtan uca: binder üreticinin kanıtını ve bağımlının HintPath'inden beslenen aday kopyayı
+    /// bulur; kaydı olmayan ve kanıtı her girdiden yeni üretici zaman kipinde tazedir (<c>BuiltOutside</c>),
+    /// <c>LastRunAt</c>'ı kanıttan sonra olan bağımlı defter kipindedir (<c>UpToDate</c>).</summary>
+    [Fact]
+    public void The_binder_locates_the_outputs_and_checks_both_modes_end_to_end()
+    {
+        string root = NewRoot();
+        var (plan, evaluated, prod, dep) = TwoLegacyProjects(root);
+        var state = DepBuiltByTheTool(plan, evaluated, root, dep);
+        var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
+        var evidenceAt = new DateTimeOffset(EvidenceAt);
+
+        var prodOutputs = binder.OutputsById[prod];
+        Assert.Equal(Path.Combine(root, "Prod", "bin", "Debug", "Prod.dll"), prodOutputs.Evidence);
+        Assert.Equal(new[] { Path.Combine(root, "lib", "Prod.dll") }, prodOutputs.FedCandidates);
+        Assert.Equal(Path.Combine(root, "Dep", "bin", "Debug", "Dep.dll"), binder.OutputsById[dep].Evidence);
+        Assert.Empty(binder.OutputsById[dep].FedCandidates);
+
+        var checks = binder.ChecksFor(state);
+
+        Assert.Equal(new OutputCheck(EvidenceMode.Time, false, true, TimeVerdict.Fresh, evidenceAt), checks[prod]);
+        Assert.Equal(new OutputCheck(EvidenceMode.Ledger, false, true, null, evidenceAt), checks[dep]);
+
+        var (bound, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, checks);
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (bound.Nodes[0].WillBuild, bound.Nodes[0].WillBuildReason));
+        Assert.Equal((false, WillBuildReason.UpToDate), (bound.Nodes[1].WillBuild, bound.Nodes[1].WillBuildReason));
+    }
+
+    /// <summary>§5 maliyet (ruling R3 — sayaçlı stat sahtesi yerine gözlenebilir): iki projenin girdi dosyası
+    /// kanıttan yeni bir zamana taşınır. Zaman kipindeki <c>Prod</c>'un hükmü değişir (<c>OwnNewer</c> ⇒
+    /// <c>OutputStale</c>); defter kipindeki <c>Dep</c>'in kontrolü BİREBİR aynı kalır — girdi zamanı orada okunmaz,
+    /// cevap defterden (içerik değişmedi, imza aynı ⇒ <c>UpToDate</c>).</summary>
+    [Fact]
+    public void Input_times_are_read_only_for_time_mode_projects()
+    {
+        string root = NewRoot();
+        var (plan, evaluated, prod, dep) = TwoLegacyProjects(root);
+        var state = DepBuiltByTheTool(plan, evaluated, root, dep);
+        var before = new IncrementalRunBinder(plan, evaluated, root, FreshCache()).ChecksFor(state);
+
+        File.SetLastWriteTimeUtc(Path.Combine(root, "Prod", "Prod.cs"), EditedAt);
+        File.SetLastWriteTimeUtc(Path.Combine(root, "Dep", "Dep.cs"), EditedAt);
+        var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
+        var after = binder.ChecksFor(state);
+
+        Assert.Equal(TimeVerdict.Fresh, before[prod].Time);
+        Assert.Equal(TimeVerdict.OwnNewer, after[prod].Time);
+        Assert.Equal(EvidenceMode.Ledger, before[dep].Mode);
+        Assert.Equal(before[dep], after[dep]);
+
+        var (bound, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, after);
+        Assert.Equal(WillBuildReason.OutputStale, bound.Nodes[0].WillBuildReason);
+        Assert.Equal(WillBuildReason.UpToDate, bound.Nodes[1].WillBuildReason);
+    }
 }

@@ -1,6 +1,7 @@
 namespace BuildOrchestrator.Core.Planning;
 
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Incremental;
 
 /// <summary>
 /// [T53][A6][v7Δ-8] Pre-run willBuild karar mantığı: dirty=true, güncel=false, imza-yok/pre-Sync=null.
@@ -68,29 +69,71 @@ public static class WillBuildEvaluator
     /// gerçek bir çalışma alanında 184 satırın 33'ü (tüm SCC üyeleri) hiçbir şey yazmıyordu. WillBuild
     /// DEĞİŞMEDİ: kapsam dışı üye hâlâ <c>false</c>'tur, yani bu koşu onu derlemez; bunu söyleyen kanal da
     /// aynı kalır (uyarı üçgeni).</para>
+    ///
+    /// <para><b>[Faz 3 — spec 2026-09-18 §5] Çıktı kanıtı.</b> <paramref name="output"/> <c>null</c> ya da
+    /// <see cref="EvidenceMode.None"/> ise karar bugünküdür (hiçbir veto yok). <see cref="EvidenceMode.Ledger"/>'da
+    /// bugünkü karar + iki veto (<see cref="LedgerVetoes"/>); <see cref="EvidenceMode.Time"/>'da hüküm kanıttan
+    /// (<see cref="TimeReason"/>). <c>WillBuild</c> = gerekçe <c>UpToDate</c> ya da <c>BuiltOutside</c> DEĞİL;
+    /// kapsam dışı döngü üyesi yine <c>false</c>, hollow yine hollow. Kanıt imzaya GİRMEZ — yalnız buraya.</para>
     /// </summary>
+    /// <param name="output">Projenin kanıt kontrolü (<see cref="OutputEvidence.Inspect"/>); yoksa bugünkü karar.</param>
     public static (bool? WillBuild, WillBuildReason? Reason) EvaluateWithReason(
-        bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
+        bool inCycle, string? currentSignature, BuildState? state, bool buildCycles, OutputCheck? output = null)
     {
         // Kapsam dışı cycle üyesi DERLENMEZ; hollow'da ise hiçbir şey bilinmez.
         bool outOfScope = inCycle && !buildCycles;
         if (currentSignature is null) return (outOfScope ? false : null, null);
 
-        var reason =
-            state?.FailedSignature is { } failedSignature
-                && string.Equals(failedSignature, currentSignature, StringComparison.Ordinal)
-                ? WillBuildReason.LastFailed                      // KANITLI kırmızı: hata anındaki imza bugünküyle aynı
-            : state?.BuiltSignature is null
-                || (state.LastResult != BuildResult.Succeeded && state.FailedSignature is null)
-                ? WillBuildReason.NeverBuilt                      // hiç başarı yok, ya da kanıtsız/kesilmiş deneme
-            : !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
-                ? WillBuildReason.SignatureChanged                // kendi değişikliği kesin derletir — not ne olursa olsun
-            : state.DepIssue                                      // bayat bağımlılığa link'li (yukarıdaki nota bak)
-                ? state.DepIssueRoots is { Count: > 0 }
-                    ? WillBuildReason.WaitingForDependency        // kökler biliniyor: koşu kök düzelince derler
-                    : WillBuildReason.DepIssue                    // kök bilinmiyor (eski kayıt): güvenli yön, derlenir
-            : WillBuildReason.UpToDate;
+        var reason = output?.Mode switch
+        {
+            EvidenceMode.Time => TimeReason(output.Time),
+            EvidenceMode.Ledger => LedgerVetoes(LedgerReason(currentSignature, state), output),
+            _ => LedgerReason(currentSignature, state),
+        };
 
-        return (outOfScope ? false : reason != WillBuildReason.UpToDate, reason);
+        return (outOfScope ? false : reason is not (WillBuildReason.UpToDate or WillBuildReason.BuiltOutside), reason);
     }
+
+    /// <summary>
+    /// [Faz 3 — spec 2026-09-18 §5.4] Zaman kipi: çıktı başkasının, hüküm kanıttan. Kırmızı YOK — defter notları
+    /// (<see cref="BuildState.FailedSignature"/>, <see cref="BuildState.DepIssue"/>) burada okunmaz; aracın
+    /// kaydı dışarıdaki derlemeden eskidir ve onu anlatamaz.
+    /// </summary>
+    private static WillBuildReason TimeReason(TimeVerdict? verdict) => verdict switch
+    {
+        TimeVerdict.Fresh => WillBuildReason.BuiltOutside,
+        TimeVerdict.Missing => WillBuildReason.OutputMissing,
+        TimeVerdict.OwnNewer or TimeVerdict.DependencyNewer => WillBuildReason.OutputStale,
+        TimeVerdict.FedBroken => WillBuildReason.OutputReplaced,
+        _ => throw new ArgumentException("A time-mode output check must carry a verdict.", nameof(verdict)),
+    };
+
+    /// <summary>
+    /// [Faz 3 — spec 2026-09-18 §5.3] Defter kipi: bugünkü karar + iki veto. <c>LastFailed</c> (kanıtlı kırmızı)
+    /// ve <c>NeverBuilt</c> aynen kalır; diğerlerinde derleme kanıtı yoksa <c>OutputMissing</c>; güncel
+    /// (<c>UpToDate</c>/<c>WaitingForDependency</c>) iken beslenen kopya bozuksa <c>OutputReplaced</c>. İçerik
+    /// değiştiyse (<c>SignatureChanged</c>, <c>DepIssue</c>) bozuk kopya gerekçeyi değiştirmez — zaten derlenecek.
+    /// </summary>
+    private static WillBuildReason LedgerVetoes(WillBuildReason reason, OutputCheck output) =>
+        reason is WillBuildReason.LastFailed or WillBuildReason.NeverBuilt ? reason
+        : output.EvidenceMissing ? WillBuildReason.OutputMissing
+        : (reason is WillBuildReason.UpToDate or WillBuildReason.WaitingForDependency) && !output.FedIntact
+            ? WillBuildReason.OutputReplaced
+        : reason;
+
+    /// <summary>Bugünkü (defterin) kararı — imza ve kayıt; kanıtsız kip bunu aynen döner.</summary>
+    private static WillBuildReason LedgerReason(string currentSignature, BuildState? state) =>
+        state?.FailedSignature is { } failedSignature
+            && string.Equals(failedSignature, currentSignature, StringComparison.Ordinal)
+            ? WillBuildReason.LastFailed                      // KANITLI kırmızı: hata anındaki imza bugünküyle aynı
+        : state?.BuiltSignature is null
+            || (state.LastResult != BuildResult.Succeeded && state.FailedSignature is null)
+            ? WillBuildReason.NeverBuilt                      // hiç başarı yok, ya da kanıtsız/kesilmiş deneme
+        : !string.Equals(currentSignature, state.BuiltSignature, StringComparison.Ordinal)
+            ? WillBuildReason.SignatureChanged                // kendi değişikliği kesin derletir — not ne olursa olsun
+        : state.DepIssue                                      // bayat bağımlılığa link'li (yukarıdaki nota bak)
+            ? state.DepIssueRoots is { Count: > 0 }
+                ? WillBuildReason.WaitingForDependency        // kökler biliniyor: koşu kök düzelince derler
+                : WillBuildReason.DepIssue                    // kök bilinmiyor (eski kayıt): güvenli yön, derlenir
+        : WillBuildReason.UpToDate;
 }

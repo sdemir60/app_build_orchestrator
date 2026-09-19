@@ -457,4 +457,51 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Null(OutputEvidence.LearnFedOutputs(new ProjectOutputs(Full(EvidenceRel), [fed])));
         Assert.Null(OutputEvidence.LearnFedOutputs(null));
     }
+
+    // ------------------------------------------------------------------ Öncelik (birleşik koşullar)
+
+    /// <summary>§5.4 sırası birleşik koşullarda: kendi girdisi VE HintPath hedefi yeni ⇒ <c>OwnNewer</c> (kendi
+    /// önce); HintPath hedefi yeni VE beslenen kopya bozuk ⇒ <c>DependencyNewer</c>; kanıt yok ve girdiler yeni ⇒
+    /// <c>Missing</c> (kanıtın yokluğu her şeyden önce).</summary>
+    [Fact]
+    public void The_time_verdict_priority_holds_under_combined_conditions()
+    {
+        Touch(InputRel, Later);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(HintRel, Later);
+
+        Assert.Equal(TimeVerdict.OwnNewer, Check(state: null, folderAt: null, HintRel).Time);
+
+        Touch(InputRel, T0);
+        Touch(FedRel, ToolBuilt, size: Size + 1);
+
+        var dependency = Check(Record(lastRun: null, fed: FedRel), folderAt: null, HintRel);
+        Assert.False(dependency.FedIntact);
+        Assert.Equal(TimeVerdict.DependencyNewer, dependency.Time);
+
+        Touch(InputRel, Latest);
+        File.Delete(Full(EvidenceRel));
+
+        Assert.Equal(TimeVerdict.Missing, Check(state: null, folderAt: Latest, HintRel).Time);
+    }
+
+    /// <summary>§5.6 (ruling R4): kanıt yolu olmayan (<c>Mode=None</c>) üye zaman grubunda kanıtsız KALIR ve grubun
+    /// taze sayılmasını engeller — tazeliğini kanıtlayamayan bir üyeyle grup "dışarıda derlendi" denemez; taze
+    /// üyeler <c>DependencyNewer</c> alır.</summary>
+    [Fact]
+    public void A_member_without_evidence_keeps_a_time_group_stale()
+    {
+        var a = Member("A", inputAt: T0, evidenceAt: ElsewhereBuilt);
+        var none = OutputEvidence.Inspect(null, null, [], [], []);
+        var checks = new Dictionary<string, OutputCheck> { ["A"] = a.Inspect(Record(ToolRun)), ["N"] = none };
+
+        Assert.Equal(TimeVerdict.Fresh, checks["A"].Time);
+
+        var grouped = OutputEvidence.ApplyCycleGroups(
+            checks, [["A", "N"]], id => id == "A" ? a.Time() : OutputEvidence.TimeCheck(null, null, [], [], []));
+
+        Assert.Equal(EvidenceMode.None, grouped["N"].Mode);
+        Assert.Equal(new OutputCheck(EvidenceMode.Time, false, true, TimeVerdict.DependencyNewer, At(ElsewhereBuilt)),
+            grouped["A"]);
+    }
 }

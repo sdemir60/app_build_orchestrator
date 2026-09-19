@@ -106,12 +106,48 @@ public sealed class IncrementalRunBinder
     /// <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını açıkça yazar, yoksa o yüzeydeki önizleme
     /// motorla ayrışır.</param>
     /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>
+    /// <param name="outputs">[Faz 3/Task 5] Çıktı kanıtı kontrolleri (<see cref="ChecksFor"/>) — yalnız karara
+    /// girer, imzaya ASLA. <c>null</c> ⇒ kanıtsız bağlama (bugünkü karar).</param>
     public (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
-        IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode)
+        IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode,
+        IReadOnlyDictionary<string, OutputCheck>? outputs = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         return IncrementalPlanner.ComputeWillBuildWithSignatures(
-            _plan, FingerprintOf, state, buildCycles, mode);
+            _plan, FingerprintOf, state, buildCycles, mode, outputs);
+    }
+
+    /// <summary>
+    /// [Faz 3/Task 5 — spec 2026-09-18 §5.2-§5.6] Her düğümün çıktı kanıtı kontrolü (<see
+    /// cref="OutputEvidence.Inspect"/>), ardından döngü grupları (<see cref="OutputEvidence.ApplyCycleGroups"/>) —
+    /// sonuç <see cref="Bind"/>'ın <c>outputs</c>'una verilir. Girdiler binder'ın ZATEN topladığı kümedir
+    /// (<see cref="InputsOf"/>, <see cref="FoldersOf"/>, değerlendirmenin HintPath hedefleri): ikinci bir tarama yok.
+    ///
+    /// <para><b>Maliyet:</b> girdi zamanları yalnız zaman kolunda okunur (<see cref="OutputEvidence.TimeCheck"/>);
+    /// defter kipindeki proje için yalnız derleme kanıtı ve beslenen kopyalar stat edilir. Projeler bağımsız
+    /// olduğundan kontroller paralel yapılır (girdi toplamayla aynı desen).</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, OutputCheck> ChecksFor(IReadOnlyDictionary<string, BuildState> state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var outputsById = OutputsById; // tembel alan paralel döngüden ÖNCE bir kez kurulur
+
+        OutputCheck CheckOf(string id, bool timeOnly)
+        {
+            var outputs = outputsById.GetValueOrDefault(id);
+            var record = state.GetValueOrDefault(id);
+            IReadOnlyList<string> inputFiles = [.. InputsOf(id).Select(i => i.Path)];
+            IReadOnlyList<string> hintTargets =
+                _evaluatedById.TryGetValue(id, out var evaluated) ? evaluated.HintPathTargets() : [];
+            return timeOnly
+                ? OutputEvidence.TimeCheck(outputs, record, inputFiles, FoldersOf(id), hintTargets)
+                : OutputEvidence.Inspect(outputs, record, inputFiles, FoldersOf(id), hintTargets);
+        }
+
+        var checks = new ConcurrentDictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            node => checks[node.Id] = CheckOf(node.Id, timeOnly: false));
+        return OutputEvidence.ApplyCycleGroups(checks, _plan.Cycles, id => CheckOf(id, timeOnly: true));
     }
 
     /// <summary>

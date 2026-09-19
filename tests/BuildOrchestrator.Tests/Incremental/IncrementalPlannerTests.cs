@@ -758,4 +758,67 @@ public class IncrementalPlannerTests
         Assert.NotEqual(before[CycA], after[CycA]);  // SCC1 kompoziti SCC-DIŞI upstream'i (SCC2) üzerinden değişti
         Assert.NotEqual(before[CycD], after[CycD]);  // cycle DIŞINDAKİ downstream'e ULAŞTI (under-build yok)
     }
+
+    // ---- [Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtı yalnız karara girer, imzaya ASLA -----------------
+
+    /// <summary>§5: kanıt (zaman kipinin hükmü) kararı değiştirir ama imzayı değiştirmez — imza içerikten gelir,
+    /// deftere o yazılır; kanıt imzaya girseydi aracın kendi derlemesinden sonra bile imza "değişmiş" görünürdü.</summary>
+    [Fact]
+    public void The_evidence_never_enters_the_signature()
+    {
+        var a = Node("A", 0, inCycle: false);
+        var b = Node("B", 1, inCycle: false, "A");
+        var plan = new BuildPlan([a, b], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("A", "fpA"), ("B", "fpB")));
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new(EvidenceMode.Time, false, true, TimeVerdict.OwnNewer, null),
+            ["B"] = new(EvidenceMode.Ledger, true, true, null, null),
+        };
+
+        var without = IncrementalPlanner.ComputeWillBuildWithSignatures(plan, fp, NoState, buildCycles: false);
+        var withEvidence = IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan, fp, NoState, buildCycles: false, outputs: outputs);
+
+        Assert.Equal(without.SignatureById, withEvidence.SignatureById);
+        Assert.Equal(WillBuildReason.NeverBuilt, without.Plan.Nodes[0].WillBuildReason);
+        Assert.Equal(WillBuildReason.OutputStale, withEvidence.Plan.Nodes[0].WillBuildReason);
+        // Defter kipinde NeverBuilt vetoyla ezilmez.
+        Assert.Equal(WillBuildReason.NeverBuilt, withEvidence.Plan.Nodes[1].WillBuildReason);
+    }
+
+    /// <summary>§5.6: zaman kipindeki döngü grubu tek karar verir — kontroller <see
+    /// cref="OutputEvidence.ApplyCycleGroups"/>'tan gelir, planlayıcı yalnız aktarır. A dışarıda taze derlendi,
+    /// B'nin kendi dosyası yeni ⇒ grup bayat: A <c>OutputStale</c> (bağımlılık), B <c>OutputStale</c> (kendi);
+    /// ikisi birden derlenir. Grubun hepsi tazeyse ikisi birden <c>BuiltOutside</c>.</summary>
+    [Fact]
+    public void A_cycle_group_in_time_mode_is_decided_as_one()
+    {
+        var a = Node("A", 0, inCycle: true, "B");
+        var b = Node("B", 1, inCycle: true, "A");
+        var plan = new BuildPlan([a, b], [["A", "B"]], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("A", "fpA"), ("B", "fpB")));
+        string composite = IncrementalPlanner.ComputeWillBuildWithSignatures(
+            plan, fp, NoState, buildCycles: true).SignatureById["A"];
+        var built = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new BuildState("A", composite, LastResult: BuildResult.Succeeded),
+            ["B"] = new BuildState("B", composite, LastResult: BuildResult.Succeeded),
+        };
+        OutputCheck TimeOf(TimeVerdict verdict) => new(EvidenceMode.Time, false, true, verdict, null);
+        var ledger = new OutputCheck(EvidenceMode.Ledger, false, true, null, null);
+
+        var stale = OutputEvidence.ApplyCycleGroups(
+            new Dictionary<string, OutputCheck> { ["A"] = TimeOf(TimeVerdict.Fresh), ["B"] = ledger },
+            plan.Cycles, id => TimeOf(id == "A" ? TimeVerdict.Fresh : TimeVerdict.OwnNewer));
+        var fresh = OutputEvidence.ApplyCycleGroups(
+            new Dictionary<string, OutputCheck> { ["A"] = TimeOf(TimeVerdict.Fresh), ["B"] = ledger },
+            plan.Cycles, _ => TimeOf(TimeVerdict.Fresh));
+
+        var stalePlan = IncrementalPlanner.ComputeWillBuild(plan, fp, built, buildCycles: true, outputs: stale);
+        var freshPlan = IncrementalPlanner.ComputeWillBuild(plan, fp, built, buildCycles: true, outputs: fresh);
+
+        Assert.All(stalePlan.Nodes, n => Assert.Equal((true, WillBuildReason.OutputStale), (n.WillBuild, n.WillBuildReason)));
+        Assert.All(freshPlan.Nodes, n => Assert.Equal((false, WillBuildReason.BuiltOutside), (n.WillBuild, n.WillBuildReason)));
+    }
 }
