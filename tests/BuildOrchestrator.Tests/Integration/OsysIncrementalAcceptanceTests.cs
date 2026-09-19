@@ -20,7 +20,7 @@ namespace BuildOrchestrator.Tests.Integration;
 /// [It-3 KABUL · Task 19] Gerçek OSYS reposunu (<c>D:\Projects\Delta\OSYS</c>) gerçek Supervisor + gerçek
 /// <c>MSBuild.exe</c> ile <b>incremental</b> derler ve It-3'ün kalbini CANLI sayılarla kanıtlar:
 /// <list type="number">
-/// <item><b>Incremental all-skipped:</b> bir <c>Build</c> başarıyla BuildState kurar; kaynak DEĞİŞMEDEN ikinci
+/// <item><b>Incremental all-skipped:</b> bir <c>Rebuild</c> başarıyla BuildState kurar; kaynak DEĞİŞMEDEN bir
 ///   <c>Build</c> → Run 1'de <b>satır persist eden</b> projelerin HEPSİ "skipped — up to date". (En güçlü tek
 ///   gösterim.) [A2] Bu küme "Run 1'de başarılı olan HER proje" DEĞİLDİR: depIssue taşıyan bir success taze imza
 ///   persist etmez, dolayısıyla Run 2'de MEŞRU olarak yeniden derlenir (bkz. <c>DepIssueCarriers</c>).</item>
@@ -71,14 +71,20 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // [K1] öncesi
         var (headBefore, branchBefore) = OsysRebuildAcceptanceTests.ReadOsysHeadAndBranch();
 
-        // İki Build AYNI cacheRoot'u (dolayısıyla AYNI build-state.json'ı) paylaşır: logsDir = <shared>\logs →
+        // İki koşu AYNI cacheRoot'u (dolayısıyla AYNI build-state.json'ı) paylaşır: logsDir = <shared>\logs →
         // cacheRoot = <shared> (Program.cs: cacheRoot = Path.GetDirectoryName(logsRoot)).
         string shared = Directory.CreateTempSubdirectory("bo-it3-").FullName;
         string logsDir = Path.Combine(shared, "logs");
         Directory.CreateDirectory(logsDir);
 
-        // ---- RUN 1: incremental Build, state YOK → derlenebilir HER ŞEY derlenir, başarılılar persist eder.
-        var run1 = await RunBuildAsync(logsDir, "it3-build-1", overall.Token);
+        // ---- RUN 1: Rebuild, state YOK → derlenebilir HER ŞEY derlenir, başarılılar persist eder.
+        // [DEĞİŞEN KURAL — spec 2026-09-18 §5.2 / §7-39] Eski hâl: Run 1 de bir incremental Build'di ve iddia
+        // "state YOK → derlenebilir her şey derlenir" idi. Artık yanlış: defter yoksa her proje ZAMAN KİPİNDEDİR,
+        // yani VS'in (ya da daha önceki bir koşunun) çıktısı her girdisinden yeni olan projeler "built outside"
+        // kredisi alır ve atlanır — OSYS makinesinde çoğu proje zaten derlenmiş durur. Defteri sıfırdan KURMAK
+        // (her şeyi derleyip persist etmek) artık açıkça Rebuild'in işidir (P7); Run 2'nin "persist edilenlerin
+        // hepsi atlanır" iddiası değişmez.
+        var run1 = await RunBuildAsync(logsDir, "it3-build-1", RunMode.Rebuild, overall.Token);
         Assert.NotNull(run1.Completed);
         Assert.NotNull(run1.Started);
         Assert.True(run1.Succeeded.Count > 100,
@@ -126,7 +132,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         int cleanRows = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded && !s.DepIssue);
 
         // ---- RUN 2: kaynak DEĞİŞMEDEN yeniden Build → önceki başarılıların HEPSİ "skipped — up to date".
-        var run2 = await RunBuildAsync(logsDir, "it3-build-2", overall.Token);
+        var run2 = await RunBuildAsync(logsDir, "it3-build-2", RunMode.Build, overall.Token);
         Assert.NotNull(run2.Completed);
 
         // [DEĞİŞEN KURAL/Task 2] reason artık YALIN ("skipped — " öneki İÇİNDE taşınmaz) — tek kaynak SkipReasons.
@@ -210,7 +216,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- Zaman damgası (UTC): {DateTimeOffset.UtcNow:O}"));
             sb.AppendLine(Inv($"- RootPath: {OsysRoot} · Parallelism: {Parallelism}"));
             sb.AppendLine();
-            sb.AppendLine("## Run 1 (Build, state YOK — hepsi derlenir)");
+            sb.AppendLine("## Run 1 (Rebuild, state YOK — hepsi derlenir)");
             sb.AppendLine(Inv($"- TotalProjects: {run1.Started?.TotalProjects} · Succeeded: {run1.Completed?.Succeeded} · Failed: {run1.Completed?.Failed} · Skipped: {run1.Completed?.Skipped} · Süre: {run1.Completed?.DurationMs} ms"));
             sb.AppendLine(Inv($"- build-state.json kayıt sayısı (Run 1 sonrası): {stateAfterRun1.Count} · beklenen alt sınır: {run1PersistExpected} (başarılı — depIssue taşıyanlar da NOTLA yazılır)"));
             sb.AppendLine();
@@ -289,9 +295,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
     // ---------------------------------------------------------------- yardımcılar
 
-    /// <summary>Gerçek Supervisor'ı verilen <paramref name="logsDir"/> ile başlatır, bir <c>Build</c> koşusunu
-    /// olay-güdümlü (sleep YOK) sürer ve sonucu toplar. Düzgün shutdown ile kapatır.</summary>
-    private async Task<RunOutcomeData> RunBuildAsync(string logsDir, string runId, CancellationToken ct)
+    /// <summary>Gerçek Supervisor'ı verilen <paramref name="logsDir"/> ile başlatır, bir koşuyu (<paramref
+    /// name="mode"/>: defteri kuran Rebuild ya da incremental Build) olay-güdümlü (sleep YOK) sürer ve sonucu
+    /// toplar. Düzgün shutdown ile kapatır.</summary>
+    private async Task<RunOutcomeData> RunBuildAsync(string logsDir, string runId, RunMode mode, CancellationToken ct)
     {
         var succeeded = new List<string>();
         var failed = new List<(string, string)>();
@@ -307,10 +314,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            // [cycles] Build bir SCC'ye HİÇ dokunmaz — üyeler "in dependency cycle" ile atlanır. Bu koşu
-            // ürünün sevk ettiği Build'in ta kendisidir; turlar kendi modundadır (RunMode.Cycles).
+            // [cycles] Build ve Rebuild bir SCC'ye HİÇ dokunmaz — üyeler "in dependency cycle" ile atlanır. Bu
+            // koşular ürünün sevk ettiği modların ta kendisidir; turlar kendi modundadır (RunMode.Cycles).
             await w.WriteAsync(
-                new StartRunCommand(runId, RunMode.Build, OsysRoot, "Debug", Parallelism), ct);
+                new StartRunCommand(runId, mode, OsysRoot, "Debug", Parallelism), ct);
 
             while (true)
             {

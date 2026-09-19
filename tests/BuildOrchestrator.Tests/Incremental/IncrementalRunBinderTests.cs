@@ -5,6 +5,7 @@ using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Planning;
 using Xunit;
+using static BuildOrchestrator.Tests.Incremental.EvidenceTimes;
 
 namespace BuildOrchestrator.Tests.Incremental;
 
@@ -314,16 +315,11 @@ public sealed class IncrementalRunBinderTests : IDisposable
 
     // ---- [Faz 3/Task 5 — spec 2026-09-18 §5] Çıktı kanıtı: gerçek legacy csproj'larla uçtan uca -----------
 
-    private static readonly DateTime InputsAt = new(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
-    private static readonly DateTime EvidenceAt = InputsAt.AddMinutes(10);
-    private static readonly DateTime ToolRunAt = InputsAt.AddMinutes(11);
-    private static readonly DateTime EditedAt = InputsAt.AddMinutes(20);
-
     /// <summary>
     /// İki gerçek legacy proje: üretici <c>Prod</c> ve HintPath'i paylaşılan klasördeki kopyayı
     /// (<c>lib\Prod.dll</c>, üreticinin çıktısıyla aynı ad) gösteren bağımlı <c>Dep</c>. Girdiler ve klasörler
-    /// <see cref="InputsAt"/>'ta, iki derleme kanıtı (<c>bin\Debug</c>) ve kopya <see cref="EvidenceAt"/>'ta —
-    /// zamanlar açıkça yazılır (D8). Dosya oluşturmak klasör zamanını ilerlettiği için klasörler EN SONDA damgalanır.
+    /// <see cref="EvidenceTimes.InputsAt"/>'ta, iki derleme kanıtı (<c>bin\Debug</c>) ve kopya
+    /// <see cref="EvidenceTimes.EvidenceAt"/>'ta — damga ortak <see cref="EvidenceTimes.Stamp"/>'tan (D8).
     /// </summary>
     private (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> Evaluated, string Prod, string Dep)
         TwoLegacyProjects(string root)
@@ -340,21 +336,14 @@ public sealed class IncrementalRunBinderTests : IDisposable
         string prod = Write(Path.Combine(root, "Prod"), "Prod.csproj", string.Format(Legacy, "Prod", ""));
         string dep = Write(Path.Combine(root, "Dep"), "Dep.csproj", string.Format(Legacy, "Dep",
             """<Reference Include="Prod"><HintPath>..\lib\Prod.dll</HintPath></Reference>"""));
-        string[] inputs =
-        [
-            prod, dep, Write(Path.Combine(root, "Prod"), "Prod.cs", "class Prod {}"),
-            Write(Path.Combine(root, "Dep"), "Dep.cs", "class Dep {}"),
-        ];
-        string[] outputs =
+        Write(Path.Combine(root, "Prod"), "Prod.cs", "class Prod {}");
+        Write(Path.Combine(root, "Dep"), "Dep.cs", "class Dep {}");
+        EvidenceTimes.Stamp(root,
         [
             Write(Path.Combine(root, "Prod", "bin", "Debug"), "Prod.dll", "prod-binary"),
             Write(Path.Combine(root, "Dep", "bin", "Debug"), "Dep.dll", "dep-binary"),
             Write(Path.Combine(root, "lib"), "Prod.dll", "prod-binary"),
-        ];
-        foreach (string input in inputs) File.SetLastWriteTimeUtc(input, InputsAt);
-        foreach (string output in outputs) File.SetLastWriteTimeUtc(output, EvidenceAt);
-        foreach (string dir in Directory.GetDirectories(root, "*", SearchOption.AllDirectories).Append(root))
-            Directory.SetLastWriteTimeUtc(dir, InputsAt);
+        ]);
 
         var evaluator = new CsprojEvaluator();
         var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)

@@ -14,6 +14,8 @@ using BuildOrchestrator.Core.Processes;
 using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Core.Workspace;
 using BuildOrchestrator.Tests.Git;
+using BuildOrchestrator.Tests.Incremental;
+using BuildOrchestrator.Tests.MsBuild;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Workspace;
@@ -723,6 +725,139 @@ public class SyncWorkspaceServiceTests
         var error = Assert.Single(events.OfType<ErrorEvent>());
         Assert.Equal("planFailed", error.Code);
         Assert.Empty(events.OfType<SyncCompletedEvent>());
+    }
+
+    // ---------------------------------------------------------------- [Faz 3/Task 6] dışarıdan derleme kredisi
+
+    /// <summary>Repo'ya <c>src\{ad}</c> altında gerçek legacy class library'ler yazar (<see
+    /// cref="LegacyFixture.CreateClassLib"/> — <c>Debug|AnyCPU</c> grubunda <c>bin\Debug\</c>, yani derleme kanıtının
+    /// yolu türetilebilir) ve commit'ler.</summary>
+    private static void CommitLegacyWorkspace(GitTestRepo repo, params string[] names)
+    {
+        foreach (string name in names) LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        repo.CommitAll("legacy");
+    }
+
+    /// <summary>VS'in (ya da başka bir aracın) yazacağı derleme kanıtını elle yazar: <c>src\{ad}\bin\Debug\{ad}.dll</c>.</summary>
+    private static string WriteBuiltOutput(GitTestRepo repo, string name)
+    {
+        string path = Path.Combine(repo.RootPath, "src", name, "bin", "Debug", name + ".dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[16]);
+        return path;
+    }
+
+    /// <summary>Ağa çıkmayan bir Sync (<c>Fetch: false</c>) — bu testlerin konusu kararın kendisidir.</summary>
+    private static async Task<List<IpcEvent>> SyncWithoutFetchAsync(GitTestRepo repo, string cacheRoot)
+    {
+        var events = new List<IpcEvent>();
+        await ServiceFor(repo.RootPath, cacheRoot).RunAsync(
+            new SyncWorkspaceCommand(repo.RootPath, repo.CurrentBranchName(), Fetch: false),
+            events.Add, CancellationToken.None);
+        return events;
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.2/§5.4, P8] Defterde kaydı olmayan ama derleme kanıtı her girdisinden yeni olan proje
+    /// (VS'te derlenmiş) zaman kipindedir: Sync onu <see cref="WillBuildReason.BuiltOutside"/> ile güncel sayar ve
+    /// önizleme kanıtın zamanını <c>OutputBuiltAt</c> olarak taşır. Eski karar kaydı olmayanı <c>NeverBuilt</c>
+    /// sayıp derletirdi.
+    /// </summary>
+    [Fact]
+    public async Task A_project_built_elsewhere_reads_built_outside_with_its_output_time()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [WriteBuiltOutput(repo, "X")]);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        Assert.Equal(new DateTimeOffset(EvidenceTimes.EvidenceAt), x.OutputBuiltAt);
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 1), (done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [karar "Sync'in Fast geçişi" + "modified ↔ affected zaman kipinde"] "N changed" sayacı ve satırın
+    /// <c>OwnFilesChanged</c>'ı zaman kipinde kanıttan gelir: dışarıda derlenmiş ve güncel <c>X</c> değişmiş
+    /// SAYILMAZ (kaydı yok diye Fast geçişi onu "derlenecek" bulsa da); kendi kaynağı çıktısından yeni <c>Y</c>
+    /// değişmiştir (<c>OutputStale</c>, <c>modified</c>). Sayaç ve satır AYNI cevaptan sayılır.
+    /// </summary>
+    [Fact]
+    public async Task A_project_built_elsewhere_is_not_counted_as_changed()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X", "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
+            [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
+        File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "Y", "Class1.cs"), EvidenceTimes.EditedAt);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside, false), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        Assert.Null(y.OutputBuiltAt); // yaş yalnız taze kanıtta
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((1, 1, 1), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+        Assert.Equal("Sync complete — 1 changed projects, 1 to build", LineStartingWith(events, "Sync complete — ").Line);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.3] Aracın kendisinin derlediği (kaydı güncel, <c>LastRunAt</c> dolu) ama derleme
+    /// kanıtı diskten silinmiş proje defter kipindedir ve <see cref="WillBuildReason.OutputMissing"/> ile
+    /// derlenir. Eski karar yalnız imzaya bakıp <c>UpToDate</c> derdi — çıktısı olmayan bir projeyi atlardı.
+    /// </summary>
+    [Fact]
+    public async Task A_recorded_project_whose_output_was_deleted_reads_output_missing()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []); // kanıt YOK
+        string cacheRoot = NewCacheRoot();
+        await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        var store = new BuildStateStore(cacheRoot);
+        var primed = Assert.Single(store.Load().Values);
+        store.Upsert(primed with { LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt) });
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputMissing), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+        Assert.Equal(1, Assert.Single(events.OfType<SyncCompletedEvent>()).ToBuildCount);
+    }
+
+    /// <summary>
+    /// [spec 2026-09-18 §5.2 "kanıtsız"] Derleme kanıtının yolu türetilemeyen proje (SDK-style) bugünkü kararla
+    /// karar verir: diskte ondan yeni bir DLL dursa bile hiç derlenmemiş sayılır (<c>NeverBuilt</c>), yaşı
+    /// taşınmaz ve "changed" sayılır. Kanıt yalnız yolu bilinen projelere kredi verir.
+    /// </summary>
+    [Fact]
+    public async Task A_project_without_derivable_output_is_decided_as_today()
+    {
+        using var repo = new GitTestRepo();
+        WriteWorkspace(repo);
+        repo.CommitAll("c1");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[16]);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+
+        var events = await SyncWithoutFetchAsync(repo, NewCacheRoot());
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i =>
+        {
+            Assert.Equal((true, WillBuildReason.NeverBuilt, true), (i.WillBuild, i.Reason, i.OwnFilesChanged));
+            Assert.Null(i.OutputBuiltAt);
+        });
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((2, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
     }
 
     // ---------------------------------------------------------------- yardımcı

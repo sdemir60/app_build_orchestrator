@@ -517,6 +517,39 @@ public class IpcMessagesTests
         Assert.False(legacyItem.LocalEdits);
     }
 
+    /// <summary>
+    /// [Faz 3/Task 6 — spec 2026-09-18 §5, P8] <c>OutputBuiltAt</c> IPC sınırını geçer: "built outside" satırında
+    /// kanıtın zamanı TAM gider, diğer satırda alan HİÇ yazılmaz. Alan eşitliğe girer (elle yazılmış
+    /// <c>Equals</c>/<c>GetHashCode</c>) — yalnız bu alanı farklı iki satır eşit sayılsaydı App'in değişiklik
+    /// kontrolü yeni yaşı yutardı. Alansız eski NDJSON satırı hâlâ çözülür ve <c>null</c>'a düşer.
+    /// </summary>
+    [Fact]
+    public void BuildPreviewItem_carries_the_output_time_across_the_wire()
+    {
+        var builtAt = new DateTimeOffset(2026, 9, 19, 9, 30, 0, TimeSpan.Zero);
+        var ev = new BuildPreviewEvent(
+        [
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", false, null, WillBuildReason.BuiltOutside, OutputBuiltAt: builtAt),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true, null, WillBuildReason.OutputStale),
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(ev, IpcJson.Options);
+
+        Assert.Equal(1, json.Split("\"outputBuiltAt\"").Length - 1); // B için alan hiç yazılmadı
+        var back = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(ev.Items, back.Items);
+        Assert.Equal(builtAt, back.Items[0].OutputBuiltAt);
+        Assert.Null(back.Items[1].OutputBuiltAt);
+
+        var other = ev.Items[0] with { OutputBuiltAt = builtAt.AddMinutes(1) };
+        Assert.NotEqual(ev.Items[0], other);
+        Assert.NotEqual(ev.Items[0].GetHashCode(), other.GetHashCode());
+
+        var legacy = Assert.IsType<BuildPreviewEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"buildPreview","items":[{"projectId":"C:\\p\\a.csproj","name":"A","willBuild":false}]}""",
+            IpcJson.Options));
+        Assert.Null(Assert.Single(legacy.Items).OutputBuiltAt);
+    }
+
     [Fact]
     public void SyncWorkspaceCommand_roundtrips_with_discriminator()
     {
