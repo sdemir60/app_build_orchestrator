@@ -156,6 +156,12 @@ public partial class ConsoleView : UserControl
         EditorControl.Cursor = Cursors.Arrow;
         EditorControl.TextArea.Cursor = Cursors.Arrow;
         EditorControl.TextArea.TextView.Cursor = Cursors.Arrow;
+        // [Task 6/design v1.17.0 §9] Konsolun TEK canlı imleci CursorHop'lu prompt caret'idir — AvalonEdit'in
+        // kendisininki DEĞİL. IsReadOnly="True" AvalonEdit'in TextArea odağı almasını engellemez: kullanıcı
+        // konsola tıklayınca kendi ince caret'i yanıp sönmeye başlar ve iki canlı imleç birden görünür.
+        // Caret'in fırçası şeffaf yapılır (mantığı — konum takibi, klavyeyle seçim, Ctrl+C — canlı kalır,
+        // yalnız GÖRÜNÜRLÜK bastırılır); Focusable'a dokunulmaz.
+        EditorControl.TextArea.Caret.CaretBrush = Brushes.Transparent;
         _hoverBandBrush = (SolidColorBrush)HoverBand.Fill;
         // [M-1 review round 1] TextView DEĞİL, EditorControl dinlenir: TextView editörün 12px iç dolgusunun
         // (Padding) İÇİNDE durur, yalnız onu dinlemek panelin sol/sağ 12px + üst 8px + alt 14px kenarlarında
