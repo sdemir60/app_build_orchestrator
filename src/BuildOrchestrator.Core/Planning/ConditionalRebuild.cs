@@ -21,7 +21,8 @@ public enum ConditionalRebuildVerdict
 /// <para><b>Neden koşullu.</b> Başarısız bir bağımlılığa rağmen başarıyla derlenen proje, o bağımlılığın SON
 /// BAŞARILI çıktısına link'lidir. Bağımlılık hâlâ patlıyorsa projeyi yeniden derlemek hiçbir şey kazandırmaz:
 /// aynı bayat çıktıya yeniden link'lenir. Ama bağımlılık bir gün KAYNAK DEĞİŞMEDEN düzelirse projenin imzası da
-/// değişmez — DLL/bin timestamp'i okunmadığı için onu yeniden derlemeye götürecek tek sinyal defterdeki nottur.
+/// değişmez — çıktı aracın kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi eşleşen
+/// imzayı bozmaz (ARCHITECTURE §7.6): onu yeniden derlemeye götürecek tek sinyal defterdeki nottur.
 /// Tetik bu yüzden "her Build'de" değil "kök düzeldiğinde"dir.</para>
 ///
 /// <para><b>Kök sonucu nereden okunur.</b> Kararın anı projenin hazır olduğu andır: tüm bağımlılıkları (ve

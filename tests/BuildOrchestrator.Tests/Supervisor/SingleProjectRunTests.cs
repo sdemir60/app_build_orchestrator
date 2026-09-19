@@ -169,9 +169,10 @@ public class SingleProjectRunTests
     /// <summary>
     /// [tek proje · Clean] Satır menüsünün <b>Clean</b>'i Visual Studio'nun proje Clean'idir: yalnız hedefte
     /// <c>msbuild /t:Clean</c>, hiçbir şey derlenmez, hiçbir başka projeye dokunulmaz.
-    /// <para><b>Defter kaydı SİLİNİR</b> — çıktılar gittiğinde defter de onları bilmemeli; §4 gereği DLL/bin
-    /// timestamp'i okunmadığı için kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlar ve kullanıcı
-    /// silinmiş çıktılarla yeşil bir koşu görürdü. Paket restore'u da koşmaz: Clean derlemez.</para>
+    /// <para><b>Defter kaydı SİLİNİR</b> — çıktılar gittiğinde defter de onları bilmemeli; çıktı kanıtı
+    /// (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür, bu yüzden kayıt
+    /// kalsaydı bir sonraki Build SDK-style bir projeyi "güncel" sayıp atlar ve kullanıcı silinmiş çıktılarla
+    /// yeşil bir koşu görürdü. Paket restore'u da koşmaz: Clean derlemez.</para>
     /// </summary>
     [Fact]
     public async Task A_scoped_clean_runs_msbuilds_clean_target_and_forgets_the_projects_ledger_row()

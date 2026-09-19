@@ -2,7 +2,8 @@
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from source content on
-disk, never from output timestamps), and builds only those — in parallel, under a supervisor process it owns.
+disk — an output's date alone never makes it current), and builds only those — in parallel, under a supervisor
+process it owns.
 
 It is a developer tool for your own machine: it builds a repository you would otherwise open in Visual Studio,
 with your own privileges.
@@ -59,10 +60,12 @@ Key consequences of that layout:
 - No output path is ever changed: no `-p:OutDir` / `-p:OutputPath` and no intermediate-path redirect is passed,
   so output — and `obj` — lands exactly where Visual Studio would put it.
 - "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
-  it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No DLL
-  or `bin` timestamp is ever read, and no version-control command takes part: git is used for fetching,
-  branches, checkout and updating external working copies, never for deciding. Hashes are cached by size and
-  modification time, so a normal run only stats those files.
+  it declares, everything build-affecting under its folder, and the `Directory.Build.*` files above it. No
+  version-control command takes part: git is used for fetching, branches, checkout and updating external
+  working copies, never for deciding. Hashes are cached by size and modification time, so a normal run only
+  stats those files. An output's date never makes the tool's own output current; it is compared with the
+  inputs only for an output built elsewhere — in Visual Studio, say — which counts as current when no input is
+  newer than it (ARCHITECTURE.md §7.6).
 
 ## Requirements
 
@@ -172,14 +175,17 @@ the running instance first — tray icon → Exit).
    added or removed — otherwise the rows simply change colour in place.
 
    **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
-   will be built, red when its last build failed with a compiler error. In a cycle member the graph node's cube
+   will be built, red when its last build failed with a compiler error. A project you built in Visual Studio is
+   green too, as long as none of its inputs is newer than that output. In a cycle member the graph node's cube
    is always amber. Before the first Sync nothing is known, so every row sits in the start mode — a four-arc
    ring in place of the dot, a dashed glyph — and every graph node draws a dashed border. Why a row will build
    is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
-   `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed),
-   `never built`, `failed · 2h` (failed at this source — the tail is how long ago), or `up to date · 2h` — the
-   tail being how long ago it was last built successfully. A project that built successfully against a
-   dependency that was failing, and has not changed since, reads the same `up to date` — a later Build leaves it
+   `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed,
+   or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
+   its output file is gone), `failed · 2h` (failed at this source — the tail is how long ago), or
+   `up to date · 2h` — the tail being how long ago it was last built successfully (or, for a project built
+   outside this tool, how old that output is). A project that built successfully against a dependency that was
+   failing, and has not changed since, reads the same `up to date` — a later Build leaves it
    alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 
    The Sync line in the console also says where you stand against the remote:
@@ -275,8 +281,10 @@ the running instance first — tray icon → Exit).
    The elapsed clock starts from zero — it is a new run.
 
 **Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
-glyph and the graph node all carry the same status, so there is nothing to cross-reference. A single amber
-triangle in the fixed slot on the right means something is off with this project's dependencies — a cycle, or
+glyph and the graph node all carry the same status, so there is nothing to cross-reference. Green does not
+say who built the output: hover the decision label and its tooltip says `built outside this tool` when it was
+not this tool. A single amber triangle in the fixed slot on the right means something is off with this project's
+dependencies — a cycle, or
 a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
 project log. The counter chips in the bottom bar count state — `✓` up to date, `○` to build, `✗` failed, plus
 what is building right now — and each is a filter; they **combine**: press the tick and the circle together to

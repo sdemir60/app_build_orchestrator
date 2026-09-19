@@ -163,7 +163,8 @@ public static class Program
     /// <see cref="BuildOrchestrator.Core.Incremental.BuildSignature"/> imzası hesaplanır.
     /// <b>SALT-OKUR git (K1):</b> HEAD/branch yalnız OKUNUR — checkout/pull/fetch/reset ASLA. Herhangi bir
     /// discovery/hash hatası → plan AYNEN döner (WillBuild=null) ve <c>Incremental=null</c>: Build o durumda
-    /// pre-skip yapmaz (hepsini derler, güvenli taraf). §4: DLL/bin/obj timestamp'ı okunmaz. Git sorguları ve
+    /// pre-skip yapmaz (hepsini derler, güvenli taraf). Çıktı dosyalarının zamanı ve boyutu yalnız çıktı
+    /// kanıtında (<c>ChecksFor</c>, ARCHITECTURE §7.6) okunur ve imzaya girmez. Git sorguları ve
     /// imzanın köke göreli yolları <c>cmd.RootPath</c>'e — kullanıcının çalışma ağacına — göredir.
     /// </summary>
     /// <param name="externalCommits">Harici projelerin kendi çalışma kopyalarının revizyonu — build-state'in

@@ -15,8 +15,10 @@ namespace BuildOrchestrator.Core.Incremental;
 /// aynı ikiliyi satır etiketleri için ister. Girdi toplama (klasör taraması) ve fingerprint hesabı bu
 /// geçişler arasında PAYLAŞILIR; statik bir metot her çağrıda diski yeniden tarardı.</para>
 ///
-/// <para><b>§4:</b> DLL/bin/obj timestamp'ı ASLA okunmaz. Okunan tek şey KAYNAK dosyaların içeriğidir; stat
-/// bilgisi yalnız <see cref="SourceHashCache"/>'in "yeniden özetlemeye gerek var mı" kapısıdır.</para>
+/// <para><b>İmza:</b> DLL/bin/obj timestamp'ı imzaya ASLA girmez. İmza için okunan tek şey KAYNAK dosyaların
+/// içeriğidir; stat bilgisi yalnız <see cref="SourceHashCache"/>'in "yeniden özetlemeye gerek var mı" kapısıdır.
+/// Çıktı dosyalarının zamanı ve boyutu yalnız <see cref="ChecksFor"/>'da (çıktı kanıtı, <see
+/// cref="OutputEvidence"/>) okunur ve imzaya değil yalnız karara girer.</para>
 ///
 /// <para><b>Kök varsayımı:</b> <c>workspaceRoot</c> kullanıcının çalışma alanı köküdür ve imzanın yol
 /// terimleri ona göredir. Kökün DIŞINDA kalan girdiler (harici köklerden gelen projeler, kökün üstündeki bir

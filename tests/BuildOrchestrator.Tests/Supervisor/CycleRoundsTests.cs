@@ -151,8 +151,9 @@ public class CycleRoundsTests
     /// <para><b>Neden upstream kapsamda:</b> üye kirli bir X'in bir önceki nesil DLL'ine karşı derlenseydi
     /// derleme yeşil olur, çıktı bayat olurdu — ve koşu sonunda üyenin imzası (X'in KAYNAK terimini zaten
     /// içerir) persist edildiği için bir sonraki Build onu "güncel" sayıp bir daha derlemezdi. Proje kalıcı
-    /// olarak bayat bir binary'e link'li kalırdı; §4 gereği DLL timestamp'i okunmadığından bunu yakalayacak
-    /// başka bir mekanizma yok.</para>
+    /// olarak bayat bir binary'e link'li kalırdı; çıktı aracın kendisinin olduğundan defter kipinde okunur ve
+    /// orada çıktının tarihi eşleşen imzayı bozmaz (ARCHITECTURE §7.6) — bunu yakalayacak başka bir mekanizma
+    /// yok.</para>
     ///
     /// <para><b>Neden downstream DEĞİL:</b> Z'yi de almak kapsamı sessizce tüm repoya genişletirdi (bir
     /// çekirdek kütüphanenin dependent kümesi pratikte her şeydir). Z'yi Build derler — düğmenin sırası
@@ -430,8 +431,8 @@ public class CycleRoundsTests
 
             Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
             // A HER TURDA YEŞİLDİ ama grup yakınsamadı: turlar bir bütündür. Taze imza yazılsaydı bir sonraki
-            // Build A'yı "güncel" sayıp atlar, grup yarım kalmış hâlde TEMİZ görünürdü (§4: DLL/bin timestamp
-            // okunmadığı için bunu yakalayacak başka mekanizma yok).
+            // Build A'yı "güncel" sayıp atlar, grup yarım kalmış hâlde TEMİZ görünürdü (defter kipinde çıktının
+            // tarihi eşleşen imzayı bozmaz — ARCHITECTURE §7.6; bunu yakalayacak başka mekanizma yok).
             var a = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, a.LastResult);   // yeşil görünen üye bile GEÇERSİZLEŞTİRİLİR
             Assert.Equal("old", a.BuiltSignature);            // taze imza ("sig") YAZILMADI ⇒ persist YOK

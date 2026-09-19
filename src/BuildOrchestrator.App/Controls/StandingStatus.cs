@@ -38,7 +38,7 @@ public static class StandingStatuses
             // [Faz 3 — spec 2026-09-18 §5.4] BuiltOutside de yeşildir: çıktı güncel, yalnız bu araçla değil.
             WillBuildReason.BuiltOutside => StandingStatus.Current,
             // NeverBuilt · SignatureChanged · DepIssue · OutputStale · OutputMissing · OutputReplaced —
-            // üçü de bugünkü kanıta göre "derlenecek"tir; varsayılan dal, açıkça belirtilir (kopya YASAK).
+            // altısı da bugünkü kanıta göre "derlenecek"tir; varsayılan dal, açıkça belirtilir (kopya YASAK).
             _ => StandingStatus.Stale,
         };
     }

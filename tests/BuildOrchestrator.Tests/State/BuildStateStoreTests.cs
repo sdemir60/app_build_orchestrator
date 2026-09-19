@@ -29,8 +29,9 @@ public class BuildStateStoreTests : IDisposable
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
     /// <summary>[tek proje · Clean] Temizlenen projenin kaydı SİLİNİR — geçersizleştirilmez. Çıktı artık yok;
-    /// §4 gereği DLL/bin timestamp'i okunmadığı için "diskte çıktı var mı" sorusunun tek cevabı bu defterdir
-    /// ve kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Kaydı olmayan bir projeyi silmek
+    /// çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür, bu
+    /// yüzden kayıt kalsaydı bir sonraki Build SDK-style bir projeyi "güncel" sayıp atlardı. Kaydı olmayan bir
+    /// projeyi silmek
     /// dosyaya HİÇ dokunmaz: hiç derlenmemiş bir projeyi temizlemek defteri şişirmez.</summary>
     [Fact]
     public void Removing_a_record_forgets_only_that_project_and_never_writes_when_there_is_none()

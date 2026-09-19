@@ -1779,8 +1779,9 @@ public class RunCoordinatorTests
         // project.assets.json/*.nuget.g.props artığı): Up dün YEŞİLDİ (Succeeded + imza persist edildi), bugün
         // AYNI imzayla FAIL ediyor. Başarısızlık build-state'e yazılmazsa kayıt hâlâ "Succeeded + eşleşen imza"
         // der ve bir sonraki Build projeyi "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk bir
-        // proje "güncel" olarak raporlanır. §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayabilecek
-        // başka mekanizma YOKTUR. Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
+        // proje "güncel" olarak raporlanır. Dünkü çıktı aracın kendisinin olduğundan defter kipinde okunur ve
+        // orada çıktının tarihi hatayı göremez (ARCHITECTURE §7.6): bunu yakalayabilecek başka mekanizma YOKTUR.
+        // Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
         // → BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
         string cacheRoot = NewCacheRoot();
         try

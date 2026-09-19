@@ -226,8 +226,9 @@ public static class IncrementalPlanner
     /// alanı köküne göreli, <c>/</c>-normalize — bkz. <see cref="IncrementalRunBinder.PathTerm"/>), içerik ise
     /// aynı dosyanın diskteki hâlinden okunur.</para>
     ///
-    /// <para>§4 kaynak-sinyali kuralı korunur: yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj ya da bir
-    /// derleme çıktısının timestamp'ı ASLA. Okuma bedeli <see cref="SourceHashCache"/> ile koşu başına bir
+    /// <para>§4 kaynak-sinyali kuralı korunur: parmak izi için yalnız kaynak dosya İÇERİĞİ okunur — DLL/bin/obj
+    /// ya da bir derleme çıktısının timestamp'ı ASLA (çıktı zamanı yalnız karara girer, bkz. <see
+    /// cref="OutputEvidence"/>). Okuma bedeli <see cref="SourceHashCache"/> ile koşu başına bir
     /// stat geçişine iner.</para>
     ///
     /// <para>Okunamayan dosyalar (canlı build ↔ tarama yarışı, silinmiş dosya) sessizce elenir; hiçbiri

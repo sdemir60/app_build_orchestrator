@@ -143,9 +143,10 @@ public sealed class BuildStateStore
     /// [tek proje · Clean] Bir projenin kaydını defterden SİLER — kayıt yoksa dosyaya hiç dokunulmaz.
     ///
     /// <para>Tek çağıranı başarılı bir <c>Clean</c> koşusudur: çıktılar gittiğinde defter de onları bilmemeli.
-    /// §4 gereği DLL/bin timestamp'i asla okunmaz, yani "diskte çıktı var mı" sorusunun tek cevabı bu
-    /// defterdir; kayıt kalsaydı bir sonraki <c>Build</c> projeyi "güncel" sayıp atlar ve kullanıcı silinmiş
-    /// çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed) yerine SİLMEK
+    /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
+    /// (SDK-style'da göremez); kayıt kalsaydı bir sonraki <c>Build</c> böyle bir projeyi "güncel" sayıp atlar ve
+    /// kullanıcı silinmiş çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed)
+    /// yerine SİLMEK
     /// doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor — <c>WillBuildEvaluator</c>
     /// da kayıtsız projeyi tam olarak böyle okur.</para>
     /// </summary>

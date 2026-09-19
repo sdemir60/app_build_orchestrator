@@ -19,7 +19,8 @@ using BuildOrchestrator.Core.Incremental;
 /// derlendi ama bağımlılığının BAYAT çıktısına link'lidir; "başarılı" olması binary'nin güncel olduğu
 /// anlamına gelmez. Bağımlılık kaynak DEĞİŞMEDEN düzelirse (ör. zehirli obj temizliği) bu projenin imzası
 /// da değişmez — not olmasaydı bir sonraki Build onu "güncel" sayıp atlar ve proje sonsuza dek bayat
-/// binary'e link'li kalırdı. §4 gereği DLL/bin timestamp'i OKUNMADIĞI için bunu yakalayacak başka bir
+/// binary'e link'li kalırdı. Çıktı aracın kendisinin olduğundan defter kipindedir ve orada çıktının tarihi
+/// eşleşen imzayı bozmaz (<see cref="LedgerVetoes"/>, ARCHITECTURE §7.6) — bunu yakalayacak başka bir
 /// mekanizma yoktur.</para>
 ///
 /// <para>Bu güvenlik eskiden koordinatörde, "böyle bir başarıyı deftere HİÇ yazma" biçiminde duruyordu.

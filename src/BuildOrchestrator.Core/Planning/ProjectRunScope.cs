@@ -20,8 +20,9 @@ using BuildOrchestrator.Core.Scheduling;
 /// hedef onun SON BİLİNEN çıktısına karşı derlenir. Bu, <see cref="CycleRunScope"/>'un anlattığı deliğin ta
 /// kendisidir: hedef yeşil döner, taze imzası (upstream terimi bağımlılığın YENİ kaynağını zaten içerir)
 /// persist edilir ve bir sonraki Build onu "güncel" sayıp bir daha derlemez — proje kalıcı olarak bayat bir
-/// DLL'e link'li kalır, §4 gereği DLL/bin timestamp'i okunmadığı için bunu yakalayacak ikinci mekanizma
-/// yoktur. Kapsamı genişletmek yerine (tasarım "build with dependencies" istemedi) bağımlılık dep-issue
+/// DLL'e link'li kalır; çıktı aracın kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi
+/// eşleşen imzayı bozmaz (ARCHITECTURE §7.6), bunu yakalayacak ikinci mekanizma yoktur. Kapsamı genişletmek
+/// yerine (tasarım "build with dependencies" istemedi) bağımlılık dep-issue
 /// olarak hedefe yapışır: log başında uyarı, satırda üçgen, defterde NOT ve bayat bağımlılık KÖK olarak (§8.3)
 /// — o not bir sonraki Build'de hedefi, kök derlenip başarılı olduğunda yeniden derletir. Bilinmeyen (<c>null</c>) de bayat sayılır: güvenli yön bir kez
 /// daha derlemektir.</para>
