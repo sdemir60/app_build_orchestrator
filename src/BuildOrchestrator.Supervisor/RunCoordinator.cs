@@ -1896,8 +1896,10 @@ public sealed class RunCoordinator(
     /// imza eşitliğine bakar) — imza bilinmiyorsa kapı zaten kanıtsız der. <b>Kanıtsızsa</b> (timeout, stopped,
     /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
     /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
-    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil) ve kayıt yoksa hiçbir şey
-    /// AÇILMAZ: kanıtsız bir başarısızlık için placeholder kayıt yazmak store'u şişirmekten başka iş yapmaz.
+    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil); kayıt yoksa <c>BuiltSignature:
+    /// null</c>, <c>LastResult=Failed</c> ile AÇILIR — kaydı olmayan proje zaman kipindedir ve açılmasaydı yarıda
+    /// kalan derlemenin taze çıktısı <c>BuiltOutside</c> okunabilirdi (<see
+    /// cref="Core.State.BuildStateStore.InvalidateWithoutEvidence"/>).
     /// </para>
     /// <para>
     /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni) her iki yolda da geçerlidir:
@@ -1925,7 +1927,7 @@ public sealed class RunCoordinator(
         try
         {
             var now = DateTimeOffset.UtcNow;
-            // [spec 2026-09-18 §5.5] Kanıtsız dal TEK yerdedir (çökme kurtarması da onu çağırır): kayıt yoksa no-op.
+            // [spec 2026-09-18 §5.5] Kanıtsız dal TEK yerdedir (çökme kurtarması da onu çağırır): kayıt yoksa açar.
             if (evidenceSignature is null) { run.StateStore.InvalidateWithoutEvidence(projectId, now); return; }
 
             run.StateStore.Load().TryGetValue(projectId, out var existing);

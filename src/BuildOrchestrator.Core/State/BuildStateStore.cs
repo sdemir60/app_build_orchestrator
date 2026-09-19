@@ -162,17 +162,22 @@ public sealed class BuildStateStore
     /// süre KORUNUR (Fast modda dependent'ların tabanı, ETA'nın ölçümü). Satır bir sonraki Sync'te gri
     /// <c>never built</c> olur: derleme kanıtı <c>LastRunAt</c>'tan eski kalır, zaman kipine giremez.
     ///
-    /// <para>Kayıt yoksa no-op — kanıtsız bir olay deftere yeni kayıt AÇMAZ (kayıtsız proje zaten derlenir).
-    /// İki çağıran: koşu içinde kanıtsız biten proje (<c>RunCoordinator.InvalidateBuildStateOnFailure</c>) ve
-    /// açılıştaki çökme kurtarması (<see cref="InFlightLedger.Recover"/>). Okuma ile yazma aynı kilit
-    /// altındadır: eşzamanlı bir <see cref="Upsert"/> araya giremez.</para>
+    /// <para>Kayıt yoksa aynı hâlde bir kayıt AÇILIR: <c>BuiltSignature: null</c>, <c>LastResult=Failed</c>,
+    /// <c>LastRunAt=</c><paramref name="now"/> (yakınsamama hafızasının kayıtsız projeye açtığı kayıtla aynı biçim).
+    /// Kaydı olmayan proje zaman kipindedir (<see cref="Incremental.OutputEvidence.Inspect"/>): kayıt açılmasaydı
+    /// kesilen derlemenin bıraktığı yarım ama girdilerinden yeni çıktı <c>BuiltOutside</c> okunup atlanabilirdi.
+    /// Açılan kayıtla derleme kanıtı <c>LastRunAt</c>'tan eski kalır, proje defter kipine geçer ve karar
+    /// <c>NeverBuilt</c>'tır. İki çağıran: koşu içinde kanıtsız biten proje
+    /// (<c>RunCoordinator.InvalidateBuildStateOnFailure</c>) ve açılıştaki çökme kurtarması (<see
+    /// cref="InFlightLedger.Recover"/>). Okuma ile yazma aynı kilit altındadır: eşzamanlı bir <see cref="Upsert"/>
+    /// araya giremez.</para>
     /// </summary>
     public void InvalidateWithoutEvidence(string projectId, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(projectId);
         Write(map =>
         {
-            if (!map.TryGetValue(projectId, out var existing)) return false; // kayıt yok ⇒ hiçbir şey açılmaz
+            var existing = map.GetValueOrDefault(projectId) ?? new BuildState(projectId, BuiltSignature: null);
             map[existing.ProjectId] = existing with
             {
                 LastResult = BuildResult.Failed,

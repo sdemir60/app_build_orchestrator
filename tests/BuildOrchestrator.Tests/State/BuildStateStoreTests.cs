@@ -53,9 +53,14 @@ public class BuildStateStoreTests : IDisposable
 
     /// <summary>[spec 2026-09-18 §5.5 · karar 12] Kanıtsız geçersizleme: kayıt "son deneme başarısız, kanıt yok"
     /// hâline çekilir (LastResult=Failed, LastRunAt=şimdi, hata imzası ve zamanı SİLİNİR), imza/commit/süre
-    /// korunur. Kaydı olmayan proje için hiçbir şey açılmaz ve dosyaya dokunulmaz.</summary>
+    /// korunur. Kaydı olmayan proje için "hiç başarı yok, son deneme başarısız" kaydı açılır.
+    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, kullanıcı kararı 2026-09-19]</b> Eski iddia: kaydı olmayan proje
+    /// için hiçbir şey açılmaz ve dosyaya dokunulmaz ("kayıtsız proje zaten derlenir"). Faz 3'te kaydı olmayan proje
+    /// zaman kipindedir: kesilen derlemenin bıraktığı yarım ama taze çıktı <c>BuiltOutside</c> okunabilirdi. Açılan
+    /// kayıt (<c>BuiltSignature: null</c>, <c>LastResult=Failed</c>, <c>LastRunAt=şimdi</c>) projeyi defter kipine
+    /// alır ve karar <c>NeverBuilt</c> olur.</para></summary>
     [Fact]
-    public void InvalidateWithoutEvidence_marks_an_unevidenced_failure_keeps_the_signature_and_opens_no_record()
+    public void InvalidateWithoutEvidence_marks_an_unevidenced_failure_keeps_the_signature_and_opens_a_failed_record()
     {
         var store = new BuildStateStore(_root);
         var earlier = new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero);
@@ -74,10 +79,10 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal("c1", a.BuiltCommit);
         Assert.Equal(1234, a.LastDurationMs);
 
-        var stamp = File.GetLastWriteTimeUtc(StatePath);
         store.InvalidateWithoutEvidence(@"C:\r\Never.csproj", now);
-        Assert.Single(store.Load());                               // kayıt açılmadı
-        Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath));  // dosyaya hiç dokunulmadı
+        Assert.Equal(
+            new BuildState(@"C:\r\Never.csproj", BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: now),
+            Assert.Contains(@"C:\r\Never.csproj", store.Load()));
     }
 
     /// <summary>

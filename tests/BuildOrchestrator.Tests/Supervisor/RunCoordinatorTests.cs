@@ -1879,8 +1879,8 @@ public class RunCoordinatorTests
     /// <summary>
     /// Yukarıdaki testin AYRIMI: hiç build-state kaydı OLMAYAN bir proje derleyici hatasıyla patladığında da
     /// kanıt kaybolmamalı — <see cref="InvalidateBuildStateOnFailure"/> kayıt yoksa <c>BuiltSignature: null</c>
-    /// ile YENİ bir kayıt açar (bugüne dek kanıtsız yollarda "kayıt yoksa açılmaz" olan davranıştan BİLEREK
-    /// AYRILIR, çünkü burada kanıt VAR).
+    /// ile YENİ bir kayıt açar ve bu kez hata imzası (kanıt) da yazılır — kanıtsız yolun açtığı kayıt
+    /// (<c>BuildStateStore.InvalidateWithoutEvidence</c>) imzasızdır.
     /// </summary>
     [Fact]
     public async Task A_compiler_failure_opens_a_record_for_a_never_built_project()

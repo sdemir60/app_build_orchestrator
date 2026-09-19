@@ -83,7 +83,8 @@ public sealed class InFlightLedger
 
     /// <summary>
     /// Açılış kurtarması: dosyadaki her proje <see cref="BuildStateStore.InvalidateWithoutEvidence"/> ile kanıtsız
-    /// hata olur (kaydı olmayan için no-op), dosya silinir, listelenen id'ler döner.
+    /// hata olur (kaydı olmayana da "son deneme başarısız" kaydı açılır — yarım çıktısı zaman kipine giremez), dosya
+    /// silinir, listelenen id'ler döner: hepsi bir sonraki Build'de yeniden derlenecektir (konsol sayısı).
     ///
     /// <para><b>Hata sözleşmesi [Task 10 fix M4/I2]:</b> yalnız AYRIŞTIRILAMAYAN içerik bozuktur — kurtarma
     /// uydurulmaz, dosya silinir, boş liste döner. Dosya OKUNAMIYORSA (kilit, izin) ya da defter yazımı patlarsa

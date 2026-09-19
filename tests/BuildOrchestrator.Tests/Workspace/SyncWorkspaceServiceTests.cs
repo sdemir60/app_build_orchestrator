@@ -875,6 +875,31 @@ public class SyncWorkspaceServiceTests
     }
 
     /// <summary>
+    /// [spec 2026-09-18 §5.5 · Faz 3 final review, kullanıcı kararı 2026-09-19] Kaydı olmayan bir proje kanıtsız
+    /// biterse (çökme, timeout, stop, invoke hatası) diskte yarım yazılmış ama girdilerinden yeni bir çıktı
+    /// kalabilir. Kanıtsız geçersizleme kayıt AÇAR (<c>LastResult=Failed</c>, <c>LastRunAt=şimdi</c>): kanıt
+    /// <c>LastRunAt</c>'tan eski kalır, proje defter kipindedir ve bir sonraki Sync onu gri <c>never built</c>
+    /// okur. Kayıt açılmasaydı proje zaman kipinde kalır ve yarım çıktı <c>BuiltOutside</c> okunurdu.
+    /// </summary>
+    [Fact]
+    public async Task An_unrecorded_project_that_failed_without_evidence_reads_never_built_not_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [WriteBuiltOutput(repo, "X")]);
+        string cacheRoot = NewCacheRoot();
+        new BuildStateStore(cacheRoot).InvalidateWithoutEvidence(
+            Path.GetFullPath(Path.Combine(repo.RootPath, "src", "X", "X.csproj")),
+            new DateTimeOffset(EvidenceTimes.ToolRunAt));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.NeverBuilt), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+    }
+
+    /// <summary>
     /// [spec 2026-09-18 §5.3] Aracın kendisinin derlediği (kaydı güncel, <c>LastRunAt</c> dolu) ama derleme
     /// kanıtı diskten silinmiş proje defter kipindedir ve <see cref="WillBuildReason.OutputMissing"/> ile
     /// derlenir. Eski karar yalnız imzaya bakıp <c>UpToDate</c> derdi — çıktısı olmayan bir projeyi atlardı.
