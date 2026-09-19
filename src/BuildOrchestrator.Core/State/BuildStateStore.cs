@@ -146,9 +146,8 @@ public sealed class BuildStateStore
     /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
     /// (SDK-style'da göremez); kayıt kalsaydı bir sonraki <c>Build</c> böyle bir projeyi "güncel" sayıp atlar ve
     /// kullanıcı silinmiş çıktılarla yeşil bir koşu görürdü. Kaydı <b>geçersizleştirmek</b> (LastResult=Failed)
-    /// yerine SİLMEK
-    /// doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor — <c>WillBuildEvaluator</c>
-    /// da kayıtsız projeyi tam olarak böyle okur.</para>
+    /// yerine SİLMEK doğrudur: proje başarısız olmadı, bu araç artık onun hiçbir çıktısını bilmiyor —
+    /// <c>WillBuildEvaluator</c> da kayıtsız projeyi tam olarak böyle okur.</para>
     /// </summary>
     public void Remove(string projectId)
     {

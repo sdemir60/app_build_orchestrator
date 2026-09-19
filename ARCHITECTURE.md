@@ -733,7 +733,9 @@ its stored signature exactly unless *X*'s own inputs changed.
 Configuration is *not* an upstream term — it enters every node's own signature — so Fast's upstream suppression
 cannot mask a `Debug ↔ Release` switch. Changing configuration makes every project dirty in both modes. This is
 a direct consequence of §9.4: output is config-agnostic in a single shared folder, so the previous
-configuration's binaries are simply gone.
+configuration's binaries are simply gone. The output evidence is the one qualifier (§7.6): when the new
+configuration's output was built elsewhere after the tool's last run of the project, that project is in time
+mode and can read up to date without compiling.
 
 ### 7.3 Cycles in the signature
 
@@ -823,7 +825,8 @@ copy's, not the repository's, because the repository's HEAD describes a differen
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
 all (§10.4). The record also carries the project's **fed outputs** — the copies of its output in dependents'
 `HintPath` locations that this tool's own successful build was seen to refresh (§7.6); the list is `null` when
-nothing was learned (no derivable output path, an older record) and survives a failed attempt unchanged. The
+nothing could be learned (no derivable output path, the output file missing after the build, an older record),
+empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
 built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
 successful build" line is the only place a revision is shown. It is written by a single serialized writer,
 atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
@@ -854,7 +857,8 @@ either — only the build evidence speaks for it.
 output was built by someone else: **time mode**. Otherwise it is the tool's own: **ledger mode**. The tool's own
 output is always older than its last run, because the record is written after MSBuild exits and a copy keeps
 its source's time — which is also why crash recovery's "last run = now" (§8.7) keeps a half-written output out
-of time mode.
+of time mode for a project with a record. Recovery writes nothing for a project that has none, so such a
+project stays in time mode and is judged by its output's time against its inputs.
 
 **Ledger mode** is the decision of §7.4 with two vetoes. `LastFailed` and never built stand as they are. For
 every other reason a missing build evidence reads **output missing** — also when the signature moved, because
@@ -1458,9 +1462,12 @@ lazily, so a workspace with nothing to restore never pays for a `vswhere` search
 
 ### 9.4 `OutDir` and `obj`
 
-**`OutDir` is never touched and never passed to MSBuild.** All the tool reads of any build output is the time and
-length of the file at the project's own output path as its csproj declares it, and of the copies it learned
-(§7.6). Build output lands exactly where Visual Studio would put it: in
+**`OutDir` is never touched and never passed to MSBuild.** The tool reads build output in three places, all
+for the output evidence (§7.6), and only times and lengths: the file at the project's own output path as its
+csproj declares it, together with the fed copies it has learned; after a successful build, every fed-output
+candidate, to learn which ones that build refreshed; and, in time mode, the times of the project's own
+`HintPath` targets — other projects' outputs and their copies. Build output lands exactly where Visual Studio
+would put it: in
 the solution's own shared output folder, produced by the projects' own post-build copy events. The orchestrator
 copies nothing.
 

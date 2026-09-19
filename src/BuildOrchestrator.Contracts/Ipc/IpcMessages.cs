@@ -91,8 +91,7 @@ public enum DependentMode { Safe, Fast }
 /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
 /// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
 /// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. Bugün
-/// yalnız satır menüsünden,
-/// <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
+/// yalnız satır menüsünden, <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>

@@ -1781,8 +1781,8 @@ public class RunCoordinatorTests
         // der ve bir sonraki Build projeyi "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk bir
         // proje "güncel" olarak raporlanır. Dünkü çıktı aracın kendisinin olduğundan defter kipinde okunur ve
         // orada çıktının tarihi hatayı göremez (ARCHITECTURE §7.6): bunu yakalayabilecek başka mekanizma YOKTUR.
-        // Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder
-        // → BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
+        // Planner, üretimdeki seam'in (Program.ComputeIncremental → IncrementalRunBinder →
+        // BuildPreview/WillBuildEvaluator) aynısını kullanır: WillBuild HER run'da GÜNCEL store'dan hesaplanır.
         string cacheRoot = NewCacheRoot();
         try
         {
