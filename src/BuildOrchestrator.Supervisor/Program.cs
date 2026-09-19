@@ -163,7 +163,8 @@ public static class Program
     /// <see cref="BuildOrchestrator.Core.Incremental.BuildSignature"/> imzası hesaplanır.
     /// <b>SALT-OKUR git (K1):</b> HEAD/branch yalnız OKUNUR — checkout/pull/fetch/reset ASLA. Herhangi bir
     /// discovery/hash hatası → plan AYNEN döner (WillBuild=null) ve <c>Incremental=null</c>: Build o durumda
-    /// pre-skip yapmaz (hepsini derler, güvenli taraf). §4: DLL/bin/obj timestamp'ı okunmaz. Git sorguları ve
+    /// pre-skip yapmaz (hepsini derler, güvenli taraf). Çıktı dosyalarının zamanı ve boyutu yalnız çıktı
+    /// kanıtında (<c>ChecksFor</c>, ARCHITECTURE §7.6) okunur ve imzaya girmez. Git sorguları ve
     /// imzanın köke göreli yolları <c>cmd.RootPath</c>'e — kullanıcının çalışma ağacına — göredir.
     /// </summary>
     /// <param name="externalCommits">Harici projelerin kendi çalışma kopyalarının revizyonu — build-state'in
@@ -191,12 +192,19 @@ public static class Program
             });
 
             var state = stateStore.Load();
-            var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode);
+            // [Faz 3/Task 6 — spec 2026-09-18 §5] Çıktı kanıtı karara girer — Sync'in Safe geçişiyle AYNI
+            // kontroller: dışarıda derlenmiş güncel proje BuiltOutside ile pre-skip edilir, kanıtı eksik/bozuk
+            // olan derlenir. Kontroller plana da taşınır (koşu önizlemesi).
+            var checks = binder.ChecksFor(state);
+            var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode, checks);
 
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
             // ve önizlemenin modified ↔ affected ayrımı defterdeki özetle bugünkünün karşılaştırmasından çıkar.
-            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById));
+            // [Faz 3/Task 4] OutputsById de aynı binder'dan — Supervisor başarılı derlemeden sonra beslenen
+            // kopyaları buradan öğrenir (BuildState.FedOutputs).
+            return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById,
+                binder.OutputsById, checks));
         }
         catch (Exception ex)
         {

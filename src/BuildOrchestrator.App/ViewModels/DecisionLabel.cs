@@ -76,17 +76,26 @@ public static class DecisionLabel
     /// <param name="now">Şimdi (yaş hesabı için).</param>
     /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
     /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
+    /// <param name="outputBuiltAt">[Faz 3 — spec 2026-09-18 §5, P8, Task 7] <see cref="WillBuildReason.BuiltOutside"/>
+    /// iken derleme kanıtının zamanı — <c>up to date</c> kuyruğu bu gerekçede <paramref name="lastBuiltAt"/>
+    /// yerine BURADAN gelir (araç bu çıktıyı üretmedi, kanıt aracın dışındaki derlemenindir). Diğer her gerekçede
+    /// okunmaz.</param>
     public static RowDecision For(
         bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt,
-        DateTimeOffset? failedAt, bool localEdits, DateTimeOffset now, bool inCycle = false)
+        DateTimeOffset? failedAt, bool localEdits, DateTimeOffset now, bool inCycle = false,
+        DateTimeOffset? outputBuiltAt = null)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
 
         switch (reason)
         {
+            // [Faz 3 — spec 2026-09-18 §5.3/§5.4, Task 7] OutputMissing NeverBuilt ile BİREBİR okunur: ikisi de
+            // "bu araç bu projeye ait bir çıktı bilmiyor" olgusudur (defterde kayıt olsa bile). Aynı case dalı —
+            // kopya YASAK, ayrı bir literal yazılmaz.
             case WillBuildReason.NeverBuilt:
-                return new("never built", null, "No build output known to this tool", Stale: true);
+            case WillBuildReason.OutputMissing:
+                return new("never built", null, NoBuildOutputKnownTitle, Stale: true);
 
             case WillBuildReason.LastFailed:
             {
@@ -107,11 +116,39 @@ public static class DecisionLabel
                     age is null ? "Up to date" : $"Up to date — last built {age} ago", Stale: false);
             }
 
+            // [Faz 3 — spec 2026-09-18 §5.4, Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil. Kuyruk
+            // (yaş) LastFailed/UpToDate'inki gibi "aracın kendi zamanı"ndan DEĞİL, dışarıdaki derlemenin
+            // kanıtından (outputBuiltAt) gelir: lastBuiltAt burada bu aracın hiç üretmediği bir çıktıyı anlatmaz.
+            case WillBuildReason.BuiltOutside:
+            {
+                string? age = AgeFormat.Age(outputBuiltAt, now);
+                string title = age is null
+                    ? "Up to date — built outside this tool"
+                    : $"Up to date — built outside this tool {age} ago";
+                return new("up to date", age, title, Stale: false);
+            }
+
+            // [Faz 3 — spec 2026-09-18 §5.3/§5.4, Task 7] Öğrenilmiş beslenen kopya (paylaşılan klasördeki DLL)
+            // bozuk — bağımlılar başka bir çıktıya link'lidir, "affected" ile AYNI sözcük ama farklı bir olguyu
+            // adlandırır (kopya kontrolü, imza kontrolü değil).
+            case WillBuildReason.OutputReplaced:
+                return new("affected", null, "Its copy in the shared folder does not match its build output", Stale: true);
+
+            // [Faz 3 — spec 2026-09-18 §5.4, Task 7] Zaman kipi: kendi girdisi derleme kanıtından yeniyse
+            // "modified" yazar ama SignatureChanged/DepIssue'nun cümlesinden FARKLI bir cümleyle (kanıt zaman
+            // damgasından geldi, defterdeki içerik özetinden değil). Kendi girdisi durup yalnız bir HintPath
+            // hedefi yeniyse ayrım defter kipiyle AYNI cümleye düşer (default dal, kopya YASAK).
+            case WillBuildReason.OutputStale when ownFilesChanged == true:
+                return new("modified", localEdits ? "local" : null,
+                    "Its own files are newer than its build output", Stale: true);
+
             default:
-                // SignatureChanged ve DepIssue: ikisinde de proje bayattır, ayrımı "kendi dosyası değişti mi"
-                // olgusu yapar. Bilinmiyorsa daha ihtiyatlı olan "affected" yazılır.
+                // SignatureChanged, DepIssue ve OutputStale (own=false/bilinmiyor): ikisinde de proje bayattır,
+                // ayrımı "kendi dosyası değişti mi" olgusu yapar. Bilinmiyorsa daha ihtiyatlı olan "affected"
+                // yazılır. [Faz 3] OutputStale'in own=false cümlesi TASARIM GEREĞİ bununla BİREBİR aynıdır
+                // (claude-decisions.md: "zaman kipinde de aynı cümle") — ayrı bir case açmak kopya olurdu.
                 if (ownFilesChanged != true)
-                    return new("affected", null, "Its own files are unchanged — a dependency changed", Stale: true);
+                    return new("affected", null, DependencyChangedTitle, Stale: true);
 
                 return localEdits
                     ? new("modified", "local",
@@ -119,4 +156,11 @@ public static class DecisionLabel
                     : new("modified", null, "Its own files changed since the last build", Stale: true);
         }
     }
+
+    /// <summary>[Faz 3 — Task 7] <c>NeverBuilt</c> ve <c>OutputMissing</c>'in PAYLAŞTIĞI tooltip — kopya YASAK.</summary>
+    private const string NoBuildOutputKnownTitle = "No build output known to this tool";
+
+    /// <summary>[Faz 3 — Task 7] Yalnız bağımlılığı değişmiş satırın (SignatureChanged/DepIssue own=false VE
+    /// OutputStale own=false) PAYLAŞTIĞI tooltip — kopya YASAK.</summary>
+    private const string DependencyChangedTitle = "Its own files are unchanged — a dependency changed";
 }

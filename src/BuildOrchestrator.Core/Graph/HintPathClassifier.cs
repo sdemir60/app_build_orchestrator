@@ -5,16 +5,16 @@ using BuildOrchestrator.Contracts.Model;
 
 /// <summary>
 /// [T71] Sınıflandırma raporu: her (proje, HintPath) çifti için sınıf + sayaçlar + repo-resolve oranı.
-/// RepoResolveRatio = Edge / (Edge + Unclassified) — external sınıflar (ThirdParty/OsysPlatform) meşru
+/// RepoResolveRatio = Edge / (Edge + Unclassified) — external sınıflar (ThirdParty/PlatformBin) meşru
 /// dış girdi kabul edilip paydadan HARİÇ tutulur [SPIKE S3 metriği].
 /// </summary>
 public sealed record ClassificationReport(
     IReadOnlyList<HintPathRef> Classified, int EdgeCount, int ThirdPartyCount,
-    int OsysPlatformCount, int UnclassifiedCount, double RepoResolveRatio, IReadOnlyList<string> Warnings);
+    int PlatformBinCount, int UnclassifiedCount, double RepoResolveRatio, IReadOnlyList<string> Warnings);
 
 /// <summary>
 /// [T71] SPIKE S3 fallback sınıflandırıcısı: HintPath'leri producer map'e göre 4 sınıfa ayırır
-/// (Edge / ExternalThirdParty / ExternalOsysPlatform / Unclassified) ve repo-resolve metriğini hesaplar.
+/// (Edge / ExternalThirdParty / ExternalPlatformBin / Unclassified) ve repo-resolve metriğini hesaplar.
 /// </summary>
 public static class HintPathClassifier
 {
@@ -32,7 +32,7 @@ public static class HintPathClassifier
                 string? prod = null;
                 if (producers.DllToProducer.TryGetValue(h.BaseName, out prod)) { cls = HintPathClass.Edge; edge++; }
                 else if (IsThirdParty(h.Raw)) { cls = HintPathClass.ExternalThirdParty; third++; }
-                else if (IsUnderBin(h.Raw)) { cls = HintPathClass.ExternalOsysPlatform; plat++; }
+                else if (IsUnderBin(h.Raw)) { cls = HintPathClass.ExternalPlatformBin; plat++; }
                 else
                 {
                     cls = HintPathClass.Unclassified;
@@ -66,8 +66,8 @@ public static class HintPathClassifier
         || raw.Replace('/', '\\').Contains("Program Files", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Ham yol bir <c>\bin\</c> segmenti taşıyor mu — üreticisi olmayan böyle bir hedef repo-dışı OSYS
-    /// platform DLL'idir (<c>ExternalOsysPlatform</c>).
+    /// Ham yol bir <c>\bin\</c> segmenti taşıyor mu — üreticisi olmayan böyle bir hedef repo-dışı havuzdaki
+    /// platform DLL'idir (<c>ExternalPlatformBin</c>).
     /// <para><see cref="IsNuGetPackagesPath"/> ile aynı sebeple public'tir: Optimize'ın "restore'un
     /// çözemedikleri" teşhisi aynı ayrımı kullanır ve literal iki yerde YAZILMAZ. Üreticinin varlığı bir GRAF
     /// sorusudur, yol sorusu değil — o kontrol çağırana aittir.</para>

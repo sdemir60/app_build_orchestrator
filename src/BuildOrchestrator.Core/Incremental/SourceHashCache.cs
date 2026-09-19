@@ -10,8 +10,9 @@ namespace BuildOrchestrator.Core.Incremental;
 /// dosyaları BAŞTAN okumak olurdu. Önbellekle ödenen bedel yalnız <b>stat</b>'tir: boyut VE mtime aynıysa
 /// dosya açılmaz.
 ///
-/// <para><b>§4 ile çelişmez.</b> "DLL/bin timestamp'ı asla okunmaz" kuralı ÇIKTI zaman damgaları içindir —
-/// karar oradan verilemez. Burada okunan şey bir KAYNAK dosyanın stat bilgisidir ve karar da ondan değil,
+/// <para><b>İçerik kararıyla çelişmez.</b> Aracın kendi çıktısında karar ÇIKTI zaman damgasından verilemez
+/// (tarihlere yalnız başkasının derlediği çıktıda bakılır — <see cref="OutputEvidence"/>). Burada okunan
+/// şey bir KAYNAK dosyanın stat bilgisidir ve karar da ondan değil,
 /// içeriğin özetinden verilir: stat yalnız "özeti yeniden hesaplamaya gerek var mı" sorusunun ucuz cevabıdır.
 /// <c>evaluation-cache.json</c> bugün zaten aynı hızlı yolu kullanır.</para>
 ///

@@ -100,6 +100,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// <see cref="BuildPreviewItem.OwnFilesChanged"/>; bilinmiyorsa <c>null</c>.</summary>
     [ObservableProperty] private bool? _ownFilesChanged;
 
+    /// <summary>[Faz 3 — spec 2026-09-18 §5, P8, Task 7] Proje bu araç dışında derlenmiş ve çıktısı güncelse
+    /// (<see cref="WillBuildReason.BuiltOutside"/>) derleme kanıtının zamanı — etiketin <c>up to date · built
+    /// outside this tool 5m ago</c> yaşı ve proje sayfasının kanıt satırı buradan. Kaynak
+    /// <see cref="BuildPreviewItem.OutputBuiltAt"/>; diğer her gerekçede <c>null</c>. Bu araç projeyi
+    /// başarıyla derlediği an eski kanıt geçersizleşir ve <c>null</c>'a çekilir (artık aracın kendi çıktısı).</summary>
+    [ObservableProperty] private DateTimeOffset? _outputBuiltAt;
+
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
     /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
@@ -1867,6 +1874,7 @@ public sealed partial class RunViewModel : ObservableObject
             row.LastBuiltAt = item.LastBuiltAt;              // [v1.16.0] "up to date · 2h" kuyruğu
             row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
             row.FailedAt = item.FailedAt;                    // [spec 2026-09-18 §1-14] "failed · 2h" kuyruğu — defterden, LastBuiltAt gibi
+            row.OutputBuiltAt = item.OutputBuiltAt;          // [Faz 3 — Task 7] "built outside this tool 2h" kuyruğu
             // [R-M3] LocalEdits yalnız KOŞU DIŞINDAKİ önizlemeden yazılır: Sync'in (ve Clean/Optimize'ın ardından
             // zincirlenen Sync'in) önizlemesi `git status`'u okur, koşu önizlemesi ise alanı hep false gönderir —
             // o yazılsaydı her koşu Sync'in "local" işaretini silerdi. Ayrım olayın geldiği ANDAKİ koşu
@@ -2060,6 +2068,9 @@ public sealed partial class RunViewModel : ObservableObject
             row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
             row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
             row.FailedAt = null; // başarı eski kanıtı düşürür (defter de FailedSignature'ı siler)
+            // [Faz 3 — Task 7] Bu araç projeyi az önce derlediyse "bu araç dışında derlendi" kanıtı ARTIK
+            // GEÇERSİZDİR — çıktı şimdi aracın kendi eseri, FailedAt'le AYNI kural (kopya YASAK).
+            row.OutputBuiltAt = null;
         }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla

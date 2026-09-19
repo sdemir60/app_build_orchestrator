@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Externals;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -39,12 +40,23 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// <param name="ContentById">[v1.16.0] Proje → KENDİ girdi dosyalarının içerik özeti. İki yere gider:
 /// başarılı bir derlemede deftere (<see cref="BuildState.BuiltContent"/>) ve önizlemeye — satırın
 /// <c>modified</c> ↔ <c>affected</c> ayrımı, deftere yazılmış özetle bugünkünün karşılaştırmasıdır.</param>
+/// <param name="OutputsById">[Faz 3/Task 4 — spec 2026-09-18 §5.1] Proje → çıktı kanıtı + beslenen aday kopyalar
+/// (<see cref="Core.Incremental.OutputEvidence.Locate"/>, <see cref="IncrementalRunBinder.OutputsById"/>).
+/// Başarılı bir derlemeden sonra <see cref="OutputEvidence.LearnFedOutputs"/> BUNDAN okur ve gerçekten beslenen
+/// kopyaları <see cref="BuildState.FedOutputs"/>'a yazar. Kayıt yoksa (testlerdeki basit planner) o proje için
+/// öğrenme yapılmaz (<c>null</c> ⇒ <see cref="BuildState.FedOutputs"/> null kalır).</param>
+/// <param name="ChecksById">[Faz 3/Task 6 — spec 2026-09-18 §5] Planın kararına giren çıktı kontrolleri
+/// (<see cref="IncrementalRunBinder.ChecksFor"/>) — koşu önizlemesi <c>OwnFilesChanged</c>'ı ve
+/// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>,
+/// <see cref="OutputEvidence.OutputBuiltAt"/>) bundan yazar. <c>null</c> (testlerdeki basit planner) ⇒ kanıtsız.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
     string? Branch,
     IReadOnlyDictionary<string, string>? CommitByProjectId = null,
-    IReadOnlyDictionary<string, string?>? ContentById = null);
+    IReadOnlyDictionary<string, string?>? ContentById = null,
+    IReadOnlyDictionary<string, ProjectOutputs>? OutputsById = null,
+    IReadOnlyDictionary<string, OutputCheck>? ChecksById = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
@@ -57,7 +69,8 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <summary>
 /// [T4/T55] Run'ın yürütme kalbi: plan → N paralel worker → proje-başına <c>MSBuild.exe</c> shell-out →
 /// disk log + IPC event → Stop/Continue. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
-/// bin/OutDir okuma YOK [§4], bellek ring buffer YOK — tek log kaynağı disktir [D4].
+/// bin/OutDir'den yalnız başarılı bir derlemeden sonra beslenen kopya adaylarının boyutu ve zamanı okunur
+/// (<see cref="OutputEvidence.LearnFedOutputs"/>), bellek ring buffer YOK — tek log kaynağı disktir [D4].
 ///
 /// <para><b>Tek seferde tek run</b> (A6): koşarken gelen <c>startRun</c> → <c>error(runInProgress)</c>.</para>
 ///
@@ -891,6 +904,8 @@ public sealed class RunCoordinator(
         // yer, gerekçesi imzadan DEĞİL koşu-zamanlama kuralından gelen skip'lerdir: yakınsamama hafızası ve
         // Cycles modunun kapsam dışı bıraktığı projeler.
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // [Faz 3/Task 6] Planın kararına giren çıktı kontrolü (Program.ComputeIncremental) — yoksa kanıtsız.
+        OutputCheck? CheckOf(string id) => runPlan.Incremental?.ChecksById?.GetValueOrDefault(id);
         // [koşullu yeniden derleme] Bu koşunun sırası geldiğinde koşullu değerlendireceği projeler — karar Core'da
         // (ConditionalRebuild.AppliesTo); pre-skip edilen hiçbir proje dispatch edilmediği için koşullu da değildir.
         // Önizleme ve dispatch AYNI kümeyi okur: "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
@@ -909,8 +924,10 @@ public sealed class RunCoordinator(
             [.. plan.Nodes.Select(n => new BuildPreviewItem(n.Id, n.Name,
                 preSkipped.Contains(n.Id) ? false : n.WillBuild,
                 BuildStateStore.BuiltCommitOf(builtCommits, n.Id), n.WillBuildReason,
-                OwnFilesChanged: BuildStateStore.OwnFilesChanged(
-                    builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
+                // [Faz 3/Task 6] modified ↔ affected ve "built outside" yaşı Sync ile AYNI yardımcılardan: zaman
+                // kipinde kanıttan, diğer kiplerde defterin cevabı (kontrol yoksa bugünkü cevap aynen).
+                OwnFilesChanged: OutputEvidence.OwnFilesChanged(
+                    CheckOf(n.Id), builtCommits, n.Id, runPlan.Incremental?.ContentById?.GetValueOrDefault(n.Id)),
                 LastBuiltAt: BuildStateStore.LastBuiltAtOf(builtCommits, n.Id),
                 Conditional: conditionalIds.Contains(n.Id),
                 DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
@@ -919,7 +936,8 @@ public sealed class RunCoordinator(
                 // aynı aramayı iki kez YAZMAZ (BuiltCommit/LastBuiltAt ile aynı desen). LocalEdits burada
                 // TAŞINMAZ (default false): o Sync'in "o anki çalışma ağacı" işaretidir, bir koşunun kendi
                 // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
-                FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id)))]));
+                FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id),
+                OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id), n.WillBuildReason)))]));
         // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
         // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
         // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
@@ -1233,8 +1251,9 @@ public sealed class RunCoordinator(
     /// <param name="trustedResult">Bu sonucun ARKASINDA DURULABİLİR mi. Tekil projede daima <c>true</c>. SCC'de
     /// yalnız grup YAKINSADIYSA (<see cref="CycleRoundDecision.Converged"/>) <c>true</c>'dur: turlar bir
     /// bütündür, yakınsamayan bir grubun tur 1'de yeşile dönmüş üyesi de taze imzasını KAYDETMEZ — aksi halde
-    /// bir sonraki Build onu "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (§4 gereği DLL/bin
-    /// timestamp'i okunmadığı için bunu yakalayacak başka mekanizma yoktur). <c>false</c> ⇒ persist YOK ve
+    /// bir sonraki Build onu "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (çıktı aracın
+    /// kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi eşleşen imzayı bozmaz — ARCHITECTURE
+    /// §7.6; bunu yakalayacak başka mekanizma yoktur). <c>false</c> ⇒ persist YOK ve
     /// BAŞARILI üye dahil herkes invalidate edilir.</param>
     /// <param name="cycleUnsettled">[cycle rounds] Tavana dayanmış bir SCC'nin başarılı üyesi ⇒ çıktı bir kuşak
     /// geride olabilir (bkz. <see cref="ProjectSucceededEvent.CycleUnsettled"/>).</param>
@@ -1835,7 +1854,10 @@ public sealed class RunCoordinator(
             : inc.HeadCommit;
         var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
             DateTimeOffset.UtcNow, external ? null : inc.Branch, durationMs, DepIssue: depIssueRoots is not null,
-            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots);
+            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots,
+            // [Faz 3/Task 4 — spec 2026-09-18 §5.1] Bu derlemenin GERÇEKTEN güncellediği havuz kopyaları —
+            // OutputsById'de kayıt yoksa (testlerdeki basit planner, kanıtsız proje) null (öğrenme yok).
+            FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)));
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
@@ -1859,8 +1881,9 @@ public sealed class RunCoordinator(
     /// <c>NeverBuilt</c>, kanıt bugünkü imzadaysa <c>LastFailed</c> okur. Tek istisna kaynağın geri alınmasıdır
     /// (spec §5.3): kanıt başka bir imzaya aitse ve kaynak son BAŞARILI imzaya (<c>BuiltSignature</c>) döndüyse
     /// karar <c>UpToDate</c>'tir — o imzanın son bilinen sonucu başarıdır. Yani "<c>LastResult != Succeeded</c>
-    /// ⇒ derlenir" genel bir kural DEĞİLDİR. §4 gereği DLL/bin timestamp'i okunmadığı için invalidasyonun tek
-    /// yeri burasıdır.
+    /// ⇒ derlenir" genel bir kural DEĞİLDİR. Önceki başarının çıktısı aracın kendisinin olduğundan defter
+    /// kipinde okunur ve orada çıktının tarihi hatayı göremez (ARCHITECTURE §7.6): invalidasyonun tek yeri
+    /// burasıdır.
     /// <para>
     /// <b>Yazım nedene göre AYRIŞIR.</b> Kanıt kararı bu metodun DIŞINDA, TEK yerde verilir
     /// (<see cref="FailureEvidenceSignature"/>: arkasında durulabilir sonuç + derleyici hatası + bilinen imza) ve
@@ -1873,8 +1896,10 @@ public sealed class RunCoordinator(
     /// imza eşitliğine bakar) — imza bilinmiyorsa kapı zaten kanıtsız der. <b>Kanıtsızsa</b> (timeout, stopped,
     /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
     /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
-    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil) ve kayıt yoksa hiçbir şey
-    /// AÇILMAZ: kanıtsız bir başarısızlık için placeholder kayıt yazmak store'u şişirmekten başka iş yapmaz.
+    /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil); kayıt yoksa <c>BuiltSignature:
+    /// null</c>, <c>LastResult=Failed</c> ile AÇILIR — kaydı olmayan proje zaman kipindedir ve açılmasaydı yarıda
+    /// kalan derlemenin taze çıktısı <c>BuiltOutside</c> okunabilirdi (<see
+    /// cref="Core.State.BuildStateStore.InvalidateWithoutEvidence"/>).
     /// </para>
     /// <para>
     /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni) her iki yolda da geçerlidir:
@@ -1902,7 +1927,7 @@ public sealed class RunCoordinator(
         try
         {
             var now = DateTimeOffset.UtcNow;
-            // [spec 2026-09-18 §5.5] Kanıtsız dal TEK yerdedir (çökme kurtarması da onu çağırır): kayıt yoksa no-op.
+            // [spec 2026-09-18 §5.5] Kanıtsız dal TEK yerdedir (çökme kurtarması da onu çağırır): kayıt yoksa açar.
             if (evidenceSignature is null) { run.StateStore.InvalidateWithoutEvidence(projectId, now); return; }
 
             run.StateStore.Load().TryGetValue(projectId, out var existing);

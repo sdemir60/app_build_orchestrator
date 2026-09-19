@@ -68,6 +68,19 @@ public static class LegacyFixture
     }
 
     /// <summary>
+    /// [Faz 3 — spec 2026-09-18 §5.1] <see cref="CreateClassLib"/>'in derleme kanıtını (<c>Debug|AnyCPU</c> →
+    /// <c>bin\Debug\{ad}.dll</c>) MSBuild çalıştırmadan elle yazar — VS'in ya da başka bir aracın bıraktığı çıktı.
+    /// İçerik anlamsızdır (16 bayt); zamanını çağıran damgalar. Döner: DLL'in tam yolu.
+    /// </summary>
+    public static string WriteBuiltOutput(string projectDir, string assemblyName)
+    {
+        string path = Path.Combine(projectDir, "bin", "Debug", assemblyName + ".dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[16]);
+        return path;
+    }
+
+    /// <summary>
     /// Fix wave 1 / Finding 1 regresyon fixture'ı: build sonrasında MSBuild.exe'nin KENDİSİ ÇIKTIKTAN SONRA da
     /// yaşayan, stdout/stderr pipe'ının bir kopyasını elinde tutan bir grandchild (ping.exe) bırakan v4.6
     /// classlib.

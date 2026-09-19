@@ -32,10 +32,11 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 - **Nested Job Object:** App outer job sahibi, Supervisor içinde, `MSBuild.exe` inner job'da. Managed
   parent-watcher / PID heuristiği yok.
 - **OutDir'e dokunulmaz.** Hiçbir çıktı yolu değiştirilmez (ne `OutDir` ne `obj`); her koşu çalışma ağacında
-  derlenir. "Değişti mi" kararı sadece kaynak sinyalinden; DLL/bin timestamp asla okunmaz. Karar DİSKTEKİ
-  kaynak İÇERİĞİNDEN verilir ve sürüm kontrolü karara girmez (git yalnız fetch, branch, checkout ve harici
-  güncelleme içindir); kaynak dosyanın boyut+mtime bilgisi yalnız özet önbelleğinin anahtarıdır, karar terimi
-  değildir. Harici köklerden gelen projeler sıradan projelerdir (aynı argümanlar, aynı graf, aynı karar).
+  derlenir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
+  derlediği çıktıda tarihlere bakılır; çıktının tarihi tek başına "güncel" demeye asla yetmez. Sürüm kontrolü
+  karara girmez (git yalnız fetch, branch, checkout ve harici güncelleme içindir); kaynak dosyanın boyut+mtime
+  bilgisi içerik kararında yalnız özet önbelleğinin anahtarıdır. Harici köklerden gelen projeler sıradan
+  projelerdir (aynı argümanlar, aynı graf, aynı karar).
 - **Git'e araç KENDİLİĞİNDEN yazmaz:** `pull`/`reset`/`switch` hiçbir akışta çalıştırılmaz. Üç istisna da
   kullanıcının açık kararıdır: (a) kayıtlı **harici kökler** — build anında, yalnız kullanıcı güncellemeyi açık
   bıraktıysa, kendi köklerinde ff-only güncelleme (`fetch` + `merge --ff-only`); (b) **ana repo pull** — yalnız

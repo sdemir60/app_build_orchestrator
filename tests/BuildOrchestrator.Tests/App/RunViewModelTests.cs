@@ -1630,6 +1630,45 @@ public class RunViewModelTests
         Assert.NotNull(row.LastBuiltAt);
     }
 
+    /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5, P8] <c>OutputBuiltAt</c> önizlemenin BuiltOutside kanıtıdır
+    /// ve satıra AYNEN diğer önizleme alanları (LastBuiltAt, OwnFilesChanged) gibi ulaşır — kopya YASAK, aynı
+    /// atama noktası.</summary>
+    [Fact]
+    public async Task A_preview_with_an_output_time_reaches_the_row()
+    {
+        const string id = @"C:\p.csproj";
+        var outputBuiltAt = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside, OutputBuiltAt: outputBuiltAt)]));
+
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(outputBuiltAt, row.OutputBuiltAt);
+    }
+
+    /// <summary>[Task 7 — Faz 3] Bu araç bir projeyi başarıyla derlediği an, önceki "bu araç dışında derlendi"
+    /// kanıtı ARTIK GEÇERSİZDİR — çıktı şimdi aracın kendi eseri. <c>FailedAt</c>'in aynı satırda sıfırlanmasıyla
+    /// AYNI kural (kopya YASAK: tek atama noktası, başarı bloğu).</summary>
+    [Fact]
+    public async Task A_successful_build_clears_the_output_time()
+    {
+        const string id = @"C:\p.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new BuildPreviewEvent(
+            [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside,
+                OutputBuiltAt: new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero))]));
+        var row = Assert.Single(vm.Projects);
+        Assert.NotNull(row.OutputBuiltAt); // ön koşul
+
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
+
+        Assert.Null(row.OutputBuiltAt);
+    }
+
     /// <summary>
     /// [Task 4 — kök neden C] Bu koşuda dep-issue'lu biten bir başarı "succeeded→clean" (UpToDate) geçişine
     /// GİRMEZ: bağımlılığı hâlâ hatalıydı, çıktı bayat bir bağımlılığa link'li. Satır <c>WaitingForDependency</c>

@@ -29,9 +29,9 @@ public class BuildStateStoreTests : IDisposable
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true); }
 
     /// <summary>[tek proje · Clean] Temizlenen projenin kaydı SİLİNİR — geçersizleştirilmez. Çıktı artık yok;
-    /// §4 gereği DLL/bin timestamp'i okunmadığı için "diskte çıktı var mı" sorusunun tek cevabı bu defterdir
-    /// ve kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Kaydı olmayan bir projeyi silmek
-    /// dosyaya HİÇ dokunmaz: hiç derlenmemiş bir projeyi temizlemek defteri şişirmez.</summary>
+    /// çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür, bu
+    /// yüzden kayıt kalsaydı bir sonraki Build SDK-style bir projeyi "güncel" sayıp atlardı. Kaydı olmayan bir
+    /// projeyi silmek dosyaya HİÇ dokunmaz: hiç derlenmemiş bir projeyi temizlemek defteri şişirmez.</summary>
     [Fact]
     public void Removing_a_record_forgets_only_that_project_and_never_writes_when_there_is_none()
     {
@@ -53,9 +53,14 @@ public class BuildStateStoreTests : IDisposable
 
     /// <summary>[spec 2026-09-18 §5.5 · karar 12] Kanıtsız geçersizleme: kayıt "son deneme başarısız, kanıt yok"
     /// hâline çekilir (LastResult=Failed, LastRunAt=şimdi, hata imzası ve zamanı SİLİNİR), imza/commit/süre
-    /// korunur. Kaydı olmayan proje için hiçbir şey açılmaz ve dosyaya dokunulmaz.</summary>
+    /// korunur. Kaydı olmayan proje için "hiç başarı yok, son deneme başarısız" kaydı açılır.
+    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, kullanıcı kararı 2026-09-19]</b> Eski iddia: kaydı olmayan proje
+    /// için hiçbir şey açılmaz ve dosyaya dokunulmaz ("kayıtsız proje zaten derlenir"). Faz 3'te kaydı olmayan proje
+    /// zaman kipindedir: kesilen derlemenin bıraktığı yarım ama taze çıktı <c>BuiltOutside</c> okunabilirdi. Açılan
+    /// kayıt (<c>BuiltSignature: null</c>, <c>LastResult=Failed</c>, <c>LastRunAt=şimdi</c>) projeyi defter kipine
+    /// alır ve karar <c>NeverBuilt</c> olur.</para></summary>
     [Fact]
-    public void InvalidateWithoutEvidence_marks_an_unevidenced_failure_keeps_the_signature_and_opens_no_record()
+    public void InvalidateWithoutEvidence_marks_an_unevidenced_failure_keeps_the_signature_and_opens_a_failed_record()
     {
         var store = new BuildStateStore(_root);
         var earlier = new DateTimeOffset(2026, 9, 1, 8, 0, 0, TimeSpan.Zero);
@@ -74,10 +79,10 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal("c1", a.BuiltCommit);
         Assert.Equal(1234, a.LastDurationMs);
 
-        var stamp = File.GetLastWriteTimeUtc(StatePath);
         store.InvalidateWithoutEvidence(@"C:\r\Never.csproj", now);
-        Assert.Single(store.Load());                               // kayıt açılmadı
-        Assert.Equal(stamp, File.GetLastWriteTimeUtc(StatePath));  // dosyaya hiç dokunulmadı
+        Assert.Equal(
+            new BuildState(@"C:\r\Never.csproj", BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: now),
+            Assert.Contains(@"C:\r\Never.csproj", store.Load()));
     }
 
     /// <summary>
@@ -124,6 +129,31 @@ public class BuildStateStoreTests : IDisposable
         var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
         Assert.Null(old.FailedSignature);
         Assert.Null(old.FailedAt);
+    }
+
+    /// <summary>
+    /// [Faz 3/Task 4 — spec 2026-09-18 §5.1] <see cref="BuildState.FedOutputs"/> içerikle round-trip eder (liste
+    /// alanı — JSON round-trip farklı örnek üretir) ve bu alandan ÖNCE yazılmış bir kayıt (serializer'ın
+    /// bugünkü çıktısından değil, alan eklenmeden önceki biçimin birebir kopyasından) <c>null</c>'a çözülür —
+    /// <see cref="Dep_issue_roots_round_trip_and_a_record_written_before_the_field_still_loads"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Fed_outputs_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.FedOutputs);
+
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", FedOutputs: [@"C:\lib\New.dll"]);
+        store.Upsert(fresh);
+
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal([@"C:\lib\New.dll"], back.FedOutputs);
+        Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
     }
 
     [Fact] // dosya yok → boş, throw yok

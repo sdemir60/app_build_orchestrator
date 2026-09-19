@@ -35,7 +35,10 @@ public static class StandingStatuses
             WillBuildReason.LastFailed => StandingStatus.Failed,
             // WaitingForDependency yeşildir: kendi çıktısı sağlam, "bekliyor" üçgende söylenir.
             WillBuildReason.UpToDate or WillBuildReason.WaitingForDependency => StandingStatus.Current,
-            // NeverBuilt · SignatureChanged · DepIssue
+            // [Faz 3 — spec 2026-09-18 §5.4] BuiltOutside de yeşildir: çıktı güncel, yalnız bu araçla değil.
+            WillBuildReason.BuiltOutside => StandingStatus.Current,
+            // NeverBuilt · SignatureChanged · DepIssue · OutputStale · OutputMissing · OutputReplaced —
+            // altısı da bugünkü kanıta göre "derlenecek"tir; varsayılan dal, açıkça belirtilir (kopya YASAK).
             _ => StandingStatus.Stale,
         };
     }

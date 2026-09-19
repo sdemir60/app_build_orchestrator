@@ -86,7 +86,21 @@ public class NextPreviewTests
     [InlineData(WillBuildReason.LastFailed, "abc", WillBuildReason.SignatureChanged)] // başarı izi var
     [InlineData(WillBuildReason.LastFailed, null, WillBuildReason.NeverBuilt)]        // hiç başarı yok
     [InlineData(WillBuildReason.NeverBuilt, "abc", WillBuildReason.NeverBuilt)]
+    // [Task 7 — Faz 3] Diğer üç yeni gerekçe bugünkü düşüşü izler: SignatureChanged. OutputMissing kendi
+    // satırında ayrı test edilir (dedicated Fact, aşağıda) — motor zaten "çıktı yok" diyor, "signature changed"
+    // onu YANLIŞ ANLATIR.
+    [InlineData(WillBuildReason.BuiltOutside, "abc", WillBuildReason.SignatureChanged)]
+    [InlineData(WillBuildReason.OutputStale, "abc", WillBuildReason.SignatureChanged)]
+    [InlineData(WillBuildReason.OutputReplaced, "abc", WillBuildReason.SignatureChanged)]
     public void a_configuration_change_reads_signature_changed_unless_nothing_ever_succeeded(
         WillBuildReason before, string? builtCommit, WillBuildReason expected)
         => Assert.Equal(expected, NextPreview.AfterConfigurationChange(before, builtCommit));
+
+    /// <summary>[Task 7 — Faz 3] OutputMissing configuration değişiminden SONRA da <c>never built</c> okunmalı:
+    /// motor zaten çıktı kanıtı olmadığını söylüyor, <c>SignatureChanged</c> "bir şey değişti" der ki bu proje
+    /// için yanlıştır — hiç derlenmemiş gibi okunmalı.</summary>
+    [Fact]
+    public void A_missing_output_stays_never_built_after_a_configuration_change()
+        => Assert.Equal(WillBuildReason.NeverBuilt,
+            NextPreview.AfterConfigurationChange(WillBuildReason.OutputMissing, "abc"));
 }

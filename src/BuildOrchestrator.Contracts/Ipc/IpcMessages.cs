@@ -88,9 +88,10 @@ public enum DependentMode { Safe, Fast }
 /// <para><b>Clean</b> = kapsamdaki her projede <c>msbuild /t:Clean</c> — Visual Studio'nun <i>Clean</i>'i:
 /// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
-/// §4 gereği DLL/bin timestamp'i okunmadığından defter, diskte çıktı olup olmadığını bilen tek yerdir ve
-/// kayıt kalsaydı bir sonraki Build projeyi "güncel" sayıp atlardı. Bugün yalnız satır menüsünden,
-/// <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
+/// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
+/// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
+/// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. Bugün
+/// yalnız satır menüsünden, <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>
@@ -511,10 +512,15 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// yerel değişiklik var mı — Sync bunu <see cref="BuildOrchestrator.Core.Workspace.LocalEdits.ProjectsWithLocalEdits"/>
 /// ile doldurur. Koşu önizlemesi (Supervisor) bu alanı TAŞIMAZ, her zaman <c>false</c> gönderir: etiket Sync'ten
 /// gelen değeri korur. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
+/// <param name="OutputBuiltAt">[Faz 3 — spec 2026-09-18 §5, P8] Proje bu araç dışında derlenmiş ve çıktısı
+/// güncelse (<see cref="WillBuildReason.BuiltOutside"/>) derleme kanıtının zamanı — "built outside this tool 5m
+/// ago" yaşının kaynağı. Sync ve koşu önizlemesi aynı yardımcıdan yazar
+/// (<see cref="BuildOrchestrator.Core.Incremental.OutputEvidence.OutputBuiltAt"/>); diğer her durumda <c>null</c>
+/// (JSON'a yazılmaz). Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,
     WillBuildReason? Reason = null, bool? OwnFilesChanged = null, DateTimeOffset? LastBuiltAt = null,
     bool Conditional = false, IReadOnlyList<string>? DependencyRoots = null,
-    DateTimeOffset? FailedAt = null, bool LocalEdits = false)
+    DateTimeOffset? FailedAt = null, bool LocalEdits = false, DateTimeOffset? OutputBuiltAt = null)
 {
     // Liste alanı: derleyicinin record eşitliği referansa düşer (JSON round-trip farklı örnek üretir) — ProjectNode
     // ile aynı gerekçe, kök adları sıralı içerikle karşılaştırılır.
@@ -532,7 +538,8 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
             ? other.DependencyRoots is null
             : other.DependencyRoots is not null && DependencyRoots.SequenceEqual(other.DependencyRoots))
         && FailedAt == other.FailedAt
-        && LocalEdits == other.LocalEdits;
+        && LocalEdits == other.LocalEdits
+        && OutputBuiltAt == other.OutputBuiltAt;
 
     public override int GetHashCode()
     {
@@ -548,6 +555,7 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
         foreach (string root in DependencyRoots ?? []) hash.Add(root);
         hash.Add(FailedAt);
         hash.Add(LocalEdits);
+        hash.Add(OutputBuiltAt);
         return hash.ToHashCode();
     }
 }

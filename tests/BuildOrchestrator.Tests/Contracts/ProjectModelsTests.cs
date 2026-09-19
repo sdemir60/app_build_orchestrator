@@ -18,11 +18,30 @@ public class ProjectModelsTests
         Assert.Equal(node, back); // record value-equality
     }
 
+    /// <summary>[Faz 3/Task 3] <c>FedOutputs</c> eşitliğe İÇERİKLE girer (liste alanı — JSON round-trip sonrası
+    /// farklı örnek, <c>DepIssueRoots</c> ile aynı gerekçe); farklı liste ya da null ≠ boş liste eşit değildir.</summary>
+    [Fact]
+    public void BuildState_equality_includes_fed_outputs()
+    {
+        var state = new BuildState(@"C:\r\A.csproj", "sig", FedOutputs: [@"C:\lib\A.dll"]);
+        string json = JsonSerializer.Serialize(state, IpcJson.Options);
+        var back = JsonSerializer.Deserialize<BuildState>(json, IpcJson.Options)!;
+
+        Assert.Equal(state, back);
+        Assert.Equal(state.GetHashCode(), back.GetHashCode());
+        Assert.NotEqual(state, state with { FedOutputs = [@"C:\lib2\A.dll"] });
+        Assert.NotEqual(state with { FedOutputs = null }, state with { FedOutputs = [] });
+        Assert.NotEqual(state.GetHashCode(), (state with { FedOutputs = [@"C:\lib2\A.dll"] }).GetHashCode());
+    }
+
+    /// <summary>[DEĞİŞEN KURAL — spec 2026-09-18 §1-20] Eski iddia: <c>"externalOsysPlatform"</c>. Karar 20
+    /// araca hard-wired OSYS bağlılığı yasaklar; enum değeri ürün adı taşıyordu, ürün-bağımsız ada
+    /// (<c>ExternalPlatformBin</c>) taşındı.</summary>
     [Fact]
     public void HintPathClass_serializes_camelCase()
     {
-        string json = JsonSerializer.Serialize(HintPathClass.ExternalOsysPlatform, IpcJson.Options);
-        Assert.Equal("\"externalOsysPlatform\"", json);
+        string json = JsonSerializer.Serialize(HintPathClass.ExternalPlatformBin, IpcJson.Options);
+        Assert.Equal("\"externalPlatformBin\"", json);
     }
 
     [Fact]

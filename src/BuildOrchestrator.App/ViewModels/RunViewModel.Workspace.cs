@@ -705,7 +705,7 @@ public sealed partial class RunViewModel
         foreach (var row in Projects)
         {
             var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
-                row.FailedAt, row.LocalEdits, now, row.InCycle);
+                row.FailedAt, row.LocalEdits, now, row.InCycle, row.OutputBuiltAt);
             keys[row.Id] = $"{row.Standing}|{d.Word}|{d.Tail}";
         }
         return keys;

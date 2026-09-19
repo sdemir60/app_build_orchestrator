@@ -6,7 +6,7 @@ namespace BuildOrchestrator.Contracts.Model;
 // It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
 // DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
 
-public enum HintPathClass { Edge, ExternalThirdParty, ExternalOsysPlatform, Unclassified }
+public enum HintPathClass { Edge, ExternalThirdParty, ExternalPlatformBin, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
 
 public sealed record SolutionRef(string Name, string Path);
@@ -119,6 +119,18 @@ public enum WillBuildReason
     /// geldiğinde değerlendirir: köklerden en az biri artık başarılıysa derlenir, hepsi hâlâ hatalıysa atlanır
     /// (<c>ConditionalRebuild</c>). Alan SONA eklendi: sayısal değeri eskilerini kaydırmaz.</summary>
     WaitingForDependency,
+    /// <summary>[Faz 3 — spec 2026-09-18 §5.4] Derlenmeyecek: çıktı bu araç dışında (VS, komut satırı) derlendi —
+    /// zaman kipi, derleme kanıtı her girdiden ve HintPath hedefinden yeni, beslenen kopyalar sağlam. Yeşildir.</summary>
+    BuiltOutside,
+    /// <summary>[§5.4] Zaman kipi: kendi girdisi (dosya ya da taranan klasör) ya da bir HintPath hedefi derleme
+    /// kanıtından yeni — çıktı bayat (<c>modified</c> ya da <c>affected</c>).</summary>
+    OutputStale,
+    /// <summary>[§5.3/§5.4] Derleme kanıtı (projenin kendi çıktı dosyası) diskte yok — defterde kayıt olsa bile
+    /// çıktı ortada değildir (<c>never built</c> gibi okunur).</summary>
+    OutputMissing,
+    /// <summary>[§5.3/§5.4] Öğrenilmiş beslenen kopya (paylaşılan klasördeki DLL) eksik, boyutu farklı ya da
+    /// derleme kanıtından eski — bağımlılar başka bir çıktıya link'lenir (<c>affected</c>).</summary>
+    OutputReplaced,
 }
 
 public sealed record BuildState(
@@ -168,7 +180,13 @@ public sealed record BuildState(
     // (LastRunAt'tan AYRI: bir proje başarısızlıktan SONRA hiç derlenmeden imzası değişebilir, o durumda
     // FailedSignature hâlâ eski hatayı anlatır ama LastRunAt onun zamanını taşımaz — bkz. BuildStateStore.
     // FailedAtOf, LastBuiltAtOf ile aynı desen). Başarıda ya da kanıtsız hatada null.
-    DateTimeOffset? FailedAt = null)
+    DateTimeOffset? FailedAt = null,
+    // [Faz 3 — spec 2026-09-18 §5.1] Bu projenin derlemesiyle GERÇEKTEN güncellendiği öğrenilen "beslenen
+    // çıktılar": bağımlılarının HintPath hedeflerinden, başarılı derlemeden sonra var olan, boyutu derleme
+    // kanıtına eşit ve zamanı ondan en çok 2 s farklı olanlar (bkz. OutputEvidence.LearnFedOutputs). Hem defter
+    // hem zaman kipinde denetlenir: biri yoksa, boyutu farklıysa ya da kanıttan eskiyse çıktı bozuk sayılır.
+    // Alan SONA ve default'lu: eski kayıtlar null çözülür — liste yok, yalnız derleme kanıtı konuşur.
+    IReadOnlyList<string>? FedOutputs = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -188,7 +206,10 @@ public sealed record BuildState(
             ? other.DepIssueRoots is null
             : other.DepIssueRoots is not null && DepIssueRoots.SequenceEqual(other.DepIssueRoots))
         && FailedSignature == other.FailedSignature
-        && FailedAt == other.FailedAt;
+        && FailedAt == other.FailedAt
+        && (FedOutputs is null
+            ? other.FedOutputs is null
+            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs));
 
     public override int GetHashCode()
     {
@@ -206,6 +227,7 @@ public sealed record BuildState(
         foreach (string root in DepIssueRoots ?? []) hash.Add(root);
         hash.Add(FailedSignature);
         hash.Add(FailedAt);
+        foreach (string fed in FedOutputs ?? []) hash.Add(fed);
         return hash.ToHashCode();
     }
 }

@@ -307,6 +307,9 @@ public partial class ProjectRow : UserControl
             // düşer, burada ikinci bir dinleyiciye gerek yok).
             case nameof(ProjectRowViewModel.FailedAt):
             case nameof(ProjectRowViewModel.LocalEdits):
+            // [Faz 3 — Task 7] BuiltOutside'ın kuyruğu (yaş) buradan — LastBuiltAt'in listede zaten olması bu
+            // alanı GEREKSİZ KILMAZ: iki gerekçe ayrı zaman kaynağı okur (bkz. DecisionLabel.For'un parametresi).
+            case nameof(ProjectRowViewModel.OutputBuiltAt):
                 ApplyDecision();
                 break;
         }
@@ -494,7 +497,7 @@ public partial class ProjectRow : UserControl
         var decision = _vm is null
             ? RowDecision.None
             : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle);
+                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle, _vm.OutputBuiltAt);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

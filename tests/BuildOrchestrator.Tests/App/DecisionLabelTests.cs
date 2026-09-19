@@ -29,8 +29,9 @@ public class DecisionLabelTests
 
     private static RowDecision For(
         bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null,
-        DateTimeOffset? failedAt = null, bool localEdits = false, bool inCycle = false)
-        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, failedAt, localEdits, Now, inCycle);
+        DateTimeOffset? failedAt = null, bool localEdits = false, bool inCycle = false,
+        DateTimeOffset? outputBuiltAt = null)
+        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, failedAt, localEdits, Now, inCycle, outputBuiltAt);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -224,6 +225,93 @@ public class DecisionLabelTests
         // Kapsam ZORLASA bile (eski "conditional=false") aynı cümle — döngü üyesi de aynı okur.
         Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, builtAt: Now.AddHours(-2)));
         Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, builtAt: Now.AddHours(-2), inCycle: true));
+    }
+
+    // ---------------------------------------------------------------- [Faz 3 — spec 2026-09-18 §5.4] dört yeni gerekçe
+
+    /// <summary>[Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil, kuyruk derleme kanıtının yaşı.</summary>
+    [Fact]
+    public void Built_outside_reads_up_to_date_with_the_output_age()
+    {
+        var decision = For(false, WillBuildReason.BuiltOutside, outputBuiltAt: Now.AddMinutes(-5));
+
+        Assert.Equal("up to date", decision.Word);
+        Assert.Equal("5m", decision.Tail);
+        Assert.False(decision.Stale);
+        Assert.Equal("Up to date — built outside this tool 5m ago", decision.Title);
+    }
+
+    /// <summary>Kanıtın zamanı bilinmiyorsa uydurma bir yaş yazılmaz — <c>up to date</c>'in genel kuralıyla AYNI.</summary>
+    [Fact]
+    public void Built_outside_without_a_known_time_has_no_age()
+    {
+        var decision = For(false, WillBuildReason.BuiltOutside);
+
+        Assert.Equal("up to date", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.False(decision.Stale);
+        Assert.Equal("Up to date — built outside this tool", decision.Title);
+    }
+
+    /// <summary>[Task 7] <c>BuiltOutside</c>'ın kuyruğu <c>outputBuiltAt</c>'tan gelir, <c>lastBuiltAt</c>'ten
+    /// DEĞİL — ikisi ayrı kanıttır (biri aracın kendi başarısı, öbürü aracın dışındaki derlemenin çıktısı).</summary>
+    [Fact]
+    public void Built_outside_age_comes_from_the_output_time_not_the_last_build()
+    {
+        var decision = For(false, WillBuildReason.BuiltOutside,
+            builtAt: Now.AddDays(-3), outputBuiltAt: Now.AddMinutes(-5));
+
+        Assert.Equal("5m", decision.Tail);
+        Assert.Equal("Up to date — built outside this tool 5m ago", decision.Title);
+    }
+
+    /// <summary>[Task 7] Derleme kanıtı diskte yok — <c>never built</c> ile AYNI okunur (kopya YASAK: tek
+    /// tooltip metni <c>DecisionLabel</c> içinde iki gerekçe arasında paylaşılır).</summary>
+    [Fact]
+    public void Output_missing_reads_never_built()
+    {
+        var decision = For(true, WillBuildReason.OutputMissing);
+
+        Assert.Equal("never built", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
+        Assert.Equal("No build output known to this tool", decision.Title);
+    }
+
+    /// <summary>[Task 7] Öğrenilmiş beslenen kopya bozuk — bağımlılar başka bir çıktıya link'lidir.</summary>
+    [Fact]
+    public void Output_replaced_reads_affected()
+    {
+        var decision = For(true, WillBuildReason.OutputReplaced);
+
+        Assert.Equal("affected", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
+        Assert.Equal("Its copy in the shared folder does not match its build output", decision.Title);
+    }
+
+    /// <summary>[Task 7] Zaman kipi: kendi girdisi derleme kanıtından yeni.</summary>
+    [Fact]
+    public void Output_stale_with_own_files_changed_reads_modified()
+    {
+        var decision = For(true, WillBuildReason.OutputStale, ownChanged: true);
+
+        Assert.Equal("modified", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
+        Assert.Equal("Its own files are newer than its build output", decision.Title);
+    }
+
+    /// <summary>[Task 7] Zaman kipi: yalnız bir HintPath hedefi derleme kanıtından yeni — kendi girdisi durur.</summary>
+    [Fact]
+    public void Output_stale_with_only_a_dependency_changed_reads_affected()
+    {
+        var decision = For(true, WillBuildReason.OutputStale, ownChanged: false);
+
+        Assert.Equal("affected", decision.Word);
+        Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
+        Assert.Equal("Its own files are unchanged — a dependency changed", decision.Title);
     }
 
     /// <summary>Öncelik: hiç derlenmemiş &gt; son derleme patladı &gt; kendi dosyası &gt; bağımlılığı.</summary>

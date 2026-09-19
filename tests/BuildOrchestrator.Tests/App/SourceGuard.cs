@@ -204,4 +204,40 @@ internal static class SourceGuard
     public static IReadOnlyList<string> ScannedTestFiles(string searchPattern) =>
         RepoPaths.TestSourceFiles(searchPattern)
                  .Select(f => Path.GetRelativePath(RepoPaths.TestsRoot, f)).ToList();
+
+    // ================================================================================================
+    // [Faz 3/Task 8] TANIMLAYICI TARAMASI — kuralı yorum ve string/char literalleri STRIPLENMİŞ koda
+    // uygular. Strip işini <see cref="SourceLiterals.CodeOnly"/> yapar: o, <see cref="SourceLiterals.FromCSharp"/>
+    // ile AYNI tarayıcıyı (aynı yorum/string/char sınır tespiti — nested interpolation dahil) kullanır, TERS
+    // yönde (literali ÇIKARMAK yerine SİLİP kodu bırakır) — sınır tespiti iki yerde YAZILMAZ (kopya YASAK).
+    // Roslyn YOK: ikisi de aynı küçük karakter-bazlı tarayıcı, diğer guard'larla aynı hız bütçesi.
+    // ================================================================================================
+
+    /// <summary>TÜM üretim projelerinin (<c>src/</c>) tanımlayıcılarını (tip/üye/enum/parametre/lokal adı)
+    /// tarar — yorum ve string/char literalleri kural görmeden ÇIKARILIR.</summary>
+    public static IReadOnlyList<string> ScanSrcIdentifiers(string searchPattern, Regex identifierRule)
+    {
+        var offenders = new List<string>();
+        foreach (string file in RepoPaths.SrcSourceFiles(searchPattern))
+        {
+            string relative = Path.GetRelativePath(RepoPaths.SrcRoot, file);
+            offenders.AddRange(ScanCodeIdentifiers(relative, File.ReadAllText(file), identifierRule));
+        }
+        return offenders;
+    }
+
+    /// <summary>Kuralı TEK bir dosya metninin STRIPLENMİŞ koduna uygular — dosya taramasının çekirdeği ve
+    /// guard'ın KENDİ kanıt testinin (sahte girdi → yorum/literal YOK SAYILIYOR, kod YAKALANIYOR mu) giriş
+    /// noktası.</summary>
+    public static IReadOnlyList<string> ScanCodeIdentifiers(string relative, string text, Regex identifierRule)
+    {
+        string code = SourceLiterals.CodeOnly(text);
+        var offenders = new List<string>();
+        foreach (Match match in identifierRule.Matches(code))
+        {
+            int line = code.AsSpan(0, match.Index).Count('\n') + 1;
+            offenders.Add($"{relative}:{line}: {match.Value}");
+        }
+        return offenders;
+    }
 }

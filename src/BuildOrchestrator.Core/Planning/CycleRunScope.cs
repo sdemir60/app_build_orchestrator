@@ -9,8 +9,9 @@ using BuildOrchestrator.Contracts.Model;
 /// <para><b>Neden yalnız üyeler YETMEZ.</b> Bir üye, döngü dışındaki KİRLİ bir bağımlılığının bir önceki
 /// nesil DLL'ine karşı derlenirse derleme başarılı olur — ama üretilen çıktı bayattır. Koşu sonunda o üyenin
 /// imzası persist edilir ve imza, upstream'in KAYNAK terimini zaten içerdiği için bir sonraki <c>Build</c> onu
-/// "güncel" sayıp atlar: proje, kimse fark etmeden kalıcı olarak bayat bir binary'e link'li kalır. §4 gereği
-/// DLL/bin timestamp'i OKUNMADIĞI için bunu yakalayacak ikinci bir mekanizma yoktur. Upstream'i kapsama almak
+/// "güncel" sayıp atlar: proje, kimse fark etmeden kalıcı olarak bayat bir binary'e link'li kalır. Çıktı
+/// aracın kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi eşleşen imzayı bozmaz
+/// (ARCHITECTURE §7.6) — bunu yakalayacak ikinci bir mekanizma yoktur. Upstream'i kapsama almak
 /// bu deliği kapatır — koşu kendi içinde tutarlıdır: derlediği her şeyi TAZE girdilere karşı derler.</para>
 ///
 /// <para><b>Neden downstream kapsama GİRMEZ.</b> Bir SCC'nin dependent'leri o grubun çıktısına bağlıdır ve

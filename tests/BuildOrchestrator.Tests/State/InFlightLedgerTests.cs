@@ -145,10 +145,15 @@ public sealed class InFlightLedgerTests : IDisposable
         Assert.Equal([A], NewLedger().ReadListed());
     }
 
-    /// <summary>Kaydı olmayan proje zaten derlenecektir; kurtarma defterde yeni kayıt AÇMAZ — ama listelenmiştir,
-    /// yani konsol sayısına girer (N proje yeniden derlenecek).</summary>
+    /// <summary>Kaydı olmayan kesilmiş proje için kurtarma "son deneme başarısız, kanıt yok" kaydı açar
+    /// (<c>BuiltSignature: null</c>, <c>LastResult=Failed</c>, <c>LastRunAt=şimdi</c>); listelenmiştir, yani konsol
+    /// sayısına girer (N proje yeniden derlenecek).
+    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, kullanıcı kararı 2026-09-19]</b> Eski iddia: kaydı olmayan proje
+    /// zaten derlenecektir, kurtarma yeni kayıt AÇMAZ. Faz 3'te kaydı olmayan proje zaman kipindedir: yarıda kalan
+    /// derlemenin taze çıktısı <c>BuiltOutside</c> okunup atlanabilirdi. Kayıt onu defter kipine alır (§5.5).</para>
+    /// </summary>
     [Fact]
-    public void Recover_without_a_record_opens_none()
+    public void Recover_without_a_record_opens_a_failed_one()
     {
         var store = new BuildStateStore(_dir.Path);
         NewLedger().Add(A);
@@ -156,7 +161,8 @@ public sealed class InFlightLedgerTests : IDisposable
         var recovered = NewLedger().Recover(store, Now);
 
         Assert.Equal([A], recovered);
-        Assert.Empty(store.Load());
+        Assert.Equal(new BuildState(A, BuiltSignature: null, LastResult: BuildResult.Failed, LastRunAt: Now),
+            Assert.Single(store.Load().Values));
         Assert.False(File.Exists(LedgerPath));
     }
 }

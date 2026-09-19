@@ -36,7 +36,7 @@ rebuilt, in what order, and how do we run that safely.**
 |---|---|
 | The tool never writes to git on its own | Every write is a user action with its own gate: a fast-forward pull from the `N behind` chip (§10.5), a checkout from the branch chip — with a stash only when the user turned that on (§10.3) — and the update of an external root the user left on (§10.4). `reset`, `rebase` and plain `pull` never run; all writes live in one file (§10.1) |
 | Output lands exactly where Visual Studio would put it | `OutDir`/`OutputPath` are never passed to MSBuild (§9.4) |
-| "Changed?" is decided from source, never from build output | The signature hashes source **content** on disk; no DLL/`bin` timestamp is ever read (§7.1) |
+| "Changed?" is decided from source; an output's date alone never makes it current | For an output this tool built, the decision is the signature over source **content** on disk (§7.1), and the output files can only veto it — never grant it; for an output built elsewhere, no input may be newer than it (§7.6) |
 | Killing the app kills the whole build tree | Nested job objects with `KILL_ON_JOB_CLOSE`, no breakaway (§4) |
 | Stopping a run never leaves a torn DLL | Graceful stop drains at project boundaries; no compiler server lives outside the job (§4.5) |
 | The build order is deterministic | Order-preserving ready-set scheduler; no hashing, no randomness (§8.2) |
@@ -372,9 +372,11 @@ the three ledgers of entries whose file is gone, sweeping the temp files their a
 the run logs, the UI state, and git, since Optimize runs no version-control command at all.
 Its permission to write in the workspace is bounded by the resolved project set: a folder no card resolves to
 is never touched, and the only files it changes anywhere else are its own three ledgers (§16). **It changes no
-build decision** — the signature is computed from source (§7.1), so neither a restore nor a deleted leftover
-makes a project dirty, which is why the App keeps the list and the graph on screen and chains no Sync when it
-ends (§13.2).
+build decision** of a project this tool built — the signature is computed from source (§7.1) and Optimize
+deletes no build output, so neither a restore nor a deleted leftover makes such a project dirty; for an output
+built elsewhere, a `HintPath` target a restore writes is an input like any other (§7.6). The App still runs a
+Sync when it ends, the same hand-over a Clean uses: the list was emptied at the click, and that Sync is what
+brings the decisions back (§13.2).
 
 Like `syncWorkspace` and `cleanWorkspace` it blocks the command loop until it finishes, and an
 `optimizeWorkspace` that arrives while a run holds the slot is rejected with `error(optimizeRejected)` (§5.4).
@@ -476,9 +478,11 @@ Three of these carry the whole model:
   preview and a run's own preview share — and `localEdits`, which is `true` only on **Sync's** preview, for a
   project whose input set overlaps a path `git status --porcelain` reports dirty (§10.2). A run's own preview
   never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
-  and a run does not repeat that read.
+  and a run does not repeat that read. `outputBuiltAt` is the time of the build evidence of a project built
+  outside this tool (§7.6), set for that reason only; both previews write it through the same helper.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
-  from one another: directly-changed projects (Fast semantics, no cascade), the will-build set size (Safe
+  from one another: directly-changed projects (Fast semantics, no cascade — for an output built elsewhere, own
+  inputs newer than the output, §7.6), the will-build set size (Safe
   semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
   conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count.
   It also carries the branch that was checked out when the Sync measured (`activeBranch`, null on a detached
@@ -542,11 +546,27 @@ neither followed deliberately nor detected — an accepted risk, since the repos
 
 Project files are read as **raw XML**. MSBuild is never evaluated for discovery. The evaluator extracts the
 assembly name, the target framework moniker, `Compile` items (including recursive `**` globs), raw `Reference`
-`HintPath`s and `ProjectReference`s.
+`HintPath`s and `ProjectReference`s — and, for the output evidence of §7.6, the `OutputType`, the default
+`Platform` and every `<OutputPath>` with its condition.
+
+**The output path is read, never guessed.** `OutputFileFor(configuration)` derives the full path of the
+project's own build output: `<OutputPath>\<AssemblyName>` with `.dll` for a `Library` and `.exe` for an `Exe`
+or `WinExe`. Two condition shapes are recognised — `'$(Configuration)|$(Platform)' == 'C|P'` and
+`'$(Configuration)' == 'C'` — and an unconditional `<OutputPath>` matches every configuration; the platform is
+the project's declared default (`'$(Platform)' == ''`), otherwise `AnyCPU`. As in MSBuild the last matching
+entry in document order wins, and with no match the path is `bin\<configuration>\`. Where the path cannot be
+derived with confidence the answer is *none*, never an approximation: an SDK-style project, a missing or
+unrecognised `OutputType`, an `AssemblyName` or chosen path that still contains `$(`, or an `<OutputPath>` under
+any other condition shape — that last one makes the whole project undecidable, whatever configuration is asked,
+because picking among entries the evaluator cannot read would produce inconsistent evidence. `HintPathTargets()`
+resolves the raw `HintPath`s the same way: absolute paths as they are, relative ones against the project's
+folder, and any path containing `$(` skipped.
 
 Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and file-length** fingerprint. The
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
-the cache would serve a stale evaluation.
+the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
+entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
+from a record that predates it — the project is simply evaluated again the first time it is met.
 
 `file → project` mapping comes from the evaluated `Compile` items, never from a path prefix. A file that sits
 inside a project's directory but is not compiled by it does not make it dirty.
@@ -578,7 +598,7 @@ Not every `HintPath` resolves inside the repository, so each one is classified i
 |---|---|
 | `Edge` | Resolved to a producing project in this repository — becomes a graph edge |
 | `ExternalThirdParty` | Path rule identifies a package or an installed product |
-| `ExternalOsysPlatform` | A sibling-repository platform binary. Registering that sibling as an external root (§10.4) turns these into real edges, because the producer map then spans both roots |
+| `ExternalPlatformBin` | A platform binary under a `bin` folder with no producer here — typically a sibling repository's. Registering that sibling as an external root (§10.4) turns these into real edges, because the producer map then spans both roots |
 | `Unclassified` | Neither — emitted as a warning line |
 
 The reported health metric is `Edge / (Edge + Unclassified)`: external classes are legitimate inputs and are
@@ -714,7 +734,9 @@ its stored signature exactly unless *X*'s own inputs changed.
 Configuration is *not* an upstream term — it enters every node's own signature — so Fast's upstream suppression
 cannot mask a `Debug ↔ Release` switch. Changing configuration makes every project dirty in both modes. This is
 a direct consequence of §9.4: output is config-agnostic in a single shared folder, so the previous
-configuration's binaries are simply gone.
+configuration's binaries are simply gone. The output evidence is the one qualifier (§7.6): when the new
+configuration's output was built elsewhere after the tool's last run of the project, that project is in time
+mode and can read up to date without compiling.
 
 ### 7.3 Cycles in the signature
 
@@ -762,10 +784,15 @@ the project's own change compiles it regardless, and a note without recorded roo
 *built against a failed dependency*, because nothing could tell the run when to stop waiting.
 
 **The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
-failed dependency, or built against a failed dependency whose roots are unknown — and it returns it even for a
-project the run will not compile, such as a cycle member outside a `Cycles` run. That reason travels on the preview and is what the row's decision label reads (§13.2),
-together with two facts: whether the project's **own** files changed (stored content fingerprint versus
-today's) and when it was last built successfully.
+failed dependency, or built against a failed dependency whose roots are unknown; and, from the output evidence
+(§7.6), built outside this tool, output older than its inputs, output missing, or a fed copy that no longer
+matches — and it returns it even for a project the run will not compile, such as a cycle member outside a
+`Cycles` run. Apart from that scope short circuit, `WillBuild` is `false` for exactly two reasons, up to date
+and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
+row's decision label reads (§13.2),
+together with three facts: whether the project's **own** files changed (stored content fingerprint versus
+today's, or — for an output built elsewhere — whether its own inputs are newer than that output), when it was
+last built successfully, and, for an output built elsewhere, that output's time.
 
 **Last build failed is evidence-based.** `LastFailed` is returned only when the ledger's failed signature — the
 composite signature captured at the moment this project's own MSBuild invocation last exited non-zero (§7.5) —
@@ -797,11 +824,95 @@ taken for a clean one. A project from an external root (§10.4) has the same rec
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
-all (§10.4). None of these fields feeds a decision: the built commit is diagnostic, and the project log's "last
+all (§10.4). The record also carries the project's **fed outputs** — the copies of its output in dependents'
+`HintPath` locations that this tool's own successful build was seen to refresh (§7.6); the list is `null` when
+nothing could be learned (no derivable output path, the output file missing after the build, an older record),
+empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
+built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
 successful build" line is the only place a revision is shown. It is written by a single serialized writer,
 atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
 `FileShare.Delete` so they cannot block the writer's rename, and a transient sharing violation is retried a
 bounded number of times. A corrupt file never throws — it falls back to defaults.
+
+### 7.6 Output evidence
+
+The signature answers "did the source change since *this tool* built it?". It cannot answer for an output built
+somewhere else — in Visual Studio, on a command line — and it cannot see an output that was deleted or a copy
+that was overwritten after the tool built it. The output evidence answers those questions, and only those: it
+never enters a signature, only the decision (`OutputEvidence`, one check per project from
+`IncrementalRunBinder.ChecksFor`).
+
+**Evidence files.** The *build evidence* is the project's own output file, derived from the csproj (§6.2). When
+no path can be derived the project has **no evidence** and is decided exactly as §7.1-§7.4 describe, with no
+veto and no credit. The *fed outputs* are copies of that file in the shared folders dependents link against:
+the candidates are the `HintPath` targets of every project that depends on this one in the graph whose file name
+is the build evidence's, and which of them this project's build really refreshes is **learned**, never assumed.
+After this tool compiles the project successfully (a *Clean* deletes the record instead, §8.1), a candidate
+that exists, has the build evidence's length and a time within two seconds of it is written to the record's
+fed outputs (§7.5). A library copy checked into the repository is never refreshed by a build, so it is never
+learned and never checked. A DLL name two projects produce has no graph edge (§6.4), so it has no candidates
+either — only the build evidence speaks for it.
+
+**Whose output is it.** The build evidence's time is set against the ledger's last run of the project
+(`LastRunAt`). If there is no record, no last run, or the evidence is strictly newer than the last run, the
+output was built by someone else: **time mode**. Otherwise it is the tool's own: **ledger mode**. The tool's own
+output is always older than its last run, because the record is written after MSBuild exits and a copy keeps
+its source's time — which is also why crash recovery's "last run = now" (§8.7) keeps a half-written output out
+of time mode. That holds for a project the ledger had never recorded too: recovery, and every other failure
+without evidence (§8.8), opens a failed record with no built signature for it, so its next decision is never
+built rather than built outside this tool.
+
+**Ledger mode** is the decision of §7.4 with two vetoes. `LastFailed` and never built stand as they are. For
+every other reason a missing build evidence reads **output missing** — also when the signature moved, because
+there is nothing on disk to call current. A project that would be up to date, or waiting for a dependency, reads
+**output replaced** when a learned fed copy is missing, has a different length, or is older than the build
+evidence (a newer copy of the same length is sound). An output's time never grants anything here: touching a
+file and undoing it, or switching branches back and forth without building, still rebuilds nothing.
+
+**Time mode** judges the output by its time against every input, in this order: no build evidence → **output
+missing**; one of the project's own inputs — a file of the §7.1 input set, or a folder the sweep visited, since
+a delete or a rename moves only the folder's time — is strictly newer → **output stale**, own; one of the
+project's own `HintPath` targets is strictly newer → **output stale**, from a dependency; a learned fed copy is
+broken → **output replaced**; otherwise **built outside this tool** — green, and not compiled. An input exactly
+as old as the output counts as current, and a missing or unreadable input or target is ignored. Time mode has
+no red: the ledger's notes (the failed signature, the dependency issue) describe a build older than the output
+on disk and are not read. Nothing is written back to the ledger; every Sync proves the output again.
+
+**Behind a dependency that will build.** A time check reads only file times, so it cannot see that a dependency
+is about to be rebuilt: until that build runs, the dependency's shared copy is still the old one and the
+dependent's output looks current against it. Dependents are always judged by the signature, so in the Safe mode
+(§7.2) a time-mode project any of whose upstream projects in the plan — directly or transitively — will build
+reads output stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own
+files did not change, and carries no built-outside age. A project whose own verdict comes earlier in the order
+above — no build evidence, or an own input newer — keeps it. The Fast mode follows no upstream and does not
+cascade here either. The rule lives in the planner, after every project's own decision, and does not depend on
+the plan's order.
+
+**`modified` or `affected`.** In time mode the split comes from the evidence — own input newer means
+`modified` — and elsewhere from the stored content fingerprint compared with today's (§7.5). The Sync and a
+run's preview make the same call (`OutputEvidence.OwnFilesChanged` over `BuildStateStore.OwnFilesChanged`), so
+a row reads the same word after a Sync as in the next *Build*. The Sync's *N changed* counter is a different
+count (§5.3): the projects the Fast pass finds dirty, with the evidence's answer in time mode. The two can
+differ — a project whose record carries a stale signature while its own files are untouched counts as changed
+yet reads `affected`.
+
+**Cycle groups.** If any member of a group is in time mode, every member goes through the time check. When all
+of them are current, all read built outside this tool; otherwise a member that fails its own check keeps its own
+verdict and a member that passes reads output stale from a dependency — the group is stale as a group. A member
+with no build evidence cannot prove it is current, so it keeps such a group stale. A group with no member in
+time mode is decided member by member in ledger mode.
+
+**Where the evidence goes.** The Sync binds its Safe pass with the checks and the engine binds a run's plan with
+the same checks, so the Sync's will-build is the next plain *Build*'s decision; the Sync's Fast pass — which
+only feeds the *N changed* counter — is bound without them, or a project whose shared copy was overwritten
+would count as changed. The checks also travel with the run's plan, so the run preview writes the
+same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only for built
+outside this tool and is the age the row's label shows. A project this tool then builds successfully drops that
+time at once: its output is now the tool's own.
+
+**Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
+only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
+as input collection does.
 
 ---
 
@@ -843,9 +954,11 @@ evaluation cache, another project's `obj` — is touched. It is a run like any o
 writes a project log and can be stopped; the maintenance box's *Clean* is a different, wider surface — the
 workspace reset of §13.2, which runs no MSBuild target at all (§5.2). Two things follow from "the outputs are
 gone". The project's **build-state row is deleted**, not invalidated: the project did not fail, this tool
-simply no longer knows any output of it, and §4 forbids reading a DLL or `bin` timestamp to find out — a row
-left behind would let the next `Build` skip the project as up to date and report a green run over deleted
-outputs. And the row **reads `never built`, in its to-build grey**, after the clean succeeds: elsewhere a
+simply no longer knows any output of it. The output evidence (§7.6) would notice the deleted output only for a
+project whose output path it can derive — for an SDK-style project it cannot — so a row left behind would let
+the next `Build` skip such a project as up to date and report a green run over deleted outputs. With the row
+gone, a project whose output path is known is in time mode, and its deleted output reads output missing. And the
+row **reads `never built`, in its to-build grey**, after the clean succeeds: elsewhere a
 success means "this is now current", here it means "its outputs are gone", which is the opposite — so the
 run's success does not paint the row green (§14.3). A Clean that fails is no evidence against the source
 either: `-t:Clean` never calls the compiler, so its non-zero exit (a locked file, a denied delete) invalidates
@@ -900,7 +1013,8 @@ workspace.
 comes back green while its output is stale — and the run then persists that member's signature. Because the
 signature already contains the upstream's source term, the next `Build` reads the member as up to date and
 never recompiles it: the project stays linked to a stale binary, permanently, with no second mechanism to
-catch it since no DLL or `bin` timestamp is ever read (§4). Pulling the transitive upstream into scope closes
+catch it — the output is the tool's own, so it is judged in ledger mode, where an output's time never overrules a
+matching signature (§7.6). Pulling the transitive upstream into scope closes
 that: the run is self-consistent, compiling everything it compiles against fresh inputs. Inside the scope the
 ordinary incremental rule applies, so a clean upstream is still skipped as `skipped — up to date`.
 
@@ -1105,9 +1219,10 @@ in-flight ledger closes that hole.
   longer than the parallelism.
 - **Startup invalidates what is left.** Before the host accepts a single command, the engine reads the file and
   marks every listed project as a failure without evidence (`LastResult = Failed`, the run timestamp set to now,
-  the built signature kept, no failed signature written — §7.5). The next `Build` compiles them, and their row
-  reads grey `never built` rather than green: the App runs a Sync every time the engine reports ready, after a
-  restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
+  the built signature kept, no failed signature written — §7.5); a listed project without a record gets one in
+  that same shape, with no built signature, so its half-written output cannot enter time mode (§7.6) either. The
+  next `Build` compiles them, and their row reads grey `never built` rather than green: the App runs a Sync every
+  time the engine reports ready, after a restart too (§12.1), so the recovered decisions reach the screen. The count rides on `engineReady` (§5.3) and
   the App prints `previous run was interrupted; N projects will rebuild`.
 - **Failure to recover never blocks the engine.** A file whose content cannot be parsed is not trusted — nobody
   knows who was in flight — so it is deleted and nothing is invented. A file that cannot be *read* (a lock, a
@@ -1161,9 +1276,10 @@ before, so a first-ever compile failure is not lost. Every other case — a time
 failed Clean (which never calls the compiler), or a result the run does not trust at all, such as a
 non-converged cycle's member that came back green — is not proof the sources are broken, only that this
 attempt's output cannot be, and it clears any failed signature a past success has since invalidated rather
-than writing one; it opens no record where none exists, since a placeholder failure for a project the ledger
-has never heard of would answer nothing. Either way only `LastResult` and the run timestamp change beyond
-that — the built signature, commit, branch and duration stay exactly as a past success left them.
+than writing one. For a project the ledger has never heard of it opens a failed record with no built signature:
+without one the project would stay in time mode (§7.6) and a half-written output newer than its inputs would read
+built outside this tool. Either way only `LastResult` and the run timestamp change beyond that — the built
+signature, commit, branch and duration stay exactly as a past success left them.
 
 The verdict is taken once, in one gate (`FailureEvidenceSignature`: a trusted result of a compiling target, a
 compiler exit, a known planning signature and a ledger to write to), and the same answer goes two ways: into
@@ -1231,8 +1347,8 @@ state the invalidate-everything path above keys on.
 
 **Non-convergence memory.** A group that ends in **no progress** records the composite signature it gave up
 at, per member, beside that member's build state (§7.5). A stop or an unexpected error never writes this —
-neither is evidence that a cycle cannot converge. This is the same principle as every other incremental
-decision, driven by the source signature; no DLL or `bin` timestamp is consulted. A member with no state row
+neither is evidence that a cycle cannot converge. The memory is keyed by the source signature alone; the output
+evidence (§7.6) plays no part in it. A member with no state row
 at all gets one created for the purpose, otherwise the very case this solves — a component that has never been
 built successfully — would never accumulate a memory. Failing to write it warns and nothing more.
 
@@ -1363,7 +1479,12 @@ lazily, so a workspace with nothing to restore never pays for a `vswhere` search
 
 ### 9.4 `OutDir` and `obj`
 
-**`OutDir` is never touched and never read.** Build output lands exactly where Visual Studio would put it: in
+**`OutDir` is never touched and never passed to MSBuild.** The tool reads build output in three places, all
+for the output evidence (§7.6), and only times and lengths: the file at the project's own output path as its
+csproj declares it, together with the fed copies it has learned; after a successful build, every fed-output
+candidate, to learn which ones that build refreshed; and, in time mode, the times of the project's own
+`HintPath` targets — other projects' outputs and their copies. Build output lands exactly where Visual Studio
+would put it: in
 the solution's own shared output folder, produced by the projects' own post-build copy events. The orchestrator
 copies nothing.
 
@@ -1387,8 +1508,9 @@ be relaxed: in an SDK-style project `project.assets.json` is legitimate, and not
 a project has no `packages.config`, so Optimize's restore step (§9.3) never reaches it and the next build would
 fail on a missing assets file. Deleting without a restore behind it breaks the build.
 
-The symmetric half of this rule is §7.1: since output is never inspected, "did it change?" can only be
-answered from source.
+The symmetric half of this rule is §7.1 and §7.6: "did it change?" is answered from source, and an output's
+time is consulted only to tell whose output it is and, for one built elsewhere, whether any input is newer — it
+never makes the tool's own output current on its own.
 
 ### 9.5 Copy contention
 
@@ -1990,12 +2112,28 @@ and MSBuild, not invented terms:
 
 | Label | What the engine found |
 |---|---|
-| `modified` | its own input files changed since the last build |
+| `modified` | its own input files changed since the last build — or, for an output built elsewhere, are newer than that output |
 | `modified · local` | same, and at least one of its input files is also dirty in `git status` |
-| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle |
-| `never built` | no build output known to this tool |
+| `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle — or its copy in the shared folder no longer matches its build output |
+| `never built` | no build output known to this tool: never built successfully, or its output file is missing |
 | `failed · 2h` | it failed at this source; the tail is the age of that failure |
-| `up to date · 2h` | it is current; the tail is the age of the last successful build |
+| `up to date · 2h` | it is current; the tail is the age of the last successful build — or of the output, when it was built outside this tool |
+
+Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps apart what the word folds together:
+
+| Reason | Label | Tooltip |
+|---|---|---|
+| never built, output missing | `never built` | `No build output known to this tool` |
+| last build failed | `failed · 2h` | `Failed at this source 2h ago — Build will retry it` (for a cycle member, `Resolve cycles will retry it`) |
+| up to date, waiting for a dependency | `up to date · 2h` | `Up to date — last built 2h ago` |
+| built outside this tool | `up to date · 5m` | `Up to date — built outside this tool 5m ago` |
+| output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
+| output stale, own inputs newer | `modified` or `modified · local` | `Its own files are newer than its build output` |
+| signature changed, dependency issue — own files changed | `modified` | `Its own files changed since the last build` (with `local`: `— includes uncommitted edits`) |
+| signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
+
+The age disappears from a tooltip when its time is unknown (`Up to date`, `Up to date — built outside this
+tool`).
 
 A project waiting on a dependency (`WaitingForDependency`) reads the same `up to date` as a project whose
 signature simply matches — both are read from the same fact, that the output is current — because *which*
@@ -2023,7 +2161,10 @@ acts on it.
 signature also carries upstream terms, so a project whose dependency failed would claim *its own* files
 changed. Measured on a real workspace: six projects the user had never touched read `modified` for exactly
 that reason. When the stored fingerprint is missing (an older record), the row shows the more cautious
-`affected`. `modified` gains its own `local` tail when at least one of the project's input files is also dirty
+`affected`. For an output built outside this tool there is no stored fingerprint that describes it, so the fact
+comes from the output evidence instead: `modified` when one of the project's own inputs is newer than the output,
+`affected` when only a `HintPath` target is (§7.6). `modified` gains its own `local` tail when at least one of the
+project's input files is also dirty
 in `git status` — a fact this tool cannot see any other way, since a dirty working copy has no signature of its
 own yet.
 
@@ -2059,12 +2200,14 @@ now`, exactly matching what the next Sync will say (`WaitingForDependency`, `Wil
 converge is different: the engine does not stand behind its green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
 to-build grey at once — what the next Sync will say — rather than a green tick the next Sync would take back.
-A cleaned project reads the same `never built`, because its ledger row is gone (§8.1).
+A cleaned project reads the same `never built`, because its ledger row is gone (§8.1), and so does a project
+whose output file is missing from disk (§7.6).
 
 **The slot is not a result column.** The state of the output is carried by the stripe, the dot and the glyph,
 and what this run did by the duration and by the run-story surfaces (the ribbon, the console header, the event
 stream); the slot always answers the same question — *what does this project's output need?* After a Sync that
-answer comes from comparing the stored signature with today's; after a build it comes from what just happened
+answer comes from comparing the stored signature with today's — or, for an output built elsewhere, its time with
+its inputs' (§7.6); after a build it comes from what just happened
 to that project. Both are the same fact at different moments, which is why the wording does not change between
 them.
 
@@ -3020,7 +3163,12 @@ lines.
   goes only to `decision.log`. Leaving the console on the run narrative made the click look like it had done
   nothing. What the body then shows is composed from the row: a first line saying **why** the project is in
   that state, and a second saying **what we have** — the commit it was last successfully built at, or that it
-  has never been built. The status word is not repeated, because the header is already showing it. A project
+  has never been built. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
+  over `Built outside this tool: 5m ago`, since the evidence is that output's time rather than a build of this
+  tool's; the output reasons read `its build output is missing`, `its files are newer than its build output`
+  (or `a dependency's output is newer than its build output`) and `its copy in the shared folder does not match
+  its build output`, and a missing output does not repeat itself on the evidence line, just as never built does
+  not. The status word is not repeated, because the header is already showing it. A project
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
@@ -3649,9 +3797,11 @@ glyph of its standing.
 graph node's border and the cube inside it are all painted from a single value (`VisualStatus`), and colour
 therefore tells exactly one story: *the state of the project's output*. It is built in two layers. The base is
 the **standing** (`StandingStatus`), read from the preview's decision alone — `unknown` when there is no
-decision, `current` (green) for `UpToDate` and for a project waiting on a dependency (its own output is sound;
-the waiting is the triangle's to say), `stale` (plain grey) for a changed, never-built or dependency-tainted
-project, and `failed` (red) for `LastFailed`, which the engine reports only when the ledger can prove the
+decision, `current` (green) for `UpToDate`, for a project waiting on a dependency (its own output is sound;
+the waiting is the triangle's to say) and for one built outside this tool (its output is current, only not
+this tool's — §7.6), `stale` (plain grey) for a changed, never-built or dependency-tainted project and for an
+output that is stale, missing or replaced, and `failed` (red) for `LastFailed`, which the engine reports only when
+the ledger can prove the
 failure (§7.5). Over it lies the **run**: `marked`
 (this operation's scope), `queued`, `building`, and the results `succeeded` (the same green as `current`, kept
 apart so the run can still say "just built") and `failed`. A result does not outrank the standing it wrote:
@@ -3673,8 +3823,9 @@ project finishes (the next preview confirms it) and stays there until a later ru
 cumulative rather than the story of the last operation alone. Switching the configuration moves the standing
 ahead of the next preview as well: the configuration is part of every signature, so every decided row drops to
 `stale` at once, with the reason the next preview will give — `SignatureChanged` when the project has ever built
-successfully, `never built` when it has not (for a row that last failed, the built commit the preview carries is
-the trace of a past success) — while a row with no decision stays unknown. The change also neutralises the
+successfully, `never built` when it has not or when its output was missing (for a row that last failed, the
+built commit the preview carries is the trace of a past success); the next Sync reads the new configuration's
+own output evidence — while a row with no decision stays unknown. The change also neutralises the
 previous run's fields, so a row that just succeeded does not keep the run's green, and it closes the previous
 run's story: a finished run's summary and a stopped run's `Stopped — n/m · k not built` both give way to the new
 plan (`Ready — N to build`). A stopped run's plan belongs to the old configuration, so there is nothing under
@@ -4078,8 +4229,8 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature; projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, autostart, tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
@@ -4173,6 +4324,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
 | Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
+| No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
 | Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16) |
 
 ### 17.3 Determinism
@@ -4331,6 +4483,13 @@ do, and how the interface works around each — useful to know before attempting
   practice, one member with no state row — the gate does not hold and members the preview drew grey are built.
   It errs safely: more work happens than promised, and nothing broken can look healthy. Closing it means
   computing the preview per component, which is a larger change than the divergence costs.
+- **The output evidence trusts file times and lengths** (§7.6), the same assumption the source-hash cache makes
+  (§7.1). A DLL copied into a shared folder by hand with the same length as the build output can pass for a fed
+  copy; a different length is caught. A file restored with its old timestamp — from a backup, say — does not
+  read as newer than the output it predates; git and Visual Studio do not do this. A clock moved back can make a
+  new output look older than the ledger's last run, or an input older than the output. These are accepted.
+- **Visual Studio and the tool must not build the same project at once.** Both write the same `obj` and the
+  same output; neither can tell, and nothing arbitrates between them.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
@@ -4504,8 +4663,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
-| Raw csproj XML evaluation | `Core/Discovery/CsprojEvaluator.cs` |
-| Evaluation cache (mtime + length fingerprint) | `Core/Discovery/EvaluationCache.cs` |
+| Raw csproj XML evaluation; the output path (`OutputFileFor`) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
+| Evaluation cache (mtime + length fingerprint, schema) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
 | DLL name → producing project | `Core/Graph/ProducerMap.cs` |
@@ -4523,8 +4682,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
 | Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
-| Input collection, path terms and the two binding passes | `Core/Incremental/IncrementalRunBinder.cs` |
-| Will-build tri-state decision and its reason | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`) | `Core/Incremental/IncrementalRunBinder.cs` |
+| Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
+| Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |

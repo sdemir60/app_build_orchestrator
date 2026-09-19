@@ -43,8 +43,18 @@ public sealed class SyncWorkspaceService(
     /// <summary>Will-build pass'inin sonucu: bağlanmış plan + §3.1 konsol satırlarının/D2 şeridinin okuduğu sayaçlar.</summary>
     /// <param name="Known">false ⇒ anlamlı bir taban yok (repo'da hiç commit yok ya da pass hata verdi) — TÜM
     /// düğümler hollow (<c>WillBuild=null</c>) kalır ve sayaçlar RAPORLANMAZ (0 yazmak "hepsi güncel" yalanı olurdu).</param>
-    /// <param name="OwnChanged">[v1.16.0] KENDİ dosyaları değişmiş projeler (Fast geçişi) — satırın karar
-    /// etiketi <c>modified</c> ile <c>affected</c> ayrımını buradan okur.</param>
+    /// <param name="OwnFilesChanged">[v1.16.0] Proje → "KENDİ dosyaları değişti mi" — önizlemenin
+    /// <c>OwnFilesChanged</c>'ı, satırın <c>modified</c> ↔ <c>affected</c> ayrımı. Koşu önizlemesiyle AYNI çağrı
+    /// (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>): zaman kipinde
+    /// kanıttan, diğer kiplerde defterdeki içerik özeti ile bugünkünün karşılaştırmasından. [Faz 3/Task 9 fix
+    /// round 2 — kullanıcı kararı I1] Eskiden defter kipinde Fast geçişinden gelirdi; Fast, kaydındaki imzası
+    /// bayat ama dosyalarına dokunulmamış bir projeyi de "değişti" bulur ve satır Build'in göstereceği
+    /// <c>affected</c> yerine <c>modified</c> yazardı.</param>
+    /// <param name="Changed">"N changed" sayacı — Fast semantiği (ARCHITECTURE §5.3, ruling R9): Fast geçişinin
+    /// derlenecek bulduğu projeler, zaman kipinde kanıtın cevabıyla (<see
+    /// cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>).</param>
+    /// <param name="Checks">[Faz 3/Task 6 — spec 2026-09-18 §5] Safe geçişinin kararına giren çıktı kontrolleri
+    /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — önizlemenin <c>OutputBuiltAt</c>'ı buradan yazılır.</param>
     /// <param name="ConditionalIds">[Task 4 review — C1 · DEĞİŞEN KURAL] Sync'in <c>WillBuild</c> zaten bir
     /// sonraki DÜZ Build'in kararını önceden söylediği için (§10.2, "Sync = örtük Build'in ucuz hâli") bu küme de
     /// o Build'in <c>ConditionalRebuild.AppliesTo</c>'sudur — hesap TEK BURADA yapılır, hem <see cref="ToBuild"/>
@@ -56,8 +66,15 @@ public sealed class SyncWorkspaceService(
     /// döndürdüğü küme — Sync anında girdi kümesinde işlenmemiş yerel değişikliği olan projeler. Git sorgusu
     /// başarısızsa (repo yok, hata) ya da pass hiç koşmadıysa (hollow) boş küme: hiçbir proje işaretlenmez.</param>
     private readonly record struct WillBuildOutcome(
-        BuildPlan Plan, IReadOnlySet<string> OwnChanged, int Changed, int ToBuild, int UpToDate, bool Known,
-        IReadOnlySet<string> ConditionalIds, IReadOnlySet<string> LocalEditsIds);
+        BuildPlan Plan, IReadOnlyDictionary<string, bool?> OwnFilesChanged, int Changed, int ToBuild, int UpToDate, bool Known,
+        IReadOnlySet<string> ConditionalIds, IReadOnlySet<string> LocalEditsIds,
+        IReadOnlyDictionary<string, OutputCheck> Checks);
+
+    private static readonly IReadOnlyDictionary<string, bool?> NoOwnFilesChanged =
+        new Dictionary<string, bool?>(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly IReadOnlyDictionary<string, OutputCheck> NoChecks =
+        new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
 
     private static readonly IReadOnlySet<string> EmptySet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -160,13 +177,14 @@ public sealed class SyncWorkspaceService(
             outcome.Plan.Nodes
                 .Select(n => new BuildPreviewItem(n.Id, n.Name, n.WillBuild,
                     BuildStateStore.BuiltCommitOf(state, n.Id), n.WillBuildReason,
-                    OwnFilesChanged: outcome.Known ? outcome.OwnChanged.Contains(n.Id) : null,
+                    OwnFilesChanged: outcome.Known ? outcome.OwnFilesChanged.GetValueOrDefault(n.Id) : null,
                     LastBuiltAt: BuildStateStore.LastBuiltAtOf(state, n.Id),
                     Conditional: outcome.ConditionalIds.Contains(n.Id),
                     DependencyRoots: ConditionalRebuild.RootNames(n.WillBuildReason,
                         state.GetValueOrDefault(n.Id), id => nameById.GetValueOrDefault(id)),
                     FailedAt: BuildStateStore.FailedAtOf(state, n.Id),
-                    LocalEdits: outcome.LocalEditsIds.Contains(n.Id)))
+                    LocalEdits: outcome.LocalEditsIds.Contains(n.Id),
+                    OutputBuiltAt: OutputEvidence.OutputBuiltAt(outcome.Checks.GetValueOrDefault(n.Id), n.WillBuildReason)))
                 .ToList()));
 
         // --- 5) §3.1 satır 3 + 4. Sayılar syncCompleted'ın sayaçlarıyla AYNI kaynaktan gelir.
@@ -288,15 +306,21 @@ public sealed class SyncWorkspaceService(
             // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
             // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
-            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe);
+            // [Faz 3/Task 6 — karar "Sync'in Fast geçişi"] Çıktı kanıtı YALNIZ Safe geçişine girer — Build'in planı
+            // da aynı kontrollerle bağlanır, dolayısıyla Sync'in WillBuild'i bir sonraki düz Build'in kararıdır.
+            // Fast geçişi yalnız "N changed" sayacını besler (satırın modified ↔ affected cevabı ondan DEĞİL, aşağıda
+            // içerik özetinden gelir) ve kanıtsız bağlanır: kanıtla bağlansaydı havuzdaki kopyası bozulmuş
+            // (OutputReplaced) ya da kanıtı silinmiş (OutputMissing) bir proje dosyasına dokunulmadığı hâlde
+            // "changed" sayılırdı.
+            var checks = binder.ChecksFor(state);
+            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, checks);
             var (fastPlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Fast);
             hashes.Flush();
 
-            // [v1.16.0 satır etiketi] "Kendi dosyası değişti mi" olgusu Fast geçişinden gelir: Safe true +
-            // Fast false = bağımlılığından etkilenmiş (affected), ikisi de true = kendi dosyası değişmiş
-            // (modified). İki geçiş zaten sayaçlar için koşuyordu; etiket ikinci bir kaynak AÇMAZ.
-            var ownChanged = fastPlan.Nodes
-                .Where(n => n.WillBuild == true)
+            // "N changed" sayacı Fast semantiğindedir (ARCHITECTURE §5.3, ruling R9): Fast geçişinin derlenecek
+            // bulduğu projeler; zaman kipinde cevap kanıttandır (kendi girdisi çıktıdan yeni ⇒ changed).
+            var changedForCounter = fastPlan.Nodes
+                .Where(n => OutputEvidence.OwnFilesChanged(checks.GetValueOrDefault(n.Id), n.WillBuild == true) == true)
                 .Select(n => n.Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -321,23 +345,35 @@ public sealed class SyncWorkspaceService(
                 n => n.Id, n => binder.InputsOf(n.Id), StringComparer.OrdinalIgnoreCase);
             var localEditsIds = LocalEdits.ProjectsWithLocalEdits(dirtyPaths, inputsById, cmd.RootPath);
 
+            // [v1.16.0 satır etiketi · Faz 3/Task 9 fix round 2 — kullanıcı kararı I1] "Kendi dosyası değişti mi"
+            // koşu önizlemesiyle (RunCoordinator) AYNI çağrıdan: zaman kipinde kanıttan, diğer kiplerde defterdeki
+            // içerik özeti ile binder'ın ZATEN hesapladığı bugünkü özetin karşılaştırmasından — Fast'ten DEĞİL (bkz.
+            // WillBuildOutcome.OwnFilesChanged). Sync'in satırı ile Build'in satırı böylece ayrışamaz.
+            var contentById = binder.ContentById;
+            var ownFilesChanged = plan.Nodes.ToDictionary(
+                n => n.Id,
+                n => OutputEvidence.OwnFilesChanged(
+                    checks.GetValueOrDefault(n.Id), state, n.Id, contentById.GetValueOrDefault(n.Id)),
+                StringComparer.OrdinalIgnoreCase);
+
             return new WillBuildOutcome(
                 Plan: safePlan,
-                OwnChanged: ownChanged,
-                Changed: ownChanged.Count,
+                OwnFilesChanged: ownFilesChanged,
+                Changed: changedForCounter.Count,
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
                 UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
                 Known: true,
                 ConditionalIds: conditionalIds,
-                LocalEditsIds: localEditsIds);
+                LocalEditsIds: localEditsIds,
+                Checks: checks);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Tanı KULLANICIYA gider (Core'un konsola doğrudan yazması gerekmez — [D4] zaten stdout'u yalnız
             // NDJSON'a ayırır): pass atlandığında will-dot'lar sessizce hollow kalacağı için sebebin görünmesi şart.
             emit(Warn($"warning: change detection was skipped — project states stay unknown ({ex.Message})"));
-            return new WillBuildOutcome(plan, EmptySet, 0, 0, 0, Known: false, ConditionalIds: EmptySet,
-                LocalEditsIds: EmptySet);
+            return new WillBuildOutcome(plan, NoOwnFilesChanged, 0, 0, 0, Known: false, ConditionalIds: EmptySet,
+                LocalEditsIds: EmptySet, Checks: NoChecks);
         }
     }
 
