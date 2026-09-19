@@ -296,6 +296,26 @@ public class OperationPipelineTests
         Assert.Contains(RunViewModel.RunCancelledLine, vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
+    /// <summary>[T8 · spec §6.1] Koreografi oynarken gelen branch kesmesi de isteği geri alır: komut henüz gitmedi,
+    /// motora ne <c>startRun</c> ne <c>stopRun</c> gider (Stop'la aynı kapı).</summary>
+    [Fact]
+    public async Task A_branch_interrupt_during_the_choreography_cancels_the_run_before_it_is_sent()
+    {
+        var vm = AfterOneCompletedRun();
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        var run = vm.BuildCommand.ExecuteAsync(null);
+        await vm.RequestInterruptAsync();
+        choreography.SetResult();
+        await run;
+
+        Assert.Empty(sent);
+        Assert.False(vm.IsStarting);
+    }
+
     // ============================================================ nötr an (planlama penceresi)
 
     /// <summary>

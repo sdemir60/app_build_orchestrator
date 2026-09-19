@@ -2563,6 +2563,128 @@ public class RunViewModelTests
         Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: kök değişiminin Sync'i gönderilemedi
     }
 
+    // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında branch
+
+    private const string RunLogDirectory = @"D:\logs\2026-09-19_10-00-00";
+
+    /// <summary>Sync'lenmiş iki satırlı workspace'te B'yi derleyen bir koşu uçuşta; HEAD sahte ve <paramref name="head"/>
+    /// değişkeninden okunur, UI kuyruğu <paramref name="posted"/>'tır.</summary>
+    private static RunViewModel MidRunVm(EngineHost engine, Queue<Action> posted, Func<Core.Git.HeadState> head)
+    {
+        var vm = SyncedTwoRowVm(engine);
+        vm.EnableAutoSync(posted.Enqueue, _ => head(), () => new FakeHeadWatcher());
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0, LogDirectory: RunLogDirectory));
+        vm.OnEvent(new BuildPreviewEvent([ // motor runStarted'ın hemen ardından önizlemeyi yayınlar: kapsam = B
+            new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
+        ]));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        Drain(posted);
+        return vm;
+    }
+
+    /// <summary>Koşu sırasında dışarıdan branch değişimi koşuyu BİR kez keser (<c>StopKind.Interrupt</c>) ve akışa
+    /// "interrupted by branch change" düşer; Sync koşu bitene dek bekler.</summary>
+    [Fact]
+    public async Task A_branch_switch_mid_run_interrupts_once()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+
+        var stop = Assert.Single(sent.OfType<StopRunCommand>());
+        Assert.Equal(new StopRunCommand("r1", StopKind.Interrupt), stop);
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+        Assert.Single(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Koşu sırasında commit koşuyu kesmez ve hiçbir şey yapmaz.</summary>
+    [Fact]
+    public async Task A_commit_mid_run_does_nothing()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.Commit);
+        Drain(posted);
+
+        Assert.Empty(sent);
+        Assert.DoesNotContain(vm.StreamEvents, e => e.Text == StreamText.InterruptedByBranchChange);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Kesilen koşu bitince yeni bölüm açılır: konsolun ilk satırı koşunun özeti (kaç proje bitti, kaçı
+    /// derlenmedi, log klasörü), ardından switch satırı; Sync fetch etmez (spec §6.2). Kesmeden sonra biten B
+    /// (Trusted=false) "built" sayılmaz.</summary>
+    [Fact]
+    public async Task After_the_interrupted_run_a_new_section_starts_with_its_summary()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("feature", CommittedSha));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        await vm.AutoSync!.HeadTriggerAsync(Core.Git.HeadMove.BranchSwitch);
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300, Trusted: false));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        string summary = Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(0, 1, RunLogDirectory);
+        string switched = Core.Planning.PlanProgressLines.SwitchedBranch("main", "feature", "2222222");
+        Assert.StartsWith(summary + "\n" + switched, vm.GetRunDocumentText().ReplaceLineEndings("\n"), StringComparison.Ordinal);
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır — aynı branch'te yeni commit
+    /// sessiz Sync'tir; kesme yoktu, özet yok.</summary>
+    [Fact]
+    public async Task A_head_change_missed_by_the_watcher_is_caught_when_the_run_ends()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", CommittedSha));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+        Assert.Empty(sent.OfType<StopRunCommand>());
+        vm.DisableAutoSync();
+    }
+
+    /// <summary>Güvenlik ağı her koşudan sonra Sync üretmez: HEAD son Sync'tekiyle aynıysa hiçbir şey gönderilmez.</summary>
+    [Fact]
+    public async Task A_run_that_ends_on_the_synced_head_sends_no_sync()
+    {
+        await using var engine = await StartedEngineAsync();
+        var posted = new Queue<Action>();
+        var vm = MidRunVm(engine, posted, () => new Core.Git.HeadState("main", "1111111111111111111111111111111111111111"));
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", B, 300));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
+        Drain(posted);
+
+        Assert.Empty(sent);
+        vm.DisableAutoSync();
+    }
+
     /// <summary>Pull/commit sonrası HEAD'in sahte sha'sı — <see cref="ReplySync"/>'in ölçtüğünden farklı.</summary>
     private const string CommittedSha = "2222222222222222222222222222222222222222";
 

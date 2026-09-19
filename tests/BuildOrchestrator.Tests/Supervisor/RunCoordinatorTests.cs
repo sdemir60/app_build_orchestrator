@@ -446,6 +446,162 @@ public class RunCoordinatorTests
         Assert.Equal(3, done.Queued);                          // B, C, D — kısıt 4: snapshot in-flight tükendikten sonra
     }
 
+    // ---------------------------------------------------------------- [spec 2026-09-18 §6.1 · karar 10] branch kesmesi
+
+    /// <summary>Tek proje uçuştayken kesme isteyen koşu: <paramref name="result"/> uçuştakinin sonucu. Kesme, sonuç
+    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan".</summary>
+    private static async Task<IReadOnlyList<IpcEvent>> InterruptWhileAIsInFlight(MsBuildInvokeResult result,
+        BuildStateStore? store = null, IncrementalPlan? incremental = null)
+    {
+        var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return result; });
+        using var h = new Harness(plan, invoker, stateStore: store);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        return h.Events;
+    }
+
+    /// <summary>Kesme Graceful gibidir: yeni proje başlamaz, uçuştaki biter; koşu Stopped biter (runStopped graceful).</summary>
+    [Fact]
+    public async Task An_interrupt_starts_nothing_new_and_lets_the_in_flight_finish()
+    {
+        var events = await InterruptWhileAIsInFlight(Ok());
+
+        Assert.Single(events.OfType<ProjectStartedEvent>());
+        Assert.Single(events.OfType<ProjectSucceededEvent>());
+        Assert.Equal("runStopped:graceful", Describe(events[^2]));
+        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+        Assert.Equal(RunOutcome.Stopped, done.Outcome);
+        Assert.Equal(1, done.Queued);
+    }
+
+    /// <summary>Kesmeden sonra biten başarı deftere başarı olarak YAZILMAZ: kanıtsız hata (gri <c>never built</c>) —
+    /// çökme kurtarmasıyla aynı defter hâli (spec §5.5). Olay da güvenilmez der.</summary>
+    [Fact]
+    public async Task A_project_that_succeeds_after_an_interrupt_is_not_recorded_as_built()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "old", "c0", BuildResult.Succeeded, DateTimeOffset.UtcNow.AddHours(-1), "main"));
+
+            var events = await InterruptWhileAIsInFlight(Ok(), store, Incremental("A", "B"));
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Equal("old", a.BuiltSignature); // taze imza ("sig") yazılmadı
+            Assert.False(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>Kesmeden sonra derleyici hatasıyla biten proje kanıt DEĞİLDİR: derlediği kaynak artık diskteki değil.</summary>
+    [Fact]
+    public async Task A_project_that_fails_after_an_interrupt_is_not_evidence()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            store.Upsert(new BuildState(Id("A"), "old", "c0", BuildResult.Succeeded, DateTimeOffset.UtcNow.AddHours(-1), "main"));
+
+            var events = await InterruptWhileAIsInFlight(Exit(1), store, Incremental("A", "B"));
+
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, a.LastResult);
+            Assert.Null(a.FailedSignature);
+            Assert.Null(a.FailedAt);
+            Assert.False(Assert.Single(events.OfType<ProjectFailedEvent>()).Evidence);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>Kesmeden sonra gelen Hard stop kazanır (bugünkü kural: Hard geri alınmaz).</summary>
+    [Fact]
+    public async Task A_later_hard_stop_wins_over_an_interrupt()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Exit(1); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        Assert.True(h.Sut.TryRequestStop(StopKind.Hard));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("stopped", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
+        Assert.Equal("runStopped:hard", Describe(h.Events[^2]));
+    }
+
+    /// <summary>Kullanıcının Graceful Stop'undan SONRA gelen kesme de koşuyu kesilmiş sayar: drain'de biten başarı
+    /// artık güvenilmez.</summary>
+    [Fact]
+    public async Task An_interrupt_after_a_graceful_stop_still_marks_the_run_interrupted()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.False(Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).Trusted);
+        Assert.Equal("runStopped:graceful", Describe(h.Events[^2]));
+    }
+
+    /// <summary>Kesme koşuya aittir: sonraki koşunun başarısı yine güvenilir.</summary>
+    [Fact]
+    public async Task An_interrupt_does_not_leak_into_the_next_run()
+    {
+        var plan = PlanOf(Node("A"));
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1, runId: "r1"), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        await h.Sut.StartAsync(Start(parallelism: 1, runId: "r2"), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var second = h.Events.OfType<ProjectSucceededEvent>().Where(e => e.RunId == "r2");
+        Assert.True(Assert.Single(second).Trusted);
+    }
+
+    /// <summary>runStarted koşunun disk log klasörünü taşır — kesilen koşunun özet satırı onu anar (spec §6.2).</summary>
+    [Fact]
+    public async Task Run_started_names_its_log_directory()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(PlanOf(Node("A")), invoker);
+
+        await h.Sut.StartAsync(Start(), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(h.LogWriters[^1].RunDirectory, Assert.Single(h.Events.OfType<RunStartedEvent>()).LogDirectory);
+    }
+
     // [Task 18] TryGetProjectLogSnapshot artık gerçek disk okumasını (canlı writer'ın FileStream'i ya da
     // ReadProjectLogFromDisk'in File.ReadAllText'i) _gate DIŞINDA yapıyor — kilit altında yalnız "hangi
     // kaynaktan okunacağı" (canlı writer referansı / en son run dizini) yakalanır. Bu test, bir proje

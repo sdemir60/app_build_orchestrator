@@ -42,6 +42,10 @@ public static class StreamText
     public static string Sync(int toBuild, int upToDate) =>
         string.Format(CultureInfo.InvariantCulture, "Sync — {0} to build, {1} up to date", toBuild, upToDate);
 
+    /// <summary>[spec 2026-09-18 §6.1 · karar 10] Koşu sırasında branch değişti ve koşu nazikçe kesildi — kesme
+    /// istendiği an akışa düşen TEK satır.</summary>
+    public const string InterruptedByBranchChange = "interrupted by branch change";
+
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";
 

@@ -1367,10 +1367,18 @@ public sealed partial class RunViewModel : ObservableObject
         // alınacak bir İSTEK var. Motora hiçbir şey gitmez.
         if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
+        AppendRunLine(StopRequestedLine(Counters.Building));
+        await SendStopAsync(_currentRunId, StopKind.Graceful);
+    }
+
+    /// <summary>Stop'un gönderimi — kullanıcının Stop'u ve branch kesmesi (<see cref="RequestInterruptAsync"/>) AYNI
+    /// kapıdan geçer: faz gönderimden ÖNCE <see cref="AppPhase.Stopping"/>'e yazılır, gönderim senkron düşerse geri
+    /// alınır (gerekçe <see cref="StopAsync"/>'in özetinde).</summary>
+    private async Task SendStopAsync(string runId, StopKind kind)
+    {
         var previous = Phase;
         Phase = AppPhase.Stopping;
-        AppendRunLine(StopRequestedLine(Counters.Building));
-        if (!await TrySendAsync(new StopRunCommand(_currentRunId, StopKind.Graceful), "stop"))
+        if (!await TrySendAsync(new StopRunCommand(runId, kind), "stop"))
             Phase = previous;
     }
 
@@ -1759,6 +1767,7 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnRunStarted(RunStartedEvent e)
     {
         _currentRunId = e.RunId;
+        BeginInterruptRecord(e);
         // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
         // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
         _currentRunMode = e.Mode;
@@ -1991,6 +2000,7 @@ public sealed partial class RunViewModel : ObservableObject
         // yanlış "koşullu değil" demekle YETİNİYORDU ama etiketi UpToDate'e düşürerek bir sonraki Sync'te
         // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
         // gelmesi bu boşluğu kapatır.
+        if (state == ProjectRowState.Succeeded && trusted) _trustedBuiltThisRun++; // [T8] kesilen koşunun özeti
         if (state == ProjectRowState.Succeeded && !RunIsClean)
         {
             // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin

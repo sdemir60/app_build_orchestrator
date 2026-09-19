@@ -1,4 +1,5 @@
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -60,10 +61,10 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>[spec 2026-09-18 §6.2] Dışarıdan gelen branch değişimi: checkout'un cevabıyla AYNI yol
     /// (<see cref="SyncMode.BranchChange"/> + bölümün ilk satırı), kapı <see cref="SyncSilentlyAsync"/>'inkiyle aynı.</summary>
-    internal async Task<bool> SyncAfterExternalBranchChangeAsync(string sectionLine)
+    internal async Task<bool> SyncAfterExternalBranchChangeAsync(params IReadOnlyList<string> sectionLines)
     {
         if (!HasWorkspace || !CanSync()) return false;
-        await SyncCoreAsync(SyncMode.BranchChange, sectionLines: [sectionLine]);
+        await SyncCoreAsync(SyncMode.BranchChange, sectionLines: sectionLines);
         return true;
     }
 
@@ -81,8 +82,63 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     Task<bool> IAutoSyncPort.SyncSilentlyAsync(SilentSyncReason reason) => SyncSilentlyAsync(reason);
 
-    Task<bool> IAutoSyncPort.SyncAfterExternalBranchChangeAsync(string sectionLine) =>
-        SyncAfterExternalBranchChangeAsync(sectionLine);
+    Task<bool> IAutoSyncPort.SyncAfterExternalBranchChangeAsync(IReadOnlyList<string> sectionLines) =>
+        SyncAfterExternalBranchChangeAsync(sectionLines);
 
     void IAutoSyncPort.AppendConsoleLine(string line) => AppendRunLine(line);
+
+    bool IAutoSyncPort.IsRunInFlight => IsMidRunLocked;
+
+    Task IAutoSyncPort.RequestInterruptAsync() => RequestInterruptAsync();
+
+    string? IAutoSyncPort.TakeInterruptedRunSummary() => TakeInterruptedRunSummary();
+
+    void IAutoSyncPort.AppendStreamLine(string line) => PushStream(StreamKind.Info, null, line);
+
+    // ---------------------------------------------------------------- [T8] koşu sırasında branch değişimi
+
+    /// <summary>Branch değişimiyle kesilen koşunun id'si — özet (<see cref="TakeInterruptedRunSummary"/>) bir kez
+    /// alınınca ya da başka bir koşu başlayınca düşer.</summary>
+    private string? _interruptedRunId;
+
+    /// <summary>Bu koşunun güvenilir başarıları (<c>ProjectSucceededEvent.Trusted</c>) — özetin "N built"i. Kesmeden
+    /// sonra biten başarı motor tarafında güvenilmezdir (Trusted=false), yani sayılmaz.</summary>
+    private int _trustedBuiltThisRun;
+
+    /// <summary>Bu koşunun disk log klasörü (<see cref="RunStartedEvent.LogDirectory"/>).</summary>
+    private string? _runLogDirectory;
+
+    /// <summary><c>runStarted</c>'ta koşunun özet kaydı sıfırlanır. Planlama penceresinde kesilmiş koşunun kaydı
+    /// korunur: kesme isteği aynı id'yle gitti, runStarted onun ardından gelebilir.</summary>
+    private void BeginInterruptRecord(RunStartedEvent e)
+    {
+        _trustedBuiltThisRun = 0;
+        _runLogDirectory = e.LogDirectory;
+        if (!string.Equals(_interruptedRunId, e.RunId, StringComparison.Ordinal)) _interruptedRunId = null;
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1 · karar 10] Uçuştaki koşuyu branch değişimi yüzünden nazikçe keser: akışa
+    /// <see cref="StreamText.InterruptedByBranchChange"/>, motora <see cref="StopKind.Interrupt"/> (yeni proje
+    /// başlamaz, uçuştakiler biter ama sonuçları deftere yazılmaz). Koşu başına BİR kez. Açılış koreografisi
+    /// sırasında komut henüz gitmediyse istek Stop'taki gibi geri alınır — derlenmiş hiçbir şey yoktur.</summary>
+    internal async Task RequestInterruptAsync()
+    {
+        if (_pendingRunId is not null) { CancelPendingRun(); return; }
+        if (_currentRunId is not { } runId || _interruptedRunId == runId) return;
+        _interruptedRunId = runId;
+        PushStream(StreamKind.Info, null, StreamText.InterruptedByBranchChange);
+        await SendStopAsync(runId, StopKind.Interrupt);
+    }
+
+    /// <summary>[spec 2026-09-18 §6.2] Kesilen koşu bittiyse özeti — bir kez: <c>N built</c> güvenilir başarılar,
+    /// <c>M not built</c> koşunun kesin kapsamının (önizlemenin derlenecekler kümesi; yoksa motorun plan boyutu)
+    /// kalanı, ardından log klasörü. Koşu hâlâ uçuştaysa ya da kesilen koşu yoksa <c>null</c>.</summary>
+    internal string? TakeInterruptedRunSummary()
+    {
+        if (_interruptedRunId is null || IsMidRunLocked) return null;
+        _interruptedRunId = null;
+        int scope = _willBuildIds.Count > 0 ? _willBuildIds.Count : _totalProjects ?? 0;
+        return Core.Planning.PlanProgressLines.RunInterruptedByBranchChange(
+            _trustedBuiltThisRun, Math.Max(0, scope - _trustedBuiltThisRun), _runLogDirectory);
+    }
 }

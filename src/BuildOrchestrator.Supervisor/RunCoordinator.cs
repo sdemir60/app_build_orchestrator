@@ -124,6 +124,10 @@ public sealed class RunCoordinator(
     private Task _runTask = Task.CompletedTask;
     private StopKind? _stopKind;        // null = stop istenmedi; Hard, Graceful'u EZER (geri alınmaz)
     private bool _stopAcked;            // runStopped yazıldı mı — TryRequestStop true dedi ise ACK BORCU vardır
+    // [spec 2026-09-18 §6.1 · karar 10] Koşu branch değişimiyle kesildi mi (StopKind.Interrupt). _stopKind'dan
+    // AYRI tutulur: kesme bir durdurma TÜRÜ değil, sonuçların güvenilirliği hakkında bir olgudur — Hard sonradan
+    // gelse de (Hard kazanır) koşu kesilmiş kalır. Okuyan tek kapı ReportProjectResult'tır.
+    private bool _interrupted;
     private ReadySetScheduler? _scheduler;
     private WakeSignal? _wake;
     // [T20-b/K11] Bu run için cap/priority GERÇEKTEN uygulandı mı (yani komut bir PerfMode taşıyor muydu).
@@ -231,6 +235,7 @@ public sealed class RunCoordinator(
                 _finishing = false;
                 _stopKind = null;
                 _stopAcked = false;
+                _interrupted = false;
                 _runTask = Task.Run(() => ExecuteRunAsync(cmd, ct), CancellationToken.None);
             }
         }
@@ -266,7 +271,8 @@ public sealed class RunCoordinator(
     /// <c>MSBuild.exe</c> child'ları post-build copy DAHİL kendi tamamlanmalarını yapar (ortak çıktı dizini
     /// yarım yazılmış kalmaz); [P3] bu drain penceresi boyunca CPU cap KALDIRILIR (bkz.
     /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
-    /// <c>projectFailed("stopped")</c> raporlanır. Terminate edilmiş Job yeni process kabul ettiği için ikisi de
+    /// <c>projectFailed("stopped")</c> raporlanır. <b>Interrupt</b> (branch değişti): Graceful'un kendisi + koşu
+    /// kesilmiş sayılır — bundan sonra biten sonuçlar deftere yazılmaz (bkz. <see cref="ReportProjectResult"/>). Terminate edilmiş Job yeni process kabul ettiği için ikisi de
     /// Continue'ya açıktır.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
@@ -278,7 +284,9 @@ public sealed class RunCoordinator(
             if (_runActive && !_finishing)
             {
                 owned = true;
+                // Interrupt, _stopKind'a Graceful olarak girer (dispatch ve drain kuralı aynı); farkı _interrupted'dadır.
                 _stopKind = kind == StopKind.Hard ? StopKind.Hard : _stopKind ?? StopKind.Graceful; // Hard geri alınmaz
+                if (kind == StopKind.Interrupt) _interrupted = true;
                 if (kind == StopKind.Hard) innerJob.Terminate();
                 else if (_stopKind == StopKind.Graceful) DrainCapLocked(warnings); // [P3] Hard'dan SONRA gelen graceful'da anlamsız
                 _scheduler?.RequestStop(); // null ise plan hâlâ kuruluyor — kurulur kurulmaz _stopKind okunup uygulanır
@@ -610,6 +618,7 @@ public sealed class RunCoordinator(
                 _runActive = false;
                 _finishing = false;
                 _stopKind = null;
+                _interrupted = false;
                 _scheduler = null;
                 _wake = null;
                 // [Fix round 2 — YENİ 1/4] Perf state'i de BURADA, `_runActive = false` ile AYNI kritik
@@ -851,7 +860,7 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, elapsedAtStart, appliedCap));
+            plan.Configuration, elapsedAtStart, appliedCap, LogDirectory: logs.RunDirectory));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
@@ -1223,6 +1232,11 @@ public sealed class RunCoordinator(
         string? failReason, DepIssueResult depIssues, bool trustedResult, bool cycleUnsettled, string? failLogTail)
     {
         string name = NameOf(run, projectId);
+        // [spec 2026-09-18 §6.1 · karar 10 · P4] Branch kesmesinden SONRA biten hiçbir sonucun arkasında durulmaz:
+        // derlenen kaynak artık diskteki kaynak değildir. Başarı defterde kanıtsız hata olur (Trusted=false, gri
+        // never built), hata kanıt sayılmaz — çökme kurtarmasıyla aynı defter hâli (§5.5). TEK kapı burasıdır;
+        // SCC üyeleri de (ReportCycleMember) buradan geçer.
+        lock (_gate) trustedResult &= !_interrupted;
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
         // [R-M4b · spec 2026-09-18 §1-14] Defterin kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
         // olay (ProjectFailedEvent.Evidence · ProjectSucceededEvent.Trusted) ve defter yazımı

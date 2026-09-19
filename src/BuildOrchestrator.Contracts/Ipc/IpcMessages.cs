@@ -55,7 +55,10 @@ public sealed record CheckoutBranchCommand(string RootPath, string Branch, bool 
 
 public sealed record PingCommand(int Seq) : IpcCommand;
 public sealed record ShutdownCommand : IpcCommand;
-public enum StopKind { Graceful, Hard }
+/// <summary>Durdurma türü. <see cref="Interrupt"/> [spec 2026-09-18 §6.1 · karar 10]: koşu sırasında branch
+/// değişti — Graceful gibi (yeni proje başlamaz, uçuştakiler biter) ama kesmeden SONRA biten hiçbir projenin
+/// sonucu deftere başarı/kanıt olarak yazılmaz (derlediği kaynak artık diskteki kaynak değildir).</summary>
+public enum StopKind { Graceful, Hard, Interrupt }
 public sealed record StopRunCommand(string RunId, StopKind Kind) : IpcCommand;
 public sealed record GetProjectLogCommand(string ProjectId) : IpcCommand;
 public sealed record DebugSpawnChildrenCommand(int Count, bool Breakaway) : IpcCommand;
@@ -271,8 +274,10 @@ public enum RunOutcome { Completed, Stopped }
 /// BAŞARISIZ olması (o durumda Supervisor konsoluna bir uyarı da düşer). Yani bu alan İSTENEN değil
 /// YÜRÜRLÜKTEKİ değeri taşır. Run ORTASINDA <see cref="SetPerfModeCommand"/> ile değişen cap'i İZLEMEZ:
 /// bu, run'ın başlangıç durumunun kaydıdır.</param>
+/// <param name="LogDirectory">[spec 2026-09-18 §6.2] Bu koşunun disk log klasörü (<c>RunLogWriter.RunDirectory</c>);
+/// branch değişimiyle kesilen koşunun özet satırı onu anar. Bilinmiyorsa <c>null</c>.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null) : IpcEvent;
+    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");

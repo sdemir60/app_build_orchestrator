@@ -16,6 +16,17 @@ public class IpcMessagesTests
         Assert.Equal(StopKind.Hard, back.Kind);
     }
 
+    /// <summary>[spec 2026-09-18 §6.1] Branch kesmesi tel üzerinde metin olarak yazılır (enum'lar camelCase metin).</summary>
+    [Fact]
+    public void An_interrupt_stop_is_written_as_text()
+    {
+        string json = JsonSerializer.Serialize<IpcCommand>(new StopRunCommand("run-1", StopKind.Interrupt), IpcJson.Options);
+
+        Assert.Contains("\"kind\":\"interrupt\"", json);
+        Assert.Equal(StopKind.Interrupt,
+            Assert.IsType<StopRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options)).Kind);
+    }
+
     [Fact]
     public void Event_roundtrip_all_types()
     {

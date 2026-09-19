@@ -112,6 +112,15 @@ public static class PlanProgressLines
     /// <summary>Stash ya da checkout başarısız — git'in kendi açıklamasıyla.</summary>
     public static string SwitchFailed(string reason) => $"Switch failed — {reason}";
 
+    /// <summary>[spec 2026-09-18 §6.2 · karar 10] Branch değişimiyle kesilen koşunun özeti — koşudan sonra açılan
+    /// bölümün İLK satırı (switch satırından önce; branch değişmediyse akışa tek satır). <paramref name="built"/>
+    /// kesmeden önce güvenilir biçimde derlenenler, <paramref name="notBuilt"/> koşu kapsamının kalanı. Log klasörü
+    /// bilinmiyorsa yazılmaz; diskteki loglar hiçbir durumda silinmez.</summary>
+    public static string RunInterruptedByBranchChange(int built, int notBuilt, string? logDirectory)
+        => logDirectory is null
+            ? $"Run interrupted by a branch change — {built} built, {notBuilt} not built"
+            : $"Run interrupted by a branch change — {built} built, {notBuilt} not built · logs: {logDirectory}";
+
     /// <summary>[spec 2026-09-18 §6.1] HEAD izleyicisi kurulamadı (ağ sürücüsü, izin, reflog klasörü yok) — kök
     /// başına BİR kez yazılır; pencereye dönüş Sync'i güvenlik ağı olarak kalır.</summary>
     public static string HeadWatcherUnavailable(string reason)

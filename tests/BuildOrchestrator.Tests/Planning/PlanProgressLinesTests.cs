@@ -61,6 +61,17 @@ public sealed class PlanProgressLinesTests
 
     /// <summary>Mesafe bilinmiyorsa (fetch degrade / başka branch seçili) satır SUSAR: uydurma bir sayı
     /// yazmak, chip'in de yanlış çıkmasına yol açardı.</summary>
+    /// <summary>[spec 2026-09-18 §6.2] Kesilen koşunun özeti: kaç proje bitti, kaçı derlenmedi, log klasörü —
+    /// klasör bilinmiyorsa ek yazılmaz.</summary>
+    [Fact]
+    public void The_interrupted_run_summary_names_the_counts_and_the_log_folder()
+    {
+        Assert.Equal(@"Run interrupted by a branch change — 3 built, 5 not built · logs: D:\logs\run",
+            PlanProgressLines.RunInterruptedByBranchChange(3, 5, @"D:\logs\run"));
+        Assert.Equal("Run interrupted by a branch change — 0 built, 1 not built",
+            PlanProgressLines.RunInterruptedByBranchChange(0, 1, null));
+    }
+
     [Fact]
     public void An_unknown_distance_leaves_the_line_with_the_head_alone()
         => Assert.DoesNotContain("behind", PlanProgressLines.HeadDistance("a3f81c2", null, "main"));

@@ -18,14 +18,27 @@ public sealed class AutoSyncCoordinatorTests
 
     private sealed class FakePort : IAutoSyncPort
     {
+        private bool _busy;
+
         public bool HasWorkspace { get; set; } = true;
-        public bool IsWorkspaceBusy { get; set; }
+
+        /// <summary>VM'deki gibi: workspace işi YA DA koşu uçuşta.</summary>
+        public bool IsWorkspaceBusy { get => _busy || IsRunInFlight; set => _busy = value; }
+
+        public bool IsRunInFlight { get; set; }
         public (string? Branch, string? HeadSha)? LastSyncHead { get; set; }
         public long? LastSyncAtMs { get; set; }
         public long Now { get; set; } = 100_000;
         public List<SilentSyncReason> Silent { get; } = [];
+
+        /// <summary>Her BranchChange Sync'inin bölüm satırları, satır sonuyla birleştirilmiş.</summary>
         public List<string> BranchChanges { get; } = [];
         public List<string> ConsoleLines { get; } = [];
+        public List<string> StreamLines { get; } = [];
+        public int Interrupts { get; private set; }
+
+        /// <summary>Kesilen koşunun özeti — VM'de kesme isteyen koşu bitince hazır olur; bir kez alınır.</summary>
+        public string? Summary { get; set; }
 
         public long NowMs() => Now;
 
@@ -35,13 +48,28 @@ public sealed class AutoSyncCoordinatorTests
             return Task.FromResult(true);
         }
 
-        public Task<bool> SyncAfterExternalBranchChangeAsync(string sectionLine)
+        public Task<bool> SyncAfterExternalBranchChangeAsync(IReadOnlyList<string> sectionLines)
         {
-            BranchChanges.Add(sectionLine);
+            BranchChanges.Add(string.Join("\n", sectionLines));
             return Task.FromResult(true);
         }
 
+        public Task RequestInterruptAsync()
+        {
+            Interrupts++;
+            return Task.CompletedTask;
+        }
+
+        public string? TakeInterruptedRunSummary()
+        {
+            string? summary = Summary;
+            Summary = null;
+            return summary;
+        }
+
         public void AppendConsoleLine(string line) => ConsoleLines.Add(line);
+
+        public void AppendStreamLine(string line) => StreamLines.Add(line);
 
         public int SyncCount => Silent.Count + BranchChanges.Count;
 
@@ -170,6 +198,134 @@ public sealed class AutoSyncCoordinatorTests
         h.Coordinator.OnWorkspaceIdle();
 
         Assert.Equal(0, h.Port.SyncCount);
+    }
+
+    // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında
+
+    private const string Summary = "Run interrupted by a branch change — 1 built, 1 not built";
+
+    /// <summary>Koşu uçuşta: <see cref="AutoSyncCoordinator.OnWorkspaceIdle"/> koşunun başladığını görür (VM'de
+    /// <c>PropagateRunLock</c> her kilit geçişinde bildirir).</summary>
+    private static Harness RunningOnMain()
+    {
+        var h = Harness.SyncedOnMain();
+        h.Port.IsRunInFlight = true;
+        h.Coordinator.OnWorkspaceIdle();
+        return h;
+    }
+
+    /// <summary>Koşu bitti: VM'in kilit düşüşü bildirimi.</summary>
+    private static void EndRun(Harness h, string? summary = null)
+    {
+        h.Port.Summary = summary;
+        h.Port.IsRunInFlight = false;
+        h.Coordinator.OnWorkspaceIdle();
+    }
+
+    /// <summary>Koşu sırasında checkout/pull/reset koşuyu BİR kez nazikçe keser; tetik koşu bitene dek bekler.</summary>
+    [Fact]
+    public async Task A_branch_switch_mid_run_interrupts_once()
+    {
+        var h = RunningOnMain();
+        h.Head = new HeadState("feature", ShaB);
+
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+        await h.Coordinator.HeadTriggerAsync(HeadMove.Other);
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+
+        Assert.Equal(1, h.Port.Interrupts);
+        Assert.Equal(0, h.Port.SyncCount);
+        Assert.NotNull(h.Coordinator.PendingTrigger);
+    }
+
+    /// <summary>Koşu sırasında commit hiçbir şey yapmaz: kesmez, beklemez (spec §6.1).</summary>
+    [Fact]
+    public async Task A_commit_mid_run_does_nothing()
+    {
+        var h = RunningOnMain();
+        h.Head = new HeadState("main", ShaB);
+
+        await h.Coordinator.HeadTriggerAsync(HeadMove.Commit);
+
+        Assert.Equal(0, h.Port.Interrupts);
+        Assert.Null(h.Coordinator.PendingTrigger);
+        Assert.Equal(0, h.Port.SyncCount);
+    }
+
+    /// <summary>Kesilen koşu bitince branch değiştiyse yeni bölüm: ilk satır koşunun özeti, sonra switch satırı.</summary>
+    [Fact]
+    public async Task After_the_interrupted_run_a_new_section_starts_with_its_summary()
+    {
+        var h = RunningOnMain();
+        h.Head = new HeadState("feature", ShaB);
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+
+        EndRun(h, Summary);
+
+        string switched = PlanProgressLines.SwitchedBranch("main", "feature", RevisionText.Short(ShaB));
+        Assert.Equal([Summary + "\n" + switched], h.Port.BranchChanges);
+        Assert.Empty(h.Port.Silent);
+        Assert.Empty(h.Port.StreamLines);
+    }
+
+    /// <summary>Branch aynı kaldıysa (aynı branch'te pull/reset) yeni bölüm YOK: özet akışa tek satır, ardından sessiz
+    /// Sync — HEAD son Sync'tekiyle aynı olsa da (kesilen koşunun sonuçları defterde değişti).</summary>
+    [Fact]
+    public async Task An_interrupted_run_on_the_same_branch_streams_its_summary_and_syncs_silently()
+    {
+        var h = RunningOnMain();
+        await h.Coordinator.HeadTriggerAsync(HeadMove.Other); // HEAD main@A — ör. reset aynı commit'e
+
+        EndRun(h, Summary);
+
+        Assert.Equal([Summary], h.Port.StreamLines);
+        Assert.Equal([SilentSyncReason.Refresh], h.Port.Silent);
+        Assert.Empty(h.Port.BranchChanges);
+    }
+
+    /// <summary>Güvenlik ağı: izleyici HEAD değişimini kaçırdıysa koşu bitince yakalanır (spec §6.1).</summary>
+    [Fact]
+    public void A_head_change_missed_by_the_watcher_is_caught_when_the_run_ends()
+    {
+        var h = RunningOnMain();
+        h.Head = new HeadState("main", ShaB);
+
+        EndRun(h);
+
+        Assert.Equal([SilentSyncReason.Refresh], h.Port.Silent);
+    }
+
+    /// <summary>Güvenlik ağı her koşudan sonra Sync üretmez: HEAD aynıysa ya da okunamıyorsa hiçbir şey.</summary>
+    [Fact]
+    public void A_run_that_ends_on_an_unchanged_or_unreadable_head_syncs_nothing()
+    {
+        var h = RunningOnMain();
+        EndRun(h);
+        Assert.Equal(0, h.Port.SyncCount);
+
+        h.Port.IsRunInFlight = true;
+        h.Coordinator.OnWorkspaceIdle();
+        h.Head = null;
+        EndRun(h);
+        Assert.Equal(0, h.Port.SyncCount);
+    }
+
+    /// <summary>Kesme koşu başınadır: sonraki koşuda gelen branch değişimi yine keser.</summary>
+    [Fact]
+    public async Task The_next_run_can_be_interrupted_again()
+    {
+        var h = RunningOnMain();
+        h.Head = new HeadState("feature", ShaB);
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+        EndRun(h, Summary);
+        h.Port.Synced("feature", ShaB);
+
+        h.Port.IsRunInFlight = true;
+        h.Coordinator.OnWorkspaceIdle();
+        h.Head = new HeadState("main", ShaA);
+        await h.Coordinator.HeadTriggerAsync(HeadMove.BranchSwitch);
+
+        Assert.Equal(2, h.Port.Interrupts);
     }
 
     /// <summary>İzleyici kurulamazsa konsola kök başına BİR satır; aynı köke yeniden bağlanmak satırı tekrarlamaz.</summary>

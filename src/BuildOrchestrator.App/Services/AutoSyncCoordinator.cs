@@ -17,6 +17,16 @@ internal interface IAutoSyncPort
     /// <summary>Workspace'e dokunan bir iş (Sync/Clean/Optimize/checkout/pull) YA DA bir koşu uçuşta mı — tetik bekletilir.</summary>
     bool IsWorkspaceBusy { get; }
 
+    /// <summary>Bir koşu uçuşta mı (planlama dahil) — <see cref="IsWorkspaceBusy"/>'nin koşu yarısı.</summary>
+    bool IsRunInFlight { get; }
+
+    /// <summary>[spec §6.1 · karar 10] Uçuştaki koşuyu branch değişimi yüzünden nazikçe keser: akışa tek satır ve
+    /// <c>StopKind.Interrupt</c>. Kesme isteyen koşu bitince özeti <see cref="TakeInterruptedRunSummary"/> verir.</summary>
+    Task RequestInterruptAsync();
+
+    /// <summary>Kesilen son koşunun özet satırı (bir kez verilir); kesilen koşu yoksa <c>null</c>.</summary>
+    string? TakeInterruptedRunSummary();
+
     /// <summary>Son tamamlanan Sync'in ölçtüğü HEAD; hiç Sync tamamlanmadıysa <c>null</c>.</summary>
     (string? Branch, string? HeadSha)? LastSyncHead { get; }
 
@@ -29,12 +39,15 @@ internal interface IAutoSyncPort
     /// <summary>Sessiz Sync (<see cref="SyncMode.Silent"/>); kapı kapalıysa hiçbir şey göndermez, <c>false</c>.</summary>
     Task<bool> SyncSilentlyAsync(SilentSyncReason reason);
 
-    /// <summary>Dışarıdan gelen branch değişimi: yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satırı
-    /// <paramref name="sectionLine"/>. Kapı kapalıysa hiçbir şey göndermez, <c>false</c>.</summary>
-    Task<bool> SyncAfterExternalBranchChangeAsync(string sectionLine);
+    /// <summary>Dışarıdan gelen branch değişimi: yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satırları
+    /// <paramref name="sectionLines"/>. Kapı kapalıysa hiçbir şey göndermez, <c>false</c>.</summary>
+    Task<bool> SyncAfterExternalBranchChangeAsync(IReadOnlyList<string> sectionLines);
 
     /// <summary>Konsola (temizlemeden) tek satır.</summary>
     void AppendConsoleLine(string line);
+
+    /// <summary>Olay akışına (temizlemeden) tek bilgi satırı.</summary>
+    void AppendStreamLine(string line);
 }
 
 /// <summary>
@@ -88,14 +101,23 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// geçiş (bir iş birden çok bayrağı sırayla bırakır) ikinci bir değerlendirme kuyruklamasın.</summary>
     private bool _reevaluationQueued;
 
+    /// <summary>[T8] Son bildirimde bir koşu uçuştaydı — koşunun bitişi (<see cref="OnWorkspaceIdle"/>) buradan anlaşılır.</summary>
+    private bool _runWasInFlight;
+
+    /// <summary>[T8] Uçuştaki koşu için kesme istendi — kesme koşu başına BİR kez; koşu bitince sıfırlanır.</summary>
+    private bool _interruptRequested;
+
     /// <summary>Bir tetik: HEAD hareketi ya da pencereye dönüş (<see cref="Move"/> = <c>null</c>).</summary>
     /// <param name="Move">İzleyicinin sınıfladığı hareket; pencereye dönüşte <c>null</c>.</param>
-    internal readonly record struct Trigger(HeadMove? Move)
+    /// <param name="RunEnded">[T8 · spec §6.1 güvenlik ağı] İzleyiciden değil koşunun bitişinden gelen tetik: HEAD
+    /// okunamıyorsa hiçbir şey yapmaz — aksi hâlde git'siz bir kökte her koşudan sonra bir Sync koşardı.</param>
+    internal readonly record struct Trigger(HeadMove? Move, bool RunEnded = false)
     {
         public bool IsActivation => Move is null;
 
-        /// <summary>Güç sırası: pencereye dönüş &lt; commit &lt; branch değişimi/diğer (<see cref="HeadMoveRules.Weight"/>).</summary>
-        public int Weight => Move is { } move ? move.Weight() : 0;
+        /// <summary>Güç sırası: pencereye dönüş ve koşu bitişinin güvenlik ağı &lt; commit &lt; branch değişimi/diğer
+        /// (<see cref="HeadMoveRules.Weight"/>) — güvenlik ağı izleyicinin gerçek bir tetiğinin yerini almaz.</summary>
+        public int Weight => !RunEnded && Move is { } move ? move.Weight() : 0;
     }
 
     /// <summary>[Task 8/9 dikişi] Meşgulken saklanan tek tetik — koşu kesme (Task 8) ve git-işlemi kapısı (Task 9)
@@ -155,6 +177,17 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// </summary>
     public void OnWorkspaceIdle()
     {
+        // [T8 · spec §6.1] Koşunun bitişi: kesme hakkı sonraki koşuya devreder ve — bekleyen bir tetik yoksa —
+        // güvenlik ağı tetiği kurulur: izleyici bir HEAD değişimini kaçırdıysa (ağ sürücüsü, taşan tampon) koşu
+        // bitince yine yakalanır. HEAD son Sync'tekiyle aynıysa değerlendirme hiçbir şey yapmaz.
+        bool runInFlight = _port.IsRunInFlight;
+        if (_runWasInFlight && !runInFlight)
+        {
+            _interruptRequested = false;
+            _pending ??= new Trigger(HeadMove.Other, RunEnded: true);
+        }
+        _runWasInFlight = runInFlight;
+
         if (_pending is null || _port.IsWorkspaceBusy || _reevaluationQueued) return;
         _reevaluationQueued = true;
         _post(() =>
@@ -170,45 +203,79 @@ internal sealed class AutoSyncCoordinator : IDisposable
     /// Kararın kendisi (spec §6.1 · §6.2 · karar 11), sırasıyla:
     /// <list type="number">
     /// <item>Workspace yok → hiçbir şey.</item>
-    /// <item>Meşgul (workspace işi ya da koşu uçuşta) → tetik saklanır (<see cref="Remember"/>), meşguliyet bitince
-    /// yeniden değerlendirilir (<see cref="OnWorkspaceIdle"/>). Koşunun kesilmesi Task 8'in, yarıdaki git işlemi
-    /// Task 9'un işidir.</item>
+    /// <item>Koşu uçuşta (spec §6.1 · karar 10): commit → hiçbir şey (saklanmaz da); diğer HEAD hareketi (checkout,
+    /// pull, merge, reset, rebase) → koşu BİR kez nazikçe kesilir (<see cref="IAutoSyncPort.RequestInterruptAsync"/>)
+    /// ve tetik saklanır; pencereye dönüş → saklanır. Koşu bitince bekleyen tetik değerlendirilir.</item>
+    /// <item>Meşgul (workspace işi) → tetik saklanır (<see cref="Remember"/>), meşguliyet bitince yeniden
+    /// değerlendirilir (<see cref="OnWorkspaceIdle"/>). Yarıdaki git işlemi Task 9'un işidir.</item>
     /// <item>Hiç Sync tamamlanmamış → hiçbir şey: kıyaslanacak HEAD yok ve ilk bölümü açılış Sync'i açar.</item>
     /// <item>Pencereye dönüş ve son Sync'ten <see cref="ActivationQuietMs"/> geçmemiş → hiçbir şey.</item>
-    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön).</item>
+    /// <item>HEAD okunamıyor → sessiz yenileme (güvenli yön); koşu bitişinin güvenlik ağı tetiğinde hiçbir şey.</item>
     /// <item>Branch adı farklı → yeni bölüm (<see cref="SyncMode.BranchChange"/>), ilk satır yeni branch.</item>
     /// <item>HEAD (branch + commit) son Sync'tekiyle aynı ve tetik bir HEAD hareketi → hiçbir şey (çift Sync yok).</item>
     /// <item>Aksi → sessiz Sync: commit → <see cref="SilentSyncReason.Commit"/>, diğer → <see cref="SilentSyncReason.Refresh"/>.</item>
     /// </list>
     /// <para>Pencereye dönüş HEAD aynı olsa da sessiz yeniler (spec §6.2 tablosu: "bir şey değiştiyse akışa tek
     /// satır") — kullanıcı başka bir pencerede dosya düzenlemiş olabilir; bunu yalnız dönüş görür.</para>
+    /// <para>[T8 · spec §6.2] Kesilen koşunun özeti (<see cref="IAutoSyncPort.TakeInterruptedRunSummary"/>) varsa:
+    /// branch değiştiyse yeni bölümün İLK satırıdır (switch satırından önce); değişmediyse (aynı branch'te pull/reset)
+    /// bölüm açılmaz — özet akışa tek satır düşer ve HEAD aynı olsa da sessiz Sync koşar (kesilen koşunun sonuçları
+    /// defterde değişti).</para>
     /// </summary>
     private async Task EvaluateAsync(Trigger trigger)
     {
         if (!_port.HasWorkspace) return;
+        if (_port.IsRunInFlight && trigger.Move is { } move)
+        {
+            if (move == HeadMove.Commit) return;
+            Remember(trigger);
+            if (_interruptRequested) return;
+            _interruptRequested = true;
+            await _port.RequestInterruptAsync();
+            return;
+        }
         if (_port.IsWorkspaceBusy)
         {
             Remember(trigger);
             return;
         }
-        if (_port.LastSyncHead is not { } last) return;
-        if (trigger.IsActivation && _port.LastSyncAtMs is { } at && _port.NowMs() - at < ActivationQuietMs) return;
+        string? summary = _port.TakeInterruptedRunSummary();
+        if (_port.LastSyncHead is not { } last)
+        {
+            if (summary is not null) _port.AppendStreamLine(summary);
+            return;
+        }
+        if (summary is null && trigger.IsActivation && _port.LastSyncAtMs is { } at && _port.NowMs() - at < ActivationQuietMs) return;
 
         var head = _readHead(_gitDir);
         if (head is null)
         {
-            await _port.SyncSilentlyAsync(SilentSyncReason.Refresh);
+            if (summary is null && trigger.RunEnded) return;
+            await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh);
             return;
         }
 
         if (!string.Equals(head.Branch, last.Branch, StringComparison.Ordinal))
         {
-            await _port.SyncAfterExternalBranchChangeAsync(SwitchedLine(last, head));
+            string switched = SwitchedLine(last, head);
+            await _port.SyncAfterExternalBranchChangeAsync(summary is null ? [switched] : [summary, switched]);
+            return;
+        }
+        if (summary is not null)
+        {
+            await SyncSilentlyAfterAsync(summary, SilentSyncReason.Refresh);
             return;
         }
         if (!trigger.IsActivation && string.Equals(head.Sha, last.HeadSha, StringComparison.Ordinal)) return;
 
         await _port.SyncSilentlyAsync(trigger.Move == HeadMove.Commit ? SilentSyncReason.Commit : SilentSyncReason.Refresh);
+    }
+
+    /// <summary>Sessiz Sync; önünde kesilen koşunun özeti varsa önce o akışa tek satır düşer.</summary>
+    private async Task SyncSilentlyAfterAsync(string? summary, SilentSyncReason reason)
+    {
+        if (summary is not null) _port.AppendStreamLine(summary);
+        await _port.SyncSilentlyAsync(reason);
     }
 
     /// <summary>Tek bekleyen tetik: yenisi eskisinden güçlüyse (ya da eşitse) yerini alır.</summary>
