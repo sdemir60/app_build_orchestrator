@@ -493,8 +493,10 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// satırın karar etiketi <c>modified</c> (kendi dosyası) ile <c>affected</c> (yalnız bağımlılığı) ayrımını
 /// buradan okur. Motorun Fast geçişinden gelir; karar bilinmiyorsa <c>null</c>. Alan default'lu: eski NDJSON
 /// satırları alansız çözülür.</param>
-/// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı — <c>up to date · 2h</c> etiketindeki
-/// göreli yaşın kaynağı. Hiç başarıyla derlenmemiş projede <c>null</c> ("never built" olgusu budur).</param>
+/// <param name="LastBuiltAt">[v1.16.0] SON BAŞARILI derlemenin zamanı, defterden aynen. Hiç başarıyla
+/// derlenmemiş projede <c>null</c> ("never built" olgusu budur). <b>[DEĞİŞEN KURAL — kullanıcı kararı
+/// 2026-09-20]</b> Bunu okuyan tek yüzey satırın <c>up to date · 2h</c> kuyruğuydu; yaşlar UI'dan kalktı, alan
+/// defterin kaydı olarak sözleşmede durmaya devam ediyor ama bugün okuyucusu YOK.</param>
 /// <param name="Conditional">Bu proje bir sonraki DÜZ Build tarafından koşullu değerlendirilir mi
 /// (<c>ConditionalRebuild.AppliesTo</c>): sırası geldiğinde yalnız kayıtlı kök bağımlılıklarından biri
 /// düzeldiyse derlenir, aksi hâlde <c>dependency still failing</c> ile atlanır. Kuyruğun (kesin derlenecekler)
@@ -510,15 +512,18 @@ public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOu
 /// bağımlılıkların GÖRÜNEN adları (ad sıralı) — satır etiketinin tooltip'i bunları yazar; App metni kendisi
 /// üretmez. Diğer gerekçelerde <c>null</c> (JSON'a yazılmaz).</param>
 /// <param name="FailedAt">[spec 2026-09-18 §1-14] <see cref="BuildOrchestrator.Core.State.BuildStateStore.FailedAtOf"/>'un
-/// taşıdığı değer — <c>failed · 2h</c> etiketindeki göreli yaşın kaynağı. Kanıtsız hatada ya da hiç hata
-/// yaşanmamışsa <c>null</c>. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
+/// taşıdığı değer — kanıtlı son hatanın zamanı. Kanıtsız hatada ya da hiç hata yaşanmamışsa <c>null</c>. Alan
+/// SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür. <b>[DEĞİŞEN KURAL — kullanıcı kararı
+/// 2026-09-20]</b> Tek okuyucusu satırın <c>failed · 2h</c> kuyruğuydu; yaş kalktı, alanın bugün okuyucusu
+/// YOK.</param>
 /// <param name="LocalEdits">Sync anında projenin girdi kümesinde <c>git status --porcelain</c>'e göre işlenmemiş
 /// yerel değişiklik var mı — Sync bunu <see cref="BuildOrchestrator.Core.Workspace.LocalEdits.ProjectsWithLocalEdits"/>
 /// ile doldurur. Koşu önizlemesi (Supervisor) bu alanı TAŞIMAZ, her zaman <c>false</c> gönderir: etiket Sync'ten
 /// gelen değeri korur. Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
 /// <param name="OutputBuiltAt">[Faz 3 — spec 2026-09-18 §5, P8] Proje bu araç dışında derlenmiş ve çıktısı
-/// güncelse (<see cref="WillBuildReason.BuiltOutside"/>) derleme kanıtının zamanı — "built outside this tool 5m
-/// ago" yaşının kaynağı. Sync ve koşu önizlemesi aynı yardımcıdan yazar
+/// güncelse (<see cref="WillBuildReason.BuiltOutside"/>) derleme kanıtının zamanı. <b>[DEĞİŞEN KURAL —
+/// kullanıcı kararı 2026-09-20]</b> Tek okuyucusu "built outside this tool 5m ago" yaşıydı — ki o yaş
+/// YANILTICIydı ve kalktı; alanın bugün okuyucusu YOK. Sync ve koşu önizlemesi aynı yardımcıdan yazar
 /// (<see cref="BuildOrchestrator.Core.Incremental.OutputEvidence.OutputBuiltAt"/>); diğer her durumda <c>null</c>
 /// (JSON'a yazılmaz). Alan SONA ve default'lu eklendi: eski NDJSON satırları alansız çözülür.</param>
 public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillBuild, string? BuiltCommit = null,

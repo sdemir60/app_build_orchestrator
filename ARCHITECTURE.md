@@ -482,6 +482,10 @@ Three of these carry the whole model:
   never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
   and a run does not repeat that read. `outputBuiltAt` is the time of the build evidence of a project built
   outside this tool (§7.6), set for that reason only; both previews write it through the same helper.
+  The three times an item can carry — `lastBuiltAt`, `failedAt` and `outputBuiltAt` — have **no reader on the
+  App side today**: no row, label, tooltip or project page prints a time (§13.2). They stay on the wire and in
+  the ledger because they are cheap facts the engine already holds and the decision surfaces may want again;
+  nothing downstream is allowed to grow a second meaning for them in the meantime.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade — for an output built elsewhere, own
   inputs newer than the output, §7.6), the will-build set size (Safe
@@ -765,7 +769,7 @@ Before a run — and after every Sync — each project carries `WillBuild` as a 
 **The plan has no colour of its own.** A separate amber/grey/hollow dot on the row and the core of the graph
 node for "what will this run do" would only duplicate what the row's own status already paints (§14.3). What
 the user sees of the plan is the row's **decision label** — `modified`, `modified · local`, `affected`,
-`never built`, `failed · 2h`, or `up to date · 2h`
+`never built`, `failed`, or `up to date`
 (§13.2) — and the scope of the marking wave when an operation actually begins. The tri-state itself is
 unchanged: it still decides what a run compiles, and it still feeds the counters.
 
@@ -794,9 +798,11 @@ matches — and it returns it even for a project the run will not compile, such 
 `Cycles` run. Apart from that scope short circuit, `WillBuild` is `false` for exactly two reasons, up to date
 and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
 row's decision label reads (§13.2),
-together with three facts: whether the project's **own** files changed (stored content fingerprint versus
-today's, or — for an output built elsewhere — whether its own inputs are newer than that output), when it was
-last built successfully, and, for an output built elsewhere, that output's time.
+together with one fact: whether the project's **own** files changed (stored content fingerprint versus
+today's, or — for an output built elsewhere — whether its own inputs are newer than that output). The preview
+also carries the moments behind those verdicts — when the project was last built successfully, when its last
+proven failure was recorded and, for an output built elsewhere, that output's time — but no surface reads them
+any more (§13.2); they travel because the ledger records them.
 
 **Last build failed is evidence-based.** `LastFailed` is returned only when the ledger's failed signature — the
 composite signature captured at the moment this project's own MSBuild invocation last exited non-zero (§7.5) —
@@ -817,7 +823,7 @@ converge (§8.8), and the signature at which this project's *own* MSBuild invoca
 together with the moment that failure was recorded. This failed signature is the evidence §7.4's `LastFailed`
 reason checks against, and it is kept apart from the last-run timestamp because the two can drift: a project
 can sit unbuilt after a failure while an upstream change still moves its signature, so the failure's own
-timestamp — not the last-run one — is what the row's `failed · 2h` age reads. Both fields go back to `null` on
+timestamp — not the last-run one — is the moment that failure actually happened. Both fields go back to `null` on
 the next success, and answer `null` for a record that predates them or whose last result never named the
 signature it broke at (an interrupted attempt, not a compile failure). The content fingerprint is stored *next
 to* the signature rather than folded into it because it answers a different question — "did this project's own
@@ -899,7 +905,7 @@ is about to be rebuilt: until that build runs, the dependency's shared copy is s
 dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
 project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
 stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
-change, and carries no built-outside age.
+change, and not `built outside this tool`.
 
 Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
 never built, because it was built against a failed dependency whose roots are unknown, or because its own
@@ -950,9 +956,11 @@ newer upstream output still makes the whole group stale.
 the same checks, so the Sync's will-build is the next plain *Build*'s decision; the Sync's Fast pass — which
 only feeds the *N changed* counter — is bound without them, or a project whose shared copy was overwritten
 would count as changed. The checks also travel with the run's plan, so the run preview writes the
-same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only for built
-outside this tool and is the age the row's label shows. A project this tool then builds successfully drops that
-time at once: its output is now the tool's own.
+same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only when the
+reason is *built outside this tool* — the time the foreign output was produced. No surface reads it today: the
+row's decision label carries no time at all (§13.2), so the field travels and is overwritten by the next
+preview, where a project this tool has since built successfully reports it empty because its output is now the
+tool's own.
 
 **Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
 only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
@@ -1779,7 +1787,9 @@ wins over the lock. While one stands:
 - only then does a poll run: the markers' existence is checked every two seconds, and when they are gone the
   pending trigger is weighed;
 - an `index.lock` that stands for 30 s is reported once as possibly left behind by a crashed git process — the
-  tool never deletes it;
+  tool never deletes it. That line stays a **plain** console line while the git refusals around it are amber:
+  the amber ones are refusals the user can act on (commit, stash, reconcile), and this one refuses nothing —
+  it is a diagnostic about something the tool merely noticed and will not touch;
 - Build is not blocked: right under the run request the console warns that files with conflict markers will
   not compile;
 - the Sync button always works, and its section's first line says the tree is mid-operation.
@@ -2149,8 +2159,8 @@ Then one mono line describing the phase, plus 20 px chips for the projects curre
 then `+N`), plus — only when there are failures — the failing chips on the right: the first three, and a
 `+N more` chip that applies the `failed` filter. The cluster is run story and lists every failure of this
 run, but the filter it opens is the `✗` state filter: it lists the rows shown red. A failure without evidence
-(a timeout, a stop, an invocation error) leaves its output stale, so its row is grey and sits under `○`, not in
-that list. The cluster carries **no counter text**: the same numbers are
+(a timeout, a stop, an invocation error) leaves its output stale, so its row is grey and sits in the to-build
+bucket, not in that list. The cluster carries **no counter text**: the same numbers are
 already in the completion line, and the ribbon should not say a number twice. Glyphs are 13 px in the phase
 line and 10 px inside chips. There is no dismissible banner: a failure summary that can be dismissed is a
 failure summary that will be missed. Underneath, a 2 px progress bar,
@@ -2188,24 +2198,31 @@ and MSBuild, not invented terms:
 | `modified · local` | same, and at least one of its input files is also dirty in `git status` |
 | `affected` | its own files are unchanged; a dependency changed — for a cycle member that dependency can be a sibling in the same cycle — or its copy in the shared folder no longer matches its build output |
 | `never built` | no build output known to this tool: never built successfully, or its output file is missing |
-| `failed · 2h` | it failed at this source; the tail is the age of that failure |
-| `up to date · 2h` | it is current; the tail is the age of the last successful build — or of the output, when it was built outside this tool |
+| `failed` | it failed at this source |
+| `up to date` | it is current — either because this tool's last build still matches, or because an output built outside it does |
 
 Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps apart what the word folds together:
 
 | Reason | Label | Tooltip |
 |---|---|---|
 | never built, output missing | `never built` | `No build output known to this tool` |
-| last build failed | `failed · 2h` | `Failed at this source 2h ago — Build will retry it` (for a cycle member, `Resolve cycles will retry it`) |
-| up to date, waiting for a dependency | `up to date · 2h` | `Up to date — last built 2h ago` |
-| built outside this tool | `up to date · 5m` | `Up to date — built outside this tool 5m ago` |
+| last build failed | `failed` | `Failed at this source — Build will retry it` (for a cycle member, `Resolve cycles will retry it`) |
+| up to date, waiting for a dependency | `up to date` | `Up to date` |
+| built outside this tool | `up to date` | `Up to date — built outside this tool` |
 | output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
 | output stale, own inputs newer | `modified` or `modified · local` | `Its own files are newer than its build output` |
 | signature changed, dependency issue — own files changed | `modified` | `Its own files changed since the last build` (with `local`: `— includes uncommitted edits`) |
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
-The age disappears from a tooltip when its time is unknown (`Up to date`, `Up to date — built outside this
-tool`).
+**No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
+four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and
+whether the project sits in a dependency cycle (which only picks the retry clause of a `failed` row's tooltip,
+*Resolve cycles* instead of *Build*). `local` is the one tail there is, and a timestamp reaching the row
+changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
+output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
+ago *this* tool last built the project while claiming to describe someone else's output — and for every other
+reason the minute count never changed the answer to the question the row exists for, "what does this
+project's output need?".
 
 A project waiting on a dependency (`WaitingForDependency`) reads the same `up to date` as a project whose
 signature simply matches — both are read from the same fact, that the output is current — because *which*
@@ -2217,16 +2234,15 @@ plus a count), while the page has room and spells out every root, then adds the 
 own vocabulary — the `Dependency issue: ` prefix and the same short-name rule — not the surrounding sentence.
 Scope does not change the label's wording either — a genuinely-waiting row, a forced one (triggered straight
 from itself, a Rebuild, an SCC member), and a cycle member all read the identical `up to date`. The slot is
-134 px, sized for its longest label, `up to date · just now`.
+134 px, which holds the longest label (`modified · local`) with room to spare; the width is also the hover icon
+block's, so it is not cut to the text.
 
-**The word is a fact; the tail is the age of the evidence behind it, never a promise.** A failed row's tail is
-how long ago that failure happened, read the same way as `up to date`'s tail — and its tooltip names who will
-retry it: *Build* ordinarily, or *Resolve cycles* for a cycle member, because a plain Build never compiles a
-dependency cycle. The tail is never paired with a fixed retry verb such as `failed · retry`, because that would
-read as a promise ("the next Build will try this again") that a cycle member cannot keep — a plain Build never
-compiles one, and on a real workspace most `failed` rows were cycle members for whom that promise would never
-come. The word does not change with scope either way — `failed` states what happened, the tooltip states who
-acts on it.
+**The word is a fact, never a promise.** A failed row's tooltip names who will retry it: *Build* ordinarily, or
+*Resolve cycles* for a cycle member, because a plain Build never compiles a dependency cycle. The word is never
+paired with a fixed retry verb such as `failed · retry`, because that would read as a promise ("the next Build
+will try this again") that a cycle member cannot keep — on a real workspace most `failed` rows were cycle
+members for whom that promise would never come. The word does not change with scope either way — `failed`
+states what happened, the tooltip states who acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
@@ -2249,25 +2265,25 @@ measured too: on that same workspace 33 of 184 rows — every SCC member — sho
 The slot carries no status colour — green and red belong to the glyph and the stripe (§14.3). The leading word
 is `text-secondary` when work is pending and `text-faint` when the project is current; whatever follows the `·`
 is always faint, so the word reads first. The longer sentence (`Its own files changed since the last build`,
-`Up to date — last built 2h ago`) is a plain tooltip, in the same language as the icon buttons. The slot is
-**empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
+`Up to date — built outside this tool`) is a plain tooltip, in the same language as the icon buttons. The slot
+is **empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
 
-The label also follows the run live: the moment a project succeeds its row reads `up to date · just now`, and a
-failure the engine counts as evidence reads `failed · just now`. A failure that is not evidence — a timeout, a
+The label also follows the run live: the moment a project succeeds its row reads `up to date`, and a
+failure the engine counts as evidence reads `failed`. A failure that is not evidence — a timeout, a
 stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge — reads
 `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will say.
 The verdict travels with the failure event (`Evidence`) and is decided by the same gate that writes the ledger;
 the application never re-reads the reason text. It does not wait for the engine's next preview, which may not
-arrive until the next Sync. A success that still carries a dependency issue reads exactly the same `up to date ·
-just now` as any other success — its own signature is genuinely current, taken straight from that success's own
+arrive until the next Sync. A success that still carries a dependency issue reads exactly the same `up to date`
+as any other success — its own signature is genuinely current, taken straight from that success's own
 event — even though it still drops out of the run's definite queue (`Conditional`, §10.2, unaffected by any of
 this: the label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a
 plain success.
 
 A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
 converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
-Build never compiles it and Cycles compiles it with its whole group — so its live row reads `up to date · just
-now`, exactly matching what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
+Build never compiles it and Cycles compiles it with its whole group — so its live row reads `up to date`,
+exactly matching what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
 `Conditional=false` — read no differently by the label than `UpToDate` would be). A member whose group did not
 converge is different: the engine does not stand behind its green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
@@ -2286,7 +2302,7 @@ them.
 The label replaced a commit pair (`a3f81c2 → b7e91d4`). That pair could not answer the question it appeared to
 answer: its right half was a remote commit the user had not pulled, and its left half described the repository,
 not the project. The revision did not disappear — it moved to where it is actually evidence: the project log's
-`Last successful build: 2h ago (a3f81c2)`.
+`Last successful build: a3f81c2`.
 
 The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
 Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
@@ -2323,7 +2339,9 @@ its automation name instead. The icon buttons keep a plain, OS-delayed tooltip (
 an HTML `title`) so that a mouse crossing the row does not trail balloons behind it. The building row carries a motionless
 amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s) — that layer belongs to the row's
 background, not to the glyph, which only turns; a sweep or a shine was tried and
-rejected. A failing row shakes once, ±3 px over 360 ms.
+rejected. It runs the row's full width, exactly as far as the bottom line and the hover band do: the row
+itself has no padding, and the 10 px of air on the right is a margin on the content inside it. A failing row
+shakes once, ±3 px over 360 ms.
 
 The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
 so that adjacent rows cannot fuse into one unbroken rail; looked at on screen, the break made the same 2 px
@@ -2473,19 +2491,22 @@ live `{name} building…` indicator) deliberately sits outside all of this: it c
 steps its background on hover, in the design as much as here — it is a status line, not a stream row, and has nothing
 of its own to select.
 
-**Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Five of them are always
+**Action bar.** Sync; the maintenance box; the counter chips, each a filter toggle. Four of them are always
 there: `Σ` (all — clears the filters), building (a spinner while something compiles, a grey dot otherwise),
-`✓` up to date, `○` to build and `✗` failed; one more appears **only when the list actually holds one** —
+`✓` up to date and `✗` failed; one more appears **only when the list actually holds one** —
 `⚠`, the combined warning chip (a dependency cycle *or* a dependency issue). It describes an exceptional
 situation, and carrying it permanently as an empty grey chip weakened the signal.
 
-The three glyph chips count **state**, not the last run's results: each counts the rows that *show* that
-state — `✓` every green row (up-to-date output, whether this run skipped it, built it or never ran), `○` every
-grey row, `✗` every red one. The bucket is read from the row's visual status in one place
+The two glyph chips count **state**, not the last run's results: each counts the rows that *show* that
+state — `✓` every green row (up-to-date output, whether this run skipped it, built it or never ran), `✗` every
+red one. The bucket is read from the row's visual status in one place
 (`VisualStatuses.StateOf`, surfaced as `ProjectFilter.StateKey`), and `RunCounters` and the filter both ask it,
-so pressing a chip lists exactly as many rows as its badge says. A failure without evidence (a timeout, a stop,
-an invocation error) leaves its output stale and the row grey, so it counts under `○`, not `✗`; rows the run is
-queueing or compiling, rows lit by the marking wave and rows with no decision yet are in no state bucket.
+so pressing a chip lists exactly as many rows as its badge says. The grey to-build bucket obeys that same one
+rule — a failure without evidence (a timeout, a stop, an invocation error) leaves its output stale and the row
+grey, so it counts as to-build rather than failed — but the bar carries **no chip** for it: every grey row
+already says *to build* in its own decision label and glyph, and a badge in the bar was the same sentence
+twice. Rows the run is queueing or compiling, rows lit by the marking wave and rows with no decision yet are
+in no state bucket at all.
 The counts are taken when a run event arrives, not on each step of the marking wave, so while the wave lights
 the scope the badges still show the state from before it; they catch up when the run starts. The run's own
 preview clears the marks first and counts second, so a marked row the run does not queue is counted in its own
@@ -2497,7 +2518,7 @@ dependency-affected) stays where it is, in the ribbon's completion line.
 
 The chips **combine**. The active filter is a set: chips toggle independently and the selected ones are OR'd
 together — `✓` plus `✗` reads as "up to date or broken" — while the search box is AND'ed on top. An active chip
-lights in its own status colour (green, neutral grey, red; amber for building and warnings), and the
+lights in its own status colour (green, red; amber for building and warnings), and the
 removable chip in the PROJECTS header lists the selected set joined with ` + `. Pressing a filter also drops the
 selection: a selection locks the graph camera onto one node, a filter says "look at this set", and the two
 fought each other. A filter reaches the **graph** too — nodes outside the visible set fade to the same 0.1 the
@@ -3249,7 +3270,7 @@ lines.
   nothing. What the body then shows is composed from the row: a first line saying **why** the project is in
   that state, and a second saying **what we have** — the commit it was last successfully built at, or that it
   has never been built. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
-  over `Built outside this tool: 5m ago`, since the evidence is that output's time rather than a build of this
+  over `Built outside this tool`, since the evidence is someone else's output rather than a build of this
   tool's; the output reasons read `its build output is missing`, `its files are newer than its build output`
   (or `a dependency's output is newer than its build output`) and `its copy in the shared folder does not match
   its build output`, and a missing output does not repeat itself on the evidence line, just as never built does
@@ -3790,9 +3811,10 @@ number, since a restated width silently drops the shell's border thickness and W
 edge of the body.
 
 Filtering is a free-text query (case-insensitive substring on the project *name* only — never the path) ANDed
-with the selected state chips — `building` (compiling right now), `current`, `stale`, `failed`, `warn` — which
-are OR'd among themselves (§13.2, "The chips combine"). The active set appears as a removable chip in the panel
-header.
+with the selected state chips — `building` (compiling right now), `current`, `failed`, `warn` — which
+are OR'd among themselves (§13.2, "The chips combine"). `stale` is a bucket of the same rule and the counters
+still fill it, but no chip offers it, so nothing can switch it on; `Σ` empties the set whatever is in it. The
+active set appears as a removable chip in the panel header.
 
 ### 13.9 Keyboard
 

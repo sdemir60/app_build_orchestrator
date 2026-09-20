@@ -61,7 +61,7 @@ public static class VisualStatuses
     /// başarı çıktı durumunu güncel yazar (<c>UpToDate</c>/<c>WaitingForDependency</c>) ve satır koşunun
     /// <see cref="VisualStatus.Succeeded"/>'ını gösterir (vurgulu ad, yeşil ✓). Çıktıyı "derlenecek" bırakan
     /// başarı — Clean (çıktı silindi) ya da motorun arkasında durmadığı SCC üyesi — o durumu gösterir: gri,
-    /// ○ sayacında, "To build". <b>[DEĞİŞEN KURAL]</b> Eskiden <c>Succeeded</c> her çıktı durumunu ezerdi;
+    /// derlenecek kovasında, "To build". <b>[DEĞİŞEN KURAL]</b> Eskiden <c>Succeeded</c> her çıktı durumunu ezerdi;
     /// temizlenen satır "never built" yazarken yeşil ✓ gösteriyordu.</para></summary>
     public static VisualStatus For(GraphStatus status, StandingStatus standing, bool marked) => status switch
     {

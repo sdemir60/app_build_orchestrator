@@ -32,7 +32,9 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para>[design v1.20.0 §2.7] <b>İki tablo.</b> <c>Succeeded</c>/<c>Failed</c>/<c>Skipped</c> KOŞUNUN tablosudur —
 /// şeridin koşu özeti (<see cref="RibbonText"/>: "N failed · N succeeded · N skipped") onları okur ve değişmez.
-/// <c>Current</c>/<c>Stale</c>/<c>Broken</c> DURUM kovalarıdır — action bar'ın ✓ · ○ · ✗ chip'leri onları okur:
+/// <c>Current</c>/<c>Stale</c>/<c>Broken</c> DURUM kovalarıdır — action bar'ın ✓ · ✗ chip'leri
+/// <c>Current</c> ile <c>Broken</c>'ı okur (gri <c>Stale</c> kovasının chip'i kullanıcı kararıyla kaldırıldı,
+/// kova kuralın parçası olarak DURUR):
 /// satır neyi GÖSTERİYORSA o sayılır (<see cref="ProjectFilter.StateKey"/>, filtreyle AYNI kural). Bu yüzden
 /// kanıtsız hata (State Failed, çıktı bayat → gri) koşu tablosunda <c>Failed</c>, durum kovasında <c>Stale</c>'dir;
 /// kuyruk · derleme · işaretleme dalgası · karar yokluğu hiçbir durum kovasına girmez. Bir satır en çok BİR

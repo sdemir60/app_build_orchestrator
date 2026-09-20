@@ -17,12 +17,13 @@ public static class AccessibilityNames
     /// <summary>Derleniyor chip'i — sözcük DURUM chip'leriyle aynı kaynaktan (<see cref="StateFilter"/>), satırın
     /// koşu bindirmesi "Building" duyurusuyla ve filtre etiketiyle AYNI.</summary>
     public static readonly string FilterBuilding = StateFilter(Controls.VisualStatus.Building);
-    /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ DURUM chip'leri. Sözcük, filtre etiketi ve satırın ekran-okuyucu
+    /// <summary>[design v1.20.0 §2.7] ✓ · ✗ DURUM chip'leri. Sözcük, filtre etiketi ve satırın ekran-okuyucu
     /// adıyla AYNI kaynaktandır (<see cref="Controls.StatusGlyph.LabelFor(Controls.VisualStatus)"/>).
     /// <b>[DEĞİŞEN KURAL]</b> Eskiden koşu sonucu chip'leri vardı: <c>FilterSucceeded</c> ("Succeeded — filter") ve
-    /// <c>FilterSkipped</c> ("Skipped — filter"); chip'ler artık durumu sayar ve atlandı chip'i kalktı.</summary>
+    /// <c>FilterSkipped</c> ("Skipped — filter"); chip'ler artık durumu sayar ve atlandı chip'i kalktı.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Üçüncü bir ad daha vardı — <c>FilterStale</c>
+    /// ("To build — filter"), ○ chip'inin adı. O chip kaldırıldı, adı da onunla birlikte.</summary>
     public static readonly string FilterCurrent = StateFilter(Controls.VisualStatus.Current);
-    public static readonly string FilterStale = StateFilter(Controls.VisualStatus.Stale);
     public static readonly string FilterFailed = StateFilter(Controls.VisualStatus.Failed);
     private static string StateFilter(Controls.VisualStatus shown) => Controls.StatusGlyph.LabelFor(shown) + " — filter";
     /// <summary>[design v1.11.0 §2.7-4] Birleşik uyarı chip'i. <b>[DEĞİŞEN KURAL]</b> Burada eskiden İKİ ad

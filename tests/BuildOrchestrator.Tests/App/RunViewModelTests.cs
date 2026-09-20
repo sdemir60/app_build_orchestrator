@@ -1728,9 +1728,13 @@ public class RunViewModelTests
 
     /// <summary>
     /// [design v1.16.0 §2.4] Satırın karar etiketi CANLI geçişi izler: bir proje bu koşuda derlendiği anda
-    /// satır "up to date · just now" yazar, patladığı anda "failed · retry". Motorun bir sonraki önizlemesi
-    /// BEKLENMEZ — o önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir
-    /// gerekçeyi ("modified") taşırdı.
+    /// satır "up to date" yazar, patladığı anda "failed". Motorun bir sonraki önizlemesi BEKLENMEZ — o
+    /// önizleme bir Sync'e kadar gelmeyebilir ve satır o süre boyunca artık doğru olmayan bir gerekçeyi
+    /// ("modified") taşırdı.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Test, tazelenen olgular arasında
+    /// <c>LastBuiltAt</c>'i de okurdu (satır "up to date · just now" yazabilsin diye). Yaş kalktı, alan
+    /// satırdan da kalktı; canlı geçişin tazelediği olgular gerekçe + "kendi dosyası değişti mi"dir.</para>
     /// </summary>
     [Fact]
     public async Task A_finished_project_updates_the_facts_its_decision_label_reads()
@@ -1750,32 +1754,20 @@ public class RunViewModelTests
         Assert.False(row.WillBuild);
         Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
         Assert.False(row.OwnFilesChanged);
-        Assert.NotNull(row.LastBuiltAt);
     }
 
-    /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5, P8] <c>OutputBuiltAt</c> önizlemenin BuiltOutside kanıtıdır
-    /// ve satıra AYNEN diğer önizleme alanları (LastBuiltAt, OwnFilesChanged) gibi ulaşır — kopya YASAK, aynı
-    /// atama noktası.</summary>
+    /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5, P8] Bu araç bir projeyi başarıyla derlediği an, önceki
+    /// "bu araç dışında derlendi" gerekçesi ARTIK GEÇERSİZDİR — çıktı şimdi aracın kendi eseri.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Burada İKİ test vardı ve ikisi de bir ZAMAN
+    /// alanını pinliyordu: <c>A_preview_with_an_output_time_reaches_the_row</c> (önizlemenin
+    /// <c>OutputBuiltAt</c>'i satıra AYNEN ulaşır) ve <c>A_successful_build_clears_the_output_time</c> (başarı
+    /// o kanıtı <c>null</c>'a çeker — <c>FailedAt</c> ile aynı kural). O alanların TEK okuyucusu etiketin
+    /// "built outside this tool 5m ago" yaşıydı; yaş kalkınca alan satırdan da kalktı. Geriye alanın
+    /// ANLAMI kaldı ve onu artık gerekçenin kendisi taşır: başarıdan sonra satır "dışarıda derlendi"
+    /// DEMEZ.</para></summary>
     [Fact]
-    public async Task A_preview_with_an_output_time_reaches_the_row()
-    {
-        const string id = @"C:\p.csproj";
-        var outputBuiltAt = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-
-        vm.OnEvent(new BuildPreviewEvent(
-            [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside, OutputBuiltAt: outputBuiltAt)]));
-
-        var row = Assert.Single(vm.Projects);
-        Assert.Equal(outputBuiltAt, row.OutputBuiltAt);
-    }
-
-    /// <summary>[Task 7 — Faz 3] Bu araç bir projeyi başarıyla derlediği an, önceki "bu araç dışında derlendi"
-    /// kanıtı ARTIK GEÇERSİZDİR — çıktı şimdi aracın kendi eseri. <c>FailedAt</c>'in aynı satırda sıfırlanmasıyla
-    /// AYNI kural (kopya YASAK: tek atama noktası, başarı bloğu).</summary>
-    [Fact]
-    public async Task A_successful_build_clears_the_output_time()
+    public async Task A_successful_build_ends_the_built_outside_reason()
     {
         const string id = @"C:\p.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1784,20 +1776,22 @@ public class RunViewModelTests
             [new BuildPreviewItem(id, "A", false, null, WillBuildReason.BuiltOutside,
                 OutputBuiltAt: new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero))]));
         var row = Assert.Single(vm.Projects);
-        Assert.NotNull(row.OutputBuiltAt); // ön koşul
+        Assert.Equal(WillBuildReason.BuiltOutside, row.WillBuildReason); // ön koşul
 
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 120));
 
-        Assert.Null(row.OutputBuiltAt);
+        Assert.Equal(WillBuildReason.UpToDate, row.WillBuildReason);
     }
 
     /// <summary>
     /// [Task 4 — kök neden C] Bu koşuda dep-issue'lu biten bir başarı "succeeded→clean" (UpToDate) geçişine
     /// GİRMEZ: bağımlılığı hâlâ hatalıydı, çıktı bayat bir bağımlılığa link'li. Satır <c>WaitingForDependency</c>
-    /// gerekçesine geçer (kökler event'ten — Sync'i beklemez), <c>Conditional=true</c> olur (kesin derlenecekler
-    /// kümesine girmez) ve <c>LastBuiltAt</c> yine ŞİMDİ'ye güncellenir (kart az önce derlendi).
+    /// gerekçesine geçer (kökler event'ten — Sync'i beklemez) ve <c>Conditional=true</c> olur (kesin
+    /// derlenecekler kümesine girmez).
     /// <b>[DEĞİŞEN KURAL]</b> Eskiden HER başarı (dep-issue'lu dahil) <c>UpToDate</c>'e düşerdi.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Test ayrıca <c>LastBuiltAt</c>'in ŞİMDİ'ye
+    /// güncellendiğini de okurdu ("kart az önce derlendi"); o alan satırdan kalktı (etiket yaş taşımıyor).
     /// </summary>
     [Fact]
     public async Task A_success_with_a_live_dep_issue_transitions_to_waiting_for_dependency_not_up_to_date()
@@ -1816,7 +1810,6 @@ public class RunViewModelTests
         Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason);
         Assert.True(row.Conditional);     // kesin derlenecekler kümesine (dalga/kuyruk/_willBuildIds) GİRMEZ
         Assert.Equal(["Up"], row.DependencyRoots);
-        Assert.NotNull(row.LastBuiltAt);  // az önce derlendi
     }
 
     /// <summary>
@@ -1843,7 +1836,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
+            row.LocalEdits, row.InCycle);
         var beforeSync = Label();
         Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
@@ -1853,7 +1846,7 @@ public class RunViewModelTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0)], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.WaitingForDependency,
-            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: true, DependencyRoots: ["Up"])]));
+            OwnFilesChanged: false, Conditional: true, DependencyRoots: ["Up"])]));
 
         var afterSync = Label();
         Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
@@ -1891,7 +1884,6 @@ public class RunViewModelTests
         Assert.False(row.WillBuild);     // döngü kapsamı yüzünden zorlanır (Build bir SCC'yi asla derlemez)
         Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // ama disk olgusu budur
         Assert.Equal(["Up"], row.DependencyRoots);
-        Assert.NotNull(row.LastBuiltAt);
     }
 
     /// <summary>
@@ -1917,7 +1909,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LastBuiltAt, row.FailedAt, row.LocalEdits, DateTimeOffset.Now, row.InCycle);
+            row.LocalEdits, row.InCycle);
         var beforeSync = Label();
         // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
         // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.
@@ -1929,7 +1921,7 @@ public class RunViewModelTests
         // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator: outOfScope⇒WillBuild=false, gerekçe yine de
         // WaitingForDependency; AppliesTo: WillBuild==true şartı düşer ⇒ Conditional=false).
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.WaitingForDependency,
-            OwnFilesChanged: false, LastBuiltAt: row.LastBuiltAt, Conditional: false, DependencyRoots: ["Up"])]));
+            OwnFilesChanged: false, Conditional: false, DependencyRoots: ["Up"])]));
 
         var afterSync = Label();
         Assert.Equal(beforeSync, afterSync); // etiket TİTREMEZ
@@ -2013,7 +2005,9 @@ public class RunViewModelTests
         Assert.Null(row.DependencyRoots);
     }
 
-    /// <summary>Patlayan proje "failed · retry" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
+    /// <summary>Patlayan proje "failed" olgusuna geçer — bir sonraki koşuda yeniden denenecektir.
+    /// <para>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Test ayrıca satırın <c>LastBuiltAt</c>'inin null
+    /// kaldığını okurdu ("başarı yok → yaş da yok"); yaş kalkınca o alan satırdan da kalktı.</para>
     /// <para>[R-M4b] Fixture motorun GERÇEK olayını taşır: <c>"exit N"</c> (<c>RunCoordinator.ReasonFor</c>) ve
     /// motorun kanıt kararı (<c>Evidence: true</c> — defter yazımıyla aynı kapı). Eski fixture uydurma bir metin
     /// (<c>"CS0103"</c>) veriyordu ve kanıt bayrağı yoktu; kanıtsız hatanın yolu RunViewModelStateTests'te.</para></summary>
@@ -2031,7 +2025,6 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         Assert.Equal(WillBuildReason.LastFailed, row.WillBuildReason);
-        Assert.Null(row.LastBuiltAt);   // başarı yok → yaş da yok
     }
 
     /// <summary>

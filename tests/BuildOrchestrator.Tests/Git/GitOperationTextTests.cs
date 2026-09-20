@@ -1,3 +1,4 @@
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.Core.Git;
 using Xunit;
 
@@ -48,5 +49,16 @@ public class GitOperationTextTests
         Assert.Equal(
             "git's index.lock has been there for 30 s — a git process may have crashed; delete it only if no git command is running",
             GitOperationText.StuckLock);
+    }
+
+    /// <summary>[eksik negatif pin] Satırın METNİ pinliydi, konsoldaki TONU değil. Takılı kilit satırı çevresindeki
+    /// git reddetmeleri amberken (<c>warning:</c> öneki — <c>PlanProgressLinesTests</c>) DÜZ satır kalır: bu bir
+    /// reddetme değil TANIdır — araç kilide dokunmaz, bir şey de reddetmemiştir, yalnız gördüğünü söyler.
+    /// Satırın "git's" ile başlaması onu KOMUT satırı da yapmaz (<c>CommandHeads</c> "git " arar).</summary>
+    [Fact]
+    public void StuckLock_stays_a_plain_console_line()
+    {
+        Assert.DoesNotContain("warning:", GitOperationText.StuckLock, StringComparison.Ordinal);
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(GitOperationText.StuckLock));
     }
 }

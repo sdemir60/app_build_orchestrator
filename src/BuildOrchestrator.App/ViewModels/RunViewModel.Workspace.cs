@@ -629,10 +629,12 @@ public sealed partial class RunViewModel
     /// <summary>Sessiz Sync'in nedeni — bitişteki tek akış satırını seçer.</summary>
     private SilentSyncReason _silentReason;
 
-    /// <summary>Sessiz Sync'in başındaki karar anlık görüntüsü (satır Id → karar anahtarı) ve o anki saat — bitişte
-    /// aynı saatle alınan ikinci görüntüyle karşılaştırılır (<see cref="CountChangedDecisions"/>). Saat SABİT
-    /// tutulur: etiketin yaş kuyruğu ("2h") iki görüntü arasında akmasın.</summary>
-    private (Dictionary<string, string> Keys, DateTimeOffset Now)? _silentBaseline;
+    /// <summary>Sessiz Sync'in başındaki karar anlık görüntüsü (satır Id → karar anahtarı) — bitişte ikinci bir
+    /// görüntüyle karşılaştırılır (<see cref="CountChangedDecisions"/>).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Görüntünün yanında bir de SABİT saat
+    /// taşınırdı: etiketin yaş kuyruğu ("2h") iki görüntü arasında akıp sahte bir "karar değişti" üretmesin
+    /// diye. Etiket artık yaş taşımıyor, anahtar da saatten bağımsız — saat alanı kalktı.</para></summary>
+    private Dictionary<string, string>? _silentBaseline;
 
     /// <summary>Tamamlanan Sync'in olay akışı satırı — <see cref="OnSyncCompleted"/> kipe göre yazar,
     /// <see cref="AppendStreamFor"/> okur (<c>null</c> ⇒ satır yok: sessiz Sync'te değişen bir şey yoktu).</summary>
@@ -694,11 +696,7 @@ public sealed partial class RunViewModel
         _syncMode = mode;
         _silentReason = reason;
         _silentBaseline = null;
-        if (mode == SyncMode.Silent)
-        {
-            var now = WallClock();
-            _silentBaseline = (DecisionKeys(now), now);
-        }
+        if (mode == SyncMode.Silent) _silentBaseline = DecisionKeys();
     }
 
     /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.</summary>
@@ -718,13 +716,13 @@ public sealed partial class RunViewModel
 
     /// <summary>Satır başına karar anahtarı: çıktı durumu (<see cref="ProjectRowViewModel.Standing"/>) + karar
     /// etiketi (<see cref="DecisionLabel"/>, satırın gördüğü AYNI sözcük ve kuyruk). "Değişti" = bu anahtar farklı.</summary>
-    private Dictionary<string, string> DecisionKeys(DateTimeOffset now)
+    private Dictionary<string, string> DecisionKeys()
     {
         var keys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in Projects)
         {
-            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LastBuiltAt,
-                row.FailedAt, row.LocalEdits, now, row.InCycle, row.OutputBuiltAt);
+            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LocalEdits,
+                row.InCycle);
             keys[row.Id] = $"{row.Standing}|{d.Word}|{d.Tail}";
         }
         return keys;
@@ -732,11 +730,11 @@ public sealed partial class RunViewModel
 
     /// <summary>Sessiz Sync'in başındaki görüntüyle bugünkü arasında kararı değişen satır sayısı — eklenen ve
     /// çıkan satırlar da değişmiş sayılır.</summary>
-    private int CountChangedDecisions((Dictionary<string, string> Keys, DateTimeOffset Now) baseline)
+    private int CountChangedDecisions(Dictionary<string, string> baseline)
     {
-        var after = DecisionKeys(baseline.Now);
-        int changed = after.Count(kv => !baseline.Keys.TryGetValue(kv.Key, out var before) || before != kv.Value);
-        changed += baseline.Keys.Keys.Count(id => !after.ContainsKey(id));
+        var after = DecisionKeys();
+        int changed = after.Count(kv => !baseline.TryGetValue(kv.Key, out var before) || before != kv.Value);
+        changed += baseline.Keys.Count(id => !after.ContainsKey(id));
         return changed;
     }
 

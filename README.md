@@ -186,9 +186,10 @@ the running instance first — tray icon → Exit).
    is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
    `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed,
    or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
-   its output file is gone), `failed · 2h` (failed at this source — the tail is how long ago), or
-   `up to date · 2h` — the tail being how long ago it was last built successfully (or, for a project built
-   outside this tool, how old that output is). A project that built successfully against a dependency that was
+   its output file is gone), `failed` (failed at this source), or `up to date` — whether because this tool's
+   last build still matches or because an output you built elsewhere does; the tooltip says which. The label
+   never carries a time: a row answers what the project's output needs, and the minutes behind that answer
+   never changed it. A project that built successfully against a dependency that was
    failing, and has not changed since, reads the same `up to date` — a later Build leaves it
    alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 
@@ -292,9 +293,9 @@ say who built the output: hover the decision label and its tooltip says `built o
 not this tool. A single amber triangle in the fixed slot on the right means something is off with this project's
 dependencies — a cycle, or
 a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
-project log. The counter chips in the bottom bar count state — `✓` up to date, `○` to build, `✗` failed, plus
-what is building right now — and each is a filter; they **combine**: press the tick and the circle together to
-see everything that is green or grey, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
+project log. The counter chips in the bottom bar count state — `✓` up to date, `✗` failed, plus what is
+building right now — and each is a filter; they **combine**: press the tick and the cross together to
+see everything that is green or red, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
 project is not a state of its own: it keeps its colour and is counted under the chip it shows, while the run's
 *N skipped* stays in the ribbon's summary. Each active chip lights in its own colour, and the chip in the
 PROJECTS header lists what is on.
@@ -408,7 +409,8 @@ While a build runs the graph quietens rather than moving: untouched projects fad
 stay bright and carry a ring of circling amber dots, and each project that reaches a result holds its colour
 bright for a moment before settling. Projects that are skipped settle quietly with no moment of their own —
 they stay exactly as dim as the queue and never move at all, because the graph is there to show what changed
-and they did not. The camera does not follow the run — it stays where you left it. Filtering the list dims the
+and they did not. The camera does not follow the run either: pressing Build brings it back to the fitted view
+once, at the start, and it then holds still for the rest of the run. Filtering the list dims the
 graph to match: the projects still in the list stay bright, everything else fades back, and the fade is slower
 than the ones a run makes so it can be followed by eye. Building keeps your filter — the list stays filtered —
 but the graph shows the whole run unfiltered, from the opening sequence to the closing lights, and returns to

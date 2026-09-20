@@ -278,6 +278,25 @@ public partial class ActionBarTests
         Assert.True(line.ShouldType);
     }
 
+    /// <summary>[eksik negatif pin] Kuralın TERSİ de bir karardır ve hiçbir test onu tutmuyordu: BEKLENMEYEN
+    /// bir pull hatası (ağ/kimlik — <see cref="PullCompletedEvent.RefusalReason"/> <c>null</c>) akışa HİÇBİR
+    /// satır düşürmez. Reddetme kullanıcının yapabileceği bir şeydir ve akışa çıkar; hata bir tanıdır,
+    /// gerekçesi konsoldadır ve akış run hikâyesini anlatır. Kapı (<c>if (e.RefusalReason is { } reason)</c>)
+    /// kaldırılsa süit bunu başka hiçbir yerde görmezdi — burada <c>null</c> neden bir metne dönüşemeyeceği
+    /// için akışa "boş" bir uyarı düşerdi.</summary>
+    [Fact]
+    public void An_unexpected_pull_failure_writes_nothing_to_the_stream()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
+        int before = vm.StreamEvents.Count;
+        Assert.True(before > 0); // ön-koşul: akış GERÇEKTEN yazıyor (vakumda yeşil kalmasın)
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: false, RefusalReason: null));
+
+        Assert.Equal(before, vm.StreamEvents.Count);
+    }
+
     /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
     [StaFact]
     public void No_dot_when_git_is_idle()
@@ -361,14 +380,17 @@ public partial class ActionBarTests
 
         var chipOrder = counterStrip.Children.Cast<UIElement>().ToList();
         Assert.Equal(
-            // [design v1.11.0 §2.7-4] Temel beşli her zaman durur; sonuncusu (birleşik ⚠) yalnız listede
+            // [design v1.11.0 §2.7-4] Temel dörtlü her zaman durur; sonuncusu (birleşik ⚠) yalnız listede
             // karşılığı varken GÖRÜNÜR — sırada yeri sabittir, görünürlüğü koşulludur.
             // [DEĞİŞEN KURAL] Eskiden burada İKİ istisnai chip vardı (turuncu ⚠ cycle + kırmızı ▲ dep);
             // v1.11.0 turuncuyu UI'dan çıkardı ve ikisini tek amber chip'te birleştirdi.
             // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski sıra Σ · building · succeeded · failed · skipped · ⚠ idi.
-            // Chip'ler artık DURUMU sayar: Σ · building · ✓ up to date · ○ to build · ✗ failed · ⚠ — "atlanmak" bir
-            // durum değildir ve — chip'i kalktı.
-            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.CurrentChip, bar.StaleChip, bar.FailedChip, bar.WarnChip },
+            // Chip'ler artık DURUMU sayar: "atlanmak" bir durum değildir ve — chip'i kalktı.
+            // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Eski iddia ALTI chip'ti ve dördüncüsü ○ "To build"
+            // (<c>StaleChip</c>) idi. O chip kaldırıldı: satırın kendi karar etiketi ve gri glyph'i zaten
+            // "derlenecek" diyor, bardaki sayaç aynı şeyi ikinci kez söylüyordu. Kalan beşli Σ · building ·
+            // ✓ up to date · ✗ failed · ⚠.
+            new UIElement[] { bar.SigmaChip, bar.BuildingChip, bar.CurrentChip, bar.FailedChip, bar.WarnChip },
             chipOrder);
         GC.KeepAlive(window);
     }
@@ -461,9 +483,13 @@ public partial class ActionBarTests
     /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
     private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
 
-    /// <summary>[design v1.20.0 §2.7] ✓ · ○ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
-    /// <see cref="RunCounters.Stale"/> · <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped
-    /// kovalarını DEĞİL (onlar şeridin koşu özetidir).</summary>
+    /// <summary>[design v1.20.0 §2.7] ✓ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
+    /// <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped kovalarını DEĞİL (onlar
+    /// şeridin koşu özetidir).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia ÜÇ rozetti; ortadaki ○ "To build"
+    /// <see cref="RunCounters.Stale"/> kovasını gösteriyordu. O chip barda YOKTUR; kova (sayaç + filtre kuralı)
+    /// modelde durur, bu koşuda hiçbir rozet onu okumaz. Sayaç burada BİLEREK doldurulur: kalan iki rozet gri
+    /// kovadan etkilenmez.</para></summary>
     [StaFact]
     public void The_state_chips_show_the_state_buckets_not_the_run_table()
     {
@@ -474,8 +500,10 @@ public partial class ActionBarTests
             DepAffected: 0, StuckCycles: 0, Current: 11, Stale: 5, Broken: 4);
 
         Assert.Equal("11", ChipValue(bar.CurrentChip).Text);
-        Assert.Equal("5", ChipValue(bar.StaleChip).Text);
         Assert.Equal("4", ChipValue(bar.FailedChip).Text);
+        // Gri kova hiçbir rozette görünmez — barın hiçbir sayaç değeri "5" okumaz.
+        Assert.DoesNotContain(((Panel)bar.SigmaChip.Parent).Children.OfType<ToggleButton>().Select(ChipValue),
+            v => v.Text == "5");
         GC.KeepAlive(window);
     }
 
@@ -524,11 +552,13 @@ public partial class ActionBarTests
         // Chip'ler artık durum yüzeyidir: güncel ✓, derlenecek kesikli daire ○, bozuk ✗. — yalnız run-story
         // yüzeylerinin glyph'idir; sayaç onu hiç almaz.
         Assert.Equal(VisualStatus.Current, Assert.IsType<StatusGlyph>(ChipIcon(bar.CurrentChip)).Status);
-        Assert.Equal(VisualStatus.Stale, Assert.IsType<StatusGlyph>(ChipIcon(bar.StaleChip)).Status);
         Assert.Equal(VisualStatus.Failed, Assert.IsType<StatusGlyph>(ChipIcon(bar.FailedChip)).Status);
         var counterStrip = (Panel)bar.SigmaChip.Parent;
-        Assert.DoesNotContain(counterStrip.Children.OfType<ToggleButton>().Select(ChipIcon).OfType<StatusGlyph>(),
-            g => g.Status == VisualStatus.Skipped);
+        var stripGlyphs = counterStrip.Children.OfType<ToggleButton>().Select(ChipIcon).OfType<StatusGlyph>().ToList();
+        Assert.DoesNotContain(stripGlyphs, g => g.Status == VisualStatus.Skipped);
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Eski iddia ○ kesikli daireyi (VisualStatus.Stale) da
+        // sayıyordu ("derlenecek" chip'i). O chip kaldırıldı — barda ARTIK hiç gri ○ glyph'i yoktur.
+        Assert.DoesNotContain(stripGlyphs, g => g.Status == VisualStatus.Stale);
 
         var warnCanvas = Assert.IsType<Canvas>(Assert.IsType<Viewbox>(ChipIcon(bar.WarnChip)).Child);
         var warnPath = Assert.IsType<System.Windows.Shapes.Path>(warnCanvas.Children[0]);
@@ -706,7 +736,11 @@ public partial class ActionBarTests
 
     /// <summary>[design v1.11.0 §2.7-4] <b>[DEĞİŞEN KURAL]</b> Eski iddia: "farklı bir chip'e tık öncekini
     /// DEVRALIR" (tek filtre). Chip'ler artık bağımsız açılıp kapanır ve seçili küme VEYA ile birleşir; aynı
-    /// chip'e ikinci tık onu kümeden çıkarır, Σ hepsini temizler.</summary>
+    /// chip'e ikinci tık onu kümeden çıkarır, Σ hepsini temizler.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> İkinci çift eskiden ✓ + ○ ("To build")
+    /// chip'leriyle kuruluyordu; ○ chip'i kaldırıldı, yerine ✓ + building çifti kullanılır. Kaldırma bir
+    /// soruyu açıyor: bardan kapatılamayan bir filtre kümede kalabilir mi? Σ'nin yolu (<c>ToggleFilter(null)</c>)
+    /// kümeyi chip'e bakmadan BOŞALTIR — test bunu kendi chip'i olmayan <c>stale</c> ile de doğrular.</para></summary>
     [StaFact]
     public void Counter_chips_toggle_independently_and_sigma_always_clears_them_all()
     {
@@ -723,12 +757,18 @@ public partial class ActionBarTests
         Click(bar.FailedChip);                                  // farklı chip → EKLENİR (devralmaz)
         Assert.Equal([ProjectFilter.Current, ProjectFilter.Failed], vm.ActiveFilters.Order());
         Click(bar.FailedChip);
-        Click(bar.StaleChip);
-        Assert.Equal([ProjectFilter.Current, ProjectFilter.Stale], vm.ActiveFilters.Order());
+        Click(bar.BuildingChip);
+        Assert.Equal([ProjectFilter.Building, ProjectFilter.Current], vm.ActiveFilters.Order());
 
         Click(bar.SigmaChip);                                   // Σ HER ZAMAN hepsini temizler
         Assert.Empty(vm.ActiveFilters);
         Assert.False(bar.SigmaChip.IsChecked);                  // Σ hiç aktif olmaz
+
+        // Chip'i OLMAYAN bir filtre kümede kalsa bile Σ onu da düşürür — kullanıcı asla kapatılamayan bir
+        // filtreye kilitlenmez (○ chip'i kalktıktan sonra bunun tek yolu Σ'dır).
+        vm.ActiveFilters = new HashSet<string>(StringComparer.Ordinal) { ProjectFilter.Stale };
+        Click(bar.SigmaChip);
+        Assert.Empty(vm.ActiveFilters);
         GC.KeepAlive(window);
     }
 

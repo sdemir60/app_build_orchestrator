@@ -2,7 +2,6 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
-using BuildOrchestrator.Core.Formatting;
 using BuildOrchestrator.Core.Git;
 
 namespace BuildOrchestrator.App.Console;
@@ -38,25 +37,44 @@ public static class ConsoleEmptyState
     /// <summary>Kanıt satırının "hiç" hâli — proje bu araçla bir kez bile başarıyla derlenmedi.</summary>
     public const string NeverBuilt = "Never built by this tool";
 
+    /// <summary>Kanıt satırının "bu araç derlemedi" hâli — çıktı var ve güncel, ama başka bir derlemenin
+    /// eseri (<see cref="WillBuildReason.BuiltOutside"/>). Yalnız gerekçe satırı bunu SÖYLEMEDİĞİNDE yazılır
+    /// (motor satırı güncel diye atladıysa, satır bir döngüdeyse ya da kapsam dışıysa); gerekçenin kendisi
+    /// <see cref="BuiltOutsideReason"/> ise tekrar olurdu ve yazılmaz.</summary>
+    private const string BuiltOutside = "Built outside this tool";
+
+    /// <summary>Bekleyen bir satırın "derlenmeyecek, çünkü çıktısı dışarıda üretilmiş" gerekçesi — kanıt
+    /// satırının tekrar kontrolü (<see cref="RepeatsReason"/>) bu cümleyi ADIYLA tanır.</summary>
+    private const string BuiltOutsideReason = "Up to date — built outside this tool.";
+
     /// <summary>Kart tıklandı, logu yok: gövdeye yazılacak satırlar (bir ya da iki).</summary>
-    /// <param name="now">Şimdi — göreli yaş için; testler sabit bir an verir (D8).</param>
-    public static IReadOnlyList<string> ForEmptyLog(ProjectRowViewModel row, DateTimeOffset? now = null)
+    public static IReadOnlyList<string> ForEmptyLog(ProjectRowViewModel row)
     {
         ArgumentNullException.ThrowIfNull(row);
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
-        var at = now ?? DateTimeOffset.Now;
         string reason = Reason(row);
-        return RepeatsReason(row) ? [reason] : [reason, Evidence(row, at)];
+        return RepeatsReason(row, reason) ? [reason] : [reason, Evidence(row)];
     }
 
     /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.
     /// [Faz 3 — Task 7] <see cref="WillBuildReason.OutputMissing"/> de kapsanır — o da "bu araç bu projeye ait
-    /// bir çıktı bilmiyor" der, kanıt satırı aynı şeyi tekrar eder.</summary>
-    private static bool RepeatsReason(ProjectRowViewModel row) =>
-        string.IsNullOrEmpty(row.CurrentSha)
-        && row.State == ProjectRowState.Pending
-        && row.WillBuildReason is WillBuildReason.NeverBuilt or WillBuildReason.OutputMissing;
+    /// bir çıktı bilmiyor" der, kanıt satırı aynı şeyi tekrar eder.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Kural <see cref="WillBuildReason.BuiltOutside"/>
+    /// satırını da kapsar. Gerekçe cümlesinden yaş kalkınca ("built outside this tool: 5m ago") gerekçe ile
+    /// kanıt kelimesi kelimesine aynı şeyi söyler oldu. Bu satırda kanıtın İKİNCİ bir hâli de yoktur:
+    /// defterdeki kendi son başarısı (<see cref="ProjectRowViewModel.CurrentSha"/>) o çıktının kanıtı DEĞİLDİR
+    /// — bu araç onu üretmedi — bu yüzden sha'ya bakılmaz.</para>
+    ///
+    /// <para>Kontrol gerekçe METNİ üzerinden yapılır, satır olgularından yeniden türetilmez: gerekçe satırının
+    /// hangi dala düştüğünü (döngü üyeliği, kapsam dışılık, motorun atlama gerekçesi) yalnız
+    /// <see cref="Reason"/> bilir; burada aynı koşulları kopyalamak iki yerin sessizce ayrışması demekti.</para></summary>
+    private static bool RepeatsReason(ProjectRowViewModel row, string reason) =>
+        reason == BuiltOutsideReason
+        || (string.IsNullOrEmpty(row.CurrentSha)
+            && row.State == ProjectRowState.Pending
+            && row.WillBuildReason is WillBuildReason.NeverBuilt or WillBuildReason.OutputMissing);
 
     /// <summary>İlk satır: bu proje NEDEN bu durumda.</summary>
     private static string Reason(ProjectRowViewModel row) => row.State switch
@@ -109,7 +127,7 @@ public static class ConsoleEmptyState
         // güncellendi?) — kullanıcı bu sayfayı tam da bunu sormak için açar.
         if (!willBuild)
             return row.WillBuildReason == WillBuildReason.BuiltOutside
-                ? "Up to date — built outside this tool."
+                ? BuiltOutsideReason
                 : "Up to date — nothing to compile.";
 
         // Bir koşu uçuştaysa VE bu satır BU koşunun kendi kuyruğundaysa KUYRUKTADIR; değilse yalnız bir plandır.
@@ -160,25 +178,27 @@ public static class ConsoleEmptyState
     }
 
     /// <summary>
-    /// İkinci satır: elde ne var — son BAŞARILI derlemenin zamanı ve o çıktıyı üreten revizyon. Kaynaklar
-    /// <see cref="ProjectRowViewModel.LastBuiltAt"/> ve <see cref="ProjectRowViewModel.CurrentSha"/> (yani
-    /// <c>BuildState</c>'in kendisi). Kısaltma ve yaş biçimi tek yerden gelir (kopya YASAK).
+    /// İkinci satır: elde ne var — bu çıktıyı üreten revizyon, ya da çıktının bu aracın eseri olmadığı.
+    /// Kaynak <see cref="ProjectRowViewModel.CurrentSha"/> (yani <c>BuildState</c>'in kendisi); kısaltma tek
+    /// yerden gelir (kopya YASAK).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Satır eskiden yaşı da söylerdi
+    /// (<c>Last successful build: 2h ago (a3f81c2)</c>, <c>Built outside this tool: 5m ago</c>) — satırın karar
+    /// etiketiyle AYNI yaş, iki yerde. Yaş her iki cümleden de kalktı (bkz. <see cref="DecisionLabel"/>'in sınıf
+    /// özeti): biri yanıltıyordu, ikisi de gürültüsüne değmiyordu. Cümleler kaldı, zaman gitti — bu yüzden
+    /// <c>BuiltOutside</c> dalı artık bir zaman damgası ARAMAZ (uydurma yaş riski kalmadı), gerekçe yeter.</para>
     /// </summary>
-    private static string Evidence(ProjectRowViewModel row, DateTimeOffset now)
+    private static string Evidence(ProjectRowViewModel row)
     {
         // [Faz 3 — spec 2026-09-18 §5, P8, Task 7] BuiltOutside'ın kanıtı aracın KENDİ başarısı değil, dışarıdaki
-        // derlemenin zamanıdır (row.CurrentSha/LastBuiltAt bu satırda boş kalabilir — araç o çıktıyı üretmedi).
-        // Zaman bilinmiyorsa (eski/okunamayan kanıt) bugünkü satırın kuralına düşülür — uydurma bir yaş yazılmaz.
-        if (row.WillBuildReason == WillBuildReason.BuiltOutside
-            && AgeFormat.Age(row.OutputBuiltAt, now) is { } builtOutsideAge)
-            return $"Built outside this tool: {builtOutsideAge} ago";
+        // derlemedir (row.CurrentSha bu satırda boş kalabilir — araç o çıktıyı üretmedi). Gerekçe satırı bunu
+        // ZATEN söylediyse buraya hiç gelinmez (RepeatsReason); bu dal gerekçenin başka bir şey dediği satırlar
+        // içindir — motor güncel diye atladı, satır bir döngüde ya da kapsam dışı.
+        if (row.WillBuildReason == WillBuildReason.BuiltOutside) return BuiltOutside;
 
         if (row.CurrentSha is not { Length: > 0 } revision) return NeverBuilt;
 
-        string sha = RevisionText.Short(revision);
-        return AgeFormat.Age(row.LastBuiltAt, now) is { } age
-            ? $"Last successful build: {age} ago ({sha})"
-            : $"Last successful build: {sha}";
+        return $"Last successful build: {RevisionText.Short(revision)}";
     }
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>

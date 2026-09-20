@@ -1501,11 +1501,16 @@ public class RunViewModelStateTests
 
     /// <summary>[R-M4b · spec 2026-09-18 §1-14 · design v1.20.0 §5] Koşudaki hata, MOTORUN kanıt kararıyla
     /// boyanır (<see cref="ProjectFailedEvent.Evidence"/> — defter yazımıyla aynı kapı): kanıt kırmızıdır
-    /// (<c>failed · just now</c>); kanıt olmayan hata hemen gridir (<c>never built</c>) — timeout, stop, invoke
+    /// (<c>failed</c>); kanıt olmayan hata hemen gridir (<c>never built</c>) — timeout, stop, invoke
     /// hatası VE yakınsamayan bir SCC'nin <c>exit N</c> ile biten üyesi (metin kanıt gibi görünür, defter kanıt
-    /// saymaz). Başarı hata zamanını düşürür; Sync'in getirdiği hata zamanı satıra taşınır.
+    /// saymaz).
     /// <para><b>[DEĞİŞEN KURAL — R-M4b]</b> İlk hâl App'te <c>Reason</c> metnini sınıflandırıyordu; SCC üyesinde
-    /// satır ile bir sonraki Sync ayrışıyordu (review I1).</para></summary>
+    /// satır ile bir sonraki Sync ayrışıyordu (review I1).</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Test ayrıca hata ZAMANININ satırda yaşadığını
+    /// pinliyordu: Sync'in getirdiği <c>FailedAt</c> satıra taşınır, kanıtlı hata onu ŞİMDİ'ye, başarı ve
+    /// kanıtsız hata <c>null</c>'a çeker. O alanın tek okuyucusu <c>failed · 2h</c> kuyruğuydu; yaş kalkınca
+    /// alan satırdan da kalktı. Kanıt kuralının KENDİSİ (gerekçe + renk) değişmedi ve burada pinlenmeye devam
+    /// ediyor.</para></summary>
     [Fact]
     public void A_run_failure_is_painted_by_the_same_evidence_rule_the_ledger_uses()
     {
@@ -1518,9 +1523,8 @@ public class RunViewModelStateTests
             Item("Invoke", true, WillBuildReason.SignatureChanged),
             Item("Cyc", true, WillBuildReason.SignatureChanged),
             Item("Fixed", true, WillBuildReason.LastFailed, failedAt: earlier));
-        Assert.Equal(earlier, RowOf(vm, "Fixed").FailedAt); // Sync'in hata zamanı satırda
+        Assert.Equal(WillBuildReason.LastFailed, RowOf(vm, "Fixed").WillBuildReason); // ön koşul: kırmızı
 
-        var before = DateTimeOffset.Now;
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug", 0));
         foreach (var n in new[] { "Exit", "Slow", "Stop", "Invoke", "Cyc", "Fixed" })
             vm.OnEvent(new ProjectStartedEvent("r1", P(n), n));
@@ -1533,18 +1537,15 @@ public class RunViewModelStateTests
 
         var exit = RowOf(vm, "Exit");
         Assert.Equal(WillBuildReason.LastFailed, exit.WillBuildReason);
-        Assert.NotNull(exit.FailedAt);
-        Assert.True(exit.FailedAt >= before);
         Assert.Equal(VisualStatus.Failed, exit.VisualStatus);
         foreach (var n in new[] { "Slow", "Stop", "Invoke", "Cyc" })
         {
             var row = RowOf(vm, n);
             Assert.Equal(ProjectRowState.Failed, row.State);            // koşu hikâyesi: bu koşuda patladı
             Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
-            Assert.Null(row.FailedAt);
             Assert.Equal(VisualStatus.Stale, row.VisualStatus);         // ama kanıt değil: gri
         }
-        Assert.Null(RowOf(vm, "Fixed").FailedAt);
+        Assert.Equal(WillBuildReason.UpToDate, RowOf(vm, "Fixed").WillBuildReason); // başarı kırmızıyı düşürdü
         Assert.Equal(5, vm.Counters.Failed);                             // şerit/konsol koşu hikâyesi değişmez
     }
 
