@@ -783,7 +783,9 @@ signature has not moved and whose ledger note names the root dependencies reads 
 *waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
 roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
 the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
-*built against a failed dependency*, because nothing could tell the run when to stop waiting.
+*built against a failed dependency*, because nothing could tell the run when to stop waiting. An output built
+outside this tool reads the same note, without the signature test, when its time verdict is fresh and a
+recorded root is still in trouble (§7.6).
 
 **The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
 failed dependency, or built against a failed dependency whose roots are unknown; and, from the output evidence
@@ -877,18 +879,51 @@ a delete or a rename moves only the folder's time — is strictly newer → **ou
 project's own `HintPath` targets is strictly newer → **output stale**, from a dependency; a learned fed copy is
 broken → **output replaced**; otherwise **built outside this tool** — green, and not compiled. An input exactly
 as old as the output counts as current, and a missing or unreadable input or target is ignored. Time mode has
-no red: the ledger's notes (the failed signature, the dependency issue) describe a build older than the output
-on disk and are not read. Nothing is written back to the ledger; every Sync proves the output again.
+no red: the ledger's failed signature describes a build older than the output on disk and is not read. One note
+is read, and never on its own: a fresh output whose record carries a dependency issue with recorded roots reads
+**waiting for a dependency** — the same answer ledger mode gives — but only while at least one of those roots
+is still in trouble in this plan. A fresh verdict proves no more than "no `HintPath` target of mine is newer
+than my output"; it does not prove the build done elsewhere linked against the root's old copy. If the root
+was fixed and rebuilt elsewhere too, and the dependent was rebuilt after it, the note is simply out of date and
+is ignored — the row is plain built outside this tool. Otherwise the note is a condition, not an order to
+compile: the row stays green, the warning triangle names the roots, and the run compiles the project only if a
+root recovers (§8.3). Whether a root is still in trouble is the one question the run asks too, and it has one
+answer: a project is *current* exactly when its reason is up to date or built outside this tool. Because that
+answer needs the whole plan, the note is the one part of the decision made after every project has its own
+(`BuildPreview`, not the evaluator). A note with no recorded roots is not read, since the only thing it could
+say is an unconditional *compile*, which would rebuild an output refreshed elsewhere on every run. Nothing is
+written back to the ledger; every Sync proves the output again.
 
 **Behind a dependency that will build.** A time check reads only file times, so it cannot see that a dependency
 is about to be rebuilt: until that build runs, the dependency's shared copy is still the old one and the
-dependent's output looks current against it. Dependents are always judged by the signature, so in the Safe mode
-(§7.2) a time-mode project any of whose upstream projects in the plan — directly or transitively — will build
-reads output stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own
-files did not change, and carries no built-outside age. A project whose own verdict comes earlier in the order
-above — no build evidence, or an own input newer — keeps it. The Fast mode follows no upstream and does not
-cascade here either. The rule lives in the planner, after every project's own decision, and does not depend on
-the plan's order.
+dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
+project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
+stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
+change, and carries no built-outside age.
+
+Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
+never built, because it was built against a failed dependency whose roots are unknown, or because its own
+output is missing, replaced or older than its inputs, leaves a new copy behind, and seeds the cascade. Two
+reasons do not. A proven failure (§7.4) will compile again from sources that have not moved since it failed,
+so the likely outcome is the same failure and the same copy left in place — and the dependent was built
+elsewhere against that very copy, so pulling it to `affected` would be a false claim of staleness; the same
+failed root under a ledger-mode dependent reads green with the warning triangle, and the two modes must not
+disagree. The signature only summarises sources, though, so a failure whose cause was somewhere else — a
+missing assembly, a restore, a locked file — can well succeed this time. The accepted cost is one round: the
+time-mode project behind it stays skipped in that run and is compiled after the next Sync, which reads it
+stale from the root's new `HintPath` time. One late round beats a wrong `affected` on every run. A project
+waiting for a dependency compiles only if one of its roots recovers (§8.3), so its new output is a possibility
+and not a fact; when a root does recover and it is compiled, its own dependents read stale from their
+`HintPath` times at the next Sync anyway. A cycle member is the exception: a group is never split, so a member
+that reads waiting for a dependency compiles unconditionally in the *Cycles* run that builds it, and there it
+seeds. A dependent behind both a failed root and a genuinely dirty upstream is reached from the dirty one and
+reads `affected` as before.
+
+The walk from those seeds does not discriminate: it follows the reverse edges to every transitive dependent,
+because each project it pulls will be built and dirties its own downstream in turn. A project whose own verdict
+comes earlier in the order above — no build evidence, or an own input newer — keeps it. The Fast mode follows
+no upstream and does not cascade here either. The rule lives in the planner, after every project's own
+decision, and does not depend on the plan's order.
 
 **`modified` or `affected`.** In time mode the split comes from the evidence — own input newer means
 `modified` — and elsewhere from the stored content fingerprint compared with today's (§7.5). The Sync and a
@@ -1112,16 +1147,26 @@ said "everything will build".
 **The note triggers a rebuild when a root recovers, not on every Build.** Recompiling a project while its root
 still fails buys nothing — it links to the same last successful output again — and it meant projects the
 marking wave never lit turning amber and compiling on the next `Build`. So a noted
-project whose signature has not moved is *waiting for dependency* (§7.4) and is evaluated when its turn comes,
+project whose signature has not moved is *waiting for dependency* (§7.4) — as is one whose output was built
+elsewhere, still reads fresh, and has a root still in trouble (§7.6) — and is evaluated when its turn comes,
 because only then — every dependency terminal — is the roots' result in this run known (`ConditionalRebuild`):
 
 | A recorded root… | reads as |
 |---|---|
 | compiled in this run and succeeded | recovered |
 | compiled in this run and failed | still failing |
-| not compiled in this run (up to date, out of scope, cycle) — last recorded result success | recovered |
-| not compiled in this run — last recorded result failure | still failing |
+| not compiled in this run, and this run's preview found its output current — up to date, or built outside this tool | recovered |
+| not compiled in this run, its reason not a current one (say a dormant cycle member reading signature changed) — last recorded result success | recovered |
+| the same, and its last recorded result a failure | still failing |
 | no longer in the workspace, or without a record | recovered (build — the safe direction) |
+
+The preview comes before the ledger because it is the fresher witness: the record says what this tool last saw,
+the preview says what is on disk now. A root fixed and rebuilt in Visual Studio reads built outside this tool
+and is pre-skipped, while its record still says *failed* — reading the record first would keep every dependent
+skipped as `dependency still failing` until the tool itself compiled the root, a state nothing in the flow
+could leave. Ledger mode had the same hole, more rarely: a root whose signature matches its last success but
+whose last run failed reads up to date and is pre-skipped too. One rule closes both, and it is the same
+*current* the dependency note is weighed against (§7.6).
 
 One recovered root is enough: the project compiles normally and its note is cleared or renewed by the ordinary
 rule. When every root still fails the project is skipped as `skipped — dependency still failing`, with the roots
@@ -4764,7 +4809,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
 | Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
-| Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
+| Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |

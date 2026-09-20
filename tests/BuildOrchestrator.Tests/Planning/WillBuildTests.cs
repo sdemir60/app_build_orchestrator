@@ -373,17 +373,47 @@ public class WillBuildTests
     }
 
     /// <summary>§5.4: zaman kipinde kırmızı yok — hata imzası bugünküyle eşleşse de, dep-issue notu olsa da
-    /// defter notları okunmaz; hüküm kanıttan.</summary>
+    /// defter notları BU YÜZEYDE okunmaz; hüküm kanıttan. Bağımlılık notu tek bir projeye bakarak
+    /// değerlendirilemez (kökün bugünkü hâli gerekir) ve yalnız <c>BuildPreview</c>'da, planın tamamı
+    /// görünürken okunur — bkz. <c>IncrementalPlannerTests</c>'in bağımlılık notu testleri.</summary>
     [Fact]
     public void Time_mode_never_reads_red()
     {
         var failed = new BuildState("A", "sig0", LastResult: BuildResult.Failed, FailedSignature: "sig1");
-        var depIssue = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true);
+        var note = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
 
         Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", failed));
         Assert.Equal((true, WillBuildReason.OutputStale), With(Time(TimeVerdict.OwnNewer), "sig1", failed));
-        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", depIssue));
+        Assert.Equal((false, WillBuildReason.BuiltOutside),
+            With(Time(TimeVerdict.Fresh), "sig1", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true)));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", note));
     }
+
+    /// <summary><see cref="WillBuildEvaluator.OutputIsCurrent"/> <c>WillBuild</c> kapısının TA KENDİSİDİR ve
+    /// koşullu yeniden derlemenin kök sınıflandırması ile bağımlılık notunun geçerlilik kapısı da onu okur
+    /// (kopya YASAK). Yalnız iki gerekçe "çıktı güncel" der; gerekçesiz (hollow) hâl güncel değildir.</summary>
+    [Fact]
+    public void Output_is_current_for_exactly_up_to_date_and_built_outside()
+    {
+        foreach (var reason in Enum.GetValues<WillBuildReason>())
+            Assert.Equal(
+                reason is WillBuildReason.UpToDate or WillBuildReason.BuiltOutside,
+                WillBuildEvaluator.OutputIsCurrent(reason));
+        Assert.False(WillBuildEvaluator.OutputIsCurrent(null));
+    }
+
+    /// <summary>Kapsam kısa devresi de TEK yüklemdir (<see cref="WillBuildEvaluator.OutOfScope"/>): yalnız bir
+    /// SCC üyesi, yalnız döngüleri derlemeyen bir koşuda kapsam dışıdır. Değerlendirici ve
+    /// <c>BuildPreview</c>'ın not geçişi onu aynı yerden okur — kopya YASAK.</summary>
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void Out_of_scope_is_a_cycle_member_in_a_run_that_does_not_build_cycles(
+        bool inCycle, bool buildCycles, bool expected)
+        => Assert.Equal(expected, WillBuildEvaluator.OutOfScope(inCycle, buildCycles));
 
     /// <summary>§5.4: zaman hükmü → gerekçe. Kendi girdisi ya da HintPath hedefi yeni ⇒ <c>OutputStale</c>;
     /// kanıt yok ⇒ <c>OutputMissing</c>; beslenen kopya bozuk ⇒ <c>OutputReplaced</c>. Hepsi derlenir.</summary>

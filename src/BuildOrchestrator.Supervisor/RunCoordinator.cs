@@ -1173,6 +1173,12 @@ public sealed class RunCoordinator(
         }
     }
 
+    /// <summary>[koşullu yeniden derleme] Bir kökün BU KOŞUNUN önizlemesindeki gerekçesi —
+    /// <see cref="ConditionalRebuild"/>'in kök sınıflandırması bunu defterin son sonucundan ÖNCE okur. Karar ve
+    /// atlama satırı AYNI kaynağı görür (kopya YASAK).</summary>
+    private static Func<string, WillBuildReason?> ReasonOf(RunContext run) =>
+        id => run.NodeById.GetValueOrDefault(id)?.WillBuildReason;
+
     /// <summary>
     /// [koşullu yeniden derleme] Koşullu projenin kararını UYGULAR (karar <see cref="ConditionalRebuild.Decide"/>'da).
     /// Kayıtlı köklerin hepsi hâlâ hatalıysa proje derlenmeden <see cref="SkipReasons.DependencyStillFailing"/> ile
@@ -1194,7 +1200,7 @@ public sealed class RunCoordinator(
         {
             recorded = run.LedgerAtStart?.GetValueOrDefault(projectId);
             if (ConditionalRebuild.Decide(recorded?.DepIssueRoots, run.Scheduler.Completed, run.NodeById.ContainsKey,
-                    run.LedgerAtStart) != ConditionalRebuildVerdict.DependencyStillFailing)
+                    run.LedgerAtStart, ReasonOf(run)) != ConditionalRebuildVerdict.DependencyStillFailing)
                 return false;
         }
         catch (Exception ex)
@@ -1213,6 +1219,7 @@ public sealed class RunCoordinator(
             // basılmaz. Kök GERÇEKTEN bu koşuda patladıysa (bugünkü senaryoların hepsi) metin DEĞİŞMEZ.
             string roots = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
                 recorded!.DepIssueRoots, run.Scheduler.Completed, run.NodeById.ContainsKey, run.LedgerAtStart,
+                ReasonOf(run),
                 id => run.NodeById.GetValueOrDefault(id)?.Name ?? Path.GetFileNameWithoutExtension(id)));
             ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId),
                 SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: roots);

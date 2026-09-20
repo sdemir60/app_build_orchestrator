@@ -1,6 +1,7 @@
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 
 namespace BuildOrchestrator.Tests.Incremental;
 
@@ -883,6 +884,222 @@ public class IncrementalPlannerTests
         Assert.True(result.Nodes.Single(n => n.Id == "D").WillBuild);
         Assert.All(result.Nodes.Where(n => n.Id != "D"),
             n => Assert.Equal((false, WillBuildReason.BuiltOutside), (n.WillBuild, n.WillBuildReason)));
+    }
+
+    // ---- [kullanıcı kararı 2026-09-20] cascade YALNIZ yeni çıktı üretecek upstream'den başlar ---------------
+
+    /// <summary>
+    /// <c>F</c> defterde KANITLI kırmızıdır (<c>LastFailed</c>): kaynağı değişmedi, bu Build'de yine patlayacak
+    /// ve ortak kopyası DEĞİŞMEYECEK. Zaman kipindeki bağımlısı <c>P</c> (ve transitive <c>P2</c>) tam da o eski
+    /// kopyaya karşı dışarıda derlendi — hükümleri <c>BuiltOutside</c> kalır, gri <c>affected</c>'a çekilmezler.
+    /// Kirli <c>G</c>'nin arkasındaki <c>M</c> ise bugünkü davranışını korur (<c>OutputStale</c>).
+    /// </summary>
+    [Fact]
+    public void A_time_mode_project_behind_a_failed_upstream_keeps_its_own_verdict()
+    {
+        var (plan, fp, state, outputs) = FailedUpstreamFixture();
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((true, WillBuildReason.LastFailed), Of("F"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("P"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("P2"));
+        // Kendi dosyası değişmedi ve bayat da değil ⇒ satır yeşil, "affected" değil.
+        Assert.False(OutputEvidence.OwnFilesChanged(outputs["P"], state, "P", "fpP"));
+    }
+
+    /// <summary>Karışık hâl: hem kanıtlı hatanın (<c>F</c>) hem içeriği değişmiş <c>G</c>'nin arkasındaki
+    /// <c>M</c> gri <c>affected</c>'tır — kirli olan kazanır, çünkü <c>G</c>'nin yeni çıktısı gerçekten
+    /// gelecektir.</summary>
+    [Fact]
+    public void A_dependent_behind_both_a_failed_and_a_dirty_upstream_is_still_cascaded()
+    {
+        var (plan, fp, state, outputs) = FailedUpstreamFixture();
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        var m = result.Nodes.Single(n => n.Id == "M");
+        Assert.Equal((true, WillBuildReason.OutputStale), (m.WillBuild, m.WillBuildReason));
+        Assert.True(result.Nodes.Single(n => n.Id == "G").WillBuild);
+    }
+
+    /// <summary>
+    /// Zaman kipi defter kipini AYNALAR: dışarıda derlenmiş bağımlının kaydında kökleri BİLİNEN bir bağımlılık
+    /// notu varsa (<c>DepIssue</c> + <c>DepIssueRoots</c>) VE o kök bu planda hâlâ dertliyse hüküm
+    /// <c>WaitingForDependency</c>'dir — satır yeşil kalır (<c>StandingStatus.Current</c>), uyarı üçgeninin
+    /// kökleri okunur ve koşu projeyi koşullu değerlendirir (<c>Conditional=true</c>). Köklerin bu koşuda ne
+    /// yaptığına göre verilen karar <c>ConditionalRebuildTests</c>'in yüzeyidir, burada tekrarlanmaz.
+    /// </summary>
+    [Fact]
+    public void A_time_mode_dependent_with_a_ledger_dependency_note_waits_for_its_root()
+    {
+        var note = Note("F");
+        var (plan, fp, state, outputs) = FailedUpstreamFixture(note);
+
+        var p = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs)
+            .Nodes.Single(n => n.Id == "P");
+
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), (p.WillBuild, p.WillBuildReason));
+        Assert.True(ConditionalRebuild.AppliesTo(p, RunMode.Build, scopedRun: false, cycleGroupMember: false));
+        // Uyarı üçgeninin kökleri: Sync ve koşu önizlemesi DependencyRoots'u bu yardımcıdan yazar.
+        Assert.Equal(["F"], ConditionalRebuild.RootNames(p.WillBuildReason, note, id => id));
+    }
+
+    /// <summary>
+    /// [fix round 1 — bulgu 1] <b>Bayat not kilitlemez.</b> Kök dışarıda (VS'te) düzeltilip derlendiyse kendi
+    /// satırı <c>BuiltOutside</c> (yeşil) okunur; defterdeki not artık BİR ŞEY ANLATMAZ. Taze bir zaman hükmü
+    /// "hiçbir HintPath hedefim benden yeni değil"den fazlasını kanıtlamaz, yani notun hâlâ geçerli olduğu
+    /// ÇIKARILAMAZ. Bağımlı bu yüzden sade <c>BuiltOutside</c>'tır: üçgen yok, koşullu değil. Aksi hâlde Sync'te
+    /// sonsuza dek yanlış bir <c>Dependency issue</c> taşır, koşuda ise <c>dependency still failing</c> ile
+    /// atlanırdı — araç kökü kendisi derleyene kadar kilitli bir durum.
+    /// </summary>
+    [Fact]
+    public void A_dependency_note_whose_roots_are_all_current_is_stale_and_ignored()
+    {
+        var note = Note("F");
+        var (plan, fp, state, outputs) = FailedUpstreamFixture(note, rootFixedOutside: true);
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("F"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("P"));
+        var p = result.Nodes.Single(n => n.Id == "P");
+        Assert.False(ConditionalRebuild.AppliesTo(p, RunMode.Build, scopedRun: false, cycleGroupMember: false));
+        Assert.Null(ConditionalRebuild.RootNames(p.WillBuildReason, note, id => id));
+    }
+
+    /// <summary>[fix round 1 — bulgu 5] Gezinti TOHUMDAN SONRA süzülmez. <c>D</c> tohumdur (çıktısı diskte yok
+    /// ⇒ <c>OutputMissing</c>, imzası değişmemiş); ona bağlı <c>W</c> tohum DEĞİLDİR (<c>WaitingForDependency</c>,
+    /// koşullu) ama gezinti onun üzerinden geçer ve zaman kipindeki yaprak <c>L</c> gri <c>affected</c>'a
+    /// çekilir — <c>W</c> derlenirse yaprağın link'lediği kopya değişecektir.</summary>
+    [Fact]
+    public void The_walk_passes_through_a_conditional_node_to_the_leaf_behind_it()
+    {
+        var r = Node("R", 0, inCycle: false);
+        var d = Node("D", 0, inCycle: false);
+        var w = Node("W", 1, inCycle: false, "D");
+        var l = Node("L", 2, inCycle: false, "W");
+        var plan = new BuildPlan([l, w, d, r], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("R", "fpR"), ("D", "fpD"), ("W", "fpW"), ("L", "fpL")));
+        var signatures = IncrementalPlanner
+            .ComputeWillBuildWithSignatures(plan, fp, NoState, buildCycles: false).SignatureById;
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Kanıtlı kırmızı kök: W'nin notunu CANLI tutar (bulgu 1'in kapısı).
+            ["R"] = new BuildState("R", null, LastResult: BuildResult.Failed, FailedSignature: signatures["R"]),
+            // İmzası değişmedi, yalnız çıktısı diskte yok ⇒ OutputMissing. W'nin imzası bu yüzden SABİT kalır.
+            ["D"] = new BuildState("D", signatures["D"], LastResult: BuildResult.Succeeded),
+            ["W"] = new BuildState("W", signatures["W"], LastResult: BuildResult.Succeeded, DepIssue: true,
+                DepIssueRoots: ["R"]),
+        };
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["R"] = new(EvidenceMode.Ledger, true, true, null, null),
+            ["D"] = new(EvidenceMode.Ledger, true, true, null, null),   // kanıt diskte yok
+            ["W"] = new(EvidenceMode.Ledger, false, true, null, null),
+            ["L"] = new(EvidenceMode.Time, false, true, TimeVerdict.Fresh, null),
+        };
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((true, WillBuildReason.OutputMissing), Of("D"));            // tohum
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), Of("W"));     // tohum DEĞİL
+        Assert.Equal((true, WillBuildReason.OutputStale), Of("L"));              // yine de çekildi
+    }
+
+    /// <summary>
+    /// Not, değerlendiricinin kapsam kısa devresini BOZMAZ: kapsam dışı bir SCC üyesi (Build/Sync,
+    /// <c>buildCycles:false</c>) <c>WaitingForDependency</c> okusa da <c>WillBuild=false</c> kalır ve tohum
+    /// olmaz — arkasındaki zaman kipi yaprağı <c>L</c> çekilmez.
+    /// <para>[fix round 1 — bulgu 4] Cycles koşusunda ise üye DERLENİR ve döngü üyesi koşullu OLMADIĞI için
+    /// (<see cref="ConditionalRebuild.AppliesTo"/> grubu bölmez) derlemesi kesindir: tohumdur, <c>L</c> gri
+    /// <c>affected</c>'a çekilir. Üyenin KENDİ hükmü o koşuda <c>OutputStale</c>'e döner — bir SCC tohumu ters
+    /// kenarlar üzerinden kendine geri ulaşır, grup bütün olarak bayatlar (§5.6 ile aynı yön).</para>
+    /// </summary>
+    [Fact]
+    public void A_cycle_member_with_a_dependency_note_seeds_only_where_it_is_built()
+    {
+        var f = Node("F", 0, inCycle: false);
+        var a = Node("A", 1, inCycle: true, "F", "B");
+        var b = Node("B", 1, inCycle: true, "A");
+        var l = Node("L", 2, inCycle: false, "A");
+        var plan = new BuildPlan([l, a, b, f], [["A", "B"]], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("F", "fpF"), ("A", "fpA"), ("B", "fpB"), ("L", "fpL")));
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new BuildState("F", null, LastResult: BuildResult.Failed,
+                FailedSignature: BuildSignature.Compute(f, "Debug", "fpF", _ => null)),
+            ["A"] = new BuildState("A", "sigA", LastResult: BuildResult.Succeeded, DepIssue: true,
+                DepIssueRoots: ["F"]),
+        };
+        OutputCheck Fresh() => new(EvidenceMode.Time, false, true, TimeVerdict.Fresh, null);
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new(EvidenceMode.Ledger, true, true, null, null),
+            ["A"] = Fresh(),
+            ["B"] = Fresh(),
+            ["L"] = Fresh(),
+        };
+
+        BuildPlan Run(bool buildCycles) =>
+            IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles, outputs: outputs);
+        (bool?, WillBuildReason?) Of(BuildPlan p, string id) =>
+            p.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+
+        var outOfScope = Run(buildCycles: false);
+        Assert.Equal((false, WillBuildReason.WaitingForDependency), Of(outOfScope, "A"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of(outOfScope, "L"));
+
+        var cycles = Run(buildCycles: true);
+        Assert.Equal((true, WillBuildReason.OutputStale), Of(cycles, "L"));
+    }
+
+    /// <summary>Kanıtlı hata fixture'ının bağımlılık notu — kökleri BİLİNEN, imzası değişmemiş bir başarı.</summary>
+    private static BuildState Note(params string[] roots) =>
+        new("P", "sigP", LastResult: BuildResult.Succeeded, DepIssue: true, DepIssueRoots: roots);
+
+    /// <summary>Kanıtlı hata fixture'ı: <c>F</c> defterde KANITLI kırmızı (hata anındaki imza bugünküyle aynı,
+    /// hiç başarısı yok) ⇒ <c>LastFailed</c>; <c>G</c> kayıtlı ve içeriği değişmiş ⇒ <c>SignatureChanged</c>.
+    /// <c>P → F</c>, <c>P2 → P</c>, <c>M → F, G</c> (karışık hâl); üçü de zaman kipinde ve tazedir. Düğümler
+    /// bilerek ters (topolojik olmayan) sıradadır. <paramref name="dependentState"/> verilirse <c>P</c>'nin
+    /// defter kaydıdır. <paramref name="rootFixedOutside"/> ile <c>F</c>'in çıktısı dışarıda tazelenmiş sayılır
+    /// (zaman kipi, taze) — defter kaydı yine "hata"dır, düzelmeyi araç görmemiştir.</summary>
+    private static (BuildPlan Plan, Func<ProjectNode, string?> Fp, Dictionary<string, BuildState> State,
+        Dictionary<string, OutputCheck> Outputs) FailedUpstreamFixture(
+        BuildState? dependentState = null, bool rootFixedOutside = false)
+    {
+        var f = Node("F", 0, inCycle: false);
+        var g = Node("G", 0, inCycle: false);
+        var p = Node("P", 1, inCycle: false, "F");
+        var p2 = Node("P2", 2, inCycle: false, "P");
+        var m = Node("M", 2, inCycle: false, "F", "G");
+        var plan = new BuildPlan([p2, m, p, g, f], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(
+            ("F", "fpF"), ("G", "fpG-v2"), ("P", "fpP"), ("P2", "fpP2"), ("M", "fpM")));
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new BuildState("F", null, LastResult: BuildResult.Failed,
+                FailedSignature: BuildSignature.Compute(f, "Debug", "fpF", _ => null)),
+            ["G"] = new BuildState("G", BuildSignature.Compute(g, "Debug", "fpG-v1", _ => null),
+                LastResult: BuildResult.Succeeded),
+        };
+        if (dependentState is not null) state["P"] = dependentState;
+        OutputCheck TimeOf(TimeVerdict verdict) => new(EvidenceMode.Time, false, true, verdict, null);
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = rootFixedOutside ? TimeOf(TimeVerdict.Fresh) : new(EvidenceMode.Ledger, true, true, null, null),
+            ["G"] = new(EvidenceMode.Ledger, false, true, null, null),
+            ["P"] = TimeOf(TimeVerdict.Fresh),
+            ["P2"] = TimeOf(TimeVerdict.Fresh),
+            ["M"] = TimeOf(TimeVerdict.Fresh),
+        };
+        return (plan, fp, state, outputs);
     }
 
     /// <summary>Kirli upstream fixture'ı: <c>D</c> kayıtlı ve imzası değişmiş (defter kipi); <c>P → D</c>,

@@ -229,18 +229,22 @@ public static class IncrementalPlanner
     /// <summary>
     /// [Faz 3 final review — ruling R10, spec 2026-09-18 §5.4 "Bağımlı projeler her zaman imzayla değerlendirilir"]
     /// Zaman kontrolü yalnız dosya zamanlarını okur: bağımlılığı <c>D</c> bu Build'de yeniden derlenecekken
-    /// (<c>WillBuild == true</c>) <c>D</c>'nin ortak kopyası henüz eskidir ve zaman kipindeki bağımlısı taze
-    /// (<c>BuiltOutside</c>) okunup pre-skip edilirdi — ağaç ancak N Sync+Build turunda tutarlı olurdu. Defter
-    /// kipindeki bağımlıda bu sorun yoktur: upstream'in imzası onun imzasına girer.
+    /// <c>D</c>'nin ortak kopyası henüz eskidir ve zaman kipindeki bağımlısı taze (<c>BuiltOutside</c>) okunup
+    /// pre-skip edilirdi — ağaç ancak N Sync+Build turunda tutarlı olurdu. Defter kipindeki bağımlıda bu sorun
+    /// yoktur: upstream'in imzası onun imzasına girer.
     ///
-    /// <para>Kural: plan içindeki (transitive) upstream'lerinden biri <c>WillBuild == true</c> biten zaman kipi
-    /// düğümünün kontrolü <see cref="TimeVerdict.DependencyNewer"/>'a çekilir — değerlendirici onu
+    /// <para>Kural: <see cref="ProducesNewOutput"/> olan bir upstream'in (doğrudan ya da transitive) arkasındaki
+    /// zaman kipi düğümünün kontrolü <see cref="TimeVerdict.DependencyNewer"/>'a çekilir — değerlendirici onu
     /// <c>OutputStale</c> ile derlenecek okur, kendi dosyası değişmediği için etiket <c>affected</c>'tır
     /// (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>). Yalnız <see cref="TimeVerdict.Fresh"/>
     /// ve <see cref="TimeVerdict.FedBroken"/> çekilir: zaman kipinin sırasında "bağımlılık yeni" beslenen kopyanın
     /// önündedir; kanıtı olmayan (<see cref="TimeVerdict.Missing"/>) ya da kendi girdisi yeni
     /// (<see cref="TimeVerdict.OwnNewer"/>) düğüm kendi hükmünü korur. Kapsam dışı döngü üyesi yine
     /// derlenmez — onu değerlendirici söyler, burada tekrarlanmaz.</para>
+    ///
+    /// <para><b>Gezinti tohumdan SONRA süzülmez.</b> Cascade yalnız <see cref="ProducesNewOutput"/> düğümlerden
+    /// BAŞLAR; oraya varan gezinti ters kenarları ayrım yapmadan izler, çünkü çekilen her düğüm de derlenecektir
+    /// ve kendi aşağı akışını kirletir.</para>
     ///
     /// <para>Sıradan bağımsızdır (plan topolojik sıralı olmak zorunda değil [A1]) ve döngüye dayanıklıdır: kirli
     /// düğümlerden ters kenarlar boyunca TEK bir genişlik-öncelikli gezinti (ziyaret kümesiyle). Bu geçişte kirli
@@ -259,7 +263,7 @@ public static class IncrementalPlanner
             }
 
         var behind = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var queue = new Queue<string>(decided.Nodes.Where(n => n.WillBuild == true).Select(n => n.Id));
+        var queue = new Queue<string>(decided.Nodes.Where(ProducesNewOutput).Select(n => n.Id));
         while (queue.TryDequeue(out string? id))
             foreach (string dependent in dependents.GetValueOrDefault(id) ?? [])
                 if (behind.Add(dependent)) queue.Enqueue(dependent);
@@ -274,6 +278,42 @@ public static class IncrementalPlanner
         foreach (string id in pulled) result[id] = outputs[id] with { Time = TimeVerdict.DependencyNewer };
         return result;
     }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-20] Bu düğümün derlenmesi ortak kopyayı GERÇEKTEN tazeler mi — cascade'in
+    /// (<see cref="BehindDirtyUpstream"/>) tohum ölçütü. Derlenecek olmak yetmez, YENİ bir çıktı gelmesi gerekir:
+    /// <c>SignatureChanged</c>, <c>NeverBuilt</c>, <c>DepIssue</c>, <c>OutputStale</c>, <c>OutputMissing</c> ve
+    /// <c>OutputReplaced</c> böyledir.
+    ///
+    /// <para>İki gerekçe DIŞARIDADIR. <see cref="WillBuildReason.LastFailed"/> KANITLI bir derleyici hatasıdır:
+    /// hata anındaki imza bugünküyle AYNI, yani kaynaklar değişmedi — <b>en olası</b> sonuç aynı hatanın
+    /// tekrarlanması ve ortak kopyanın olduğu gibi kalmasıdır. Arkasındaki zaman kipi düğümü tam da o kopyaya
+    /// karşı dışarıda derlenmiştir; onu gri <c>affected</c>'a çekmek yanlış bir bayatlık iddiasıdır (defter
+    /// kipindeki bağımlı aynı durumda yeşil + uyarı üçgeni okunur, iki kip ayrışamaz).
+    /// <b>Kabul edilen bedel:</b> imza yalnız kaynakları özetler, bu yüzden nedeni kaynakta OLMAYAN bir hata
+    /// (eksik DLL, restore, kilitli dosya) aradan düzelmiş olabilir ve kök bu koşuda BAŞARIYLA derlenebilir;
+    /// o zaman arkasındaki zaman kipi düğümü bir tur pre-skip kalır ve ancak bir sonraki Sync'te — kendi
+    /// HintPath hedefinin yeni tarihinden — bayat okunup derlenir. Bir tur gecikme, her koşuda yanlış bir
+    /// <c>affected</c>'a yeğlenir.</para>
+    ///
+    /// <para><see cref="WillBuildReason.WaitingForDependency"/> ise KOŞULLUDUR: koşu onu yalnız bir kök
+    /// düzelirse derler (<see cref="ConditionalRebuild"/>), yani yeni çıktı bir olgu değil bir ihtimaldir. Kök
+    /// gerçekten düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync
+    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Ama döngü üyesi koşullu DEĞİLDİR</b>
+    /// (<see cref="ConditionalRebuild.AppliesTo"/>: grup tek iş kalemidir, bir üyeyi atlamak grubu yarım
+    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (Cycles)
+    /// KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
+    /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
+    /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli yoktur: <see cref="ProjectRunScope.Of"/>
+    /// planı TEK düğüme indirir, yani o koşuda çekilecek bir bağımlı hiç yoktur.</para>
+    ///
+    /// <para>Karışık hâl kendiliğinden doğrudur: hem kanıtlı hatanın hem içeriği değişmiş bir upstream'in
+    /// arkasındaki düğüm, ikincisinin tohumundan gezintiye girer ve gri <c>affected</c> olur.</para>
+    /// </summary>
+    private static bool ProducesNewOutput(ProjectNode node) =>
+        node.WillBuild == true
+        && node.WillBuildReason != WillBuildReason.LastFailed
+        && (node.WillBuildReason != WillBuildReason.WaitingForDependency || node.InCycle);
 
     /// <summary>
     /// [D1][D5] Bir projenin içerik fingerprint'i: girdi dosyalarının (bkz. <see cref="ProjectInputs"/>)
