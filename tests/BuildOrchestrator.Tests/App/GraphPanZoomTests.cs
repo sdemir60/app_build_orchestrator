@@ -332,4 +332,37 @@ public class GraphPanZoomTests
         Assert.Equal(GraphCamera.Default, view.CurrentCamera);
         Assert.Equal(GraphCamera.Default, view.LiveCameraForTest);
     }
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-19 · regresyon guard'ı] Yukarıdaki pin <see cref="GraphView"/>'ı DOĞRUDAN
+    /// sürer; ÜRETİMDE arada bir kablo vardır: Build komutu → VM'in <c>OperationChoreography</c> delegesi →
+    /// kabuk → <c>GraphHost.BeginOperation()</c> (<c>MainWindow.xaml.cs</c>, koreografi delegesi). O kablo
+    /// koparsa (delege hiç kurulmazsa ya da <c>BeginOperation</c> çağrısı oradan düşerse) birim testi yeşil
+    /// kalır ve kullanıcı yine zoom'lu grafta koşu izler. Burada GERÇEK pencere kurulur, graf üretimdeki wheel
+    /// seam'iyle zoom'lanır ve ÜRETİM Build komutu koşturulur.
+    ///
+    /// <para><b>Hareket KAPALI.</b> Bu kabuk graf motion'ını <c>App.Motion</c>'dan alır ve headless'ta o
+    /// null'dır. Açık olsaydı <c>ApplyCamera(animate: true)</c> gerçek bir 460 ms'lik WPF saati başlatırdı;
+    /// ekrandaki kamera (<c>LiveCamera</c>) ancak duvar saati dolunca Default'a otururdu ve testin onu
+    /// beklemesi determinizmi bozardı. Kapalı yolda hedef ile ekran aynı turda Default olur — bu testin
+    /// pinlediği şey kablonun KENDİSİDİR, animasyonlu dal değil (onu <c>BeginOperation</c>'ın kendi pini
+    /// kapsar).</para>
+    /// </summary>
+    [StaFact]
+    public async Task Pressing_Build_in_the_real_window_returns_a_zoomed_camera_to_the_fitted_view()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("Alpha", null), ("Beta", null));
+        MainWindowHost.AcceptSends(vm);
+        var graph = window.Shell.GraphHost;
+
+        graph.HandleWheel(Anchor, 120);
+        Assert.NotEqual(GraphCamera.Default, graph.LiveCameraForTest); // ön-koşul: ekran GERÇEKTEN zoomlu
+
+        await vm.BuildCommand.ExecuteAsync(null); // üretim yolu: komut → koreografi → BeginOperation
+
+        Assert.Equal(GraphCamera.Default, graph.CurrentCamera);
+        Assert.Equal(GraphCamera.Default, graph.LiveCameraForTest);
+        GC.KeepAlive(window);
+    }
 }
