@@ -27,9 +27,10 @@ public enum ConditionalRebuildVerdict
 ///
 /// <para><b>Kök sonucu nereden okunur.</b> Kararın anı projenin hazır olduğu andır: tüm bağımlılıkları (ve
 /// dolayısıyla onların üstündeki kökler) bu koşuda terminaldir. Bu koşuda DERLENEN kökün sonucu koşudan okunur;
-/// derlenmeyen (up to date / kapsam dışı / döngüde atlanan ya da koşuda hiç görünmeyen) kökün sonucu koşu
-/// başındaki defterden okunur. Belirsizlikte yön DERLEMEdir: kök bilinmiyorsa, projede artık yoksa ya da
-/// defterde kaydı yoksa proje derlenir.</para>
+/// derlenmeyen (up to date / kapsam dışı / döngüde atlanan ya da koşuda hiç görünmeyen) kökün önce BU KOŞUNUN
+/// ÖNİZLEMESİNE bakılır — çıktısı güncel bulunduysa kök temizdir — ve ancak orada bir şey kanıtlanamıyorsa koşu
+/// başındaki defter okunur. Belirsizlikte yön DERLEMEdir: kök bilinmiyorsa, projede artık yoksa ya da defterde
+/// kaydı yoksa proje derlenir.</para>
 /// </summary>
 public static class ConditionalRebuild
 {
@@ -56,16 +57,19 @@ public static class ConditionalRebuild
     /// <param name="completedThisRun">Bu koşunun terminal sonuçları (pre-skip tohumları dahil).</param>
     /// <param name="inWorkspace">Kimlik bu koşunun planında var mı. Yoksa ⇒ derlenir.</param>
     /// <param name="ledgerAtRunStart">Koşu başında okunan defter. Kök kaydı yoksa ⇒ derlenir.</param>
+    /// <param name="reasonOf">Kökün BU KOŞUNUN önizlemesindeki gerekçesi (<c>ProjectNode.WillBuildReason</c>);
+    /// bilinmiyorsa <c>null</c>. Bkz. <see cref="ClassifyRoot"/> — defterin son sonucundan DAHA TAZE kanıttır.</param>
     public static ConditionalRebuildVerdict Decide(IReadOnlyList<string>? rootIds,
         IReadOnlyDictionary<string, BuildResult> completedThisRun, Func<string, bool> inWorkspace,
-        IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart)
+        IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart, Func<string, WillBuildReason?> reasonOf)
     {
         ArgumentNullException.ThrowIfNull(completedThisRun);
         ArgumentNullException.ThrowIfNull(inWorkspace);
+        ArgumentNullException.ThrowIfNull(reasonOf);
         if (rootIds is not { Count: > 0 }) return ConditionalRebuildVerdict.Build;
 
         foreach (string root in rootIds)
-            if (ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart) == RootEvidence.Cleared)
+            if (ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart, reasonOf) == RootEvidence.Cleared)
                 return ConditionalRebuildVerdict.Build;
         return ConditionalRebuildVerdict.DependencyStillFailing;
     }
@@ -84,14 +88,34 @@ public static class ConditionalRebuild
         FailedInLedgerOnly,
     }
 
+    /// <summary>
+    /// Bir kökün kanıt sırası: çalışma alanından düştü → bu koşuda derlendi → BU KOŞUNUN ÖNİZLEMESİ →
+    /// koşu başındaki defter.
+    ///
+    /// <para><b>Önizleme defterden daha tazedir (kullanıcı kararı 2026-09-20).</b> Kök bu koşuda derlenmediyse
+    /// ve önizleme onun çıktısını GÜNCEL buluyorsa (<see cref="WillBuildEvaluator.OutputIsCurrent"/> — yani
+    /// <c>up to date</c> ya da <c>built outside this tool</c>) kök temizdir, defterin "son sonuç: hata" kaydına
+    /// BAKILMAZ. O kayıt aracın en son ne gördüğünü anlatır; önizleme ise DİSKİN ŞU ANKİ hâlini. İki kip de bu
+    /// deliği taşıyordu: kök dışarıda (VS'te) düzeltilip derlendiğinde zaman kipinde <c>BuiltOutside</c> okunup
+    /// pre-skip edilir, defterde ise hâlâ <c>Failed</c> durur — bağımlı, araç kökü kendisi derleyene kadar her
+    /// koşuda <c>dependency still failing</c> ile atlanırdı (kilitli durum). Defter kipinde de aynı hâl
+    /// (kaydı <c>LastResult=Failed</c> ama imzası eşleşen, hata imzası artık tutmayan bir kök <c>up to date</c>
+    /// okunur) daha seyrek olarak vardı. TEK kural ikisini de kapatır.</para>
+    ///
+    /// <para>Güncel OLMAYAN bir gerekçe (ör. kapsam dışı bir döngü üyesinin <c>SignatureChanged</c>'i) hiçbir
+    /// şey KANITLAMAZ — orada karar yine defterin son bilinen sonucuna düşer.</para>
+    /// </summary>
     private static RootEvidence ClassifyRoot(string root, IReadOnlyDictionary<string, BuildResult> completedThisRun,
-        Func<string, bool> inWorkspace, IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart)
+        Func<string, bool> inWorkspace, IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart,
+        Func<string, WillBuildReason?> reasonOf)
     {
         if (!inWorkspace(root)) return RootEvidence.Cleared;
 
-        // Bu koşuda DERLENDİ: sonucu koşudan. Skipped "derlenmedi" demektir — sonucu defterden okunur.
+        // Bu koşuda DERLENDİ: sonucu koşudan. Skipped "derlenmedi" demektir — aşağıdan devam edilir.
         if (completedThisRun.TryGetValue(root, out var result) && result != BuildResult.Skipped)
             return result == BuildResult.Succeeded ? RootEvidence.Cleared : RootEvidence.FailedThisRun;
+
+        if (WillBuildEvaluator.OutputIsCurrent(reasonOf(root))) return RootEvidence.Cleared;
 
         if (ledgerAtRunStart is null || !ledgerAtRunStart.TryGetValue(root, out var recorded)
             || recorded.LastResult == BuildResult.Succeeded)
@@ -112,17 +136,18 @@ public static class ConditionalRebuild
     public static IReadOnlyList<string> DescribeStillFailingRoots(
         IReadOnlyList<string>? rootIds, IReadOnlyDictionary<string, BuildResult> completedThisRun,
         Func<string, bool> inWorkspace, IReadOnlyDictionary<string, BuildState>? ledgerAtRunStart,
-        Func<string, string> nameOf)
+        Func<string, WillBuildReason?> reasonOf, Func<string, string> nameOf)
     {
         ArgumentNullException.ThrowIfNull(completedThisRun);
         ArgumentNullException.ThrowIfNull(inWorkspace);
+        ArgumentNullException.ThrowIfNull(reasonOf);
         ArgumentNullException.ThrowIfNull(nameOf);
         if (rootIds is not { Count: > 0 }) return [];
 
         var entries = new List<(string Name, bool LedgerOnly)>();
         foreach (string root in rootIds)
         {
-            var evidence = ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart);
+            var evidence = ClassifyRoot(root, completedThisRun, inWorkspace, ledgerAtRunStart, reasonOf);
             if (evidence == RootEvidence.Cleared) continue; // savunmacı: Decide zaten Build dönerdi
             entries.Add((nameOf(root), evidence == RootEvidence.FailedInLedgerOnly));
         }

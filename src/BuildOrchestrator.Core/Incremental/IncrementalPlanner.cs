@@ -286,20 +286,34 @@ public static class IncrementalPlanner
     /// <c>OutputReplaced</c> böyledir.
     ///
     /// <para>İki gerekçe DIŞARIDADIR. <see cref="WillBuildReason.LastFailed"/> KANITLI bir derleyici hatasıdır:
-    /// kaynağı değişmediği için bu koşuda da patlayacak, ortak kopyası olduğu gibi kalacaktır — arkasındaki
-    /// zaman kipi düğümü tam da o kopyaya karşı dışarıda derlenmiştir, onu gri <c>affected</c>'a çekmek yanlış
-    /// bir bayatlık iddiasıdır (defter kipindeki bağımlı aynı durumda yeşil + uyarı üçgeni okunur; iki kip
-    /// ayrışamaz). <see cref="WillBuildReason.WaitingForDependency"/> ise KOŞULLUDUR: koşu onu yalnız bir kök
-    /// düzelirse derler (<see cref="ConditionalRebuild"/>), yani yeni çıktı bir varsayım değildir. Kök gerçekten
-    /// düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync kendi
-    /// HintPath hedefinin tarihinden zaten bayat okur.</para>
+    /// hata anındaki imza bugünküyle AYNI, yani kaynaklar değişmedi — <b>en olası</b> sonuç aynı hatanın
+    /// tekrarlanması ve ortak kopyanın olduğu gibi kalmasıdır. Arkasındaki zaman kipi düğümü tam da o kopyaya
+    /// karşı dışarıda derlenmiştir; onu gri <c>affected</c>'a çekmek yanlış bir bayatlık iddiasıdır (defter
+    /// kipindeki bağımlı aynı durumda yeşil + uyarı üçgeni okunur, iki kip ayrışamaz).
+    /// <b>Kabul edilen bedel:</b> imza yalnız kaynakları özetler, bu yüzden nedeni kaynakta OLMAYAN bir hata
+    /// (eksik DLL, restore, kilitli dosya) aradan düzelmiş olabilir ve kök bu koşuda BAŞARIYLA derlenebilir;
+    /// o zaman arkasındaki zaman kipi düğümü bir tur pre-skip kalır ve ancak bir sonraki Sync'te — kendi
+    /// HintPath hedefinin yeni tarihinden — bayat okunup derlenir. Bir tur gecikme, her koşuda yanlış bir
+    /// <c>affected</c>'a yeğlenir.</para>
+    ///
+    /// <para><see cref="WillBuildReason.WaitingForDependency"/> ise KOŞULLUDUR: koşu onu yalnız bir kök
+    /// düzelirse derler (<see cref="ConditionalRebuild"/>), yani yeni çıktı bir olgu değil bir ihtimaldir. Kök
+    /// gerçekten düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync
+    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Ama döngü üyesi koşullu DEĞİLDİR</b>
+    /// (<see cref="ConditionalRebuild.AppliesTo"/>: grup tek iş kalemidir, bir üyeyi atlamak grubu yarım
+    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (Cycles)
+    /// KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
+    /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
+    /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli dardır: o koşunun planı yalnız hedefi ve
+    /// bağımlılıklarını taşır, aşağı akışı zaten içermez.</para>
     ///
     /// <para>Karışık hâl kendiliğinden doğrudur: hem kanıtlı hatanın hem içeriği değişmiş bir upstream'in
     /// arkasındaki düğüm, ikincisinin tohumundan gezintiye girer ve gri <c>affected</c> olur.</para>
     /// </summary>
     private static bool ProducesNewOutput(ProjectNode node) =>
         node.WillBuild == true
-        && node.WillBuildReason is not (WillBuildReason.LastFailed or WillBuildReason.WaitingForDependency);
+        && node.WillBuildReason != WillBuildReason.LastFailed
+        && (node.WillBuildReason != WillBuildReason.WaitingForDependency || node.InCycle);
 
     /// <summary>
     /// [D1][D5] Bir projenin içerik fingerprint'i: girdi dosyalarının (bkz. <see cref="ProjectInputs"/>)

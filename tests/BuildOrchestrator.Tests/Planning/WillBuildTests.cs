@@ -372,43 +372,35 @@ public class WillBuildTests
         Assert.Equal((null, null), With(Time(TimeVerdict.Fresh), null, null));
     }
 
-    /// <summary>§5.4: zaman kipinde kırmızı yok — hata imzası bugünküyle eşleşse de okunmaz; hüküm kanıttan.
-    /// Kökleri BİLİNMEYEN bir dep-issue notu da okunmaz: söyleyeceği tek şey "kesin derle" olurdu, oysa dışarıda
-    /// derlenmiş çıktı tazedir.
-    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia "dep-issue notu OLSA DA defter
-    /// notları okunmaz" idi ve bu test kökleri bilinen notu da <c>BuiltOutside</c> diye pinliyordu. Kökleri
-    /// bilinen not tek başına bir "derle" emri değil, bir KOŞUL taşır (bkz.
-    /// <see cref="Time_mode_reads_a_dependency_note_whose_roots_are_known"/>) — zaman kipinin defter kipinden
-    /// ayrıştığı tek yer oydu.</para></summary>
+    /// <summary>§5.4: zaman kipinde kırmızı yok — hata imzası bugünküyle eşleşse de, dep-issue notu olsa da
+    /// defter notları BU YÜZEYDE okunmaz; hüküm kanıttan. Bağımlılık notu tek bir projeye bakarak
+    /// değerlendirilemez (kökün bugünkü hâli gerekir) ve yalnız <c>BuildPreview</c>'da, planın tamamı
+    /// görünürken okunur — bkz. <c>IncrementalPlannerTests</c>'in bağımlılık notu testleri.</summary>
     [Fact]
     public void Time_mode_never_reads_red()
     {
         var failed = new BuildState("A", "sig0", LastResult: BuildResult.Failed, FailedSignature: "sig1");
-        var rootless = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true);
+        var note = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
 
         Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", failed));
         Assert.Equal((true, WillBuildReason.OutputStale), With(Time(TimeVerdict.OwnNewer), "sig1", failed));
-        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", rootless));
+        Assert.Equal((false, WillBuildReason.BuiltOutside),
+            With(Time(TimeVerdict.Fresh), "sig1", new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true)));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", note));
     }
 
-    /// <summary>[kullanıcı kararı 2026-09-20] Dışarıda derlenmiş taze bir çıktının kaydında kökleri BİLİNEN bir
-    /// bağımlılık notu varsa hüküm <c>WaitingForDependency</c>'dir — defter kipindekiyle AYNI: satır yeşil kalır,
-    /// uyarı üçgeni kökleri söyler ve koşu projeyi koşullu değerlendirir. Yalnız TAZE hüküm için geçerlidir:
-    /// kendi girdisi yeni olan ya da kanıtı olmayan proje kendi (daha ağır) hükmünü korur.</summary>
+    /// <summary><see cref="WillBuildEvaluator.OutputIsCurrent"/> <c>WillBuild</c> kapısının TA KENDİSİDİR ve
+    /// koşullu yeniden derlemenin kök sınıflandırması ile bağımlılık notunun geçerlilik kapısı da onu okur
+    /// (kopya YASAK). Yalnız iki gerekçe "çıktı güncel" der; gerekçesiz (hollow) hâl güncel değildir.</summary>
     [Fact]
-    public void Time_mode_reads_a_dependency_note_whose_roots_are_known()
+    public void Output_is_current_for_exactly_up_to_date_and_built_outside()
     {
-        var waiting = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
-            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
-
-        Assert.Equal((true, WillBuildReason.WaitingForDependency), With(Time(TimeVerdict.Fresh), "sig1", waiting));
-        // İmzası değişmiş olması fark etmez: zaman kipinde imza hiç okunmaz, çıktı dışarıda tazelendi.
-        Assert.Equal((true, WillBuildReason.WaitingForDependency), With(Time(TimeVerdict.Fresh), "sig2", waiting));
-        Assert.Equal((true, WillBuildReason.OutputStale), With(Time(TimeVerdict.OwnNewer), "sig1", waiting));
-        Assert.Equal((true, WillBuildReason.OutputMissing), With(Time(TimeVerdict.Missing), "sig1", waiting));
-        // Kapsam dışı döngü üyesi yine derlenmez.
-        Assert.Equal((false, WillBuildReason.WaitingForDependency),
-            With(Time(TimeVerdict.Fresh), "sig1", waiting, inCycle: true, buildCycles: false));
+        foreach (var reason in Enum.GetValues<WillBuildReason>())
+            Assert.Equal(
+                reason is WillBuildReason.UpToDate or WillBuildReason.BuiltOutside,
+                WillBuildEvaluator.OutputIsCurrent(reason));
+        Assert.False(WillBuildEvaluator.OutputIsCurrent(null));
     }
 
     /// <summary>§5.4: zaman hükmü → gerekçe. Kendi girdisi ya da HintPath hedefi yeni ⇒ <c>OutputStale</c>;

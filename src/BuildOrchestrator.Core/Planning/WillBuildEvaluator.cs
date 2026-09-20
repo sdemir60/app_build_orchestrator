@@ -87,34 +87,37 @@ public static class WillBuildEvaluator
 
         var reason = output?.Mode switch
         {
-            EvidenceMode.Time => TimeReason(output.Time, state),
+            EvidenceMode.Time => TimeReason(output.Time),
             EvidenceMode.Ledger => LedgerVetoes(LedgerReason(currentSignature, state), output),
             _ => LedgerReason(currentSignature, state),
         };
 
-        return (outOfScope ? false : reason is not (WillBuildReason.UpToDate or WillBuildReason.BuiltOutside), reason);
+        return (outOfScope ? false : !OutputIsCurrent(reason), reason);
     }
 
     /// <summary>
-    /// [Faz 3 — spec 2026-09-18 §5.4] Zaman kipi: çıktı başkasının, hüküm kanıttan. Kırmızı YOK —
-    /// <see cref="BuildState.FailedSignature"/> burada okunmaz; aracın kaydı dışarıdaki derlemeden eskidir ve
-    /// onu anlatamaz.
-    ///
-    /// <para><b>Tek istisna, kökleri bilinen bağımlılık notu (kullanıcı kararı 2026-09-20).</b> Çıktı TAZE ama
-    /// kayıtta <see cref="BuildState.DepIssue"/> + <see cref="BuildState.DepIssueRoots"/> duruyorsa hüküm
-    /// <see cref="WillBuildReason.WaitingForDependency"/>'dir — defter kipindekiyle AYNI cevap. Not hâlâ
-    /// doğrudur: taze hüküm "hiçbir HintPath hedefim benden yeni değil" demektir, yani dışarıdaki derleme de
-    /// kökün AYNI bayat çıktısına link'lenmiştir. Bu, "derle" emri DEĞİL bir KOŞULDUR: satır yeşil kalır
-    /// (<c>StandingStatus.Current</c>), uyarı üçgeni kökleri söyler ve koşu projeyi
-    /// <see cref="ConditionalRebuild"/> ile değerlendirir — kök hâlâ patlıyorsa atlanır, düzeldiyse AYNI koşuda
-    /// derlenir. Kökleri BİLİNMEYEN not okunmaz: söyleyebileceği tek şey koşulsuz "derle" olurdu ve dışarıda
-    /// tazelenmiş bir çıktıyı her koşuda yeniden derletirdi.</para>
+    /// Bu gerekçe "çıktı ŞU AN yerinde ve güncel" mi diyor — yalnız <see cref="WillBuildReason.UpToDate"/> ve
+    /// <see cref="WillBuildReason.BuiltOutside"/>. <c>WillBuild</c>'in kapısı budur (kapsam kısa devresi dışında
+    /// diğer her gerekçe derletir) ve AYNI soruyu soran her yüzey buradan okur — kopya YASAK:
+    /// <see cref="ConditionalRebuild"/> bir kökün hâlâ dertli olup olmadığını, <see cref="BuildPreview"/> ise
+    /// defter notunun hâlâ geçerli olup olmadığını bu tek yüklemle sorar. Gerekçe yoksa (hollow) "güncel"
+    /// DEĞİLDİR: bilinmeyen bir hâl güncellik iddiası taşıyamaz.
     /// </summary>
-    private static WillBuildReason TimeReason(TimeVerdict? verdict, BuildState? state) => verdict switch
+    public static bool OutputIsCurrent(WillBuildReason? reason) =>
+        reason is WillBuildReason.UpToDate or WillBuildReason.BuiltOutside;
+
+    /// <summary>
+    /// [Faz 3 — spec 2026-09-18 §5.4] Zaman kipi: çıktı başkasının, hüküm kanıttan. Kırmızı YOK — defter notları
+    /// (<see cref="BuildState.FailedSignature"/>, <see cref="BuildState.DepIssue"/>) burada okunmaz; aracın
+    /// kaydı dışarıdaki derlemeden eskidir ve onu TEK BAŞINA anlatamaz.
+    ///
+    /// <para>Bağımlılık notunun okunduğu TEK yer <see cref="BuildPreview"/>'dur (kullanıcı kararı 2026-09-20):
+    /// notun hâlâ geçerli olup olmadığı yalnız PLANIN tamamı görünürken söylenebilir — kökün bugünkü hâline
+    /// bakmadan verilen bir hüküm, dışarıda düzeltilmiş bir kökün ardından sonsuza dek yanlış kalırdı.</para>
+    /// </summary>
+    private static WillBuildReason TimeReason(TimeVerdict? verdict) => verdict switch
     {
-        TimeVerdict.Fresh => state is { DepIssue: true, DepIssueRoots.Count: > 0 }
-            ? WillBuildReason.WaitingForDependency
-            : WillBuildReason.BuiltOutside,
+        TimeVerdict.Fresh => WillBuildReason.BuiltOutside,
         TimeVerdict.Missing => WillBuildReason.OutputMissing,
         TimeVerdict.OwnNewer or TimeVerdict.DependencyNewer => WillBuildReason.OutputStale,
         TimeVerdict.FedBroken => WillBuildReason.OutputReplaced,
