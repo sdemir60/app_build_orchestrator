@@ -84,7 +84,12 @@ public class ProjectFilterChipTests
     /// <c>warn</c> chip'inde birleşti ("Warnings"); eski <c>Dependency issues</c> etiketi artık YOKTUR.</para>
     /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7]</b> Eski satırlar <c>succeeded</c> → "Succeeded" ve
     /// <c>skipped</c> → "Skipped" idi; chip'ler artık durum filtreleridir ("Up to date" · "To build" · "Failed") ve
-    /// atlandı chip'i kalktı.</para></summary>
+    /// atlandı chip'i kalktı.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu doc "To build"u BARIN bir chip'i diye
+    /// sayıyordu; o chip aksiyon barından kaldırıldı. Satır burada KALIR çünkü test bar'ı değil PROJECTS
+    /// başlığındaki kaldırılabilir chip'i ve <see cref="ProjectFilter.Label"/> tablosunu ölçer — filtre
+    /// değerinin kendisi modelde durur ve bu yol (VM üzerinden set edilen bir kümenin başlıkta etiketlenmesi)
+    /// hâlâ geçerlidir; tabloda boşluk bırakmak etiketi testsiz bırakırdı.</para></summary>
     [StaTheory]
     [InlineData(ProjectFilter.Building, "Building")]
     [InlineData(ProjectFilter.Current, "Up to date")]

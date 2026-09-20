@@ -2074,7 +2074,7 @@ public sealed partial class RunViewModel : ObservableObject
             row.DependencyRoots = null;
             // [R-M4b · spec 2026-09-18 §1-14] Kanıt kararı MOTORUNDUR ve olayla gelir (ProjectFailedEvent.Evidence):
             // defter yazımıyla AYNI kapıdan (RunCoordinator.FailureEvidenceSignature) verilir. Kanıt kırmızıdır
-            // ("failed · just now"); kanıt olmayan hata — timeout, Stop, invoke hatası, yakınsamayan bir SCC'nin
+            // ("failed"); kanıt olmayan hata — timeout, Stop, invoke hatası, yakınsamayan bir SCC'nin
             // exit N ile biten üyesi — defterde "hiç başarı yok"tur (WillBuildEvaluator: NeverBuilt), satır da
             // hemen griye iner. App reason metnini YENİDEN sınıflandırmaz: metin SCC üyesinde kanıt gibi görünür.
             // [DEĞİŞEN KURAL — design v1.20.0 §5] Eskiden her hata LastFailed yazardı; timeout'lu satır bir

@@ -278,6 +278,25 @@ public partial class ActionBarTests
         Assert.True(line.ShouldType);
     }
 
+    /// <summary>[eksik negatif pin] Kuralın TERSİ de bir karardır ve hiçbir test onu tutmuyordu: BEKLENMEYEN
+    /// bir pull hatası (ağ/kimlik — <see cref="PullCompletedEvent.RefusalReason"/> <c>null</c>) akışa HİÇBİR
+    /// satır düşürmez. Reddetme kullanıcının yapabileceği bir şeydir ve akışa çıkar; hata bir tanıdır,
+    /// gerekçesi konsoldadır ve akış run hikâyesini anlatır. Kapı (<c>if (e.RefusalReason is { } reason)</c>)
+    /// kaldırılsa süit bunu başka hiçbir yerde görmezdi — burada <c>null</c> neden bir metne dönüşemeyeceği
+    /// için akışa "boş" bir uyarı düşerdi.</summary>
+    [Fact]
+    public void An_unexpected_pull_failure_writes_nothing_to_the_stream()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
+        int before = vm.StreamEvents.Count;
+        Assert.True(before > 0); // ön-koşul: akış GERÇEKTEN yazıyor (vakumda yeşil kalmasın)
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: false, RefusalReason: null));
+
+        Assert.Equal(before, vm.StreamEvents.Count);
+    }
+
     /// <summary>[spec §6.4] Git boştayken nokta yoktur ve chip bir git tooltip'i taşımaz.</summary>
     [StaFact]
     public void No_dot_when_git_is_idle()

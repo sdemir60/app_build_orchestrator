@@ -79,6 +79,20 @@ public sealed class PlanProgressLinesTests
         Assert.Equal(ConsoleLineType.Warn, ConsoleLineClassifier.Classify(PlanProgressLines.PullRefusedDetached()));
     }
 
+    /// <summary>[eksik negatif pin] Önek kuralının TERSİ de bir karardır ve hiçbir test onu tutmuyordu:
+    /// BEKLENMEYEN bir pull hatası (ağ, kimlik, git'in kendi çöküşü) <c>warning:</c> öneki TAŞIMAZ ve konsolda
+    /// düz satır kalır. Ayrım bilinçlidir — reddetmede kullanıcının yapabileceği bir şey vardır (commit/stash/
+    /// reconcile) ve göz oraya çekilir; hatada çalışma ağacına hiç dokunulmamıştır ve satır bir TANIdır.
+    /// Öneki buraya da eklemek (ya da <see cref="ConsoleLineClassifier"/>'ın sözleşmesini metin tahminine geri
+    /// açmak) bu testi kırmızıya çevirir.</summary>
+    [Fact]
+    public void An_unexpected_pull_failure_stays_a_plain_line()
+    {
+        Assert.Equal("Pull failed — could not resolve host github.com",
+            PlanProgressLines.PullFailed("could not resolve host github.com"));
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(PlanProgressLines.PullFailed("exit 128")));
+    }
+
     /// <summary>[spec 2026-09-18 §6.2] Kesilen koşunun özeti: kaç proje bitti, kaçı derlenmedi, log klasörü —
     /// klasör bilinmiyorsa ek yazılmaz.</summary>
     [Fact]

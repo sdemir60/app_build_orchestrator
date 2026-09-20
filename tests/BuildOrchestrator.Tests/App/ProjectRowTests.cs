@@ -838,8 +838,15 @@ public class ProjectRowTests
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Yaş kuyrukları kalktı (bkz.
     /// <see cref="DecisionLabel"/>'in sınıf özeti), yani en uzun etiket artık "up to date · just now" DEĞİL:
     /// kalan tek kuyrukla "modified · local". Bu test hâlâ AYNI şeyi sorar — yuvanın en uzun etiketi SIĞIYOR
-    /// mu — ama artık o etiketle sorar. Yuvanın 134px'i BİLEREK küçültülmedi: ölçü kararı etiket sözcükleriyle
-    /// birlikte alınmadı, satırın hover ikon bloğu da aynı yuvayı paylaşıyor.</para>
+    /// mu — ama artık o etiketle sorar. Etiket kısalınca soru TEK BAŞINA zayıfladı: yuvanın İKİNCİ talep
+    /// sahibi de (hover ikon bloğu, aynı yuvayı paylaşır) ölçülür ve onun da sığdığı pinlenir, çünkü yuvanın
+    /// 134px'ini artık tek başına etiket temsil etmiyor.</para>
+    ///
+    /// <para><b>ÖLÇÜLDÜ:</b> iki talep sahibi de 134'ün ALTINDA kalır (etiket ~101px, ikon bloğu ~94px) —
+    /// yani bugün sayıyı hiçbir içerik ZORLAMAZ; yuva bilerek bırakılmış bir rezervdir (XAML yorumu: "Yuva
+    /// BİLEREK daraltılmadı"). Test bunu olduğu gibi tutar: literal <see cref="ProjectRow.RightBlock"/>
+    /// üzerinden bir kez pinlenir, iki talep sahibinin de sığdığı ölçülür; rezervin kendisi bir tasarım
+    /// kararıdır ve daraltılırsa bu iki ölçü onu ilk yakalayan yer olur.</para>
     ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
@@ -874,6 +881,16 @@ public class ProjectRowTests
         double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
         Assert.True(width <= slotMinWidth, $"en uzun karar etiketi {slotMinWidth}px yuvaya sığmadı: {width}px");
+
+        // [kullanıcı kararı 2026-09-20] Yuvanın İKİ talep sahibi vardır ve test artık ikisini de ölçer: karar
+        // etiketi (yukarıda) ve AYNI yuvayı paylaşan hover ikon bloğu — satır hover'dayken etiketin yerini o
+        // alır (XAML yorumu: "aynı genişliği hover ikon bloğu paylaşıyor"). Blok TEMBELDİR, ilk hover'da doğar
+        // (EnsureActions), bu yüzden önce hover edilir.
+        row.SimulateHover(true);
+        row.UpdateLayout();
+        double icons = row.Actions!.DesiredSize.Width;
+        Assert.True(icons > 0, "hover ikon bloğu hiç ölçülmedi (tembel blok doğmadı mı?)");
+        Assert.True(icons <= slotMinWidth, $"hover ikon bloğu {slotMinWidth}px yuvaya sığmadı: {icons}px");
         GC.KeepAlive(window);
     }
 

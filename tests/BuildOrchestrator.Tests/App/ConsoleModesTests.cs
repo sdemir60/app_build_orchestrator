@@ -242,18 +242,30 @@ public class ConsoleModesTests
     }
 
     /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5.4] BuiltOutside bir DİSK OLGUSUDUR: proje bu araç dışında
-    /// derlenmiş ve çıktısı güncel. Kanıt satırı aracın KENDİ başarısını (CurrentSha, ki burada boştur) DEĞİL,
-    /// çıktının başkasının eseri olduğunu söyler.
+    /// derlenmiş ve çıktısı güncel. Sayfa bunu TEK cümlede söyler.
     ///
-    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia kanıt satırının dışarıdaki
-    /// derlemenin YAŞINI söylediğiydi ("Built outside this tool: 5m ago", kaynağı <c>OutputBuiltAt</c>).
-    /// Yaş kalktı — cümle kaldı. Satır artık hiçbir zaman damgası OKUMAZ, gerekçe tek başına yeter.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> İki eski iddia da düştü. (1) Kanıt satırı
+    /// dışarıdaki derlemenin YAŞINI söylerdi ("Built outside this tool: 5m ago", kaynağı <c>OutputBuiltAt</c>);
+    /// yaş tüm yüzeylerden kalktı. (2) Yaş gidince geriye İKİ satır kaldı — "Up to date — built outside this
+    /// tool." + "Built outside this tool" — yani sayfa aynı şeyi iki kez söylüyordu. Kanıtın gerekçeyi tekrar
+    /// ettiği yerde yazılmama kuralı (<c>RepeatsReason</c>) artık bu gerekçeyi de kapsar. Defterdeki KENDİ son
+    /// başarısı (<c>CurrentSha</c>) de kanıt olarak yazılmaz: o çıktıyı bu araç üretmedi, kendi son build'inin
+    /// commit'ini göstermek yanlış bir kanıt olurdu (bkz. <see cref="ConsoleEmptyState"/> sınıf özeti).</para></summary>
     [Fact]
-    public void A_row_built_outside_says_so_instead_of_the_last_build()
-        => Assert.Equal(
-            ["Up to date — built outside this tool.", "Built outside this tool"],
+    public void A_row_built_outside_says_so_once_and_never_shows_the_tools_own_sha()
+    {
+        Assert.Equal(
+            ["Up to date — built outside this tool."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
                 willBuildReason: WillBuildReason.BuiltOutside)));
+
+        // Defterde bu aracın kendi son başarısı DURUYOR olsa bile kanıt satırı açılmaz.
+        Assert.Equal(
+            ["Up to date — built outside this tool."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                willBuildReason: WillBuildReason.BuiltOutside,
+                currentSha: "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b")));
+    }
 
     /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
     /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır

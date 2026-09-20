@@ -96,11 +96,15 @@ public sealed class OutputEvidenceTests : IDisposable
     }
 
     /// <summary>§7-3, §7-4: değiştirip (ya da değiştirmeden) VS'de derledim — kanıt defterden ve girdilerden yeni,
-    /// havuz kopyası da yeni ⇒ zaman kipi, taze; "built outside" yaşı kanıtın zamanından.
-    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, ruling R10]</b> Eski iddia: taze kontrol ⇒ yaş her zaman
+    /// havuz kopyası da yeni ⇒ zaman kipi, taze; dışarıdaki derlemenin zamanı kanıtın zamanından okunur.
+    /// <para><b>[DEĞİŞEN KURAL — Faz 3 final review, ruling R10]</b> Eski iddia: taze kontrol ⇒ zaman her zaman
     /// taşınır. Taze kontrollü proje kirli bir upstream'in arkasındaysa artık <c>OutputStale</c> ile derlenir
-    /// (§5.4 son cümle) ve yaş yalnız son gerekçe <c>BuiltOutside</c> iken taşınır — aksi hâlde derlenecek bir
-    /// satır "built outside 5m ago" derdi.</para></summary>
+    /// (§5.4 son cümle) ve zaman yalnız son gerekçe <c>BuiltOutside</c> iken taşınır.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu ayrımın gerekçesi doc'ta "aksi hâlde
+    /// derlenecek bir satır <c>built outside 5m ago</c> derdi" diye yazılıydı; o cümle artık hiçbir yüzeyde
+    /// YOK — yaş tüm etiketlerden ve proje sayfasından kalktı. Gerekçe bugün daha dar ama aynı yönde: zaman
+    /// alanı yalnızca çıktının GERÇEKTEN dışarıda üretildiği gerekçeye aittir, derlenecek bir satıra değil.
+    /// Alanın bugün bir okuyucusu yoktur (defterde ve telde taşınır); gövde değişmedi.</para></summary>
     [Fact]
     public void Built_elsewhere_after_the_tool_is_time_mode_and_fresh()
     {

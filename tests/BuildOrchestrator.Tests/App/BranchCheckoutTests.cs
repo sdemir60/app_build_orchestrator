@@ -243,6 +243,27 @@ public class BranchCheckoutTests
         Assert.True(line.ShouldType);
     }
 
+    /// <summary>[eksik negatif pin] Akışa yalnız KİRLİ AĞAÇ REDDİ düşer; checkout'un kendisi düştüyünde
+    /// (<see cref="CheckoutStatus.Failed"/> / <see cref="CheckoutStatus.StashFailed"/>) akışa HİÇBİR satır
+    /// yazılmaz — uyarı yalnız konsoldadır. Ayrım bilinçlidir: red kullanıcının yapabileceği bir şeydir
+    /// (commit/stash), hata ise bir tanıdır ve run hikâyesine ait değildir. Yalnız <c>Dirty</c> dalı pinliydi;
+    /// <c>PushStream</c> bu iki duruma da genişletilse süit sessiz kalırdı.</summary>
+    [Theory]
+    [InlineData(CheckoutStatus.Failed)]
+    [InlineData(CheckoutStatus.StashFailed)]
+    public void A_failed_checkout_writes_nothing_to_the_stream(CheckoutStatus status)
+    {
+        var vm = NewVm();
+        vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\a.csproj", SkipReasons.UpToDate));
+        int before = vm.StreamEvents.Count;
+        Assert.True(before > 0); // ön-koşul: akış GERÇEKTEN yazıyor (vakumda yeşil kalmasın)
+
+        vm.OnEvent(new CheckoutCompletedEvent(status, "main", "main", null, 0, null, "exit 1"));
+
+        Assert.Equal(before, vm.StreamEvents.Count);
+        Assert.Equal(PlanProgressLines.SwitchFailed("exit 1"), Lines(vm)[^1]); // konsol yine de söyler
+    }
+
     /// <summary>Stash yapıldı ama checkout düştü: kullanıcının değişiklikleri stash'tedir — konsol bunu SÖYLEMEK
     /// zorundadır, yoksa değişiklikler kaybolmuş gibi görünür. Konsol yine temizlenmez.
     /// <para>[final review M2] Satırlar ardışıktır ama artık sonuncu olmak zorunda değildir: ardından gelen sessiz

@@ -264,10 +264,15 @@ public class BuildStateStoreTests : IDisposable
     }
 
     /// <summary>
-    /// [spec 2026-09-18 §1-14] <see cref="BuildStateStore.FailedAtOf"/>: <c>failed · 2h</c> etiketinin yaşı
-    /// yalnız hata KANITLIYSA (<c>FailedSignature</c> dolu) okunur — <see cref="BuildStateStore.LastBuiltAtOf"/>
-    /// ile aynı desen, tek arama yeri. Kayıt yoksa, ya da <c>FailedSignature</c> boşsa (kanıtsız/kesilmiş
-    /// deneme ya da hiç hata yaşanmamış temiz kayıt), <c>null</c> döner.
+    /// [spec 2026-09-18 §1-14] <see cref="BuildStateStore.FailedAtOf"/>: hatanın zamanı yalnız hata
+    /// KANITLIYSA (<c>FailedSignature</c> dolu) okunur — <see cref="BuildStateStore.LastBuiltAtOf"/> ile aynı
+    /// desen, tek arama yeri. Kayıt yoksa, ya da <c>FailedSignature</c> boşsa (kanıtsız/kesilmiş deneme ya da
+    /// hiç hata yaşanmamış temiz kayıt), <c>null</c> döner.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu doc değerin tüketicisini <c>failed · 2h</c>
+    /// karar etiketi diye anlatıyordu; etiketlerden yaş kuyruğu kalktı ve hiçbir yüzey bu zamanı artık
+    /// GÖSTERMİYOR. Alan olduğu yerde kalır (defterde yazılı, Sync ve koşu önizlemesi telde taşır) ve bu test
+    /// onun okunma KURALINI tutar — gövde değişmedi, yalnız iddianın gerekçesi düzeltildi.</para>
     /// </summary>
     [Fact]
     public void FailedAtOf_answers_only_while_the_failure_is_evidence()

@@ -69,7 +69,9 @@ public class ExternalRowsTests
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Testin okuduğu olgular arasında
     /// <c>LastBuiltAt</c> de vardı (harici satır da önizlemenin zamanını AYNEN alır). Karar etiketi yaş
     /// taşımayı bıraktığı için o alan satırdan kalktı; iddia kalan olgularla (gerekçe + kendi dosyası değişti
-    /// mi + son başarılı derlemenin revizyonu) AYNEN sürüyor.</para>
+    /// mi + son başarılı derlemenin revizyonu) AYNEN sürüyor. Alan önizleme olayında (telde) DURUYOR ama
+    /// bugün okuyucusu yoktur, bu yüzden fixture'dan da çıkarıldı: hiçbir şeyin okumadığı bir değeri
+    /// beslemek testi okuyan kişiye yanlış bir ipucu verir.</para>
     /// </summary>
     [Fact]
     public async Task An_external_row_reads_the_decision_facts_exactly_like_a_main_row()
@@ -79,13 +81,12 @@ public class ExternalRowsTests
         vm.OnEvent(new WorkspaceTopologyEvent(
             [ExternalNode("Mail", MailTarget), MainNode(@"D:epo.csproj", "A", 1)], [], [], []));
 
-        var builtAt = new System.DateTimeOffset(2026, 9, 10, 12, 0, 0, System.TimeSpan.Zero);
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(MailTarget, "Mail", false, "a1b2c3d", WillBuildReason.UpToDate,
-                OwnFilesChanged: false, LastBuiltAt: builtAt),
+                OwnFilesChanged: false),
             new BuildPreviewItem(@"D:epo.csproj", "A", true, "b7e91d4", WillBuildReason.SignatureChanged,
-                OwnFilesChanged: true, LastBuiltAt: builtAt),
+                OwnFilesChanged: true),
         ]));
 
         var external = vm.Projects.Single(r => r.IsExternal);
