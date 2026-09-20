@@ -482,6 +482,10 @@ Three of these carry the whole model:
   never sets it; it always carries `false`, because that flag describes what Sync last saw in the working tree,
   and a run does not repeat that read. `outputBuiltAt` is the time of the build evidence of a project built
   outside this tool (§7.6), set for that reason only; both previews write it through the same helper.
+  The three times an item can carry — `lastBuiltAt`, `failedAt` and `outputBuiltAt` — have **no reader on the
+  App side today**: no row, label, tooltip or project page prints a time (§13.2). They stay on the wire and in
+  the ledger because they are cheap facts the engine already holds and the decision surfaces may want again;
+  nothing downstream is allowed to grow a second meaning for them in the meantime.
 - **`syncCompleted`** carries the target SHA, the degrade flag and three counters that are *not* derivable
   from one another: directly-changed projects (Fast semantics, no cascade — for an output built elsewhere, own
   inputs newer than the output, §7.6), the will-build set size (Safe
@@ -901,7 +905,7 @@ is about to be rebuilt: until that build runs, the dependency's shared copy is s
 dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
 project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
 stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
-change, and carries no built-outside age.
+change, and not `built outside this tool`.
 
 Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
 never built, because it was built against a failed dependency whose roots are unknown, or because its own
@@ -952,9 +956,11 @@ newer upstream output still makes the whole group stale.
 the same checks, so the Sync's will-build is the next plain *Build*'s decision; the Sync's Fast pass — which
 only feeds the *N changed* counter — is bound without them, or a project whose shared copy was overwritten
 would count as changed. The checks also travel with the run's plan, so the run preview writes the
-same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only for built
-outside this tool and is the age the row's label shows. A project this tool then builds successfully drops that
-time at once: its output is now the tool's own.
+same `modified` ↔ `affected` answer and the same `outputBuiltAt` time (§5.3), which is set only when the
+reason is *built outside this tool* — the time the foreign output was produced. No surface reads it today: the
+row's decision label carries no time at all (§13.2), so the field travels and is overwritten by the next
+preview, where a project this tool has since built successfully reports it empty because its output is now the
+tool's own.
 
 **Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
 only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
@@ -1781,7 +1787,9 @@ wins over the lock. While one stands:
 - only then does a poll run: the markers' existence is checked every two seconds, and when they are gone the
   pending trigger is weighed;
 - an `index.lock` that stands for 30 s is reported once as possibly left behind by a crashed git process — the
-  tool never deletes it;
+  tool never deletes it. That line stays a **plain** console line while the git refusals around it are amber:
+  the amber ones are refusals the user can act on (commit, stash, reconcile), and this one refuses nothing —
+  it is a diagnostic about something the tool merely noticed and will not touch;
 - Build is not blocked: right under the run request the console warns that files with conflict markers will
   not compile;
 - the Sync button always works, and its section's first line says the tree is mid-operation.
@@ -2206,14 +2214,15 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | signature changed, dependency issue — own files changed | `modified` | `Its own files changed since the last build` (with `local`: `— includes uncommitted edits`) |
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
-**No label and no tooltip carries a time.** The slot once ended in the age of the evidence behind the word —
-`failed · 2h`, `up to date · 2h`, `up to date · 5m` for an output built elsewhere — and the tooltip repeated
-it. One of those ages was a lie waiting to happen: an output built outside this tool has no age of *this*
-tool's making, so the row could show how long ago *this* tool last built the project while claiming to describe
-someone else's output. The rest was noise: a row answers "what does this project's output need?", and the
-minute count behind that answer never changed it. The label reads the plan and three facts only — the reason,
-whether the project's own files changed, and whether any of them is dirty — so `local` is the one tail left,
-and a timestamp reaching the row changes nothing on screen.
+**No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
+four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and
+whether the project sits in a dependency cycle (which only picks the retry clause of a `failed` row's tooltip,
+*Resolve cycles* instead of *Build*). `local` is the one tail there is, and a timestamp reaching the row
+changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
+output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
+ago *this* tool last built the project while claiming to describe someone else's output — and for every other
+reason the minute count never changed the answer to the question the row exists for, "what does this
+project's output need?".
 
 A project waiting on a dependency (`WaitingForDependency`) reads the same `up to date` as a project whose
 signature simply matches — both are read from the same fact, that the output is current — because *which*

@@ -409,7 +409,8 @@ While a build runs the graph quietens rather than moving: untouched projects fad
 stay bright and carry a ring of circling amber dots, and each project that reaches a result holds its colour
 bright for a moment before settling. Projects that are skipped settle quietly with no moment of their own —
 they stay exactly as dim as the queue and never move at all, because the graph is there to show what changed
-and they did not. The camera does not follow the run — it stays where you left it. Filtering the list dims the
+and they did not. The camera does not follow the run either: pressing Build brings it back to the fitted view
+once, at the start, and it then holds still for the rest of the run. Filtering the list dims the
 graph to match: the projects still in the list stay bright, everything else fades back, and the fade is slower
 than the ones a run makes so it can be followed by eye. Building keeps your filter — the list stays filtered —
 but the graph shows the whole run unfiltered, from the opening sequence to the closing lights, and returns to
