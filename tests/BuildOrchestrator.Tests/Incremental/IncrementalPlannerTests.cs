@@ -1,6 +1,7 @@
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Planning;
 
 namespace BuildOrchestrator.Tests.Incremental;
 
@@ -883,6 +884,113 @@ public class IncrementalPlannerTests
         Assert.True(result.Nodes.Single(n => n.Id == "D").WillBuild);
         Assert.All(result.Nodes.Where(n => n.Id != "D"),
             n => Assert.Equal((false, WillBuildReason.BuiltOutside), (n.WillBuild, n.WillBuildReason)));
+    }
+
+    // ---- [kullanıcı kararı 2026-09-20] cascade YALNIZ yeni çıktı üretecek upstream'den başlar ---------------
+
+    /// <summary>
+    /// <c>F</c> defterde KANITLI kırmızıdır (<c>LastFailed</c>): kaynağı değişmedi, bu Build'de yine patlayacak
+    /// ve ortak kopyası DEĞİŞMEYECEK. Zaman kipindeki bağımlısı <c>P</c> (ve transitive <c>P2</c>) tam da o eski
+    /// kopyaya karşı dışarıda derlendi — hükümleri <c>BuiltOutside</c> kalır, gri <c>affected</c>'a çekilmezler.
+    /// Kirli <c>G</c>'nin arkasındaki <c>M</c> ise bugünkü davranışını korur (<c>OutputStale</c>).
+    /// </summary>
+    [Fact]
+    public void A_time_mode_project_behind_a_failed_upstream_keeps_its_own_verdict()
+    {
+        var (plan, fp, state, outputs) = FailedUpstreamFixture();
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((true, WillBuildReason.LastFailed), Of("F"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("P"));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("P2"));
+        // Kendi dosyası değişmedi ve bayat da değil ⇒ satır yeşil, "affected" değil.
+        Assert.False(OutputEvidence.OwnFilesChanged(outputs["P"], state, "P", "fpP"));
+    }
+
+    /// <summary>Karışık hâl: hem kanıtlı hatanın (<c>F</c>) hem içeriği değişmiş <c>G</c>'nin arkasındaki
+    /// <c>M</c> gri <c>affected</c>'tır — kirli olan kazanır, çünkü <c>G</c>'nin yeni çıktısı gerçekten
+    /// gelecektir.</summary>
+    [Fact]
+    public void A_dependent_behind_both_a_failed_and_a_dirty_upstream_is_still_cascaded()
+    {
+        var (plan, fp, state, outputs) = FailedUpstreamFixture();
+
+        var result = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs);
+
+        var m = result.Nodes.Single(n => n.Id == "M");
+        Assert.Equal((true, WillBuildReason.OutputStale), (m.WillBuild, m.WillBuildReason));
+        Assert.True(result.Nodes.Single(n => n.Id == "G").WillBuild);
+    }
+
+    /// <summary>
+    /// Zaman kipi defter kipini AYNALAR: dışarıda derlenmiş bağımlının kaydında kökleri BİLİNEN bir bağımlılık
+    /// notu varsa (<c>DepIssue</c> + <c>DepIssueRoots</c>) hüküm <c>WaitingForDependency</c>'dir — satır yeşil
+    /// kalır (<c>StandingStatus.Current</c>), uyarı üçgeninin kökleri okunur ve koşu projeyi koşullu değerlendirir:
+    /// kök hâlâ patlıyorsa atlar, düzeldiyse derler. Notu olmayan bağımlı sade <c>BuiltOutside</c>'tır.
+    /// </summary>
+    [Fact]
+    public void A_time_mode_dependent_with_a_ledger_dependency_note_waits_for_its_root()
+    {
+        var note = new BuildState("P", "sigP", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: ["F"]);
+        var (plan, fp, state, outputs) = FailedUpstreamFixture(note);
+
+        var p = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs)
+            .Nodes.Single(n => n.Id == "P");
+
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), (p.WillBuild, p.WillBuildReason));
+        Assert.Equal(["F"], ConditionalRebuild.RootNames(p.WillBuildReason, note, id => id));
+        Assert.True(ConditionalRebuild.AppliesTo(p, RunMode.Build, scopedRun: false, cycleGroupMember: false));
+        bool InPlan(string id) => plan.Nodes.Any(n => n.Id == id);
+        // Kök bu koşuda yine patlarsa proje derlenmez — "dependency still failing".
+        Assert.Equal(
+            ConditionalRebuildVerdict.DependencyStillFailing,
+            ConditionalRebuild.Decide(note.DepIssueRoots, new Dictionary<string, BuildResult>
+            { ["F"] = BuildResult.Failed }, InPlan, state));
+        // Kök düzelirse aynı koşuda derlenir.
+        Assert.Equal(
+            ConditionalRebuildVerdict.Build,
+            ConditionalRebuild.Decide(note.DepIssueRoots, new Dictionary<string, BuildResult>
+            { ["F"] = BuildResult.Succeeded }, InPlan, state));
+    }
+
+    /// <summary>Kanıtlı hata fixture'ı: <c>F</c> defterde KANITLI kırmızı (hata anındaki imza bugünküyle aynı,
+    /// hiç başarısı yok) ⇒ <c>LastFailed</c>; <c>G</c> kayıtlı ve içeriği değişmiş ⇒ <c>SignatureChanged</c>.
+    /// <c>P → F</c>, <c>P2 → P</c>, <c>M → F, G</c> (karışık hâl); üçü de zaman kipinde ve tazedir. Düğümler
+    /// bilerek ters (topolojik olmayan) sıradadır. <paramref name="dependentState"/> verilirse <c>P</c>'nin
+    /// defter kaydıdır.</summary>
+    private static (BuildPlan Plan, Func<ProjectNode, string?> Fp, Dictionary<string, BuildState> State,
+        Dictionary<string, OutputCheck> Outputs) FailedUpstreamFixture(BuildState? dependentState = null)
+    {
+        var f = Node("F", 0, inCycle: false);
+        var g = Node("G", 0, inCycle: false);
+        var p = Node("P", 1, inCycle: false, "F");
+        var p2 = Node("P2", 2, inCycle: false, "P");
+        var m = Node("M", 2, inCycle: false, "F", "G");
+        var plan = new BuildPlan([p2, m, p, g, f], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(
+            ("F", "fpF"), ("G", "fpG-v2"), ("P", "fpP"), ("P2", "fpP2"), ("M", "fpM")));
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new BuildState("F", null, LastResult: BuildResult.Failed,
+                FailedSignature: BuildSignature.Compute(f, "Debug", "fpF", _ => null)),
+            ["G"] = new BuildState("G", BuildSignature.Compute(g, "Debug", "fpG-v1", _ => null),
+                LastResult: BuildResult.Succeeded),
+        };
+        if (dependentState is not null) state["P"] = dependentState;
+        OutputCheck TimeOf(TimeVerdict verdict) => new(EvidenceMode.Time, false, true, verdict, null);
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new(EvidenceMode.Ledger, true, true, null, null),
+            ["G"] = new(EvidenceMode.Ledger, false, true, null, null),
+            ["P"] = TimeOf(TimeVerdict.Fresh),
+            ["P2"] = TimeOf(TimeVerdict.Fresh),
+            ["M"] = TimeOf(TimeVerdict.Fresh),
+        };
+        return (plan, fp, state, outputs);
     }
 
     /// <summary>Kirli upstream fixture'ı: <c>D</c> kayıtlı ve imzası değişmiş (defter kipi); <c>P → D</c>,

@@ -372,17 +372,43 @@ public class WillBuildTests
         Assert.Equal((null, null), With(Time(TimeVerdict.Fresh), null, null));
     }
 
-    /// <summary>§5.4: zaman kipinde kırmızı yok — hata imzası bugünküyle eşleşse de, dep-issue notu olsa da
-    /// defter notları okunmaz; hüküm kanıttan.</summary>
+    /// <summary>§5.4: zaman kipinde kırmızı yok — hata imzası bugünküyle eşleşse de okunmaz; hüküm kanıttan.
+    /// Kökleri BİLİNMEYEN bir dep-issue notu da okunmaz: söyleyeceği tek şey "kesin derle" olurdu, oysa dışarıda
+    /// derlenmiş çıktı tazedir.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia "dep-issue notu OLSA DA defter
+    /// notları okunmaz" idi ve bu test kökleri bilinen notu da <c>BuiltOutside</c> diye pinliyordu. Kökleri
+    /// bilinen not tek başına bir "derle" emri değil, bir KOŞUL taşır (bkz.
+    /// <see cref="Time_mode_reads_a_dependency_note_whose_roots_are_known"/>) — zaman kipinin defter kipinden
+    /// ayrıştığı tek yer oydu.</para></summary>
     [Fact]
     public void Time_mode_never_reads_red()
     {
         var failed = new BuildState("A", "sig0", LastResult: BuildResult.Failed, FailedSignature: "sig1");
-        var depIssue = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true);
+        var rootless = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true);
 
         Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", failed));
         Assert.Equal((true, WillBuildReason.OutputStale), With(Time(TimeVerdict.OwnNewer), "sig1", failed));
-        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", depIssue));
+        Assert.Equal((false, WillBuildReason.BuiltOutside), With(Time(TimeVerdict.Fresh), "sig1", rootless));
+    }
+
+    /// <summary>[kullanıcı kararı 2026-09-20] Dışarıda derlenmiş taze bir çıktının kaydında kökleri BİLİNEN bir
+    /// bağımlılık notu varsa hüküm <c>WaitingForDependency</c>'dir — defter kipindekiyle AYNI: satır yeşil kalır,
+    /// uyarı üçgeni kökleri söyler ve koşu projeyi koşullu değerlendirir. Yalnız TAZE hüküm için geçerlidir:
+    /// kendi girdisi yeni olan ya da kanıtı olmayan proje kendi (daha ağır) hükmünü korur.</summary>
+    [Fact]
+    public void Time_mode_reads_a_dependency_note_whose_roots_are_known()
+    {
+        var waiting = new BuildState("A", "sig1", LastResult: BuildResult.Succeeded, DepIssue: true,
+            DepIssueRoots: [@"C:\r\Up\Up.csproj"]);
+
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), With(Time(TimeVerdict.Fresh), "sig1", waiting));
+        // İmzası değişmiş olması fark etmez: zaman kipinde imza hiç okunmaz, çıktı dışarıda tazelendi.
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), With(Time(TimeVerdict.Fresh), "sig2", waiting));
+        Assert.Equal((true, WillBuildReason.OutputStale), With(Time(TimeVerdict.OwnNewer), "sig1", waiting));
+        Assert.Equal((true, WillBuildReason.OutputMissing), With(Time(TimeVerdict.Missing), "sig1", waiting));
+        // Kapsam dışı döngü üyesi yine derlenmez.
+        Assert.Equal((false, WillBuildReason.WaitingForDependency),
+            With(Time(TimeVerdict.Fresh), "sig1", waiting, inCycle: true, buildCycles: false));
     }
 
     /// <summary>§5.4: zaman hükmü → gerekçe. Kendi girdisi ya da HintPath hedefi yeni ⇒ <c>OutputStale</c>;

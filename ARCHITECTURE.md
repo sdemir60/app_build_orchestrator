@@ -783,7 +783,8 @@ signature has not moved and whose ledger note names the root dependencies reads 
 *waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
 roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
 the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
-*built against a failed dependency*, because nothing could tell the run when to stop waiting.
+*built against a failed dependency*, because nothing could tell the run when to stop waiting. An output built
+outside this tool reads the same note, without the signature test, when its time verdict is fresh (§7.6).
 
 **The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
 failed dependency, or built against a failed dependency whose roots are unknown; and, from the output evidence
@@ -877,18 +878,39 @@ a delete or a rename moves only the folder's time — is strictly newer → **ou
 project's own `HintPath` targets is strictly newer → **output stale**, from a dependency; a learned fed copy is
 broken → **output replaced**; otherwise **built outside this tool** — green, and not compiled. An input exactly
 as old as the output counts as current, and a missing or unreadable input or target is ignored. Time mode has
-no red: the ledger's notes (the failed signature, the dependency issue) describe a build older than the output
-on disk and are not read. Nothing is written back to the ledger; every Sync proves the output again.
+no red: the ledger's failed signature describes a build older than the output on disk and is not read. One note
+is: a fresh output whose record carries a dependency issue with recorded roots reads **waiting for a
+dependency**, the same answer ledger mode gives. The note is still true, because a fresh verdict means no
+`HintPath` target is newer than the output — the build done elsewhere linked against the very same stale copy
+of the root. And it is a condition, not an order to compile: the row stays green, the warning triangle names
+the roots, and the run compiles the project only if a root recovers (§8.3). A note with no recorded roots is
+not read, since the only thing it could say is an unconditional *compile*, which would rebuild an output
+refreshed elsewhere on every run. Nothing is written back to the ledger; every Sync proves the output again.
 
 **Behind a dependency that will build.** A time check reads only file times, so it cannot see that a dependency
 is about to be rebuilt: until that build runs, the dependency's shared copy is still the old one and the
-dependent's output looks current against it. Dependents are always judged by the signature, so in the Safe mode
-(§7.2) a time-mode project any of whose upstream projects in the plan — directly or transitively — will build
-reads output stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own
-files did not change, and carries no built-outside age. A project whose own verdict comes earlier in the order
-above — no build evidence, or an own input newer — keeps it. The Fast mode follows no upstream and does not
-cascade here either. The rule lives in the planner, after every project's own decision, and does not depend on
-the plan's order.
+dependent's output looks current against it. So in the Safe mode (§7.2) a time-mode project behind an upstream
+project in the plan — directly or transitively — whose build really refreshes that shared copy reads output
+stale from a dependency and is built in the same *Build*; its row reads `affected`, since its own files did not
+change, and carries no built-outside age.
+
+Which upstreams count is the whole rule. A project that will build because its signature moved, because it was
+never built, because it was built against a failed dependency whose roots are unknown, or because its own
+output is missing, replaced or older than its inputs, leaves a new copy behind, and seeds the cascade. Two
+reasons do not. A proven failure (§7.4) will compile again from unchanged sources, fail again, and leave the
+copy exactly as it is — and the dependent was built elsewhere against that very copy, so pulling it to
+`affected` would be a false claim of staleness; the same failed root under a ledger-mode dependent reads green
+with the warning triangle, and the two modes must not disagree. A project waiting for a dependency compiles
+only if one of its roots recovers (§8.3), so its new output is a possibility and not a fact; when a root does
+recover and it is compiled, its own dependents read stale from their `HintPath` times at the next Sync anyway.
+A dependent behind both a failed root and a genuinely dirty upstream is reached from the dirty one and reads
+`affected` as before.
+
+The walk from those seeds does not discriminate: it follows the reverse edges to every transitive dependent,
+because each project it pulls will be built and dirties its own downstream in turn. A project whose own verdict
+comes earlier in the order above — no build evidence, or an own input newer — keeps it. The Fast mode follows
+no upstream and does not cascade here either. The rule lives in the planner, after every project's own
+decision, and does not depend on the plan's order.
 
 **`modified` or `affected`.** In time mode the split comes from the evidence — own input newer means
 `modified` — and elsewhere from the stored content fingerprint compared with today's (§7.5). The Sync and a
@@ -1112,7 +1134,8 @@ said "everything will build".
 **The note triggers a rebuild when a root recovers, not on every Build.** Recompiling a project while its root
 still fails buys nothing — it links to the same last successful output again — and it meant projects the
 marking wave never lit turning amber and compiling on the next `Build`. So a noted
-project whose signature has not moved is *waiting for dependency* (§7.4) and is evaluated when its turn comes,
+project whose signature has not moved is *waiting for dependency* (§7.4) — as is one whose output was built
+elsewhere and still reads fresh (§7.6) — and is evaluated when its turn comes,
 because only then — every dependency terminal — is the roots' result in this run known (`ConditionalRebuild`):
 
 | A recorded root… | reads as |

@@ -87,7 +87,7 @@ public static class WillBuildEvaluator
 
         var reason = output?.Mode switch
         {
-            EvidenceMode.Time => TimeReason(output.Time),
+            EvidenceMode.Time => TimeReason(output.Time, state),
             EvidenceMode.Ledger => LedgerVetoes(LedgerReason(currentSignature, state), output),
             _ => LedgerReason(currentSignature, state),
         };
@@ -96,13 +96,25 @@ public static class WillBuildEvaluator
     }
 
     /// <summary>
-    /// [Faz 3 — spec 2026-09-18 §5.4] Zaman kipi: çıktı başkasının, hüküm kanıttan. Kırmızı YOK — defter notları
-    /// (<see cref="BuildState.FailedSignature"/>, <see cref="BuildState.DepIssue"/>) burada okunmaz; aracın
-    /// kaydı dışarıdaki derlemeden eskidir ve onu anlatamaz.
+    /// [Faz 3 — spec 2026-09-18 §5.4] Zaman kipi: çıktı başkasının, hüküm kanıttan. Kırmızı YOK —
+    /// <see cref="BuildState.FailedSignature"/> burada okunmaz; aracın kaydı dışarıdaki derlemeden eskidir ve
+    /// onu anlatamaz.
+    ///
+    /// <para><b>Tek istisna, kökleri bilinen bağımlılık notu (kullanıcı kararı 2026-09-20).</b> Çıktı TAZE ama
+    /// kayıtta <see cref="BuildState.DepIssue"/> + <see cref="BuildState.DepIssueRoots"/> duruyorsa hüküm
+    /// <see cref="WillBuildReason.WaitingForDependency"/>'dir — defter kipindekiyle AYNI cevap. Not hâlâ
+    /// doğrudur: taze hüküm "hiçbir HintPath hedefim benden yeni değil" demektir, yani dışarıdaki derleme de
+    /// kökün AYNI bayat çıktısına link'lenmiştir. Bu, "derle" emri DEĞİL bir KOŞULDUR: satır yeşil kalır
+    /// (<c>StandingStatus.Current</c>), uyarı üçgeni kökleri söyler ve koşu projeyi
+    /// <see cref="ConditionalRebuild"/> ile değerlendirir — kök hâlâ patlıyorsa atlanır, düzeldiyse AYNI koşuda
+    /// derlenir. Kökleri BİLİNMEYEN not okunmaz: söyleyebileceği tek şey koşulsuz "derle" olurdu ve dışarıda
+    /// tazelenmiş bir çıktıyı her koşuda yeniden derletirdi.</para>
     /// </summary>
-    private static WillBuildReason TimeReason(TimeVerdict? verdict) => verdict switch
+    private static WillBuildReason TimeReason(TimeVerdict? verdict, BuildState? state) => verdict switch
     {
-        TimeVerdict.Fresh => WillBuildReason.BuiltOutside,
+        TimeVerdict.Fresh => state is { DepIssue: true, DepIssueRoots.Count: > 0 }
+            ? WillBuildReason.WaitingForDependency
+            : WillBuildReason.BuiltOutside,
         TimeVerdict.Missing => WillBuildReason.OutputMissing,
         TimeVerdict.OwnNewer or TimeVerdict.DependencyNewer => WillBuildReason.OutputStale,
         TimeVerdict.FedBroken => WillBuildReason.OutputReplaced,
