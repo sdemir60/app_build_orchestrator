@@ -6,10 +6,12 @@
              FocusVisualStyle="{DynamicResource Ds.FocusVisual}"><!-- [E5/T47] Tab/ok ile ulaşılır + amber DS focus halkası -->
   <!-- [T53/T54-UI] design-v1 proje kartı (BuildApp.jsx:355-416 — birebir). Yükseklik LayoutMetrics sabitine
        bağlı (sticky aritmetiği bunu varsayar); geçiş/durum renkleri kod-tarafı (ProjectRow.xaml.cs) — saf-XAML
-       Storyboard motion sözleşmesince İMKANSIZ (MotionTokens.cs). Sol padding YOK: şerit kenara yapışır. -->
+       Storyboard motion sözleşmesince İMKANSIZ (MotionTokens.cs). Kökün İÇ DOLGUSU YOKTUR: satırın tam-genişlik
+       yüzeyleri (hover/seçim bandı = kökün Background'u, amber nefes katmanı, alt çizgi) kenardan kenara uzanır;
+       10px sağ nefesi İÇERİK grid'inin Margin'i verir (EventStreamView.xaml.cs içerik margin'iyle aynı desen).
+       Sol boşluk YOK: şerit kenara yapışır. -->
   <Border x:Name="PART_Root"
           Height="{x:Static controls:LayoutMetrics.DefaultRowHeight}"
-          Padding="0,0,10,0"
           BorderBrush="{DynamicResource Brush.BorderSubtle}" BorderThickness="0,0,0,1"
           Background="Transparent" SnapsToDevicePixels="True" Cursor="Hand">
     <Border.RenderTransform>
@@ -22,7 +24,7 @@
       <Border x:Name="PART_Breath" Background="{DynamicResource Brush.AmberSoft}"
               Opacity="0" Visibility="Collapsed" IsHitTestVisible="False" />
 
-      <Grid VerticalAlignment="Stretch">
+      <Grid VerticalAlignment="Stretch" Margin="0,0,10,0"><!-- içeriğin sağ nefesi (kökün İÇ DOLGUSU DEĞİL) -->
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="Auto" />
           <ColumnDefinition Width="*" />

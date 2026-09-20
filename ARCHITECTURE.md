@@ -2330,7 +2330,9 @@ its automation name instead. The icon buttons keep a plain, OS-delayed tooltip (
 an HTML `title`) so that a mouse crossing the row does not trail balloons behind it. The building row carries a motionless
 amber "breath" (an `amber-soft` layer at 0 → 0.32 → 0 opacity over 3.8 s) — that layer belongs to the row's
 background, not to the glyph, which only turns; a sweep or a shine was tried and
-rejected. A failing row shakes once, ±3 px over 360 ms.
+rejected. It runs the row's full width, exactly as far as the bottom line and the hover band do: the row
+itself has no padding, and the 10 px of air on the right is a margin on the content inside it. A failing row
+shakes once, ±3 px over 360 ms.
 
 The stripe has **no vertical inset**, which is a deliberate departure from §2.4. The design insets it by 1 px
 so that adjacent rows cannot fuse into one unbroken rail; looked at on screen, the break made the same 2 px

@@ -350,6 +350,31 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-20] Nefes katmanı satırın ALT ÇİZGİSİYLE aynı genişliktedir: kenardan kenara.
+    /// Satırın diğer tam-genişlik yüzeyleri (hover/seçim bandı — kök Border'ın KENDİ Background'u —, olay akışı
+    /// satır bandı, konsol hover bandı) zaten öyleydi; amber katman kök Border'ın sağ iç dolgusunun İÇİNDE
+    /// kaldığı için satırın alt çizgisinden 10px erken bitiyordu. İç dolgu İÇERİK grid'inin Margin'ine taşındı
+    /// (EventStreamView'ın içerik margin'i deseniyle aynı): içerik aynı yerde durur, katman kenara ulaşır.
+    /// </summary>
+    [StaFact]
+    public void The_breathing_layer_spans_the_full_row_width_like_the_bottom_line()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.BreathLayer.Visibility); // ön-koşul: katman gerçekten ölçülür
+        var root = row.Root;
+        Assert.True(root.ActualWidth > 0, "kök satır hiç ölçülmedi");
+
+        // Alt çizgi kökün KENDİ kenarıdır (BorderThickness 0,0,0,1) — yatayda kenarlık yok, yani "tam genişlik"
+        // referansı kökün genişliğidir. Katman hem o genişlikte hem de SOL kenardan başlar.
+        Assert.Equal(root.ActualWidth, row.BreathLayer.ActualWidth, precision: 3);
+        Point left = row.BreathLayer.TransformToAncestor(root).Transform(new Point(0, 0));
+        Assert.Equal(0, left.X, precision: 3);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Breathing_layer_only_shows_while_building_and_is_capped_at_thirty_fps()
     {
