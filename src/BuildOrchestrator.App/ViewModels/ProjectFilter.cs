@@ -15,7 +15,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.7]</b> Statü chip'leri eskiden KOŞUNUN sonucunu seçiyordu
 /// (<c>succeeded</c> · <c>failed</c> · <c>skipped</c>; ✓ + ✗ = "bu koşuda derlenenler") ve <c>building</c> kuyruğu da
 /// kapsıyordu. Artık <b>durum filtreleridir</b>: <see cref="Current"/> "Up to date" (yeşil — güncel çıktı, bu koşuda
-/// atlanan güncel satır ve bu koşunun başarıları), <see cref="Stale"/> "To build" (gri — kanıtsız hata dahil),
+/// atlanan güncel satır ve bu koşunun başarıları), <see cref="Stale"/> "To build" (gri — kanıtsız hata dahil;
+/// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> bu filtrenin barda chip'i YOKTUR, değer sayaç kovası
+/// ve filtre kuralı olarak durur — hiçbir yüzey onu açamaz, Σ kümeyi zaten koşulsuz temizler),
 /// <see cref="Failed"/> "Failed" (yalnız kırmızı görünen), <see cref="Building"/> yalnız ŞU AN derlenen. Atlandı
 /// chip'i kalktı: atlanmak bir durum değildir, satır kendi durumunun rengini taşır; koşunun "N skipped" özeti
 /// şeritte kalır. Üyelik satırın GÖSTERDİĞİ görsel durumdan okunur (<see cref="StateKey"/>) — sayaç
@@ -97,12 +99,13 @@ public static class ProjectFilter
 
     /// <summary>[design v1.11.0 §2.7-4] "Aktif çip KENDİ statü renginde yanar" — chip değerinin fırça anahtarı.
     /// Pasifken hepsi <c>Brush.TextPrimary</c>'dir (çağıranın işi). [design v1.20.0 §2.7] ✓ yeşil, ✗ kırmızı,
-    /// ○ (derlenecek) nötr gri.</summary>
+    /// derlenecek (<see cref="Stale"/>) nötr gri — o filtrenin barda chip'i YOKTUR (kullanıcı kararı
+    /// 2026-09-20), tablo yine de eksiksizdir: renk filtrenin bir olgusudur, chip'in değil.</summary>
     public static string ActiveBrushKey(string filter) => filter switch
     {
         Current => "Brush.StatusSuccessText",
         Failed => "Brush.StatusFailText",
-        Stale => "Brush.StatusSkippedText", // token adı tarihsel ("skipped"); değeri nötr gri metin — ○'nun rengi
+        Stale => "Brush.StatusSkippedText", // token adı tarihsel ("skipped"); değeri nötr gri metin
         _ => "Brush.AmberText", // building + warn: ikisi de amber ailesindendir
     };
 }

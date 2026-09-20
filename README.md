@@ -293,9 +293,9 @@ say who built the output: hover the decision label and its tooltip says `built o
 not this tool. A single amber triangle in the fixed slot on the right means something is off with this project's
 dependencies — a cycle, or
 a dependency that failed or was not rebuilt — and its one-line tooltip says which; the details are in the
-project log. The counter chips in the bottom bar count state — `✓` up to date, `○` to build, `✗` failed, plus
-what is building right now — and each is a filter; they **combine**: press the tick and the circle together to
-see everything that is green or grey, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
+project log. The counter chips in the bottom bar count state — `✓` up to date, `✗` failed, plus what is
+building right now — and each is a filter; they **combine**: press the tick and the cross together to
+see everything that is green or red, and type in the filter box (`Ctrl+F`) to narrow that further. A skipped
 project is not a state of its own: it keeps its colour and is counted under the chip it shows, while the run's
 *N skipped* stays in the ribbon's summary. Each active chip lights in its own colour, and the chip in the
 PROJECTS header lists what is on.

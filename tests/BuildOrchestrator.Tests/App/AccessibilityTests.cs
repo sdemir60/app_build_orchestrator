@@ -51,7 +51,9 @@ public class AccessibilityTests
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski adlar "Succeeded — filter" ve "Skipped — filter" idi; chip'ler
         // artık durum filtreleridir ve adları filtre etiketinin sözcüğünü taşır.
         Assert.Equal("Up to date — filter", AutomationProperties.GetName(bar.CurrentChip));
-        Assert.Equal("To build — filter", AutomationProperties.GetName(bar.StaleChip));
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Burada bir satır daha vardı: ○ "To build — filter"
+        // (<c>bar.StaleChip</c>). O chip kaldırıldı, adı da (<c>AccessibilityNames.FilterStale</c>) — ekran
+        // okuyucunun barda duyacağı durum adları ✓ ve ✗ ile sınırlıdır.
         Assert.Equal("Failed — filter", AutomationProperties.GetName(bar.FailedChip));
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7] Eski ad "Warnings — dependency cycle or dependency issue" idi; ⚠
         // artık bekleyen bağımlılık notunu da sayar ve tasarımın tooltip'ini taşır.
