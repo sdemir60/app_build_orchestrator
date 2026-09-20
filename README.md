@@ -186,9 +186,10 @@ the running instance first — tray icon → Exit).
    is readable from the **decision label** at the right end of each row: `modified` (its own files changed,
    `modified · local` when one of them is also dirty in `git status`), `affected` (only a dependency changed,
    or its copy in a shared folder no longer matches its output), `never built` (never built by this tool, or
-   its output file is gone), `failed · 2h` (failed at this source — the tail is how long ago), or
-   `up to date · 2h` — the tail being how long ago it was last built successfully (or, for a project built
-   outside this tool, how old that output is). A project that built successfully against a dependency that was
+   its output file is gone), `failed` (failed at this source), or `up to date` — whether because this tool's
+   last build still matches or because an output you built elsewhere does; the tooltip says which. The label
+   never carries a time: a row answers what the project's output needs, and the minutes behind that answer
+   never changed it. A project that built successfully against a dependency that was
    failing, and has not changed since, reads the same `up to date` — a later Build leaves it
    alone until that dependency is healthy again, and the warning triangle's tooltip names which one.
 

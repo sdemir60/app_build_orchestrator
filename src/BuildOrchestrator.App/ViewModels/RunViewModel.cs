@@ -90,22 +90,17 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// KALDIRILDI: hedef commit motorda kalır (konsol satırı ve pull için), satıra itilmez.</para></summary>
     [ObservableProperty] private string? _currentSha;
 
-    /// <summary>[v1.16.0] Son BAŞARILI derlemenin zamanı — satırın <c>up to date · 2h</c> etiketindeki göreli
-    /// yaş ve proje logunun "Last successful build" satırı buradan. Kaynak
-    /// <see cref="BuildPreviewItem.LastBuiltAt"/>; hiç başarıyla derlenmemiş projede <c>null</c>.</summary>
-    [ObservableProperty] private DateTimeOffset? _lastBuiltAt;
-
     /// <summary>[v1.16.0] Projenin KENDİ girdi dosyaları son derlemeden bu yana değişti mi — etiketin
     /// <c>modified</c> (kendi dosyası) / <c>affected</c> (yalnız bağımlılığı) ayrımı. Kaynak
-    /// <see cref="BuildPreviewItem.OwnFilesChanged"/>; bilinmiyorsa <c>null</c>.</summary>
+    /// <see cref="BuildPreviewItem.OwnFilesChanged"/>; bilinmiyorsa <c>null</c>.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bunun yanında ÜÇ zaman alanı daha dururdu —
+    /// <c>LastBuiltAt</c> (son başarılı derleme), <c>FailedAt</c> (kanıtlı son hata) ve <c>OutputBuiltAt</c>
+    /// (bu araç dışındaki derlemenin kanıtı). Üçünün de TEK okuyucusu karar etiketinin yaş kuyruğu ve proje
+    /// sayfasının kanıt satırıydı; yaşlar kalkınca (bkz. <see cref="DecisionLabel"/>) satırda okuyucusuz
+    /// kaldılar ve buradan da kalktılar. Defter ve önizleme onları taşımaya devam eder
+    /// (<c>BuildStateStore</c>, <see cref="BuildPreviewItem"/>) — satır artık okumaz.</para></summary>
     [ObservableProperty] private bool? _ownFilesChanged;
-
-    /// <summary>[Faz 3 — spec 2026-09-18 §5, P8, Task 7] Proje bu araç dışında derlenmiş ve çıktısı güncelse
-    /// (<see cref="WillBuildReason.BuiltOutside"/>) derleme kanıtının zamanı — etiketin <c>up to date · built
-    /// outside this tool 5m ago</c> yaşı ve proje sayfasının kanıt satırı buradan. Kaynak
-    /// <see cref="BuildPreviewItem.OutputBuiltAt"/>; diğer her gerekçede <c>null</c>. Bu araç projeyi
-    /// başarıyla derlediği an eski kanıt geçersizleşir ve <c>null</c>'a çekilir (artık aracın kendi çıktısı).</summary>
-    [ObservableProperty] private DateTimeOffset? _outputBuiltAt;
 
     /// <summary>[T53-UI · C1 debt] Satır seçili mi — <see cref="RunViewModel.SelectedProjectId"/> değiştiğinde
     /// (<see cref="RunViewModel.OnSelectedProjectIdChanged"/>) tüm satırlar için tazelenir. Kart bunu şerit
@@ -225,12 +220,6 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// bağımlılığa karşı derlendi" notu ise Sync'ten sonra hiç görünmezdi. Üçgen artık defter notunu da
     /// taşır; koşu özetinin sorusu <see cref="HasRunDepIssue"/>'ya ayrıldı (R-D144).</para></summary>
     public bool HasDepIssue => WarningRoots is { Count: > 0 };
-
-    /// <summary>[spec 2026-09-18 §1-14] Kanıtlı son hatanın zamanı — <c>failed · 2h</c> etiketinin yaşı.
-    /// Kaynak önizlemedir (<see cref="BuildPreviewItem.FailedAt"/>, <c>BuildStateStore.FailedAtOf</c>); koşu
-    /// içinde kanıtlı hata onu ŞİMDİ'ye, başarı ve kanıtsız hata <c>null</c>'a çeker
-    /// (<see cref="RunViewModel.OnProjectDone"/>). Çıktı durumunun parçasıdır: nötrleme dokunmaz.</summary>
-    [ObservableProperty] private DateTimeOffset? _failedAt;
 
     /// <summary>[spec 2026-09-18 §4 <c>local</c>] Projenin girdilerinden en az biri <c>git status</c>'ta kirli
     /// mi. YALNIZ koşu dışındaki önizlemeden yazılır (Sync; koşu önizlemesi alanı hep <c>false</c> gönderir —
@@ -1024,9 +1013,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// siler</b> — ve yalnız onları: statü (<c>Pending</c>), süre, bu koşunun dependency listesi, döngü tur
     /// bayrakları, atlama gerekçesi ve koreografi işareti. Satırın ÇIKTI DURUMU (önizleme kararı
     /// <see cref="ProjectRowViewModel.WillBuild"/>/<see cref="ProjectRowViewModel.WillBuildReason"/>,
-    /// <see cref="ProjectRowViewModel.LastBuiltAt"/>, <see cref="ProjectRowViewModel.OwnFilesChanged"/>,
-    /// <see cref="ProjectRowViewModel.FailedAt"/>, <see cref="ProjectRowViewModel.LocalEdits"/>, defter notunun
-    /// kökleri) ve yapısal bilgi (döngü üyeliği, katman) DOKUNULMAZ: renk kümülatiftir ve kapsam plandan
+    /// <see cref="ProjectRowViewModel.OwnFilesChanged"/>, <see cref="ProjectRowViewModel.LocalEdits"/>, defter
+    /// notunun kökleri) ve yapısal bilgi (döngü üyeliği, katman) DOKUNULMAZ: renk kümülatiftir ve kapsam plandan
     /// okunur.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.20.0 §2.3]</b> Eski hâl bir <c>fresh</c> parametresi taşırdı: Sync
@@ -1889,10 +1877,10 @@ public sealed partial class RunViewModel : ObservableObject
             // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
             // persist'ini içerdiği için terminal satırların sol yarısı ancak burada TAZELENİR.
             row.CurrentSha = item.BuiltCommit;
-            row.LastBuiltAt = item.LastBuiltAt;              // [v1.16.0] "up to date · 2h" kuyruğu
             row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
-            row.FailedAt = item.FailedAt;                    // [spec 2026-09-18 §1-14] "failed · 2h" kuyruğu — defterden, LastBuiltAt gibi
-            row.OutputBuiltAt = item.OutputBuiltAt;          // [Faz 3 — Task 7] "built outside this tool 2h" kuyruğu
+            // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Önizlemenin üç zaman alanı (LastBuiltAt, FailedAt,
+            // OutputBuiltAt) burada satıra TAŞINIRDI; etiket yaş taşımadığı için satırda okuyucuları kalmadı ve
+            // alanlar satırdan kalktı. Önizleme onları taşımaya devam eder (defterin kaydı, bkz. Contracts).
             // [R-M3] LocalEdits yalnız KOŞU DIŞINDAKİ önizlemeden yazılır: Sync'in (ve Clean/Optimize'ın ardından
             // zincirlenen Sync'in) önizlemesi `git status`'u okur, koşu önizlemesi ise alanı hep false gönderir —
             // o yazılsaydı her koşu Sync'in "local" işaretini silerdi. Ayrım olayın geldiği ANDAKİ koşu
@@ -2092,16 +2080,13 @@ public sealed partial class RunViewModel : ObservableObject
             // [DEĞİŞEN KURAL — design v1.20.0 §5] Eskiden her hata LastFailed yazardı; timeout'lu satır bir
             // sonraki Sync'e kadar kırmızı durur, Sync onu griye çevirirdi — aynı proje iki farklı renk.
             row.WillBuildReason = NextPreview.AfterFailure(evidence);
-            row.FailedAt = evidence ? DateTimeOffset.Now : null;
         }
         if (state == ProjectRowState.Succeeded)
         {
-            row.LastBuiltAt = RunIsClean ? null : DateTimeOffset.Now;
+            // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Burada satırın üç zaman alanı da tazelenirdi
+            // (LastBuiltAt=şimdi, FailedAt=null, OutputBuiltAt=null — "az önce derlendi, eski kanıt geçersiz").
+            // Alanların TEK okuyucusu etiketin yaş kuyruğuydu; yaş kalkınca alanlar da satırdan kalktı.
             row.OwnFilesChanged = RunIsClean ? null : false;   // az önce derlendi: kendi dosyası artık güncel
-            row.FailedAt = null; // başarı eski kanıtı düşürür (defter de FailedSignature'ı siler)
-            // [Faz 3 — Task 7] Bu araç projeyi az önce derlediyse "bu araç dışında derlendi" kanıtı ARTIK
-            // GEÇERSİZDİR — çıktı şimdi aracın kendi eseri, FailedAt'le AYNI kural (kopya YASAK).
-            row.OutputBuiltAt = null;
         }
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla

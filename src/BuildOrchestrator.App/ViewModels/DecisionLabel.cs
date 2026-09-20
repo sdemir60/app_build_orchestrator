@@ -1,5 +1,4 @@
 using BuildOrchestrator.Contracts.Model;
-using BuildOrchestrator.Core.Formatting;
 
 namespace BuildOrchestrator.App.ViewModels;
 
@@ -8,7 +7,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// NEDEN olacağını söyleyen iki sözcük.
 /// </summary>
 /// <param name="Word">Asıl sözcük (<c>modified</c>, <c>up to date</c>…) — boşsa yuva boş kalır.</param>
-/// <param name="Tail">"·" sonrası kuyruk (<c>local</c>, <c>2h</c>); yoksa null. Her zaman soluk çizilir.</param>
+/// <param name="Tail">"·" sonrası kuyruk; bugün TEK bir kuyruk vardır (<c>local</c>), yoksa null. Her zaman
+/// soluk çizilir.</param>
 /// <param name="Title">Uzun gerekçe — DS Tooltip DEĞİL, native <c>title</c> (ikon butonlarıyla aynı dil).</param>
 /// <param name="Stale">Etiket BEKLEYEN İŞ mi söylüyor — yuvanın rengi bundan gelir (bekleyen iş
 /// <c>text-secondary</c>, güncel <c>text-faint</c>). "Bu koşuda derlenecek" ile aynı şey DEĞİLDİR: kapsam
@@ -47,9 +47,8 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 /// <list type="bullet">
 /// <item><c>failed · retry</c> çifti: <c>retry</c> bir SÖZDÜ ("bir sonraki Build bunu yeniden deneyecek") ve
 /// döngü üyesinde tutulmuyordu (ölçüldü: gerçek bir çalışma alanında 18 <c>failed</c> satırının 15'i döngü
-/// üyesiydi). Sözcük artık her koşulda yalnız <c>failed</c> + KANITIN YAŞI (<see cref="WillBuildReason.LastFailed"/>
-/// iken <c>failedAt</c>'in <see cref="AgeFormat.Age"/>'i) yazar — "yeniden denenecek mi" sorusunu artık uzun
-/// gerekçe (döngü üyesinde <i>Resolve cycles</i>, değilse <i>Build</i>) cevaplar, kuyruk değil.</item>
+/// üyesiydi). "Yeniden denenecek mi" sorusunu artık uzun gerekçe (döngü üyesinde <i>Resolve cycles</i>,
+/// değilse <i>Build</i>) cevaplar, kuyruk değil.</item>
 /// <item><c>affected · up to date · &lt;yaş&gt;</c> üçlüsü (koşullu yeniden derleme, Task 4): motor bu koşuyu
 /// gerçekten bekletiyorsa (<c>conditional</c>) yuva kökleri tooltip'inde tekrarlıyordu — ama aynı bilgi zaten
 /// uyarı üçgeninin TEK SATIRLIK tooltip'inde vardı (kopya YASAK). <see cref="WillBuildReason.WaitingForDependency"/>
@@ -58,6 +57,16 @@ public readonly record struct RowDecision(string Word, string? Tail, string Titl
 /// <c>dependencyRoots</c> ve <c>namePrefix</c> parametreleri bu yüzden TAMAMEN kalktı — kapsamın zorlayıp
 /// zorlamadığı ve hangi kökün beklendiği artık etiketin işi değil.</item>
 /// </list></para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Etiket ve uzun gerekçe artık HİÇBİR ZAMAN yaş
+/// taşımaz. Eski iddia: <c>failed</c> ve <c>up to date</c> kuyruklarında kanıtın yaşı dururdu
+/// (<c>up to date · 2h</c>, <c>failed · 2h</c>, dışarıda derlenmiş çıktıda <c>up to date · 5m</c>) ve uzun
+/// gerekçe onu tekrar ederdi (<c>Up to date — last built 2h ago</c>, <c>Failed at this source 2h ago — …</c>,
+/// <c>Up to date — built outside this tool 5m ago</c>). Gerekçe: yaşlardan biri YANILTIYORDU — bu araç dışında
+/// derlenmiş bir projede satır, o çıktının değil ARACIN kendi son derlemesinin yaşını gösterebiliyordu — ve
+/// kullanıcı bilginin gürültüsüne değmediğine karar verdi. Kalan TEK kuyruk <c>local</c>'dır; zaman kaynakları
+/// (<c>lastBuiltAt</c>, <c>failedAt</c>, <c>outputBuiltAt</c>) ve <c>now</c> parametreleri bu yüzden imzadan
+/// tamamen kalktı — etiket saat okumaz, yalnız olgu adlandırır.</para>
 ///
 /// <para><b>Karar bilinmiyorsa yuva BOŞ kalır</b> — yalnız gerçekten bilinmiyorsa: Sync yapılmadı ya da motor
 /// bu satır için gerekçe üretmedi. Boş yuva "henüz bilmiyorum"un doğru karşılığıdır.</para>
@@ -68,22 +77,12 @@ public static class DecisionLabel
     /// <param name="reason">Motorun gerekçesi (<see cref="BuildPreviewItem.Reason"/>).</param>
     /// <param name="ownFilesChanged">Projenin KENDİ girdi dosyaları değişti mi — defterdeki içerik özetiyle
     /// bugünkünün karşılaştırması (<c>BuildStateStore.OwnFilesChanged</c>); bilinmiyorsa <c>null</c>.</param>
-    /// <param name="lastBuiltAt">Son BAŞARILI derlemenin zamanı — <c>up to date</c> kuyruğu buradan.</param>
-    /// <param name="failedAt">[spec 2026-09-18 §1-14] Kanıtlı son hatanın zamanı — <c>failed</c> kuyruğu buradan
-    /// (<see cref="WillBuildReason.LastFailed"/> dışında okunmaz).</param>
     /// <param name="localEdits">[spec 2026-09-18 §4 <c>local</c>] Projenin girdilerinden en az biri
     /// <c>git status</c>'ta kirli mi — yalnız <c>modified</c> satırında <c>local</c> kuyruğunu ekler.</param>
-    /// <param name="now">Şimdi (yaş hesabı için).</param>
     /// <param name="inCycle">Proje bir bağımlılık döngüsünün üyesi mi — yalnız <c>failed</c> satırının uzun
     /// gerekçesini seçer (o satırı yeniden denemek <i>Resolve cycles</i>'ın işidir).</param>
-    /// <param name="outputBuiltAt">[Faz 3 — spec 2026-09-18 §5, P8, Task 7] <see cref="WillBuildReason.BuiltOutside"/>
-    /// iken derleme kanıtının zamanı — <c>up to date</c> kuyruğu bu gerekçede <paramref name="lastBuiltAt"/>
-    /// yerine BURADAN gelir (araç bu çıktıyı üretmedi, kanıt aracın dışındaki derlemenindir). Diğer her gerekçede
-    /// okunmaz.</param>
     public static RowDecision For(
-        bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, DateTimeOffset? lastBuiltAt,
-        DateTimeOffset? failedAt, bool localEdits, DateTimeOffset now, bool inCycle = false,
-        DateTimeOffset? outputBuiltAt = null)
+        bool? willBuild, WillBuildReason? reason, bool? ownFilesChanged, bool localEdits, bool inCycle = false)
     {
         // Karar yok: Sync yapılmadı (willBuild null) ya da motor bu satır için gerekçe üretmedi.
         if (willBuild is null || reason is null) return RowDecision.None;
@@ -99,10 +98,8 @@ public static class DecisionLabel
 
             case WillBuildReason.LastFailed:
             {
-                string? failAge = AgeFormat.Age(failedAt, now);
-                string ageSuffix = failAge is null ? "" : $" {failAge} ago";
                 string retryClause = inCycle ? "Resolve cycles will retry it" : "Build will retry it";
-                return new("failed", failAge, $"Failed at this source{ageSuffix} — {retryClause}", Stale: true);
+                return new("failed", null, $"Failed at this source — {retryClause}", Stale: true);
             }
 
             // [DEĞİŞEN KURAL — design v1.20.0 §2.4] Bkz. sınıf özeti: WaitingForDependency artık UpToDate ile
@@ -110,23 +107,13 @@ public static class DecisionLabel
             // hangi kökün beklendiğini yalnız uyarı üçgeni söyler.
             case WillBuildReason.UpToDate:
             case WillBuildReason.WaitingForDependency:
-            {
-                string? age = AgeFormat.Age(lastBuiltAt, now);
-                return new("up to date", age,
-                    age is null ? "Up to date" : $"Up to date — last built {age} ago", Stale: false);
-            }
+                return new("up to date", null, "Up to date", Stale: false);
 
-            // [Faz 3 — spec 2026-09-18 §5.4, Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil. Kuyruk
-            // (yaş) LastFailed/UpToDate'inki gibi "aracın kendi zamanı"ndan DEĞİL, dışarıdaki derlemenin
-            // kanıtından (outputBuiltAt) gelir: lastBuiltAt burada bu aracın hiç üretmediği bir çıktıyı anlatmaz.
+            // [Faz 3 — spec 2026-09-18 §5.4, Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil. Sözcük
+            // UpToDate ile AYNI, uzun gerekçe ise çıktının KİMİN eseri olduğunu söyler: kullanıcı bu satırın
+            // yeşilini aracın kendi derlemesine bağlamasın.
             case WillBuildReason.BuiltOutside:
-            {
-                string? age = AgeFormat.Age(outputBuiltAt, now);
-                string title = age is null
-                    ? "Up to date — built outside this tool"
-                    : $"Up to date — built outside this tool {age} ago";
-                return new("up to date", age, title, Stale: false);
-            }
+                return new("up to date", null, "Up to date — built outside this tool", Stale: false);
 
             // [Faz 3 — spec 2026-09-18 §5.3/§5.4, Task 7] Öğrenilmiş beslenen kopya (paylaşılan klasördeki DLL)
             // bozuk — bağımlılar başka bir çıktıya link'lidir, "affected" ile AYNI sözcük ama farklı bir olguyu

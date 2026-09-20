@@ -185,10 +185,13 @@ public static class OutputEvidence
         OwnFilesChanged(check, BuildStateStore.OwnFilesChanged(state, projectId, currentContent));
 
     /// <summary>
-    /// "Built outside this tool" yaşının kaynağı — yalnız son gerekçe <see cref="WillBuildReason.BuiltOutside"/>
-    /// iken (zaman kipinde ve taze) kanıtın zamanı. Gerekçe de okunur çünkü taze bir kontrol tek başına yetmez:
-    /// kirli bir upstream'in arkasındaki düğüm (<c>IncrementalPlanner</c>, §5.4 son cümle) kontrolü taze olsa da
-    /// <c>OutputStale</c> ile derlenir ve yaşı yoktur.
+    /// Bu araç dışında derlenmiş çıktının kanıt zamanı — yalnız son gerekçe
+    /// <see cref="WillBuildReason.BuiltOutside"/> iken (zaman kipinde ve taze). Gerekçe de okunur çünkü taze
+    /// bir kontrol tek başına yetmez: kirli bir upstream'in arkasındaki düğüm (<c>IncrementalPlanner</c>,
+    /// §5.4 son cümle) kontrolü taze olsa da <c>OutputStale</c> ile derlenir ve böyle bir zamanı yoktur.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu değeri satırın "built outside this tool
+    /// 5m ago" yaşı okurdu — ve o yaş YANILTICIydı, kalktı. Önizleme alanını
+    /// (<c>BuildPreviewItem.OutputBuiltAt</c>) beslemeye devam eder; bugün okuyucusu YOK.</para>
     /// </summary>
     public static DateTimeOffset? OutputBuiltAt(OutputCheck? check, WillBuildReason? reason) =>
         reason == WillBuildReason.BuiltOutside && check is { Mode: EvidenceMode.Time, Time: TimeVerdict.Fresh }

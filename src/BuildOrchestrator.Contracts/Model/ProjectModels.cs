@@ -176,7 +176,8 @@ public sealed record BuildState(
     // kanıtsız kırmızı YASAK. Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null
     // çözülür (hiçbir eski kayıt yanlışlıkla "kanıtlı" sayılmaz).
     string? FailedSignature = null,
-    // [spec 2026-09-18 §1-14] FailedSignature'ın YAZILDIĞI an — `failed · 2h` etiketinin yaşı buradan okunur
+    // [spec 2026-09-18 §1-14] FailedSignature'ın YAZILDIĞI an — kanıtlı hatanın kendi zamanı. [DEĞİŞEN KURAL —
+    // kullanıcı kararı 2026-09-20] Bunu `failed · 2h` etiketinin yaşı okurdu; yaş kalktı, defter kaydı kaldı
     // (LastRunAt'tan AYRI: bir proje başarısızlıktan SONRA hiç derlenmeden imzası değişebilir, o durumda
     // FailedSignature hâlâ eski hatayı anlatır ama LastRunAt onun zamanını taşımaz — bkz. BuildStateStore.
     // FailedAtOf, LastBuiltAtOf ile aynı desen). Başarıda ya da kanıtsız hatada null.

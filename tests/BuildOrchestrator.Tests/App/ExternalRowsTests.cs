@@ -65,6 +65,11 @@ public class ExternalRowsTests
     /// yalan söylerdi). Hedef commit artık HİÇBİR satıra itilmiyor: satırın sağ yuvasında commit değil KARAR
     /// duruyor. Geriye kalan — ve asıl önemli olan — iddia şudur: harici satır bu yüzeyde de SIRADAN bir
     /// satırdır, ayrı bir dalı yoktur.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Testin okuduğu olgular arasında
+    /// <c>LastBuiltAt</c> de vardı (harici satır da önizlemenin zamanını AYNEN alır). Karar etiketi yaş
+    /// taşımayı bıraktığı için o alan satırdan kalktı; iddia kalan olgularla (gerekçe + kendi dosyası değişti
+    /// mi + son başarılı derlemenin revizyonu) AYNEN sürüyor.</para>
     /// </summary>
     [Fact]
     public async Task An_external_row_reads_the_decision_facts_exactly_like_a_main_row()
@@ -86,10 +91,10 @@ public class ExternalRowsTests
         var external = vm.Projects.Single(r => r.IsExternal);
         var main = vm.Projects.Single(r => !r.IsExternal);
 
-        Assert.Equal(builtAt, external.LastBuiltAt);
+        Assert.Equal("a1b2c3d", external.CurrentSha);
         Assert.False(external.OwnFilesChanged);
         Assert.Equal(WillBuildReason.UpToDate, external.WillBuildReason);
-        Assert.Equal(builtAt, main.LastBuiltAt);
+        Assert.Equal("b7e91d4", main.CurrentSha);
         Assert.True(main.OwnFilesChanged);
     }
 

@@ -810,6 +810,12 @@ public class ProjectRowTests
     /// sınıf özeti) — hangi kökün beklendiğini yalnız uyarı üçgeni söyler, yuvanın etiketi asla üç parça
     /// olmaz. Yuva 134px'e DÖNDÜ, en uzun etiket yeniden "up to date · just now".</para>
     ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Yaş kuyrukları kalktı (bkz.
+    /// <see cref="DecisionLabel"/>'in sınıf özeti), yani en uzun etiket artık "up to date · just now" DEĞİL:
+    /// kalan tek kuyrukla "modified · local". Bu test hâlâ AYNI şeyi sorar — yuvanın en uzun etiketi SIĞIYOR
+    /// mu — ama artık o etiketle sorar. Yuvanın 134px'i BİLEREK küçültülmedi: ölçü kararı etiket sözcükleriyle
+    /// birlikte alınmadı, satırın hover ikon bloğu da aynı yuvayı paylaşıyor.</para>
+    ///
     /// <para>pack:// aileler headless çözülmez → aynı OTF file:// üzerinden enjekte edilir
     /// (GraphCullTests/TrackedTextBlockTests deseni); üretimde bu seam ASLA set edilmez.</para>
     ///
@@ -823,9 +829,10 @@ public class ProjectRowTests
     {
         var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
         {
-            WillBuild = false,
-            WillBuildReason = WillBuildReason.UpToDate,
-            LastBuiltAt = DateTimeOffset.Now,     // "just now" — en uzun kuyruk
+            WillBuild = true,
+            WillBuildReason = WillBuildReason.SignatureChanged,
+            OwnFilesChanged = true,
+            LocalEdits = true,                    // "modified · local" — kalan en uzun etiket
         };
         var (row, window, _) = Realize(vm);
         row.DecisionText.FontFamily = DsResources.MonoFontFamily;
@@ -837,7 +844,7 @@ public class ProjectRowTests
         // sınanır, geri kalan assertion'lar o okunan değeri kullanır.
         Assert.Equal(134, row.RightBlock.MinWidth);
 
-        Assert.Equal("up to date · just now", row.DecisionText.Text);
+        Assert.Equal("modified · local", row.DecisionText.Text);
         double width = row.DecisionText.DesiredSize.Width;
         double slotMinWidth = row.RightBlock.MinWidth; // XAML'ın GERÇEK değeri — sabit kopyalanmaz
         Assert.True(width > 0, "etiket hiç ölçülemedi (font çözülmedi mi?)");
@@ -845,35 +852,15 @@ public class ProjectRowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>
-    /// [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eskiden bu test <c>Conditional</c> bayrağının TEK BAŞINA
-    /// (WillBuild/Reason SABİT kalırken) etiketi tazelediğini pinliyordu. <see cref="DecisionLabel"/> artık
-    /// <c>Conditional</c>'ı hiç okumuyor (bkz. o sınıfın özeti), o senaryo ANLAMSIZLAŞTI. Yerini
-    /// <c>FailedAt</c> aldı: <see cref="DecisionLabel.For"/>'a giren YENİ bir olgu (kanıtın yaşı) ve
-    /// property-changed anahtarında (<c>ProjectRow.OnVmPropertyChanged</c>) Conditional'ınkiyle AYNI riski
-    /// taşır — WillBuild/Reason SABİT kalıp yalnız FailedAt değişen bir önizleme (kanıt tazelenir, "failed"
-    /// kalır) listede olmasaydı satır bayat kalırdı.</summary>
-    [StaFact]
-    public void Flipping_only_the_failed_at_flag_repaints_the_decision_label()
-    {
-        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Pending)
-        {
-            WillBuild = true,
-            WillBuildReason = WillBuildReason.LastFailed,
-            FailedAt = DateTimeOffset.Now.AddHours(-2),
-        };
-        var (row, window, _) = Realize(vm);
-        Assert.Equal("failed · 2h", row.DecisionText.Text);
-
-        vm.FailedAt = DateTimeOffset.Now.AddDays(-3); // yalnız kanıtın yaşı değişti, gerekçe AYNI kaldı
-        row.UpdateLayout();
-
-        Assert.Equal("failed · 3d", row.DecisionText.Text);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[Task 6] <c>LocalEdits</c> de <see cref="DecisionLabel.For"/>'a giren YENİ bir olgudur
-    /// (<c>modified · local</c> kuyruğu) — AYNI property-changed riski, ayrı bir test.</summary>
+    /// <summary>[Task 6] <c>LocalEdits</c> de <see cref="DecisionLabel.For"/>'a giren bir olgudur
+    /// (<c>modified · local</c> kuyruğu) — WillBuild/Reason SABİT kalırken TEK BAŞINA değişebildiği için
+    /// property-changed anahtarında (<c>ProjectRow.OnVmPropertyChanged</c>) listelenmezse satır bayat kalırdı.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bunun bir eşi vardı
+    /// (<c>Flipping_only_the_failed_at_flag_repaints_the_decision_label</c>): yalnız <c>FailedAt</c> değişen
+    /// bir önizlemede satırın <c>failed · 2h</c>'den <c>failed · 3d</c>'ye tazelendiğini pinliyordu. Yaş
+    /// kalkınca etiket zaman alanlarını hiç okumaz oldu, <c>FailedAt</c> satırdan da kalktı — o eş test
+    /// KALDIRILDI (tazelenecek bir şey yok), aynı riski pinleyen bu test tek başına kaldı.</para></summary>
     [StaFact]
     public void Flipping_only_the_local_edits_flag_repaints_the_decision_label()
     {

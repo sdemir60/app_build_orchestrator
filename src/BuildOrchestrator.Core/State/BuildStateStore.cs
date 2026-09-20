@@ -93,20 +93,25 @@ public sealed class BuildStateStore
     }
 
     /// <summary>
-    /// [v1.16.0] Bir projenin SON BAŞARILI derlemesinin zamanı — satırın <c>up to date · 2h</c> etiketindeki
-    /// göreli yaş ve proje logu başlığındaki "Last successful build" satırı bunu okur. Kayıt yoksa ya da son
-    /// koşu başarılı DEĞİLSE <c>null</c>: "hiç derlenmemiş" ile "en son patladı" ayrı olgulardır ve ikisinde
-    /// de bir başarı yaşı yazılamaz. <see cref="BuiltCommitOf"/> ile aynı desen — tek arama yeri.
+    /// [v1.16.0] Bir projenin SON BAŞARILI derlemesinin zamanı — önizlemenin (<c>BuildPreviewItem.LastBuiltAt</c>)
+    /// taşıdığı değer. Kayıt yoksa ya da son koşu başarılı DEĞİLSE <c>null</c>: "hiç derlenmemiş" ile "en son
+    /// patladı" ayrı olgulardır ve ikisinde de bir başarı zamanı yazılamaz. <see cref="BuiltCommitOf"/> ile
+    /// aynı desen — tek arama yeri.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu değeri satırın <c>up to date · 2h</c>
+    /// kuyruğu ve proje logunun "Last successful build" satırı okurdu; ikisinden de yaş kalktı, yani bugün
+    /// okuyucusu YOK. Defter kaydı ve önizleme alanı durmaya devam ediyor.</para>
     /// </summary>
     public static DateTimeOffset? LastBuiltAtOf(IReadOnlyDictionary<string, BuildState>? state, string projectId) =>
         state is not null && state.TryGetValue(projectId, out var found)
         && found.LastResult == BuildResult.Succeeded ? found.LastRunAt : null;
 
     /// <summary>
-    /// [spec 2026-09-18 §1-14] Bir projenin KANITLI son hatasının zamanı — satırın <c>failed · 2h</c>
-    /// etiketindeki göreli yaş bunu okur. Kayıt yoksa ya da <see cref="BuildState.FailedSignature"/> boşsa
-    /// (hiç hata yaşanmamış temiz kayıt, ya da kanıtsız/kesilmiş bir deneme — bkz. <see
-    /// cref="BuildOrchestrator.Core.Planning.WillBuildEvaluator"/>) <c>null</c>: gösterilecek bir hata yaşı yoktur. <see
+    /// [spec 2026-09-18 §1-14] Bir projenin KANITLI son hatasının zamanı — önizlemenin
+    /// (<c>BuildPreviewItem.FailedAt</c>) taşıdığı değer. Kayıt yoksa ya da <see cref="BuildState.FailedSignature"/>
+    /// boşsa (hiç hata yaşanmamış temiz kayıt, ya da kanıtsız/kesilmiş bir deneme — bkz. <see
+    /// cref="BuildOrchestrator.Core.Planning.WillBuildEvaluator"/>) <c>null</c>: anılacak bir hata anı yoktur.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bunu satırın <c>failed · 2h</c> kuyruğu okurdu;
+    /// yaş kalktı, bugün okuyucusu YOK. <see
     /// cref="LastBuiltAtOf"/> ile AYNI desen — tek arama yeri, "imzalı kanıt var mı" sorusunu ikinci kez
     /// yazmaz.
     /// </summary>

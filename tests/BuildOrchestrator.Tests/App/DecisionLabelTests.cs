@@ -16,22 +16,28 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4]</b> Sınıf İKİ girdi daha KAZANDI (<c>failedAt</c>,
 /// <c>localEdits</c>) ve BİRİNİ KAYBETTİ (<c>conditional</c>). Eski aile burada iki şey PİNLİYORDU ve ikisi de
-/// kalktı: (a) <c>failed · retry</c> — <c>retry</c> bir SÖZDÜ, kuyruk artık kanıtın YAŞIdır; (b)
-/// <c>affected · up to date · &lt;yaş&gt;</c> üçlüsü — <c>WaitingForDependency</c> artık <c>UpToDate</c> ile
-/// BİREBİR okunur, hangi kökün beklendiğini yalnız uyarı üçgeni (<c>RowWarning</c>) söyler. Bu yüzden
-/// <c>conditional</c>/<c>roots</c>/<c>prefix</c> parametreleri buradan da kalktı — imza artık
-/// <see cref="DecisionLabel.For"/>'un GÜNCEL hâliyle birebirdir (kökler/önek hâlâ imzada var ama fonksiyon
-/// onları okumuyor, bkz. o sınıfın <c>&lt;param&gt;</c> notu).</para>
+/// kalktı: (a) <c>failed · retry</c> — <c>retry</c> bir SÖZDÜ; (b) <c>affected · up to date · &lt;yaş&gt;</c>
+/// üçlüsü — <c>WaitingForDependency</c> artık <c>UpToDate</c> ile BİREBİR okunur, hangi kökün beklendiğini
+/// yalnız uyarı üçgeni (<c>RowWarning</c>) söyler.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Bu aile bir dizi YAŞ pinliyordu ve hepsi kalktı.
+/// Eski iddialar: <c>failed</c> ile <c>up to date</c> kuyruklarında kanıtın yaşı dururdu (<c>failed · 2h</c>,
+/// <c>up to date · 2h</c>, dışarıda derlenmiş çıktıda <c>up to date · 5m</c>), yaş tek kaba birimle
+/// biçimlenirdi (<c>just now</c>/<c>14m</c>/<c>3d</c>), <c>BuiltOutside</c>'ın yaşı <c>lastBuiltAt</c>'ten
+/// DEĞİL <c>outputBuiltAt</c>'ten gelirdi ve uzun gerekçeler yaşı tekrar ederdi (<c>Up to date — last built
+/// 2h ago</c>, <c>Failed at this source 2h ago — …</c>, <c>Up to date — built outside this tool 5m ago</c>).
+/// Gerekçe: yaşlardan biri YANILTIYORDU (bu araç dışında derlenmiş bir projede satır aracın KENDİ son
+/// derlemesinin yaşını gösterebiliyordu) ve kullanıcı bilginin gürültüsüne değmediğine karar verdi. Etiket
+/// artık saat okumaz: <c>lastBuiltAt</c>/<c>failedAt</c>/<c>outputBuiltAt</c>/<c>now</c> parametreleri imzadan
+/// kalktı, kalan tek kuyruk <c>local</c>'dır ve bunu <see cref="The_label_never_carries_a_time"/> süpürerek
+/// pinler.</para>
 /// </summary>
 public class DecisionLabelTests
 {
-    private static readonly DateTimeOffset Now = new(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
-
     private static RowDecision For(
-        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, DateTimeOffset? builtAt = null,
-        DateTimeOffset? failedAt = null, bool localEdits = false, bool inCycle = false,
-        DateTimeOffset? outputBuiltAt = null)
-        => DecisionLabel.For(willBuild, reason, ownChanged, builtAt, failedAt, localEdits, Now, inCycle, outputBuiltAt);
+        bool? willBuild, WillBuildReason? reason = null, bool? ownChanged = null, bool localEdits = false,
+        bool inCycle = false)
+        => DecisionLabel.For(willBuild, reason, ownChanged, localEdits, inCycle);
 
     [Fact]
     public void Its_own_files_changed_reads_modified()
@@ -87,47 +93,39 @@ public class DecisionLabelTests
         Assert.Equal("No build output known to this tool", decision.Title);
     }
 
-    /// <summary>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eski aile <c>failed · retry</c> çiftini
-    /// pinliyordu: kuyruk sabit "retry" sözcüğüydü ve yalnız GERÇEKTEN derlenecek satırda çıkardı. O söz
-    /// kalktı (bkz. sınıf özeti) — kuyruk artık kanıtın (son hatanın) YAŞIdır, <c>up to date</c>'in
-    /// <c>lastBuiltAt</c> kuyruğuyla AYNI biçimde (<see cref="Core.Formatting.AgeFormat"/>).</summary>
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Bu yerde İKİ test vardı: biri
+    /// <c>failed · 2h</c> çiftini ve <c>Failed at this source 2h ago — Build will retry it</c> cümlesini
+    /// pinliyordu, öbürü de kanıtın zamanı bilinmiyorsa kuyruğun boş kaldığını. Yaş kalkınca ikisi AYNI iddiaya
+    /// düştü (kopya YASAK) ve tek teste indi: sözcük her koşulda yalnız <c>failed</c>, kuyruk YOK, uzun gerekçe
+    /// de kimin yeniden deneyeceğini söyler — bir zaman değil.</summary>
     [Fact]
-    public void A_failure_at_this_source_reads_failed_with_its_age()
-    {
-        var decision = For(true, WillBuildReason.LastFailed, failedAt: Now.AddHours(-2));
-
-        Assert.Equal("failed", decision.Word);
-        Assert.Equal("2h", decision.Tail);
-        Assert.True(decision.Stale);
-        Assert.Equal("Failed at this source 2h ago — Build will retry it", decision.Title);
-    }
-
-    /// <summary>Kayıtlı hatanın zamanı bilinmiyorsa (eski defter) kuyruk uydurma bir yaş taşımaz — <c>up to
-    /// date</c>'in kuralıyla AYNI.</summary>
-    [Fact]
-    public void A_failure_without_a_recorded_time_has_no_age_in_its_tail()
+    public void A_failure_at_this_source_reads_plain_failed()
     {
         var decision = For(true, WillBuildReason.LastFailed);
 
         Assert.Equal("failed", decision.Word);
         Assert.Null(decision.Tail);
+        Assert.True(decision.Stale);
         Assert.Equal("Failed at this source — Build will retry it", decision.Title);
     }
 
-    /// <summary>[Task 6 review round 1] <c>failedAt</c> yalnız <c>LastFailed</c> gerekçesinde okunur — başka
-    /// hiçbir dal eski bir hata kanıtı taşıyor diye "failed" YAZMAZ. <c>UpToDate</c> kuyruğu her zaman
-    /// <c>lastBuiltAt</c>'in yaşıdır (satır aynı anda hem güncel hem "kanıtlı hatalı" olamaz — bunlar motorun
-    /// gerekçe alanında zaten birbirini DIŞLAR, ama etiket kendi payına düşeni doğru okumalı); <c>modified</c>'in
-    /// başlığı da kelimenin kendisini asla içermez.</summary>
+    /// <summary>[Task 6 review round 1] <c>UpToDate</c> satırı kendi payına düşeni doğru okur: bir hata
+    /// kanıtından söz ETMEZ (satır aynı anda hem güncel hem "kanıtlı hatalı" olamaz — bunlar motorun gerekçe
+    /// alanında zaten birbirini DIŞLAR); <c>modified</c>'in başlığı da kelimenin kendisini asla içermez.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia daha dardı ve bir ZAMAN alanını
+    /// pinliyordu: "<c>failedAt</c> yalnız <c>LastFailed</c> gerekçesinde okunur, <c>UpToDate</c>'in kuyruğu
+    /// her zaman <c>lastBuiltAt</c>'in yaşıdır" (eski adı <c>FailedAt_is_read_only_for_the_last_failed_reason</c>).
+    /// Etiket artık hiçbir zaman alanı okumadığı için o kural anlamsızlaştı; geriye sözcüklerin karışmaması
+    /// kaldı.</para></summary>
     [Fact]
-    public void FailedAt_is_read_only_for_the_last_failed_reason()
+    public void An_up_to_date_row_never_speaks_of_a_failure()
     {
-        var upToDate = For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2), failedAt: Now.AddDays(-3));
+        var upToDate = For(false, WillBuildReason.UpToDate);
         Assert.Equal("up to date", upToDate.Word);
-        Assert.Equal("2h", upToDate.Tail);           // failedAt'in 3 günlük yaşı DEĞİL, lastBuiltAt'in 2 saati
+        Assert.Null(upToDate.Tail);
         Assert.DoesNotContain("failed", upToDate.Title, StringComparison.Ordinal);
 
-        var modified = For(true, WillBuildReason.SignatureChanged, ownChanged: true, failedAt: Now.AddDays(-3));
+        var modified = For(true, WillBuildReason.SignatureChanged, ownChanged: true);
         Assert.Equal("modified", modified.Word);
         Assert.Null(modified.Tail);
         Assert.DoesNotContain("failed", modified.Title, StringComparison.Ordinal);
@@ -139,21 +137,24 @@ public class DecisionLabelTests
     [Fact]
     public void A_cycle_member_failure_names_resolve_cycles_in_the_tooltip()
     {
-        var cycleMember = For(true, WillBuildReason.LastFailed, failedAt: Now.AddHours(-2), inCycle: true);
+        var cycleMember = For(true, WillBuildReason.LastFailed, inCycle: true);
 
         Assert.Equal("failed", cycleMember.Word);
-        Assert.Equal("2h", cycleMember.Tail);
-        Assert.Equal("Failed at this source 2h ago — Resolve cycles will retry it", cycleMember.Title);
+        Assert.Null(cycleMember.Tail);
+        Assert.Equal("Failed at this source — Resolve cycles will retry it", cycleMember.Title);
         Assert.True(cycleMember.Stale);
 
-        var outOfScope = For(false, WillBuildReason.LastFailed, failedAt: Now.AddHours(-2));
-        Assert.Equal("Failed at this source 2h ago — Build will retry it", outOfScope.Title);
+        var outOfScope = For(false, WillBuildReason.LastFailed);
+        Assert.Equal("Failed at this source — Build will retry it", outOfScope.Title);
     }
 
-    /// <summary>[DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] <c>retry</c> sözcüğü artık KUYRUKTA hiçbir
-    /// girdi kombinasyonunda çıkmaz (kuyruk kanıtın yaşıdır ya da <c>local</c>/null) — düz metinde kalabilir
-    /// (uzun gerekçenin cümlesinde, "Build will retry it"), ama bir SÖZ olarak yuvanın kuyruğuna asla
-    /// taşınmaz.</summary>
+    /// <summary>
+    /// [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Bu testin eski hâli (<c>Retry_is_never_promised_in_the_label</c>)
+    /// yalnız kuyruğun "retry" OLMADIĞINI süpürüyordu — çünkü o gün kuyruk kanıtın YAŞIydı. Yaş kalktı ve
+    /// süpürme genişledi: hiçbir girdi bileşiminde ne kuyrukta ne uzun gerekçede bir ZAMAN çıkar. Kuyruk ya
+    /// yoktur ya <c>local</c>'dır; cümlelerde "ago"/"just now" ve rakam bulunmaz ("retry" düz metinde,
+    /// "Build will retry it" cümlesinde yaşamaya devam eder — o bir söz değil, kimin derleyeceğidir).
+    /// </summary>
     [Theory]
     [InlineData(WillBuildReason.NeverBuilt)]
     [InlineData(WillBuildReason.LastFailed)]
@@ -161,45 +162,38 @@ public class DecisionLabelTests
     [InlineData(WillBuildReason.WaitingForDependency)]
     [InlineData(WillBuildReason.SignatureChanged)]
     [InlineData(WillBuildReason.DepIssue)]
-    public void Retry_is_never_promised_in_the_label(WillBuildReason reason)
+    [InlineData(WillBuildReason.BuiltOutside)]
+    [InlineData(WillBuildReason.OutputMissing)]
+    [InlineData(WillBuildReason.OutputStale)]
+    [InlineData(WillBuildReason.OutputReplaced)]
+    public void The_label_never_carries_a_time(WillBuildReason reason)
     {
         foreach (bool willBuild in new[] { true, false })
         foreach (bool ownChanged in new[] { true, false })
         foreach (bool localEdits in new[] { true, false })
         foreach (bool inCycle in new[] { true, false })
         {
-            var decision = For(willBuild, reason, ownChanged, Now.AddHours(-2), Now.AddHours(-2), localEdits, inCycle);
-            Assert.NotEqual("retry", decision.Tail);
+            var decision = For(willBuild, reason, ownChanged, localEdits, inCycle);
+
+            Assert.True(decision.Tail is null or "local", $"beklenmedik kuyruk: {decision.Tail}");
+            Assert.DoesNotContain("ago", decision.Title, StringComparison.Ordinal);
+            Assert.DoesNotContain("just now", decision.Title, StringComparison.Ordinal);
+            Assert.DoesNotContain(decision.Title, char.IsDigit);
         }
     }
 
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Eski iddia: <c>up to date</c> kuyruğu son
+    /// BAŞARILI derlemenin yaşıydı (<c>up to date · 2h</c>, <c>Up to date — last built 2h ago</c>) ve zaman
+    /// bilinmiyorsa kuyruk boş kalırdı (ayrı bir test). İkisi tek iddiaya indi: sözcük yalın, kuyruk yok,
+    /// gerekçe tek sözcüklük bir cümle.</summary>
     [Fact]
-    public void An_up_to_date_project_reads_the_age_of_its_last_successful_build()
-    {
-        var decision = For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2));
-
-        Assert.Equal("up to date", decision.Word);
-        Assert.Equal("2h", decision.Tail);
-        Assert.False(decision.Stale);       // yuva soluk çizilir
-        Assert.Equal("Up to date — last built 2h ago", decision.Title);
-    }
-
-    [Theory]
-    [InlineData(0, 30, "just now")]
-    [InlineData(0, 14 * 60, "14m")]
-    [InlineData(3, 0, "3d")]
-    public void The_age_uses_one_coarse_unit(int days, int seconds, string expected)
-        => Assert.Equal(expected, For(false, WillBuildReason.UpToDate,
-            builtAt: Now.AddDays(-days).AddSeconds(-seconds)).Tail);
-
-    /// <summary>Eski bir kayıtta zaman yoksa etiket kuyruksuz kalır — uydurma bir yaş yazılmaz.</summary>
-    [Fact]
-    public void An_up_to_date_project_without_a_timestamp_has_no_tail()
+    public void An_up_to_date_project_reads_plain_up_to_date()
     {
         var decision = For(false, WillBuildReason.UpToDate);
 
         Assert.Equal("up to date", decision.Word);
         Assert.Null(decision.Tail);
+        Assert.False(decision.Stale);       // yuva soluk çizilir
         Assert.Equal("Up to date", decision.Title);
     }
 
@@ -215,35 +209,31 @@ public class DecisionLabelTests
     [Fact]
     public void A_waiting_project_reads_plain_up_to_date()
     {
-        var decision = For(true, WillBuildReason.WaitingForDependency, builtAt: Now.AddHours(-2));
+        var decision = For(true, WillBuildReason.WaitingForDependency);
 
         Assert.Equal("up to date", decision.Word);
-        Assert.Equal("2h", decision.Tail);
+        Assert.Null(decision.Tail);
         Assert.False(decision.Stale);
-        Assert.Equal("Up to date — last built 2h ago", decision.Title);
+        Assert.Equal("Up to date", decision.Title);
 
         // Kapsam ZORLASA bile (eski "conditional=false") aynı cümle — döngü üyesi de aynı okur.
-        Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, builtAt: Now.AddHours(-2)));
-        Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, builtAt: Now.AddHours(-2), inCycle: true));
+        Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency));
+        Assert.Equal(decision, For(false, WillBuildReason.WaitingForDependency, inCycle: true));
     }
 
     // ---------------------------------------------------------------- [Faz 3 — spec 2026-09-18 §5.4] dört yeni gerekçe
 
-    /// <summary>[Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil, kuyruk derleme kanıtının yaşı.</summary>
+    /// <summary>[Task 7] Çıktı bu araç dışında derlenmiş ve güncel — yeşil, sözcük <c>UpToDate</c> ile AYNI;
+    /// ayrımı yalnız uzun gerekçe söyler (çıktı bu aracın eseri değil).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Burada ÜÇ test vardı: kuyruk çıktı kanıtının
+    /// yaşıydı (<c>up to date · 5m</c>, <c>Up to date — built outside this tool 5m ago</c>), zaman
+    /// bilinmiyorsa kuyruk boş kalırdı, ve bir üçüncü test yaşın <c>lastBuiltAt</c>'ten DEĞİL
+    /// <c>outputBuiltAt</c>'ten geldiğini pinliyordu. Kullanıcının kaldırma gerekçesi tam da o üçüncüsüydü:
+    /// pratikte satır aracın KENDİ son derlemesinin yaşını gösterip yanıltabiliyordu. Yaş hepten kalktı,
+    /// üç test tek iddiaya indi — cümle "dışarıda derlendi" demeye devam eder, ne zaman olduğunu söylemez.</para></summary>
     [Fact]
-    public void Built_outside_reads_up_to_date_with_the_output_age()
-    {
-        var decision = For(false, WillBuildReason.BuiltOutside, outputBuiltAt: Now.AddMinutes(-5));
-
-        Assert.Equal("up to date", decision.Word);
-        Assert.Equal("5m", decision.Tail);
-        Assert.False(decision.Stale);
-        Assert.Equal("Up to date — built outside this tool 5m ago", decision.Title);
-    }
-
-    /// <summary>Kanıtın zamanı bilinmiyorsa uydurma bir yaş yazılmaz — <c>up to date</c>'in genel kuralıyla AYNI.</summary>
-    [Fact]
-    public void Built_outside_without_a_known_time_has_no_age()
+    public void Built_outside_reads_up_to_date_and_says_it_was_built_elsewhere()
     {
         var decision = For(false, WillBuildReason.BuiltOutside);
 
@@ -251,18 +241,6 @@ public class DecisionLabelTests
         Assert.Null(decision.Tail);
         Assert.False(decision.Stale);
         Assert.Equal("Up to date — built outside this tool", decision.Title);
-    }
-
-    /// <summary>[Task 7] <c>BuiltOutside</c>'ın kuyruğu <c>outputBuiltAt</c>'tan gelir, <c>lastBuiltAt</c>'ten
-    /// DEĞİL — ikisi ayrı kanıttır (biri aracın kendi başarısı, öbürü aracın dışındaki derlemenin çıktısı).</summary>
-    [Fact]
-    public void Built_outside_age_comes_from_the_output_time_not_the_last_build()
-    {
-        var decision = For(false, WillBuildReason.BuiltOutside,
-            builtAt: Now.AddDays(-3), outputBuiltAt: Now.AddMinutes(-5));
-
-        Assert.Equal("5m", decision.Tail);
-        Assert.Equal("Up to date — built outside this tool 5m ago", decision.Title);
     }
 
     /// <summary>[Task 7] Derleme kanıtı diskte yok — <c>never built</c> ile AYNI okunur (kopya YASAK: tek
@@ -335,11 +313,11 @@ public class DecisionLabelTests
     {
         Assert.Equal("modified", For(false, WillBuildReason.SignatureChanged, ownChanged: true).Word);
         Assert.Equal("affected", For(false, WillBuildReason.SignatureChanged, ownChanged: false).Word);
-        Assert.Equal("up to date", For(false, WillBuildReason.UpToDate, builtAt: Now.AddHours(-2)).Word);
+        Assert.Equal("up to date", For(false, WillBuildReason.UpToDate).Word);
         Assert.Equal("never built", For(false, WillBuildReason.NeverBuilt).Word);
 
-        // ...ama hiçbiri SÖZ vermez: kuyruk yalnız kanıtlı hatanın yaşıdır, sabit bir "retry" değil.
-        Assert.Equal("2h", For(false, WillBuildReason.LastFailed, failedAt: Now.AddHours(-2), inCycle: true).Tail);
+        // ...ama hiçbiri SÖZ vermez ve hiçbiri saat okumaz: döngü üyesinin hatası da kuyruksuzdur.
+        Assert.Null(For(false, WillBuildReason.LastFailed, inCycle: true).Tail);
     }
 
     /// <summary>

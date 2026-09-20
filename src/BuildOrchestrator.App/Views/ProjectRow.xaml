@@ -72,7 +72,9 @@
              [DEĞİŞEN KURAL — Task 6] Task 4'te koşullu yeniden derleme etiketi ("affected · up to date · just
              now", üç parçalı) 204px'e kadar büyütmüştü. O üçlü kalktı (design v1.20.0 §2.4: WaitingForDependency
              artık UpToDate ile BİREBİR okunur, "hangi kök bekleniyor" sorusunu yalnız uyarı üçgeni cevaplar) —
-             yuva 134px'e döndü, en uzun etiket yeniden "up to date · just now" (mono 10.5px'te ~120px sürüyor).
+             yuva 134px'e döndü. [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] O gün en uzun etiket
+             "up to date · just now"dı (mono 10.5px'te ~120px); yaş kuyrukları kalkınca en uzunu
+             "modified · local" oldu. Yuva BİLEREK daraltılmadı: aynı genişliği hover ikon bloğu paylaşıyor.
              [L1/It-5 perf] Hover ikonları + VS-chooser popover'ı BURADA DEĞİL: Views/ProjectRowActions.xaml'e
              taşındı ve İLK HOVER'da kod-tarafı buraya eklenir (ProjectRow.xaml.cs EnsureActions). Görsel sonuç
              aynı — hover edilmemiş satır o alt-ağacın 16 nesnesini artık hiç ödemez. -->

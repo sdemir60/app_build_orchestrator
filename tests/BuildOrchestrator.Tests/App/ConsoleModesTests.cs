@@ -178,40 +178,37 @@ public class ConsoleModesTests
     [Fact]
     public void An_empty_project_page_states_the_reason_and_the_evidence()
     {
-        // [DEĞİŞEN KURAL — v1.16.0] Kanıt satırı eskiden yalnız revizyonu söylüyordu ("Last built a3f81c2"),
-        // çünkü son başarılı derlemenin ZAMANI bu tarafta yoktu. Motor artık onu da taşıyor; satır iki soruyu
-        // birlikte cevaplıyor ve yaş biçimi satırın "up to date · 2h" etiketiyle AYNI (kullanıcı iki yerde iki
-        // farklı zaman görmez).
-        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
-        var twoHoursAgo = now.AddHours(-2);
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Kanıt satırı bir süre YAŞI da söyledi ("Last
+        // successful build: 2h ago (a3f81c2)") — satırın karar etiketiyle AYNI yaş, iki yerde. Yaş kalktı
+        // (bkz. DecisionLabel'in sınıf özeti: biri yanıltıyordu, ikisi de gürültüsüne değmiyordu); satır
+        // yeniden yalnız revizyonu söylüyor ve bu tarafta bir saat OKUNMUYOR.
         // Kısaltma YALNIZ gerçek bir git sha'sına (40 hex) uygulanır — kanıt satırı da o kuralı okur.
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         // Atlanmış — motorun söylediği gerekçeyle (SkipReasons, tek doğruluk kaynağı).
         Assert.Equal(
-            ["Up to date — nothing to compile in this run.", "Last successful build: 2h ago (a3f81c2)"],
+            ["Up to date — nothing to compile in this run.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
-                skipReason: SkipReasons.UpToDate, currentSha: sha, lastBuiltAt: twoHoursAgo), now));
+                skipReason: SkipReasons.UpToDate, currentSha: sha)));
 
         // Koşu uçuşta, sıra bu satırda değil — plan gerekçesi will-build'den gelir.
         // [Task 1 review fix — I-2] "Queued" artık yalnız runActive'e değil, BU koşunun kendi kuyruğuna
         // (InRunQueue) da bağlı — bkz. Row helper'ının ve ConsoleEmptyState.Pending'in yorumu.
         Assert.Equal(
-            ["Queued — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
+            ["Queued — the signature changed since the last successful build.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
-                runActive: true, inRunQueue: true, lastBuiltAt: twoHoursAgo), now));
+                runActive: true, inRunQueue: true)));
 
         // Koşu uçuşta AMA bu satır BU koşunun kendi kuyruğunda DEĞİL (tek proje koşusunda bayat bir komşu) —
         // "Queued" DEĞİL, düz plan metni.
         Assert.Equal(
-            ["Will build — the signature changed since the last successful build.", "Last successful build: 2h ago (a3f81c2)"],
+            ["Will build — the signature changed since the last successful build.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
-                runActive: true, inRunQueue: false, lastBuiltAt: twoHoursAgo), now));
+                runActive: true, inRunQueue: false)));
 
         // Koşu YOK: aynı plan "Will build" diye okunur — kuyruk, ancak bir koşu varken vardır.
-        // Zaman bilinmiyorsa (eski kayıt) satır yalnız revizyonu söyler — uydurma bir yaş yazılmaz.
         // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Eski cümle "its last build failed" idi; artık satırın
         // kendi kelimesiyle AYNI dili konuşur ("failed" — bu KAYNAKTA hata verdi). [Task 6 review round 1 —
         // DÜZELTME] Bu, DecisionLabel'in Title'ıyla AYNI KAYNAKTAN gelmiyor — ikisi ayrı literal, yalnız
@@ -219,7 +216,7 @@ public class ConsoleModesTests
         Assert.Equal(
             ["Will build — it failed at this source.", "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
-                willBuildReason: WillBuildReason.LastFailed, currentSha: sha), now));
+                willBuildReason: WillBuildReason.LastFailed, currentSha: sha)));
 
         // Hiç derlenmemiş: kanıt satırı gerekçeyi tekrarlayacağı için YAZILMAZ.
         Assert.Equal(
@@ -245,18 +242,18 @@ public class ConsoleModesTests
     }
 
     /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5.4] BuiltOutside bir DİSK OLGUSUDUR: proje bu araç dışında
-    /// derlenmiş ve çıktısı güncel. Kanıt satırı da aracın KENDİ başarısını (LastBuiltAt/CurrentSha, ki burada
-    /// ikisi de boştur) değil, dışarıdaki derlemenin zamanını (OutputBuiltAt) söyler.</summary>
+    /// derlenmiş ve çıktısı güncel. Kanıt satırı aracın KENDİ başarısını (CurrentSha, ki burada boştur) DEĞİL,
+    /// çıktının başkasının eseri olduğunu söyler.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Eski iddia kanıt satırının dışarıdaki
+    /// derlemenin YAŞINI söylediğiydi ("Built outside this tool: 5m ago", kaynağı <c>OutputBuiltAt</c>).
+    /// Yaş kalktı — cümle kaldı. Satır artık hiçbir zaman damgası OKUMAZ, gerekçe tek başına yeter.</para></summary>
     [Fact]
     public void A_row_built_outside_says_so_instead_of_the_last_build()
-    {
-        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
-
-        Assert.Equal(
-            ["Up to date — built outside this tool.", "Built outside this tool: 5m ago"],
+        => Assert.Equal(
+            ["Up to date — built outside this tool.", "Built outside this tool"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
-                willBuildReason: WillBuildReason.BuiltOutside, outputBuiltAt: now.AddMinutes(-5)), now));
-    }
+                willBuildReason: WillBuildReason.BuiltOutside)));
 
     /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
     /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır
@@ -291,25 +288,22 @@ public class ConsoleModesTests
     [Fact]
     public void A_waiting_row_states_the_dependency_it_is_waiting_on_not_will_build()
     {
-        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         Assert.Equal(
             ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: 2h ago (a3f81c2)"],
+                "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
-                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
-                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
 
         // Kapsam ZORLASA bile (Conditional=false) AYNI cümle — söz artık kapsamdan bağımsız bir disk olgusudur.
         Assert.Equal(
             ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: 2h ago (a3f81c2)"],
+                "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
-                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
-                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
     }
 
     /// <summary>[final review — I1] Motor projeyi GERÇEKTEN koşullu olduğu için atladıysa
@@ -328,36 +322,35 @@ public class ConsoleModesTests
     [Fact]
     public void A_row_skipped_because_its_dependency_is_still_failing_names_that_dependency()
     {
-        var now = new DateTimeOffset(2026, 9, 10, 18, 0, 0, TimeSpan.Zero);
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         Assert.Equal(
             ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: 2h ago (a3f81c2)"],
+                "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
-                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
-                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
 
         // conditional:false pratikte olmaz (yukarıdaki not), ama guard KALKTIĞI için cümle YİNE de aynı —
         // savunmacı durumda bile sessizce "Skipped in this run."a düşmez.
         Assert.Equal(
             ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: 2h ago (a3f81c2)"],
+                "Last successful build: a3f81c2"],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
-                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.",
-                currentSha: sha, lastBuiltAt: now.AddHours(-2)), now));
+                dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
     }
 
+    /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Helper'ın iki zaman parametresi
+    /// (<c>lastBuiltAt</c>, <c>outputBuiltAt</c>) kalktı: sayfa artık hiçbir yaş yazmadığı için kurulacak bir
+    /// zaman da yok.</summary>
     private static ProjectRowViewModel Row(
         ProjectRowState state, string? skipReason = null, bool? willBuild = null,
         WillBuildReason? willBuildReason = null, bool inCycle = false, string? currentSha = null,
-        bool runActive = false, DateTimeOffset? lastBuiltAt = null, bool? inRunQueue = null,
-        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "",
-        DateTimeOffset? outputBuiltAt = null) =>
+        bool runActive = false, bool? inRunQueue = null,
+        bool conditional = false, IReadOnlyList<string>? dependencyRoots = null, string namePrefix = "") =>
         new(@"C:\p\a.csproj", "A", state)
         {
             SkipReason = skipReason,
@@ -365,7 +358,6 @@ public class ConsoleModesTests
             WillBuildReason = willBuildReason,
             InCycle = inCycle,
             CurrentSha = currentSha,
-            LastBuiltAt = lastBuiltAt,
             IsRunActive = runActive,
             // [Task 1 review fix — I-2] Belirtilmezse runActive'i izler (eski tek-bayraklı davranışla aynı
             // çağıran deneyimi) — yalnız iki senaryonun ayrıştığı yeni testler açıkça geçer.
@@ -374,8 +366,6 @@ public class ConsoleModesTests
             Conditional = conditional,
             DependencyRoots = dependencyRoots,
             NamePrefix = namePrefix,
-            // [Task 7 — Faz 3] BuiltOutside'ın kanıt satırı buradan — aracın kendi LastBuiltAt'inden BAĞIMSIZ.
-            OutputBuiltAt = outputBuiltAt,
         };
 
     /// <summary>

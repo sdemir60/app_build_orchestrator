@@ -296,20 +296,17 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.SolutionName):
                 PART_Sln.Text = _vm?.SolutionName;
                 break;
-            case nameof(ProjectRowViewModel.LastBuiltAt):
             case nameof(ProjectRowViewModel.OwnFilesChanged):
             case nameof(ProjectRowViewModel.WillBuildReason):
-            // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Etiketin girdileri burada BİTER: FailedAt (failed
-            // kuyruğunun yaşı) ve LocalEdits (modified · local) da DecisionLabel.For'a girer. Conditional ve
-            // DependencyRoots BURADAN kalktı — etiket artık ikisini de okumuyor (WaitingForDependency, UpToDate
-            // ile birleşti; hangi kök bekleniyor sorusunu yalnız uyarı üçgeni cevaplar, bkz. ApplyDep/WarningRoots
-            // case'i aşağıda — DependencyRoots'un değişimi zaten NotifyPropertyChangedFor(WarningRoots) ile oraya
-            // düşer, burada ikinci bir dinleyiciye gerek yok).
-            case nameof(ProjectRowViewModel.FailedAt):
+            // [DEĞİŞEN KURAL — Task 6, design v1.20.0 §2.4] Etiketin girdileri burada BİTER: LocalEdits
+            // (modified · local) da DecisionLabel.For'a girer. Conditional ve DependencyRoots BURADAN kalktı —
+            // etiket artık ikisini de okumuyor (WaitingForDependency, UpToDate ile birleşti; hangi kök
+            // bekleniyor sorusunu yalnız uyarı üçgeni cevaplar, bkz. ApplyDep/WarningRoots case'i aşağıda —
+            // DependencyRoots'un değişimi zaten NotifyPropertyChangedFor(WarningRoots) ile oraya düşer, burada
+            // ikinci bir dinleyiciye gerek yok).
+            // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] LastBuiltAt/FailedAt/OutputBuiltAt de BURADAN kalktı:
+            // etiket yaş taşımadığı için bir zaman damgasının tazelenmesi satırda hiçbir şeyi değiştirmez.
             case nameof(ProjectRowViewModel.LocalEdits):
-            // [Faz 3 — Task 7] BuiltOutside'ın kuyruğu (yaş) buradan — LastBuiltAt'in listede zaten olması bu
-            // alanı GEREKSİZ KILMAZ: iki gerekçe ayrı zaman kaynağı okur (bkz. DecisionLabel.For'un parametresi).
-            case nameof(ProjectRowViewModel.OutputBuiltAt):
                 ApplyDecision();
                 break;
         }
@@ -496,8 +493,7 @@ public partial class ProjectRow : UserControl
     {
         var decision = _vm is null
             ? RowDecision.None
-            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LastBuiltAt,
-                _vm.FailedAt, _vm.LocalEdits, DateTimeOffset.Now, _vm.InCycle, _vm.OutputBuiltAt);
+            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LocalEdits, _vm.InCycle);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;
