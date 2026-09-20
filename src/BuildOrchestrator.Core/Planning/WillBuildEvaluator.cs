@@ -82,7 +82,7 @@ public static class WillBuildEvaluator
         bool inCycle, string? currentSignature, BuildState? state, bool buildCycles, OutputCheck? output = null)
     {
         // Kapsam dışı cycle üyesi DERLENMEZ; hollow'da ise hiçbir şey bilinmez.
-        bool outOfScope = inCycle && !buildCycles;
+        bool outOfScope = OutOfScope(inCycle, buildCycles);
         if (currentSignature is null) return (outOfScope ? false : null, null);
 
         var reason = output?.Mode switch
@@ -94,6 +94,14 @@ public static class WillBuildEvaluator
 
         return (outOfScope ? false : !OutputIsCurrent(reason), reason);
     }
+
+    /// <summary>
+    /// Bu düğüm BU koşunun kapsamı DIŞINDA mı: bir SCC üyesidir ve koşu döngüleri derlemiyordur. Kapsam dışı
+    /// düğüm gerekçesi ne olursa olsun <c>WillBuild=false</c>'tur (bir SCC'yi yalnız <c>RunMode.Cycles</c>
+    /// derler). Karar buradan okunur, kopyalanmaz — <see cref="BuildPreview"/>'ın ikinci geçişi bir hükmü
+    /// yükseltirken AYNI kısa devreyi uygulamak zorundadır, aksi hâlde iki yer sessizce ayrışırdı.
+    /// </summary>
+    public static bool OutOfScope(bool inCycle, bool buildCycles) => inCycle && !buildCycles;
 
     /// <summary>
     /// Bu gerekçe "çıktı ŞU AN yerinde ve güncel" mi diyor — yalnız <see cref="WillBuildReason.UpToDate"/> ve

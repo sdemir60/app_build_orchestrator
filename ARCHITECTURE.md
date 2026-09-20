@@ -1156,8 +1156,8 @@ because only then — every dependency terminal — is the roots' result in this
 | compiled in this run and succeeded | recovered |
 | compiled in this run and failed | still failing |
 | not compiled in this run, and this run's preview found its output current — up to date, or built outside this tool | recovered |
-| not compiled in this run, preview proves nothing (out of scope, cycle) — last recorded result success | recovered |
-| not compiled in this run, preview proves nothing — last recorded result failure | still failing |
+| not compiled in this run, its reason not a current one (say a dormant cycle member reading signature changed) — last recorded result success | recovered |
+| the same, and its last recorded result a failure | still failing |
 | no longer in the workspace, or without a record | recovered (build — the safe direction) |
 
 The preview comes before the ledger because it is the fresher witness: the record says what this tool last saw,

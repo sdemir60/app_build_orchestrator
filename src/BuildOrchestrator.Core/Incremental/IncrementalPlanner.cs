@@ -304,8 +304,8 @@ public static class IncrementalPlanner
     /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (Cycles)
     /// KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
     /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
-    /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli dardır: o koşunun planı yalnız hedefi ve
-    /// bağımlılıklarını taşır, aşağı akışı zaten içermez.</para>
+    /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli yoktur: <see cref="ProjectRunScope.Of"/>
+    /// planı TEK düğüme indirir, yani o koşuda çekilecek bir bağımlı hiç yoktur.</para>
     ///
     /// <para>Karışık hâl kendiliğinden doğrudur: hem kanıtlı hatanın hem içeriği değişmiş bir upstream'in
     /// arkasındaki düğüm, ikincisinin tohumundan gezintiye girer ve gri <c>affected</c> olur.</para>

@@ -66,11 +66,10 @@ public static class BuildPreview
             if (decided[i].WillBuildReason != WillBuildReason.BuiltOutside) continue;
             if (stateLookup(decided[i].Id) is not { DepIssue: true, DepIssueRoots: { Count: > 0 } roots }) continue;
             if (!roots.Any(Troubled)) continue;
-            // Kapsam dışı döngü üyesi yine derlenmez — değerlendiricinin kısa devresiyle AYNI koşul.
-            bool outOfScope = decided[i].InCycle && !buildCycles;
+            // Kapsam dışı döngü üyesi yine derlenmez — değerlendiricinin kısa devresi, tek yerden (kopya YASAK).
             decided[i] = decided[i] with
             {
-                WillBuild = !outOfScope,
+                WillBuild = !WillBuildEvaluator.OutOfScope(decided[i].InCycle, buildCycles),
                 WillBuildReason = WillBuildReason.WaitingForDependency,
             };
         }

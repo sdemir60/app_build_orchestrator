@@ -403,6 +403,18 @@ public class WillBuildTests
         Assert.False(WillBuildEvaluator.OutputIsCurrent(null));
     }
 
+    /// <summary>Kapsam kısa devresi de TEK yüklemdir (<see cref="WillBuildEvaluator.OutOfScope"/>): yalnız bir
+    /// SCC üyesi, yalnız döngüleri derlemeyen bir koşuda kapsam dışıdır. Değerlendirici ve
+    /// <c>BuildPreview</c>'ın not geçişi onu aynı yerden okur — kopya YASAK.</summary>
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void Out_of_scope_is_a_cycle_member_in_a_run_that_does_not_build_cycles(
+        bool inCycle, bool buildCycles, bool expected)
+        => Assert.Equal(expected, WillBuildEvaluator.OutOfScope(inCycle, buildCycles));
+
     /// <summary>§5.4: zaman hükmü → gerekçe. Kendi girdisi ya da HintPath hedefi yeni ⇒ <c>OutputStale</c>;
     /// kanıt yok ⇒ <c>OutputMissing</c>; beslenen kopya bozuk ⇒ <c>OutputReplaced</c>. Hepsi derlenir.</summary>
     [Fact]
