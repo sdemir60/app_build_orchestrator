@@ -2302,8 +2302,9 @@ them.
 
 The label replaced a commit pair (`a3f81c2 → b7e91d4`). That pair could not answer the question it appeared to
 answer: its right half was a remote commit the user had not pulled, and its left half described the repository,
-not the project. The revision did not disappear — it moved to where it is actually evidence: the project log's
-`Last successful build: a3f81c2`.
+not the project. The revision is not shown anywhere else either: the decision is made from content, and a
+commit next to it would suggest otherwise. A project page without a log says who produced the output only when
+it was not this tool (`Never built by this tool`, `Built outside this tool`).
 
 The **⋯** menu — also opened by right-clicking the row, as in Solution Explorer — offers *Build · Rebuild ·
 Clean* scoped to that one project. It is anchored to the **row**, not to the ⋯ button: its right edge sits 8 px
@@ -3269,8 +3270,9 @@ lines.
   exceptional case but the common one, since a skipped project never writes a log file at all and its reason
   goes only to `decision.log`. Leaving the console on the run narrative made the click look like it had done
   nothing. What the body then shows is composed from the row: a first line saying **why** the project is in
-  that state, and a second saying **what we have** — the commit it was last successfully built at, or that it
-  has never been built. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
+  that state, and a second saying **what we have** when the output is not this tool's own — that it has never
+  been built. A project last built by this tool gets no second line: the decision is made from content, so its
+  commit is not evidence and is not shown. A project built outside this tool (§7.6) reads `Up to date — built outside this tool.`
   over `Built outside this tool`, since the evidence is someone else's output rather than a build of this
   tool's; the output reasons read `its build output is missing`, `its files are newer than its build output`
   (or `a dependency's output is newer than its build output`) and `its copy in the shared folder does not match

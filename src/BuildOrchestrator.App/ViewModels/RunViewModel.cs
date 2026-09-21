@@ -83,8 +83,8 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// kararıdır. <b>Hiç derlenmemiş</b> proje ⇒ <c>null</c> (uydurulmaz).
     ///
     /// <para><b>[DEĞİŞEN KURAL — v1.16.0]</b> Bu değer artık SATIRDA GÖSTERİLMEZ; satırın sağ yuvasında
-    /// kararın gerekçesi durur (bkz. <see cref="DecisionLabel"/>). Revizyon yalnız proje logu başlığındaki
-    /// "Last successful build" satırını besler. Eski çift (<c>a3f81c2 → b7e91d4</c>) kararı ANLATMIYORDU:
+    /// kararın gerekçesi durur (bkz. <see cref="DecisionLabel"/>). [2026-09-21] Değer hiçbir yerde
+    /// gösterilmez; yalnız "bu araç hiç derledi mi" sorusu için okunur (bkz. <c>ConsoleEmptyState.Evidence</c>). Eski çift (<c>a3f81c2 → b7e91d4</c>) kararı ANLATMIYORDU:
     /// sağ yarı pull edilmemiş bir UZAK commit'ti, sol yarı ise projeye değil repoya aitti — ikisi de "bu
     /// proje neden derlenecek" sorusunu cevaplamıyordu. Bu yüzden satırın <c>TargetSha</c> alanı da
     /// KALDIRILDI: hedef commit motorda kalır (konsol satırı ve pull için), satıra itilmez.</para></summary>

@@ -2,7 +2,6 @@ using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
-using BuildOrchestrator.Core.Git;
 
 namespace BuildOrchestrator.App.Console;
 
@@ -14,17 +13,16 @@ namespace BuildOrchestrator.App.Console;
 /// görünüyordu. Oysa log olmasa da elde HER ZAMAN bir şey vardır — proje bu koşuda atlandı, kuyrukta, bir
 /// döngüde, ya da hiç derlenmedi.</para>
 ///
-/// <para><b>Metin İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
-/// (<see cref="Controls.StatusGlyph.RunLabelFor"/>). İlk satır NEDEN öyle olduğunu, ikinci satır elde ne olduğunu söyler
-/// (son başarıyla derlendiği commit, ya da hiç derlenmediği). Derlenmekte olan bir projenin tek satırı vardır:
-/// orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
+/// <para><b>Metin en çok İKİ satırdır: gerekçe + kanıt.</b> Statüyü tekrar etmez — onu başlık zaten söyler
+/// (<see cref="Controls.StatusGlyph.RunLabelFor"/>). İlk satır NEDEN öyle olduğunu söyler; ikinci satır yalnız
+/// çıktı bu aracın eseri değilse gelir (hiç derlenmedi / dışarıda derlendi). Derlenmekte olan bir projenin tek
+/// satırı vardır: orada kanıt henüz oluşmamıştır, akış birazdan gelecektir.</para>
 ///
 /// <para><b>[DEĞİŞEN KURAL]</b> Bu sınıf eskiden design-v1'in ÖRNEK metinlerini birebir taşıyordu
 /// (<c>Skipped(sha)</c> / <c>Queued(deps)</c>) ve içlerinde uydurma veri vardı — "Last successful build:
 /// yesterday 18:42". İkisi de üretimde HİÇ ÇAĞRILMIYORDU: yüzey kurulmuş ama hiçbir yere bağlanmamıştı, yani
 /// pinlenen tek şey kullanılmayan bir literaldi. Yerine gerçek satır durumundan türeyen bu tablo geldi;
-/// uydurma tarih/saat kaldırıldı, çünkü o veri (son başarılı build'in ZAMANI) bu tarafta yok — elimizde
-/// commit var (<see cref="ProjectRowViewModel.CurrentSha"/>) ve söylenen odur.</para>
+/// uydurma tarih/saat kaldırıldı (bkz. <see cref="Evidence"/>).</para>
 /// </summary>
 public static class ConsoleEmptyState
 {
@@ -54,7 +52,7 @@ public static class ConsoleEmptyState
         // Derleniyor: kanıt henüz yok, akış birazdan gelir.
         if (row.State == ProjectRowState.Started) return [NoLog];
         string reason = Reason(row);
-        return RepeatsReason(row, reason) ? [reason] : [reason, Evidence(row)];
+        return RepeatsReason(row, reason) || Evidence(row) is not { } evidence ? [reason] : [reason, evidence];
     }
 
     /// <summary>Kanıt satırı gerekçeyi TEKRAR ediyorsa yazılmaz: "hiç derlenmedi" iki kez söylenmez.
@@ -178,9 +176,13 @@ public static class ConsoleEmptyState
     }
 
     /// <summary>
-    /// İkinci satır: elde ne var — bu çıktıyı üreten revizyon, ya da çıktının bu aracın eseri olmadığı.
-    /// Kaynak <see cref="ProjectRowViewModel.CurrentSha"/> (yani <c>BuildState</c>'in kendisi); kısaltma tek
-    /// yerden gelir (kopya YASAK).
+    /// İkinci satır: çıktı bu aracın eseri DEĞİLSE söylenir — hiç derlenmedi ya da dışarıda derlendi. Araç
+    /// derlediyse satır yoktur (<c>null</c>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-21]</b> Araç derlediyse satır eskiden o çıktıyı
+    /// üreten revizyonu yazardı (<c>Last successful build: a3f81c2</c>). Karar içerikten verilir, commit karara
+    /// girmez; sha satırda durunca kararın commit'e bağlı olduğu sanıldı. <see cref="ProjectRowViewModel.CurrentSha"/>
+    /// artık yalnız "bu araç hiç derledi mi" sorusu için okunur, değeri gösterilmez.</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20]</b> Satır eskiden yaşı da söylerdi
     /// (<c>Last successful build: 2h ago (a3f81c2)</c>, <c>Built outside this tool: 5m ago</c>) — satırın karar
@@ -188,7 +190,7 @@ public static class ConsoleEmptyState
     /// özeti): biri yanıltıyordu, ikisi de gürültüsüne değmiyordu. Cümleler kaldı, zaman gitti — bu yüzden
     /// <c>BuiltOutside</c> dalı artık bir zaman damgası ARAMAZ (uydurma yaş riski kalmadı), gerekçe yeter.</para>
     /// </summary>
-    private static string Evidence(ProjectRowViewModel row)
+    private static string? Evidence(ProjectRowViewModel row)
     {
         // [Faz 3 — spec 2026-09-18 §5, P8, Task 7] BuiltOutside'ın kanıtı aracın KENDİ başarısı değil, dışarıdaki
         // derlemedir (row.CurrentSha bu satırda boş kalabilir — araç o çıktıyı üretmedi). Gerekçe satırı bunu
@@ -196,9 +198,7 @@ public static class ConsoleEmptyState
         // içindir — motor güncel diye atladı, satır bir döngüde ya da kapsam dışı.
         if (row.WillBuildReason == WillBuildReason.BuiltOutside) return BuiltOutside;
 
-        if (row.CurrentSha is not { Length: > 0 } revision) return NeverBuilt;
-
-        return $"Last successful build: {RevisionText.Short(revision)}";
+        return string.IsNullOrEmpty(row.CurrentSha) ? NeverBuilt : null;
     }
 
     /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
