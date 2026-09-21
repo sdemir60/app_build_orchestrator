@@ -76,7 +76,9 @@ public enum DependentMode { Safe, Fast }
 /// <para><b>Sürdürme/yeniden deneme AYRI bir mod DEĞİLDİR</b> (design v1.7.0 §3.1): Stop'tan sonra da hata
 /// sonrasında da <b>Build</b> koşulur. Tamamlanıp yeşil bitmiş projeler imzalarını persist ettikleri için
 /// <c>up to date</c> atlanır; öldürülenler ve başarısız olanlar <c>LastResult</c> invalidasyonuyla kirli
-/// kalır, hata etkilenmiş bağımlılar ise imzalarını hiç persist etmedikleri için yeniden derlenir. Tek fark
+/// kalır. Hatalı bir bağımlılığa karşı başarıyla derlenen bağımlı ise imzasını bir bağımlılık notuyla
+/// (<c>DepIssue</c> + kökler) persist eder ve o bağımlılık düzelene kadar bekler (<c>WaitingForDependency</c>) —
+/// her Build'de yeniden derlenmez. Tek fark
 /// elapsed'in sıfırdan başlamasıdır — bu yeni bir koşudur.</para>
 /// <para><b>Cycles</b> = dairesel bağımlılık (SCC) oluşturan projeler, sıralı turlarla — ve onların
 /// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine

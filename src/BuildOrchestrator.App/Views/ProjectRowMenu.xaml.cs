@@ -56,9 +56,9 @@ public partial class ProjectRowMenu : UserControl
     /// <summary>[D6] Menü her açılışında 140ms pop-in (BuildApp.jsx:597 <c>bo-pop-in</c>).</summary>
     public void PlayPopIn() => PopIn.Play(PART_Rows);
 
-    /// <summary>[design §3.8] Build/Rebuild maddelerinin kapısı — satır menüyü açarken koşu kapısından
-    /// (<c>BuildProjectCommand.CanExecute</c>) okuyup buraya yazar. Kapalıyken maddeler pasiftir, prototipin
-    /// <c>busy</c> opaklığını alır ve tooltip nedeni söyler; Clean bundan bağımsız hep pasiftir.</summary>
+    /// <summary>[design §3.8] Build/Rebuild/Clean maddelerinin ORTAK kapısı — satır menüyü açarken koşu kapısından
+    /// (<c>BuildProjectCommand.CanExecute</c>) okuyup buraya yazar. Kapalıyken üç madde de pasiftir, prototipin
+    /// <c>busy</c> opaklığını alır ve tooltip nedeni söyler.</summary>
     internal void SetRunActionsEnabled(bool enabled)
     {
         _runActionsEnabled = enabled;
