@@ -182,12 +182,15 @@ public class ConsoleModesTests
         // successful build: 2h ago (a3f81c2)") — satırın karar etiketiyle AYNI yaş, iki yerde. Yaş kalktı
         // (bkz. DecisionLabel'in sınıf özeti: biri yanıltıyordu, ikisi de gürültüsüne değmiyordu); satır
         // yeniden yalnız revizyonu söylüyor ve bu tarafta bir saat OKUNMUYOR.
-        // Kısaltma YALNIZ gerçek bir git sha'sına (40 hex) uygulanır — kanıt satırı da o kuralı okur.
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-21] Revizyon da kalktı: eski iddia araç derlediyse ikinci
+        // satırın "Last successful build: a3f81c2" demesiydi. Karar içerikten verilir, commit ona girmez; sha
+        // satırda durunca kullanıcı kararı commit'e bağlı sandı (ağaç kirliyken sha zaten tam doğru da değildi).
+        // Araç derlediyse artık kanıt satırı YOKTUR; yalnız "hiç derlenmedi" / "dışarıda derlendi" kalır.
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         // Atlanmış — motorun söylediği gerekçeyle (SkipReasons, tek doğruluk kaynağı).
         Assert.Equal(
-            ["Up to date — nothing to compile in this run.", "Last successful build: a3f81c2"],
+            ["Up to date — nothing to compile in this run."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.UpToDate, currentSha: sha)));
 
@@ -195,7 +198,7 @@ public class ConsoleModesTests
         // [Task 1 review fix — I-2] "Queued" artık yalnız runActive'e değil, BU koşunun kendi kuyruğuna
         // (InRunQueue) da bağlı — bkz. Row helper'ının ve ConsoleEmptyState.Pending'in yorumu.
         Assert.Equal(
-            ["Queued — the signature changed since the last successful build.", "Last successful build: a3f81c2"],
+            ["Queued — the signature changed since the last successful build."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
                 runActive: true, inRunQueue: true)));
@@ -203,7 +206,7 @@ public class ConsoleModesTests
         // Koşu uçuşta AMA bu satır BU koşunun kendi kuyruğunda DEĞİL (tek proje koşusunda bayat bir komşu) —
         // "Queued" DEĞİL, düz plan metni.
         Assert.Equal(
-            ["Will build — the signature changed since the last successful build.", "Last successful build: a3f81c2"],
+            ["Will build — the signature changed since the last successful build."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.SignatureChanged, currentSha: sha,
                 runActive: true, inRunQueue: false)));
@@ -214,7 +217,7 @@ public class ConsoleModesTests
         // DÜZELTME] Bu, DecisionLabel'in Title'ıyla AYNI KAYNAKTAN gelmiyor — ikisi ayrı literal, yalnız
         // kelime seçimi bilerek tutarlı (kopya YASAK burada UYGULANMADI, yalnız SÖZCÜK ortak).
         Assert.Equal(
-            ["Will build — it failed at this source.", "Last successful build: a3f81c2"],
+            ["Will build — it failed at this source."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.LastFailed, currentSha: sha)));
 
@@ -303,16 +306,14 @@ public class ConsoleModesTests
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         Assert.Equal(
-            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: a3f81c2"],
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
 
         // Kapsam ZORLASA bile (Conditional=false) AYNI cümle — söz artık kapsamdan bağımsız bir disk olgusudur.
         Assert.Equal(
-            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: a3f81c2"],
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
@@ -337,8 +338,7 @@ public class ConsoleModesTests
         const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
 
         Assert.Equal(
-            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: a3f81c2"],
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: true,
@@ -347,8 +347,7 @@ public class ConsoleModesTests
         // conditional:false pratikte olmaz (yukarıdaki not), ama guard KALKTIĞI için cümle YİNE de aynı —
         // savunmacı durumda bile sessizce "Skipped in this run."a düşmez.
         Assert.Equal(
-            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again.",
-                "Last successful build: a3f81c2"],
+            ["Dependency issue: Sales.Data — rebuilds once that dependency is healthy again."],
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped,
                 skipReason: SkipReasons.DependencyStillFailing, willBuild: true,
                 willBuildReason: WillBuildReason.WaitingForDependency, conditional: false,
