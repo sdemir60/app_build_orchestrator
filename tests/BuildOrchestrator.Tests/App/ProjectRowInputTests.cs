@@ -4,6 +4,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -451,5 +453,166 @@ public class ProjectRowInputTests
         row.Actions!.MoreButton.IsChecked = false; // menü kapandı → hover kuralı geri işler
         Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
         GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- liste ↔ graf yansıyan hover
+
+    private const string OtherId = @"C:\p\b.csproj";
+
+    /// <summary>Paylaşılan hover değeri yalnız o projenin satırını hover'lı yapar; değer değişince eskisi söner.
+    /// Proje kimliği dosya yoludur — büyük/küçük harf duyarsız.</summary>
+    [StaFact]
+    public void The_shared_hovered_project_marks_only_its_own_row()
+    {
+        var runVm = NewRunVm();
+        var a = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
+        var b = new ProjectRowViewModel(OtherId, "B", ProjectRowState.Pending);
+        runVm.Projects.Add(a);
+        runVm.Projects.Add(b);
+
+        runVm.HoveredProjectId = RowId.ToUpperInvariant();
+        Assert.True(a.IsHovered);
+        Assert.False(b.IsHovered);
+
+        runVm.HoveredProjectId = OtherId;
+        Assert.False(a.IsHovered);
+        Assert.True(b.IsHovered);
+
+        runVm.HoveredProjectId = null;
+        Assert.False(b.IsHovered);
+    }
+
+    /// <summary>[perf] Bir hover değişimi yalnız ESKİ ve YENİ satıra dokunur — liste bütünüyle tazelenmez
+    /// (grafikte fare hızla gezerken saniyede onlarca değişim olur).</summary>
+    [StaFact]
+    public void A_hover_change_touches_only_the_previous_and_the_new_row()
+    {
+        var runVm = NewRunVm();
+        var rows = Enumerable.Range(0, 20)
+            .Select(i => new ProjectRowViewModel($@"C:\p\r{i}.csproj", $"R{i}", ProjectRowState.Pending)).ToList();
+        foreach (var r in rows) runVm.Projects.Add(r);
+        runVm.HoveredProjectId = rows[3].Id;
+        var touched = new HashSet<ProjectRowViewModel>();
+        foreach (var r in rows) r.PropertyChanged += (s, _) => touched.Add((ProjectRowViewModel)s!);
+
+        runVm.HoveredProjectId = rows[7].Id;
+
+        Assert.Equal(new HashSet<ProjectRowViewModel>([rows[3], rows[7]]), touched);
+    }
+
+    /// <summary>Grafikteki düğümün üzerindeyken satır STANDART hover'ı gösterir: karar etiketi yerini hover
+    /// ikonlarına bırakır. Satırın kendi hover'ı ile aynı görünüm — ikinci bir dil yok.</summary>
+    [StaFact]
+    public void A_row_whose_project_is_hovered_elsewhere_shows_the_standard_hover()
+    {
+        var runVm = NewRunVm();
+        var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
+        var row = Realize(runVm, rowVm, out var window);
+
+        rowVm.IsHovered = true;
+        Assert.Equal(Visibility.Collapsed, row.DecisionText.Visibility);
+        Assert.Equal(Visibility.Visible, row.HoverIcons!.Visibility);
+
+        rowVm.IsHovered = false;
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
+        Assert.Equal(Visibility.Collapsed, row.HoverIcons!.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Satır geri dönüştürülüp hover'lı OLMAYAN bir projeye bağlanınca hover'sız görünür —
+    /// yansıyan hover konteynerde değil, projenin VM'inde yaşar.</summary>
+    [StaFact]
+    public void A_recycled_row_takes_the_hover_of_its_new_project()
+    {
+        var runVm = NewRunVm();
+        var hovered = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending) { IsHovered = true };
+        var row = Realize(runVm, hovered, out var window);
+        Assert.Equal(Visibility.Collapsed, row.DecisionText.Visibility);
+
+        row.DataContext = new ProjectRowViewModel(OtherId, "B", ProjectRowState.Pending);
+        row.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, row.DecisionText.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Satırın GERÇEK hover'ı paylaşılan değeri yazar: giriş kendi id'sini, çıkış null'ı. Çıkış
+    /// başkasının değerini silmez.</summary>
+    [StaFact]
+    public void The_real_row_hover_writes_the_shared_hovered_project()
+    {
+        var runVm = NewRunVm();
+        var rowVm = new ProjectRowViewModel(RowId, "A", ProjectRowState.Pending);
+        var row = Realize(runVm, rowVm, out var window);
+
+        RaiseMouse(row, Mouse.MouseEnterEvent);
+        Assert.Equal(RowId, runVm.HoveredProjectId);
+
+        RaiseMouse(row, Mouse.MouseLeaveEvent);
+        Assert.Null(runVm.HoveredProjectId);
+
+        RaiseMouse(row, Mouse.MouseEnterEvent);
+        runVm.HoveredProjectId = OtherId;
+        RaiseMouse(row, Mouse.MouseLeaveEvent);
+        Assert.Equal(OtherId, runVm.HoveredProjectId);
+        GC.KeepAlive(window);
+    }
+
+    private static GraphView WiredGraph(RunViewModel runVm)
+    {
+        var graph = GraphTestView.Realized(new Size(640, 400), () => false);
+        graph.SetGraph(
+            [new(RowId, "A", 0, GraphStatus.Queued), new(OtherId, "B", 1, GraphStatus.Queued)],
+            [new(RowId, OtherId)]);
+        GraphHoverEcho.Wire(runVm, graph);
+        return graph;
+    }
+
+    /// <summary>Kablaj, liste → graf: paylaşılan değer düğümde standart hover'ı açar ve kapatır.</summary>
+    [StaFact]
+    public void The_list_hover_reaches_the_graph()
+    {
+        var runVm = NewRunVm();
+        var graph = WiredGraph(runVm);
+
+        runVm.HoveredProjectId = RowId;
+        Assert.Equal(RowId, graph.HoveredNode);
+
+        runVm.HoveredProjectId = null;
+        Assert.Null(graph.HoveredNode);
+    }
+
+    /// <summary>Kablaj, graf → liste: düğüme giren/çıkan gerçek fare paylaşılan değeri, o da satırı sürer.</summary>
+    [StaFact]
+    public void The_graph_hover_reaches_the_list()
+    {
+        var runVm = NewRunVm();
+        var b = new ProjectRowViewModel(OtherId, "B", ProjectRowState.Pending);
+        runVm.Projects.Add(b);
+        var graph = WiredGraph(runVm);
+        var body = graph.NodeVisuals[OtherId].Body;
+
+        body.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
+        Assert.Equal(OtherId, runVm.HoveredProjectId);
+        Assert.True(b.IsHovered);
+
+        body.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseLeaveEvent });
+        Assert.Null(runVm.HoveredProjectId);
+        Assert.False(b.IsHovered);
+    }
+
+    /// <summary>Düğüm kadraj dışındayken listedeki hover grafikte hiçbir şey yapmaz ve paylaşılan değeri de
+    /// SİLMEZ — imleç hâlâ satırdadır.</summary>
+    [StaFact]
+    public void A_list_hover_on_a_node_outside_the_frame_leaves_the_graph_and_the_shared_value_alone()
+    {
+        var runVm = NewRunVm();
+        var graph = WiredGraph(runVm);
+        graph.MoveLiveCameraForTest(new CameraTransform(1.0, 5000, 0));
+
+        runVm.HoveredProjectId = RowId;
+
+        Assert.Null(graph.HoveredNode);
+        Assert.Equal(RowId, runVm.HoveredProjectId);
     }
 }

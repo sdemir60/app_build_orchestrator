@@ -1208,15 +1208,35 @@ public partial class GraphView : UserControl
     /// [quiet] §2.3 "Hover": node scale(1.7) (120ms ease-out), border 2px, opacity 1 (soluk moddayken bile),
     /// z-index öne; tooltip GECİKMESİZ ve TAM proje adıyla.
     /// </summary>
+    /// <summary>İMLECİN hover'ı değişti (fare girişi/çıkışı ya da seçimin temizlemesi) — listenin yansıtması
+    /// için. <see cref="EchoHover"/> bunu YÜKSELTMEZ: yansıyan hover geri yankılanmaz.</summary>
+    public event EventHandler<string?>? HoveredNodeChanged;
+
+    /// <summary>Listeden yansıyan hover: düğüm kadrajdaysa standart hover'ın TA KENDİSİ, değilse hiçbir şey.</summary>
+    public void EchoHover(string? nodeId)
+    {
+        bool onScreen = nodeId is not null && _slots.TryGetValue(nodeId, out var slot)
+            && GraphOverlay.IsOnScreen(slot.Center, LiveCamera, ViewportSize);
+        ApplyHoverState(onScreen ? nodeId : null);
+    }
+
+    /// <summary>İmlecin hover'ı: standart görünümü uygular ve değiştiyse dışarı bildirir.</summary>
     private void SetHover(string? nodeId)
     {
-        if (string.Equals(_hoveredNode, nodeId, StringComparison.OrdinalIgnoreCase)) return;
+        if (ApplyHoverState(nodeId)) HoveredNodeChanged?.Invoke(this, nodeId);
+    }
+
+    /// <summary>Hover görünümünü uygular — imleçten ya da listeden gelsin, TEK yol. Değişiklik olduysa true.</summary>
+    private bool ApplyHoverState(string? nodeId)
+    {
+        if (string.Equals(_hoveredNode, nodeId, StringComparison.OrdinalIgnoreCase)) return false;
 
         string? previous = _hoveredNode;
         _hoveredNode = nodeId;
         if (previous is not null) ApplyHover(previous);
         if (nodeId is not null) ApplyHover(nodeId);
         UpdateTooltip();
+        return true;
     }
 
     /// <summary>

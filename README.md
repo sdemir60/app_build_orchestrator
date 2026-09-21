@@ -400,7 +400,8 @@ commit it was last successfully built at, or that it has never been built.
 
 The dependency graph fits the panel at every size: nodes are unnamed mini squares laid out in build order,
 and the spacing shrinks until they do fit — so there is never a scrollbar and never a part of the graph you
-have to go looking for. Hover a node to see its full project name. Click one — or a list row, or a stream
+have to go looking for. Hover a node to see its full project name; its list row lights up with it, and
+hovering a row lights its node the same way (when the counterpart is in view). Click one — or a list row, or a stream
 line — and the graph zooms to that project with its direct dependencies and dependents, draws the amber
 dependency lines for that neighbourhood only, and fades everything else back. Click it again, or click empty
 background, to let go.

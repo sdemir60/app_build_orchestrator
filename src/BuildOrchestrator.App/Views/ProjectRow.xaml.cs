@@ -54,6 +54,7 @@ public partial class ProjectRow : UserControl
     private ProjectRowActions? _actions; // [L1] ilk hover'da kurulur (bkz. EnsureActions)
     private bool _applied;               // [L1] ApplyAll bu DataContext için koştu mu (çift koşum guard'ı)
     private bool _hover;
+    private bool _hoverRendered; // ApplyBackground'un en son çizdiği hover görünürlüğü (bkz. ApplyHoverVisuals)
     private bool _isBreathing;
     private ProjectRowState? _prevState;
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
@@ -286,6 +287,9 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.IsSelected):
                 ApplySelection();
                 break;
+            case nameof(ProjectRowViewModel.IsHovered):
+                ApplyHoverVisuals();
+                break;
             case nameof(ProjectRowViewModel.IsRunTarget): // [§3.8] hedef satır: play ↔ Stop, hover'sız görünürlük
             case nameof(ProjectRowViewModel.IsRunLocked): // [§3.8] play tooltip'i: boşta / koşarken
                 ApplyRightBlock();
@@ -511,7 +515,7 @@ public partial class ProjectRow : UserControl
         bool menuOpen = _actions?.MoreButton.IsChecked == true;
         // [design §3.8] Koşunun HEDEFİ olan satırda Stop hover OLMADAN da görünür (prototip `hover || isTarget || menuOpen`).
         bool target = _vm?.IsRunTarget == true;
-        bool showIcons = _hover || menuOpen || target;
+        bool showIcons = IsHoverShown || menuOpen || target;
         bool showDecision = !showIcons; // [design v1.7.0 §2.4] Etiket her satırda — yalnız hover ikonları onu örter
         if (showIcons) EnsureActions().HoverIcons.Visibility = Visibility.Visible;
         else if (_actions is { } hidden) hidden.HoverIcons.Visibility = Visibility.Collapsed;
@@ -574,15 +578,31 @@ public partial class ProjectRow : UserControl
     {
         if (_hover == hover) return;
         _hover = hover;
+        // Grafik aynı projenin düğümünde standart hover'ı göstersin diye paylaşılan değere yazılır.
+        if (_vm is { } vm) FindRunViewModel()?.HoverProject(vm.Id, hover);
+        ApplyHoverVisuals();
+    }
+
+    /// <summary>Hover görünür mü: imleç satırda ya da projenin grafikteki düğümünde (<see cref="ProjectRowViewModel.IsHovered"/>).
+    /// İkisi AYNI standart görünümü verir.</summary>
+    private bool IsHoverShown => _hover || _vm?.IsHovered == true;
+
+    /// <summary>Hover görünümünü yalnız görünürlüğü DEĞİŞTİYSE yeniden çizer: satırın kendi hover'ı paylaşılan
+    /// değeri yazınca <see cref="ProjectRowViewModel.IsHovered"/> bildirimi de buraya gelir — ikinci çağrı
+    /// uçuştaki 120ms renk geçişini baştan kurardı.</summary>
+    private void ApplyHoverVisuals()
+    {
+        if (IsHoverShown == _hoverRendered) return;
         ApplyBackground();
         ApplyRightBlock();
     }
 
     private void ApplyBackground()
     {
+        _hoverRendered = IsHoverShown;
         bool selected = _vm?.IsSelected ?? false;
         Color target = selected ? ResolveColor("Brush.SurfaceRaised", Colors.Transparent)
-            : _hover ? ResolveColor("Brush.SurfaceHover", Colors.Transparent)
+            : IsHoverShown ? ResolveColor("Brush.SurfaceHover", Colors.Transparent)
             : Colors.Transparent;
         // [L1/It-5 perf] Zemin zaten hedef renkteyse geçiş kurma (ilk uygulamada HER satırda Transparent→Transparent
         // idi → satır başına iki kaynak-zinciri yürüyüşü + bir renk saati). Guard BURADA DEĞİL,

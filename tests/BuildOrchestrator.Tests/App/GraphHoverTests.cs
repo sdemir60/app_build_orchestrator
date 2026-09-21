@@ -170,6 +170,93 @@ public class GraphHoverTests
         Assert.Null(view.HoveredNode);
     }
 
+    // ---------------------------------------------------------------- listeden yansıyan hover
+
+    /// <summary>Listede bir satırın üzerindeyken düğümü kadrajdaysa STANDART hover'ın ta kendisini alır:
+    /// büyüme, kalın çerçeve, öne alma, soluk koşuda bile tam opaklık ve tooltip. İkinci bir görünüm yoktur.</summary>
+    [StaFact]
+    public void An_echoed_hover_on_an_on_screen_node_is_the_standard_hover()
+    {
+        var view = Built(animations: false);
+        view.RunPhase = GraphRunPhase.Running;
+        var visual = view.NodeVisuals[LongName];
+
+        view.EchoHover(LongName);
+
+        Assert.Equal(LongName, view.HoveredNode);
+        Assert.Equal(GraphView.HoverScale, ((ScaleTransform)visual.Body.RenderTransform).ScaleX, 6);
+        Assert.Equal(GraphView.HoverBorderThickness, visual.Square.StrokeThickness, 6);
+        Assert.Equal(1, System.Windows.Controls.Panel.GetZIndex(visual.Cell));
+        Assert.Equal(1.0, visual.Body.Opacity, 6);
+        Assert.Equal(Visibility.Visible, view.TooltipVisibility);
+        Assert.Equal(LongName, view.TooltipContent);
+
+        view.EchoHover(null);
+
+        Assert.Null(view.HoveredNode);
+        Assert.Equal(Visibility.Collapsed, view.TooltipVisibility);
+        Assert.Equal(1.0, ((ScaleTransform)visual.Body.RenderTransform).ScaleX, 6);
+    }
+
+    /// <summary>Zoom/focus düğümü kadrajın dışına ittiyse yansıyan hover HİÇBİR ŞEY yapmaz — tooltip'in
+    /// kelepçeli ankrajı onu panelin kenarında, hiçbir şeyi göstermeden çizerdi.</summary>
+    [StaFact]
+    public void An_echoed_hover_on_a_node_outside_the_frame_does_nothing()
+    {
+        var view = Built(animations: false);
+        view.MoveLiveCameraForTest(new CameraTransform(1.0, 5000, 0));
+
+        view.EchoHover(LongName);
+
+        Assert.Null(view.HoveredNode);
+        Assert.Equal(Visibility.Collapsed, view.TooltipVisibility);
+    }
+
+    /// <summary>İmlecin GERÇEK hover'ı dışarı bildirilir (listenin yansıtması için): fare girişi id'yi,
+    /// çıkışı null'ı yükseltir.</summary>
+    [StaFact]
+    public void The_real_pointer_hover_is_reported_to_the_outside()
+    {
+        var view = Built(animations: false);
+        var reported = new List<string?>();
+        view.HoveredNodeChanged += (_, id) => reported.Add(id);
+        var body = view.NodeVisuals[LongName].Body;
+
+        body.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
+        body.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseLeaveEvent });
+
+        Assert.Equal([LongName, null], reported);
+    }
+
+    /// <summary>Seçimin hover'ı temizlemesi de imlecin hover'ının değişmesidir — liste bunu da duyar, yoksa
+    /// grafikte sönmüş bir hover listede yanık kalırdı.</summary>
+    [StaFact]
+    public void The_selection_clearing_the_hover_is_reported_too()
+    {
+        var view = Built(animations: false);
+        view.SetHoverForTest(LongName);
+        var reported = new List<string?>();
+        view.HoveredNodeChanged += (_, id) => reported.Add(id);
+
+        view.SelectedNode = "OSYS.Base";
+
+        Assert.Equal([(string?)null], reported);
+    }
+
+    /// <summary>Yansıyan hover GERİ YANKILANMAZ: listeden geleni bildirmek döngü kurardı.</summary>
+    [StaFact]
+    public void An_echoed_hover_is_not_reported_back()
+    {
+        var view = Built(animations: false);
+        var reported = new List<string?>();
+        view.HoveredNodeChanged += (_, id) => reported.Add(id);
+
+        view.EchoHover(LongName);
+        view.EchoHover(null);
+
+        Assert.Empty(reported);
+    }
+
     /// <summary>[REALIZE TESTİ] Overlay katmanı YENİ bir XAML kökü parçasıdır — headless Measure/Arrange XAML
     /// runtime çözümlemesini GÖRMEZ. Gerçek bir pencerede, uygulamanın merge zinciriyle realize olmalı ve
     /// token'ları (surface-overlay / border-strong / radius-md / popover gölgesi) GERÇEKTEN çözmeli.</summary>
