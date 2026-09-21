@@ -2182,7 +2182,8 @@ standing, because that line is still true.
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
 a right-aligned block (min 134 px): on hover four icon buttons (*build this project*, a **⋯** menu, *Reveal in
-Explorer*, *Open in Visual Studio*), and without hover the **decision label**. Then the status glyph, the fixed
+Explorer*, *Open in Visual Studio*), and without hover the **decision label** — a row also takes that hover
+while its project's node is hovered in the graph (§13.6, "The list and the graph share one hover"). Then the status glyph, the fixed
 warning slot, and a 46 px duration column. The stripe, the dot and the glyph paint one value — the state of the
 project's output with the running operation laid over it (§14.3) — so after a Sync every row already wears its
 colour, and after a run each keeps the colour the run left it in. The warning slot is cumulative in the same
@@ -3637,6 +3638,23 @@ and returned early, leaving `DesiredSize` at the *previous* name's width — so 
 short name's box and sat well to the left of its node. Nothing is built per node. Changing the selection clears the hover, because the camera is about to move somewhere else
 and the pointer is no longer over what it was.
 
+**The list and the graph share one hover.** Pointing at a project on either surface shows the other surface's
+*standard* hover for the same project — there is no second, quieter look. A hovered node lights its list row
+(the hover ground, the icon buttons in place of the decision label); a hovered row gives its node the full node
+hover described above, tooltip included, whatever the camera is doing — default view, zoom or focus-and-fit.
+Nothing moves to make that happen: the list does not scroll and the camera does not glide. If the counterpart
+is not in view the echo simply does nothing — a row that is not realized has nothing to paint, and a node whose
+projected centre lies outside the panel (`GraphOverlay.IsOnScreen`) is left alone, because the tooltip's anchor
+clamp would otherwise draw it at the panel's edge pointing at nothing. The one shared value is
+`RunViewModel.HoveredProjectId`. Only real pointer hover writes it: a row's enter writes its project and its
+leave clears the value only if it still names that project, and the graph reports its pointer hover through
+`GraphView.HoveredNodeChanged` (`GraphHoverEcho` wires the two). The echo reads the value and never reports
+back (`GraphView.EchoHover`), so no loop can form. Hover on a row lives on the project's view model
+(`ProjectRowViewModel.IsHovered`), not on the recycled container, and a change touches only the previous and
+the new row — the pointer sweeping across the graph produces dozens of changes a second. The selection's
+clearing of the node hover (above) counts as the pointer's hover changing, so it clears the shared value too:
+clicking a row leaves the node in its selected look with its name label, without a tooltip on top.
+
 **Selection focuses and fits.** Clicking a node — or a list row, or a stream line — fits the bounding box of
 the selection plus its direct dependencies and dependents into the panel: scale is `min(W/bw, H/bh)` clamped
 to 0.7–2.6 with a padding of `3 × node + 48 px`, and the camera glides there over 460 ms. Everything outside
@@ -5012,6 +5030,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Node visuals, status tick, opening wave, hover, hidden-panel gate | `App/Graph/GraphView.xaml(.cs)`, `GraphNodeVisual.cs` |
+| Shared list ↔ graph hover (the shared value, its wiring, the on-screen gate) | `App/Graph/GraphHoverEcho.cs`, `App/ViewModels/RunViewModel.cs` (`HoveredProjectId`), `App/Graph/GraphOverlay.cs` (`IsOnScreen`) |
 | Graph node identity (project id, not name) and the label that is the name | `App/Graph/GraphModels.cs`, `QuietGraphLayout.cs` |
 | Opening/ending choreography on the graph (marking opacity, neon flicker) | `App/Graph/GraphView.xaml.cs` (`SetMarking`/`PlayEndFinale`) |
 | The filter set aside for a run and its return; the camera reset on rebuild and at the start of an operation | `App/Graph/GraphView.xaml.cs` (`BeginOperation`/`EndOperation`, `IsFilterSuspended`, `SnapCameraTo`), `MainWindow.xaml.cs` |

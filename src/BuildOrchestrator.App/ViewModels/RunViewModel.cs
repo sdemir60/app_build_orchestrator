@@ -107,6 +107,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// genişliği (2→3), iç sarmalayıcı <c>TranslateX 4</c> ve <c>Brush.SurfaceRaised</c> zemini için okur.</summary>
     [ObservableProperty] private bool _isSelected;
 
+    /// <summary>Proje hover'da mı — satırın kendisinde ya da grafikteki düğümünde (<see cref="RunViewModel.HoveredProjectId"/>).</summary>
+    [ObservableProperty] private bool _isHovered;
+
     /// <summary>[D5] Kısa-ad öneki (ör. <c>"OSYS."</c>) — dep-issue tooltip'i tam proje adlarını gösterirken bu
     /// öneki atar. HARDCODE DEĞİL: <see cref="RunViewModel"/> topoloji adlarından türetip (tek otorite,
     /// <see cref="Graph.GraphNode.CommonDotPrefix"/>) her satıra iter (<see cref="IsRunActive"/> deseni). Önek
@@ -770,6 +773,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[C2] Proje listesinde seçili satırın Id'si (yol) — null = seçim yok. <see cref="SelectProject"/>
     /// ile yönetilir (aynı projeye tekrar tıklama = deselect).</summary>
     [ObservableProperty] private string? _selectedProjectId;
+
+    /// <summary>Üzerinde durulan proje (null = yok) — liste ile graf hover'ı bunu paylaşır.</summary>
+    [ObservableProperty] private string? _hoveredProjectId;
 
     /// <summary>[design v1.11.0 §2.7-4] Aktif statü chip'lerinin KÜMESİ (<see cref="ProjectFilter"/> sabitleri) —
     /// boş küme = filtre yok. Chip'ler bağımsız açılıp kapanır ve seçili küme <b>VEYA</b> ile birleşir.
@@ -1476,6 +1482,22 @@ public sealed partial class RunViewModel : ObservableObject
         foreach (var row in Projects)
             row.IsSelected = string.Equals(row.Id, value, StringComparison.OrdinalIgnoreCase);
         PropagateSelectionToStream(value); // [D3] stream satırları da tek seçim kaynağından tazelenir
+    }
+
+    /// <summary>Bir satırın GERÇEK hover'ı: giriş kendi projesini yazar; çıkış yalnız değer hâlâ kendisiyse
+    /// siler — başka bir yüzeyin yazdığı değeri ezmez.</summary>
+    public void HoverProject(string id, bool hovered)
+    {
+        if (hovered) HoveredProjectId = id;
+        else if (string.Equals(HoveredProjectId, id, StringComparison.OrdinalIgnoreCase)) HoveredProjectId = null;
+    }
+
+    /// <summary>Hover değişince yalnız ESKİ ve YENİ satır tazelenir — seçimin aksine tüm liste dolaşılmaz:
+    /// grafikte fare hızla gezerken saniyede onlarca değişim olur.</summary>
+    partial void OnHoveredProjectIdChanged(string? oldValue, string? newValue)
+    {
+        if (oldValue is not null && FindRow(oldValue) is { } previous) previous.IsHovered = false;
+        if (newValue is not null && FindRow(newValue) is { } current) current.IsHovered = true;
     }
 
     /// <summary>Bir run GERÇEKTEN koşuyor mu — <see cref="ProjectRowViewModel.Status"/>'un <c>queued</c>

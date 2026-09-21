@@ -179,6 +179,25 @@ public class GraphOverlayTests
         Assert.Equal(screen.Y + HalfExtent + GraphOverlay.OverlayGapPx, topLeft.Y, 6);
     }
 
+    /// <summary>
+    /// Listeden yansıyan hover'ın kapısı: düğümün ekran noktası panelin içindeyse kadrajdadır. Zoom/focus
+    /// düğümü panelin dışına ittiyse (dört yönde de) kadrajda DEĞİLDİR — o durumda tooltip'in kelepçeli
+    /// ankrajı onu kenarda, hiçbir şeyi göstermeden çizerdi.
+    /// </summary>
+    [Fact]
+    public void A_node_is_on_screen_only_while_its_projected_centre_lies_inside_the_panel()
+    {
+        var node = new Point(100, 50);
+
+        Assert.True(GraphOverlay.IsOnScreen(node, new CameraTransform(1.0, 0, 0), Panel));
+        Assert.True(GraphOverlay.IsOnScreen(node, new CameraTransform(2.6, -100, -60), Panel)); // focus zoom'u, içeride
+
+        Assert.False(GraphOverlay.IsOnScreen(node, new CameraTransform(1.0, 5000, 0), Panel));  // sağda
+        Assert.False(GraphOverlay.IsOnScreen(node, new CameraTransform(1.0, -5000, 0), Panel)); // solda
+        Assert.False(GraphOverlay.IsOnScreen(node, new CameraTransform(1.0, 0, 5000), Panel));  // altta
+        Assert.False(GraphOverlay.IsOnScreen(node, new CameraTransform(1.0, 0, -5000), Panel)); // üstte
+    }
+
     /// <summary>§2.3'ün sayıları — birinin sessizce kayması bu testi düşürür. Kelepçe payı AYRI bir sayı
     /// değildir: grafın kendi iç payıdır (kopya YASAK).</summary>
     [Fact]

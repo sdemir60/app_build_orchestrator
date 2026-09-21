@@ -357,6 +357,8 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
+        // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
+        Graph.GraphHoverEcho.Wire(_vm, Shell.GraphHost);
 
         Loaded += async (_, _) =>
         {

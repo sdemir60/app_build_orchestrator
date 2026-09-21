@@ -37,6 +37,15 @@ public static class GraphOverlay
         (contentCentre.X + QuietGraphLayout.ContentInset) * camera.Scale + camera.Tx,
         (contentCentre.Y + QuietGraphLayout.ContentInset) * camera.Scale + camera.Ty);
 
+    /// <summary>Düğümün merkezi o anki kadrajda (panelin içinde) mi. Listeden yansıyan hover YALNIZ bu durumda
+    /// işler: tooltip'in ankrajı panele kelepçelendiği için kadraj dışındaki bir düğümün tooltip'i kenarda,
+    /// hiçbir şeyi göstermeden belirirdi.</summary>
+    public static bool IsOnScreen(Point contentCentre, CameraTransform camera, Size panel)
+    {
+        var screen = Project(contentCentre, camera);
+        return screen.X >= 0 && screen.X <= panel.Width && screen.Y >= 0 && screen.Y <= panel.Height;
+    }
+
     /// <summary>
     /// Tooltip kutusunun SOL-ÜST köşesi: düğümün boyanmış üst kenarının 8px üstünde ve düğüme ortalı.
     /// Üstte yer kalmadıysa düğümün ALTINA taklar.
