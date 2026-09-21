@@ -23,8 +23,9 @@ internal static class DsResources
     /// MC3072 verir). Gevşek XAML'de ise kural TERSİDİR: assembly adı yoksa tipler ÇAĞIRAN assembly'de
     /// (bu test projesinde) aranır ve bulunamaz. Bu yüzden metin, parse edilmeden önce tamamlanır.
     /// </summary>
-    private const string LocalNamespace = "clr-namespace:BuildOrchestrator.App.Controls";
-    private const string QualifiedNamespace = LocalNamespace + ";assembly=BuildOrchestrator.App";
+    private static readonly string[] LocalNamespaces =
+        ["clr-namespace:BuildOrchestrator.App.Controls", "clr-namespace:BuildOrchestrator.App"];
+    private const string AssemblySuffix = ";assembly=BuildOrchestrator.App";
 
     public static string AssetPath(string fileName)
         => Path.Combine(AppContext.BaseDirectory, "TestAssets", "Resources", fileName);
@@ -39,8 +40,9 @@ internal static class DsResources
 
     public static ResourceDictionary Load(string fileName)
     {
-        string xaml = File.ReadAllText(AssetPath(fileName))
-            .Replace($"\"{LocalNamespace}\"", $"\"{QualifiedNamespace}\"", StringComparison.Ordinal);
+        string xaml = File.ReadAllText(AssetPath(fileName));
+        foreach (string ns in LocalNamespaces)
+            xaml = xaml.Replace($"\"{ns}\"", $"\"{ns}{AssemblySuffix}\"", StringComparison.Ordinal);
         return (ResourceDictionary)XamlReader.Parse(xaml);
     }
 

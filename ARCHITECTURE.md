@@ -3750,6 +3750,14 @@ returning to the fitted view, and the console switched to the project's log rath
 The gate reads the event's source rather than listing elements, so anything that grows in that block is
 covered by it.
 
+**Clicking away from a text box releases its focus.** WPF moves keyboard focus only to an element that can take
+it; a panel background, a non-focusable button or a row takes the click and leaves the caret — and the amber
+ring — in the filter box. `ClickAwayBlur`, enabled on the main window, listens to `MouseDown` at the end of the
+route, handled events included: if the clicked element took focus itself, nothing happens; if focus is still in
+a text box and the click landed outside it, focus goes to the nearest focusable ancestor of the click — which
+keeps it inside a modal's focus trap — or is cleared when there is none. Clicks inside a popup are left alone:
+their visual route never reaches the window, and the popup manages its own focus.
+
 ### 13.8 Design-system control library
 
 WPF ships almost none of the design's vocabulary, so `Resources/Controls.xaml` defines it as templates and
@@ -3763,7 +3771,7 @@ styles, and `Controls/` holds the custom elements that a template cannot express
 | Icon button | Its own compact template, with a toggle variant for the layout-mode icons |
 | Switch | A `CheckBox` template — WPF has no toggle switch |
 | Segment | An `ItemsControl` of `RadioButton`s — the `Debug｜Release` control, and the About dialog's tab switch |
-| Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one |
+| Input | A `TextBox` style with watermark, prefix and invalid states, in two heights: the default one, and a shorter variant for the 28 px panel-header strip, where the default would fill the strip edge to edge and push its focus ring outside. The template deliberately leaves `PART_ContentHost` without a margin: WPF applies `Padding` to the content host itself, so a template that also binds the padding to a margin indents the caret and the typed text by two paddings instead of one. `DsChrome.IsClearable` is opt-in and only the two search boxes set it (the project filter and the branch search): while the box holds text a 16 px `✕` sits inside the right padding — which is reserved whether or not the `✕` shows, so typing never narrows the text area — and clicking it empties the box through `DsChrome.ClearTextCommand`, a normal edit that the filter binding and `TextChanged` both see. The `✕` is not focusable, so the caret stays in the box |
 | Select | A `ComboBox` template, ported from the design system's `<select>`. It is the library's one component with no live consumer — external-project cards carry no source picker (§10.4) — and is kept so the port does not have to be redone. Same input shell and focus ring as `Ds.Input`; the dropdown carries the same overlay chrome as the popovers, at a smaller radius. The chevron reuses the chip dropdown's existing glyph rather than adding a second copy of the same geometry, and the row hover runs through the same `DsTransition` gate as every other 120 ms colour change in the library — no bespoke entrance animation was added for the popup itself |
 | Tooltips | Open with **no delay** and stay until the pointer leaves, on disabled elements too. All three are `ToolTipService` attached properties that WPF reads from the tooltip's *owner*, not from the tooltip — set on the `ToolTip` style they are dead, which is how every tooltip in the app ended up on WPF's ~1 s default and looked like it never appeared. The defaults are overridden once, on `FrameworkElement`'s metadata (`AppTooltipDefaults`) |
 | Scrollbar | An implicit `ScrollBar` style — a 10 px transparent rail, no arrow buttons, and a neutral thumb pill inset by 3 px. The pill reacts to the *rail*, not to itself: a 4 px pill is a poor grab target, so as soon as the pointer enters the 10 px rail the inset flows from 3 px to 1 px — an 8 px pill — and the fill steps once up the neutral ramp; dragging steps once more. Only the pill grows, never the rail, so hovering never re-lays out the content beside it. Being implicit the style crosses template boundaries, so stock and third-party viewers alike (the console editor included) wear it without their XAML knowing; the stock corner square between two bars is neutralised app-wide |
@@ -4997,6 +5005,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Brand geometry and chevron gradient — one source, two consumers | `App/Resources/BrandGeometry.xaml` |
 | Raster icon generation (.exe, taskbar, tray) | `App/Assets/generate-app-icons.ps1` |
 | DS templates and styles | `App/Resources/Controls.xaml` |
+| Clear button in search boxes · releasing a text box's focus on a click elsewhere | `App/Controls/DsChrome.cs` (`IsClearable`, `ClearTextCommand`), `App/Resources/Controls.xaml` (`Ds.Input`, `Ds.Input.Clear`), `App/Controls/ClickAwayBlur.cs` |
 | Status glyph, spinner, status dot, split button, chips, tooltip, panel header, pill | `App/Controls/StatusGlyph.cs`, `BuildingSpinner.cs`, `StatusDot.cs`, `SplitButton.cs`, `DsChipFactory.cs`, `AppTooltip.cs`, `PanelHeader.xaml(.cs)`, `LatestPill.xaml(.cs)` |
 | Visual status (the single colour channel) and its token table; the standing it is built on | `App/Controls/VisualStatus.cs`, `App/Controls/StandingStatus.cs` |
 | Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
