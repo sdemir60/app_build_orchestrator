@@ -129,6 +129,8 @@ public static class AccessibilityNames
     /// ekran okuyucuya bir şey söylemez — işlev burada tarif edilir).</summary>
     public const string ClearFilterChip = "Clear the active filter";
     public const string BranchFilter = "Filter branches";
+    /// <summary>Temizlenebilir input'un (<c>DsChrome.IsClearable</c>) ikon-yalnız ✕'i — UIA adı ve tooltip.</summary>
+    public const string ClearInput = "Clear";
 
     // ---- [About] Title bar ----
     /// <summary>Title bar'daki ikon-yalnız info butonu. Tooltip'ten AYRIDIR: tooltip, kısayolu da anlatan

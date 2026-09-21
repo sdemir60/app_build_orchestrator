@@ -10,7 +10,10 @@
         WindowStyle="SingleBorderWindow"
         Background="{DynamicResource Brush.SurfaceBase}" Foreground="{DynamicResource Brush.TextPrimary}"
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display"
-        TextOptions.TextRenderingMode="Grayscale">
+        TextOptions.TextRenderingMode="Grayscale"
+        controls:ClickAwayBlur.IsEnabled="True">
+  <!-- ClickAwayBlur: odaktaki metin kutusunun (proje filtresi vb.) dışına, odak almayan bir yere (panel zemini)
+       tıklanınca odak kutudan bırakılır. -->
   <!-- [T35 fold #1] WindowChrome ARTIK KOD-TARAFI kurulur (MainWindow ctor): CaptionHeight + title-bar satır
        yüksekliği tek kaynaktan (Size.TitleBarHeight token) türetilir; XAML'de 40px literali KALMADI. WindowChrome
        bir Freezable olduğundan DynamicResource onda güvenilir çözülmez — kod-tarafı kurulum kesin çalışır. -->

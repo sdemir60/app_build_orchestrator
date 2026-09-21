@@ -19,7 +19,8 @@
                Foreground="{DynamicResource Brush.TextFaint}" />
 
     <!-- Ds.Input (implicit TextBox) + büyüteç prefix + watermark "Search branches…" -->
-    <TextBox x:Name="PART_Search" controls:DsChrome.Watermark="Search branches…">
+    <TextBox x:Name="PART_Search" controls:DsChrome.Watermark="Search branches…"
+             controls:DsChrome.IsClearable="True">
       <controls:DsChrome.Prefix>
         <Viewbox Width="14" Height="14">
           <Canvas Width="24" Height="24">

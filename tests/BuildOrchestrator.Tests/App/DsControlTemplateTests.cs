@@ -362,6 +362,58 @@ public class DsControlTemplateTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>
+    /// Temizlenebilir input (<see cref="DsChrome.IsClearableProperty"/>): metin VARKEN sağda bir ✕ belirir,
+    /// tıklanınca metni siler ve odak kutuda kalır. Metin ✕'in altına akmaz (sağ dolgu ✕'e yer ayırır).
+    /// Bayrak opt-in'dir — sıradan bir input'ta metin olsa da ✕ yoktur.
+    /// </summary>
+    [StaFact]
+    public void Clearable_input_shows_a_clear_button_only_while_it_has_text_and_clearing_keeps_focus()
+    {
+        var host = DsResources.NewHost();
+        var input = new TextBox { Width = 160, Style = (Style)host.FindResource("Ds.Input") };
+        DsChrome.SetPrefix(input, new TextBlock { Text = "Q" });
+        DsChrome.SetIsClearable(input, true);
+        var window = DsResources.Realize(host, input);
+
+        var clear = (Button)input.Template.FindName("PART_Clear", input);
+        Assert.Equal(Visibility.Collapsed, clear.Visibility);   // boşken silinecek bir şey yok
+
+        input.Text = "core";
+        input.UpdateLayout();
+        Assert.Equal(Visibility.Visible, clear.Visibility);
+        Assert.False(clear.Focusable);                            // fareyle tıklamak odağı kutudan ÇALMAZ
+        Assert.Equal(26.0, input.Padding.Left);                   // prefix payı korunur
+        Assert.True(input.Padding.Right >= clear.ActualWidth,
+            $"sağ dolgu {input.Padding.Right}, ✕ genişliği {clear.ActualWidth} — metin ✕'in altına akar");
+
+        Assert.True(input.Focus());
+        Assert.True(clear.Command.CanExecute(clear.CommandParameter));
+        clear.Command.Execute(clear.CommandParameter);
+        input.UpdateLayout();
+
+        Assert.Equal("", input.Text);
+        Assert.True(input.IsKeyboardFocused);
+        Assert.Equal(Visibility.Collapsed, clear.Visibility);
+
+        // opt-in: bayraksız input'ta metin olsa da ✕ yok, prefix'siz temizlenebilir input'ta sol dolgu 8
+        var plain = new TextBox { Width = 160, Text = "x", Style = (Style)host.FindResource("Ds.Input") };
+        var noPrefix = new TextBox { Width = 160, Text = "x", Style = (Style)host.FindResource("Ds.Input") };
+        DsChrome.SetIsClearable(noPrefix, true);
+        var panel = new StackPanel();
+        host.Child = null;
+        panel.Children.Add(plain);
+        panel.Children.Add(noPrefix);
+        host.Child = panel;
+        panel.UpdateLayout();
+        Assert.Equal(Visibility.Collapsed, ((Button)plain.Template.FindName("PART_Clear", plain)).Visibility);
+        Assert.Equal(new Thickness(8, 0, 8, 0), plain.Padding);
+        Assert.Equal(Visibility.Visible, ((Button)noPrefix.Template.FindName("PART_Clear", noPrefix)).Visibility);
+        Assert.Equal(8.0, noPrefix.Padding.Left);
+        Assert.Equal(input.Padding.Right, noPrefix.Padding.Right);
+        GC.KeepAlive(window);
+    }
+
     /// <summary><c>TextBoxView</c>'un kendi caret payı (WPF sabiti, şablondan gelmez).</summary>
     private const double CaretGutter = 3;
 

@@ -1,6 +1,7 @@
 ﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls">
+                    xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+                    xmlns:app="clr-namespace:BuildOrchestrator.App">
   <!--
     ============================ [T60] DS KONTROL KÜTÜPHANESİ ============================
 
@@ -765,6 +766,36 @@
 
   <!-- ======================================== INPUT ======================================== -->
   <!--
+    Temizlenebilir input'un (DsChrome.IsClearable) sağındaki ✕ — Ds.IconButton'ın hover dili, input'un İÇİNE
+    sığan ölçüde: 16px kare (sm input 21px'tir; 22'lik ikon butonu kutudan taşardı), radius-xs. Glif, filtre
+    chip'inin kaldırma ✕'iyle AYNIDIR (Icon.ChipRemove, 16'lık ızgarada 10px). Odak ALMAZ: fareyle tıklamak
+    odağı kutudan çalmamalı — silince yazmaya devam edilir.
+  -->
+  <Style x:Key="Ds.Input.Clear" TargetType="Button" BasedOn="{StaticResource Ds.IconButton}">
+    <Setter Property="Width" Value="16" />
+    <Setter Property="Height" Value="16" />
+    <Setter Property="Focusable" Value="False" />
+    <Setter Property="IsTabStop" Value="False" />
+    <Setter Property="controls:DsChrome.CornerRadius" Value="{DynamicResource Radius.Xs}" />
+    <Setter Property="AutomationProperties.Name" Value="{x:Static app:AccessibilityNames.ClearInput}" />
+    <Setter Property="ToolTip" Value="{x:Static app:AccessibilityNames.ClearInput}" />
+    <Setter Property="ContentTemplate">
+      <Setter.Value>
+        <DataTemplate>
+          <Viewbox Width="10" Height="10">
+            <Canvas Width="16" Height="16">
+              <Path Data="{DynamicResource Icon.ChipRemove}"
+                    StrokeThickness="{DynamicResource Icon.ChipRemove.StrokeThickness}"
+                    Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            </Canvas>
+          </Viewbox>
+        </DataTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!--
     _ds_bundle.js:714-727 (inputBase) — height 28, padding '0 8px', surface-sunken zemin,
     1px border-strong (invalid: status-fail-border, :717), radius-sm, text-primary, text-sm,
     transition border-color duration-fast ease-standard (:726).
@@ -820,6 +851,12 @@
                 <ScrollViewer x:Name="PART_ContentHost"
                               VerticalAlignment="Center" Focusable="False"
                               HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" />
+                <!-- Temizleme ✕'i (DsChrome.IsClearable) — sağ dolgunun (26) içinde, kenardan 4px. Metin
+                     varken görünür; tıklanınca DsChrome.ClearTextCommand kutuyu boşaltır, odak kutuda kalır. -->
+                <Button x:Name="PART_Clear" Style="{StaticResource Ds.Input.Clear}" Visibility="Collapsed"
+                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0"
+                        Command="{x:Static controls:DsChrome.ClearTextCommand}"
+                        CommandParameter="{Binding RelativeSource={RelativeSource TemplatedParent}}" />
               </Grid>
             </Border>
           </Grid>
@@ -830,6 +867,24 @@
             <Trigger Property="controls:DsChrome.Prefix" Value="{x:Null}">
               <Setter TargetName="Prefix" Property="Visibility" Value="Collapsed" />
               <Setter Property="Padding" Value="8,0" />
+            </Trigger>
+            <!-- Temizlenebilir: sağ dolgu ✕'e yer ayırır (prefix'in 26'sıyla simetrik) — boşken de, ki yazmaya
+                 başlayınca metin alanı daralıp oynamasın. Sıra ÖNEMLİDİR (sonraki kazanır): prefix'siz +
+                 temizlenebilir kombinasyonu en sonda, solu 8'e döndürür. -->
+            <Trigger Property="controls:DsChrome.IsClearable" Value="True">
+              <Setter Property="Padding" Value="26,0,26,0" />
+              <Setter TargetName="PART_Clear" Property="Visibility" Value="Visible" />
+            </Trigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="controls:DsChrome.Prefix" Value="{x:Null}" />
+                <Condition Property="controls:DsChrome.IsClearable" Value="True" />
+              </MultiTrigger.Conditions>
+              <Setter Property="Padding" Value="8,0,26,0" />
+            </MultiTrigger>
+            <!-- Silinecek metin yoksa ✕ de yok (IsClearable'ın görünür kıldığını EZER — bu yüzden ondan sonra). -->
+            <Trigger Property="Text" Value="">
+              <Setter TargetName="PART_Clear" Property="Visibility" Value="Collapsed" />
             </Trigger>
             <Trigger Property="IsKeyboardFocusWithin" Value="True">
               <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />

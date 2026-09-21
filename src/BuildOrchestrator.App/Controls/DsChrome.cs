@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
@@ -39,6 +41,32 @@ public static class DsChrome
 
     public static void SetPrefix(DependencyObject d, object? value) => d.SetValue(PrefixProperty, value);
     public static object? GetPrefix(DependencyObject d) => d.GetValue(PrefixProperty);
+
+    /// <summary>Arama kutusu bayrağı: metin varken sağda bir temizleme ✕'i (<c>PART_Clear</c>) belirir,
+    /// tıklanınca metni siler ve odak kutuda kalır (<see cref="ClearTextCommand"/>). Opt-in'dir — yalnız
+    /// arama/filtre kutuları açar; yol ya da ad giren alanlarda ✕ yoktur.</summary>
+    public static readonly DependencyProperty IsClearableProperty = DependencyProperty.RegisterAttached(
+        "IsClearable", typeof(bool), typeof(DsChrome), new PropertyMetadata(false));
+
+    public static void SetIsClearable(DependencyObject d, bool value) => d.SetValue(IsClearableProperty, value);
+    public static bool GetIsClearable(DependencyObject d) => (bool)d.GetValue(IsClearableProperty);
+
+    /// <summary><c>PART_Clear</c>'ın komutu; parametre kutunun kendisidir. <c>Clear()</c> <c>TextChanged</c>'i
+    /// ve iki-yönlü binding'i sıradan bir düzenleme gibi tetikler (filtre/arama yenilenir); odak kutuya geri
+    /// verilir ki kullanıcı yazmaya devam edebilsin.</summary>
+    public static ICommand ClearTextCommand { get; } = new ClearText();
+
+    private sealed class ClearText : ICommand
+    {
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+        public bool CanExecute(object? parameter) => parameter is TextBox;
+        public void Execute(object? parameter)
+        {
+            if (parameter is not TextBox box) return;
+            box.Clear();
+            box.Focus();
+        }
+    }
 
     /// <summary>DS <c>Input</c>'un <c>invalid</c> bayrağı (_ds_bundle.js:717): kenar
     /// <c>status-fail-border</c>'a döner ve focus'ta amber'e GEÇMEZ.</summary>
