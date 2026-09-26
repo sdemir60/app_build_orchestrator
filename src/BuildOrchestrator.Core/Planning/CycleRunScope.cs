@@ -34,14 +34,33 @@ public static class CycleRunScope
     public static IReadOnlySet<string> Of(BuildPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
+        return Of(plan.Nodes, plan.Cycles);
+    }
 
+    /// <summary>
+    /// Aynı kapsam, plan yerine düğüm + SCC listesinden. App'in elinde <see cref="BuildPlan"/> YOKTUR —
+    /// topoloji olayı aynı iki listeyi ayrı ayrı taşır; Cycles düğmesinin "+N upstream" faturası ikinci bir
+    /// kapsam hesabı yazmak yerine bu gövdeyi kullanır (kopya YASAK, CLAUDE.md; <c>CycleGroups.From</c>'un
+    /// aynı deseni).
+    /// </summary>
+    public static IReadOnlySet<string> Of(IReadOnlyList<ProjectNode> nodes,
+                                          IReadOnlyList<IReadOnlyList<string>> cycles)
+    {
+        ArgumentNullException.ThrowIfNull(nodes);
+        ArgumentNullException.ThrowIfNull(cycles);
+        return OfCore(nodes, cycles);
+    }
+
+    private static IReadOnlySet<string> OfCore(IReadOnlyList<ProjectNode> nodes,
+                                               IReadOnlyList<IReadOnlyList<string>> cycles)
+    {
         var byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
-        foreach (var node in plan.Nodes) byId[node.Id] = node;
+        foreach (var node in nodes) byId[node.Id] = node;
 
         var scope = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Yığın tabanlı geçiş: dairesel kenarlar tam da burada beklenir, özyineleme taşardı.
         var pending = new Stack<string>();
-        foreach (var cycle in plan.Cycles)
+        foreach (var cycle in cycles)
             foreach (string id in cycle)
                 if (scope.Add(id)) pending.Push(id);
 

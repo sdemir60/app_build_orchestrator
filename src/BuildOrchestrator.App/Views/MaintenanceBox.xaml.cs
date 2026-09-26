@@ -191,6 +191,8 @@ public partial class MaintenanceBox : UserControl
         if (!_built) return;
         int groups = _vm?.CycleGroupCount ?? 0;
         int members = _vm?.CycleMemberCount ?? 0;
-        PART_Resolve.ToolTip = AccessibilityNames.ResolveCyclesTooltip(groups, members);
+        // [fatura görünürlüğü] Üçüncü sayı: kapsama girecek kirli upstream — koşunun görünmez Build faturası.
+        int upstream = _vm?.CycleUpstreamToBuildCount ?? 0;
+        PART_Resolve.ToolTip = AccessibilityNames.ResolveCyclesTooltip(groups, members, upstream);
     }
 }

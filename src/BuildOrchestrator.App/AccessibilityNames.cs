@@ -101,6 +101,18 @@ public static class AccessibilityNames
     /// <para><b>Korunan geliştirme:</b> grup sayısı yalnız BİRDEN ÇOK ayrı döngü varken eklenir — tasarımın
     /// tek-sayılı cümlesi o durumda eksik kalıyor, "5 proje" beş projelik TEK bir döngü sanılabiliyordu.
     /// Tek gruplu yaygın durumda cümle tasarımdakiyle birebir aynıdır.</para></summary>
+    /// <summary>[fatura görünürlüğü] Aynı tooltip, koşunun kapsamına girecek KİRLİ upstream sayısıyla:
+    /// kapsam üyelerle bitmez (ARCHITECTURE §8.1 — üyeler + transitif upstream) ve kirli upstream önce
+    /// derlenir; düğme bunu söylemezse "cycle çözüyorum" sanılan koşu görünmez bir Build faturası taşır.
+    /// <c>upstreamToBuild == 0</c> ⇒ metin iki sayılı halin BİREBİR aynısıdır.</summary>
+    public static string ResolveCyclesTooltip(int groupCount, int memberCount, int upstreamToBuild)
+    {
+        string text = ResolveCyclesTooltip(groupCount, memberCount);
+        return memberCount > 0 && upstreamToBuild > 0
+            ? string.Format(CultureInfo.InvariantCulture, "{0} · {1} upstream to build first", text, upstreamToBuild)
+            : text;
+    }
+
     public static string ResolveCyclesTooltip(int groupCount, int memberCount)
     {
         if (memberCount <= 0) return ResolveCyclesButton + " — no dependency cycles detected";

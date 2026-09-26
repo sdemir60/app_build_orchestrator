@@ -64,4 +64,24 @@ public class CycleRunScopeTests
         var dangling = Plan([["A", "B"]], Node("A", true, "B", "ghost"), Node("B", true, "A"));
         Assert.Equal(["A", "B", "ghost"], CycleRunScope.Of(dangling).OrderBy(x => x, StringComparer.Ordinal));
     }
+
+    /// <summary>Düğüm+SCC overload'u plan overload'uyla AYNI kümeyi verir — App (elinde plan yok, topoloji
+    /// olayının iki listesi var) "+N upstream" faturasını bu gövdeden okur; iki gövde ayrışsaydı düğmenin
+    /// söylediği fatura motorun keseceğinden sessizce farklılaşırdı.</summary>
+    [Fact]
+    public void The_node_list_overload_matches_the_plan_overload()
+    {
+        var plan = Plan([["A", "B"]],
+            Node("Y", false),
+            Node("X", false, "Y"),
+            Node("A", true, "B", "X"),
+            Node("B", true, "A"),
+            Node("Z", false, "A"));
+
+        Assert.Equal(
+            CycleRunScope.Of(plan).OrderBy(x => x, StringComparer.Ordinal),
+            CycleRunScope.Of(plan.Nodes, plan.Cycles).OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(["A", "B", "X", "Y"],
+            CycleRunScope.Of(plan.Nodes, plan.Cycles).OrderBy(x => x, StringComparer.Ordinal));
+    }
 }

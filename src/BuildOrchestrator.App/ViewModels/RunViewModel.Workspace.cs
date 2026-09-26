@@ -68,6 +68,13 @@ public sealed partial class RunViewModel
     public int CycleMemberCount => _cycleMemberCount;
     private int _cycleMemberCount;
 
+    /// <summary>[fatura görünürlüğü] Cycles koşusunun kapsamına girecek KİRLİ upstream sayısı — Resolve
+    /// tooltip'inin "+N upstream to build first" kuyruğu (üçüncü sayı). Kapsam Core'un kendi kuralından
+    /// okunur (<see cref="CycleRunScope"/>, kopya YASAK): üyeler sayılmaz; <c>WillBuild == true</c> olmayan
+    /// (temiz ya da henüz imzasız) upstream da sayılmaz — fatura ancak kanıtlı kirlilikte iddia edilir.</summary>
+    public int CycleUpstreamToBuildCount => _cycleUpstreamToBuildCount;
+    private int _cycleUpstreamToBuildCount;
+
     /// <summary>Stop istendi (<see cref="AppPhase.Stopping"/>) ya da Sync başladı (<see cref="AppPhase.Syncing"/>):
     /// motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ya da <c>syncCompleted</c> ile cevap
     /// vermelidir — sessizlik saati burada kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe).
@@ -873,6 +880,12 @@ public sealed partial class RunViewModel
         // Değer AÇIKÇA duyurulur: HasCycles boole'u aynı kalsa da (ör. 2→3 döngü) sayılar değişmiş olabilir —
         // türetilmiş özelliğin kendi bildirimi yok (OnBranchList'in ActiveBranchName deseniyle AYNI).
         _cycleMemberCount = e.Cycles.Sum(scc => scc.Count);
+        // [fatura görünürlüğü] Tooltip'in üçüncü sayısı: kapsamdaki (üye + transitif upstream) kirli upstream.
+        // Kirli DOWNSTREAM kapsam dışıdır (onu Build derler) ve buradan doğal olarak düşer.
+        var cycleScope = CycleRunScope.Of(e.Nodes, e.Cycles);
+        var cycleMembers = new HashSet<string>(e.Cycles.SelectMany(m => m), StringComparer.OrdinalIgnoreCase);
+        _cycleUpstreamToBuildCount = e.Nodes.Count(n =>
+            n.WillBuild == true && !cycleMembers.Contains(n.Id) && cycleScope.Contains(n.Id));
         OnPropertyChanged(nameof(HasCycles));
         // [D5] Kısa-ad öneki topoloji adlarından türetilir (tek otorite) — aşağıda her satıra itilir.
         _graphNamePrefix = GraphNode.CommonDotPrefix(e.Nodes.Select(n => n.Name).ToList());

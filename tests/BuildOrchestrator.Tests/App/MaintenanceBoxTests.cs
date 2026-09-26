@@ -27,8 +27,9 @@ public class MaintenanceBoxTests
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
 
-    private static ProjectNode Node(string id, string name, int buildOrder) =>
-        new(id, name, id, ["Osys"], [], buildOrder, null, null, false, null);
+    private static ProjectNode Node(string id, string name, int buildOrder,
+        string[]? deps = null, bool? willBuild = null) =>
+        new(id, name, id, ["Osys"], deps ?? [], buildOrder, null, null, false, willBuild);
 
     private static (MaintenanceBox box, Window window) Realize(RunViewModel vm)
     {
@@ -212,6 +213,31 @@ public class MaintenanceBoxTests
 
         Assert.Equal("Resolve cycles — build the 4 cycle projects in repeated rounds: stale references first, "
                      + "then rebuild until they converge (2 separate cycles)", box.ResolveButton.ToolTip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[fatura görünürlüğü] Bir Cycles koşusunun kapsamı üyelerle bitmez (ARCHITECTURE §8.1 —
+    /// üyeler + transitif upstream) ve KİRLİ upstream gruptan önce derlenir. Tooltip bu faturayı sayar:
+    /// kapsamdaki kirli upstream SAYILIR; temiz upstream (derlenmeyecek) ve kirli bile olsa DOWNSTREAM
+    /// (kapsam dışı — onu Build derler) SAYILMAZ. Kapsam kuralı Core'un kendisinden okunur
+    /// (<c>CycleRunScope.Of</c>) — düğmenin söylediği fatura motorun keseceğinden ayrışamaz.</summary>
+    [StaFact]
+    public void Resolve_tooltip_counts_the_dirty_upstream_inside_the_cycle_scope()
+    {
+        var vm = NewVm();
+        var (box, window) = Realize(vm);
+
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(@"C:\p\x.csproj", "X", 0, willBuild: true),                  // kirli upstream → sayılır
+             Node(@"C:\p\y.csproj", "Y", 1, willBuild: false),                 // temiz upstream → sayılmaz
+             Node(@"C:\p\a.csproj", "A", 2, deps: [@"C:\p\x.csproj", @"C:\p\y.csproj", @"C:\p\b.csproj"]),
+             Node(@"C:\p\b.csproj", "B", 3, deps: [@"C:\p\a.csproj"]),
+             Node(@"C:\p\z.csproj", "Z", 4, deps: [@"C:\p\a.csproj"], willBuild: true)], // kirli downstream → kapsam dışı
+            [[@"C:\p\a.csproj", @"C:\p\b.csproj"]], [], []));
+
+        Assert.Equal(AccessibilityNames.ResolveCyclesTooltip(1, 2, upstreamToBuild: 1),
+            box.ResolveButton.ToolTip);
+        Assert.EndsWith(" · 1 upstream to build first", (string)box.ResolveButton.ToolTip, StringComparison.Ordinal);
         GC.KeepAlive(window);
     }
 
