@@ -336,6 +336,47 @@ public class ProjectRowInputTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T9/PİN] <see cref="The_row_menu_offers_build_rebuild_and_clean_and_locks_all_three_while_a_run_is_in_flight"/>
+    /// menüyü KENDİ BAŞINA kurup kilidi pinliyordu; burada GERÇEK zincir sınanır: satır → sağ tık →
+    /// <c>ProjectRow.xaml.cs:124</c> <c>MoreButton.Checked</c> → <c>SetRunActionsEnabled(CanRunProject())</c>. Koşu
+    /// (<c>IsStarting</c>) UÇUŞTAYKEN açılan menüde üç madde de kilitli olmalı; kilitli maddeye tıklamak da hiçbir
+    /// komut göndermemeli — bu ikinci koruma <c>OnRowMenuItem</c>'ın (ProjectRow.xaml.cs:563) KENDİ
+    /// <c>command.CanExecute</c> kontrolüdür, yani madde sırf görsel olarak pasif GÖRÜNDÜĞÜ için değil, komut
+    /// GERÇEKTEN kapalı OLDUĞU için sessiz kalır.</summary>
+    [StaFact]
+    public void The_row_menu_is_locked_through_the_real_row_when_a_run_is_in_flight()
+    {
+        var runVm = NewRunVm();
+        VmTopology.Seed(runVm, RowId);
+        var row = Realize(runVm, runVm.Projects.Single(), out var window);
+        var sent = new List<StartRunCommand>();
+        runVm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent.Add(s); };
+
+        RaiseMouse(row, Mouse.MouseEnterEvent); // ikon bloğu kurulsun ki Opened'a abone olunabilsin
+        var actions = row.Actions!;
+        bool opened = false;
+        actions.RowMenu.Opened += (_, _) => opened = true;
+
+        runVm.IsStarting = true; // koşu UÇUŞTA — menü bunu görerek AÇILMALI
+        row.RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+        { RoutedEvent = UIElement.MouseRightButtonUpEvent });
+        DispatcherPump.PumpUntil(() => opened, TimeSpan.FromSeconds(2));
+        Assert.True(opened, "ön-koşul: satır menüsü açılmadı");
+        actions.RowMenuContent.UpdateLayout();
+        var rows = actions.RowMenuContent.Rows.ToList();
+
+        Assert.Equal(3, rows.Count);
+        Assert.All(rows, r => Assert.False(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(BuildMenu.DisabledOpacity, r.Opacity));
+        Assert.All(rows, r => Assert.Equal(BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, r.ToolTip));
+
+        rows[0].RaiseEvent(new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Left)
+        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+
+        Assert.Empty(sent); // kilitli madde HİÇBİR komut göndermedi
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
     /// [design §2.4-4 · ölçüldü] <b>Satırdaki ikon butonların hover zemini, satırın KENDİ hover zemininden
     /// bir kademe yukarıda olmalıdır.</b> İkonlar yalnız satır hover'dayken görünür — yani buton her zaman
