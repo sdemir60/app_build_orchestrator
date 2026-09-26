@@ -508,6 +508,55 @@ public class RunCoordinatorTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    /// <summary>[T10] <see cref="InterruptWhileAIsInFlight"/>'ın klonu — TEK fark <c>StopKind.Graceful</c>
+    /// (Interrupt DEĞİL): motor <c>_interrupted</c> bayrağını hiç görmez (RunCoordinator.cs:1278'in
+    /// <c>trustedResult &amp;= !_interrupted</c> satırı Graceful'da hep true kalır). Parametreleştirmek yerine
+    /// klonlanır: StopKind ortak helper'ın imzasında yoktur ve eklemek üstteki Interrupt testlerinin çağrılarını
+    /// da değiştirirdi — iki senaryo (kesme/graceful) ayrı kanıt zincirleri pinlediği için ayrı kalmaları
+    /// okunurluğu bozmaz.</summary>
+    private static async Task<IReadOnlyList<IpcEvent>> GracefulStopWhileAIsInFlight(MsBuildInvokeResult result,
+        BuildStateStore? store = null, IncrementalPlan? incremental = null)
+    {
+        var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return result; });
+        using var h = new Harness(plan, invoker, stateStore: store);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+        return h.Events;
+    }
+
+    /// <summary>[T10 PİN] Karşıtı <see cref="A_project_that_succeeds_after_an_interrupt_is_not_recorded_as_built"/>:
+    /// düz Graceful Stop (Interrupt DEĞİL) sonrası biten başarı deftere GÜVENİLİR yazılır — <c>_interrupted</c>
+    /// yalnız Interrupt'ta true olur, sıradan Graceful onu hiç etkilemez (RunCoordinator.cs:1278 çevresi). B hiç
+    /// dispatch edilmediği için defterde hiç kaydı yoktur; tamamlanma olayında Queued yalnız B'yi sayar.</summary>
+    [Fact]
+    public async Task A_project_that_succeeds_after_a_graceful_stop_is_trusted_and_persisted()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+
+            var events = await GracefulStopWhileAIsInFlight(Ok(), store, Incremental("A", "B"));
+
+            Assert.True(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
+            var state = store.Load();
+            var a = Assert.Contains(Id("A"), state);
+            Assert.Equal(BuildResult.Succeeded, a.LastResult);
+            Assert.Equal("sig", a.BuiltSignature); // taze imza GERÇEKTEN yazıldı (Interrupt'ta yazılmıyordu)
+            Assert.DoesNotContain(Id("B"), state); // B hiç dispatch edilmedi — kayıt yok
+            var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+            Assert.Equal(1, done.Queued);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     /// <summary>Kesmeden sonra derleyici hatasıyla biten proje kanıt DEĞİLDİR: derlediği kaynak artık diskteki değil.</summary>
     [Fact]
     public async Task A_project_that_fails_after_an_interrupt_is_not_evidence()

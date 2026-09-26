@@ -626,6 +626,28 @@ public class EventStreamTests
         Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
     }
 
+    // ============================================================ [T10 PİN] Stop → akış satırı (kablolama)
+
+    /// <summary>[T10 PİN] Kullanıcı Stop'a basar (motor yok → gönderim <c>TrySendAsync</c>'te sessizce düşer;
+    /// StopCommand'ın KENDİSİ akışa dokunmaz — bu adım yalnız gerçek tetikleyici zinciri kurar), motor sonra
+    /// <see cref="RunCompletedEvent"/>(Stopped) ile biter: <c>RunViewModel.Stream.cs</c>'in (satır 264-266)
+    /// <c>AppendStreamFor</c>'daki <c>StreamText.Stopped(e.Queued)</c> kablosu GERÇEKTEN akışa satır basıyor mu —
+    /// eskiden yalnız şablon metninin KENDİSİ (<see cref="StreamText_templates_match_the_prototype_verbatim"/>)
+    /// pinliydi, kablolamanın GERÇEKTEN çalıştığı hiç kanıtlanmamıştı.</summary>
+    [Fact]
+    public async Task A_user_stop_followed_by_the_stopped_completion_streams_the_stopped_line()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 1, "Debug", 0));
+
+        await vm.StopCommand.ExecuteAsync(null); // kullanıcının Stop tıklaması
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 3, DurationMs: 500));
+
+        // Sabite referans — metni burada YENİDEN YAZMA (StreamText tek doğruluk kaynağı, kopya YASAK).
+        Assert.Contains(vm.StreamEvents, l => l.Text == StreamText.Stopped(3));
+    }
+
     // ============================================================ §12 — tampon cap 260 doyumu
 
     [Fact]
