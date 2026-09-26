@@ -1591,4 +1591,34 @@ public class RunViewModelStateTests
         Assert.False(RowOf(vm, "W").HasDepIssue);
         Assert.Equal(0, vm.Counters.Warn);
     }
+
+    /// <summary>[T15 PİN] "dependency still failing" skip'i SONRASI satır: motor durumu <c>Skipped</c>'tır ama
+    /// <see cref="VisualStatus"/> kendi ÇIKTI durumundan okunur (<see cref="VisualStatuses.For"/>'un "atlanmak
+    /// bir renk değildir" kuralı) — <c>WaitingForDependency</c> yeşildir, "bekliyor" olgusu üçgende söylenir.
+    /// Üçgenin (<see cref="RowWarning.For"/>) VE etiketin (<see cref="DecisionLabel.For"/>) AYNI defter
+    /// alanlarından (<see cref="ProjectRowViewModel.WarningRoots"/>/<see cref="ProjectRowViewModel.WillBuildReason"/>)
+    /// bu skip'ten SONRA da GERÇEKTEN besleniyor mu hiç kanıtlanmamıştı.</summary>
+    [Fact]
+    public void A_dependency_still_failing_skip_leaves_the_row_current_with_the_warning_and_the_up_to_date_label()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("A", true, WillBuildReason.SignatureChanged),
+            Item("Down", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["A"]));
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([Item("A", true, WillBuildReason.SignatureChanged),
+            Item("Down", true, WillBuildReason.WaitingForDependency, conditional: true, roots: ["A"])]));
+        vm.OnEvent(new ProjectStartedEvent("r1", P("A"), "A"));
+        vm.OnEvent(new ProjectFailedEvent("r1", P("A"), 900, "exit 1", Evidence: true)); // kök yine hatalı
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("Down"), SkipReasons.DependencyStillFailing));
+
+        var down = RowOf(vm, "Down");
+        Assert.Equal(ProjectRowState.Skipped, down.State);      // motor: bu koşuda atlandı
+        Assert.Equal(VisualStatus.Current, down.VisualStatus);  // ama renk çıktı durumundan — yeşil kalır
+        Assert.True(down.HasDepIssue);                          // ⚠ taşır
+        Assert.Equal(["A"], down.WarningRoots);
+        Assert.Equal("Dependency issue: A", RowWarning.For(false, false, false, down.WarningRoots, down.NamePrefix));
+        Assert.Equal("up to date",
+            DecisionLabel.For(down.WillBuild, down.WillBuildReason, down.OwnFilesChanged, down.LocalEdits).Word);
+    }
 }

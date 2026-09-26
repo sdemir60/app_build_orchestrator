@@ -484,6 +484,28 @@ public class EventStreamTests
         Assert.Equal($"down skipped — {SkipReasons.DependencyStillFailing}", line.Text);
     }
 
+    // ============================================================ [T15 PİN] başarı + dependency-issue → akış satırı
+
+    /// <summary>[T15 PİN] Dependency-issue kökleri taşıyan bir başarı event'i (<c>DepIssues: ["A"]</c>) → akış
+    /// satırı GERÇEKTEN <see cref="StreamText.BuiltDependencyIssue"/> biçimini üretiyor mu
+    /// (<c>RunViewModel.Stream.cs:194-198</c>'in dependency-issue dalı) — eskiden yalnız şablon metninin kendisi
+    /// (<see cref="StreamText_templates_match_the_prototype_verbatim"/>) pinliydi, bu dalın GERÇEK bir
+    /// <see cref="ProjectSucceededEvent"/>'ten beslendiği hiç kanıtlanmamıştı.</summary>
+    [Fact]
+    public void A_success_event_with_dependency_issue_roots_streams_the_built_dependency_issue_line()
+    {
+        const string id = @"C:\p\b.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "B"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 3400, DepIssues: ["A"]));
+
+        var line = Assert.Single(vm.StreamEvents, l => l.ProjectId == id);
+        // Sabite referans — metni burada YENİDEN YAZMA (StreamText tek doğruluk kaynağı, kopya YASAK).
+        Assert.Equal(StreamText.BuiltDependencyIssue("B", 3400), line.Text);
+    }
+
     /// <summary>[Task 2] Cycles koşusunda kapsam-dışı (<see cref="SkipReasons.OutOfCycleScope"/>) skip'ler
     /// proje başına satır YAZMAZ — sonraki stream olayından ÖNCE tek toplu Info satırına katlanır. "Güncel"
     /// (<see cref="SkipReasons.UpToDate"/>) skip AYRI kalır ve satır satır akmaya devam eder.</summary>
