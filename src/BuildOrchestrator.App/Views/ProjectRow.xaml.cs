@@ -120,7 +120,8 @@ public partial class ProjectRow : UserControl
         actions.MoreButton.Checked += (_, _) =>
         {
             actions.RowMenuContent.Title = ShortName();
-            // [design §3.8] Menü açılırken Build/Rebuild kapısı koşu kapısından okunur (prototip `busy`).
+            // [design §3.8] Menü açılırken Build/Rebuild/Clean kapısı (üçü de AYNI tek-proje-koşusu kapısı)
+            // koşu kapısından okunur (prototip `busy`).
             actions.RowMenuContent.SetRunActionsEnabled(CanRunProject());
             ApplyRightBlock();
         };

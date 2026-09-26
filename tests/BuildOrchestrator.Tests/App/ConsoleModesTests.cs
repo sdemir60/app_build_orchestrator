@@ -354,6 +354,48 @@ public class ConsoleModesTests
                 dependencyRoots: ["OSYS.Sales.Data"], namePrefix: "OSYS.", currentSha: sha)));
     }
 
+    /// <summary>[T16] Pending + willBuild=false + <see cref="WillBuildReason.UpToDate"/>, sha DOLU
+    /// (<c>ConsoleEmptyState.cs:126-129</c>): metin Skipped dalının "...in this run." EKİNİ TAŞIMAZ — bu satır
+    /// motorun BU KOŞUDA söylediği bir şey değil, imza karşılaştırmasından türeyen bir PLANDIR. Kanıt satırı da
+    /// yoktur (sha dolu → <c>Evidence</c> null döner).</summary>
+    [Fact]
+    public void A_pending_up_to_date_row_says_nothing_to_compile_without_the_in_this_run_wording()
+    {
+        const string sha = "a3f81c29b4d5e6f708192a3b4c5d6e7f80910a2b";
+
+        Assert.Equal(
+            ["Up to date — nothing to compile."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+                willBuildReason: WillBuildReason.UpToDate, currentSha: sha)));
+    }
+
+    /// <summary>[T16] LastFailed + sha YOK (<c>ConsoleEmptyState.cs:201</c> çevresi): <c>RepeatsReason</c>'ın
+    /// metin-tekrarı guard'ı yalnız NeverBuilt/OutputMissing gerekçeleri için geçerlidir — LastFailed onların
+    /// dışında kalır, bu yüzden kanıt satırı YAZILIR ve İKİ satır birden görünür.</summary>
+    [Fact]
+    public void A_last_failed_row_with_no_recorded_success_shows_both_the_failure_and_the_never_built_evidence()
+    {
+        Assert.Equal(
+            ["Will build — it failed at this source.", "Never built by this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.LastFailed)));
+    }
+
+    /// <summary>[T16] Motor bu koşuda "up to date" diye ATLADI (Skipped/<see cref="SkipReasons.UpToDate"/> —
+    /// gerekçe metni <c>ConsoleEmptyState.cs:83</c>'ten, "...in this run." ekiyle) AMA defterdeki kayıt bu
+    /// çıktının dışarıda derlendiğini söylüyor (<see cref="WillBuildReason.BuiltOutside"/>, kanıt
+    /// <c>ConsoleEmptyState.cs:199</c>'dan). İki metin BİREBİR AYNI DEĞİL (biri Skipped dalından, biri
+    /// Pending dalının kendi cümlesinden) — <c>RepeatsReason</c>'ın metin-eşitliği guard'ı burada TUTMAZ ve
+    /// kanıt satırı yine eklenir.</summary>
+    [Fact]
+    public void A_row_skipped_as_up_to_date_still_names_an_externally_built_output_as_evidence()
+    {
+        Assert.Equal(
+            ["Up to date — nothing to compile in this run.", "Built outside this tool"],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped, skipReason: SkipReasons.UpToDate,
+                willBuildReason: WillBuildReason.BuiltOutside)));
+    }
+
     /// <summary>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Helper'ın iki zaman parametresi
     /// (<c>lastBuiltAt</c>, <c>outputBuiltAt</c>) kalktı: sayfa artık hiçbir yaş yazmadığı için kurulacak bir
     /// zaman da yok.</summary>

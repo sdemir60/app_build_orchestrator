@@ -73,6 +73,25 @@ public sealed class HeadWatcherTests
         Assert.Equal([HeadMove.Commit], recorder.Calls.ToArray());
     }
 
+    /// <summary>[T11 · rehber madde 53] Working tree'de bir dosyayı DEĞİŞTİRMEK (commit atılmadan) hiçbir çağrı
+    /// üretmez: <c>git add</c> index'i güncellese de <c>logs\HEAD</c> oynamaz, izleyici bu yazımı hiç görmez.</summary>
+    [Fact]
+    public async Task A_working_tree_save_without_a_commit_fires_nothing()
+    {
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "1");
+        repo.CommitAll("init");
+        var recorder = new Recorder();
+        using var watcher = new HeadWatcher();
+        Assert.True(watcher.Start(GitDir(repo), recorder.On), watcher.UnavailableReason);
+
+        repo.WriteFile("a.txt", "2");
+        GitTestRepo.RunGitAt(repo.RootPath, "add", "-A"); // index de değişir — logs\HEAD'e dokunmaz
+
+        await Task.Delay(HeadWatcher.SettleDelay + Quiet);
+        Assert.Empty(recorder.Calls);
+    }
+
     /// <summary>Reflog klasörü yoksa (henüz hiç ref hareketi olmamış bir git dizini) izleyici kurulmaz ve gerekçesini söyler.</summary>
     [Fact]
     public void A_missing_logs_folder_reports_unavailable()

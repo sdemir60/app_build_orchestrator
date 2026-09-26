@@ -2059,6 +2059,28 @@ public class RunViewModelTests
         Assert.False(vm.CanShowBehind);
     }
 
+    /// <summary>[T20 · design v1.16.0 §3.9] Başarılı pull ÜÇ şeyi BİRDEN yapar: mesafe sıfırlanır (ff sonrası
+    /// yerel HEAD uzak uca eşitlendi → <see cref="RunViewModel.Behind"/>/<see cref="RunViewModel.CanShowBehind"/>),
+    /// chip düşer VE konsol KORUNARAK TEK fetch'li Sync zincirlenir (<c>RunViewModel.Workspace.cs</c>
+    /// <c>OnPullCompletedAsync</c> → <c>SyncMode.Appended</c>, <c>Fetches()==true</c>) — ikinci bir Sync'in
+    /// GİTMEDİĞİNİ de pinler.</summary>
+    [Fact]
+    public async Task A_successful_pull_zeroes_behind_and_chains_exactly_one_fetching_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — gönderim düşer, DebugOnCommandSent yine görür
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        Assert.True(vm.CanShowBehind); // ön-koşul: chip GERÇEKTEN görünür durumda
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: true));
+
+        Assert.Equal(0, vm.Behind);
+        Assert.False(vm.CanShowBehind);
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+    }
+
     [Fact] // buildPreview arrives BEFORE the per-project events; ProjectStarted on an already-previewed row must still flip it to Started
     public async Task ProjectStarted_after_a_buildPreview_row_still_transitions_the_row_to_Started()
     {
@@ -2765,6 +2787,38 @@ public class RunViewModelTests
         Assert.Null(vm.LastSyncHead);
         Assert.Null(vm.LastSyncCompletedAtMs);
         Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: kök değişiminin Sync'i gönderilemedi
+    }
+
+    /// <summary>[spec 2026-09-18 §6.1 · karar 11 · PİN] Pencereye dönüşün eşiği son Sync'in ANINDAN
+    /// (<see cref="RunViewModel.LastSyncAtMs"/>) ölçülür — pencerenin ne kadar süre pasif/arka planda kaldığından
+    /// DEĞİL: VM hiçbir yerde "son aktivasyon" saati tutmaz, tek kaynak son Sync'in başlangıç/bitiş anı. Eşiğin
+    /// 1 ms altında hiçbir Sync gitmez; eşik TAM dolduğu an (5000. ms) TEK sessiz Sync, fetch'siz. Sayılar
+    /// literal (<see cref="AutoSyncCoordinator.ActivationQuietMs"/> sabiti kaysa da bu test onu yakalar —
+    /// literalin kendisi <see cref="AutoSyncCoordinatorTests.The_activation_quiet_threshold_is_five_seconds"/>'te ayrıca pinli).</summary>
+    [Fact]
+    public void Window_activation_waits_for_five_seconds_since_the_last_sync()
+    {
+        long now = 1000;
+        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
+        {
+            RootPath = @"D:\repo",
+        };
+        var posted = new Queue<Action>();
+        vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("main", CommittedSha), () => new FakeHeadWatcher());
+        ReplySync(vm, upToDateB: false); // ilk Sync tamamlandı — LastSyncAtMs bu anın (now) değerine iğnelenir
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        now += 4999; // son Sync'ten 4999 ms geçti — eşik henüz dolmadı
+        vm.OnWindowActivated();
+        Drain(posted);
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
+
+        now += 1; // toplam tam 5000 ms — eşik doldu
+        vm.OnWindowActivated();
+        Drain(posted);
+
+        Assert.False(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
     }
 
     // ---------------------------------------------------------------- [T8 · spec §6.1 · §6.2 · karar 10] koşu sırasında branch

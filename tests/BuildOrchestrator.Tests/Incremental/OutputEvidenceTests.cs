@@ -190,6 +190,58 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.True(sameSizeNewer.FedIntact);
     }
 
+    /// <summary>[Task T14] Ledger kipinde öğrenilmiş beslenen kopya SİLİNMİŞ — bu kontrol önceden yalnız zaman
+    /// kipinde pinliydi (<c>A_failed_copy_to_the_shared_folder_breaks_the_fed_output</c>); araç derledikten sonra
+    /// asıl koşu genelde ledger kipindedir (<c>OutputEvidence.cs:208-210</c>, <see cref="OutputEvidence.Inspect"/>).
+    /// Kopya silinince bozuk sayılır ve yol LEDGER kalır (zaman hükmü hâlâ üretilmez).</summary>
+    [Fact]
+    public void A_deleted_shared_copy_is_broken_in_ledger_mode()
+    {
+        Touch(InputRel, T0);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(FedRel, ToolBuilt);
+
+        var intact = Check(Record(ToolRun, fed: FedRel));
+        Assert.True(intact.FedIntact);
+
+        File.Delete(Full(FedRel));
+        var broken = Check(Record(ToolRun, fed: FedRel));
+
+        Assert.Equal(new OutputCheck(EvidenceMode.Ledger, false, false, null, At(ToolBuilt)), broken);
+    }
+
+    /// <summary>[Task T14] Ledger kipinde öğrenilmiş kopya AYNI boyutta ama kanıttan ESKİ tarihli — karşıtı zaten
+    /// pinli (<c>A_release_build_in_the_shared_folder_breaks_the_fed_output</c>: aynı boyut + YENİ tarih ⇒ sağlam).
+    /// <see cref="OutputEvidence.Inspect"/>'in beslenen-kopya kontrolü (<c>OutputEvidence.cs:208-210</c>) "yeni
+    /// DEĞİLSE bozuk" der — eski tarihli kopya da bozuk sayılmalı.</summary>
+    [Fact]
+    public void A_same_size_but_older_shared_copy_is_broken_in_ledger_mode()
+    {
+        Touch(InputRel, T0);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(FedRel, T0);
+
+        var check = Check(Record(ToolRun, fed: FedRel));
+
+        Assert.Equal(new OutputCheck(EvidenceMode.Ledger, false, false, null, At(ToolBuilt)), check);
+    }
+
+    /// <summary>[Task T14] Ledger kipinde HintPath hedefi (bağımlılık çıktısı) kayıttan ve kanıttan YENİ olsa da
+    /// zaman hükmü ÜRETİLMEMELİ: <see cref="OutputEvidence.Inspect"/>'in ledger dalı <c>hintTargets</c>'i hiç
+    /// okumadan erken döner (<c>OutputEvidence.cs:90-91</c>) — <c>TimeCheck</c>'e girseydi bu aynı hedef
+    /// <see cref="TimeVerdict.DependencyNewer"/> üretirdi (bkz. <c>A_newer_dependency_output_is_dependency_newer</c>).</summary>
+    [Fact]
+    public void A_newer_hint_path_target_produces_no_time_verdict_in_ledger_mode()
+    {
+        Touch(InputRel, T0);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(HintRel, Later);
+
+        var check = Check(Record(ToolRun), folderAt: null, HintRel);
+
+        Assert.Equal(new OutputCheck(EvidenceMode.Ledger, false, true, null, At(ToolBuilt)), check);
+    }
+
     /// <summary>§7-21, §7-22: yeni <c>.cs</c> eklendi ya da silindi — taranan klasörün zamanı ilerler; girdi
     /// dosyalarının hiçbiri çıktıdan yeni olmasa da zaman kipinde <c>OwnNewer</c>.</summary>
     [Fact]
@@ -201,6 +253,26 @@ public sealed class OutputEvidenceTests : IDisposable
         var check = Check(state: null, folderAt: Later);
 
         Assert.Equal(TimeVerdict.OwnNewer, check.Time);
+    }
+
+    /// <summary>[Task T1] VS'nin sürekli yazdığı <c>.vs</c> önbelleğine kanıttan yeni tarihli bir dosya düşmesi
+    /// verdict'i DEĞİŞTİRMEMELİ: <see cref="ProjectInputs.CollectWithFolders"/>'ın gerçek klasör taraması
+    /// (bu testte <c>Check</c>'in sabit tek-klasör listesi DEĞİL, üretimin kullandığı gerçek tarama) kullanılır
+    /// — <c>.vs</c> taranan klasör kümesine hiç girmediği için zamanı da hiç okunmaz (Fresh kalır).</summary>
+    [Fact]
+    public void A_new_file_under_dot_vs_leaves_the_verdict_fresh()
+    {
+        Touch(@"P\P.csproj", T0);
+        Touch(InputRel, T0);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(@"P\.vs\Generated.cs", Later);
+        Stamp(FolderRel, T0);
+        Stamp(@"P\.vs", Later);
+
+        var (files, folders) = ProjectInputs.CollectWithFolders(Full(@"P\P.csproj"), null, _dir.Path);
+        var check = OutputEvidence.Inspect(Outputs(), state: null, [.. files.Select(f => f.Path)], folders, []);
+
+        Assert.Equal(TimeVerdict.Fresh, check.Time);
     }
 
     /// <summary>§7-23 (zaman kipi): bağımlılık D değişti ve derlendi, P'ye dokunulmadı — D'nin HintPath hedefi

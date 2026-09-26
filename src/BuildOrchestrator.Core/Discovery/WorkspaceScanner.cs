@@ -12,8 +12,20 @@ public sealed record ScanResult(IReadOnlyList<string> CsprojPaths, IReadOnlyList
 /// </summary>
 public sealed class WorkspaceScanner
 {
-    private static readonly HashSet<string> Ignored = new(StringComparer.OrdinalIgnoreCase)
-        { ".git", "bin", "obj", "node_modules", ".vs" }; // [Global Constraints scan ignore]
+    /// <summary>[Global Constraints scan ignore] MSBuild derleme çıktısı klasörleri.</summary>
+    public static readonly IReadOnlyList<string> BuildOutputFolderNames = ["bin", "obj"];
+
+    /// <summary>
+    /// IDE/VCS/paket yöneticisi klasörleri — kaynak değil, hiçbir tarama İÇİNE girmez. Tek tanım burada
+    /// (kopya YASAK, CLAUDE.md): <see cref="BuildOrchestrator.Core.Incremental.ProjectInputs"/>'in proje-içi
+    /// klasör taraması da bu adları <see cref="IsSkippedFolder"/> üzerinden buradan okur — eskiden ayrı bir
+    /// atlama listesi tutuyordu ve yalnız <see cref="BuildOutputFolderNames"/>'i biliyordu; VS'nin sürekli
+    /// yazdığı <c>.vs</c> bu yüzden zaman kararına (<c>OutputEvidence</c>) sızıyordu (Task T1).
+    /// </summary>
+    public static readonly IReadOnlyList<string> ExternalToolingFolderNames = [".git", ".vs", "node_modules"];
+
+    private static readonly HashSet<string> Ignored =
+        new(BuildOutputFolderNames.Concat(ExternalToolingFolderNames), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Bu yol, canlı bir build'in saniyeler içinde sileceği geçici bir artefakt mı — kalıcı bir kaynak dosya
@@ -27,6 +39,10 @@ public sealed class WorkspaceScanner
     /// </summary>
     public static bool IsTransientBuildArtifact(string path) =>
         path.EndsWith("_wpftmp.csproj", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Bu klasör adı (yalnız ad, tam yol değil) — derleme çıktısı ya da IDE/VCS/paket yöneticisi
+    /// klasörü — hiçbir taramanın İÇİNE girmediği adlardan biri mi.</summary>
+    public static bool IsSkippedFolder(string folderName) => Ignored.Contains(folderName);
 
     public ScanResult Scan(string root)
     {
@@ -51,7 +67,7 @@ public sealed class WorkspaceScanner
         }
         foreach (var sub in Directory.EnumerateDirectories(dir))
         {
-            if (Ignored.Contains(Path.GetFileName(sub))) continue;
+            if (IsSkippedFolder(Path.GetFileName(sub))) continue;
             Walk(sub, csproj, sln);
         }
     }

@@ -35,8 +35,12 @@ public class SyncWorkspaceServiceTests
 
     // ---------------------------------------------------------------- fixture
 
-    /// <summary>Repo'ya iki SDK-style proje (B → A ProjectReference) + ikisini içeren bir .sln yazar.</summary>
-    private static void WriteWorkspace(GitTestRepo repo)
+    /// <summary>Repo'ya iki SDK-style proje (B → A ProjectReference) + ikisini içeren bir .sln yazar.
+    /// <paramref name="includeC"/> ile üçüncü bir SDK-style proje de eklenir (C → B ProjectReference,
+    /// B→A ile AYNI üslup) — zincir <c>A ← B ← C</c> olur (<c>.sln</c>'e eklenmez: <see
+    /// cref="BuildOrchestrator.Core.Discovery.WorkspaceScanner"/> csproj'ları .sln'den BAĞIMSIZ, dizin
+    /// taramasıyla bulur — bkz. [Task 6]).</summary>
+    private static void WriteWorkspace(GitTestRepo repo, bool includeC = false)
     {
         repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
@@ -50,6 +54,13 @@ public class SyncWorkspaceServiceTests
         repo.WriteFile(SlnName,
             "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
             + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
+
+        if (!includeC) return;
+        repo.WriteFile(Path.Combine("src", "C", "C.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>C</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "C", "C.cs"), "public class C { }");
     }
 
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
@@ -284,6 +295,29 @@ public class SyncWorkspaceServiceTests
         foreach (var (projectId, signature) in signatures)
             store.Upsert(new BuildState(projectId, signature, head, BuildResult.Succeeded));
         return binder.ContentById;
+    }
+
+    /// <summary>[Task 4/6 review — kopya YASAK] Defterdeki "araç derledi" kaydını <paramref name="names"/>'teki
+    /// her proje için <paramref name="content"/>'in (<see cref="PrimeBuildStateAsUpToDateAsync"/>'in döndürdüğü
+    /// bugünkü içerik özeti) karşılığıyla upsert eder — T4'ün iki pin'i (<see
+    /// cref="A_tool_built_project_vs_rebuilt_without_content_change_reads_built_outside"/>, <see
+    /// cref="A_tool_built_dependency_edited_then_vs_rebuilt_marks_the_dependent_affected"/>) VE <see
+    /// cref="PrimeChainWorkspaceAsync"/> ARTIK BURADAN geçer (üçü de aynı döngüyü kendi gövdesine
+    /// kopyalıyordu). <paramref name="toolRunAt"/> verilirse <c>LastRunAt</c> da o değere yazılır (T4'ün "VS
+    /// içerik değiştirmeden yeniden derledi" senaryosu — DLL artık bu zamandan yeni olmalı); verilmezse
+    /// dokunulmaz (zincir kurulumu yalnız <c>BuiltContent</c> ister).</summary>
+    private static void PrimeToolBuilt(string root, string cacheRoot, IEnumerable<string> names,
+        IReadOnlyDictionary<string, string?> content, DateTimeOffset? toolRunAt = null)
+    {
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        foreach (string name in names)
+        {
+            string id = Path.Combine(root, "src", name, name + ".csproj");
+            store.Upsert(toolRunAt is { } runAt
+                ? primed[id] with { LastRunAt = runAt, BuiltContent = content[id] }
+                : primed[id] with { BuiltContent = content[id] });
+        }
     }
 
     /// <summary>
@@ -789,6 +823,20 @@ public class SyncWorkspaceServiceTests
         return events;
     }
 
+    /// <summary>[Task 4] X ve Y legacy class library'leri + Y'nin X'e <c>ProjectReference</c> bağımlılığı — üç
+    /// tüketici PAYLAŞIR (kopya YASAK): <see cref="A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected"/>
+    /// (eskiden inline yazılıydı, Task 4 review'da buraya taşındı) ve Task 4'ün iki pin testi.</summary>
+    private static void CommitLegacyXYWorkspace(GitTestRepo repo)
+    {
+        foreach (string name in new[] { "X", "Y" })
+            LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        string yProject = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
+        File.WriteAllText(yProject, File.ReadAllText(yProject).Replace(
+            "<Compile Include=\"Class1.cs\" />",
+            "<Compile Include=\"Class1.cs\" /><ProjectReference Include=\"..\\X\\X.csproj\" />"));
+        repo.CommitAll("legacy");
+    }
+
     /// <summary>
     /// [spec 2026-09-18 §5.2/§5.4, P8] Defterde kaydı olmayan ama derleme kanıtı her girdisinden yeni olan proje
     /// (VS'te derlenmiş) zaman kipindedir: Sync onu <see cref="WillBuildReason.BuiltOutside"/> ile güncel sayar ve
@@ -851,13 +899,7 @@ public class SyncWorkspaceServiceTests
     public async Task A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected()
     {
         using var repo = new GitTestRepo();
-        foreach (string name in new[] { "X", "Y" })
-            LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
-        string yProject = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
-        File.WriteAllText(yProject, File.ReadAllText(yProject).Replace(
-            "<Compile Include=\"Class1.cs\" />",
-            "<Compile Include=\"Class1.cs\" /><ProjectReference Include=\"..\\X\\X.csproj\" />"));
-        repo.CommitAll("legacy");
+        CommitLegacyXYWorkspace(repo);
         EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
             [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
         File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "X", "Class1.cs"), EvidenceTimes.EditedAt);
@@ -955,6 +997,484 @@ public class SyncWorkspaceServiceTests
         });
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal((2, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [Task 4 — spec 2026-09-18 §5.4, en yaygın gerçek geçiş: "araç derledi, sonra VS yeniden derledi",
+    /// <c>OutputEvidence.cs:79-92</c>] X ve Y aracın kendi defterinde tool-built olarak dururken (kayıt +
+    /// <c>LastRunAt=ToolRunAt</c>) VS, X'i İÇERİK DEĞİŞMEDEN yeniden derler — X.dll artık <c>LastRunAt</c>'tan
+    /// yeni. X defter kipinden zaman kipine geçer ve kanıt taze okunur (<c>BuiltOutside</c>). Y'nin kendi DLL'i
+    /// dokunulmadığı için Y defter kipinde kalır; X'in içeriği değişmediğinden Y'nin bugünkü imzası da kayıtlı
+    /// imzasıyla eşleşmeye devam eder (<c>UpToDate</c>) — geçiş X'te kalır, Y'ye sızmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_project_vs_rebuilt_without_content_change_reads_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyXYWorkspace(repo);
+        string xDll = WriteBuiltOutput(repo, "X");
+        string yDll = WriteBuiltOutput(repo, "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [xDll, yDll]);
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        // DİKKAT: PrimeBuildStateAsUpToDateAsync BuiltContent YAZMAZ — upsert edilmezse proje yanlışlıkla
+        // `affected` okur (bkz. The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass).
+        PrimeToolBuilt(repo.RootPath, cacheRoot, ["X", "Y"], content, new DateTimeOffset(EvidenceTimes.ToolRunAt));
+
+        // VS, X'i İÇERİK DEĞİŞMEDEN yeniden derledi: DLL artık ToolRunAt'ten yeni.
+        File.SetLastWriteTimeUtc(xDll, EvidenceTimes.ToolRunAt.AddMinutes(1));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        // değişmez: X'in içeriği aynı kaldı. OwnFilesChanged=false, Y defter kipinde kaldığı için
+        // BuildStateStore.OwnFilesChanged'tan (BuiltContent karşılaştırması) gelir — upsert edilen
+        // BuiltContent burada da (pin b'deki gibi) GERÇEKTEN okunur.
+        Assert.Equal((false, WillBuildReason.UpToDate, false), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 0, 2), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [Task 4 — spec 2026-09-18 §5.4] AYNI geçiş, FAKAT VS derlemeden ÖNCE X'in bir kaynak dosyası değişti: X'in
+    /// yeni DLL'i artık bu değişikliği de kapsayacak kadar taze (zaman kipinde <c>BuiltOutside</c>, pin (a) ile
+    /// AYNI karar) — ama Y'nin KAYITLI imzası X'in ESKİ içeriğine dayanıyordu. Bugünkü imza (Safe geçişi, X'in
+    /// yeni içeriğini gören) o kayıtla eşleşmez ve Y defter kipinde <c>SignatureChanged</c> okur. Y'nin KENDİ
+    /// dosyaları dokunulmadı (<c>OwnFilesChanged=false</c>, etiket <c>affected</c>) — bayatlık X'ten miras.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_dependency_edited_then_vs_rebuilt_marks_the_dependent_affected()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyXYWorkspace(repo);
+        string xDll = WriteBuiltOutput(repo, "X");
+        string yDll = WriteBuiltOutput(repo, "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [xDll, yDll]);
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        PrimeToolBuilt(repo.RootPath, cacheRoot, ["X", "Y"], content, new DateTimeOffset(EvidenceTimes.ToolRunAt));
+
+        // X'in kaynağı değişti ve commit edildi.
+        string xClass = Path.Combine(repo.RootPath, "src", "X", "Class1.cs");
+        File.WriteAllText(xClass, File.ReadAllText(xClass).Replace("42", "43"));
+        repo.CommitAll("edit X");
+        File.SetLastWriteTimeUtc(xClass, EvidenceTimes.EditedAt);
+        // VS, düzenlemeden SONRA X'i yeniden derledi: DLL kendi (yeni) girdisinden de yeni.
+        File.SetLastWriteTimeUtc(xDll, EvidenceTimes.EditedAt.AddMinutes(1));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 1, 1), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    // ---------------------------------------------------------------- [Task 5] clean → sync zinciri (rehber 33)
+
+    /// <summary>[Task 5] <see cref="CleanWorkspaceServiceTests.NewService"/> ile AYNI kurulum (kopya YASAK) —
+    /// üretim varsayılan retry gecikmesini no-op'a çeviren dikiş burada da kurulur, gerçek bekleme YOK (D8).</summary>
+    private static CleanWorkspaceService NewCleanService(string cacheRoot) =>
+        new(new WorkspaceScanner(), new BuildStateStore(cacheRoot)) { DeleteRetryDelay = _ => { } };
+
+    /// <summary>Clean'i koşar ve olaylarını toplar (<see cref="CleanWorkspaceServiceTests.Run"/> deseni).</summary>
+    private static List<IpcEvent> RunClean(CleanWorkspaceService service, string root)
+    {
+        var events = new List<IpcEvent>();
+        service.Run(new CleanWorkspaceCommand(root), events.Add);
+        return events;
+    }
+
+    /// <summary>[Task 5] <see cref="LegacyFixture.CreateClassLib"/>'in OutputPath'ini repo kökündeki paylaşılan
+    /// bir <c>Output\</c> klasörüne yönlendirir (OSYS'teki ortak OutDir deseni — bkz. <c>CleanWorkspaceServiceTests</c>
+    /// içindeki <c>sharedOutput</c> fixture'ı); gövdenin gerisi AYNI fixture'dan gelir (kopya YASAK).</summary>
+    private static void CommitSharedOutputWorkspace(GitTestRepo repo, string name)
+    {
+        string csproj = LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        File.WriteAllText(csproj, File.ReadAllText(csproj).Replace(
+            @"<OutputPath>bin\Debug\</OutputPath>", @"<OutputPath>..\..\Output\</OutputPath>"));
+        repo.CommitAll("legacy-shared-output");
+    }
+
+    /// <summary>[Task 5] <c>src\{ad}</c> projesinin paylaşılan klasördeki (repo kökü\<c>Output\</c>) elle
+    /// yazılmış derleme kanıtı — <see cref="LegacyFixture.WriteBuiltOutput"/>'un paylaşılan-OutputPath karşılığı.</summary>
+    private static string WriteSharedOutput(GitTestRepo repo, string name)
+    {
+        string path = Path.Combine(repo.RootPath, "Output", name + ".dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[16]);
+        return path;
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (a)] Varsayılan OutputPath'te (<c>bin\Debug\</c>) derleme
+    /// kanıtının KENDİSİ bin'in içindedir: bakım Clean'i onu obj'yle BİRLİKTE siler, kanıt tamamen ortadan
+    /// kalkar ve zaman kontrolü <see cref="TimeVerdict.Missing"/> okur — gerekçe <c>OutputMissing</c>, etiket
+    /// "never built" gibi görünür.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_project_at_the_default_output_path_reads_output_missing_after_clean()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        string dll = WriteBuiltOutput(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+        await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot); // "araç derledi" — güncel bir kayıt var
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // bin (DLL dahil) + defter kaydı gider — fixture obj YARATMAZ
+        Assert.False(File.Exists(dll), "bakım Clean'i bin'i DLL'iyle birlikte silmeli");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputMissing), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (b), asıl pin] REHBER burada yeşil (<c>BuiltOutside</c>)
+    /// BEKLİYORDU: "OutputPath'i paylaşılan klasör olan proje bakım Clean'inden sonra da yeşil görünebilir"
+    /// diye çıkarım yapmıştı — gerekçesi, Clean'in paylaşılan çıktıya hiç dokunmamasıydı. GERÇEK farklı: bakım
+    /// Clean'i projenin KENDİ <c>obj</c>'sini siler (paylaşılan çıktıdan bağımsız bir işlemdir) ve obj proje
+    /// klasörünün DİREKT alt öğesi olduğu için silinmesi klasörün KENDİ mtime'ını ilerletir; zaman kontrolü
+    /// klasörü kanıttan yeni bulur (<see cref="TimeVerdict.OwnNewer"/>) ve gerekçe <c>OutputStale</c> olur —
+    /// etiket gri "modified", REHBERİN beklediği yeşil DEĞİL.
+    /// </summary>
+    [Fact]
+    public async Task A_shared_output_project_with_an_obj_folder_reads_modified_after_clean_not_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitSharedOutputWorkspace(repo, "X");
+        string projectDir = Path.Combine(repo.RootPath, "src", "X");
+        Directory.CreateDirectory(Path.Combine(projectDir, "obj", "Debug"));
+        File.WriteAllText(Path.Combine(projectDir, "obj", "Debug", "X.csproj.FileListAbsolute.txt"), "intermediate");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []);
+        string sharedDll = WriteSharedOutput(repo, "X");
+        File.SetLastWriteTimeUtc(sharedDll, EvidenceTimes.EvidenceAt);
+        string cacheRoot = NewCacheRoot();
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // paylaşılan DLL'e dokunmaz, projenin obj'sini siler
+        Assert.False(Directory.Exists(Path.Combine(projectDir, "obj")));
+        Assert.True(File.Exists(sharedDll), "paylaşılan çıktı Clean'in silme kümesinin DIŞINDA kalmalı");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (c)] (b) ile AYNI paylaşılan OutputPath, FAKAT projede hiç
+    /// <c>obj</c>/<c>bin</c> yok: bakım Clean'inin proje klasöründen silecek hiçbir şeyi yoktur, klasörün
+    /// mtime'ı İLERLEMEZ ve zaman kontrolü tazedir. Yeşilin (<c>BuiltOutside</c>) mümkün olduğu TEK biçim
+    /// budur — rehberin genel kuralı burada, ve YALNIZ burada, doğru çıkıyor.
+    /// </summary>
+    [Fact]
+    public async Task A_shared_output_project_without_obj_or_bin_still_reads_built_outside_after_clean()
+    {
+        using var repo = new GitTestRepo();
+        CommitSharedOutputWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []);
+        string sharedDll = WriteSharedOutput(repo, "X");
+        File.SetLastWriteTimeUtc(sharedDll, EvidenceTimes.EvidenceAt);
+        string cacheRoot = NewCacheRoot();
+
+        var cleanEvents = RunClean(NewCleanService(cacheRoot), repo.RootPath);
+        Assert.Equal(0, Assert.IsType<CleanCompletedEvent>(cleanEvents[^1]).FoldersRemoved); // silecek hiçbir şey yok
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (d)] Kilitli bin DLL'i Clean'in silme denemesinden sağ çıkar
+    /// (kanıt yerinde durur, K-6) ama AYNI projenin kilitsiz <c>obj</c>'si gider — (b)'deki AYNI mekanizma: obj'nin
+    /// gitmesi proje klasörünün mtime'ını ilerletir ve zaman kontrolü <c>OwnNewer</c> okur. Kilitli dosya Clean'i
+    /// DURDURMAZ ve kısmen başarısız bir Clean de gerçeği DEĞİŞTİRMEZ — sonuç (b) ile AYNI: gri "modified".
+    /// </summary>
+    [Fact]
+    public async Task A_locked_bin_dll_survives_clean_but_its_deleted_obj_still_reads_modified()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        string dll = WriteBuiltOutput(repo, "X");
+        string projectDir = Path.Combine(repo.RootPath, "src", "X");
+        Directory.CreateDirectory(Path.Combine(projectDir, "obj", "Debug"));
+        File.WriteAllText(Path.Combine(projectDir, "obj", "Debug", "X.csproj.FileListAbsolute.txt"), "intermediate");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+
+        using (new FileStream(dll, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var cleanEvents = RunClean(NewCleanService(cacheRoot), repo.RootPath);
+            Assert.True(Assert.IsType<CleanCompletedEvent>(cleanEvents[^1]).LockedFileCount >= 1);
+        } // handle burada bırakılır — Clean'in kilitli-dosya denemesi bundan sonrasını GÖRMEZ
+
+        Assert.True(File.Exists(dll), "kilitli DLL silinemez, kanıt yerinde durmalı");
+        Assert.False(Directory.Exists(Path.Combine(projectDir, "obj")), "obj kilitsizdi — gitmeli");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (e)] SDK-style projede <c>OutputFileFor</c> HER ZAMAN
+    /// <c>null</c>'dur (<c>CsprojEvaluator.IsSdkStyle</c> ⇒ kanıtsız) — Clean'in bin'i gerçekten silmiş olması
+    /// kararı DEĞİŞTİRMEZ, çünkü zaman yolu hiç yoktu. Kanıtsız projede bugünkü karar hep <c>NeverBuilt</c>'tir;
+    /// bu senaryonun tek konusu Clean'in de bu kararı bozmadığıdır.
+    /// </summary>
+    [Fact]
+    public async Task An_sdk_style_project_reads_never_built_after_clean_with_no_derivable_output_path()
+    {
+        using var repo = new GitTestRepo();
+        WriteWorkspace(repo);
+        repo.CommitAll("c1");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[16]);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // A'nın bin'i gerçekten silinir
+        Assert.False(File.Exists(dll));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.Equal((true, WillBuildReason.NeverBuilt), (i.WillBuild, i.Reason)));
+    }
+
+    // ---------------------------------------------------------------- [Task 6] sync seviyesinde etiket geçiş serisi
+
+    /// <summary>
+    /// [Task 6] <see cref="WriteWorkspace"/>'in <c>includeC</c> uzantısıyla <c>A ← B ← C</c> zincirini kurar
+    /// (B→A, C→B ProjectReference), commit'ler (c1), klonlar ve üçünü de "araç derledi" olarak prime eder
+    /// (<see cref="PrimeBuildStateAsUpToDateAsync"/>). Ayrıca üçünün de <c>BuiltContent</c>'ini <see
+    /// cref="PrimeToolBuilt"/> ile upsert eder (Task 4 ile PAYLAŞILAN kalıp, kopya YASAK) — yoksa kayıtlı
+    /// proje bir sonraki Sync'te yanlışlıkla <c>affected</c> okur (bkz. <see
+    /// cref="The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass"/>).
+    /// </summary>
+    /// <param name="beforeCommit">İlk commit'ten (c1) ÖNCE workspace'e ek dosya yazmak içindir (ör. Task 6'nın
+    /// paylaşılan <c>Directory.Build.props</c>'u) — verilmezse no-op.</param>
+    private static async Task<(string CloneRoot, string CacheRoot, string Branch)> PrimeChainWorkspaceAsync(
+        GitTestRepo origin, Action<GitTestRepo>? beforeCommit = null)
+    {
+        WriteWorkspace(origin, includeC: true);
+        beforeCommit?.Invoke(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        PrimeToolBuilt(cloneRoot, cacheRoot, ["A", "B", "C"], content);
+
+        return (cloneRoot, cacheRoot, branch);
+    }
+
+    /// <summary>[Task 6 — review fix, kopya YASAK] <c>git add -A</c> + <c>git commit -q -m</c> ikilisini TEK
+    /// yerden çağırır — dosyadaki dört Task 6 testi de (madde 2, 3 [x2], 6) bunu paylaşır, artık hiçbiri
+    /// ikiliyi kendi gövdesine kopyalamaz.</summary>
+    private static void CommitAt(string cloneRoot, string message)
+    {
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", message);
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 1] A'nın bir kaynak dosyası COMMIT'SİZ değişir: A kendi girdisinden dirty olduğu
+    /// için hem <c>SignatureChanged</c> hem <c>OwnFilesChanged=true</c> hem <c>LocalEdits=true</c> okur
+    /// (<c>modified · local</c>). B ve C kendi dosyalarına dokunulmadı ama imzaları A'nın (B doğrudan, C
+    /// B üzerinden dolaylı) değişen imzasını taşıdığı için ikisi de <c>SignatureChanged</c> okur; kendi
+    /// içerikleri sabit kaldığından <c>OwnFilesChanged=false</c> ve dirty yol yalnız A'nın klasöründe
+    /// olduğundan <c>LocalEdits=false</c> (<c>affected</c>).
+    /// </summary>
+    [Fact]
+    public async Task An_uncommitted_edit_marks_its_own_project_local_and_ripples_signature_to_dependents()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "A.cs"), "public class A { public int X; }"); // commit YOK
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        // sanity: [Task 6] genişletmesi gerçekten A ← B ← C zincirini kurdu (C→B, B→A)
+        var topology = Assert.Single(events.OfType<WorkspaceTopologyEvent>());
+        var nodeA = Assert.Single(topology.Nodes, n => n.Name == "A");
+        var nodeB = Assert.Single(topology.Nodes, n => n.Name == "B");
+        var nodeC = Assert.Single(topology.Nodes, n => n.Name == "C");
+        Assert.Equal([nodeA.Id], nodeB.Dependencies);
+        Assert.Equal([nodeB.Id], nodeC.Dependencies);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        var c = Assert.Single(preview.Items, i => i.Name == "C");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, true),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (b.WillBuild, b.Reason, b.OwnFilesChanged, b.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (c.WillBuild, c.Reason, c.OwnFilesChanged, c.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 2] AYNI değişiklik şimdi COMMIT edilir: A'nın <c>LocalEdits</c>'i düşer (artık
+    /// dirty değil, <c>modified</c>) ama <c>OwnFilesChanged</c> hâlâ <c>true</c>'dur — A'nın içeriği hâlâ
+    /// prime edildiği andan FARKLI. B ve C commit'ten etkilenmez: hâlâ <c>SignatureChanged</c>/<c>affected</c>
+    /// okurlar, tıpkı madde 1'de olduğu gibi (commit, Sync'in salt-okur taraması için maddi bir fark YARATMAZ).
+    /// </summary>
+    [Fact]
+    public async Task A_committed_edit_drops_local_edits_but_the_chain_stays_signature_changed()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "A.cs"), "public class A { public int X; }");
+        CommitAt(cloneRoot, "edit A");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        var c = Assert.Single(preview.Items, i => i.Name == "C");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, false),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (b.WillBuild, b.Reason, b.OwnFilesChanged, b.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (c.WillBuild, c.Reason, c.OwnFilesChanged, c.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 3] A'nın içeriği ORİJİNALİNE (<see cref="WriteWorkspace"/>'in yazdığı birebir
+    /// metne) döndürülür ve bu da commit'lenir: bugünkü fingerprint prime anındakiyle birebir eşleşir, imza
+    /// tekrar kayıtlı imzayla aynı olur ve zincirin ÜÇÜ de <c>UpToDate</c>'e döner.
+    /// </summary>
+    [Fact]
+    public async Task A_reverted_edit_returns_the_whole_chain_to_up_to_date()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+        string aCs = Path.Combine(cloneRoot, "src", "A", "A.cs");
+        const string originalContent = "public class A { }"; // WriteWorkspace'in yazdığı ORİJİNAL — birebir
+
+        File.WriteAllText(aCs, "public class A { public int X; }");
+        CommitAt(cloneRoot, "edit A");
+        File.WriteAllText(aCs, originalContent);
+        CommitAt(cloneRoot, "revert A");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.Equal((false, WillBuildReason.UpToDate), (i.WillBuild, i.Reason)));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 4, ÖZEL DURUM] A'ya README.md + App.config eklenir (ikisi de COMMIT'SİZ). Bu iki
+    /// uzantı <see cref="BuildOrchestrator.Core.Incremental.BuildSignature.BuildAffectingExtensions"/>'ta
+    /// YOKTUR (yalnız <c>.cs</c>/<c>.xaml</c>/<c>.resx</c>/<c>.csproj</c>/<c>.props</c>/<c>.targets</c>
+    /// derlemeyi etkiler) — dolayısıyla ne <see cref="Core.Incremental.ProjectInputs"/>'in girdi kümesine ne
+    /// (aynı kümeyi kullanan) <see cref="Core.Workspace.LocalEdits"/>'in kesişimine girerler. Rehberin çıkarımı
+    /// buydu ve kod okumasıyla doğrulandı: zincirin ÜÇÜ de <c>UpToDate</c> kalır, <c>LocalEdits=false</c>.
+    /// </summary>
+    [Fact]
+    public async Task Uncommitted_readme_and_app_config_edits_do_not_move_the_decision()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "README.md"), "# A\n");
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "App.config"), "<configuration />");
+        // commit YOK — ikisi de dirty/untracked kalır.
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i =>
+            Assert.Equal((false, WillBuildReason.UpToDate, false), (i.WillBuild, i.Reason, i.LocalEdits)));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 5] A'ya untracked <c>New.cs</c> (düz dosya) + <c>Sub\New2.cs</c> (henüz hiç
+    /// izlenmeyen bir alt klasörün İÇİNDE) eklenir. İkisi birlikte <see cref="Core.Workspace.LocalEdits"/>'in
+    /// iki dirty-yol biçimini de sınar: git tek başına untracked bir dosyayı düz satırla, TAMAMEN untracked
+    /// bir klasörü ise (<c>-uall</c> olmadan) tek bir <c>dir/</c> satırıyla bildirir (bkz. LocalEdits.cs'in
+    /// "Dizin öneki" notu) — ikisi de A'nın SDK-style implicit <c>**/*.cs</c> glob'una girip içerik özetini
+    /// değiştirir. A: <c>SignatureChanged</c>, <c>OwnFilesChanged=true</c>, <c>LocalEdits=true</c>.
+    /// </summary>
+    [Fact]
+    public async Task Untracked_new_source_files_mark_the_owning_project_signature_changed_and_local()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "New.cs"), "public class New { }");
+        string subDir = Path.Combine(cloneRoot, "src", "A", "Sub");
+        Directory.CreateDirectory(subDir);
+        File.WriteAllText(Path.Combine(subDir, "New2.cs"), "public class New2 { }");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, true),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 6] Workspace'te (repo kökünde, c1'de) commit'li duran paylaşılan
+    /// <c>Directory.Build.props</c> değiştirilir ve bu da commit'lenir. A/B/C'nin HİÇBİRİNİN kendi klasöründe
+    /// (ya da <c>src\</c>'de) daha yakın bir props yoktur, yani üçü de yukarı yürüyüşte AYNI kök dosyayı bulur
+    /// (<see cref="Core.Incremental.ProjectInputs.DirectoryLevelFileNames"/>) — üçünün de kendi girdi kümesi
+    /// (dolayısıyla içerik özeti) doğrudan değişir: <c>SignatureChanged</c> + <c>OwnFilesChanged=true</c>,
+    /// B/C'ye A üzerinden DOLAYLI değil.
+    /// </summary>
+    [Fact]
+    public async Task A_shared_directory_build_props_edit_marks_every_project_that_sees_it_as_nearest()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin, beforeCommit: o =>
+            o.WriteFile("Directory.Build.props",
+                "<Project><PropertyGroup><LangVersion>10.0</LangVersion></PropertyGroup></Project>"));
+
+        File.WriteAllText(Path.Combine(cloneRoot, "Directory.Build.props"),
+            "<Project><PropertyGroup><LangVersion>11.0</LangVersion></PropertyGroup></Project>");
+        CommitAt(cloneRoot, "bump LangVersion");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.Equal(3, preview.Items.Count); // sanity: A, B, C hepsi göründü
+        Assert.All(preview.Items, i => Assert.Equal((true, WillBuildReason.SignatureChanged, true),
+            (i.WillBuild, i.Reason, i.OwnFilesChanged)));
     }
 
     // ---------------------------------------------------------------- yardımcı
