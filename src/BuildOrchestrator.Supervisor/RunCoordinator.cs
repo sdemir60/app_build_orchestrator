@@ -1261,8 +1261,9 @@ public sealed class RunCoordinator(
     /// metodu dispatch edilmiş her proje için tam bir kez, KENDİ <c>finally</c>'sinden çağırmaktır.</para>
     /// </summary>
     /// <param name="trustedResult">Bu sonucun ARKASINDA DURULABİLİR mi. Tekil projede daima <c>true</c>. SCC'de
-    /// yalnız grup YAKINSADIYSA (<see cref="CycleRoundDecision.Converged"/>) <c>true</c>'dur: turlar bir
-    /// bütündür, yakınsamayan bir grubun tur 1'de yeşile dönmüş üyesi de taze imzasını KAYDETMEZ — aksi halde
+    /// grup YAKINSADIYSA (<see cref="CycleRoundDecision.Converged"/>) — ya da [suçlu kırmızı] üye, yüzeyleri
+    /// oturmuşken patlamış kanıtlı-umutsuz üyeyse (bkz. <see cref="ReportCycleMember"/>) — <c>true</c>'dur:
+    /// turlar bir bütündür, yakınsamayan bir grubun tur 1'de yeşile dönmüş üyesi taze imzasını KAYDETMEZ — aksi halde
     /// bir sonraki Build onu "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (çıktı aracın
     /// kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi eşleşen imzayı bozmaz — ARCHITECTURE
     /// §7.6; bunu yakalayacak başka mekanizma yoktur). <c>false</c> ⇒ persist YOK ve
@@ -1469,6 +1470,12 @@ public sealed class RunCoordinator(
         // taşmazlardı, decision'la AYNI kapsamda dururlar.
         int roundsRun = 0;
         int lastFailedCount = 0;
+        // [suçlu kırmızı] NoProgress'i getiren turda hem BAŞARISIZ hem de OTURMUŞ (staleNow dışı) üyeler:
+        // okudukları her grup-içi yüzey nihaiyken derleyici hatası verdiler — girdileri bir sonraki denemede
+        // de birebir aynı olacağından hataları sıradan bir Build hatasıyla aynı kalitede KANITTIR ve satır
+        // kırmızısını hak eder. Yalnız yüzey kanıtı varken dolar; legacy NoProgress'te (suçlu ayırt edilemez)
+        // null kalır ve bugünkü kanıtsız davranış sürer.
+        HashSet<string>? provenHopeless = null;
         try
         {
             // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
@@ -1569,6 +1576,8 @@ public sealed class RunCoordinator(
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
                 previousFailed = failed;
+                if (decision == CycleRoundDecision.NoProgress && staleNow is not null)
+                    provenHopeless = [.. failed.Where(id => !staleNow.Contains(id))];
                 if (decision == CycleRoundDecision.Continue)
                     toBuild = staleNow is null ? members : [.. members.Where(staleNow.Contains)];
                 // Stop istendiyse YENİ tur da AÇILMAZ. Turun TAMAMLANDIĞI hâlde stop'un tam tur sınırında
@@ -1614,7 +1623,8 @@ public sealed class RunCoordinator(
                 try
                 {
                     ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason,
-                        decision, member.DepIssues);
+                        decision, member.DepIssues,
+                        failureIsEvidence: provenHopeless?.Contains(id) == true);
                 }
                 catch (Exception ex) { reportFailure ??= ex; }
             }
@@ -1686,7 +1696,9 @@ public sealed class RunCoordinator(
     private static string CycleOutcomeText(CycleRoundDecision decision) => decision switch
     {
         CycleRoundDecision.Converged => "converged",
-        CycleRoundDecision.NoProgress => "no progress — the same members failed twice",
+        // [suçlu kırmızı/metin] "the same members failed twice" idi; yüzey kanıtı NoProgress'i TEK turda da
+        // verebildiği için "twice" yanlışlanabilir bir iddiaya dönüştü — metin iki kanıt yolunu da kapsar.
+        CycleRoundDecision.NoProgress => "no progress — another round could not change the result",
         CycleRoundDecision.CapReached => string.Format(CultureInfo.InvariantCulture,
             "round cap reached ({0} rounds) — output may be one generation behind", CycleRoundPolicy.RoundCap),
         _ => "interrupted",
@@ -1808,12 +1820,21 @@ public sealed class RunCoordinator(
     /// Turların hiçbirinde ara sonuç yayılmadığı için bu, o üye hakkında yayılan TEK sonuçtur ve
     /// <paramref name="totalDurationMs"/> turların TOPLAMIDIR.
     /// </summary>
+    /// <param name="failureIsEvidence">[suçlu kırmızı] Üye, okuduğu her grup-içi yüzey NİHAİYKEN derleyici
+    /// hatası verdi (NoProgress'in yüzey-kanıtlı yolu) — hatası sıradan bir Build hatası kadar kanıtlıdır ve
+    /// kanıt kapısından geçer (satır kırmızı `failed`, defterde <see cref="BuildState.FailedSignature"/>).
+    /// Kapının diğer şartları (derleyici çıkışı, bilinen imza, defter) yine kapının kendisindedir — timeout
+    /// gibi bir gerekçe buradan true gelse bile kanıt olmaz.</param>
     private void ReportCycleMember(RunContext run, string projectId, BuildResult result, long totalDurationMs,
-                                   string? failReason, CycleRoundDecision decision, DepIssueResult depIssues) =>
+                                   string? failReason, CycleRoundDecision decision, DepIssueResult depIssues,
+                                   bool failureIsEvidence = false) =>
         ReportProjectResult(run, projectId, result, totalDurationMs, failReason, depIssues,
-            // YAKINSAMAYAN GRUP HİÇBİR ŞEY PERSIST ETMEZ: yalnız Converged'e güvenilir. NoProgress/CapReached/
-            // stop/iptal/beklenmeyen hata (decision hâlâ Continue) hâlinde yeşil görünen üye de invalidate edilir.
-            trustedResult: decision == CycleRoundDecision.Converged,
+            // YAKINSAMAYAN GRUP HİÇBİR ŞEY PERSIST ETMEZ: yalnız Converged'e güvenilir — BAŞARI tarafında.
+            // NoProgress/CapReached/stop/iptal (decision hâlâ Continue) hâlinde yeşil görünen üye de invalidate
+            // edilir. [suçlu kırmızı] HATA tarafında bir istisna vardır: yüzeyleri oturmuşken patlayan üyenin
+            // sonucu da "arkasında durulabilir"dir — kanıt kapısı yalnız trusted sonuçları kanıt sayar, bu
+            // yüzden bayrak buradan geçer (üye zaten Failed olduğundan başarı-persist yolu hiç açılmaz).
+            trustedResult: decision == CycleRoundDecision.Converged || failureIsEvidence,
             // Tavana dayanıldı ve üye yeşil: derleme başarılı ama çıktı bir kuşak geride OLABİLİR. Dep-issue
             // listesine sahte isim enjekte EDİLMEZ — ayrı bir bayrak taşınır.
             cycleUnsettled: decision == CycleRoundDecision.CapReached && result == BuildResult.Succeeded,
@@ -2079,7 +2100,8 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [spec 2026-09-18 §1-14 · R-M4b] <b>Kanıt kapısının TEK yeri.</b> Bir başarısızlık, (1) sonucun arkasında
-    /// durulabiliyorsa (<paramref name="trustedResult"/> — yakınsamayan bir SCC'de değil), (2) nedeni derleyicinin
+    /// durulabiliyorsa (<paramref name="trustedResult"/> — yakınsamayan bir SCC'de yalnız yüzeyleri oturmuşken
+    /// patlayan kanıtlı-umutsuz üye için true gelir, bkz. <see cref="ReportCycleMember"/>), (2) nedeni derleyicinin
     /// kendi sıfır-dışı çıkışıysa (<see cref="FailureClassification.IsCompilerFailure"/> — timeout, stopped,
     /// invoke error değil) ve (3) planlamadaki imzası biliniyorsa (<c>run.Incremental.SignatureById</c> — imzasız
     /// kanıt YASAK, <see cref="Core.Planning.WillBuildEvaluator"/>'ın <c>LastFailed</c>'i imza eşitliğine bakar)

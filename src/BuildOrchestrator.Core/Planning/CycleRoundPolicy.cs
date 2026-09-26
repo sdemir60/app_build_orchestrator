@@ -7,7 +7,8 @@ public enum CycleRoundDecision
     Continue,
     /// <summary>İki ardışık yeşil tur — tüm üyeler nihai API'lere karşı derlendi.</summary>
     Converged,
-    /// <summary>Aynı küme iki turdur patlıyor — tur eklemek çözmez.</summary>
+    /// <summary>Tur eklemek sonucu değiştiremez: ya aynı küme iki turdur patlıyor (klasik kanıt) ya da
+    /// patlayan bir üyenin okuduğu grup-içi yüzeyler oturmuş (yüzey kanıtı — tur 1'de bile verilebilir).</summary>
     NoProgress,
     /// <summary>Tavana dayanıldı; çıktılar bir kuşak geride olabilir.</summary>
     CapReached,

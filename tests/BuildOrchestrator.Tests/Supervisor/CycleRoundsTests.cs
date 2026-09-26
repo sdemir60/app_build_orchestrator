@@ -1039,7 +1039,12 @@ public class CycleRoundsTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             // Grup, tur göstergesiyle AYNI adla (build-order'daki ilk üye) anılır.
-            Assert.Contains("cycle A: no progress — the same members failed twice (2 members)", h.DecisionLog, StringComparison.Ordinal);
+            // [DEĞİŞEN KURAL — metin] Eski satır "the same members failed twice" idi; yüzey kanıtı NoProgress'i
+            // TEK turda da verebildiği için "twice" artık yanlışlanabilir bir iddiaydı (tek turda kesilen grupta
+            // kimse iki kez patlamadı). Metin iki kanıt yolunu da kapsayan gerçeği söyler: tur eklemek sonucu
+            // değiştiremez.
+            Assert.Contains("cycle A: no progress — another round could not change the result (2 members)",
+                h.DecisionLog, StringComparison.Ordinal);
             Assert.Contains("non-convergence remembered at sig", h.DecisionLog, StringComparison.Ordinal);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
@@ -1347,6 +1352,129 @@ public class CycleRoundsTests
     }
 
     // ---------------------------------------------------------------- 13) restore-once
+
+    // ---------------------------------------------------------------- 14) umutsuz üyenin hatası KANITTIR
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — suçlu artık kırmızı.]</b> Eski kural: yakınsamayan grupta HİÇBİR sonuca güvenilmez,
+    /// <c>exit N</c> ile patlayan üye bile kanıtsızdır — hatası bayat bir kardeş DLL'inden kaynaklanıyor
+    /// olabilirdi ve araç bunu AYIRT EDEMİYORDU (satır kırmızı olsa bir sonraki Sync griye çevirirdi).
+    /// Yüzey kanıtı belirsizliği kaldırdı: okuduğu her grup-içi yüzey OTURMUŞKEN derleyici hatası veren üyenin
+    /// girdileri bir sonraki denemede de BİREBİR aynı olacak — hatası sıradan bir Build hatasıyla aynı kalitede
+    /// kanıttır. Böyle bir üye artık kanıtlı FAILED'dır: olay <c>Evidence=true</c> taşır (satır kırmızı, etiket
+    /// <c>failed</c>) ve defter <c>FailedSignature</c> yazar (karar Sync/restart sonrası da AYNI kalır —
+    /// sahada kullanıcı suçluyu ekrandan bulamıyordu, iki üye tıpatıp aynı görünüyordu). Suçsuz yeşil eş
+    /// AYNEN eskisi gibi kanıtsız invalidate edilir: gri never built, tek Resolve ile geri gelir.
+    /// </summary>
+    [Fact]
+    public async Task a_hopeless_members_failure_is_evidence_and_its_green_sibling_stays_unevidenced()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a1");
+            disk.Set("B", "b1");
+            var plan = HashModePlan(TwoMemberCycle(), "A", "B");
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) =>
+            {
+                if (name == "B") return Exit(1);              // suçlu: nihai yüzeye karşı derleyici hatası
+                disk.Set("A", "a1");                          // suçsuz eş: yeşil, yüzeyi oturmuş
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1"], rec.Calls);
+            // Suçlu: kanıtlı kırmızı — olay VE defter aynı kapıdan.
+            var failed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.Equal(Id("B"), failed.ProjectId);
+            Assert.True(failed.Evidence);
+            var culprit = store.Load()[Id("B")];
+            Assert.Equal("sig", culprit.FailedSignature);     // bir sonraki Sync LastFailed okur → etiket `failed`
+            Assert.NotNull(culprit.FailedAt);
+            Assert.Equal("sig", culprit.NonConvergentSignature); // grup hafızası AYRICA yazılır — iki alan bağımsız
+            // Suçsuz eş: değişen HİÇBİR şey yok — güvenilmez başarı, kanıtsız invalidasyon, gri never built.
+            var green = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.Equal(Id("A"), green.ProjectId);
+            Assert.False(green.Trusted);
+            var sibling = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Failed, sibling.LastResult);
+            Assert.Equal("old", sibling.BuiltSignature);
+            Assert.Null(sibling.FailedSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Kanıt ÜYEYE özeldir: girdisi DEĞİŞMİŞ başarısız üye kanıt almaz — bir tur daha onu düzeltebilirdi.
+    public async Task a_stale_failed_member_carries_no_evidence_even_when_the_group_is_hopeless()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a-old");
+            disk.Set("B", "b1");
+            disk.Set("D", "d1");
+            // Build-order D → A → B. D, A'yı ESKİ nesliyle okur (a-old) ve patlar; A yeşildir ama yüzeyi
+            // DEĞİŞİR (a-old → a-new) ⇒ D bayat (bir tur daha hak ederdi). B, A'nın NİHAİ yüzeyini (a-new)
+            // okuyup patlar ⇒ umutsuz — grubun kaderini B belirler (NoProgress, tur 1).
+            var plan = HashModePlan(CyclePlanOf(["D", "A", "B"],
+                Node("D", deps: ["A"], inCycle: true),
+                Node("A", deps: ["D", "B"], inCycle: true),
+                Node("B", deps: ["A"], inCycle: true)), "A", "B", "D");
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) =>
+            {
+                if (name != "A") return Exit(1);
+                disk.Set("A", "a-new");
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["D#1", "A#1", "B#1"], rec.Calls);   // NoProgress tur 1'de — B umutsuz
+            var failedById = h.Events.OfType<ProjectFailedEvent>().ToDictionary(e => e.ProjectId);
+            Assert.True(failedById[Id("B")].Evidence);        // nihai yüzeye karşı patladı: kanıt
+            Assert.False(failedById[Id("D")].Evidence);       // bayat yüzeye karşı patladı: kanıt DEĞİL
+            Assert.Equal("sig", store.Load()[Id("B")].FailedSignature);
+            Assert.Null(store.Load()[Id("D")].FailedSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Yüzey kanıtı YOKKEN eski kural aynen sürer: suçlu ayırt edilemez, exit N bile kanıtsız kalır.
+    public async Task a_no_progress_group_without_surface_info_still_writes_no_failure_evidence()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var plan = TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok());
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls); // eski iki-tur kanıtı
+            Assert.False(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence);
+            Assert.Null(store.Load()[Id("B")].FailedSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
 
     /// <summary>[restore-once] Turlar arasında ne kaynak ne <c>packages.config</c> değişebilir: bir önceki
     /// turu BAŞARILI biten üyenin sonraki invoke'u restore prologunu taşımaz (başarılı invoke restore'u da
