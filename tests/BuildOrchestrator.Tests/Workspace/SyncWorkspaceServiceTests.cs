@@ -789,6 +789,20 @@ public class SyncWorkspaceServiceTests
         return events;
     }
 
+    /// <summary>[Task 4] X ve Y legacy class library'leri + Y'nin X'e <c>ProjectReference</c> bağımlılığı — aynı
+    /// kurgu <see cref="A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected"/>'ta inline
+    /// yazılmıştı; burada Task 4'ün iki pin testi arasında PAYLAŞILIR (kopya YASAK).</summary>
+    private static void CommitLegacyXYWorkspace(GitTestRepo repo)
+    {
+        foreach (string name in new[] { "X", "Y" })
+            LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        string yProject = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
+        File.WriteAllText(yProject, File.ReadAllText(yProject).Replace(
+            "<Compile Include=\"Class1.cs\" />",
+            "<Compile Include=\"Class1.cs\" /><ProjectReference Include=\"..\\X\\X.csproj\" />"));
+        repo.CommitAll("legacy");
+    }
+
     /// <summary>
     /// [spec 2026-09-18 §5.2/§5.4, P8] Defterde kaydı olmayan ama derleme kanıtı her girdisinden yeni olan proje
     /// (VS'te derlenmiş) zaman kipindedir: Sync onu <see cref="WillBuildReason.BuiltOutside"/> ile güncel sayar ve
@@ -955,6 +969,100 @@ public class SyncWorkspaceServiceTests
         });
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal((2, 2, 0), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [Task 4 — spec 2026-09-18 §5.4, en yaygın gerçek geçiş: "araç derledi, sonra VS yeniden derledi",
+    /// <c>OutputEvidence.cs:79-92</c>] X ve Y aracın kendi defterinde tool-built olarak dururken (kayıt +
+    /// <c>LastRunAt=ToolRunAt</c>) VS, X'i İÇERİK DEĞİŞMEDEN yeniden derler — X.dll artık <c>LastRunAt</c>'tan
+    /// yeni. X defter kipinden zaman kipine geçer ve kanıt taze okunur (<c>BuiltOutside</c>). Y'nin kendi DLL'i
+    /// dokunulmadığı için Y defter kipinde kalır; X'in içeriği değişmediğinden Y'nin bugünkü imzası da kayıtlı
+    /// imzasıyla eşleşmeye devam eder (<c>UpToDate</c>) — geçiş X'te kalır, Y'ye sızmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_project_vs_rebuilt_without_content_change_reads_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyXYWorkspace(repo);
+        string xDll = WriteBuiltOutput(repo, "X");
+        string yDll = WriteBuiltOutput(repo, "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [xDll, yDll]);
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        string idX = Path.Combine(repo.RootPath, "src", "X", "X.csproj");
+        string idY = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        // DİKKAT: PrimeBuildStateAsUpToDateAsync BuiltContent YAZMAZ — upsert edilmezse proje yanlışlıkla
+        // `affected` okur (bkz. The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass).
+        foreach (string id in new[] { idX, idY })
+            store.Upsert(primed[id] with
+            {
+                LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt),
+                BuiltContent = content[id],
+            });
+
+        // VS, X'i İÇERİK DEĞİŞMEDEN yeniden derledi: DLL artık ToolRunAt'ten yeni.
+        File.SetLastWriteTimeUtc(xDll, EvidenceTimes.ToolRunAt.AddMinutes(1));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        Assert.Equal((false, WillBuildReason.UpToDate), (y.WillBuild, y.Reason)); // değişmez: X'in içeriği aynı kaldı
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 0, 2), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
+    }
+
+    /// <summary>
+    /// [Task 4 — spec 2026-09-18 §5.4] AYNI geçiş, FAKAT VS derlemeden ÖNCE X'in bir kaynak dosyası değişti: X'in
+    /// yeni DLL'i artık bu değişikliği de kapsayacak kadar taze (zaman kipinde <c>BuiltOutside</c>, pin (a) ile
+    /// AYNI karar) — ama Y'nin KAYITLI imzası X'in ESKİ içeriğine dayanıyordu. Bugünkü imza (Safe geçişi, X'in
+    /// yeni içeriğini gören) o kayıtla eşleşmez ve Y defter kipinde <c>SignatureChanged</c> okur. Y'nin KENDİ
+    /// dosyaları dokunulmadı (<c>OwnFilesChanged=false</c>, etiket <c>affected</c>) — bayatlık X'ten miras.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_dependency_edited_then_vs_rebuilt_marks_the_dependent_affected()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyXYWorkspace(repo);
+        string xDll = WriteBuiltOutput(repo, "X");
+        string yDll = WriteBuiltOutput(repo, "Y");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [xDll, yDll]);
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
+        string idX = Path.Combine(repo.RootPath, "src", "X", "X.csproj");
+        string idY = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        foreach (string id in new[] { idX, idY })
+            store.Upsert(primed[id] with
+            {
+                LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt),
+                BuiltContent = content[id],
+            });
+
+        // X'in kaynağı değişti ve commit edildi.
+        string xClass = Path.Combine(repo.RootPath, "src", "X", "Class1.cs");
+        File.WriteAllText(xClass, File.ReadAllText(xClass).Replace("42", "43"));
+        repo.CommitAll("edit X");
+        File.SetLastWriteTimeUtc(xClass, EvidenceTimes.EditedAt);
+        // VS, düzenlemeden SONRA X'i yeniden derledi: DLL kendi (yeni) girdisinden de yeni.
+        File.SetLastWriteTimeUtc(xDll, EvidenceTimes.EditedAt.AddMinutes(1));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var x = Assert.Single(preview.Items, i => i.Name == "X");
+        var y = Assert.Single(preview.Items, i => i.Name == "Y");
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false), (y.WillBuild, y.Reason, y.OwnFilesChanged));
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal((0, 1, 1), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
     }
 
     // ---------------------------------------------------------------- yardımcı
