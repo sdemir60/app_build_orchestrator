@@ -297,6 +297,29 @@ public class SyncWorkspaceServiceTests
         return binder.ContentById;
     }
 
+    /// <summary>[Task 4/6 review — kopya YASAK] Defterdeki "araç derledi" kaydını <paramref name="names"/>'teki
+    /// her proje için <paramref name="content"/>'in (<see cref="PrimeBuildStateAsUpToDateAsync"/>'in döndürdüğü
+    /// bugünkü içerik özeti) karşılığıyla upsert eder — T4'ün iki pin'i (<see
+    /// cref="A_tool_built_project_vs_rebuilt_without_content_change_reads_built_outside"/>, <see
+    /// cref="A_tool_built_dependency_edited_then_vs_rebuilt_marks_the_dependent_affected"/>) VE <see
+    /// cref="PrimeChainWorkspaceAsync"/> ARTIK BURADAN geçer (üçü de aynı döngüyü kendi gövdesine
+    /// kopyalıyordu). <paramref name="toolRunAt"/> verilirse <c>LastRunAt</c> da o değere yazılır (T4'ün "VS
+    /// içerik değiştirmeden yeniden derledi" senaryosu — DLL artık bu zamandan yeni olmalı); verilmezse
+    /// dokunulmaz (zincir kurulumu yalnız <c>BuiltContent</c> ister).</summary>
+    private static void PrimeToolBuilt(string root, string cacheRoot, IEnumerable<string> names,
+        IReadOnlyDictionary<string, string?> content, DateTimeOffset? toolRunAt = null)
+    {
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        foreach (string name in names)
+        {
+            string id = Path.Combine(root, "src", name, name + ".csproj");
+            store.Upsert(toolRunAt is { } runAt
+                ? primed[id] with { LastRunAt = runAt, BuiltContent = content[id] }
+                : primed[id] with { BuiltContent = content[id] });
+        }
+    }
+
     /// <summary>
     /// [v1.16.0] Sync, yerel HEAD'in uzak uçtan kaç commit geride olduğunu ölçer ve hem konsola hem tele
     /// yazar — alt bardaki <c>N behind</c> chip'inin tek kaynağı budur.
@@ -995,18 +1018,9 @@ public class SyncWorkspaceServiceTests
         string cacheRoot = NewCacheRoot();
 
         var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
-        string idX = Path.Combine(repo.RootPath, "src", "X", "X.csproj");
-        string idY = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
-        var store = new BuildStateStore(cacheRoot);
-        var primed = store.Load();
         // DİKKAT: PrimeBuildStateAsUpToDateAsync BuiltContent YAZMAZ — upsert edilmezse proje yanlışlıkla
         // `affected` okur (bkz. The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass).
-        foreach (string id in new[] { idX, idY })
-            store.Upsert(primed[id] with
-            {
-                LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt),
-                BuiltContent = content[id],
-            });
+        PrimeToolBuilt(repo.RootPath, cacheRoot, ["X", "Y"], content, new DateTimeOffset(EvidenceTimes.ToolRunAt));
 
         // VS, X'i İÇERİK DEĞİŞMEDEN yeniden derledi: DLL artık ToolRunAt'ten yeni.
         File.SetLastWriteTimeUtc(xDll, EvidenceTimes.ToolRunAt.AddMinutes(1));
@@ -1043,16 +1057,7 @@ public class SyncWorkspaceServiceTests
         string cacheRoot = NewCacheRoot();
 
         var content = await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot);
-        string idX = Path.Combine(repo.RootPath, "src", "X", "X.csproj");
-        string idY = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
-        var store = new BuildStateStore(cacheRoot);
-        var primed = store.Load();
-        foreach (string id in new[] { idX, idY })
-            store.Upsert(primed[id] with
-            {
-                LastRunAt = new DateTimeOffset(EvidenceTimes.ToolRunAt),
-                BuiltContent = content[id],
-            });
+        PrimeToolBuilt(repo.RootPath, cacheRoot, ["X", "Y"], content, new DateTimeOffset(EvidenceTimes.ToolRunAt));
 
         // X'in kaynağı değişti ve commit edildi.
         string xClass = Path.Combine(repo.RootPath, "src", "X", "Class1.cs");
@@ -1125,7 +1130,7 @@ public class SyncWorkspaceServiceTests
         string cacheRoot = NewCacheRoot();
         await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot); // "araç derledi" — güncel bir kayıt var
 
-        RunClean(NewCleanService(cacheRoot), repo.RootPath); // bin (DLL dahil) + obj + defter kaydı gider
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // bin (DLL dahil) + defter kaydı gider — fixture obj YARATMAZ
         Assert.False(File.Exists(dll), "bakım Clean'i bin'i DLL'iyle birlikte silmeli");
 
         var events = await SyncWithoutFetchAsync(repo, cacheRoot);
@@ -1257,9 +1262,9 @@ public class SyncWorkspaceServiceTests
     /// <summary>
     /// [Task 6] <see cref="WriteWorkspace"/>'in <c>includeC</c> uzantısıyla <c>A ← B ← C</c> zincirini kurar
     /// (B→A, C→B ProjectReference), commit'ler (c1), klonlar ve üçünü de "araç derledi" olarak prime eder
-    /// (<see cref="PrimeBuildStateAsUpToDateAsync"/>). Ayrıca üçünün de <c>BuiltContent</c>'ini upsert eder
-    /// (dosyadaki ~752-755 kalıbı, Task 4) — yoksa kayıtlı proje bir sonraki Sync'te yanlışlıkla
-    /// <c>affected</c> okur (bkz. <see
+    /// (<see cref="PrimeBuildStateAsUpToDateAsync"/>). Ayrıca üçünün de <c>BuiltContent</c>'ini <see
+    /// cref="PrimeToolBuilt"/> ile upsert eder (Task 4 ile PAYLAŞILAN kalıp, kopya YASAK) — yoksa kayıtlı
+    /// proje bir sonraki Sync'te yanlışlıkla <c>affected</c> okur (bkz. <see
     /// cref="The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass"/>).
     /// </summary>
     /// <param name="beforeCommit">İlk commit'ten (c1) ÖNCE workspace'e ek dosya yazmak içindir (ör. Task 6'nın
@@ -1275,13 +1280,7 @@ public class SyncWorkspaceServiceTests
         string cacheRoot = NewCacheRoot();
 
         var content = await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
-        var store = new BuildStateStore(cacheRoot);
-        var primed = store.Load();
-        foreach (string name in new[] { "A", "B", "C" })
-        {
-            string id = Path.Combine(cloneRoot, "src", name, name + ".csproj");
-            store.Upsert(primed[id] with { BuiltContent = content[id] });
-        }
+        PrimeToolBuilt(cloneRoot, cacheRoot, ["A", "B", "C"], content);
 
         return (cloneRoot, cacheRoot, branch);
     }

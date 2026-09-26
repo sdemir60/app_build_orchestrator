@@ -294,7 +294,7 @@ public class GraphWillBuildFeedTests
 
         // Event script'i RunViewModelStateTests.A_second_build_keeps_the_greens_of_the_first'teki diziyle AYNI
         // kalıp: build preview + reason'lar, sonra proje eventleri, sonra RunCompleted.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug", 0));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(MainWindowHost.IdOf("Ok"), "Ok", true, Reason: WillBuildReason.SignatureChanged),
             new BuildPreviewItem(MainWindowHost.IdOf("Bad"), "Bad", true, Reason: WillBuildReason.SignatureChanged),
