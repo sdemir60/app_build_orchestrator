@@ -789,9 +789,9 @@ public class SyncWorkspaceServiceTests
         return events;
     }
 
-    /// <summary>[Task 4] X ve Y legacy class library'leri + Y'nin X'e <c>ProjectReference</c> bağımlılığı — aynı
-    /// kurgu <see cref="A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected"/>'ta inline
-    /// yazılmıştı; burada Task 4'ün iki pin testi arasında PAYLAŞILIR (kopya YASAK).</summary>
+    /// <summary>[Task 4] X ve Y legacy class library'leri + Y'nin X'e <c>ProjectReference</c> bağımlılığı — üç
+    /// tüketici PAYLAŞIR (kopya YASAK): <see cref="A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected"/>
+    /// (eskiden inline yazılıydı, Task 4 review'da buraya taşındı) ve Task 4'ün iki pin testi.</summary>
     private static void CommitLegacyXYWorkspace(GitTestRepo repo)
     {
         foreach (string name in new[] { "X", "Y" })
@@ -865,13 +865,7 @@ public class SyncWorkspaceServiceTests
     public async Task A_project_built_elsewhere_behind_a_changed_dependency_is_rebuilt_as_affected()
     {
         using var repo = new GitTestRepo();
-        foreach (string name in new[] { "X", "Y" })
-            LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
-        string yProject = Path.Combine(repo.RootPath, "src", "Y", "Y.csproj");
-        File.WriteAllText(yProject, File.ReadAllText(yProject).Replace(
-            "<Compile Include=\"Class1.cs\" />",
-            "<Compile Include=\"Class1.cs\" /><ProjectReference Include=\"..\\X\\X.csproj\" />"));
-        repo.CommitAll("legacy");
+        CommitLegacyXYWorkspace(repo);
         EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"),
             [WriteBuiltOutput(repo, "X"), WriteBuiltOutput(repo, "Y")]);
         File.SetLastWriteTimeUtc(Path.Combine(repo.RootPath, "src", "X", "Class1.cs"), EvidenceTimes.EditedAt);
@@ -1012,7 +1006,10 @@ public class SyncWorkspaceServiceTests
         var x = Assert.Single(preview.Items, i => i.Name == "X");
         var y = Assert.Single(preview.Items, i => i.Name == "Y");
         Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
-        Assert.Equal((false, WillBuildReason.UpToDate), (y.WillBuild, y.Reason)); // değişmez: X'in içeriği aynı kaldı
+        // değişmez: X'in içeriği aynı kaldı. OwnFilesChanged=false, Y defter kipinde kaldığı için
+        // BuildStateStore.OwnFilesChanged'tan (BuiltContent karşılaştırması) gelir — upsert edilen
+        // BuiltContent burada da (pin b'deki gibi) GERÇEKTEN okunur.
+        Assert.Equal((false, WillBuildReason.UpToDate, false), (y.WillBuild, y.Reason, y.OwnFilesChanged));
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal((0, 0, 2), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
     }
