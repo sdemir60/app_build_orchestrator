@@ -1286,6 +1286,15 @@ public class SyncWorkspaceServiceTests
         return (cloneRoot, cacheRoot, branch);
     }
 
+    /// <summary>[Task 6 — review fix, kopya YASAK] <c>git add -A</c> + <c>git commit -q -m</c> ikilisini TEK
+    /// yerden çağırır — dosyadaki dört Task 6 testi de (madde 2, 3 [x2], 6) bunu paylaşır, artık hiçbiri
+    /// ikiliyi kendi gövdesine kopyalamaz.</summary>
+    private static void CommitAt(string cloneRoot, string message)
+    {
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", message);
+    }
+
     /// <summary>
     /// [Task 6 — brief madde 1] A'nın bir kaynak dosyası COMMIT'SİZ değişir: A kendi girdisinden dirty olduğu
     /// için hem <c>SignatureChanged</c> hem <c>OwnFilesChanged=true</c> hem <c>LocalEdits=true</c> okur
@@ -1333,14 +1342,13 @@ public class SyncWorkspaceServiceTests
     /// okurlar, tıpkı madde 1'de olduğu gibi (commit, Sync'in salt-okur taraması için maddi bir fark YARATMAZ).
     /// </summary>
     [Fact]
-    public async Task Committing_the_edit_drops_local_edits_but_the_chain_stays_signature_changed()
+    public async Task A_committed_edit_drops_local_edits_but_the_chain_stays_signature_changed()
     {
         using var origin = new GitTestRepo();
         var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
 
         File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "A.cs"), "public class A { public int X; }");
-        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
-        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "edit A");
+        CommitAt(cloneRoot, "edit A");
 
         var events = new List<IpcEvent>();
         await ServiceFor(cloneRoot, cacheRoot)
@@ -1364,7 +1372,7 @@ public class SyncWorkspaceServiceTests
     /// tekrar kayıtlı imzayla aynı olur ve zincirin ÜÇÜ de <c>UpToDate</c>'e döner.
     /// </summary>
     [Fact]
-    public async Task Reverting_to_the_original_content_returns_the_whole_chain_to_up_to_date()
+    public async Task A_reverted_edit_returns_the_whole_chain_to_up_to_date()
     {
         using var origin = new GitTestRepo();
         var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
@@ -1372,11 +1380,9 @@ public class SyncWorkspaceServiceTests
         const string originalContent = "public class A { }"; // WriteWorkspace'in yazdığı ORİJİNAL — birebir
 
         File.WriteAllText(aCs, "public class A { public int X; }");
-        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
-        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "edit A");
+        CommitAt(cloneRoot, "edit A");
         File.WriteAllText(aCs, originalContent);
-        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
-        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "revert A");
+        CommitAt(cloneRoot, "revert A");
 
         var events = new List<IpcEvent>();
         await ServiceFor(cloneRoot, cacheRoot)
@@ -1451,7 +1457,7 @@ public class SyncWorkspaceServiceTests
     /// B/C'ye A üzerinden DOLAYLI değil.
     /// </summary>
     [Fact]
-    public async Task Editing_the_shared_directory_build_props_marks_every_project_that_sees_it_as_nearest()
+    public async Task A_shared_directory_build_props_edit_marks_every_project_that_sees_it_as_nearest()
     {
         using var origin = new GitTestRepo();
         var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin, beforeCommit: o =>
@@ -1460,8 +1466,7 @@ public class SyncWorkspaceServiceTests
 
         File.WriteAllText(Path.Combine(cloneRoot, "Directory.Build.props"),
             "<Project><PropertyGroup><LangVersion>11.0</LangVersion></PropertyGroup></Project>");
-        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
-        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "bump LangVersion");
+        CommitAt(cloneRoot, "bump LangVersion");
 
         var events = new List<IpcEvent>();
         await ServiceFor(cloneRoot, cacheRoot)
