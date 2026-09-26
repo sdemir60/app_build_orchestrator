@@ -83,7 +83,7 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
         // [harici projeler] Ana tarama + kayıtlı harici kökler, TEK çalışma alanı — Sync'in ve koşu
         // planlayıcısının kullandığı AYNI çözümleyici (kopya YASAK). Harici proje sıradan bir projedir:
         // aynı grafa girer, aynı kararı alır, aynı Clean'i görür.
-        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), cmd.ExternalProjects, scanner);
+        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), cmd.ExternalProjects, scanner, root);
         foreach (var problem in workspace.Problems)
             emit(Warn(PlanProgressLines.ExternalNotCleaned(problem.Name, problem.Problem)));
 

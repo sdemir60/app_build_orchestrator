@@ -128,4 +128,55 @@ public class BuildAfterFailureTests
         Assert.True(willBuild["F1"]);
         Assert.False(willBuild["D1"]);
     }
+
+    /// <summary>
+    /// [Task 3 — rehber madde 23 YANILIYORDU] Rehberin 13/15. adımları "A'yı düzeltip derlersen B ve C bir
+    /// Build daha öyle kalır, ⚠ SONRAKİ Build'de çözülür" diyordu. Kod okuması gerçek kuralın böyle
+    /// olmadığını gösterdi: A'nın İÇERİĞİ gerçekten değişince A'nın kendi imzası da değişir ve B/C'nin (A'nın
+    /// BOZUK içeriğine karşı yazılmış) kayıtlı imzasıyla bugünkü imza artık eşleşmez — <c>WillBuildEvaluator</c>
+    /// imza-değişti kontrolünü DepIssue/kök-notu kontrolünden ÖNCE yapar, yani not hiç okunmadan
+    /// <c>SignatureChanged</c> kazanılır (<c>WaitingForDependency</c> DEĞİL). Kurulum ilk testle (F1/D1/D2)
+    /// AYNI desendir; tek fark A'nın (F1 karşılığı) kaydı yazıldıktan SONRA içeriğinin BİR KEZ DAHA (gerçek
+    /// bir düzeltmeyle) değişmesidir.
+    /// </summary>
+    [Fact]
+    public void A_fix_to_the_failed_projects_own_content_after_the_ledger_note_flips_dependents_to_signature_changed_not_waiting()
+    {
+        var a = Node("A", 0);
+        var b = Node("B", 1, "A");
+        var c = Node("C", 2, "B");
+        var plan = new BuildPlan([a, b, c], [], "Debug");
+
+        // A DÜZELDİ: içeriği hatalı koşunun içeriğinden (v2) gerçek bir düzeltmeye (v3) geçti.
+        var fp = Fingerprints(("A", "fpA-v3"), ("B", "fpB"), ("C", "fpC"));
+
+        // Hatalı koşunun BAŞINDA (v2) hesaplanan imzalar — B/C kayıtlarına bunlar yazılmıştı.
+        string failedTimeA = BuildSignature.Compute(a, "Debug", "fpA-v2", _ => null);
+        string recordedB = BuildSignature.Compute(b, "Debug", "fpB", id => id == "A" ? failedTimeA : null);
+        string recordedC = BuildSignature.Compute(c, "Debug", "fpC", id => id == "B" ? recordedB : null);
+
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            // A: hata anındaki (v2) imzayla kanıtlı kırmızı; sonuç Failed → geçersiz.
+            ["A"] = new BuildState("A", null, LastResult: BuildResult.Failed, FailedSignature: failedTimeA),
+            // B/C: yeşil bittiler; kayıtları v2-tabanlı imzayı taşır ve DepIssue notu (kök: A) düşer — kendi
+            // dosyaları (fpB/fpC) hiç değişmedi.
+            ["B"] = new BuildState("B", recordedB, LastResult: BuildResult.Succeeded, BuiltContent: "fpB",
+                DepIssue: true, DepIssueRoots: ["A"]),
+            ["C"] = new BuildState("C", recordedC, LastResult: BuildResult.Succeeded, BuiltContent: "fpC",
+                DepIssue: true, DepIssueRoots: ["A"]),
+        };
+
+        var result = IncrementalPlanner.ComputeWillBuild(
+            plan, fp, state,
+            buildCycles: false, mode: DependentMode.Safe);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((true, WillBuildReason.SignatureChanged), Of("B"));
+        Assert.Equal((true, WillBuildReason.SignatureChanged), Of("C"));
+        // Kendi dosyaları değişmedi ⇒ affected (modified DEĞİL) — not okunmadan bile bu ayrım korunur.
+        Assert.False(OutputEvidence.OwnFilesChanged(null, state, "B", "fpB"));
+        Assert.False(OutputEvidence.OwnFilesChanged(null, state, "C", "fpC"));
+    }
 }

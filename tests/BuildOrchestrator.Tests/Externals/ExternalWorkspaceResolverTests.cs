@@ -16,7 +16,10 @@ public class ExternalWorkspaceResolverTests
     private static readonly ScanResult EmptyMain = new([], []);
 
     private static ExternalWorkspace Resolve(ScanResult main, params ExternalProject[] externals) =>
-        ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner());
+        ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), ExternalTestRoots.UnrelatedMainRoot);
+
+    private static ExternalWorkspace Resolve(ScanResult main, string mainRootPath, params ExternalProject[] externals) =>
+        ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), mainRootPath);
 
     /// <summary>Bir klasörde proje (ve istenirse solution) dosyaları üretir; dönen değer klasörün yoludur.</summary>
     private static string WriteProject(string directory, string name)
@@ -135,7 +138,7 @@ public class ExternalWorkspaceResolverTests
     {
         var main = new ScanResult([@"D:\repo\A.csproj"], [@"D:\repo\Osys.sln"]);
 
-        var workspace = ExternalWorkspaceResolver.Resolve(main, null, new WorkspaceScanner());
+        var workspace = ExternalWorkspaceResolver.Resolve(main, null, new WorkspaceScanner(), ExternalTestRoots.UnrelatedMainRoot);
 
         Assert.Same(main, workspace.Scan);
         Assert.Empty(workspace.Roots);
@@ -203,6 +206,74 @@ public class ExternalWorkspaceResolverTests
 
         Assert.Equal([mail], workspace.Scan.CsprojPaths);
         Assert.Single(workspace.Problems);
+    }
+
+    // ---------------------------------------------------------------- [kullanıcı kararı] ana kökün içi reddedilir
+
+    /// <summary>Kart TAM OLARAK ana kökü gösteriyor: ana ağaç zaten taranıyor, ikinci kez "harici" rozetiyle
+    /// taranması aynı projeye iki kimlik (sıradan + harici) verirdi. Sync uyarır, hiçbir harici proje eklenmez —
+    /// diğer çözülemeyen yollarla AYNI yüzey (<see cref="ExternalScanProblem"/>).</summary>
+    [Fact]
+    public void A_card_pointing_at_the_main_root_itself_is_rejected()
+    {
+        using var main = new TempDir();
+        WriteProject(Path.Combine(main.Path, "A"), "A");
+
+        var workspace = Resolve(new ScanResult([], []), main.Path, new ExternalProject(main.Path));
+
+        Assert.Equal("the path is inside the main workspace root", Assert.Single(workspace.Problems).Problem);
+        Assert.Empty(workspace.Roots);
+        Assert.Empty(workspace.ExternalProjectIds);
+    }
+
+    /// <summary>Kart ana kökün BİR ALT KLASÖRÜNÜ gösteriyor — "ekleyemesin" kararı yalnız tam eşleşmeyi değil,
+    /// ana ağacın İÇİNİ de kapsar.</summary>
+    [Fact]
+    public void A_card_pointing_at_a_subfolder_of_the_main_root_is_rejected()
+    {
+        using var main = new TempDir();
+        string nested = Path.Combine(main.Path, "src", "Mail");
+        WriteProject(nested, "Mail");
+
+        var workspace = Resolve(new ScanResult([], []), main.Path, new ExternalProject(nested));
+
+        Assert.Equal("the path is inside the main workspace root", Assert.Single(workspace.Problems).Problem);
+        Assert.Empty(workspace.Scan.CsprojPaths);
+    }
+
+    /// <summary>Karşılaştırma normalizasyon-güvenlidir: sondaki ayraç ve büyük/küçük harf farkı Windows'ta
+    /// AYNI kökü gösterir, kontrolü atlatmaz.</summary>
+    [Fact]
+    public void The_comparison_is_normalization_safe_for_trailing_separators_and_case()
+    {
+        using var main = new TempDir();
+        string upper = main.Path.ToUpperInvariant() + Path.DirectorySeparatorChar;
+
+        var workspace = Resolve(new ScanResult([], []), main.Path, new ExternalProject(upper));
+
+        Assert.Equal("the path is inside the main workspace root", Assert.Single(workspace.Problems).Problem);
+    }
+
+    /// <summary>Ana kökün YANINDAKİ (aynı önekle başlayan ama AYRI) bir kök yanlışlıkla reddedilmemeli — <see
+    /// cref="RootScope"/>'un tuzak notu: <c>C:\repo</c> öneki <c>C:\repo2\...</c>'yi KAPSAMAZ.</summary>
+    [Fact]
+    public void A_sibling_root_with_an_overlapping_prefix_is_not_rejected()
+    {
+        using var main = new TempDir();
+        string sibling = main.Path + "-sibling";
+        string mail = WriteProject(Path.Combine(sibling, "Mail"), "Mail");
+
+        try
+        {
+            var workspace = Resolve(new ScanResult([], []), main.Path, new ExternalProject(sibling));
+
+            Assert.Equal([mail], workspace.Scan.CsprojPaths);
+            Assert.Empty(workspace.Problems);
+        }
+        finally
+        {
+            if (Directory.Exists(sibling)) Directory.Delete(sibling, recursive: true);
+        }
     }
 
     // ---------------------------------------------------------------- yardımcılar

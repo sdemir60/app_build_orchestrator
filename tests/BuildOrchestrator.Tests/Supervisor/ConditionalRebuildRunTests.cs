@@ -26,23 +26,35 @@ public class ConditionalRebuildRunTests : IDisposable
 
     private static readonly DateTimeOffset RecordedAt = new(2026, 9, 1, 10, 0, 0, TimeSpan.Zero);
 
-    /// <summary>Önceki koşunun defteri: Up patladı; Down ona rağmen başarıyla derlendi ve Up'ı kök olarak not etti.</summary>
-    private BuildStateStore SeededStore(BuildResult upLastResult = BuildResult.Failed, bool downRootsKnown = true)
+    /// <summary>Önceki koşunun defteri: Up patladı; Down ona rağmen başarıyla derlendi ve Up'ı kök olarak not etti.
+    /// <para>[T15 — carried item 3] <paramref name="leafWaiting"/>: zincirin ÜÇÜNCÜ halkası (Leaf) da ÖNCEKİ bir
+    /// koşuda Down'ın (dolayısıyla Up'ın) bayat çıktısına link'li derlenmiş — kendi ledger notu da Up'ı kök
+    /// sayar (senaryo 1'in "Leaf, Up'ı Down üzerinden MİRAS alır" notunun BİR SONRAKİ koşuya taşınmış hâli).
+    /// Varsayılan <c>false</c> diğer senaryoların (Leaf'in hiç ledger notu olmadığı) bugünkü hâlini korur.</para></summary>
+    private BuildStateStore SeededStore(BuildResult upLastResult = BuildResult.Failed, bool downRootsKnown = true,
+        bool leafWaiting = false)
     {
         var store = new BuildStateStore(_cacheRoot);
         store.Upsert(new BuildState(Id("Up"), "up-sig", LastResult: upLastResult, LastRunAt: RecordedAt));
         store.Upsert(new BuildState(Id("Down"), "down-sig", "oldsha", BuildResult.Succeeded, RecordedAt,
             DepIssue: true, DepIssueRoots: downRootsKnown ? [Id("Up")] : null));
+        if (leafWaiting)
+            store.Upsert(new BuildState(Id("Leaf"), "leaf-sig", "leafsha", BuildResult.Succeeded, RecordedAt,
+                DepIssue: true, DepIssueRoots: [Id("Up")]));
         return store;
     }
 
-    /// <summary>Up → Down → Leaf. Down koşullu; Leaf kendi değişikliğiyle kesin derlenecek.</summary>
-    private static RunPlan ChainPlan(bool upWillBuild = true, WillBuildReason downReason = WillBuildReason.WaitingForDependency) =>
+    /// <summary>Up → Down → Leaf. Down koşullu; Leaf varsayılan olarak kendi değişikliğiyle kesin derlenecek.
+    /// <para>[T15 — carried item 3] <paramref name="leafReason"/>: Leaf'i de Down gibi BEKLEYEN yapmak için
+    /// <see cref="WillBuildReason.WaitingForDependency"/> geçilir — varsayılan diğer tüm senaryoların okuduğu
+    /// KESİN Leaf'i korur (kopya YASAK — tek fixture, iki çağrı biçimi).</para></summary>
+    private static RunPlan ChainPlan(bool upWillBuild = true, WillBuildReason downReason = WillBuildReason.WaitingForDependency,
+        WillBuildReason leafReason = WillBuildReason.SignatureChanged) =>
         new(new BuildPlan(
             [Node("Up", willBuild: upWillBuild) with
                 { BuildOrder = 0, WillBuildReason = upWillBuild ? WillBuildReason.LastFailed : WillBuildReason.UpToDate },
              Node("Down", deps: ["Up"], willBuild: true) with { BuildOrder = 1, WillBuildReason = downReason },
-             Node("Leaf", deps: ["Down"], willBuild: true) with { BuildOrder = 2, WillBuildReason = WillBuildReason.SignatureChanged }],
+             Node("Leaf", deps: ["Down"], willBuild: true) with { BuildOrder = 2, WillBuildReason = leafReason }],
             Cycles: [], Configuration: "Debug"),
             EmptyRefs(), Incremental: RunCoordinatorTests.Incremental("Up", "Down", "Leaf"));
 
@@ -90,6 +102,40 @@ public class ConditionalRebuildRunTests : IDisposable
 
         // Atlanan proje bu koşunun dep-issue sayacına girmez: o sayı bu koşuda DERLENEN etkilenmişleri anlatır.
         Assert.Equal(1, Assert.Single(h.Events.OfType<RunCompletedEvent>()).DepIssueCount);
+    }
+
+    // ---------------------------------------------------------------- 1c) kalıtsal kök: zincirin üçüncü halkası da bekliyor
+
+    /// <summary>
+    /// [T15 — carried item 3] Senaryo 1'in üçüncü halkası: Leaf de (Down gibi) BEKLEYEN bir proje — kendi ledger
+    /// notu Up'ı kök sayar (Down üzerinden MİRAS aldığı not, bkz. yukarıdaki senaryo 1'in son iddiası: "Leaf ...
+    /// Up'ı Down üzerinden MİRAS alır"). Kök (Up) bu koşuda YİNE patlarsa Down VE Leaf'in İKİSİ de "dependency
+    /// still failing" ile atlanır ve ikisinin de ledger kaydı DOKUNULMADAN kalır — <c>TrySkipWhileDependencyStillFails</c>'in
+    /// "defter kaydına dokunulmaz" kuralı (RunCoordinator.cs:1187-1190) tek bir bekleyen halka değil, ZİNCİRİN
+    /// HER halkası için geçerlidir.
+    /// </summary>
+    [Fact]
+    public async Task A_waiting_chains_third_link_is_skipped_alongside_the_second_when_the_root_fails_again()
+    {
+        var store = SeededStore(leafWaiting: true);
+        var invoker = UpFails();
+        using var h = new Harness(ChainPlan(leafReason: WillBuildReason.WaitingForDependency), invoker, stateStore: store);
+
+        await RunAsync(h, Start(RunMode.Build));
+
+        Assert.Equal([Id("Up")], invoker.Requests.Select(r => r.ProjectId)); // Down/Leaf hiç dispatch edilmedi
+        var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
+        Assert.Equal(2, skipped.Count);
+        Assert.Contains(skipped, s => (s.ProjectId, s.Reason) == (Id("Down"), SkipReasons.DependencyStillFailing));
+        Assert.Contains(skipped, s => (s.ProjectId, s.Reason) == (Id("Leaf"), SkipReasons.DependencyStillFailing));
+        Assert.Contains("Down: skipped — dependency still failing (Up)", h.DecisionLog);
+        Assert.Contains("Leaf: skipped — dependency still failing (Up)", h.DecisionLog);
+
+        var ledger = store.Load();
+        Assert.Equal(new BuildState(Id("Down"), "down-sig", "oldsha", BuildResult.Succeeded, RecordedAt,
+            DepIssue: true, DepIssueRoots: [Id("Up")]), ledger[Id("Down")]);
+        Assert.Equal(new BuildState(Id("Leaf"), "leaf-sig", "leafsha", BuildResult.Succeeded, RecordedAt,
+            DepIssue: true, DepIssueRoots: [Id("Up")]), ledger[Id("Leaf")]);
     }
 
     // ---------------------------------------------------------------- 2) kök bu koşuda başarılı

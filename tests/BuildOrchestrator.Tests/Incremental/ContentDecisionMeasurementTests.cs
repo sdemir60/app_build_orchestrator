@@ -357,12 +357,14 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         }
     }
 
+    // [final review MINOR-4] Üretimin GERÇEK atlama kümesiyle (bin/obj/.git/.vs/node_modules) hizalanır —
+    // bu dosyanın kendi amacı "gerçek bedeli" ölçmektir (üstteki sınıf doc'u); üretim .vs/node_modules'ı da
+    // atlıyorsa (WorkspaceScanner.IsSkippedFolder, ProjectInputs'in de okuduğu TEK kaynak) ölçüm de atlamalı,
+    // aksi halde girdi kümesini üretimin asla dokunmayacağı dosyalarla şişirip bedeli yanlış büyütür.
     private static bool IsUnderBuildOutput(string root, string file)
     {
         string rel = Path.GetRelativePath(root, file);
         return rel.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            .Any(seg => seg.Equals("obj", StringComparison.OrdinalIgnoreCase)
-                     || seg.Equals("bin", StringComparison.OrdinalIgnoreCase)
-                     || seg.Equals(".git", StringComparison.OrdinalIgnoreCase));
+            .Any(WorkspaceScanner.IsSkippedFolder);
     }
 }

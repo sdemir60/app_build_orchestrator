@@ -113,6 +113,15 @@ public sealed class AutoSyncCoordinatorTests
         }
     }
 
+    /// <summary>[spec karar 11 · PİN] Rehberin "5 saniye" cümlesinin sayı pini — literal burada; aşağıdaki iki
+    /// aktivasyon testi sabitin KENDİSİNE göre ölçer (<c>ActivationQuietMs ± 1</c>), yani sabit kayarsa onlar
+    /// yakalamaz. Bu test yakalar.</summary>
+    [Fact]
+    public void The_activation_quiet_threshold_is_five_seconds()
+    {
+        Assert.Equal(5000, AutoSyncCoordinator.ActivationQuietMs);
+    }
+
     [Fact]
     public async Task An_unchanged_head_runs_no_sync()
     {

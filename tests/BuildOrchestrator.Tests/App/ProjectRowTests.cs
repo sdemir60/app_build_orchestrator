@@ -1032,4 +1032,19 @@ public class ProjectRowTests
         Assert.Null(row.Glyph.ToolTip);
         GC.KeepAlive(window);
     }
+
+    /// <summary>[Task 8 · cycle rounds] Sıra oturmama (<see cref="ProjectRowViewModel.CycleUnsettled"/>) da
+    /// sıradan üyelik gibi TEK satırlık uyarı tooltip'inde duyurulur — GERÇEKTEN realize edilmiş bir satırda.
+    /// <see cref="RowWarningTests"/>'teki saf teori aynı önceliği WPF'siz sınar; bu test onun kartta da
+    /// göründüğünü kanıtlar.</summary>
+    [StaFact]
+    public void Cycle_unsettled_is_announced_by_the_warning_triangle_alone()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded) { CycleUnsettled = true };
+        var (row, window, _) = Realize(vm);
+
+        Assert.Equal(Visibility.Visible, row.DepIcon.Visibility);
+        Assert.Equal(RowWarning.CycleUnsettled, row.DepTooltip);
+        GC.KeepAlive(window);
+    }
 }

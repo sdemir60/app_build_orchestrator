@@ -228,7 +228,7 @@ public class ExternalSyncIntegrationTests
         var scan = new WorkspaceScanner();
         var evaluator = new CsprojEvaluator();
         var cache = new EvaluationCache(Path.Combine(cacheRoot, "signature-probe.json"));
-        var workspace = Core.Externals.ExternalWorkspaceResolver.Resolve(scan.Scan(main.RootPath), [card], scan);
+        var workspace = Core.Externals.ExternalWorkspaceResolver.Resolve(scan.Scan(main.RootPath), [card], scan, main.RootPath);
         var plan = new Core.Planning.BuildPlanBuilder(scan, evaluator, cache)
             .Build(workspace.Scan, "Debug", null, workspace.ExternalProjectIds);
         var evaluated = workspace.Scan.CsprojPaths

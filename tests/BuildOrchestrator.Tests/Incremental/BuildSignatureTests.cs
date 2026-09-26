@@ -143,6 +143,11 @@ public class BuildSignatureTests
     [InlineData("README.md", false)]
     [InlineData("notes.txt", false)]
     [InlineData("noextension", false)]
+    // [Task T14] Rehber §0.3: bunlar da girdi sayılmaz — önceden yalnız .md/.txt/.png pinliydi.
+    [InlineData("X.dll", false)]
+    [InlineData("App.config", false)]
+    [InlineData("packages.config", false)]
+    [InlineData("a.json", false)]
     public void IsBuildAffecting_filter_matches_global_constraints_extension_list(string path, bool expected)
         => Assert.Equal(expected, BuildSignature.IsBuildAffecting(path));
 

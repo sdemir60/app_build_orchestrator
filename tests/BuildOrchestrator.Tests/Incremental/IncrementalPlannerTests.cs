@@ -1130,4 +1130,82 @@ public class IncrementalPlannerTests
         };
         return (plan, fp, state, outputs);
     }
+
+    // ---- [Task 3 — rehber madde 23 YANILIYORDU] "Kırmızı A, VS'de düzeltildi" gerçek geçişi -------------------
+    //
+    // Rehber "A'yı VS'de düzeltip derlersen B/C bir Build daha yeşil kalır, ⚠ SONRAKİ Build'de çözülür"
+    // diyordu. Kod okuması bunun yalnız A'nın KAYNAĞI DEĞİŞMEDEN düzeldiği durumda (ör. zehirli obj temizliği)
+    // doğru olduğunu gösterdi: A'nın İÇERİĞİ GERÇEKTEN değişince A'nın kendi imzası da değişir, bağımlının
+    // (bozuk A'ya karşı yazılmış) kayıtlı imzasıyla bugünkü imza ARTIK EŞLEŞMEZ ve
+    // <see cref="Core.Planning.WillBuildEvaluator"/>'daki imza-değişti kontrolü DepIssue/kök-notu kontrolünden
+    // ÖNCE geldiği için not hiç okunmadan karar biter. Gerçek kural budur; aşağıdaki iki test AYNI grafı
+    // (F → P) yalnız F'in BUGÜNKÜ içeriğiyle ayırarak bunu pinler.
+
+    /// <summary>[Task 3a] F kanıtlı kırmızı (hata anındaki imzası <c>fpF-broken</c>'a karşı) ve VS'de İÇERİK
+    /// değiştirilerek düzeltildi: bugünkü içeriği <c>fpF-fixed</c>, kendi zaman hükmü taze
+    /// (<see cref="WillBuildReason.BuiltOutside"/>, satırı yeşil). P defter yolunda: kayıtlı imzası F'nin
+    /// BROKEN imzasıyla hesaplanmıştı ve bir dependency-note taşıyor (kök: F). F'in İÇERİĞİ değiştiği için
+    /// F'in bugünkü imzası da değişir ⇒ P'nin bugünkü kompozit imzası kayıtlı imzayla ARTIK EŞLEŞMEZ — not hiç
+    /// okunmadan <see cref="WillBuildReason.SignatureChanged"/> kazanılır. Kendi dosyası (<c>fpP</c>) AYNI
+    /// kaldığı için satır etiketi <c>modified</c> değil <c>affected</c>'tır.</summary>
+    [Fact]
+    public void A_dependent_recorded_against_a_failed_upstreams_broken_signature_becomes_signature_changed_once_vs_fixes_the_upstreams_content()
+    {
+        var (plan, fp, state, outputs) = VsFixedUpstreamFixture(fCurrentContent: "fpF-fixed");
+
+        var result = IncrementalPlanner.ComputeWillBuild(
+            plan, fp, state, buildCycles: false, outputs: outputs);
+
+        (bool?, WillBuildReason?) Of(string id) =>
+            result.Nodes.Single(n => n.Id == id) is var n ? (n.WillBuild, n.WillBuildReason) : default;
+        Assert.Equal((false, WillBuildReason.BuiltOutside), Of("F"));    // VS düzeltti, taze kanıt, yeşil
+        Assert.Equal((true, WillBuildReason.SignatureChanged), Of("P")); // rehber 23 YANILIYORDU: hemen affected
+        Assert.False(OutputEvidence.OwnFilesChanged(outputs["P"], state, "P", "fpP"));
+    }
+
+    /// <summary>[Task 3b] Kontrol: (a) ile AYNI graf ve kayıtlar, TEK fark F'in bugünkü içeriğinin HÂLÂ
+    /// <c>fpF-broken</c> olması (değişmeden düzelme yok). P'nin bugünkü kompozit imzası bu durumda kayıtlı
+    /// imzayla AYNI kalır, not okunur ve gerekçe <see cref="WillBuildReason.WaitingForDependency"/>'dir —
+    /// satır yine yeşildir ama uyarı üçgeni taşır, <see cref="WillBuildReason.SignatureChanged"/> DEĞİL. İki
+    /// testin TEK farkı F'in içerik fingerprint'i olduğu için ayırt edicilik doğrudan bu satırdadır.</summary>
+    [Fact]
+    public void A_dependent_recorded_against_a_failed_upstreams_broken_signature_keeps_waiting_when_the_upstreams_content_has_not_changed()
+    {
+        var (plan, fp, state, outputs) = VsFixedUpstreamFixture(fCurrentContent: "fpF-broken");
+
+        var p = IncrementalPlanner.ComputeWillBuild(plan, fp, state, buildCycles: false, outputs: outputs)
+            .Nodes.Single(n => n.Id == "P");
+
+        Assert.Equal((true, WillBuildReason.WaitingForDependency), (p.WillBuild, p.WillBuildReason));
+    }
+
+    /// <summary>Task 3 fixture'ı: F → P; F kanıtlı kırmızı (hata anındaki imzası her zaman <c>fpF-broken</c>'a
+    /// karşı hesaplanmış) ve kendi zaman hükmü F'in bu koşuda dışarıda (VS'de) taze derlendiğini söylüyor. P'nin
+    /// kaydı F'in BROKEN imzasıyla hesaplanmış ve bir dependency-note (kök: F) taşıyor; kendi içeriği
+    /// (<c>fpP</c>) hiç değişmiyor. <paramref name="fCurrentContent"/> F'in BUGÜNKÜ içerik fingerprint'idir:
+    /// <c>fpF-fixed</c> gerçek VS düzeltmesini, <c>fpF-broken</c> (değişmeden) kontrol dalını temsil eder.</summary>
+    private static (BuildPlan Plan, Func<ProjectNode, string?> Fp, Dictionary<string, BuildState> State,
+        Dictionary<string, OutputCheck> Outputs) VsFixedUpstreamFixture(string fCurrentContent)
+    {
+        var f = Node("F", 0, inCycle: false);
+        var p = Node("P", 1, inCycle: false, "F");
+        var plan = new BuildPlan([f, p], [], "Debug");
+        var fp = FingerprintLookup(Fingerprints(("F", fCurrentContent), ("P", "fpP")));
+
+        string failedF = BuildSignature.Compute(f, "Debug", "fpF-broken", _ => null);
+        string recordedP = BuildSignature.Compute(p, "Debug", "fpP", id => id == "F" ? failedF : null);
+
+        var state = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new BuildState("F", null, LastResult: BuildResult.Failed, FailedSignature: failedF),
+            ["P"] = new BuildState("P", recordedP, LastResult: BuildResult.Succeeded, BuiltContent: "fpP",
+                DepIssue: true, DepIssueRoots: ["F"]),
+        };
+        var outputs = new Dictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["F"] = new(EvidenceMode.Time, false, true, TimeVerdict.Fresh, null),
+            ["P"] = new(EvidenceMode.Ledger, false, true, null, null),
+        };
+        return (plan, fp, state, outputs);
+    }
 }

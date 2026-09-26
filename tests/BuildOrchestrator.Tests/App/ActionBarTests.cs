@@ -247,6 +247,29 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[T20 · design v1.16.0 §3.9] Chip'e TIKLAMAK <c>PullRepositoryCommand</c>'ı tetikler (mevcut
+    /// kablaj: <c>ActionBar.xaml.cs:438</c>, değişmez) — gönderilen TEK komut workspace kökünü ve aktif
+    /// branch'i taşır, ikinci bir gönderim YOKTUR.</summary>
+    [StaFact]
+    public void The_behind_chip_click_sends_exactly_one_pull_command_for_the_workspace_root_and_active_branch()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        vm.OnEvent(new BranchListEvent([new BranchRef("main", "aaa", IsActive: true, IsRemoteTracking: false)]));
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        bar.UpdateLayout();
+        Assert.True(bar.BehindChip.IsEnabled); // ön-koşul: chip GERÇEKTEN tıklanabilir
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        Click(bar.BehindChip);
+
+        var cmd = Assert.Single(sent.OfType<PullRepositoryCommand>());
+        Assert.Equal(@"D:\repo", cmd.RootPath); // NewVm() fixture'ının workspace kökü
+        Assert.Equal("main", cmd.Branch);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[Task 7] Pull reddi (kirli/ayrışmış/detached) konsola <c>warning:</c> önekli açıklamalı satırı
     /// bırakır (bkz. <c>PullRepositoryTests</c>, Supervisor tarafı) VE event stream'e KISA bir Warn satırı
     /// düşer — ikisi aynı olayı farklı ayrıntı seviyesinde anlatır (kopya YASAK: metin tek kaynak

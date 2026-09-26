@@ -458,9 +458,13 @@ public class RunCoordinatorTests
     // ---------------------------------------------------------------- [spec 2026-09-18 §6.1 · karar 10] branch kesmesi
 
     /// <summary>Tek proje uçuştayken kesme isteyen koşu: <paramref name="result"/> uçuştakinin sonucu. Kesme, sonuç
-    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan".</summary>
+    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan". <paramref name="kind"/> varsayılan
+    /// <c>Interrupt</c>'tır; <c>Graceful</c> ile çağrıldığında AYNI iskelet düz Graceful Stop'u kurar (bkz.
+    /// <see cref="A_project_that_succeeds_after_a_graceful_stop_is_trusted_and_persisted"/>) — kopya YASAK
+    /// (CLAUDE.md): üç çağıran da pozisyonel argüman geçtiği için bu SONA eklenen opsiyonel parametre hiçbirini
+    /// bozmaz.</summary>
     private static async Task<IReadOnlyList<IpcEvent>> InterruptWhileAIsInFlight(MsBuildInvokeResult result,
-        BuildStateStore? store = null, IncrementalPlan? incremental = null)
+        BuildStateStore? store = null, IncrementalPlan? incremental = null, StopKind kind = StopKind.Interrupt)
     {
         var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
         var inFlight = Signal();
@@ -470,7 +474,7 @@ public class RunCoordinatorTests
 
         await h.Sut.StartAsync(Start(parallelism: 1), default);
         await inFlight.Task.WaitAsync(Limit);
-        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        Assert.True(h.Sut.TryRequestStop(kind));
         release.SetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
         return h.Events;
@@ -508,6 +512,34 @@ public class RunCoordinatorTests
             Assert.Null(a.FailedSignature);
             Assert.Equal("old", a.BuiltSignature); // taze imza ("sig") yazılmadı
             Assert.False(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[T10 PİN] Karşıtı <see cref="A_project_that_succeeds_after_an_interrupt_is_not_recorded_as_built"/>:
+    /// düz Graceful Stop (Interrupt DEĞİL) sonrası biten başarı deftere GÜVENİLİR yazılır — <c>_interrupted</c>
+    /// yalnız Interrupt'ta true olur, sıradan Graceful onu hiç etkilemez (RunCoordinator.cs:1278 çevresi). B hiç
+    /// dispatch edilmediği için defterde hiç kaydı yoktur; tamamlanma olayında Queued yalnız B'yi sayar. Aynı
+    /// <see cref="InterruptWhileAIsInFlight"/> iskeleti <c>kind: StopKind.Graceful</c> ile çağrılır (kopya YASAK
+    /// — CLAUDE.md).</summary>
+    [Fact]
+    public async Task A_project_that_succeeds_after_a_graceful_stop_is_trusted_and_persisted()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+
+            var events = await InterruptWhileAIsInFlight(Ok(), store, Incremental("A", "B"), kind: StopKind.Graceful);
+
+            Assert.True(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
+            var state = store.Load();
+            var a = Assert.Contains(Id("A"), state);
+            Assert.Equal(BuildResult.Succeeded, a.LastResult);
+            Assert.Equal("sig", a.BuiltSignature); // taze imza GERÇEKTEN yazıldı (Interrupt'ta yazılmıyordu)
+            Assert.DoesNotContain(Id("B"), state); // B hiç dispatch edilmedi — kayıt yok
+            var done = Assert.IsType<RunCompletedEvent>(events[^1]);
+            Assert.Equal(1, done.Queued);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -1507,9 +1539,14 @@ public class RunCoordinatorTests
     }
 
     /// <summary>
-    /// KANITLI bir başarısızlık kaydı KISMİ birleştirir (bkz. <see cref="InvalidateBuildStateOnFailure"/>):
-    /// önceki başarının öğrendiği beslenen kopyalar dokunulmadan kalır — bir sonraki zaman kipi kontrolü onları
+    /// KANITLI bir başarısızlık kaydı KISMİ birleştirir (bkz. <see cref="InvalidateBuildStateOnFailure"/>,
+    /// satır 1940-1948'deki <c>with</c>): önceki başarının öğrendiği beslenen kopyalar, <c>BuiltSignature</c> VE
+    /// içerik özeti (<c>BuiltContent</c>) dokunulmadan kalır — bir sonraki zaman kipi/defter kontrolü onları
     /// hâlâ okuyabilmeli.
+    ///
+    /// <para>[PİN — rehber madde 13: "A'daki hatayı düzelt, Sync (Build yok) → A gri `modified`"]
+    /// <c>BuiltContent</c> bu merge'de kaybolursa <see cref="BuildStateStore.OwnFilesChanged"/> <c>null</c>'a
+    /// düşer ve hatayı düzeltip Sync'te satır `modified` yerine (daha ihtiyatlı) `affected` okunurdu.</para>
     /// </summary>
     [Fact]
     public async Task A_failure_keeps_the_recorded_copies()
@@ -1519,7 +1556,7 @@ public class RunCoordinatorTests
         {
             var store = new BuildStateStore(cacheRoot);
             store.Upsert(new BuildState(Id("A"), "sig", LastResult: BuildResult.Succeeded,
-                FedOutputs: [@"C:\shared\A.dll"]));
+                FedOutputs: [@"C:\shared\A.dll"], BuiltContent: "int A() { return 1; }"));
             var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
                 EmptyRefs(), Incremental: Incremental("A"));
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
@@ -1531,6 +1568,8 @@ public class RunCoordinatorTests
             var after = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, after.LastResult);
             Assert.Equal([@"C:\shared\A.dll"], after.FedOutputs); // önceki başarının öğrendiği kopyalar KORUNUR
+            Assert.Equal("sig", after.BuiltSignature); // Fast modun frozen-upstream tabanı da KORUNUR
+            Assert.Equal("int A() { return 1; }", after.BuiltContent); // BuiltContent KORUNUR (rehber 13 pini)
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

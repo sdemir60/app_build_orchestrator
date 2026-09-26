@@ -93,7 +93,7 @@ public sealed class OptimizeWorkspaceService(
 
         // [harici projeler] Ana tarama + kayıtlı harici kökler, TEK çalışma alanı — Sync'in, koşu
         // planlayıcısının ve Clean'in kullandığı AYNI çözümleyici.
-        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner);
+        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner, cmd.RootPath);
         foreach (var problem in workspace.Problems)
             emit(Warn(PlanProgressLines.ExternalNotOptimized(problem.Name, problem.Problem)));
 

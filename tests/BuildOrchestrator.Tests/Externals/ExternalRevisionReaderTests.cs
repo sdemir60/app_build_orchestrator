@@ -17,7 +17,7 @@ namespace BuildOrchestrator.Tests.Externals;
 public class ExternalRevisionReaderTests
 {
     private static ExternalWorkspace Resolve(params ExternalProject[] cards) =>
-        ExternalWorkspaceResolver.Resolve(new ScanResult([], []), cards, new WorkspaceScanner());
+        ExternalWorkspaceResolver.Resolve(new ScanResult([], []), cards, new WorkspaceScanner(), ExternalTestRoots.UnrelatedMainRoot);
 
     private static string WriteProject(string directory, string name)
     {

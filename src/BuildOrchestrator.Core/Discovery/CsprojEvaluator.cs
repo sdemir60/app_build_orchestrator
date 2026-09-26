@@ -135,7 +135,14 @@ public sealed record EvaluatedProject(
 public sealed class CsprojEvaluator
 {
     private static readonly EnumerationOptions Recurse = new() { RecurseSubdirectories = true };
-    private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase) { "obj", "bin" };
+
+    /// <summary>[T1/T22 · kopya YASAK] Atlanan derleme-çıktısı klasörleri — tek kaynak
+    /// <see cref="WorkspaceScanner.BuildOutputFolderNames"/> (bağımsız bir "obj"/"bin" literali burada
+    /// YAZILMAZ). <see cref="WorkspaceScanner.ExternalToolingFolderNames"/> (<c>.git</c>/<c>.vs</c>/
+    /// <c>node_modules</c>) BİLEREK dışarıda kalır: bu evaluator csproj item glob'larını değerlendirir, workspace
+    /// taraması değildir — davranış eskisiyle AYNI kalır (yalnız bin/obj atlanır).</summary>
+    private static readonly HashSet<string> SkipDirs =
+        new(WorkspaceScanner.BuildOutputFolderNames, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>[D2] <see cref="EvaluatedProject.ResourceFiles"/>'a giren item adları.</summary>
     private static readonly string[] ResourceItemNames =

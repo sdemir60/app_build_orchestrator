@@ -22,6 +22,13 @@ namespace BuildOrchestrator.Tests.App;
 /// Tıklama ise Direct bir routed event (<see cref="UIElement.MouseLeftButtonUpEvent"/>) olduğundan GERÇEKTEN
 /// realize edilmiş Border üzerinde <c>RaiseEvent</c> ile tetiklenip GERÇEK <c>Scroll.VerticalOffset</c>
 /// üzerinden doğrulanır.</para>
+///
+/// <para><b>Ortam notu (flaky kaynağı):</b> basış GERÇEK bir HWND'ye karşı yükseltilir (<c>CaptureMouse()</c>
+/// bir HWND olmadan sessizce başarısız olur — bkz. <see cref="DsResources.Realize"/> çağrısındaki "GERÇEK
+/// HWND" notu), yani bu testler headless/ekran-dışı bir çizimden FARKLI olarak gerçek pencere/capture/dispatcher
+/// mekaniğine bağımlıdır. Makine eşzamanlı ağır bir işle meşgulken (paralel build, yoğun disk/CPU) tıklama
+/// yanlış hedefe düşebilir ve bu testler KIRMIZI verebilir — bir regresyondan şüphelenmeden ÖNCE sakin bir
+/// makinede yeniden çalıştır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class StickyLayerHeaderClickTests

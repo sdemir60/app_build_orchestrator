@@ -429,6 +429,28 @@ public class EventStreamTests
         Assert.Equal(leaderId, line.ProjectId);
     }
 
+    // ============================================================ [Task 12 PİN] — resolve cycles şerit metni (VM besleme)
+
+    /// <summary>[Task 12 PİN] RunStarted(Cycles) + CycleRoundStarted(1/3) sonrası <c>vm.RibbonLine.Text</c>
+    /// GERÇEKTEN RibbonText.Compose'un resolvingCycles dalını (RibbonText.cs:164-170) üretiyor mu — VM'in
+    /// <c>_cycleRound</c>/<c>_cycleRoundCap</c> beslemesi (RunViewModel.Stream.cs:228) bugüne kadar hiç assert
+    /// edilmemişti (RibbonText'in kendi birim testleri sabit sayılarla pinli, ama VM'den GERÇEKTEN besleniyor mu
+    /// ayrı bir sorudur). BuildPreviewEvent burada AllClean'i düşürür — aksi halde Running dalında allClean
+    /// ÖNCELİKLİDİR (bkz. RibbonTextTests.Resolving_cycles_still_shows_checking_when_the_preview_is_all_clean)
+    /// ve "Checking" satırı cycles metnini hiç üretmeden ezerdi.</summary>
+    [Fact]
+    public void Ribbon_line_shows_the_resolving_cycles_round_after_a_cycle_round_starts()
+    {
+        var vm = NewVm();
+        const string leaderId = @"C:\p\m1.csproj";
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(leaderId, "M1", WillBuild: true)]));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", leaderId, Round: 1, RoundCap: 3, MemberCount: 2));
+
+        Assert.StartsWith("▸ Resolving cycles · round 1/3", vm.RibbonLine.Text);
+    }
+
     // ============================================================ §13 — skip gerekçesi görünür + kapsam-dışı fırtınası tek satır
 
     /// <summary>[Task 2] <c>ProjectSkippedEvent.Reason</c> artık stream satırına AYNEN taşınır — eskiden
@@ -463,6 +485,28 @@ public class EventStreamTests
         var line = Assert.Single(vm.StreamEvents, l => l.ProjectId == @"C:\p\down.csproj");
         Assert.Equal(StreamText.Skipped("down", SkipReasons.DependencyStillFailing), line.Text);
         Assert.Equal($"down skipped — {SkipReasons.DependencyStillFailing}", line.Text);
+    }
+
+    // ============================================================ [T15 PİN] başarı + dependency-issue → akış satırı
+
+    /// <summary>[T15 PİN] Dependency-issue kökleri taşıyan bir başarı event'i (<c>DepIssues: ["A"]</c>) → akış
+    /// satırı GERÇEKTEN <see cref="StreamText.BuiltDependencyIssue"/> biçimini üretiyor mu
+    /// (<c>RunViewModel.Stream.cs:194-198</c>'in dependency-issue dalı) — eskiden yalnız şablon metninin kendisi
+    /// (<see cref="StreamText_templates_match_the_prototype_verbatim"/>) pinliydi, bu dalın GERÇEK bir
+    /// <see cref="ProjectSucceededEvent"/>'ten beslendiği hiç kanıtlanmamıştı.</summary>
+    [Fact]
+    public void A_success_event_with_dependency_issue_roots_streams_the_built_dependency_issue_line()
+    {
+        const string id = @"C:\p\b.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", id, "B"));
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 3400, DepIssues: ["A"]));
+
+        var line = Assert.Single(vm.StreamEvents, l => l.ProjectId == id);
+        // Sabite referans — metni burada YENİDEN YAZMA (StreamText tek doğruluk kaynağı, kopya YASAK).
+        Assert.Equal(StreamText.BuiltDependencyIssue("B", 3400), line.Text);
     }
 
     /// <summary>[Task 2] Cycles koşusunda kapsam-dışı (<see cref="SkipReasons.OutOfCycleScope"/>) skip'ler
@@ -627,6 +671,28 @@ public class EventStreamTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 2, DurationMs: 500));
 
         Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
+    }
+
+    // ============================================================ [T10 PİN] Stop → akış satırı (kablolama)
+
+    /// <summary>[T10 PİN] Kullanıcı Stop'a basar (motor yok → gönderim <c>TrySendAsync</c>'te sessizce düşer;
+    /// StopCommand'ın KENDİSİ akışa dokunmaz — bu adım yalnız gerçek tetikleyici zinciri kurar), motor sonra
+    /// <see cref="RunCompletedEvent"/>(Stopped) ile biter: <c>RunViewModel.Stream.cs</c>'in (satır 264-266)
+    /// <c>AppendStreamFor</c>'daki <c>StreamText.Stopped(e.Queued)</c> kablosu GERÇEKTEN akışa satır basıyor mu —
+    /// eskiden yalnız şablon metninin KENDİSİ (<see cref="StreamText_templates_match_the_prototype_verbatim"/>)
+    /// pinliydi, kablolamanın GERÇEKTEN çalıştığı hiç kanıtlanmamıştı.</summary>
+    [Fact]
+    public async Task A_user_stop_followed_by_the_stopped_completion_streams_the_stopped_line()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 1, "Debug", 0));
+
+        await vm.StopCommand.ExecuteAsync(null); // kullanıcının Stop tıklaması
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 3, DurationMs: 500));
+
+        // Sabite referans — metni burada YENİDEN YAZMA (StreamText tek doğruluk kaynağı, kopya YASAK).
+        Assert.Contains(vm.StreamEvents, l => l.Text == StreamText.Stopped(3));
     }
 
     // ============================================================ §12 — tampon cap 260 doyumu
