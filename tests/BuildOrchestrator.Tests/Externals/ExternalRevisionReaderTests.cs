@@ -16,8 +16,12 @@ namespace BuildOrchestrator.Tests.Externals;
 /// </summary>
 public class ExternalRevisionReaderTests
 {
+    /// <summary>Bu testlerin konusu revizyon okuma — ana kök/kart ilişkisi değil; hiçbir kartla ÇAKIŞMAYAN
+    /// sabit bir yol (§10.4'ün kapsama testleri kendi ana köklerini AÇIKÇA verir).</summary>
+    private const string UnrelatedMainRoot = @"D:\bo-tests-unrelated-main-root";
+
     private static ExternalWorkspace Resolve(params ExternalProject[] cards) =>
-        ExternalWorkspaceResolver.Resolve(new ScanResult([], []), cards, new WorkspaceScanner());
+        ExternalWorkspaceResolver.Resolve(new ScanResult([], []), cards, new WorkspaceScanner(), UnrelatedMainRoot);
 
     private static string WriteProject(string directory, string name)
     {

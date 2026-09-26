@@ -125,7 +125,7 @@ public sealed class SyncWorkspaceService(
         // ve buradan sonrası onları ayırt etmez — kenarları, sıraları ve incremental kararları sıradan
         // projelerinkiyle aynı yoldan gelir. Hiçbir VCS komutu çalışmaz: Sync yalnız BAKAR.
         var workspace = ExternalWorkspaceResolver.Resolve(
-            scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner);
+            scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner, cmd.RootPath);
         foreach (var problem in workspace.Problems)
             emit(Warn(PlanProgressLines.ExternalNotScanned(problem.Name, problem.Problem)));
 

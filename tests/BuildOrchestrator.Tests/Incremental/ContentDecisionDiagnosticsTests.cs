@@ -78,7 +78,7 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         // (Harici kökler üretici haritasını genişletir, yani bağımlılık KENARLARINI değiştirir — onlarsız
         // kurulan bir plan başka imzalar üretir ve tanı yanlış yere bakar.)
         var ui = UiState.Read(Path.Combine(cacheRoot, "ui-state.json"));
-        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), ui.Externals, scanner);
+        var workspace = ExternalWorkspaceResolver.Resolve(scanner.Scan(root), ui.Externals, scanner, root);
         var scan = workspace.Scan;
         var plan = new BuildPlanBuilder(scanner, evaluator, cache)
             .Build(scan, ui.Configuration, ui.LayerPatterns, workspace.ExternalProjectIds);

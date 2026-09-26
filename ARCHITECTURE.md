@@ -1815,6 +1815,13 @@ a path that is gone, an empty folder, a file that is neither — is reported: Sy
 refuses to start. Letting a configured root silently vanish would produce a green build linked against
 whatever stale DLLs were lying around.
 
+**A card cannot point at the main workspace itself.** A path equal to the repository root, or anywhere under
+it, is rejected the same way — Sync warns and carries on, Build refuses to start — because the main root is
+already scanned; treating it as an external root too would scan the same tree twice and the same project would
+carry both an ordinary and an external identity at once. The comparison is on fully-resolved,
+separator-normalised paths (`RootScope`, the same helper the ledger's root-scoped pruning uses), so a case
+difference, a trailing separator or a forward slash cannot let a card slip through.
+
 **Everything else is derived, nothing is stored.** The project set, the display names and the working-copy
 root are resolved from the path on every run, so moving a project or recreating its working copy needs no
 settings change. The working-copy root is found by walking up from the path to the first `.git` — a directory
