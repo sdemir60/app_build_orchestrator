@@ -426,6 +426,28 @@ public class EventStreamTests
         Assert.Equal(leaderId, line.ProjectId);
     }
 
+    // ============================================================ [Task 12 PİN] — resolve cycles şerit metni (VM besleme)
+
+    /// <summary>[Task 12 PİN] RunStarted(Cycles) + CycleRoundStarted(1/3) sonrası <c>vm.RibbonLine.Text</c>
+    /// GERÇEKTEN RibbonText.Compose'un resolvingCycles dalını (RibbonText.cs:164-170) üretiyor mu — VM'in
+    /// <c>_cycleRound</c>/<c>_cycleRoundCap</c> beslemesi (RunViewModel.Stream.cs:228) bugüne kadar hiç assert
+    /// edilmemişti (RibbonText'in kendi birim testleri sabit sayılarla pinli, ama VM'den GERÇEKTEN besleniyor mu
+    /// ayrı bir sorudur). BuildPreviewEvent burada AllClean'i düşürür — aksi halde Running dalında allClean
+    /// ÖNCELİKLİDİR (bkz. RibbonTextTests.Resolving_cycles_still_shows_checking_when_the_preview_is_all_clean)
+    /// ve "Checking" satırı cycles metnini hiç üretmeden ezerdi.</summary>
+    [Fact]
+    public void Ribbon_line_shows_the_resolving_cycles_round_after_a_cycle_round_starts()
+    {
+        var vm = NewVm();
+        const string leaderId = @"C:\p\m1.csproj";
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(leaderId, "M1", WillBuild: true)]));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", leaderId, Round: 1, RoundCap: 3, MemberCount: 2));
+
+        Assert.StartsWith("▸ Resolving cycles · round 1/3", vm.RibbonLine.Text);
+    }
+
     // ============================================================ §13 — skip gerekçesi görünür + kapsam-dışı fırtınası tek satır
 
     /// <summary>[Task 2] <c>ProjectSkippedEvent.Reason</c> artık stream satırına AYNEN taşınır — eskiden

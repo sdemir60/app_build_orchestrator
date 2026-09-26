@@ -170,6 +170,48 @@ public class RibbonTextTests
         Assert.Null(line.Glyph);
     }
 
+    // [Task 12 PİN] Resolve cycles'ın faz-metni (RibbonText.cs:164-175) — "▸ Resolving cycles · round r/cap ·
+    // f/w · t" biçimi hiçbir yerde assert edilmiyordu. f/w/t burada da (kardeş test gibi) willBuild/
+    // finishedOfWillBuild/elapsedMs'ten AYNI sayılarla türetilir.
+    [Fact]
+    public void Resolving_cycles_line_shows_the_round_and_the_willbuild_progress()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1, queued: 6),
+            willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0,
+            resolvingCycles: true, cycleRound: 1, cycleRoundCap: 3);
+        Assert.Equal("▸ Resolving cycles · round 1/3 · 7/14 · 24s", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Equal("building", line.Glyph);
+    }
+
+    // [Task 12 PİN] Turlar henüz başlamadı (cycleRound:0) — koşu önce döngünün bayat upstream'ini derler (§8.1
+    // kapsam). VM bu pencerede round/cap'i birlikte (0,0) tutar (RunViewModel.Stream.cs: run başlangıcında ve
+    // her CycleRoundStartedEvent öncesinde resetlenen çift), o yüzden cap de 0 pinlenir.
+    [Fact]
+    public void Resolving_cycles_line_shows_preparing_dependencies_before_the_first_round_starts()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1),
+            willBuild: 5, finishedOfWillBuild: 2, totalProjects: 14, elapsedMs: 8_000, etaMs: null, checkDurMs: null, warnings: 0,
+            resolvingCycles: true, cycleRound: 0, cycleRoundCap: 0);
+        Assert.Equal("▸ Resolving cycles · preparing dependencies · 2/5 · 8s", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Equal("building", line.Glyph);
+    }
+
+    // [Task 12 PİN · öncelik pini] allClean kontrolü switch'te resolvingCycles'tan ÖNCE gelir (RibbonText.cs:
+    // 156-164): bir Cycles koşusu "her şey temiz" önizlemesiyle açılırsa şerit hâlâ "Checking" der, cycles
+    // metnini hiç üretmez.
+    [Fact]
+    public void Resolving_cycles_still_shows_checking_when_the_preview_is_all_clean()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: true, Counters(building: 1),
+            willBuild: 0, finishedOfWillBuild: 0, totalProjects: 14, elapsedMs: 5_000, etaMs: null, checkDurMs: null, warnings: 0,
+            resolvingCycles: true, cycleRound: 1, cycleRoundCap: 3);
+        Assert.Equal("▸ Checking — scanning for changes…", line.Text);
+        Assert.Equal("Brush.TextSecondary", line.BrushKey);
+        Assert.Null(line.Glyph);
+    }
+
     // [planlama görünürlüğü] Build'e basmakla runStarted arasında geçen pencere: motor planlamayı koşuyor
     // (177 projelik OSYS'te saniyeler). Şerit burada önceki metinde ("▸ Ready — …" / "▸ Stopped — …") DONUYORDU
     // ve konsol da BeginRunAsync tarafından temizlendiği için ekranda tıklamanın kaydedildiğine dair tek bir
