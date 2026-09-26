@@ -15,12 +15,8 @@ public class ExternalWorkspaceResolverTests
 {
     private static readonly ScanResult EmptyMain = new([], []);
 
-    /// <summary>Bu testlerin ana kökü hiçbir kartla ÇAKIŞMAYAN sabit bir yoldur — asıl konu ana kök/kart
-    /// ilişkisi değil, tarama davranışıdır. Kapsama testleri (§10.4) kendi ana köklerini AÇIKÇA verir.</summary>
-    private const string UnrelatedMainRoot = @"D:\bo-tests-unrelated-main-root";
-
     private static ExternalWorkspace Resolve(ScanResult main, params ExternalProject[] externals) =>
-        ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), UnrelatedMainRoot);
+        ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), ExternalTestRoots.UnrelatedMainRoot);
 
     private static ExternalWorkspace Resolve(ScanResult main, string mainRootPath, params ExternalProject[] externals) =>
         ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), mainRootPath);
@@ -142,7 +138,7 @@ public class ExternalWorkspaceResolverTests
     {
         var main = new ScanResult([@"D:\repo\A.csproj"], [@"D:\repo\Osys.sln"]);
 
-        var workspace = ExternalWorkspaceResolver.Resolve(main, null, new WorkspaceScanner(), UnrelatedMainRoot);
+        var workspace = ExternalWorkspaceResolver.Resolve(main, null, new WorkspaceScanner(), ExternalTestRoots.UnrelatedMainRoot);
 
         Assert.Same(main, workspace.Scan);
         Assert.Empty(workspace.Roots);
