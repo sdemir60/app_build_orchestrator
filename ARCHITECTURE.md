@@ -446,9 +446,11 @@ git's own detail on failure. The App builds every console line of a branch switc
 run ended normally.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
-and the member count. A strongly-connected component is one build unit whose per-round results are never
-published (§8.8), so the round number is the only progress the group itself emits; its members still emit
-their own `projectStarted` on every round, because on every round they really are compiling.
+and how many members that round compiles — a later round can be narrower than the group, because only the
+members whose read surfaces moved compile again (§8.8). A strongly-connected component is one build unit whose
+per-round results are never published (§8.8), so the round number is the only progress the group itself emits;
+its members still emit their own `projectStarted` on every round they compile in, because they really are
+compiling then.
 
 `cycleCompleted` follows once a group has an actual verdict — converged, no progress (the same members failed
 twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
@@ -1204,8 +1206,10 @@ replaced by `· almost done` below 4 s. The per-project estimate comes from `Bui
 no history the ribbon shows progress and elapsed time without an estimate.
 
 Cycle members are the one term that is **not** divided by parallelism: their work is sequential by
-construction and the group runs at least twice (§8.8), so both assumptions the division encodes are false for
-them. A member counts in that term from the moment it is planned until its group is finished — while the group
+construction and the estimate budgets the baseline round count (§8.8), so both assumptions the division
+encodes are false for them. A group whose output surfaces prove settled can finish in a single round (§8.8);
+the estimate keeps the two-round budget anyway, in the same direction the rest of this section already
+accepts — an ETA that runs long is the better failure. A member counts in that term from the moment it is planned until its group is finished — while the group
 runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
 member's elapsed time within one round says nothing about how much of the group is left. Entering a third
 round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded.
@@ -1361,29 +1365,44 @@ building glyph, and before the first round starts (while the cycle's stale upstr
 group needs, and the interface reports that rather than promising a fixed count. A worker that is
 handed a strongly-connected component runs the whole group. Every member is
 invoked in build order and **one at a time** — never concurrently, because one member reads the DLL another is
-in the middle of writing — and then the whole set is invoked again. Each member's log file is opened once and
-kept open for every round: opening it per round would truncate the previous rounds away and restart the line
-numbers.
+in the middle of writing. The first round invokes every member; whether anyone is invoked again is a question
+of evidence, and a later round compiles only the members for whom the answer is yes. Each member's log file is
+opened once and kept open for every round: opening it per round would truncate the previous rounds away and
+restart the line numbers.
 
-The stopping rule is a pure function in Core, given the round number, this round's failing members and the
-previous round's. Two consecutive all-clean rounds mean **converged**; the identical failure *set* twice means
-**no progress**; the round ceiling means **cap reached**; anything else means another round. The baseline is
-two rounds because the source does not change between them: the first round settles every member's public API,
-the second recompiles everyone against those settled APIs. One clean round is not evidence — a member compiled
-in the first round was compiled against the previous generation's DLL, so it can bind to a method that no
-longer exists and fail at run time rather than at compile time; breaking that silence is the point of the
-second round. The comparison is on the set and not its size, since `{A,C}` followed by `{B,D}` is oscillation,
-not progress. The ceiling is three, which is what the rule needs: a group that is clean twice converges at
-two, a group that fails identically twice stops at two, and only the "failed, then recovered" branch reaches a
-third. A low ceiling loses nothing, because rounds are idempotent against what is on disk and the next `Build`
-picks up where this one left off.
+The stopping rule is a pure function in Core, given the round number, the members currently failing, the
+previous round's failures and — when the engine can prove it — the members whose read surfaces went stale.
+Both of its early exits rest on one fact: the source does not change between rounds, so a member's result can
+only change if the **API surface** of a sibling output it compiled against changes. Before each invoke the
+engine records the surface state of every intra-group dependency the member is about to read — the
+dependency's evidence path *and* its fed copies (§7.6), hashed over declarations alone (`ApiSurfaceHash`: no
+IL, no MVID, no compiler-generated names, signatures resolved to type names rather than raw blobs so a
+renumbered ref table cannot masquerade as change; the assembly version counts only under a strong name, so a
+wildcard `AssemblyVersion` does not defeat the proof) — and at the end of the round compares those records
+with the disk. Everyone green and nobody stale means **converged**: every member provably compiled against
+final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
+whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
+progress** — in the first round when the failure is hopeless from the start, which is what keeps a broken
+source from burning the remaining rounds. A failing member whose inputs did move gets another round, and that
+round compiles only the stale members. Without surface evidence — a member with no derivable output path
+(§7.6), or a file that cannot be read before or during the run — the group falls back to full rounds and the
+classic rules alone: two consecutive all-clean rounds mean converged (the first round settles every member's
+public API, the second recompiles everyone against those settled APIs; one clean round alone proves nothing
+there, because a member compiled in the first round may have bound to a method that no longer exists), the
+identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
+followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
+both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
+idempotent against what is on disk and the next `Build` picks up where this one left off. Restore is not
+repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
+between rounds can change `packages.config` — only a member that failed carries the restore prologue again
+(§9.3), because the failure may have been the restore's own.
 
 **Intermediate rounds are not published.** A member gets no `projectSucceeded`/`projectFailed` until the group
 is finished, and then exactly one, carrying the **sum** of its rounds as the duration — the real cost, not the
 last round's. Publishing per round would send progress backwards, a project going from succeeded back to
 building, and would give the same project two result lines in the event stream. `projectStarted` is still
-emitted every round, because the project really is compiling, and `cycleRoundStarted` announces the round
-itself (§5.3). Those starts accumulate — with no intermediate results, a member stays started for the whole
+emitted on every round the member compiles in, because it really is compiling then, and `cycleRoundStarted`
+announces the round itself (§5.3). Those starts accumulate — with no intermediate results, a member stays started for the whole
 life of the group — so the App reads only the most recent start *within a component* as actually compiling and
 counts the rest of the component as still queued. Without that, a 32-member component would report 32
 projects building on a four-worker run.
@@ -1514,7 +1533,10 @@ an input to restore and not only to the UI.
 
 That argument list has **two callers and one source**. The build path runs it as a prologue: a project that
 carries a `packages.config` next to its `.csproj` gets a restore child before its build child, and a non-zero
-restore exit means the build child is never started. A `-t:Clean` target gets no restore — there is nothing to
+restore exit means the build child is never started. Within a cycle group's rounds (§8.8) the prologue runs
+once, not per round: a member re-invoked after a successful round carries no restore — that success already
+restored, and nothing between rounds can change `packages.config` — while a member whose last round failed
+gets the prologue again, because the failure may have been the restore's own. A `-t:Clean` target gets no restore — there is nothing to
 restore for. *Optimize* (§13.2) calls the same list through a **restore-only entry point** on the invoker;
 `-t:Build` is never appended there, so that path cannot compile anything. It exists because a restore is not
 always a build's prologue: Optimize repairs what a build would otherwise have failed on. Both callers share the
@@ -2608,8 +2630,9 @@ as a variant of the primary action, which it is not — it is a run of its own (
 rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
 because in a workspace without cycles that run would skip every project and do nothing; a disabled button says
 so before the click rather than after. Its tooltip carries the same fact in numbers once there is one to
-report — `Build dependency cycles — N cycles · M projects` — and falls back to the plain label when the
-workspace has none. The accessible name is unaffected either way: it stays the plain label, since a screen
+report — the member count and the rounds it will repeat, the group count when there is more than one separate
+cycle, and, when the run's scope must first compile dirty upstream (§8.1), that bill too
+(`· N upstream to build first`) — and falls back to the plain label when the workspace has none. The accessible name is unaffected either way: it stays the plain label, since a screen
 reader announces what the control does, not a count that moves under it on every Sync.
 
 **Clean is the workspace reset.** The eraser wipes the build output of the current workspace — the `bin` and
@@ -4859,6 +4882,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
 | Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
+| API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 
@@ -4873,7 +4897,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
-| Cycle round stopping rule (converged / no progress / cap) | `Core/Planning/CycleRoundPolicy.cs` |
+| Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |

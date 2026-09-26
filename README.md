@@ -321,7 +321,8 @@ them with the reason `in dependency cycle`. **Resolve cycles** — the
 third icon (unlink) of the maintenance box next to *Sync* — is what compiles them, and it is the only thing
 that does. It is enabled only when the workspace actually has a cycle, and its tooltip says what it will do
 once a Sync has found one: `Resolve cycles — build the N cycle projects in repeated rounds: stale references
-first, then rebuild until they converge`. While it runs the ribbon reports the engine's own count —
+first, then rebuild until they converge` — with ` · N upstream to build first` appended when the run's scope
+must first compile stale prerequisites, so the bill is visible before the click. While it runs the ribbon reports the engine's own count —
 `Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes. It is meant to be pressed **before** a build, not instead of one: it compiles the cycles,
 then *Build* takes care of everything else, including whatever depends on them.
 
@@ -341,9 +342,12 @@ the click, its button turns amber with a spinner, and when it finishes a *Sync* 
 back. The console reports each step's result; a failed restore shows MSBuild's error messages, not its whole
 output.
 
-Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members compile
-one after another, then the whole set compiles again, until two rounds in a row come back clean, three rounds
-at the most. That is members × rounds of compiling, which next to an ordinary incremental build is a large and
+Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members
+compile one after another, and a member compiles again only when the **API surface** of a sibling output it
+built against has actually changed. A body-only change settles in a single round; an API change costs a
+second, narrower round; three rounds is the ceiling, and a member that fails while its inputs are provably
+settled stops the run at once — an identical compile cannot end differently. Even so the worst case is
+members × rounds of sequential compiling, which next to an ordinary incremental build is a large and
 unpredictable bill. Behind a button you decide when to pay it.
 
 Such a run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
@@ -357,8 +361,9 @@ The run reads like any other beyond that: each round prints its own line, `cycle
 while a member is actually compiling the active line names it and its place in the group,
 `member I/N · round R/K`. A member waiting its turn shows the clock glyph, no breathing highlight, and a
 duration column that stays at `—` — only the member actually compiling is doing anything, and the group's own
-round line is what moves. When the group has a verdict the event stream says which one it got — converged,
-failed the same way twice, or hit the round cap — with how many rounds it took. Cycle rows show the normal
+round line is what moves. When the group has a verdict the event stream says which one it got — converged, no
+progress (repeating the failed compiles could only repeat their result), or hit the round cap — with how many
+rounds it took. Cycle rows show the normal
 build icons — green, red, the spinner — and carry a single amber warning triangle to say where they sit. Its
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build

@@ -19,7 +19,13 @@ public enum CycleRoundDecision
 /// Neden tek yeşil tur yetmez: turlar arasında KAYNAK DEĞİŞMEZ, ama tur 1'de A diskteki ESKİ B.dll'e karşı
 /// derlenir. Yeşil geçse bile A.dll eski imzaya bağlanmış olabilir (çalışma anında MissingMethodException).
 /// Tur 1 her üyenin public API'sini nihaileştirir; tur 2 herkesi nihai API'lere karşı yeniden derler.
-/// Bu yüzden yakınsama ölçütü İKİ ARDIŞIK yeşil turdur.
+/// Bu yüzden yüzey kanıtı YOKKEN yakınsama ölçütü İKİ ARDIŞIK yeşil turdur.
+///
+/// [API kısa devresi] <c>staleNow</c> verildiğinde aynı iddia KANITLA ve daha erken kurulur: kaynak sabitken
+/// bir üyenin sonucunu yalnız okuduğu grup-içi yüzeyin değişmesi değiştirebilir. Herkes yeşil + kimse bayat
+/// değil ⇒ herkes nihai API'lere bağlandı ⇒ tur 1'de bile Converged. Patlayan üyenin girdisi değişmedi ⇒
+/// aynı derleme aynı hatayı verir; grup hep birlikte persist ettiğinden tek kanıtlı-umutsuz üye grubun
+/// kaderidir ⇒ tur 1'de bile NoProgress. Kanıt yarımsa (staleNow null) eski kurallar tek başına geçerlidir.
 ///
 /// Neden tavan 3 yeterli: tur 1-2 yeşilse Converged zaten 2'de olur; tur 1-2 aynı kümede patlarsa NoProgress
 /// 2'de durur. 3. tur yalnız "tur 1 patladı, sonra düzeldi" dalı için vardır. Turlar diskteki duruma göre
