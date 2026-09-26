@@ -36,8 +36,12 @@ public static class CycleRoundPolicy
     /// <param name="round">Biten turun 1-tabanlı numarası.</param>
     /// <param name="failedNow">Bu turda derlemesi başarısız olan üyeler.</param>
     /// <param name="failedPrevious">Bir önceki turunki; ilk turda <c>null</c>.</param>
+    /// <param name="staleNow">[API kısa devresi] Son derlemesinin OKUDUĞU grup-içi çıktı yüzeyi bu tur sonunda
+    /// DEĞİŞMİŞ olan üyeler — yani bir tur daha derlemenin sonucunu değiştirebileceği üyeler. <c>null</c> ⇒
+    /// yüzey bilgisi yok (eski kurallar tek başına geçerli).</param>
     public static CycleRoundDecision Decide(int round, IReadOnlySet<string> failedNow,
-                                            IReadOnlySet<string>? failedPrevious)
+                                            IReadOnlySet<string>? failedPrevious,
+                                            IReadOnlySet<string>? staleNow = null)
     {
         ArgumentNullException.ThrowIfNull(failedNow);
 
@@ -45,6 +49,21 @@ public static class CycleRoundPolicy
         if (round >= BaselineRounds && failedPrevious is not null
             && failedNow.Count == 0 && failedPrevious.Count == 0)
             return CycleRoundDecision.Converged;
+
+        // [API kısa devresi] Yüzey kanıtı iki ardışık yeşil turla AYNI iddiayı daha erken kurar: kaynak turlar
+        // arasında değişmez, dolayısıyla bir üyenin sonucunu yalnız OKUDUĞU grup-içi yüzeyin değişmesi
+        // değiştirebilir. Herkes yeşil ve kimse bayat bağlanmamışken tur eklemek hiçbir şeyi değiştiremez ⇒
+        // Converged (tur 1'de bile).
+        if (staleNow is not null && failedNow.Count == 0 && staleNow.Count == 0)
+            return CycleRoundDecision.Converged;
+
+        // Aynı kanıtın karanlık yüzü: girdisi DEĞİŞMEMİŞ bir üyeye aynı derleme aynı hatayı verir. Grup hep
+        // birlikte persist ettiği için tek bir kanıtlı-umutsuz üye grubun kaderidir — diğer üyelerin hâlâ
+        // düzelebilecek olması sonucu değiştirmez, koşu ERKEN keser (kullanıcı "olmayacaksa devam etme" der).
+        if (staleNow is not null && failedNow.Count > 0)
+            foreach (string member in failedNow)
+                if (!staleNow.Contains(member))
+                    return CycleRoundDecision.NoProgress;
 
         if (round >= BaselineRounds && failedPrevious is not null && failedNow.SetEquals(failedPrevious))
             return CycleRoundDecision.NoProgress;
