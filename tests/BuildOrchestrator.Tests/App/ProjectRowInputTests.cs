@@ -237,7 +237,8 @@ public class ProjectRowInputTests
     }
 
     /// <summary>[§9-6] Satıra SAĞ TIK, ⋯ ile AYNI menüyü açar; menü başlığı projenin kısa adıdır ve maddeleri
-    /// Build · Rebuild · Clean'dir (Build/Rebuild tek proje koşusuna bağlı, Clean motoru bekliyor).</summary>
+    /// Build · Rebuild · Clean'dir (üçü de AYNI tek-proje-koşusu kapısına bağlı; Clean o projeye SCOPED bir
+    /// clean run'ı gönderir).</summary>
     [StaFact]
     public void Right_clicking_the_row_opens_the_same_menu_the_ellipsis_opens()
     {
@@ -262,8 +263,8 @@ public class ProjectRowInputTests
     /// pasifleşip nedenini söyler.
     /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: üçü de "not available yet" ile pasifti; sonra Build/Rebuild
     /// açıldı, Clean pasif kaldı. Clean da yazıldı — satırdan Clean, Visual Studio&apos;nun proje Clean&apos;idir
-    /// (<c>msbuild /t:Clean</c>). Bakım kutusundaki DERİN Clean ile Build split menüsünün Clean&apos;i AYRI
-    /// yüzeylerdir ve hâlâ motorlarını bekler.</para>
+    /// (<c>msbuild /t:Clean</c>, tek-proje koşusu). Bakım kutusundaki DERİN Clean (bin/obj silme) ile Build
+    /// split menüsünün Clean&apos;i AYRI yüzeylerdir: biri tek projeyi koşar, öteki workspace'i siler.</para>
     /// <para>Menü kabuğu, KAPALI bir popup içinde realize olmadığı için burada TEK BAŞINA kurulur
     /// (BuildMenuTests deseni) — satırın kablajı aşağıdaki testte, içeriği burada pinlenir.</para></summary>
     [StaFact]

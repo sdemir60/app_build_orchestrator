@@ -2059,6 +2059,28 @@ public class RunViewModelTests
         Assert.False(vm.CanShowBehind);
     }
 
+    /// <summary>[T20 · design v1.16.0 §3.9] Başarılı pull ÜÇ şeyi BİRDEN yapar: mesafe sıfırlanır (ff sonrası
+    /// yerel HEAD uzak uca eşitlendi → <see cref="RunViewModel.Behind"/>/<see cref="RunViewModel.CanShowBehind"/>),
+    /// chip düşer VE konsol KORUNARAK TEK fetch'li Sync zincirlenir (<c>RunViewModel.Workspace.cs</c>
+    /// <c>OnPullCompletedAsync</c> → <c>SyncMode.Appended</c>, <c>Fetches()==true</c>) — ikinci bir Sync'in
+    /// GİTMEDİĞİNİ de pinler.</summary>
+    [Fact]
+    public async Task A_successful_pull_zeroes_behind_and_chains_exactly_one_fetching_sync()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe); // hiç başlatılmadı — gönderim düşer, DebugOnCommandSent yine görür
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        vm.OnEvent(new SyncCompletedEvent("main", "b7e91d4", FetchDegraded: false, 1, 0, Behind: 3));
+        Assert.True(vm.CanShowBehind); // ön-koşul: chip GERÇEKTEN görünür durumda
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+
+        vm.OnEvent(new PullCompletedEvent(Succeeded: true));
+
+        Assert.Equal(0, vm.Behind);
+        Assert.False(vm.CanShowBehind);
+        Assert.True(Assert.Single(sent.OfType<SyncWorkspaceCommand>()).Fetch);
+    }
+
     [Fact] // buildPreview arrives BEFORE the per-project events; ProjectStarted on an already-previewed row must still flip it to Started
     public async Task ProjectStarted_after_a_buildPreview_row_still_transitions_the_row_to_Started()
     {

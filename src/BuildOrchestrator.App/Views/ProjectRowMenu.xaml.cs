@@ -39,8 +39,8 @@ public partial class ProjectRowMenu : UserControl
     private bool _runActionsEnabled = true;
     private readonly List<Border> _runRows = [];
 
-    /// <summary>Bir madde seçildi — argüman maddenin <c>Kind</c>'ıdır (<c>build</c>/<c>rebuild</c>). Satır menüyü
-    /// kapatır ve komutu kendi projesiyle çalıştırır (BuildMenu'nün <c>ItemInvoked</c> deseni).</summary>
+    /// <summary>Bir madde seçildi — argüman maddenin <c>Kind</c>'ıdır (<c>build</c>/<c>rebuild</c>/<c>clean</c>).
+    /// Satır menüyü kapatır ve komutu kendi projesiyle çalıştırır (BuildMenu'nün <c>ItemInvoked</c> deseni).</summary>
     internal event Action<string>? ItemInvoked;
 
     /// <summary>Menünün başlığı — projenin KISA adı (ortak önek atılmış).</summary>

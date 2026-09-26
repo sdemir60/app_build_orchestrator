@@ -43,6 +43,34 @@ public class GitOperationTextTests
         Assert.Null(GitOperationText.BuildWarning(operation));
     }
 
+    /// <summary><see cref="BuildWarning_returns_expected_text"/>'in simetriği: Sync düğmesi yarım bir ağaçta
+    /// koşarken temizlikten sonra yazılan TEK satır.</summary>
+    [Theory]
+    [InlineData(GitOperation.Merge, "the working tree is mid-merge — results may change once it finishes")]
+    [InlineData(GitOperation.Rebase, "the working tree is mid-rebase — results may change once it finishes")]
+    [InlineData(GitOperation.CherryPick, "the working tree is mid-cherry-pick — results may change once it finishes")]
+    [InlineData(GitOperation.Revert, "the working tree is mid-revert — results may change once it finishes")]
+    public void SyncWarning_returns_expected_text(GitOperation operation, string expected)
+    {
+        Assert.Equal(expected, GitOperationText.SyncWarning(operation));
+    }
+
+    /// <summary>[eksik negatif pin] <see cref="GitOperationText.BuildWarning"/>/<see cref="GitOperationText.SyncWarning"/>
+    /// metinleri Satırın METNİ değil TONU'nu pinler: ikisi de uygulamanın kendi amber öneki (<c>warning:</c>) İLE BAŞLAMAZ ve
+    /// MSBuild'in <c>: warning </c> tanı biçimini de içermez, bu yüzden <see cref="ConsoleLineClassifier.Classify"/>
+    /// onları DÜZ (<see cref="ConsoleLineType.Info"/>) satır olarak sınıflar — amber DEĞİL. Kalıp:
+    /// <see cref="StuckLock_stays_a_plain_console_line"/>.</summary>
+    [Theory]
+    [InlineData(GitOperation.Merge)]
+    [InlineData(GitOperation.Rebase)]
+    [InlineData(GitOperation.CherryPick)]
+    [InlineData(GitOperation.Revert)]
+    public void BuildWarning_and_SyncWarning_classify_as_plain_info(GitOperation operation)
+    {
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(GitOperationText.BuildWarning(operation)));
+        Assert.Equal(ConsoleLineType.Info, ConsoleLineClassifier.Classify(GitOperationText.SyncWarning(operation)));
+    }
+
     [Fact]
     public void StuckLock_has_expected_text()
     {
