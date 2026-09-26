@@ -1,6 +1,7 @@
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -35,6 +36,13 @@ public class GraphWillBuildFeedTests
 
     private static System.Windows.Media.Color CoreColour(MainWindow window, string name) =>
         DsResources.ColorOf(VisualOf(window, name).Icon.Stroke);
+
+    /// <summary>[Task 2] Realize edilmiş listede bir proje Id'sinin satırı — <c>HoverEchoWiringTests.RowOf</c>'un
+    /// yaklaşımı (DataContext eşlemesi); o metot private olduğu için buraya KOPYALANMAZ, aynı yaklaşım bu
+    /// dosyanın kendi yardımcısı olarak yeniden yazılır.</summary>
+    private static ProjectRow ListRowOf(System.Windows.FrameworkElement content, string id) =>
+        DsResources.RealizedObjects(content).OfType<ProjectRow>()
+            .Single(r => r.DataContext is BuildOrchestrator.App.ViewModels.ProjectRowViewModel vm && vm.Id == id);
 
     /// <summary>[DEĞİŞEN KURAL — design v1.20.0 §2.3] Eski ad/iddia:
     /// <c>A_build_preview_after_sync_leaves_every_cube_neutral_because_sync_shows_no_plan</c> — plan bilinse
@@ -246,5 +254,91 @@ public class GraphWillBuildFeedTests
 
         Assert.True(a.Marked); // OnRunStarted'ın Rebuild'e özel NeutralizeRows'u işareti EZMEMELİ
         Assert.True(a.VisualStatus is VisualStatus.Marked or VisualStatus.Queued);
+    }
+
+    /// <summary>
+    /// [Task 2 — sync/durum kapsamı TDD planı] <b>PİN.</b> Build bitti/başarısız oldu → proje listesindeki satır
+    /// durumu ile graf düğümünün rengi AYNI hikâyeyi anlatıyor mu — mimari tek kaynak kullanır
+    /// (<see cref="ProjectRowViewModel.VisualStatus"/> → <see cref="VisualStatuses.For"/> →
+    /// <see cref="VisualStatuses.NodeBorderBrushKey"/>/<see cref="VisualStatuses.StripeBrushKey"/>), ama hiçbir
+    /// test koşu SONUÇLARINDAN sonra iki yüzeyi gerçek pencerede karşılaştırmıyordu.
+    ///
+    /// <para>Dört proje: <c>Ok</c> kanıtlı başarı (yeşil), <c>Bad</c> <see cref="ProjectFailedEvent"/>
+    /// (<c>Evidence: true</c> — kırmızı), <c>Flaky</c> aynı olay ama <c>Evidence: false</c> — KIRMIZI DEĞİL,
+    /// bayat/gri ailesinde kalır (bkz. <see cref="VisualStatusTests.A_failure_that_is_not_evidence_reads_as_its_stale_standing"/>),
+    /// ve <c>Cyc</c> bir döngü (<see cref="ProjectRowViewModel.InCycle"/>) üyesi: küpü HER DURUMDA amber, şeridi
+    /// kendi gerçek (bayat) durumunu taşır — ikisi karışmaz.</para>
+    /// </summary>
+    [StaFact]
+    public void After_run_results_land_the_row_and_its_graph_node_agree_on_colour()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(
+            dir, ("Ok", null), ("Bad", null), ("Flaky", null), ("Cyc", null));
+        var content = MainWindowHost.Realize(window);
+        MainWindowHost.AcceptSends(vm);
+
+        // "Cyc" bir döngü üyesi olacak — NewWithProjects'in düz Node() yardımcısı InCycle taşımaz (hep false).
+        // Topoloji burada AYNI YAPIYLA (imza değişmez: TopologySignature Id/Ad/LayerIndex/LayerName/Dependencies
+        // okur, InCycle'ı BİLEREK dışarıda bırakır — RunViewModel.Workspace.cs'teki o alanın yorumuna bkz.) ama
+        // Cyc.InCycle=true olarak yeniden yayınlanır: satır VE _vm.Topology reconciliation'da (OnWorkspaceTopology)
+        // güncellenir; graf az sonraki BuildPreviewEvent'in RowDecisionsChanged'ıyla bunu okur (PushGraphStatuses
+        // her seferinde GraphBinder.Nodes'u TAZE hesaplar).
+        var withCycle = new[]
+        {
+            MainWindowHost.Node("Ok", 0), MainWindowHost.Node("Bad", 1), MainWindowHost.Node("Flaky", 2),
+            new ProjectNode(MainWindowHost.IdOf("Cyc"), "Cyc", MainWindowHost.IdOf("Cyc"), ["Osys"], [], 3,
+                null, null, InCycle: true, WillBuild: null),
+        };
+        vm.OnEvent(new WorkspaceTopologyEvent(withCycle, [], [], []));
+
+        // Event script'i RunViewModelStateTests.A_second_build_keeps_the_greens_of_the_first'teki diziyle AYNI
+        // kalıp: build preview + reason'lar, sonra proje eventleri, sonra RunCompleted.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(MainWindowHost.IdOf("Ok"), "Ok", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(MainWindowHost.IdOf("Bad"), "Bad", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(MainWindowHost.IdOf("Flaky"), "Flaky", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(MainWindowHost.IdOf("Cyc"), "Cyc", true, Reason: WillBuildReason.SignatureChanged),
+        ]));
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("Ok"), "Ok"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("Ok"), 900));
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("Bad"), "Bad"));
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("Bad"), 900, "exit 1", Evidence: true));
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("Flaky"), "Flaky"));
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("Flaky"), 900, "timeout", Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 2, 0, 0, 2700));
+        content.UpdateLayout();
+
+        ProjectRow? cycListRow = null;
+        foreach (string name in new[] { "Ok", "Bad", "Flaky", "Cyc" })
+        {
+            var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf(name));
+            var node = VisualOf(window, name);
+            var listRow = ListRowOf(content, row.Id);
+            if (name == "Cyc") cycListRow = listRow;
+
+            // Liste ve graf AYNI görsel durumu okur — mimarinin tek kaynağı (VisualStatus) ikisine de ulaşmış.
+            Assert.Equal(row.VisualStatus, node.Model.Visual);
+            // Düğüm çerçevesi TOKEN'IN realize edilmiş fırçasıyla AYNI renk.
+            Assert.Equal(DsResources.TokenColor(window, VisualStatuses.NodeBorderBrushKey(row.VisualStatus)),
+                DsResources.ColorOf(node.Square.Stroke));
+            // Satır şeridi TOKEN'IN realize edilmiş fırçasıyla AYNI renk.
+            Assert.Equal(DsResources.TokenColor(window, VisualStatuses.StripeBrushKey(row.VisualStatus)),
+                DsResources.ColorOf(listRow.Stripe.Fill));
+        }
+
+        // Kanıtsız hata (Flaky) KIRMIZI DEĞİL — bayat/gri ailesinde kalır.
+        var flaky = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("Flaky"));
+        Assert.Equal(VisualStatus.Stale, flaky.VisualStatus);
+        Assert.NotEqual(VisualStatus.Failed, flaky.VisualStatus);
+
+        // Döngü üyesinin küpü HER DURUMDA amber; şeridi KENDİ gerçek (bayat) rengini korur — ikisi KARIŞMAZ.
+        var cyc = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("Cyc"));
+        Assert.True(cyc.InCycle);
+        Assert.Equal(VisualStatus.Stale, cyc.VisualStatus);
+        Assert.Equal(DsResources.TokenColor(window, "Brush.AmberText"), CoreColour(window, "Cyc"));
+        Assert.Equal("Brush.StatusSkippedBorder", VisualStatuses.StripeBrushKey(cyc.VisualStatus)); // gri aile, amber DEĞİL
+        Assert.NotEqual(CoreColour(window, "Cyc"), DsResources.ColorOf(cycListRow!.Stripe.Fill));
     }
 }
