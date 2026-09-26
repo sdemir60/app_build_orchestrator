@@ -1062,6 +1062,185 @@ public class SyncWorkspaceServiceTests
         Assert.Equal((0, 1, 1), (done.ChangedCount, done.ToBuildCount, done.UpToDateCount));
     }
 
+    // ---------------------------------------------------------------- [Task 5] clean → sync zinciri (rehber 33)
+
+    /// <summary>[Task 5] <see cref="CleanWorkspaceServiceTests.NewService"/> ile AYNI kurulum (kopya YASAK) —
+    /// üretim varsayılan retry gecikmesini no-op'a çeviren dikiş burada da kurulur, gerçek bekleme YOK (D8).</summary>
+    private static CleanWorkspaceService NewCleanService(string cacheRoot) =>
+        new(new WorkspaceScanner(), new BuildStateStore(cacheRoot)) { DeleteRetryDelay = _ => { } };
+
+    /// <summary>Clean'i koşar ve olaylarını toplar (<see cref="CleanWorkspaceServiceTests.Run"/> deseni).</summary>
+    private static List<IpcEvent> RunClean(CleanWorkspaceService service, string root)
+    {
+        var events = new List<IpcEvent>();
+        service.Run(new CleanWorkspaceCommand(root), events.Add);
+        return events;
+    }
+
+    /// <summary>[Task 5] <see cref="LegacyFixture.CreateClassLib"/>'in OutputPath'ini repo kökündeki paylaşılan
+    /// bir <c>Output\</c> klasörüne yönlendirir (OSYS'teki ortak OutDir deseni — bkz. <c>CleanWorkspaceServiceTests</c>
+    /// içindeki <c>sharedOutput</c> fixture'ı); gövdenin gerisi AYNI fixture'dan gelir (kopya YASAK).</summary>
+    private static void CommitSharedOutputWorkspace(GitTestRepo repo, string name)
+    {
+        string csproj = LegacyFixture.CreateClassLib(Path.Combine(repo.RootPath, "src", name), name);
+        File.WriteAllText(csproj, File.ReadAllText(csproj).Replace(
+            @"<OutputPath>bin\Debug\</OutputPath>", @"<OutputPath>..\..\Output\</OutputPath>"));
+        repo.CommitAll("legacy-shared-output");
+    }
+
+    /// <summary>[Task 5] <c>src\{ad}</c> projesinin paylaşılan klasördeki (repo kökü\<c>Output\</c>) elle
+    /// yazılmış derleme kanıtı — <see cref="LegacyFixture.WriteBuiltOutput"/>'un paylaşılan-OutputPath karşılığı.</summary>
+    private static string WriteSharedOutput(GitTestRepo repo, string name)
+    {
+        string path = Path.Combine(repo.RootPath, "Output", name + ".dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, new byte[16]);
+        return path;
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (a)] Varsayılan OutputPath'te (<c>bin\Debug\</c>) derleme
+    /// kanıtının KENDİSİ bin'in içindedir: bakım Clean'i onu obj'yle BİRLİKTE siler, kanıt tamamen ortadan
+    /// kalkar ve zaman kontrolü <see cref="TimeVerdict.Missing"/> okur — gerekçe <c>OutputMissing</c>, etiket
+    /// "never built" gibi görünür.
+    /// </summary>
+    [Fact]
+    public async Task A_tool_built_project_at_the_default_output_path_reads_output_missing_after_clean()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        string dll = WriteBuiltOutput(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+        await PrimeBuildStateAsUpToDateAsync(repo.RootPath, cacheRoot); // "araç derledi" — güncel bir kayıt var
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // bin (DLL dahil) + obj + defter kaydı gider
+        Assert.False(File.Exists(dll), "bakım Clean'i bin'i DLL'iyle birlikte silmeli");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputMissing), (x.WillBuild, x.Reason));
+        Assert.Null(x.OutputBuiltAt);
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (b), asıl pin] REHBER burada yeşil (<c>BuiltOutside</c>)
+    /// BEKLİYORDU: "OutputPath'i paylaşılan klasör olan proje bakım Clean'inden sonra da yeşil görünebilir"
+    /// diye çıkarım yapmıştı — gerekçesi, Clean'in paylaşılan çıktıya hiç dokunmamasıydı. GERÇEK farklı: bakım
+    /// Clean'i projenin KENDİ <c>obj</c>'sini siler (paylaşılan çıktıdan bağımsız bir işlemdir) ve obj proje
+    /// klasörünün DİREKT alt öğesi olduğu için silinmesi klasörün KENDİ mtime'ını ilerletir; zaman kontrolü
+    /// klasörü kanıttan yeni bulur (<see cref="TimeVerdict.OwnNewer"/>) ve gerekçe <c>OutputStale</c> olur —
+    /// etiket gri "modified", REHBERİN beklediği yeşil DEĞİL.
+    /// </summary>
+    [Fact]
+    public async Task A_shared_output_project_with_an_obj_folder_reads_modified_after_clean_not_built_outside()
+    {
+        using var repo = new GitTestRepo();
+        CommitSharedOutputWorkspace(repo, "X");
+        string projectDir = Path.Combine(repo.RootPath, "src", "X");
+        Directory.CreateDirectory(Path.Combine(projectDir, "obj", "Debug"));
+        File.WriteAllText(Path.Combine(projectDir, "obj", "Debug", "X.csproj.FileListAbsolute.txt"), "intermediate");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []);
+        string sharedDll = WriteSharedOutput(repo, "X");
+        File.SetLastWriteTimeUtc(sharedDll, EvidenceTimes.EvidenceAt);
+        string cacheRoot = NewCacheRoot();
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // paylaşılan DLL'e dokunmaz, projenin obj'sini siler
+        Assert.False(Directory.Exists(Path.Combine(projectDir, "obj")));
+        Assert.True(File.Exists(sharedDll), "paylaşılan çıktı Clean'in silme kümesinin DIŞINDA kalmalı");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (c)] (b) ile AYNI paylaşılan OutputPath, FAKAT projede hiç
+    /// <c>obj</c>/<c>bin</c> yok: bakım Clean'inin proje klasöründen silecek hiçbir şeyi yoktur, klasörün
+    /// mtime'ı İLERLEMEZ ve zaman kontrolü tazedir. Yeşilin (<c>BuiltOutside</c>) mümkün olduğu TEK biçim
+    /// budur — rehberin genel kuralı burada, ve YALNIZ burada, doğru çıkıyor.
+    /// </summary>
+    [Fact]
+    public async Task A_shared_output_project_without_obj_or_bin_still_reads_built_outside_after_clean()
+    {
+        using var repo = new GitTestRepo();
+        CommitSharedOutputWorkspace(repo, "X");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), []);
+        string sharedDll = WriteSharedOutput(repo, "X");
+        File.SetLastWriteTimeUtc(sharedDll, EvidenceTimes.EvidenceAt);
+        string cacheRoot = NewCacheRoot();
+
+        var cleanEvents = RunClean(NewCleanService(cacheRoot), repo.RootPath);
+        Assert.Equal(0, Assert.IsType<CleanCompletedEvent>(cleanEvents[^1]).FoldersRemoved); // silecek hiçbir şey yok
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (x.WillBuild, x.Reason));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (d)] Kilitli bin DLL'i Clean'in silme denemesinden sağ çıkar
+    /// (kanıt yerinde durur, K-6) ama AYNI projenin kilitsiz <c>obj</c>'si gider — (b)'deki AYNI mekanizma: obj'nin
+    /// gitmesi proje klasörünün mtime'ını ilerletir ve zaman kontrolü <c>OwnNewer</c> okur. Kilitli dosya Clean'i
+    /// DURDURMAZ ve kısmen başarısız bir Clean de gerçeği DEĞİŞTİRMEZ — sonuç (b) ile AYNI: gri "modified".
+    /// </summary>
+    [Fact]
+    public async Task A_locked_bin_dll_survives_clean_but_its_deleted_obj_still_reads_modified()
+    {
+        using var repo = new GitTestRepo();
+        CommitLegacyWorkspace(repo, "X");
+        string dll = WriteBuiltOutput(repo, "X");
+        string projectDir = Path.Combine(repo.RootPath, "src", "X");
+        Directory.CreateDirectory(Path.Combine(projectDir, "obj", "Debug"));
+        File.WriteAllText(Path.Combine(projectDir, "obj", "Debug", "X.csproj.FileListAbsolute.txt"), "intermediate");
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+
+        using (new FileStream(dll, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var cleanEvents = RunClean(NewCleanService(cacheRoot), repo.RootPath);
+            Assert.True(Assert.IsType<CleanCompletedEvent>(cleanEvents[^1]).LockedFileCount >= 1);
+        } // handle burada bırakılır — Clean'in kilitli-dosya denemesi bundan sonrasını GÖRMEZ
+
+        Assert.True(File.Exists(dll), "kilitli DLL silinemez, kanıt yerinde durmalı");
+        Assert.False(Directory.Exists(Path.Combine(projectDir, "obj")), "obj kilitsizdi — gitmeli");
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
+        Assert.Equal((true, WillBuildReason.OutputStale, true), (x.WillBuild, x.Reason, x.OwnFilesChanged));
+    }
+
+    /// <summary>
+    /// [Task 5 — rehber madde 33'ün çıkarımı, durum (e)] SDK-style projede <c>OutputFileFor</c> HER ZAMAN
+    /// <c>null</c>'dur (<c>CsprojEvaluator.IsSdkStyle</c> ⇒ kanıtsız) — Clean'in bin'i gerçekten silmiş olması
+    /// kararı DEĞİŞTİRMEZ, çünkü zaman yolu hiç yoktu. Kanıtsız projede bugünkü karar hep <c>NeverBuilt</c>'tir;
+    /// bu senaryonun tek konusu Clean'in de bu kararı bozmadığıdır.
+    /// </summary>
+    [Fact]
+    public async Task An_sdk_style_project_reads_never_built_after_clean_with_no_derivable_output_path()
+    {
+        using var repo = new GitTestRepo();
+        WriteWorkspace(repo);
+        repo.CommitAll("c1");
+        string dll = Path.Combine(repo.RootPath, "src", "A", "bin", "Debug", "net10.0", "A.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        File.WriteAllBytes(dll, new byte[16]);
+        EvidenceTimes.Stamp(Path.Combine(repo.RootPath, "src"), [dll]);
+        string cacheRoot = NewCacheRoot();
+
+        RunClean(NewCleanService(cacheRoot), repo.RootPath); // A'nın bin'i gerçekten silinir
+        Assert.False(File.Exists(dll));
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.Equal((true, WillBuildReason.NeverBuilt), (i.WillBuild, i.Reason)));
+    }
+
     // ---------------------------------------------------------------- yardımcı
 
     /// <summary>Çalıştırılan git argüman listelerini kaydeder, çağrıyı gerçek <see cref="ProcessRunner"/>'a geçirir (K1 kanıtı).</summary>
