@@ -356,12 +356,19 @@ public sealed class SyncWorkspaceService(
                     checks.GetValueOrDefault(n.Id), state, n.Id, contentById.GetValueOrDefault(n.Id)),
                 StringComparer.OrdinalIgnoreCase);
 
+            // [kullanıcı kararı — waiting = up to date] conditionalIds ToBuild'ten çıkarılan AYNI kümedir
+            // (yukarıda): koşullu bir proje kesin derlenecek SAYILMAZ, ama bu onu hiçbir kovaya düşmeyen bir
+            // üçüncü hâlde bırakmaz — yeşil ✓ + ⚠ ile "güncel" görünen bir satırdır (son sağlıklı çıktıya karşı
+            // derlenmiş) ve özet sayımında UP TO DATE'e eklenir. Şeridin zaten yaptığı ayrımla AYNI kural
+            // (RibbonText ~143-144, totalProjects - willBuild): ToBuild hariç KALAN her proje güncel sayılır,
+            // toplam asla proje sayısının altında kalmaz. Eski kural ikisini de saymıyordu — özet satırı
+            // "N to build" + "M up to date" toplamı proje sayısını TUTMUYORDU.
             return new WillBuildOutcome(
                 Plan: safePlan,
                 OwnFilesChanged: ownFilesChanged,
                 Changed: changedForCounter.Count,
                 ToBuild: safePlan.Nodes.Count(n => n.WillBuild == true) - conditionalIds.Count,
-                UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false),
+                UpToDate: safePlan.Nodes.Count(n => n.WillBuild == false) + conditionalIds.Count,
                 Known: true,
                 ConditionalIds: conditionalIds,
                 LocalEditsIds: localEditsIds,

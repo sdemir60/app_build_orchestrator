@@ -344,7 +344,11 @@ public sealed record PlanProgressEvent(string Line) : IpcEvent;
 /// pass'inin <c>DependentMode.Fast</c> (cascade YOK) sonucudur. <paramref name="ToBuildCount"/>'tan TÜRETİLEMEZ:
 /// o küme transitive dependent'ları da içerir (§3.1 "7 changed projects, 14 to build" tam olarak bu farktır).</param>
 /// <param name="ToBuildCount">[A5/T69] Will-build kümesinin boyutu (<c>DependentMode.Safe</c> — dirty + transitive dependent).</param>
-/// <param name="UpToDateCount">[A5/T69] Güncel (<c>WillBuild=false</c>) proje sayısı — Build'de pre-skip edilecekler.</param>
+/// <param name="UpToDateCount">[A5/T69] Güncel proje sayısı — Build'de pre-skip edilecekler. [kullanıcı kararı —
+/// waiting = up to date] <c>WillBuild=false</c> olanların YANINDA, <paramref name="ToBuildCount"/>'tan çıkarılan
+/// koşullu (<c>WaitingForDependency</c>) projeleri de kapsar: onlar kesin derlenecek SAYILMAZ ama üçüncü bir
+/// kovaya da düşmez, güncel sayılır — şeridin <c>totalProjects - willBuild</c> ile zaten yaptığı ayrımla AYNI
+/// kural.</param>
 /// <param name="Behind">[v1.16.0] Yerel HEAD'in <c>origin/&lt;branch&gt;</c>'ten kaç commit geride olduğu —
 /// alt bardaki <c>N behind</c> chip'i bunu okur. Fetch'siz Sync'te son bilinen uzak uca göre hesaplanır.
 /// <c>null</c> ⇒ mesafe BİLİNMİYOR (fetch degrade oldu, uzak ref yok ya da detached HEAD): chip çizilmez, uydurma sayı gösterilmez. Alan default'lu: eski NDJSON
