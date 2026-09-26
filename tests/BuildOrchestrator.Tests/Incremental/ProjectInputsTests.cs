@@ -74,6 +74,22 @@ public sealed class ProjectInputsTests : IDisposable
     }
 
     [Fact]
+    public void ide_vcs_and_package_manager_folders_are_not_inputs()
+    {
+        // VS ".vs"e sürekli yazar, repo kökünde ".git" oturur, npm "node_modules" bırakır — hiçbiri kaynak
+        // değildir ve build-etkileyen bir uzantı (.cs) taşısalar bile girdi sayılmamalı.
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        Write(@"src\A\.vs\Generated.cs", "// vs cache");
+        Write(@"src\A\.git\Generated.cs", "// git internal");
+        Write(@"src\A\node_modules\Generated.cs", "// npm");
+        string real = Write(@"src\A\Real.cs", "class Real {}");
+
+        var inputs = PathsOf(csproj);
+
+        Assert.Equal([csproj, real], [.. inputs.OrderBy(p => p, StringComparer.OrdinalIgnoreCase)]);
+    }
+
+    [Fact]
     public void a_file_linked_from_outside_the_project_folder_is_an_input()
     {
         string csproj = Write(@"src\A\A.csproj", "<Project/>");
@@ -183,6 +199,26 @@ public sealed class ProjectInputsTests : IDisposable
         Assert.Contains(viewsDir, folders);
         Assert.DoesNotContain(folders, f => f.StartsWith(objDir, StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(folders, f => f.StartsWith(binDir, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void The_swept_folders_do_not_include_ide_vcs_or_package_manager_folders()
+    {
+        string csproj = Write(@"src\A\A.csproj", "<Project/>");
+        Write(@"src\A\.vs\Cache.cs", "// vs cache");
+        Write(@"src\A\.git\Cache.cs", "// git internal");
+        Write(@"src\A\node_modules\Cache.cs", "// npm");
+        string projectDir = Path.Combine(_root, "src", "A");
+        string vsDir = Path.Combine(projectDir, ".vs");
+        string gitDir = Path.Combine(projectDir, ".git");
+        string nodeModulesDir = Path.Combine(projectDir, "node_modules");
+
+        var (_, folders) = ProjectInputs.CollectWithFolders(csproj, null, _root);
+
+        Assert.Contains(projectDir, folders);
+        Assert.DoesNotContain(folders, f => f.StartsWith(vsDir, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(folders, f => f.StartsWith(gitDir, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(folders, f => f.StartsWith(nodeModulesDir, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

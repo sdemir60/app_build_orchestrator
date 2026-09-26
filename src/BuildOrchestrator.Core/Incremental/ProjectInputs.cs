@@ -15,9 +15,11 @@ public readonly record struct ProjectInput(string Path);
 /// <para><b>Küme dört kaynaktan gelir:</b> (1) <c>.csproj</c>'un kendisi; (2) csproj'un BİLDİRDİĞİ öğeler
 /// (<see cref="EvaluatedProject.CompileFiles"/> ve <see cref="EvaluatedProject.ResourceFiles"/>) — bunlar
 /// proje klasörünün DIŞINA link verilmiş dosyaları da yakalar; (3) proje klasörü altındaki derleme-etkileyen
-/// uzantılı TÜM dosyalar (<c>obj</c>/<c>bin</c> hariç) — csproj'da bildirilmemiş ama derlemeye giren, git'e
-/// eklenmemiş ya da gitignore'lanmış dosyalar ancak böyle görünür; (4) proje klasöründen yukarı yürürken
-/// bulunan <c>Directory.Build.props</c> / <c>Directory.Build.targets</c> / <c>Directory.Packages.props</c>.</para>
+/// uzantılı TÜM dosyalar (<see cref="WorkspaceScanner.BuildOutputFolderNames"/> ve
+/// <see cref="WorkspaceScanner.ExternalToolingFolderNames"/> — <c>obj</c>/<c>bin</c>, <c>.git</c>/<c>.vs</c>/
+/// <c>node_modules</c> — hariç) — csproj'da bildirilmemiş ama derlemeye giren, git'e eklenmemiş ya da
+/// gitignore'lanmış dosyalar ancak böyle görünür; (4) proje klasöründen yukarı yürürken bulunan
+/// <c>Directory.Build.props</c> / <c>Directory.Build.targets</c> / <c>Directory.Packages.props</c>.</para>
 ///
 /// <para><b>Yukarı yürüme MSBuild'in kuralını izler:</b> her ad için İLK bulunan dosya alınır ve o adın
 /// araması orada biter. Arama, proje çalışma alanı kökünün altındaysa kökte durur; harici bir kökten gelen
@@ -48,8 +50,9 @@ public static class ProjectInputs
     /// klasörleri de döner. "Zaman modu"nda bir klasörün mtime'ı bir dosya silme/yeniden adlandırmayı
     /// yakalar — içerik imzasına giren <see cref="Files"/> Collect'in döndüğüyle birebir aynıdır.
     /// </summary>
-    /// <returns><c>Files</c>: Collect ile aynı küme. <c>Folders</c>: proje klasörü dahil, <c>obj</c>/<c>bin</c>
-    /// hariç, gezilen tüm klasörler — tam yol, sıralı, harf büyüklüğünden bağımsız tekilleştirilmiş.</returns>
+    /// <returns><c>Files</c>: Collect ile aynı küme. <c>Folders</c>: proje klasörü dahil,
+    /// <c>obj</c>/<c>bin</c>/<c>.git</c>/<c>.vs</c>/<c>node_modules</c> hariç, gezilen tüm klasörler — tam yol,
+    /// sıralı, harf büyüklüğünden bağımsız tekilleştirilmiş.</returns>
     public static (IReadOnlyList<ProjectInput> Files, IReadOnlyList<string> Folders) CollectWithFolders(
         string projectFile, EvaluatedProject? evaluated, string workspaceRoot)
     {
@@ -84,11 +87,13 @@ public static class ProjectInputs
 
     /// <summary>
     /// Proje klasörünün altındaki derleme-etkileyen dosyalar; AYNI yürüyüşte gezilen klasörleri de
-    /// <paramref name="intoFolders"/>'a toplar (proje klasörü dahil, <c>obj</c>/<c>bin</c> hariç — onlar hiç
-    /// yığına girmediği için zaten toplanmazlar).
+    /// <paramref name="intoFolders"/>'a toplar (proje klasörü dahil, <see cref="WorkspaceScanner.IsSkippedFolder"/>
+    /// hariç — <c>obj</c>/<c>bin</c> ve <c>.git</c>/<c>.vs</c>/<c>node_modules</c> hiç yığına girmediği için
+    /// zaten toplanmazlar).
     ///
-    /// <para>Yürüyüş elle yapılır çünkü <c>obj</c>/<c>bin</c> dizinlerine HİÇ GİRİLMEMELİDİR: onları
-    /// enumerate edip sonra elemek, bir derleme çıktısındaki binlerce dosyayı boşuna gezmek olurdu.</para>
+    /// <para>Yürüyüş elle yapılır çünkü <c>obj</c>/<c>bin</c> gibi derleme çıktısı dizinlerine HİÇ
+    /// GİRİLMEMELİDİR: onları enumerate edip sonra elemek, bir derleme çıktısındaki binlerce dosyayı boşuna
+    /// gezmek olurdu — aynı maliyet gerekçesi <c>.git</c>/<c>node_modules</c> için de geçerlidir.</para>
     /// </summary>
     private static void SweepFolder(string projectDir, SortedSet<string> into, SortedSet<string> intoFolders)
     {
@@ -110,7 +115,7 @@ public static class ProjectInputs
 
                 foreach (string sub in Directory.EnumerateDirectories(dir))
                 {
-                    if (IsBuildOutputFolder(Path.GetFileName(sub))) continue;
+                    if (WorkspaceScanner.IsSkippedFolder(Path.GetFileName(sub))) continue;
                     pending.Push(sub);
                 }
             }
@@ -144,8 +149,4 @@ public static class ProjectInputs
             dir = dir.Parent;
         }
     }
-
-    private static bool IsBuildOutputFolder(string folderName) =>
-        folderName.Equals("obj", StringComparison.OrdinalIgnoreCase)
-        || folderName.Equals("bin", StringComparison.OrdinalIgnoreCase);
 }

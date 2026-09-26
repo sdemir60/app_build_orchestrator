@@ -203,6 +203,26 @@ public sealed class OutputEvidenceTests : IDisposable
         Assert.Equal(TimeVerdict.OwnNewer, check.Time);
     }
 
+    /// <summary>[Task T1] VS'nin sürekli yazdığı <c>.vs</c> önbelleğine kanıttan yeni tarihli bir dosya düşmesi
+    /// verdict'i DEĞİŞTİRMEMELİ: <see cref="ProjectInputs.CollectWithFolders"/>'ın gerçek klasör taraması
+    /// (bu testte <c>Check</c>'in sabit tek-klasör listesi DEĞİL, üretimin kullandığı gerçek tarama) kullanılır
+    /// — <c>.vs</c> taranan klasör kümesine hiç girmediği için zamanı da hiç okunmaz (Fresh kalır).</summary>
+    [Fact]
+    public void A_new_file_under_dot_vs_leaves_the_verdict_fresh()
+    {
+        Touch(@"P\P.csproj", T0);
+        Touch(InputRel, T0);
+        Touch(EvidenceRel, ToolBuilt);
+        Touch(@"P\.vs\Generated.cs", Later);
+        Stamp(FolderRel, T0);
+        Stamp(@"P\.vs", Later);
+
+        var (files, folders) = ProjectInputs.CollectWithFolders(Full(@"P\P.csproj"), null, _dir.Path);
+        var check = OutputEvidence.Inspect(Outputs(), state: null, [.. files.Select(f => f.Path)], folders, []);
+
+        Assert.Equal(TimeVerdict.Fresh, check.Time);
+    }
+
     /// <summary>§7-23 (zaman kipi): bağımlılık D değişti ve derlendi, P'ye dokunulmadı — D'nin HintPath hedefi
     /// P'nin çıktısından yeni ⇒ <c>DependencyNewer</c> (<c>affected</c>, kendi dosyaları değişmedi). Olmayan
     /// HintPath hedefi yok sayılır.</summary>

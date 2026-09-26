@@ -687,8 +687,10 @@ A project's inputs are the union of four sources, de-duplicated and sorted:
 - the `.csproj` itself;
 - the items it declares — `Compile`, plus `Page`, `ApplicationDefinition`, `EmbeddedResource` and `Resource`
   (this is what catches a `.xaml` or `.resx` **linked from outside** the project folder);
-- every build-affecting file under the project folder, `obj/` and `bin/` excluded — this is what catches files
-  that are not declared, not committed, or ignored by version control;
+- every build-affecting file under the project folder, `obj/`, `bin/`, `.git/`, `.vs/` and `node_modules/`
+  excluded — this is what catches files that are not declared, not committed, or ignored by version control;
+  the excluded names are the same ones the workspace scan skips (§6.1), read from one shared list so the two
+  scans cannot silently drift apart;
 - the nearest `Directory.Build.props`, `Directory.Build.targets` and `Directory.Packages.props` found walking
   up from the project folder (MSBuild's own rule: the first hit for each name wins, and the walk stops at the
   workspace root).
