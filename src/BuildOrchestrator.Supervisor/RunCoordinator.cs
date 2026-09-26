@@ -1117,7 +1117,12 @@ public sealed class RunCoordinator(
             try
             {
                 if (members.Count == 0) await BuildProjectAsync(run, projectId, ct);
-                else await BuildCycleGroupAsync(run, members, ct);
+                // [grup koşullu atlama] Tekil projenin §8.3 kuralının grup-atomik hâli: tüm üyeler yalnız
+                // köklerini bekliyorsa ve kökler bu koşuda da hâlâ kırıksa grup HİÇ derlenmez — yeniden
+                // derlemek herkesi aynı bayat köke yeniden link'lemekten başka bir şey yapmazdı (sahada
+                // ölçüldü: kırık bir kök, 17 üyeli grubu her Resolve basışında ~98 sn boşuna derletiyordu).
+                else if (!TrySkipGroupWhileDependenciesStillFail(run, members))
+                    await BuildCycleGroupAsync(run, members, ct);
             }
             finally { run.Wake.WakeAll(); } // Complete edildi (ya da patladı) → parked worker'lar yeniden baksın
         }
@@ -1355,6 +1360,81 @@ public sealed class RunCoordinator(
     /// FIRLATMAYAN biçimde yapılır: buradan gelecek bir exception Complete'i atlatabilirdi.</summary>
     private static string NameOf(RunContext run, string projectId) =>
         run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+
+    /// <summary>
+    /// [grup koşullu atlama] Dispatch edilmiş bir SCC'yi, uygunsa DERLEMEDEN atlar ve <c>true</c> döner.
+    /// Uygunluk saf kuralda (<see cref="ConditionalRebuild.GroupAppliesTo"/>); kökler üye başına
+    /// <see cref="ConditionalRebuild.Decide"/>'a sorulur ve TEK düzelen kök grubu normal derletir (o zaman
+    /// <c>false</c> döner ve çağıran <see cref="BuildCycleGroupAsync"/>'i koşar). Karar anı grubun dispatch
+    /// anıdır: dışarıdaki tüm bağımlılıklar (dolayısıyla kökler) bu koşuda terminaldir — tekil projenin
+    /// <see cref="TrySkipWhileDependencyStillFails"/> kuralıyla aynı an, aynı kanıt sırası.
+    ///
+    /// <para>Atlamada tekil yolun sözleşmesi birebir korunur: defter kaydına DOKUNULMAZ (not, kökler, imza
+    /// aynen kalır — kök düzelince derlenecek), kökler birikime yazılır (bağımlılar notu miras alır),
+    /// her üye kendi <c>finally</c>'siyle TAM BİR KEZ <see cref="ReadySetScheduler.Complete"/> edilir.
+    /// Karar hesabında beklenmedik hata ⇒ grup DERLENİR (güvenli yön, tekil yol gibi).</para>
+    /// </summary>
+    private bool TrySkipGroupWhileDependenciesStillFail(RunContext run, IReadOnlyList<string> allMembers)
+    {
+        // Yalnız gerçekten dispatch edilmiş üyeler Complete borcu taşır (BuildCycleGroupAsync ile AYNI filtre).
+        var completedAtDispatch = run.Scheduler.Completed;
+        var members = allMembers
+            .Where(id => run.NodeById.ContainsKey(id) && !completedAtDispatch.ContainsKey(id))
+            .ToList();
+        if (members.Count == 0) return false;
+
+        try
+        {
+            var nodes = new List<ProjectNode>(members.Count);
+            foreach (string id in members)
+            {
+                if (!run.NodeById.TryGetValue(id, out var node)) return false; // savunmacı: bilinmeyen üye → derle
+                nodes.Add(node);
+            }
+            if (!ConditionalRebuild.GroupAppliesTo(nodes)) return false;
+
+            foreach (var node in nodes)
+            {
+                if (node.WillBuild != true) continue; // güncel üye kısıt üretmez
+                var recorded = run.LedgerAtStart?.GetValueOrDefault(node.Id);
+                if (ConditionalRebuild.Decide(recorded?.DepIssueRoots, run.Scheduler.Completed,
+                        run.NodeById.ContainsKey, run.LedgerAtStart, ReasonOf(run))
+                    != ConditionalRebuildVerdict.DependencyStillFailing)
+                    return false; // bir kök düzeldi: grup normal derlenir
+            }
+        }
+        catch (Exception ex)
+        {
+            console("warning: cycle group conditional check failed ("
+                + NameOf(run, allMembers[0]) + ") — building: " + ex.Message);
+            return false;
+        }
+
+        // Karar kesin: grup atlanır. Raporlama tekil yolun karşılığıdır; güncel üye kendi gerekçesini taşır.
+        foreach (string id in members)
+        {
+            var node = run.NodeById[id];
+            try
+            {
+                if (node.WillBuild != true)
+                {
+                    ReportSkipped(run.Events, run.Logs, run.RunId, id, node.Name,
+                        SkipReasons.UpToDate, cycleUnconverged: false);
+                    continue;
+                }
+                // GroupAppliesTo + Decide==StillFailing bu üyenin kayıtlı kökleri olduğunu garantiler.
+                var roots = run.LedgerAtStart?.GetValueOrDefault(id)?.DepIssueRoots;
+                if (roots is { Count: > 0 }) run.DepIssuesById[id] = roots; // birikim: miras kaybolmaz
+                string described = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
+                    roots, run.Scheduler.Completed, run.NodeById.ContainsKey, run.LedgerAtStart, ReasonOf(run),
+                    rootId => run.NodeById.GetValueOrDefault(rootId)?.Name ?? Path.GetFileNameWithoutExtension(rootId)));
+                ReportSkipped(run.Events, run.Logs, run.RunId, id, node.Name,
+                    SkipReasons.DependencyStillFailing, cycleUnconverged: false, detail: described);
+            }
+            finally { run.Scheduler.Complete(id, BuildResult.Skipped); }
+        }
+        return true;
+    }
 
     /// <summary>
     /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda build-order sırasıyla ve SIRALI invoke

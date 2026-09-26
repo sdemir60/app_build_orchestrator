@@ -1476,6 +1476,108 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    // ---------------------------------------------------------------- 15) grup koşullu atlama
+
+    /// <summary>Up kökü kırık; A↔B üyelerinin İKİSİ de yalnız "kökü bekliyor" (WaitingForDependency + defter
+    /// notunda kök Up). Ledger + plan bu durumu kurar; Up bu koşuda yine patlar.</summary>
+    private static (BuildStateStore Store, RunPlan Plan) WaitingCyclePlan(string cacheRoot,
+        WillBuildReason bReason = WillBuildReason.WaitingForDependency)
+    {
+        var store = new BuildStateStore(cacheRoot);
+        store.Upsert(new BuildState(Id("Up"), "up-sig", LastResult: BuildResult.Failed,
+            LastRunAt: DateTimeOffset.UtcNow.AddDays(-1)));
+        store.Upsert(new BuildState(Id("A"), "old", "sha", BuildResult.Succeeded,
+            DateTimeOffset.UtcNow.AddDays(-1), DepIssue: true, DepIssueRoots: [Id("Up")]));
+        store.Upsert(new BuildState(Id("B"), "old", "sha", BuildResult.Succeeded,
+            DateTimeOffset.UtcNow.AddDays(-1), DepIssue: true, DepIssueRoots: [Id("Up")]));
+        var plan = CyclePlanOf(["A", "B"],
+            Node("Up", willBuild: true) with { WillBuildReason = WillBuildReason.LastFailed },
+            Node("A", deps: ["Up", "B"], inCycle: true, willBuild: true)
+                with { WillBuildReason = WillBuildReason.WaitingForDependency },
+            Node("B", deps: ["A"], inCycle: true, willBuild: true) with { WillBuildReason = bReason })
+            with { Incremental = RunCoordinatorTests.Incremental("Up", "A", "B") };
+        return (store, plan);
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — grup koşullu atlama.]</b> Eski kural: bir SCC üyesi ASLA koşullu değerlendirilmez
+    /// ("bir üyeyi atlayıp diğerlerini derlemek grubu yarım bırakırdı") — dolayısıyla kökü kırık diye bekleyen
+    /// bir grup, kök düzelmeden de HER Resolve basışında baştan derlenirdi. Sahada ölçüldü: PRM kökü kırıkken
+    /// 17 üyeli UI grubu her basışta ~98 sn boşuna yeniden derleniyordu — üyeler aynı bayat köke yeniden
+    /// link'lenmekten başka hiçbir şey kazanmıyordu. Tekil projenin kuralı (§8.3: kök düzelince derle, hâlâ
+    /// kırıksa atla) GRUBUN TAMAMINA atomik uygulanınca "yarım grup" itirazı ortadan kalkar: ya herkes atlanır
+    /// ya herkes derlenir. Defter kayıtlarına DOKUNULMAZ — kök düzeldiği ilk koşuda grup normal derlenir
+    /// (aşağıdaki kontrol testi).
+    /// </summary>
+    [Fact]
+    public async Task a_cycle_group_only_waiting_for_a_still_failing_root_is_skipped_without_a_single_round()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["Up#1"], rec.Calls);                 // grup HİÇ derlenmedi — tek tur bile yok
+            Assert.Empty(h.Events.OfType<CycleRoundStartedEvent>());
+            var skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
+            Assert.Equal([Id("A"), Id("B")], skips.Select(e => e.ProjectId));
+            Assert.All(skips, e => Assert.Equal(SkipReasons.DependencyStillFailing, e.Reason));
+            Assert.Contains("A: skipped — dependency still failing (Up)", h.DecisionLog, StringComparison.Ordinal);
+            // Defter kaydı OLDUĞU GİBİ kalır: not, kökler, imza — kök düzelince aynı soru yeniden sorulacak.
+            var a = store.Load()[Id("A")];
+            Assert.Equal(BuildResult.Succeeded, a.LastResult);
+            Assert.Equal("old", a.BuiltSignature);
+            Assert.Equal([Id("Up")], a.DepIssueRoots);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Kontrol: kök bu koşuda DÜZELDİYSE grup normal derlenir — atlama yalnız "hâlâ kırık" kanıtına bağlı.
+    public async Task the_waiting_group_builds_normally_once_its_root_recovers()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((_, _) => Ok());          // Up bu koşuda yeşil
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["Up#1", "A#1", "B#1", "A#2", "B#2"], rec.Calls); // eski davranış aynen
+            Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Kontrol: TEK üye bile başka bir gerekçeyle kirliyse (imza değişti) grup DERLENİR — güvenli yön.
+    public async Task a_member_dirty_for_its_own_reason_keeps_the_whole_group_building()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot, bReason: WillBuildReason.SignatureChanged);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok());
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Contains("A#1", rec.Calls);                  // grup dispatch edildi
+            Assert.Contains("B#1", rec.Calls);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     /// <summary>[restore-once] Turlar arasında ne kaynak ne <c>packages.config</c> değişebilir: bir önceki
     /// turu BAŞARILI biten üyenin sonraki invoke'u restore prologunu taşımaz (başarılı invoke restore'u da
     /// içeriyordu). Başarısız üye yeniden restore ALIR — patlayan şey restore'un kendisi olabilir. packages.config'i

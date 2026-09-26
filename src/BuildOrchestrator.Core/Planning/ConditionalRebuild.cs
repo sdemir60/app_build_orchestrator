@@ -48,6 +48,33 @@ public static class ConditionalRebuild
         && node.WillBuildReason == WillBuildReason.WaitingForDependency;
 
     /// <summary>
+    /// [grup koşullu atlama] Bir SCC, dispatch anında GRUP OLARAK koşullu değerlendirilebilir mi.
+    /// <see cref="AppliesTo"/> üyeyi tek başına koşullu saymaz — bir üyeyi atlayıp diğerlerini derlemek grubu
+    /// yarım bırakırdı; grubun TAMAMI atlandığında ise yarım kalma yoktur ve tekil kural (kök düzelince derle,
+    /// hâlâ kırıksa atla) atomik olarak gruba uygulanabilir. Uygunluk: her üye ya güncel (<c>WillBuild==false</c>)
+    /// ya da YALNIZ kökünü bekliyor (<c>true</c> + <see cref="WillBuildReason.WaitingForDependency"/>) olmalı ve
+    /// en az bir bekleyen üye bulunmalıdır (hepsi güncel olsaydı grup zaten pre-skip edilirdi). Başka HERHANGİ
+    /// bir gerekçeyle kirli tek üye grubu derletir — güvenli yön. Kararın kendisi (kökler hâlâ kırık mı) üye
+    /// başına <see cref="Decide"/>'a sorulur; TEK düzelen kök bile grubu normal derletir.
+    /// </summary>
+    public static bool GroupAppliesTo(IReadOnlyList<ProjectNode> members)
+    {
+        ArgumentNullException.ThrowIfNull(members);
+        bool anyWaiting = false;
+        foreach (var member in members)
+        {
+            if (member.WillBuild == false) continue;
+            if (member.WillBuild == true && member.WillBuildReason == WillBuildReason.WaitingForDependency)
+            {
+                anyWaiting = true;
+                continue;
+            }
+            return false; // kendi sebebiyle kirli (imza/asla derlenmedi/hata…) ya da karar yok (null) → derle
+        }
+        return anyWaiting;
+    }
+
+    /// <summary>
     /// Koşullu projenin sırası geldiğinde kararı: köklerden EN AZ BİRİ başarılıysa (bu koşuda başarıyla
     /// derlendi, ya da bu koşuda derlenmedi ama defterdeki son sonucu başarı) derlenir; hepsi hâlâ hatalıysa
     /// (bu koşuda patladı, ya da derlenmedi ve defterdeki son sonucu hata) atlanır.
