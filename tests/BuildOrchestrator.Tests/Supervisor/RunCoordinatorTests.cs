@@ -1503,9 +1503,14 @@ public class RunCoordinatorTests
     }
 
     /// <summary>
-    /// KANITLI bir başarısızlık kaydı KISMİ birleştirir (bkz. <see cref="InvalidateBuildStateOnFailure"/>):
-    /// önceki başarının öğrendiği beslenen kopyalar dokunulmadan kalır — bir sonraki zaman kipi kontrolü onları
+    /// KANITLI bir başarısızlık kaydı KISMİ birleştirir (bkz. <see cref="InvalidateBuildStateOnFailure"/>,
+    /// satır 1940-1948'deki <c>with</c>): önceki başarının öğrendiği beslenen kopyalar, <c>BuiltSignature</c> VE
+    /// içerik özeti (<c>BuiltContent</c>) dokunulmadan kalır — bir sonraki zaman kipi/defter kontrolü onları
     /// hâlâ okuyabilmeli.
+    ///
+    /// <para>[PİN — rehber madde 13: "A'daki hatayı düzelt, Sync (Build yok) → A gri `modified`"]
+    /// <c>BuiltContent</c> bu merge'de kaybolursa <see cref="BuildStateStore.OwnFilesChanged"/> <c>null</c>'a
+    /// düşer ve hatayı düzeltip Sync'te satır `modified` yerine (daha ihtiyatlı) `affected` okunurdu.</para>
     /// </summary>
     [Fact]
     public async Task A_failure_keeps_the_recorded_copies()
@@ -1515,7 +1520,7 @@ public class RunCoordinatorTests
         {
             var store = new BuildStateStore(cacheRoot);
             store.Upsert(new BuildState(Id("A"), "sig", LastResult: BuildResult.Succeeded,
-                FedOutputs: [@"C:\shared\A.dll"]));
+                FedOutputs: [@"C:\shared\A.dll"], BuiltContent: "int A() { return 1; }"));
             var plan = new RunPlan(new BuildPlan([Node("A")], Cycles: [], Configuration: "Debug"),
                 EmptyRefs(), Incremental: Incremental("A"));
             var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Exit(1)));
@@ -1527,6 +1532,8 @@ public class RunCoordinatorTests
             var after = store.Load()[Id("A")];
             Assert.Equal(BuildResult.Failed, after.LastResult);
             Assert.Equal([@"C:\shared\A.dll"], after.FedOutputs); // önceki başarının öğrendiği kopyalar KORUNUR
+            Assert.Equal("sig", after.BuiltSignature); // Fast modun frozen-upstream tabanı da KORUNUR
+            Assert.Equal("int A() { return 1; }", after.BuiltContent); // BuiltContent KORUNUR (rehber 13 pini)
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

@@ -1,5 +1,6 @@
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Planning;
+using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Contracts.Model;
 
 namespace BuildOrchestrator.Tests.Planning;
@@ -119,6 +120,32 @@ public class WillBuildTests
 
         Assert.Equal(WillBuildReason.UpToDate, reason);
         Assert.False(willBuild);
+    }
+
+    /// <summary>[PİN — rehber madde 13: "A'daki hatayı düzelt, Sync (Build yok) → A gri `modified`"] Motorun
+    /// bir hatadan SONRA GERÇEKTEN yazdığı kayıt şekli (<c>InvalidateBuildStateOnFailure</c>'ın partial
+    /// merge'i: <c>BuiltSignature</c> korunur, <c>LastResult=Failed</c>, <c>FailedSignature</c>=hata anındaki
+    /// imza) üzerinden — hata düzeltilip kaynak imzası ne <c>BuiltSignature</c>'a (eski başarı) ne
+    /// <c>FailedSignature</c>'a (hatanın kendisi) eşit ÜÇÜNCÜ bir imzaya ilerlediğinde gerekçe
+    /// <c>SignatureChanged</c>'dir. Üstteki <see cref="reason_is_signature_changed_when_the_source_moved"/>
+    /// bu satırı <c>LastResult=Succeeded</c> bir kayıtla pinliyordu; motor bir hatadan sonra GERÇEKTE
+    /// <c>LastResult=Failed</c> yazar — bağ pinsizdi.</summary>
+    [Fact]
+    public void A_fixed_source_after_a_proven_failure_reads_SignatureChanged()
+    {
+        var state = new BuildState("A", BuiltSignature: "sig1", LastResult: BuildResult.Failed,
+            FailedSignature: "sig0", BuiltContent: "int A() { return 1; }");
+
+        var (willBuild, reason) = WillBuildEvaluator.EvaluateWithReason(false, "sig2", state, buildCycles: false);
+
+        Assert.Equal(WillBuildReason.SignatureChanged, reason);
+        Assert.True(willBuild);
+
+        // İkinci bağ (aynı rehber maddesinin "gri modified" iddiası): OwnFilesChanged imzadan değil, deftere
+        // yazılmış BuiltContent'in bugünkü içerikle karşılaştırmasından gelir (BuildStateStore.OwnFilesChanged)
+        // — burada içerik FARKLI olduğu için true okunur (etiketin `modified` demesinin dayandığı olgu).
+        var stored = new Dictionary<string, BuildState>(StringComparer.OrdinalIgnoreCase) { ["A"] = state };
+        Assert.True(BuildStateStore.OwnFilesChanged(stored, "A", "int A() { return 2; }"));
     }
 
     /// <summary>Kesilmiş deneme (ortam hatası, kill, timeout — Task 2'nin YAZMADIĞI durumlar): sonuç başarısız
