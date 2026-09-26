@@ -5,8 +5,9 @@ using BuildOrchestrator.Tests.App;
 namespace BuildOrchestrator.Tests.Git;
 
 /// <summary>
-/// [T11 · rehber madde 53] <c>new FileSystemWatcher(</c> inşasının kaynak-tarayan guard'ı: src altında bu
-/// inşa TEK bir dosyada yaşar.
+/// [T11 · rehber madde 53] <c>FileSystemWatcher</c> inşasının kaynak-tarayan guard'ı — klasik
+/// <c>new FileSystemWatcher(...)</c> ve target-typed <c>FileSystemWatcher x = new(...)</c> biçimlerinin
+/// İKİSİ de yakalanır: src altında bu inşa TEK bir dosyada yaşar.
 ///
 /// <para><b>Neden var:</b> "dosya kaydetmek Sync'i tetiklemez" garantisi tek bir öncüle dayanır —
 /// <c>HeadWatcher</c> yalnız <c>&lt;gitDir&gt;\logs\HEAD</c>'i izler; kaynak ağacına, <c>bin</c>/<c>obj</c>'a
@@ -15,8 +16,14 @@ namespace BuildOrchestrator.Tests.Git;
 /// guard'ı kırmadan yeni bir izleyici açamaz.</para>
 ///
 /// <para><b>İzin listesi DAR ve GEREKÇELİ:</b> yalnız <c>HeadWatcher</c>'ın kendi dosyası. Adet PİNLENMEZ
-/// ama dosya listesi pinlenir — yeni bir dosyaya <c>FileSystemWatcher</c> inşası eklemek guard'ı kırmızıya
-/// çeker.</para>
+/// ama dosya listesi pinlenir — yeni bir dosyaya <c>FileSystemWatcher</c> inşası eklemek (klasik ya da
+/// target-typed) guard'ı kırmızıya çeker.</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — review bulgusu]</b> Eski regex yalnız klasik <c>new FileSystemWatcher(</c>
+/// biçimini yakalıyordu; target-typed <c>FileSystemWatcher x = new(...)</c> (aynı satırda tip adı +
+/// değişken + <c>=</c> + <c>new(</c>) bu deseni atlayıp dört testi de sessizce yeşil bırakırdı. Regex artık
+/// İKİ alternatifin birleşimi — her iki biçim de
+/// <see cref="The_rule_recognises_a_watcher_that_sneaks_into_another_file"/> ile tek tek kanıtlanır.</para>
 ///
 /// <para><b>YAKALAYAMADIĞI (bilinçli sınır):</b> tip adını çalışma zamanında birleştirmek
 /// (<c>"FileSystem" + "Watcher"</c>) ya da yansımayla kurmak. Guard literal çağrı biçimine bakar; niyetin
@@ -24,9 +31,10 @@ namespace BuildOrchestrator.Tests.Git;
 /// </summary>
 public sealed class SingleFileSystemWatcherGuardTests
 {
-    /// <summary><c>new FileSystemWatcher(</c> inşası — ctor çağrısı her zaman <c>new</c> ile başlar.</summary>
+    /// <summary><c>FileSystemWatcher</c> inşası — klasik <c>new FileSystemWatcher(</c> YA DA target-typed
+    /// <c>FileSystemWatcher x = new(</c> (tip adı, değişken, <c>=</c>, <c>new(</c> aynı satırda).</summary>
     private static readonly Regex FileSystemWatcherConstruction = new(
-        @"new\s+FileSystemWatcher\s*\(", RegexOptions.Compiled);
+        @"new\s+FileSystemWatcher\s*\(|FileSystemWatcher\??\s+\w+\s*=\s*new\s*\(", RegexOptions.Compiled);
 
     /// <summary>Mutasyonun MEŞRU olduğu tek dosya (src köküne göre) ve gerekçesi.</summary>
     private static readonly IReadOnlyCollection<string> Allowed =
@@ -69,11 +77,17 @@ public sealed class SingleFileSystemWatcherGuardTests
     [Fact]
     public void The_rule_recognises_a_watcher_that_sneaks_into_another_file()
     {
-        // Guard'ın kendi kanıtı: sahte bir ihlal gerçekten raporlanıyor mu?
+        // Guard'ın kendi kanıtı: sahte bir ihlal — klasik VE target-typed 'new' biçimi — gerçekten
+        // raporlanıyor mu? İkisi de AYRI birer offender üretmeli, tek bir alternatif sessizce atlamamalı.
         var offenders = SourceGuard.ScanText("Core/Git/GitService.cs",
-            """var w = new FileSystemWatcher(root, "*.cs");""",
+            """
+            var watcher = new FileSystemWatcher(root, "*.cs");
+            FileSystemWatcher watcher2 = new(root, "*.cs");
+            """,
             FileSystemWatcherConstruction);
 
-        Assert.Single(offenders);
+        Assert.Equal(2, offenders.Count);
+        Assert.Contains(offenders, o => o.Contains("new FileSystemWatcher(", StringComparison.Ordinal));
+        Assert.Contains(offenders, o => o.Contains("FileSystemWatcher watcher2 = new(", StringComparison.Ordinal));
     }
 }
