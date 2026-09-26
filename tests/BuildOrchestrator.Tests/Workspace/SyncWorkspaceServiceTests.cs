@@ -35,8 +35,12 @@ public class SyncWorkspaceServiceTests
 
     // ---------------------------------------------------------------- fixture
 
-    /// <summary>Repo'ya iki SDK-style proje (B → A ProjectReference) + ikisini içeren bir .sln yazar.</summary>
-    private static void WriteWorkspace(GitTestRepo repo)
+    /// <summary>Repo'ya iki SDK-style proje (B → A ProjectReference) + ikisini içeren bir .sln yazar.
+    /// <paramref name="includeC"/> ile üçüncü bir SDK-style proje de eklenir (C → B ProjectReference,
+    /// B→A ile AYNI üslup) — zincir <c>A ← B ← C</c> olur (<c>.sln</c>'e eklenmez: <see
+    /// cref="BuildOrchestrator.Core.Discovery.WorkspaceScanner"/> csproj'ları .sln'den BAĞIMSIZ, dizin
+    /// taramasıyla bulur — bkz. [Task 6]).</summary>
+    private static void WriteWorkspace(GitTestRepo repo, bool includeC = false)
     {
         repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
             "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
@@ -50,6 +54,13 @@ public class SyncWorkspaceServiceTests
         repo.WriteFile(SlnName,
             "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
             + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
+
+        if (!includeC) return;
+        repo.WriteFile(Path.Combine("src", "C", "C.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>C</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "C", "C.cs"), "public class C { }");
     }
 
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
@@ -1239,6 +1250,227 @@ public class SyncWorkspaceServiceTests
 
         var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
         Assert.All(preview.Items, i => Assert.Equal((true, WillBuildReason.NeverBuilt), (i.WillBuild, i.Reason)));
+    }
+
+    // ---------------------------------------------------------------- [Task 6] sync seviyesinde etiket geçiş serisi
+
+    /// <summary>
+    /// [Task 6] <see cref="WriteWorkspace"/>'in <c>includeC</c> uzantısıyla <c>A ← B ← C</c> zincirini kurar
+    /// (B→A, C→B ProjectReference), commit'ler (c1), klonlar ve üçünü de "araç derledi" olarak prime eder
+    /// (<see cref="PrimeBuildStateAsUpToDateAsync"/>). Ayrıca üçünün de <c>BuiltContent</c>'ini upsert eder
+    /// (dosyadaki ~752-755 kalıbı, Task 4) — yoksa kayıtlı proje bir sonraki Sync'te yanlışlıkla
+    /// <c>affected</c> okur (bkz. <see
+    /// cref="The_preview_reads_own_files_changed_from_the_content_fingerprint_not_the_fast_pass"/>).
+    /// </summary>
+    /// <param name="beforeCommit">İlk commit'ten (c1) ÖNCE workspace'e ek dosya yazmak içindir (ör. Task 6'nın
+    /// paylaşılan <c>Directory.Build.props</c>'u) — verilmezse no-op.</param>
+    private static async Task<(string CloneRoot, string CacheRoot, string Branch)> PrimeChainWorkspaceAsync(
+        GitTestRepo origin, Action<GitTestRepo>? beforeCommit = null)
+    {
+        WriteWorkspace(origin, includeC: true);
+        beforeCommit?.Invoke(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        var content = await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        foreach (string name in new[] { "A", "B", "C" })
+        {
+            string id = Path.Combine(cloneRoot, "src", name, name + ".csproj");
+            store.Upsert(primed[id] with { BuiltContent = content[id] });
+        }
+
+        return (cloneRoot, cacheRoot, branch);
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 1] A'nın bir kaynak dosyası COMMIT'SİZ değişir: A kendi girdisinden dirty olduğu
+    /// için hem <c>SignatureChanged</c> hem <c>OwnFilesChanged=true</c> hem <c>LocalEdits=true</c> okur
+    /// (<c>modified · local</c>). B ve C kendi dosyalarına dokunulmadı ama imzaları A'nın (B doğrudan, C
+    /// B üzerinden dolaylı) değişen imzasını taşıdığı için ikisi de <c>SignatureChanged</c> okur; kendi
+    /// içerikleri sabit kaldığından <c>OwnFilesChanged=false</c> ve dirty yol yalnız A'nın klasöründe
+    /// olduğundan <c>LocalEdits=false</c> (<c>affected</c>).
+    /// </summary>
+    [Fact]
+    public async Task An_uncommitted_edit_marks_its_own_project_local_and_ripples_signature_to_dependents()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "A.cs"), "public class A { public int X; }"); // commit YOK
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        // sanity: [Task 6] genişletmesi gerçekten A ← B ← C zincirini kurdu (C→B, B→A)
+        var topology = Assert.Single(events.OfType<WorkspaceTopologyEvent>());
+        var nodeA = Assert.Single(topology.Nodes, n => n.Name == "A");
+        var nodeB = Assert.Single(topology.Nodes, n => n.Name == "B");
+        var nodeC = Assert.Single(topology.Nodes, n => n.Name == "C");
+        Assert.Equal([nodeA.Id], nodeB.Dependencies);
+        Assert.Equal([nodeB.Id], nodeC.Dependencies);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        var c = Assert.Single(preview.Items, i => i.Name == "C");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, true),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (b.WillBuild, b.Reason, b.OwnFilesChanged, b.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (c.WillBuild, c.Reason, c.OwnFilesChanged, c.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 2] AYNI değişiklik şimdi COMMIT edilir: A'nın <c>LocalEdits</c>'i düşer (artık
+    /// dirty değil, <c>modified</c>) ama <c>OwnFilesChanged</c> hâlâ <c>true</c>'dur — A'nın içeriği hâlâ
+    /// prime edildiği andan FARKLI. B ve C commit'ten etkilenmez: hâlâ <c>SignatureChanged</c>/<c>affected</c>
+    /// okurlar, tıpkı madde 1'de olduğu gibi (commit, Sync'in salt-okur taraması için maddi bir fark YARATMAZ).
+    /// </summary>
+    [Fact]
+    public async Task Committing_the_edit_drops_local_edits_but_the_chain_stays_signature_changed()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "A.cs"), "public class A { public int X; }");
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "edit A");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        var b = Assert.Single(preview.Items, i => i.Name == "B");
+        var c = Assert.Single(preview.Items, i => i.Name == "C");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, false),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (b.WillBuild, b.Reason, b.OwnFilesChanged, b.LocalEdits));
+        Assert.Equal((true, WillBuildReason.SignatureChanged, false, false),
+            (c.WillBuild, c.Reason, c.OwnFilesChanged, c.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 3] A'nın içeriği ORİJİNALİNE (<see cref="WriteWorkspace"/>'in yazdığı birebir
+    /// metne) döndürülür ve bu da commit'lenir: bugünkü fingerprint prime anındakiyle birebir eşleşir, imza
+    /// tekrar kayıtlı imzayla aynı olur ve zincirin ÜÇÜ de <c>UpToDate</c>'e döner.
+    /// </summary>
+    [Fact]
+    public async Task Reverting_to_the_original_content_returns_the_whole_chain_to_up_to_date()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+        string aCs = Path.Combine(cloneRoot, "src", "A", "A.cs");
+        const string originalContent = "public class A { }"; // WriteWorkspace'in yazdığı ORİJİNAL — birebir
+
+        File.WriteAllText(aCs, "public class A { public int X; }");
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "edit A");
+        File.WriteAllText(aCs, originalContent);
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "revert A");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.Equal((false, WillBuildReason.UpToDate), (i.WillBuild, i.Reason)));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 4, ÖZEL DURUM] A'ya README.md + App.config eklenir (ikisi de COMMIT'SİZ). Bu iki
+    /// uzantı <see cref="BuildOrchestrator.Core.Incremental.BuildSignature.BuildAffectingExtensions"/>'ta
+    /// YOKTUR (yalnız <c>.cs</c>/<c>.xaml</c>/<c>.resx</c>/<c>.csproj</c>/<c>.props</c>/<c>.targets</c>
+    /// derlemeyi etkiler) — dolayısıyla ne <see cref="Core.Incremental.ProjectInputs"/>'in girdi kümesine ne
+    /// (aynı kümeyi kullanan) <see cref="Core.Workspace.LocalEdits"/>'in kesişimine girerler. Rehberin çıkarımı
+    /// buydu ve kod okumasıyla doğrulandı: zincirin ÜÇÜ de <c>UpToDate</c> kalır, <c>LocalEdits=false</c>.
+    /// </summary>
+    [Fact]
+    public async Task Uncommitted_readme_and_app_config_edits_do_not_move_the_decision()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "README.md"), "# A\n");
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "App.config"), "<configuration />");
+        // commit YOK — ikisi de dirty/untracked kalır.
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i =>
+            Assert.Equal((false, WillBuildReason.UpToDate, false), (i.WillBuild, i.Reason, i.LocalEdits)));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 5] A'ya untracked <c>New.cs</c> (düz dosya) + <c>Sub\New2.cs</c> (henüz hiç
+    /// izlenmeyen bir alt klasörün İÇİNDE) eklenir. İkisi birlikte <see cref="Core.Workspace.LocalEdits"/>'in
+    /// iki dirty-yol biçimini de sınar: git tek başına untracked bir dosyayı düz satırla, TAMAMEN untracked
+    /// bir klasörü ise (<c>-uall</c> olmadan) tek bir <c>dir/</c> satırıyla bildirir (bkz. LocalEdits.cs'in
+    /// "Dizin öneki" notu) — ikisi de A'nın SDK-style implicit <c>**/*.cs</c> glob'una girip içerik özetini
+    /// değiştirir. A: <c>SignatureChanged</c>, <c>OwnFilesChanged=true</c>, <c>LocalEdits=true</c>.
+    /// </summary>
+    [Fact]
+    public async Task Untracked_new_source_files_mark_the_owning_project_signature_changed_and_local()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin);
+
+        File.WriteAllText(Path.Combine(cloneRoot, "src", "A", "New.cs"), "public class New { }");
+        string subDir = Path.Combine(cloneRoot, "src", "A", "Sub");
+        Directory.CreateDirectory(subDir);
+        File.WriteAllText(Path.Combine(subDir, "New2.cs"), "public class New2 { }");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        var a = Assert.Single(preview.Items, i => i.Name == "A");
+        Assert.Equal((true, WillBuildReason.SignatureChanged, true, true),
+            (a.WillBuild, a.Reason, a.OwnFilesChanged, a.LocalEdits));
+    }
+
+    /// <summary>
+    /// [Task 6 — brief madde 6] Workspace'te (repo kökünde, c1'de) commit'li duran paylaşılan
+    /// <c>Directory.Build.props</c> değiştirilir ve bu da commit'lenir. A/B/C'nin HİÇBİRİNİN kendi klasöründe
+    /// (ya da <c>src\</c>'de) daha yakın bir props yoktur, yani üçü de yukarı yürüyüşte AYNI kök dosyayı bulur
+    /// (<see cref="Core.Incremental.ProjectInputs.DirectoryLevelFileNames"/>) — üçünün de kendi girdi kümesi
+    /// (dolayısıyla içerik özeti) doğrudan değişir: <c>SignatureChanged</c> + <c>OwnFilesChanged=true</c>,
+    /// B/C'ye A üzerinden DOLAYLI değil.
+    /// </summary>
+    [Fact]
+    public async Task Editing_the_shared_directory_build_props_marks_every_project_that_sees_it_as_nearest()
+    {
+        using var origin = new GitTestRepo();
+        var (cloneRoot, cacheRoot, branch) = await PrimeChainWorkspaceAsync(origin, beforeCommit: o =>
+            o.WriteFile("Directory.Build.props",
+                "<Project><PropertyGroup><LangVersion>10.0</LangVersion></PropertyGroup></Project>"));
+
+        File.WriteAllText(Path.Combine(cloneRoot, "Directory.Build.props"),
+            "<Project><PropertyGroup><LangVersion>11.0</LangVersion></PropertyGroup></Project>");
+        GitTestRepo.RunGitAt(cloneRoot, "add", "-A");
+        GitTestRepo.RunGitAt(cloneRoot, "commit", "-q", "-m", "bump LangVersion");
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.Equal(3, preview.Items.Count); // sanity: A, B, C hepsi göründü
+        Assert.All(preview.Items, i => Assert.Equal((true, WillBuildReason.SignatureChanged, true),
+            (i.WillBuild, i.Reason, i.OwnFilesChanged)));
     }
 
     // ---------------------------------------------------------------- yardımcı
