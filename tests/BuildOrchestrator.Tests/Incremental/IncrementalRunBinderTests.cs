@@ -321,8 +321,13 @@ public sealed class IncrementalRunBinderTests : IDisposable
     /// <see cref="EvidenceTimes.InputsAt"/>'ta, iki derleme kanıtı (<c>bin\Debug</c>) ve kopya
     /// <see cref="EvidenceTimes.EvidenceAt"/>'ta — damga ortak <see cref="EvidenceTimes.Stamp"/>'tan (D8).
     /// </summary>
+    /// <param name="withDownstream">[Task 18] <c>true</c> iken Dep'in ARKASINA üçüncü bir legacy proje
+    /// (<c>C</c>) eklenir — Dep'i Dep'in Prod'u kullandığı AYNI paylaşılan-lib HintPath kalıbıyla kullanır
+    /// (<c>lib\Dep.dll</c>), kendi derleme kanıtı da (<c>C\bin\Debug\C.dll</c>) tazedir. Varsayılan
+    /// <c>false</c> iki mevcut çağrı yerini DEĞİŞTİRMEZ (kopya YASAK — T15'in kalıbı: opsiyonel, geriye
+    /// uyumlu parametre).</param>
     private (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> Evaluated, string Prod, string Dep)
-        TwoLegacyProjects(string root)
+        TwoLegacyProjects(string root, bool withDownstream = false)
     {
         const string Legacy = """
             <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
@@ -338,12 +343,13 @@ public sealed class IncrementalRunBinderTests : IDisposable
             """<Reference Include="Prod"><HintPath>..\lib\Prod.dll</HintPath></Reference>"""));
         Write(Path.Combine(root, "Prod"), "Prod.cs", "class Prod {}");
         Write(Path.Combine(root, "Dep"), "Dep.cs", "class Dep {}");
-        EvidenceTimes.Stamp(root,
+
+        List<string> evidence =
         [
             Write(Path.Combine(root, "Prod", "bin", "Debug"), "Prod.dll", "prod-binary"),
             Write(Path.Combine(root, "Dep", "bin", "Debug"), "Dep.dll", "dep-binary"),
             Write(Path.Combine(root, "lib"), "Prod.dll", "prod-binary"),
-        ]);
+        ];
 
         var evaluator = new CsprojEvaluator();
         var evaluated = new Dictionary<string, EvaluatedProject>(StringComparer.OrdinalIgnoreCase)
@@ -351,11 +357,28 @@ public sealed class IncrementalRunBinderTests : IDisposable
             [prod] = evaluator.Evaluate(prod),
             [dep] = evaluator.Evaluate(dep),
         };
-        var plan = new BuildPlan(
-        [
-            new ProjectNode(prod, "Prod", prod, [], [], 0, null, null, InCycle: false, WillBuild: null),
-            new ProjectNode(dep, "Dep", dep, [], [prod], 1, null, null, InCycle: false, WillBuild: null),
-        ], [], "Debug");
+        var nodes = new List<ProjectNode>
+        {
+            new(prod, "Prod", prod, [], [], 0, null, null, InCycle: false, WillBuild: null),
+            new(dep, "Dep", dep, [], [prod], 1, null, null, InCycle: false, WillBuild: null),
+        };
+
+        if (withDownstream)
+        {
+            // [Task 18] C, Dep'in ARKASINDA — dalga (IncrementalPlanner.BehindDirtyUpstream) yalnız graf
+            // kenarını (Dependencies) okur, C'nin kendi HintPath hedefine BAKMADAN Dep bayatlayınca onu çeker.
+            string c = Write(Path.Combine(root, "C"), "C.csproj", string.Format(Legacy, "C",
+                """<Reference Include="Dep"><HintPath>..\lib\Dep.dll</HintPath></Reference>"""));
+            Write(Path.Combine(root, "C"), "C.cs", "class C {}");
+            evidence.Add(Write(Path.Combine(root, "C", "bin", "Debug"), "C.dll", "c-binary"));
+            evidence.Add(Write(Path.Combine(root, "lib"), "Dep.dll", "dep-binary"));
+
+            evaluated[c] = evaluator.Evaluate(c);
+            nodes.Add(new ProjectNode(c, "C", c, [], [dep], 2, null, null, InCycle: false, WillBuild: null));
+        }
+
+        EvidenceTimes.Stamp(root, evidence);
+        var plan = new BuildPlan([.. nodes], [], "Debug");
         return (plan, evaluated, prod, dep);
     }
 
@@ -426,6 +449,67 @@ public sealed class IncrementalRunBinderTests : IDisposable
         var (bound, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, after);
         Assert.Equal(WillBuildReason.OutputStale, bound.Nodes[0].WillBuildReason);
         Assert.Equal(WillBuildReason.UpToDate, bound.Nodes[1].WillBuildReason);
+    }
+
+    // ---- [Task 18] HintPath DLL yenilendi: affected + dalga (rehber 22) ---------------------------------
+
+    /// <summary>
+    /// [Rehber 22] Prod ve Dep VS'de derlenmiş (defter kaydı YOK ⇒ ikisi de zaman kipinde). Sonra YALNIZ Prod
+    /// yeniden derlenir: paylaşılan kopya <c>lib\Prod.dll</c>, Dep'in KENDİ kanıtından (<c>Dep.dll</c>) yeni
+    /// damgalanır — Prod'un kendi girdisi ve kendi kanıtı dokunulmadan kalır (VS Prod'u derleyip paylaşılan
+    /// klasöre kopyaladı, Dep'e hiç dokunmadı). Dep'in hükmü <see cref="TimeVerdict.DependencyNewer"/>,
+    /// kararı <see cref="WillBuildReason.OutputStale"/> olur — kendi dosyaları değişmediği için etiket
+    /// <c>modified</c> DEĞİL <c>affected</c>'tır (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, bool?)"/>
+    /// ⇒ <c>false</c>).
+    /// </summary>
+    [Fact]
+    public void Rebuilding_only_the_producer_leaves_the_dependent_affected_not_modified()
+    {
+        string root = NewRoot();
+        var (plan, evaluated, prod, dep) = TwoLegacyProjects(root);
+        var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
+
+        // VS Prod'u yeniden derledi: paylaşılan kopya Dep'in kanıtından (EvidenceAt) YENİ.
+        File.SetLastWriteTimeUtc(Path.Combine(root, "lib", "Prod.dll"), EditedAt);
+
+        var checks = binder.ChecksFor(NoState);
+        Assert.Equal(TimeVerdict.Fresh, checks[prod].Time);              // Prod kendi kanıtına göre taze kaldı
+        Assert.Equal(TimeVerdict.DependencyNewer, checks[dep].Time);
+        Assert.False(OutputEvidence.OwnFilesChanged(checks[dep], ledgerAnswer: null));
+
+        var (bound, _) = binder.Bind(NoState, buildCycles: false, DependentMode.Safe, checks);
+        // Rehber 22: "A yeşil, B affected" — Prod BuiltOutside ile yeşil KALIR, Dep OutputStale'e döner.
+        Assert.Equal((false, WillBuildReason.BuiltOutside), (bound.Nodes[0].WillBuild, bound.Nodes[0].WillBuildReason));
+        Assert.Equal((true, WillBuildReason.OutputStale), (bound.Nodes[1].WillBuild, bound.Nodes[1].WillBuildReason));
+    }
+
+    /// <summary>
+    /// [Rehber 22'nin atladığı gerçek] Aynı tetik (yalnız Prod yeniden derlenir), bu sefer Dep'in ARKASINDA
+    /// üçüncü bir legacy proje <c>C</c> var (kendi paylaşılan kopyası <c>lib\Dep.dll</c>, kendi kanıtı taze,
+    /// hiçbiri dokunulmadı). C'nin KENDİ kontrolü tek başına <see cref="TimeVerdict.Fresh"/>'tir. Ama Dep
+    /// <see cref="WillBuildReason.OutputStale"/> ile "yeni çıktı üretecek" sayıldığı için dalga
+    /// (<see cref="IncrementalPlanner"/>'ın <c>BehindDirtyUpstream</c>'i, satır ~254-280) C'nin kontrolünü de
+    /// <c>DependencyNewer</c>'a çeker — C KENDİ BAŞINA taze göründüğü hâlde <c>WillBuild=true</c> olur.
+    /// </summary>
+    [Fact]
+    public void The_wave_behind_a_stale_dependency_pulls_in_a_third_project_that_looks_fresh_on_its_own()
+    {
+        string root = NewRoot();
+        var (plan, evaluated, _, _) = TwoLegacyProjects(root, withDownstream: true);
+        string c = Path.Combine(root, "C", "C.csproj");
+        var binder = new IncrementalRunBinder(plan, evaluated, root, FreshCache());
+
+        // VS Prod'u yeniden derledi — C'ye hiç dokunulmadı.
+        File.SetLastWriteTimeUtc(Path.Combine(root, "lib", "Prod.dll"), EditedAt);
+
+        var checks = binder.ChecksFor(NoState);
+        Assert.Equal(TimeVerdict.Fresh, checks[c].Time); // dalgadan ÖNCE: kendi başına taze
+
+        var (bound, _) = binder.Bind(NoState, buildCycles: false, DependentMode.Safe, checks);
+        // Tohum: Dep bu koşuda OutputStale ile "yeni çıktı üretecek" (ProducesNewOutput) sayılır.
+        Assert.Equal((true, WillBuildReason.OutputStale), (bound.Nodes[1].WillBuild, bound.Nodes[1].WillBuildReason));
+        // Dalga: C kendi kontrolünde Fresh'ken, Dep'in ARKASINDA olduğu için aynı karara (OutputStale) çekilir.
+        Assert.Equal((true, WillBuildReason.OutputStale), (bound.Nodes[2].WillBuild, bound.Nodes[2].WillBuildReason));
     }
 
     // ---- [Task 4] Döngü grubu zaman kipi: kardeşin çıktısı DependencyNewer'a girmez --------------------
