@@ -53,6 +53,10 @@ public sealed class ProjectInputsTests : IDisposable
         Write(@"src\A\README.md", "docs");
         Write(@"src\A\notes.txt", "notes");
         Write(@"src\A\Assets\logo.png", "binary-ish");
+        // [Task T14] .dll ve .config build-etkileyen uzantı listesinde değil (BuildSignature.BuildAffectingExtensions)
+        // — klasörden bağımsız, salt uzantı kararı.
+        Write(@"src\A\X.dll", "binary-ish");
+        Write(@"src\A\App.config", "<configuration/>");
 
         var inputs = PathsOf(csproj);
 
