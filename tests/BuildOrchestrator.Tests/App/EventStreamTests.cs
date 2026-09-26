@@ -241,6 +241,9 @@ public class EventStreamTests
         // grubu temsil etmiyordu. Koşunun maliyetini üye sayısı anlatır; ProjectId event'te durduğu için satır
         // hâlâ lidere tıklatır (CycleRoundStartedEvent — RunViewModel.Stream).
         Assert.Equal("cycle round 2/3 — 15 members", StreamText.CycleRound(2, 3, 15));
+        // [API kısa devresi] Sonraki turlar yalnız bayat bağlanan üyeleri derler — sayı artık 1 olabilir ve
+        // satır tekil yazılır ("1 members" bir kopya-yapıştır kokusudur, design §14.6 ton kuralı).
+        Assert.Equal("cycle round 2/3 — 1 member", StreamText.CycleRound(2, 3, 1));
         // [DEĞİŞEN KURAL — Task 4] Eski iddia: açılış satırı TEK toplam proje sayısı taşırdı; toplamın çoğu
         // upstream (prerequisite) olabiliyordu ve kullanıcı ekrandan "neden bu kadar proje derleniyor"u
         // okuyamıyordu — satır artık üye/prerequisite kırılımını ayrı ayrı söyler (tavan yine

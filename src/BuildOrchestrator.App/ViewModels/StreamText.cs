@@ -165,8 +165,11 @@ public static class StreamText
     /// <para><b>[DEĞİŞEN KURAL — Task 4]</b> Eski iddia: <c>{leaderName} (+{memberCount-1} more)</c> — tek lider
     /// adı grubu temsil etmiyordu; koşunun maliyetini üye sayısı anlatır. <c>CycleRoundStartedEvent.ProjectId</c>
     /// (lider) event'te durduğu için satır hâlâ lidere tıklatır — yalnız METİN lider adını bırakır.</para></summary>
+    /// <para>[API kısa devresi] Sonraki turlar yalnız bayat bağlanan üyeleri derlediği için sayı artık 1
+    /// olabilir — satır tekil yazılır (§14.6 ton kuralı: "1 members" kopya-yapıştır kokusudur).</para>
     public static string CycleRound(int round, int cap, int memberCount) =>
-        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} members", round, cap, memberCount);
+        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} {3}", round, cap, memberCount,
+            memberCount == 1 ? "member" : "members");
 
     /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
     /// parametresinin TEK metin kaynağı: <c>member {index}/{count} · round {round}/{cap}</c>. Kopya YASAK
