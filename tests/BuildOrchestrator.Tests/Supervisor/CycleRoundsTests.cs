@@ -1476,6 +1476,83 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
+    // ---------------------------------------------------------------- 16) seviyeli paralellik
+
+    /// <summary>Yıldız SCC: Hub ↔ S1/S2/S3 — uydular yalnız Hub'ı okur, birbirine komşu değiller.
+    /// Seviye planı [Hub], [S1,S2,S3]'tür (CycleRoundLevelsTests'te pinli).</summary>
+    private static RunPlan StarCycle() => CyclePlanOf(["Hub", "S1", "S2", "S3"],
+        Node("Hub", deps: ["S1", "S2", "S3"], inCycle: true),
+        Node("S1", deps: ["Hub"], inCycle: true),
+        Node("S2", deps: ["Hub"], inCycle: true),
+        Node("S3", deps: ["Hub"], inCycle: true));
+
+    private static SurfaceDisk StableStarDisk()
+    {
+        var disk = new SurfaceDisk();
+        foreach (string name in new[] { "Hub", "S1", "S2", "S3" }) disk.Set(name, name + "-api");
+        return disk;
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — tur içi seviyeli paralellik.]</b> Eski kural üyeleri KOŞULSUZ sıralı derliyordu;
+    /// gerekçesi ("A, B.dll'i okurken B aynı dosyayı yazıyor olurdu") yalnız DOĞRUDAN kenar komşuları için
+    /// geçerlidir. Sahada ölçüldü: 17 üyeli UI grubunun iç grafında kritik yol 6 — tur, 17 ardışık derleme
+    /// yerine ~6 bariyerli dalgada koşabilirken 3 worker boş bekliyordu (~98 sn tek worker'da). Üyeler artık
+    /// <c>CycleRoundLevels</c>'ın bariyerli seviyeleriyle derlenir: komşu olmayan üyeler AYNI seviyede
+    /// eşzamanlı, komşular asla (torn read yapısal olarak imkânsız — bariyerler örtüşmez). Turun anlamı,
+    /// durma kuralları, stop sözleşmesi ve raporlama değişmez.
+    /// </summary>
+    [Fact]
+    public async Task satellites_of_one_level_compile_concurrently_between_hub_barriers()
+    {
+        var disk = StableStarDisk();
+        var plan = HashModePlan(StarCycle(), "Hub", "S1", "S2", "S3");
+        var trio = Signal();
+        int arrived = 0;
+        var rec = new RoundRecorder();
+        // Üç uydu BİRBİRİNİ bekler: eşzamanlılık deterministik kanıtlanır (sıralı bir uygulamada ilk uydu
+        // diğerleri hiç başlamadığı için sonsuza dek bekler → Limit testi hataya düşürür; sleep/poll yok [D8]).
+        var invoker = rec.Invoker(async (name, _, _) =>
+        {
+            if (name == "Hub") return Ok();
+            if (Interlocked.Increment(ref arrived) >= 3) trio.TrySetResult();
+            await trio.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Bariyer: Hub uydulardan ÖNCE ve TEK BAŞINA; uydular üçü BİRDEN uçuşta; yüzeyler oturduğu için tek tur.
+        Assert.Equal(4, rec.Calls.Count);
+        Assert.Equal("Hub#1", rec.Calls[0]);
+        Assert.Equal(["S1#1", "S2#1", "S3#1"], rec.Calls.Skip(1).Order(StringComparer.Ordinal));
+        Assert.Equal(3, invoker.MaxConcurrent);
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+        Assert.Equal(1, completed.Rounds);
+        Assert.Equal(4, h.Events.OfType<ProjectSucceededEvent>().Count());
+        Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
+    }
+
+    [Fact] // KONTROL: seviye eşzamanlılığı koşunun paralellik tavanına uyar — grup tek worker'da diye tavan aşılmaz.
+    public async Task level_concurrency_respects_the_run_parallelism_cap()
+    {
+        var disk = StableStarDisk();
+        var plan = HashModePlan(StarCycle(), "Hub", "S1", "S2", "S3");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker(async (_, _, _) => { await Task.Yield(); return Ok(); });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 2), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.True(invoker.MaxConcurrent <= 2,
+            $"parallelism 2 iken {invoker.MaxConcurrent} eşzamanlı invoke gözlendi");
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
     // ---------------------------------------------------------------- 15) grup koşullu atlama
 
     /// <summary>Up kökü kırık; A↔B üyelerinin İKİSİ de yalnız "kökü bekliyor" (WaitingForDependency + defter

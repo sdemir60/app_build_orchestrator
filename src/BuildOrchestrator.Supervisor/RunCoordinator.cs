@@ -989,6 +989,9 @@ public sealed class RunCoordinator(
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
+            // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (perf profili) — koşu bitiminde
+            // hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using güvenlidir.
+            using var invokeSlots = new SemaphoreSlim(parallelism, parallelism);
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs,
                 nodeById,
@@ -1008,6 +1011,7 @@ public sealed class RunCoordinator(
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
                 conditionalIds, // [koşullu yeniden derleme] önizlemenin okuduğu AYNI küme
                 builtCommits, // [koşullu yeniden derleme] koşu başındaki defter — derlenmeyen kökün son sonucu
+                invokeSlots, // [seviyeli turlar] MSBuild-child tavanı — worker'lar + seviye üyeleri tek kapıdan
                 staleDependenciesById, // [tek proje] hedefin derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda)
                 // [tek proje · design §3.8] MSBuild hedefi: Clean modu doğrudan -t:Clean koşar (hiçbir şey
                 // derlenmez). Rebuild YALNIZ satırdan tetiklendiğinde MSBuild'in kendi Rebuild'i olur — alt
@@ -1437,8 +1441,11 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda build-order sırasıyla ve SIRALI invoke
-    /// edilir — paralellik YOK: A, B.dll'i okurken B aynı dosyayı yazıyor olurdu.
+    /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda <see cref="CycleRoundLevels"/>'ın
+    /// BARİYERLİ seviyeleriyle invoke edilir: komşu olmayan üyeler aynı seviyede eşzamanlı, HERHANGİ yönde
+    /// doğrudan kenar komşuları asla — A, B.dll'i okurken B aynı dosyayı yazıyor olurdu; bariyerler örtüşmediği
+    /// için bu yapısal olarak imkânsızdır. Eşzamanlılık koşunun paralellik tavanını aşamaz (InvokeOnceAsync'teki
+    /// ortak semafor).
     ///
     /// <para>ARA TUR SONUÇLARI YAYILMAZ. SCC tek bir derleme birimidir (§7.3, tek bileşik imza); yarı bitmiş bir
     /// birimi "bitti" saymak progress'i geri götürür ve ETA'yı yanıltır. Yalnız son turun sonucu raporlanır,
@@ -1574,23 +1581,32 @@ public sealed class RunCoordinator(
                     run.RunId, members[0], round, CycleRoundPolicy.RoundCap, toBuild.Count));
 
                 bool cutShort = false;
-                foreach (string id in toBuild)                       // SIRALI — eşzamanlı invoke YOK
+                // [seviyeli turlar] Üyeler CycleRoundLevels'ın BARİYERLİ seviyeleriyle derlenir: komşu olmayan
+                // üyeler aynı seviyede EŞZAMANLI (koşunun paralellik tavanı InvokeOnceAsync'teki ortak
+                // sema-forla korunur), HERHANGİ yönde doğrudan kenar komşuları asla — biri diğerinin DLL'ini
+                // okurken öteki aynı dosyayı yazamaz; bariyerler örtüşmediği için torn read yapısal olarak
+                // imkânsızdır. Bir seviye TAMAMEN bitmeden sonraki başlamaz — sıralı turun okuma semantiği
+                // (ileri kenar taze, geri kenar önceki nesil) birebir korunur.
+                async Task CompileOneAsync(string id)
                 {
                     // [§4.5] Stop istendiyse turun KALAN üyeleri de dispatch EDİLMEZ. Graceful stop'un
-                    // sözleşmesi "yeni hiçbir şey dispatch edilmez, in-flight child'lar biter"dir ve turun her
-                    // üyesi YENİ bir MSBuild.exe child'ıdır — sıradan Build bunu scheduler'ın stop kapısıyla
-                    // sağlar (ReadySetScheduler.RequestStop), grup ise kendi döngüsünü koştuğu için kapıyı
-                    // BURADA taşımak zorundadır. Halihazırda derlenen üye await edilerek DRAIN edilir.
-                    // Turu yarıda kesmenin bedeli yoktur: yarıda kesilen grup zaten her üyesini Failed'a
-                    // çevirir ve hiçbir şey persist etmez (aşağıdaki FailEveryMember).
-                    if (StopRequested) { cutShort = true; break; }
+                    // sözleşmesi "yeni hiçbir şey dispatch edilmez, in-flight child'lar biter"dir ve her üye
+                    // YENİ bir MSBuild.exe child'ıdır — kapı üye BAŞLAMADAN kontrol edilir; başlamış seviye
+                    // arkadaşları Task.WhenAll ile DRAIN edilir. Turu yarıda kesmenin bedeli yoktur: yarıda
+                    // kesilen grup zaten her üyesini Failed'a çevirir (aşağıdaki FailEveryMember).
+                    if (StopRequested) { cutShort = true; return; }
 
                     var member = state[id];
                     if (hashMode)
                     {
-                        // Üyenin ŞU AN okuyacağı kardeş yüzeyleri — tur sonundaki bayatlık kararının referansı.
+                        // Üyenin ŞU AN okuyacağı kardeş yüzeyleri — tur sonu bayatlık kararının referansı.
+                        // Kilit: aynı seviyedeki bir üye KENDİ yüzeyini yazarken sözlük okunuyor olabilir
+                        // (farklı anahtar, aynı gövde); üyenin kendi bağımlılıkları komşu ayrımı gereği bu
+                        // seviyede DEĞİLDİR, değerleri seviye boyunca sabittir.
                         var read = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                        foreach (string dep in siblingDeps[id]) read[dep] = surfaceState[dep];
+                        lock (surfaceState)
+                            foreach (string dep in siblingDeps[id])
+                                read[dep] = surfaceState[dep];
                         member.ReadStates = read;
                     }
                     TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
@@ -1605,8 +1621,10 @@ public sealed class RunCoordinator(
                         member.FailReason = outcome.FailReason;
                     else if (hashMode && producers.Contains(id))
                     {
-                        // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — turun sonraki üyeleri ve tur sonu bunu görür.
-                        if (SurfaceStateOf(id) is { } fresh) surfaceState[id] = fresh;
+                        // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
+                        // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
+                        string? fresh = SurfaceStateOf(id);
+                        if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
                         else
                         {
                             // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
@@ -1616,6 +1634,14 @@ public sealed class RunCoordinator(
                                 Path.GetFileNameWithoutExtension(members[0])));
                         }
                     }
+                }
+
+                foreach (var level in CycleRoundLevels.Compute(toBuild, id => siblingDeps[id]))
+                {
+                    if (StopRequested) { cutShort = true; break; }
+                    if (level.Count == 1) await CompileOneAsync(level[0]);
+                    else await Task.WhenAll(level.Select(CompileOneAsync)); // tümü biter, ilk hata SONRA fırlar
+                    if (cutShort) break;
                 }
 
                 // YARIDA KESİLEN TUR KARARA SOKULMAZ. Decide'a devam etmek en tehlikeli köşedir: ikinci turda
@@ -1956,7 +1982,13 @@ public sealed class RunCoordinator(
             Emit(run, projectId, log, commandLine);
         foreach (string warnLine in DepIssueWarnLines(depIssues))
             Emit(run, projectId, log, warnLine);
-        var invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
+        // [seviyeli turlar] MSBuild-child tavanı TEK kapıdan: tekil yolda N worker ↔ N slot (davranış aynı),
+        // bir SCC seviyesinin eşzamanlı üyeleri de aynı havuzdan alır — tavan hiçbir bileşimde aşılmaz.
+        // Slot, timeout saati başlamadan ÖNCE alınır (PerProjectTimeout invoker'ın içinde kurulur).
+        await run.InvokeSlots.WaitAsync(ct);
+        MsBuildInvokeResult invoke;
+        try { invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct); }
+        finally { run.InvokeSlots.Release(); }
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
@@ -2269,6 +2301,10 @@ public sealed class RunCoordinator(
         // koşuda derlenmeyen kökün son sonucu buradan okunur. Koşu içi persist'ler bu örneğe yansımaz — kasıtlı,
         // bu koşuda derlenen kökün sonucu zaten scheduler'dan okunur.
         IReadOnlyDictionary<string, BuildState>? LedgerAtStart,
+        // [seviyeli turlar] Koşunun MSBuild-child tavanı: her invoke (tekil worker yolu da, bir SCC seviyesinin
+        // eşzamanlı üyeleri de) bu semafordan slot alır — worker sayısı + seviye genişliği hiçbir bileşimde
+        // parallelism'i aşamaz. Tekil yolda N worker ↔ N slot: davranış birebir aynıdır.
+        SemaphoreSlim InvokeSlots,
         // [tek proje] projectId → bu koşuda derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda, yalnız
         // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
         IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null,
