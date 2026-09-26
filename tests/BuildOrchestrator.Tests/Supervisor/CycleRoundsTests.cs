@@ -1,6 +1,7 @@
 using System.IO;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.State;
@@ -1118,5 +1119,267 @@ public class CycleRoundsTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Empty(h.Events.OfType<CycleCompletedEvent>());
+    }
+
+    // ---------------------------------------------------------------- 12) API kısa devresi (yüzey kanıtı)
+    // Kaynak turlar arasında DEĞİŞMEZ; bir üyenin sonucunu yalnız OKUDUĞU grup-içi çıktı yüzeyinin değişmesi
+    // değiştirebilir. Koordinatör her üyenin invoke ANINDA okuduğu kardeş yüzeylerini kaydeder, tur sonunda
+    // güncel yüzeyle karşılaştırır ve CycleRoundPolicy'ye staleNow olarak verir: tur 2 yalnız bayat bağlanan
+    // üyelere daralır, hiç bayat yoksa TEK turda kanıtlı Converged, girdisi oturmuş bir hata TEK turda
+    // NoProgress. Yüzey bilgisi eksik/okunamaz ise grup bugünkü tam-tur davranışına düşer (aşağıda pinli).
+
+    /// <summary>Sahte yüzey diski: üretici → çıktı yolu → o anki yüzey metni. Invoker script'i başarıyla
+    /// "derlediği" üyenin yüzeyini buraya yazar; koordinatörün enjekte edilen <c>apiSurface</c>'ı buradan okur.
+    /// Gerçek PE YOK — yüzey özetinin kendisi gerçek metadata ile <c>ApiSurfaceHashTests</c>'te pinlidir;
+    /// burada pinlenen, koordinatörün o özetle kurduğu TUR kararlarıdır.</summary>
+    private sealed class SurfaceDisk
+    {
+        private readonly Dictionary<string, string> _byPath = new(StringComparer.OrdinalIgnoreCase);
+
+        public static string PathOf(string name) => @"X:\surface\" + name + ".dll";
+
+        public void Set(string name, string api) { lock (_byPath) _byPath[PathOf(name)] = api; }
+
+        public string? Read(string path)
+        { lock (_byPath) return _byPath.TryGetValue(path, out string? api) ? api : ApiSurfaceHash.Absent; }
+
+        /// <summary>Verilen üyeler için kanıt yolu haritası — <see cref="IncrementalPlan.OutputsById"/>'a gider.</summary>
+        public static IReadOnlyDictionary<string, ProjectOutputs> OutputsFor(params string[] names) =>
+            names.ToDictionary(Id, n => new ProjectOutputs(PathOf(n), FedCandidates: []),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static RunPlan HashModePlan(RunPlan plan, params string[] names) =>
+        plan with { Incremental = RunCoordinatorTests.Incremental(names) with { OutputsById = SurfaceDisk.OutputsFor(names) } };
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — iki tur her zaman değil.]</b> Eski iddia "yakınsama iki ardışık yeşil turdur" idi ve
+    /// KOŞULSUZDU; gövdesi değişip yüzeyi değişmeyen tipik commit'te ikinci tur, birincinin birebir tekrarıydı
+    /// (gerçek OSYS'te 17 üyeli grupta tur ~8-14 dk ölçüldü). İkinci turun tek işlevi "tur 1'de eski nesil
+    /// API'ye bağlanmış olabilir" şüphesini kapatmaktı — aynı şüphe yüzey karşılaştırmasıyla KANITLA kapanır:
+    /// kimsenin okuduğu yüzey değişmediyse herkes NİHAİ API'lere bağlanmıştır. Kanıt gevşetilmedi,
+    /// ucuzlatıldı; yüzey bilgisi olmayan grupta eski kural aynen yürürlükte (aşağıdaki fallback testleri).
+    /// </summary>
+    [Fact]
+    public async Task a_green_group_whose_surfaces_did_not_change_converges_in_one_round()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a1");                              // eski nesil çıktılar diskte, yüzeyleri oturmuş
+            disk.Set("B", "b1");
+            var plan = HashModePlan(TwoMemberCycle(), "A", "B");
+            var rec = new RoundRecorder();
+            // Gövde değişti (yeniden derlendi) ama YÜZEY aynı kaldı — tipik "metot gövdesi düzeltildi" commit'i.
+            var invoker = rec.Invoker((name, _) => { disk.Set(name, name == "A" ? "a1" : "b1"); return Ok(); });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1"], rec.Calls);          // ikinci tur SATIN ALINMADI
+            var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+            Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+            Assert.Equal(1, completed.Rounds);
+            // Kanıtlı yakınsama TAM yakınsamadır: persist edilir ve güvenilir raporlanır — unsettled DEĞİL.
+            foreach (string name in new[] { "A", "B" })
+            {
+                Assert.Equal("sig", store.Load()[Id(name)].BuiltSignature);
+                Assert.Equal(BuildResult.Succeeded, store.Load()[Id(name)].LastResult);
+            }
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.False(e.CycleUnsettled));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Yüzeyi değişen üretici DEĞİL, onu ESKİ nesliyle okumuş TÜKETİCİLER ikinci turu öder — o kadar.
+    public async Task only_the_consumers_of_a_changed_surface_pay_a_second_round()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");
+        disk.Set("B", "b-old");
+        disk.Set("C", "c1");
+        // Build-order A → B → C. A, B'yi turun BAŞINDA (eski nesil, b-old) okur; C ise B'den SONRA geldiği
+        // için B'nin taze yüzeyini okur. B'nin yüzeyi bu turda değişir (b-old → b-new).
+        var plan = HashModePlan(CyclePlanOf(["A", "B", "C"],
+            Node("A", deps: ["B"], inCycle: true),
+            Node("B", deps: ["C"], inCycle: true),
+            Node("C", deps: ["A"], inCycle: true)), "A", "B", "C");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) =>
+        { disk.Set(name, name == "B" ? "b-new" : name == "A" ? "a1" : "c1"); return Ok(); });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Tur 2 yalnız A'yı derler (b-old okumuştu); C, B'nin NİHAİ yüzeyini zaten okudu — ikinci tur ödemez.
+        Assert.Equal(["A#1", "B#1", "C#1", "A#2"], rec.Calls);
+        // Tur olayı O TURDA derlenecek üye sayısını taşır (alanın sözleşmesi) — şerit/konsol doğru sayıyı okur.
+        Assert.Equal([3, 1], h.Events.OfType<CycleRoundStartedEvent>().Select(e => e.MemberCount));
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+        Assert.Equal(2, completed.Rounds);
+        Assert.Equal(3, h.Events.OfType<ProjectSucceededEvent>().Count());
+    }
+
+    /// <summary>Kullanıcının "olmayacaksa devam etme"si: patlayan üyenin okuduğu HİÇBİR grup-içi yüzey
+    /// değişmediyse aynı derleme aynı hatayı verir — NoProgress kararı TEK turda çıkar (eskiden aynı kümenin
+    /// iki kez patlaması beklenirdi) ve yakınsamama hafızası aynen yazılır.</summary>
+    [Fact]
+    public async Task a_failure_whose_inputs_are_settled_is_no_progress_after_one_round()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a1");
+            disk.Set("B", "b1");
+            var plan = HashModePlan(TwoMemberCycle(), "A", "B");
+            var rec = new RoundRecorder();
+            // A yüzeyini değiştirmeden yeşil biter; B, A'nın NİHAİ yüzeyine karşı derlenmişken patlar.
+            var invoker = rec.Invoker((name, _) =>
+            {
+                if (name == "B") return Exit(1);              // başarısız üye yeni çıktı YAZMAZ
+                disk.Set("A", "a1");
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1"], rec.Calls);          // ikinci tur HİÇ açılmadı
+            var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+            Assert.Equal(CycleOutcome.NoProgress, completed.Outcome);
+            Assert.Equal(1, completed.Rounds);
+            Assert.Equal(1, completed.FailedCount);
+            // Yakınsamayan grup persist ETMEZ ve hafıza yazılır — tur sayısı kısalırken kanıt sözleşmesi aynı.
+            Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
+            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
+            Assert.Equal("sig", store.Load()[Id("B")].NonConvergentSignature);
+            var succeeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+            Assert.False(succeeded.Trusted);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    [Fact] // Patlayan üyenin girdisi DEĞİŞTİYSE bir tur daha hak eder — ve turlar yalnız gerekeni derler.
+    public async Task a_stale_failure_gets_another_round_and_the_group_still_converges_selectively()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a-old");
+        disk.Set("B", "b-old");
+        // Build-order B → A: B, A'yı ESKİ nesliyle okur (a-old). A'nın yüzeyi tur 1'de değişir (a-old → a-new).
+        var plan = HashModePlan(CyclePlanOf(["B", "A"],
+            Node("B", deps: ["A"], inCycle: true),
+            Node("A", deps: ["B"], inCycle: true)), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, round) =>
+        {
+            if (name == "A") { disk.Set("A", "a-new"); return Ok(); }
+            if (round == 1) return Exit(1);                   // B, a-old'a karşı patlar
+            disk.Set("B", "b-new");                           // a-new'e karşı düzelir
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Tur 1: B (patlar) + A (yüzeyi değişir). Tur 2: yalnız B (bayat + başarısız) — düzelir, yüzeyi değişir.
+        // Tur 3: yalnız A (B'yi b-old ile okumuştu). Kimse dördüncü kez derlenmez; tavanda kanıtlı Converged.
+        Assert.Equal(["B#1", "A#1", "B#2", "A#2"], rec.Calls);
+        Assert.Equal([2, 1, 1], h.Events.OfType<CycleRoundStartedEvent>().Select(e => e.MemberCount));
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+        Assert.Equal(3, completed.Rounds);
+        Assert.Equal(2, h.Events.OfType<ProjectSucceededEvent>().Count());
+        Assert.Empty(h.Events.OfType<ProjectFailedEvent>());  // B'nin tur-1 hatası ARA sonuçtur, yayılmaz
+    }
+
+    // ---------------------------------------------------------------- 12b) kısa devrenin düştüğü yerler
+
+    [Fact] // Kanıt YARIM olmaz: tek bir üyenin bile çıktı kanıtı yoksa grup bugünkü tam-tur davranışında kalır.
+    public async Task a_member_without_output_evidence_keeps_the_group_on_full_rounds()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");                                  // B için kanıt yolu YOK (OutputsFor yalnız A)
+        var plan = TwoMemberCycle() with
+        { Incremental = RunCoordinatorTests.Incremental("A", "B") with { OutputsById = SurfaceDisk.OutputsFor("A") } };
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) => { if (name == "A") disk.Set("A", "a1"); return Ok(); });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls); // eski kural aynen: iki ardışık yeşil tur
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    [Fact] // Okunamayan yüzey (kilitli/bozuk dosya) kanıt DEĞİLDİR — grup tam-tur davranışına düşer, karar değişmez.
+    public async Task an_unreadable_surface_falls_back_to_full_rounds()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");
+        disk.Set("B", "b1");
+        var plan = HashModePlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        using var h = new Harness(plan, invoker,
+            apiSurface: path => path.Contains("B", StringComparison.OrdinalIgnoreCase) ? null : disk.Read(path));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    // ---------------------------------------------------------------- 13) restore-once
+
+    /// <summary>[restore-once] Turlar arasında ne kaynak ne <c>packages.config</c> değişebilir: bir önceki
+    /// turu BAŞARILI biten üyenin sonraki invoke'u restore prologunu taşımaz (başarılı invoke restore'u da
+    /// içeriyordu). Başarısız üye yeniden restore ALIR — patlayan şey restore'un kendisi olabilir. packages.config'i
+    /// olmayan üye zaten hiç taşımaz.</summary>
+    [Fact]
+    public async Task a_member_that_succeeded_last_round_does_not_repeat_the_restore_prologue()
+    {
+        // Benzersiz adlar: PlanRoot paylaşılan bir temp köküdür ve "A"/"B" adlarını başka testler de kullanır —
+        // oraya packages.config bırakmak paralel koşan testlerin NeedsRestore'unu sessizce çevirirdi.
+        const string px = "RestoreOnceX";
+        const string py = "RestoreOnceY";
+        string projectDir = Path.GetDirectoryName(Id(px))!;
+        Directory.CreateDirectory(projectDir);
+        File.WriteAllText(Path.Combine(projectDir, "packages.config"), "<packages />");
+        try
+        {
+            var plan = CyclePlanOf([px, py],
+                Node(px, deps: [py], inCycle: true),
+                Node(py, deps: [px], inCycle: true));
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((_, _) => Ok());        // yüzey bilgisi yok ⇒ eski kural: iki tam tur
+            using var h = new Harness(plan, invoker);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal([$"{px}#1", $"{py}#1", $"{px}#2", $"{py}#2"], rec.Calls);
+            Assert.Equal([true, false],                       // tur 1 restore'lu, tur 2 restore'suz
+                invoker.Requests.Where(r => r.ProjectId == Id(px)).Select(r => r.NeedsRestore));
+            Assert.Equal([false, false],                      // packages.config'i olmayan üye zaten taşımaz
+                invoker.Requests.Where(r => r.ProjectId == Id(py)).Select(r => r.NeedsRestore));
+        }
+        finally { Directory.Delete(projectDir, recursive: true); }
     }
 }

@@ -174,7 +174,8 @@ public class RunCoordinatorTests
 
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
             BuildStateStore? stateStore = null,
-            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null)
+            ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
+            Func<string, string?>? apiSurface = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -195,7 +196,10 @@ public class RunCoordinatorTests
                 // [P3/D8] Copy-contention retry'ının backoff'u testte GERÇEK ZAMAN beklemez: üretimde
                 // Task.Delay olan seam burada anında tamamlanır — istenen süre yalnız KAYDEDİLİR.
                 retryDelay: (wait, _) => { lock (RetryDelays) RetryDelays.Add(wait); return Task.CompletedTask; },
-                inFlight: inFlight);
+                inFlight: inFlight,
+                // [API kısa devresi] null ⇒ üretimdeki ApiSurfaceHash.OfFile — sahte planların yolları diskte
+                // olmadığından her dosya "absent" okunur; hash-mode testleri kendi sahte diskini enjekte eder.
+                apiSurface: apiSurface);
         }
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>

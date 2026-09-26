@@ -132,10 +132,15 @@ public sealed class RunCoordinator(
     BuildStateStore? stateStore = null,
     ICpuGovernor? cpuGovernor = null,
     Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
-    InFlightLedger? inFlight = null) : IDisposable
+    InFlightLedger? inFlight = null,
+    Func<string, string?>? apiSurface = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
+
+    /// <summary>[API kısa devresi] Bir çıktı dosyasının yüzey özeti — üretimde <see cref="ApiSurfaceHash.OfFile"/>.
+    /// Seam yalnız test içindir: gerçek PE üretmeden tur döngüsünün bayatlık kararı kurulabilsin.</summary>
+    private readonly Func<string, string?> _apiSurface = apiSurface ?? ApiSurfaceHash.OfFile;
 
     // --- run yaşam döngüsü (hepsi _gate altında) ---
     private bool _runActive;            // startRun slotu dolu (planlama dahil) — A6
@@ -1388,6 +1393,52 @@ public sealed class RunCoordinator(
         foreach (string id in members)
             state[id] = new CycleMemberState(ComputeDepIssues(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
 
+        // [API kısa devresi] Grup-içi kenarların YÜZEY takibi. Kaynak turlar arasında değişmez; bir üyenin
+        // sonucunu yalnız OKUDUĞU grup-içi çıktı yüzeyinin değişmesi değiştirebilir. Kimin kimi okuduğu plan
+        // kenarlarından gelir (kenar, üye terminal olsa da kenardır — allMembers); "okunan dosyalar" ise
+        // üreticinin kanıt yolu + beslenen kopyalarıdır (IncrementalPlan.OutputsById): tüketicinin HintPath'i
+        // paylaşılan kopyaya bakar ve başarılı derlemenin copy event'leri onu tazeler — yalnız kanıt yolunu
+        // saymak, bayat kalmış bir paylaşılan kopyanın üstünü örterdi.
+        var memberSet = new HashSet<string>(allMembers, StringComparer.OrdinalIgnoreCase);
+        var siblingDeps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (string id in members)
+            siblingDeps[id] = run.NodeById.TryGetValue(id, out var node)
+                ? [.. node.Dependencies.Where(memberSet.Contains)]
+                : [];
+
+        var outputsById = run.Incremental?.OutputsById;
+        string? SurfaceStateOf(string producerId)
+        {
+            if (outputsById is null || !outputsById.TryGetValue(producerId, out var outputs)) return null;
+            var files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { outputs.Evidence };
+            foreach (string fed in outputs.FedCandidates) files.Add(fed);
+            var parts = new List<string>(files.Count);
+            foreach (string file in files)
+            {
+                if (_apiSurface(file) is not { } hash) return null; // okunamayan dosya kanıt değildir
+                parts.Add(file + "=" + hash);
+            }
+            return string.Join("\n", parts);
+        }
+
+        var producers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var deps in siblingDeps.Values)
+            foreach (string dep in deps)
+                producers.Add(dep);
+
+        // hashMode: kanıt YARIM olmaz — tek bir üreticinin bile yüzeyi koşu başında okunamıyorsa (kanıt yolu
+        // türetilememiş ya da dosya bozuk/kilitli) grup bugünkü tam-tur davranışında kalır: kısmi bilgiyle
+        // verilecek erken bir karar kanıt değil tahmin olurdu. "Dosya yok" ise okunabilir bir DURUMDUR
+        // (ApiSurfaceHash.Absent) — hiç derlenmemiş bir grup da kısa devreden yararlanır.
+        var surfaceState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        bool hashMode = outputsById is not null && producers.Count > 0;
+        foreach (string producerId in producers)
+        {
+            if (!hashMode) break;
+            if (SurfaceStateOf(producerId) is { } initial) surfaceState[producerId] = initial;
+            else hashMode = false;
+        }
+
         // [DEĞİŞEN KURAL] Yarıda kesilen grupta HİÇBİR üyenin sonucunun arkasında durulamaz: tur 1'de yeşile
         // dönmüş bir üye de Failed raporlanır. Eskiden yalnız reason yazılır, sonuç KORUNURDU — o üye ÖNCEKİ
         // (ara) turunun sonucuyla ProjectSucceededEvent alırdı; tam olarak "ara tur sonucu nihai sonuç diye
@@ -1426,14 +1477,17 @@ public sealed class RunCoordinator(
             foreach (string id in members) state[id].Log = run.Logs.OpenProjectLog(id);
 
             HashSet<string>? previousFailed = null;
+            // [API kısa devresi] Turun derleyeceği üyeler: tur 1 HERKES; sonraki turlar yalnız bayat bağlanmış
+            // (staleNow) üyeler — kanıt yoksa yine herkes. Liste build-order sırasını korur; tur olayı da
+            // O TURDA derlenecek sayıyı taşır (alanın sözleşmesi).
+            IReadOnlyList<string> toBuild = members;
             for (int round = 1; decision == CycleRoundDecision.Continue; round++)
             {
                 run.Events.TryWrite(new CycleRoundStartedEvent(
-                    run.RunId, members[0], round, CycleRoundPolicy.RoundCap, members.Count));
+                    run.RunId, members[0], round, CycleRoundPolicy.RoundCap, toBuild.Count));
 
-                var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 bool cutShort = false;
-                foreach (string id in members)                       // SIRALI — eşzamanlı invoke YOK
+                foreach (string id in toBuild)                       // SIRALI — eşzamanlı invoke YOK
                 {
                     // [§4.5] Stop istendiyse turun KALAN üyeleri de dispatch EDİLMEZ. Graceful stop'un
                     // sözleşmesi "yeni hiçbir şey dispatch edilmez, in-flight child'lar biter"dir ve turun her
@@ -1445,15 +1499,35 @@ public sealed class RunCoordinator(
                     if (StopRequested) { cutShort = true; break; }
 
                     var member = state[id];
+                    if (hashMode)
+                    {
+                        // Üyenin ŞU AN okuyacağı kardeş yüzeyleri — tur sonundaki bayatlık kararının referansı.
+                        var read = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (string dep in siblingDeps[id]) read[dep] = surfaceState[dep];
+                        member.ReadStates = read;
+                    }
                     TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
                     run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
-                    var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct);
+                    // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
+                    // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
+                    var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
+                        suppressRestore: member.Result == BuildResult.Succeeded);
                     member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
                     member.Result = outcome.Result;
                     if (outcome.Result != BuildResult.Succeeded)
-                    {
-                        failed.Add(id);
                         member.FailReason = outcome.FailReason;
+                    else if (hashMode && producers.Contains(id))
+                    {
+                        // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — turun sonraki üyeleri ve tur sonu bunu görür.
+                        if (SurfaceStateOf(id) is { } fresh) surfaceState[id] = fresh;
+                        else
+                        {
+                            // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
+                            hashMode = false;
+                            Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
+                                "cycle {0}: output surface unreadable — continuing with full rounds",
+                                Path.GetFileNameWithoutExtension(members[0])));
+                        }
                     }
                 }
 
@@ -1464,10 +1538,39 @@ public sealed class RunCoordinator(
                 // aşağıdaki FailEveryMember her üyeyi invalidate eder, RecordCycleOutcome hiçbir şey yazmaz.
                 if (cutShort) break;
 
+                // failedNow üyelerin GÜNCEL (taşınan) sonucundan okunur: seçici turda derlenmeyen üyenin sonucu
+                // son turundan taşınır — tam-tur kipinde bu, "bu turda patlayanlar"la birebir aynı kümedir.
+                var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string id in members)
+                    if (state[id].Result != BuildResult.Succeeded)
+                        failed.Add(id);
+
+                // staleNow: son invoke'unda okuduğu bir kardeş yüzeyi ŞU AN farklı olan üyeler — yani bir tur
+                // daha derlemenin sonucunu DEĞİŞTİREBİLECEĞİ üyeler. Karar saf policy'de (CycleRoundPolicy).
+                HashSet<string>? staleNow = null;
+                if (hashMode)
+                {
+                    staleNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (string id in members)
+                    {
+                        var read = state[id].ReadStates;
+                        if (read is null) { staleNow.Add(id); continue; } // savunmacı: kaydı olmayan bayat sayılır
+                        foreach (string dep in siblingDeps[id])
+                            if (!read.TryGetValue(dep, out string? seen)
+                                || !string.Equals(seen, surfaceState[dep], StringComparison.Ordinal))
+                            {
+                                staleNow.Add(id);
+                                break;
+                            }
+                    }
+                }
+
                 roundsRun = round;
                 lastFailedCount = failed.Count;
-                decision = CycleRoundPolicy.Decide(round, failed, previousFailed);
+                decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
                 previousFailed = failed;
+                if (decision == CycleRoundDecision.Continue)
+                    toBuild = staleNow is null ? members : [.. members.Where(staleNow.Contains)];
                 // Stop istendiyse YENİ tur da AÇILMAZ. Turun TAMAMLANDIĞI hâlde stop'un tam tur sınırında
                 // düştüğü dar durumun kapısıdır bu; Converged/NoProgress/CapReached ile biten tur buradan
                 // geçmez, çünkü onlar GERÇEK kararlardır.
@@ -1693,6 +1796,10 @@ public sealed class RunCoordinator(
 
         /// <summary>Grubun tüm turları boyunca açık kalan proje logu; açılamadıysa null.</summary>
         public ProjectLogFile? Log { get; set; }
+
+        /// <summary>[API kısa devresi] Üyenin SON invoke'u başlarken okuduğu kardeş yüzeyleri
+        /// (üretici → yüzey durumu); hash-mode kapalıyken null. Tur sonu bayatlık kararının referansıdır.</summary>
+        public Dictionary<string, string>? ReadStates { get; set; }
     }
 
     /// <summary>
@@ -1722,15 +1829,20 @@ public sealed class RunCoordinator(
     /// ayrışırdı (kopya YASAK, CLAUDE.md).
     /// </summary>
     private async Task<InvokeOutcome> InvokeOnceAsync(
-        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct)
+        RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct,
+        bool suppressRestore = false)
     {
         // Proje kimliği (tam csproj yolu) derlenen dosyanın kendisidir; proje kendi (VS-parity) obj'inde derlenir.
         var request = new MsBuildInvokeRequest(
             ProjectId: projectId,
             Configuration: run.Configuration,
             SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
-            // Clean hiçbir şey derlemez: paket restore'u onun için anlamsız bir bekleme olurdu.
-            NeedsRestore: run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(projectId),
+            // Clean hiçbir şey derlemez: paket restore'u onun için anlamsız bir bekleme olurdu. [restore-once]
+            // suppressRestore, SCC tur döngüsünün "bu üyenin bir önceki turu BAŞARILIYDI" bilgisidir: başarılı
+            // invoke restore prologunu da içerir ve turlar arasında ne kaynak ne packages.config değişebilir —
+            // aynı no-op restore'u her turda yeniden ödemek 7 üyeli gerçek bir grupta tur başına dakikalar
+            // ölçüyordu. Başarısız üye yeniden restore ALIR (patlayan şey restore'un kendisi olabilir).
+            NeedsRestore: !suppressRestore && run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(projectId),
             Target: run.MsBuildTarget);
 
         // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır: OpenProjectLog
