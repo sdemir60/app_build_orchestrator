@@ -1356,9 +1356,12 @@ signature, commit, branch and duration stay exactly as a past success left them.
 The verdict is taken once, in one gate (`FailureEvidenceSignature`: a trusted result of a compiling target, a
 compiler exit, a known planning signature and a ledger to write to), and the same answer goes two ways: into
 the ledger and onto the `projectFailed` event as `evidence`. The application paints the row from that flag and
-never re-reads the reason text — a non-converged group's member that fails with `exit N` looks like evidence
-from its text alone, but it is not, and the row would otherwise turn red only for the next Sync to turn it
-grey. An event without the field (an older engine) reads as no evidence. A success is handled the same way:
+never re-reads the reason text. A non-converged group's member that fails with `exit N` looks like evidence
+from its text alone; whether it *is* depends on what it compiled against: a member whose every intra-group
+read surface was already final when it failed is trusted through the gate like a plain `Build` failure (the
+stale-sibling explanation is ruled out — §8.8, cycle rounds), while without that proof it is not, and the row
+would otherwise turn red only for the next Sync to turn it grey. An event without the field (an older engine)
+reads as no evidence. A success is handled the same way:
 whether the ledger keeps it as a success travels on the `projectSucceeded` event as `trusted`, decided where
 the invalidation is. A green member of a cycle group that did not converge (no progress, or the round ceiling)
 is invalidated like a failure without evidence and arrives with `trusted: false`; a group cut short reports
@@ -1413,10 +1416,18 @@ life of the group — so the App reads only the most recent start *within a comp
 counts the rest of the component as still queued. Without that, a 32-member component would report 32
 projects building on a four-worker run.
 
-**A group that did not converge persists nothing.** Only `Converged` is trusted: on no-progress, on the
-ceiling, on a stop, on cancellation and on an unexpected exception, every member is invalidated — including
-members that came back green — and a group cut short reports every member as failed rather than carrying an
-intermediate round's verdict out.
+**A group that did not converge persists no success.** Only `Converged` is trusted with a fresh signature: on
+no-progress, on the ceiling, on a stop, on cancellation and on an unexpected exception, every member is
+invalidated — including members that came back green — and a group cut short reports every member as failed
+rather than carrying an intermediate round's verdict out. One thing *is* kept on the surface-proof no-progress
+path: the member whose compiler failure forced the verdict — it failed with every intra-group surface it read
+already final, so its inputs will be identical on any retry — records that failure as **evidence**
+(`FailedSignature`, §7.5) and arrives with `evidence: true`, exactly like a plain `Build` failure. Its row
+turns red and reads `failed` (with the *Resolve cycles will retry it* clause, §13.2), and the verdict survives
+the next Sync, so the member that actually broke the group is visible at a glance; its green siblings stay
+unevidenced and grey. Without surface proof the old rule holds unchanged — a member of a non-converged group
+that fails with `exit N` looks like evidence from its text alone, but nothing can rule the stale-sibling
+explanation out, so it is not, and no row turns red only for the next Sync to turn it grey.
 
 **A stop cuts the group where it lands, not at the end of the round.** The member already compiling drains, as
 everywhere else; the members after it in the round are never invoked at all. A group runs its own loop rather

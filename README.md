@@ -370,7 +370,10 @@ tooltip is one line (`In a dependency cycle`); the loop itself is named in the p
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
 answers "why was this one not built?". A member the run actually compiled wears its result colour alone —
 except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
-because nothing it produced is kept.
+because nothing it produced is kept. One member escapes that grey: the one whose compile failed while every
+sibling output it read was already final is the proven culprit — it turns red like any failed build, reads
+`failed` with *Resolve cycles will retry it*, and keeps that verdict across Sync, so the project that actually
+breaks the cycle is visible at a glance while its innocent siblings wait in grey.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
