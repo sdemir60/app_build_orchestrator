@@ -454,9 +454,13 @@ public class RunCoordinatorTests
     // ---------------------------------------------------------------- [spec 2026-09-18 §6.1 · karar 10] branch kesmesi
 
     /// <summary>Tek proje uçuştayken kesme isteyen koşu: <paramref name="result"/> uçuştakinin sonucu. Kesme, sonuç
-    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan".</summary>
+    /// dönmeden ÖNCE düşer — "değişim anında derlenmekte olan". <paramref name="kind"/> varsayılan
+    /// <c>Interrupt</c>'tır; <c>Graceful</c> ile çağrıldığında AYNI iskelet düz Graceful Stop'u kurar (bkz.
+    /// <see cref="A_project_that_succeeds_after_a_graceful_stop_is_trusted_and_persisted"/>) — kopya YASAK
+    /// (CLAUDE.md): üç çağıran da pozisyonel argüman geçtiği için bu SONA eklenen opsiyonel parametre hiçbirini
+    /// bozmaz.</summary>
     private static async Task<IReadOnlyList<IpcEvent>> InterruptWhileAIsInFlight(MsBuildInvokeResult result,
-        BuildStateStore? store = null, IncrementalPlan? incremental = null)
+        BuildStateStore? store = null, IncrementalPlan? incremental = null, StopKind kind = StopKind.Interrupt)
     {
         var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
         var inFlight = Signal();
@@ -466,7 +470,7 @@ public class RunCoordinatorTests
 
         await h.Sut.StartAsync(Start(parallelism: 1), default);
         await inFlight.Task.WaitAsync(Limit);
-        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        Assert.True(h.Sut.TryRequestStop(kind));
         release.SetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
         return h.Events;
@@ -508,33 +512,12 @@ public class RunCoordinatorTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    /// <summary>[T10] <see cref="InterruptWhileAIsInFlight"/>'ın klonu — TEK fark <c>StopKind.Graceful</c>
-    /// (Interrupt DEĞİL): motor <c>_interrupted</c> bayrağını hiç görmez (RunCoordinator.cs:1278'in
-    /// <c>trustedResult &amp;= !_interrupted</c> satırı Graceful'da hep true kalır). Parametreleştirmek yerine
-    /// klonlanır: StopKind ortak helper'ın imzasında yoktur ve eklemek üstteki Interrupt testlerinin çağrılarını
-    /// da değiştirirdi — iki senaryo (kesme/graceful) ayrı kanıt zincirleri pinlediği için ayrı kalmaları
-    /// okunurluğu bozmaz.</summary>
-    private static async Task<IReadOnlyList<IpcEvent>> GracefulStopWhileAIsInFlight(MsBuildInvokeResult result,
-        BuildStateStore? store = null, IncrementalPlan? incremental = null)
-    {
-        var plan = PlanOf(Node("A"), Node("B")) with { Incremental = incremental };
-        var inFlight = Signal();
-        var release = Signal();
-        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return result; });
-        using var h = new Harness(plan, invoker, stateStore: store);
-
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
-        await inFlight.Task.WaitAsync(Limit);
-        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
-        release.SetResult();
-        await h.Sut.RunCompletion.WaitAsync(Limit);
-        return h.Events;
-    }
-
     /// <summary>[T10 PİN] Karşıtı <see cref="A_project_that_succeeds_after_an_interrupt_is_not_recorded_as_built"/>:
     /// düz Graceful Stop (Interrupt DEĞİL) sonrası biten başarı deftere GÜVENİLİR yazılır — <c>_interrupted</c>
     /// yalnız Interrupt'ta true olur, sıradan Graceful onu hiç etkilemez (RunCoordinator.cs:1278 çevresi). B hiç
-    /// dispatch edilmediği için defterde hiç kaydı yoktur; tamamlanma olayında Queued yalnız B'yi sayar.</summary>
+    /// dispatch edilmediği için defterde hiç kaydı yoktur; tamamlanma olayında Queued yalnız B'yi sayar. Aynı
+    /// <see cref="InterruptWhileAIsInFlight"/> iskeleti <c>kind: StopKind.Graceful</c> ile çağrılır (kopya YASAK
+    /// — CLAUDE.md).</summary>
     [Fact]
     public async Task A_project_that_succeeds_after_a_graceful_stop_is_trusted_and_persisted()
     {
@@ -543,7 +526,7 @@ public class RunCoordinatorTests
         {
             var store = new BuildStateStore(cacheRoot);
 
-            var events = await GracefulStopWhileAIsInFlight(Ok(), store, Incremental("A", "B"));
+            var events = await InterruptWhileAIsInFlight(Ok(), store, Incremental("A", "B"), kind: StopKind.Graceful);
 
             Assert.True(Assert.Single(events.OfType<ProjectSucceededEvent>()).Trusted);
             var state = store.Load();
