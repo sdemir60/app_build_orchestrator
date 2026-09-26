@@ -490,7 +490,11 @@ Three of these carry the whole model:
   from one another: directly-changed projects (Fast semantics, no cascade — for an output built elsewhere, own
   inputs newer than the output, §7.6), the will-build set size (Safe
   semantics, dirty plus transitive dependents, minus any project a plain `Build` would only evaluate
-  conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count.
+  conditionally, §8.3 — the same subtraction the queue colour and the wave apply), and the up-to-date count. A
+  project excluded from the will-build set only for being conditional does not fall into neither counter: it is
+  a green row (built against a dependency's last healthy output), so the up-to-date count folds it back in — the
+  same split the ribbon already draws from the rows themselves (`totalProjects - willBuild`, `RibbonText`). The
+  two counters therefore always add up to the project count.
   It also carries the branch that was checked out when the Sync measured (`activeBranch`, null on a detached
   HEAD) and the local HEAD commit (`headSha`, null in a repository with no commit yet). The App keeps the pair
   as "the HEAD of the last Sync", which is what lets a trigger that finds HEAD unchanged skip its Sync (§10.2),
@@ -1810,6 +1814,13 @@ resolves to no project at all —
 a path that is gone, an empty folder, a file that is neither — is reported: Sync warns and carries on, Build
 refuses to start. Letting a configured root silently vanish would produce a green build linked against
 whatever stale DLLs were lying around.
+
+**A card cannot point at the main workspace itself.** A path equal to the repository root, or anywhere under
+it, is rejected the same way — Sync warns and carries on, Build refuses to start — because the main root is
+already scanned; treating it as an external root too would scan the same tree twice and the same project would
+carry both an ordinary and an external identity at once. The comparison is on fully-resolved,
+separator-normalised paths (`RootScope`, the same helper the ledger's root-scoped pruning uses), so a case
+difference, a trailing separator or a forward slash cannot let a card slip through.
 
 **Everything else is derived, nothing is stored.** The project set, the display names and the working-copy
 root are resolved from the path on every run, so moving a project or recreating its working copy needs no

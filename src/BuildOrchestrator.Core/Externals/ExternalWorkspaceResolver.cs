@@ -1,5 +1,6 @@
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
+using BuildOrchestrator.Core.Paths;
 
 namespace BuildOrchestrator.Core.Externals;
 
@@ -52,9 +53,18 @@ public static class ExternalWorkspaceResolver
     private const string SolutionExtension = ".sln";
     private const string ProjectExtension = ".csproj";
 
+    /// <summary>[kullanıcı kararı] Ana kökün kendisini ya da bir alt klasörünü gösteren bir kart <see
+    /// cref="ScanOne"/>'a hiç girmez — ana ağaç zaten taranıyor, ikinci kez "harici" rozetiyle taranması aynı
+    /// projeyi iki kimlikle (sıradan + harici) ortaya çıkarırdı.</summary>
+    private const string InsideMainWorkspaceMessage = "the path is inside the main workspace root";
+
     /// <summary>Harici kart yoksa ana tarama olduğu gibi geçer — tek bir dizin bile okunmaz.</summary>
+    /// <param name="mainRootPath">Ana çalışma alanı kökü — <see cref="InsideMainWorkspaceMessage"/> kontrolünün
+    /// karşılaştırdığı taraf. Çözülemezse (boş/geçersiz) kontrol atlanır (bkz. <see
+    /// cref="RootScope.NormalizeRoot"/> — never-throw), diğer hata sınıfları zaten aşağıda yakalanır.</param>
     public static ExternalWorkspace Resolve(
-        ScanResult mainScan, IReadOnlyList<ExternalProject>? externals, WorkspaceScanner scanner)
+        ScanResult mainScan, IReadOnlyList<ExternalProject>? externals, WorkspaceScanner scanner,
+        string mainRootPath)
     {
         ArgumentNullException.ThrowIfNull(mainScan);
         ArgumentNullException.ThrowIfNull(scanner);
@@ -67,10 +77,17 @@ public static class ExternalWorkspaceResolver
         var externalProjectIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var csproj = new List<string>(mainScan.CsprojPaths);
         var sln = new List<string>(mainScan.SlnPaths);
+        string? normalizedMainRoot = RootScope.NormalizeRoot(mainRootPath);
 
         foreach (var project in externals)
         {
             string name = DisplayName(project.Path);
+            if (normalizedMainRoot is not null && IsInsideMainRoot(project.Path, normalizedMainRoot))
+            {
+                problems.Add(new ExternalScanProblem(project, name, InsideMainWorkspaceMessage));
+                continue;
+            }
+
             var (scan, problem) = ScanOne(project.Path, scanner);
             if (scan is null)
             {
@@ -89,6 +106,20 @@ public static class ExternalWorkspaceResolver
 
         return new ExternalWorkspace(
             new ScanResult(Canonical(csproj), Canonical(sln)), externalProjectIds, roots, problems);
+    }
+
+    /// <summary>
+    /// <paramref name="path"/>'in arama kökü (<see cref="SearchRootOf"/> — dosyaysa içeren dizin, klasörse
+    /// kendisi) <paramref name="normalizedMainRoot"/>'un ALTINDA mı, yoksa ONUNLA AYNI mı? Normalizasyon iki
+    /// tarafta da <see cref="RootScope"/> — sondaki ayraç, OrdinalIgnoreCase (Windows). Ana kökün KENDİSİ de
+    /// reddedilir: iki taraf AYNI yordamla (sondaki ayraç eklenerek) normalize edildiğinde tam eşitlik
+    /// kendiliğinden bir "ile BAŞLAR" durumuna düşer (bir dize kendisiyle başlar), yani <see
+    /// cref="RootScope.Contains"/>'a ikinci bir dal eklemeye gerek yoktur.
+    /// </summary>
+    private static bool IsInsideMainRoot(string path, string normalizedMainRoot)
+    {
+        string? candidate = RootScope.NormalizeRoot(SearchRootOf(path));
+        return candidate is not null && RootScope.Contains(normalizedMainRoot, candidate);
     }
 
     /// <summary>

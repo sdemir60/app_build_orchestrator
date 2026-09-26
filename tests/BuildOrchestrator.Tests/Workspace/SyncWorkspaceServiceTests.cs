@@ -526,6 +526,14 @@ public class SyncWorkspaceServiceTests
     /// olduğundan (§10.2), <c>Conditional</c> artık AYNI soruyu sorar — B burada <c>true</c> olmalı, tıpkı bir
     /// sonraki düz Build'in kendi önizlemesinde olacağı gibi (bkz. <c>ConditionalRebuildRunTests.
     /// The_preview_marks_a_waiting_project_as_conditional_and_carries_its_root_names</c>).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı, waiting = up to date]</b> Eski iddia örtüktü: test
+    /// <c>UpToDateCount</c>'u hiç sınamıyordu ve eski kod B'yi ne <c>ToBuildCount</c>'a ne <c>UpToDateCount</c>'a
+    /// yazıyordu (ikisi de A'yı sayıp B'yi hiçbir kovaya koymuyordu — özet satırının toplamı proje sayısını
+    /// TUTMUYORDU). Karar: B, yeşil ✓ + ⚠ ile "güncel" görünen bir satırdır (son sağlıklı çıktıya karşı derlenmiş),
+    /// dolayısıyla özet sayımında UP TO DATE sayılmalı — tıpkı üst şeridin (<c>RibbonText</c> ~143-144,
+    /// <c>totalProjects - willBuild</c>) zaten yaptığı gibi. Sync'in kendi <c>UpToDateCount</c>'u şeritle
+    /// AYNI kuralı izler: <c>ToBuild</c> hariç KALAN her proje güncel sayılır.</para>
     /// </summary>
     [Fact]
     public async Task The_preview_carries_the_root_names_of_a_project_waiting_for_a_failed_dependency()
@@ -566,6 +574,7 @@ public class SyncWorkspaceServiceTests
 
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil
+        Assert.Equal(1, done.UpToDateCount); // DEĞİŞEN KURAL — B bekliyor ama güncel sayılır, ne de olsa ikisi ARASINDA kaybolmaz
     }
 
     /// <summary>

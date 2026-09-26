@@ -2,9 +2,12 @@ namespace BuildOrchestrator.Core.Paths;
 
 /// <summary>
 /// "Bu yol şu workspace kökünün altında mı?" sorusunun TEK cevabı — kök-kapsamlı defter işlemlerinin ortak
-/// kapısı. İki çağıran ailesi vardır: Clean'in <c>RemoveUnderRoot</c>'u (kök altındaki HER kaydı siler) ve
-/// Optimize'ın <c>PruneMissingUnderRoot</c>'u (yalnız dosyası kaybolmuş kaydı siler). Normalizasyonun her
-/// çağıranda yeniden yazılması, çağıran sayısı kadar farklı prefix tuzağı demek olurdu.
+/// kapısı. Üç çağıran ailesi vardır: Clean'in <c>RemoveUnderRoot</c>'u (kök altındaki HER kaydı siler),
+/// Optimize'ın <c>PruneMissingUnderRoot</c>'u (yalnız dosyası kaybolmuş kaydı siler) ve <see
+/// cref="BuildOrchestrator.Core.Externals.ExternalWorkspaceResolver"/>'ın <c>IsInsideMainRoot</c>'u (bir
+/// harici kartın ana kökün içinde ya da AYNISINDA olup olmadığını sorar — bkz. <see cref="Contains"/>'in
+/// altındaki not). Normalizasyonun her çağıranda yeniden yazılması, çağıran sayısı kadar farklı prefix
+/// tuzağı demek olurdu.
 ///
 /// <para><b>Tuzak:</b> ham prefix karşılaştırması <c>C:\repo</c> köküne <c>C:\repo2\Y\Y.csproj</c>'yi de
 /// katar — ad kökle BAŞLAR ama proje AYRI bir workspace'tedir. Bu yüzden kök daima sonuna ayraç eklenerek
@@ -33,7 +36,12 @@ public static class RootScope
     }
 
     /// <summary><paramref name="path"/> <paramref name="normalizedRoot"/>'un (bkz. <see cref="NormalizeRoot"/>)
-    /// ALTINDA mı? Kökün kendisi "altında" SAYILMAZ — defterlerin anahtarları hep dosya yollarıdır.</summary>
+    /// ALTINDA mı? Kökün kendisi, TEK dosya yolu olarak verildiğinde "altında" SAYILMAZ — defterlerin
+    /// anahtarları hep dosya yollarıdır. Kökle AYNI konumu da yakalamak isteyen bir çağıran (üçüncü aile,
+    /// yukarıda) bunu BURADA bir özel dal AÇMADAN çözer: <paramref name="path"/>'i kendisi <see
+    /// cref="NormalizeRoot"/> ile (sondaki ayraçla) normalize ederek verir — iki taraf AYNI biçimde
+    /// normalize edilince tam eşitlik kendiliğinden bir "ile BAŞLAR" durumuna düşer. Bu, çağıranın
+    /// normalizasyon seçimidir; <c>Contains</c>'in kuralı değişmez.</summary>
     public static bool Contains(string normalizedRoot, string path) =>
         path.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
 }

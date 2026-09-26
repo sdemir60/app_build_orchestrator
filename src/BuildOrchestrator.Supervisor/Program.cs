@@ -103,7 +103,7 @@ public static class Program
             // gelir. Çözülemeyen bir kart koşuyu DURDURUR (Sync yalnız uyarır): yapılandırılmış bir haricinin
             // sessizce düşmesi, bayat bir DLL'e link'lenmiş yeşil bir build demektir.
             var external = ExternalWorkspaceResolver.Resolve(
-                scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner);
+                scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner, cmd.RootPath);
             if (external.Problems.Count > 0)
             {
                 var first = external.Problems[0];
