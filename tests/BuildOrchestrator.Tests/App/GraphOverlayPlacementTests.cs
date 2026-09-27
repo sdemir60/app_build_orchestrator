@@ -117,6 +117,52 @@ public class GraphOverlayPlacementTests
     }
 
     /// <summary>
+    /// AYIRT EDİCİ — <b>hangi düğümün üzerine gelinirse gelinsin</b> tooltip panelin iç payının İÇİNDE bütün
+    /// durur ve düğümünün üstünde kalır. Sığdığı her yerde düğüme ortalıdır; sığmadığında yalnız taştığı
+    /// kadar kayar, yani iç payın o kenarına dayanır.
+    ///
+    /// <para><b>Kusur (kullanıcı gözlemi):</b> "en sağdakinin üzerine hover olunca yarısı dışarıda kalıyor".
+    /// Kutu yalnız ankraja ortalanıyordu; kenar sütunlardaki düğümlerde yarısı panelin dışına taşıyor ve
+    /// <c>Ground</c>'un kırpması o yarıyı siliyordu.</para>
+    /// </summary>
+    [StaFact]
+    public void Every_hovered_node_keeps_its_tooltip_whole_inside_the_inset_and_over_its_node()
+    {
+        var (nodes, edges) = SyntheticGraph.Build(96, 5, 2.2);
+        var view = GraphTestView.Realized(Panel, () => false);
+        view.Resources.MergedDictionaries.Add(DsResources.Load("Controls.xaml"));
+        view.SetGraph(nodes, edges);
+
+        double inset = QuietGraphLayout.ContentInset;
+        double right = view.ViewportSize.Width - inset;
+        int slid = 0;
+        foreach (var node in nodes)
+        {
+            view.SetHoverForTest(node.Name);
+            double x = GraphOverlay.Project(view.NodeCenter(node.Name), view.CurrentCamera).X;
+            var topLeft = view.TooltipTopLeft;
+            var box = view.TooltipBoxSize;
+
+            // Konumlar ZEMİNE (Ground) göredir — panel başlığı bu ölçünün dışındadır.
+            Assert.InRange(topLeft.X, inset - 0.51, right - box.Width + 0.51);
+            Assert.InRange(topLeft.Y, inset - 0.51, view.ViewportSize.Height - inset - box.Height + 0.51);
+            Assert.InRange(x, topLeft.X, topLeft.X + box.Width); // kayan kutu düğümünden kopmaz
+
+            if (x - box.Width / 2 >= inset && x + box.Width / 2 <= right)
+            {
+                Assert.Equal(x - box.Width / 2, topLeft.X, 3); // sığıyorsa kıpırdamaz
+                continue;
+            }
+
+            slid++;
+            bool touchesAnEdge = Math.Abs(topLeft.X - inset) < 1e-3 || Math.Abs(topLeft.X + box.Width - right) < 1e-3;
+            Assert.True(touchesAnEdge, $"{node.Name}: kutu taştığından FAZLA kaydı ({topLeft.X}, {box.Width})");
+        }
+
+        Assert.True(slid > 0, "kurulum hatalı: hiçbir kutu kenara taşmadı — kusur bu grafla yeniden üretilmiyor");
+    }
+
+    /// <summary>
     /// Tooltip'in KAREYE mesafesi, ad etiketinin HALKAYA mesafesiyle aynıdır (kullanıcı kararı). İki yüzey
     /// aynı sayıyı kullanır ama farklı kenardan ölçer: hover edilen düğümün halkası yoktur.
     ///

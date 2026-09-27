@@ -3678,12 +3678,15 @@ one overlay `Canvas` that is a *sibling* of the camera's world, carrying no tran
 the camera would scale the text along with the graph and blur it at 5× zoom. Their positions come from the
 node's world point projected through the camera's **live** transform, refreshed on every frame the transform
 changes — reading the camera's *target* instead would leave the label parked where the camera has not arrived
-yet for the whole 460 ms of a selection glide. The box is centred on its node and the clamp applies to the
-**anchor**, not to the box: clamping the whole box was tried and measured badly, because real project names
-are long — a 30-character name is a ~215 px box, so in a 500 px panel every node near an edge dragged its
-tooltip tens of pixels away from the node it belonged to. Staying centred beats staying whole; the anchor is
-pulled into the graph's own inset, which is what keeps a label off the corner when the focus camera has zoomed
-in.
+yet for the whole 460 ms of a selection glide. The box is centred on its node, and the node's projected point
+— the **anchor** — is pulled into the graph's own inset first, which is what keeps a label off the corner when
+the focus camera has zoomed in. The tooltip then keeps its *whole* box inside that inset: centred on a node in
+an edge column, a long name would hang half outside the panel, where the panel's clip cuts it off and the name
+can no longer be read. It slides only by the amount it would cross the inset, so a box that fits never moves,
+and a box that slides still covers its anchor — for a node inside the inset that is the node itself, so the
+tooltip stays over the node it names. Sliding sideways cannot put the box on top of the node, because the
+vertical gap stays; sliding up or down would, which is why the vertical axis flips instead (below). A box wider
+than the whole space between the insets starts at the left one.
 
 Both boxes sit the same distance from the node — one number, not the design's two — but they measure from
 different edges: the tooltip from the square, since a merely hovered node has no ring, and the name label from

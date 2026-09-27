@@ -90,40 +90,101 @@ public class GraphOverlayTests
     }
 
     /// <summary>
-    /// AYIRT EDİCİ — kutu düğüme ORTALI kalır; kelepçe ANKRAJA uygulanır, kutuya değil.
+    /// AYIRT EDİCİ — tooltip sığdığı sürece düğüme ORTALIDIR; sığmadığında yalnız TAŞTIĞI KADAR içeri kayar ve
+    /// panelin iç payının içinde BÜTÜN kalır. Kayan kutu yine düğümün üstündedir.
     ///
-    /// <para><b>Eski iddia:</b> <c>A_node_at_the_edge_still_gets_a_fully_readable_tooltip_because_the_whole_box_is_clamped</c>
-    /// kelepçeyi kutunun tamamına uyguluyordu; gerekçesi §2.3'ün "node kenardayken bile TAMAMEN okunur"
-    /// cümlesiydi. <b>Değişme gerekçesi (ölçüm):</b> gerçek panelde proje adları uzundur — 500px'lik bir
-    /// panelde 30 karakterlik bir ad ~215px'lik kutu demektir, dolayısıyla kenardaki HER düğümde tooltip
-    /// düğümden onlarca piksel uzağa kayıyordu. Prototip yalnız ankrajı kelepçeler (JSX:470).</para>
+    /// <para><b>Eski iddia:</b> <c>A_node_near_the_edge_keeps_its_tooltip_centred_even_if_the_box_overflows</c>
+    /// kutuyu kenarda da ortalı tutuyor, taşan yarının kırpılmasını bedel sayıyordu ("ortalı durmak, kenarda
+    /// kırpılmaktan önce gelir"). <b>Değişme gerekçesi:</b> kullanıcı gözlemi — "en sağdakinin üzerine hover
+    /// olunca yarısı dışarıda kalıyor"; <c>Ground</c>'un kırpması o yarıyı siliyor ve ad okunmuyor. Eski
+    /// kararın dayanağı ("kutu kelepçesi tooltip'i düğümden koparıyor") kutu genişliğinin her adda ilk
+    /// ölçümdeki 24.6px'te takılı kaldığı bayat ölçüm kusuru varken gözlenmişti — o kusurun düzeltmesi 40 dk
+    /// sonra geldi. Yanlış genişlikle kelepçelenen kutu gerçekten düğümden kopar; doğru genişlikle kelepçelenen
+    /// kutu ise iç payın içindeki düğümünü her zaman örter (aşağıdaki iddia).</para>
     /// </summary>
     [Fact]
-    public void A_node_near_the_edge_keeps_its_tooltip_centred_even_if_the_box_overflows()
+    public void A_tooltip_that_would_cross_the_inset_slides_in_just_enough_to_stay_whole()
     {
-        var camera = new CameraTransform(1.0, 190, 0); // düğüm sağ kenara yakın
         var box = new Size(180, 20);
+        var node = new Point(300, 150);
 
-        var topLeft = GraphOverlay.TooltipTopLeft(new Point(300, 150), camera, HalfExtent, Panel, box);
+        // Sağ kenar: ekran X'i 526, ortalı kutu [436, 616] iç payın sınırını (564) 52px aşardı.
+        var rightCamera = new CameraTransform(1.0, 190, 0);
+        double rightX = GraphOverlay.Project(node, rightCamera).X;
+        Assert.True(rightX + box.Width / 2 > Panel.Width, "kurulum hatalı: ortalı kutu panelden taşmalıydı");
 
-        var screen = GraphOverlay.Project(new Point(300, 150), camera);
-        Assert.True(screen.X < Panel.Width, "kurulum hatalı: düğüm panelin içinde olmalı");
-        Assert.Equal(screen.X - box.Width / 2, topLeft.X, 6);
-        Assert.True(topLeft.X + box.Width > Panel.Width, "kurulum hatalı: kutu taşmalıydı");
+        var right = GraphOverlay.TooltipTopLeft(node, rightCamera, HalfExtent, Panel, box);
+
+        Assert.Equal(Panel.Width - Inset - box.Width, right.X, 6); // tam taştığı kadar — fazlası değil
+        Assert.InRange(rightX, right.X, right.X + box.Width);      // kutu hâlâ düğümün üstünde
+
+        // Sol kenar: ayna. Ekran X'i 74, ortalı kutu [-16, 164].
+        var leftCamera = new CameraTransform(1.0, -262, 0);
+        double leftX = GraphOverlay.Project(node, leftCamera).X;
+        Assert.True(leftX - box.Width / 2 < 0, "kurulum hatalı: ortalı kutu panelden taşmalıydı");
+
+        var left = GraphOverlay.TooltipTopLeft(node, leftCamera, HalfExtent, Panel, box);
+
+        Assert.Equal(Inset, left.X, 6);
+        Assert.InRange(leftX, left.X, left.X + box.Width);
     }
 
-    /// <summary>Ankraj panelin İÇ PAYINA kelepçelenir: düğüm (odak kipinde kamera yakınlaştığı için) panelin
-    /// dışına çıksa bile etiket köşeye yapışmaz.</summary>
+    /// <summary>Kayma yalnız GEREKTİĞİNDE olur: iç payın sınırına TAM dayanan kutu yerinden oynamaz, düğüme
+    /// ortalı kalır.</summary>
+    [Fact]
+    public void A_tooltip_that_just_fits_beside_the_inset_stays_centred()
+    {
+        var box = new Size(120, 20);
+        var node = new Point(300, 150);
+        var camera = new CameraTransform(1.0, 168, 0); // ekran X'i 504, ortalı kutu [444, 564]
+        double x = GraphOverlay.Project(node, camera).X;
+        Assert.Equal(Panel.Width - Inset, x + box.Width / 2, 6); // kurulum: sağ kenar sınırda
+
+        var topLeft = GraphOverlay.TooltipTopLeft(node, camera, HalfExtent, Panel, box);
+
+        Assert.Equal(x - box.Width / 2, topLeft.X, 6);
+    }
+
+    /// <summary>Kutu iç payların arasından genişse (dar panel, çok uzun ad) SOL iç paya oturur — dikeydeki son
+    /// çareyle aynı kural. Kelepçe hiçbir zaman <c>min &gt; max</c> ile kurulmaz: <c>Math.Clamp</c> o durumda
+    /// istisna fırlatır, yani hover uygulamayı düşürürdü.</summary>
+    [Fact]
+    public void A_tooltip_wider_than_the_content_area_starts_at_the_left_inset()
+    {
+        var box = new Size(Panel.Width - Inset, 20); // iç payların arası 528px, kutu 564px
+        Assert.True(box.Width > Panel.Width - 2 * Inset, "kurulum hatalı: kutu iç paya sığmamalıydı");
+
+        var topLeft = GraphOverlay.TooltipTopLeft(
+            new Point(300, 150), new CameraTransform(1.0, 0, 0), HalfExtent, Panel, box);
+
+        Assert.Equal(Inset, topLeft.X, 6);
+    }
+
+    /// <summary>
+    /// Ankraj panelin İÇ PAYINA kelepçelenir: düğüm (odak kipinde kamera yakınlaştığı için) panelin dışına
+    /// çıksa bile ad etiketi köşeye yapışmaz. Tooltip o durumda da kutusunun tamamıyla iç payın içindedir.
+    ///
+    /// <para><b>Eski iddia:</b> ankraj kelepçesi TOOLTIP üzerinden pinleniyordu (<c>Inset - box.Width / 2</c>,
+    /// yani yarısı panelin dışında bir kutu). <b>Değişme gerekçesi:</b> tooltip artık kutusunun tamamını iç
+    /// payın içinde tutar (<see cref="A_tooltip_that_would_cross_the_inset_slides_in_just_enough_to_stay_whole"/>);
+    /// yatayda yalnız ankraja kelepçelenen yüzey ad etiketidir, iddia oraya taşındı.</para>
+    /// </summary>
     [Fact]
     public void An_anchor_pushed_outside_the_panel_is_pulled_back_into_the_content_inset()
     {
         var box = new Size(80, 20);
+        var node = new Point(300, 150);
+        var farLeft = new CameraTransform(1, -900, 0);
+        var farRight = new CameraTransform(1, 900, 0);
 
-        var left = GraphOverlay.TooltipTopLeft(new Point(300, 150), new CameraTransform(1, -900, 0), HalfExtent, Panel, box);
-        Assert.Equal(Inset - box.Width / 2, left.X, 6);
+        Assert.Equal(Inset - box.Width / 2,
+            GraphOverlay.NameLabelTopLeft(node, farLeft, HalfExtent, Panel, box).X, 6);
+        Assert.Equal(Panel.Width - Inset - box.Width / 2,
+            GraphOverlay.NameLabelTopLeft(node, farRight, HalfExtent, Panel, box).X, 6);
 
-        var right = GraphOverlay.TooltipTopLeft(new Point(300, 150), new CameraTransform(1, 900, 0), HalfExtent, Panel, box);
-        Assert.Equal(Panel.Width - Inset - box.Width / 2, right.X, 6);
+        Assert.Equal(Inset, GraphOverlay.TooltipTopLeft(node, farLeft, HalfExtent, Panel, box).X, 6);
+        Assert.Equal(Panel.Width - Inset - box.Width,
+            GraphOverlay.TooltipTopLeft(node, farRight, HalfExtent, Panel, box).X, 6);
     }
 
     /// <summary>Seçim ad etiketi düğümün BOYANMIŞ alt kenarının 6px altındadır ve aynı ankraj kelepçesini
