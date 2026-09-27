@@ -1638,6 +1638,10 @@ public sealed class RunCoordinator(
                     bool announced = false;
                     try
                     {
+                        // [§4.5] Sıra beklenirken Stop düşmüş olabilir: üye henüz BAŞLAMADI, başlatılmaz. Yukarıdaki
+                        // kapının aynısıdır — dalgalı turda "başlamak" slotun alındığı andır; kapı yalnız slottan
+                        // önce dursaydı sırasını bekleyen üye Stop'tan SONRA yeni bir MSBuild.exe başlatırdı.
+                        if (StopRequested) { cutShort = true; return; }
                         TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
                         run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
                         announced = true;

@@ -1828,4 +1828,38 @@ public class CycleRoundsTests
         int peak = PeakAnnouncedCompiles(h.Events);
         Assert.True(peak <= 2, $"parallelism 2 iken {peak} proje aynı anda 'derleniyor' ilan edildi");
     }
+
+    /// <summary>
+    /// [dalga görünürlüğü · §4.5] Slot beklerken Stop düşen dalga üyesi BAŞLATILMAZ. Stop kapısı üye başlamadan
+    /// önce kontrol edilir ve dalgalı turda "başlamak" slotun alındığı andır. Kapı yalnız slottan önce dursaydı,
+    /// sırasını bekleyen üye Stop'tan SONRA yeni bir MSBuild.exe başlatırdı — "Stop'a basıyorum ama yenileri
+    /// derlenmeye devam ediyor" kusurunun (bkz. 7b) dalgadaki hâli.
+    /// </summary>
+    [Fact]
+    public async Task a_member_waiting_for_a_build_slot_is_not_started_after_a_stop()
+    {
+        var plan = HashModePlan(StarCycle(), "Hub", "S1", "S2", "S3");
+        var disk = StableStarDisk();
+        var rec = new RoundRecorder();
+        RunCoordinator? sut = null;
+        // Paralellik 1: S1 tek slotu tutarken S2 ve S3 kapıdan geçip sıraya girer; Stop S1 derlenirken düşer.
+        var invoker = rec.Invoker(async (name, _, _) =>
+        {
+            if (name == "S1")
+            {
+                await Task.Yield();
+                Assert.True(sut!.TryRequestStop(StopKind.Graceful));
+            }
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+        sut = h.Sut;
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["Hub#1", "S1#1"], rec.Calls);   // sırada bekleyen S2 ve S3 hiç invoke EDİLMEZ
+        // Yarıda kesilen grup: her üye "stopped" raporlanır, hiçbir şey persist edilmez (bkz. 7).
+        Assert.Equal(4, h.Events.OfType<ProjectFailedEvent>().Count(e => e.Reason == "stopped"));
+    }
 }
