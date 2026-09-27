@@ -350,6 +350,34 @@ public class EventStreamTests
         Assert.Equal("A building… · member 1/2 · round 2/3", vm.ActiveLineText); // sayaç 1'e döndü
     }
 
+    /// <summary>[dalga görünürlüğü] Aktif satır ŞU AN derleneni anlatır: bir üyenin turdaki derlemesi bitince
+    /// (<c>CycleMemberHeldEvent</c>) satır, hâlâ derlenen en son başlayan dalga arkadaşına geçer; kimse
+    /// kalmadıysa boşalır. Eskiden bu an yayılmıyordu ve işi biten üye, bir sonraki başlama olayına dek
+    /// "building…" diye kalıyordu.</summary>
+    [Fact]
+    public void Active_line_moves_off_a_member_once_the_engine_holds_it()
+    {
+        var vm = NewVm();
+        const string hubId = @"C:\p\hub.csproj";
+        const string aId = @"C:\p\a.csproj";
+        const string bId = @"C:\p\b.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(hubId, "Hub", 0, inCycle: true), Node(aId, "A", 1, inCycle: true), Node(bId, "B", 2, inCycle: true)],
+            [[hubId, aId, bId]], [], []));
+
+        // Seçici tur: yalnız bayat bağlanan A ile B derlenir; ikisi yalnız Hub'ı okur, aynı dalgada birlikte.
+        vm.OnEvent(new CycleRoundStartedEvent("r1", hubId, Round: 2, RoundCap: 3, MemberCount: 2));
+        vm.OnEvent(new ProjectStartedEvent("r1", aId, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", bId, "B"));
+        Assert.Equal("B building… · member 2/2 · round 2/3", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleMemberHeldEvent("r1", bId));      // B bitti — A hâlâ derleniyor
+        Assert.Equal("A building… · member 1/2 · round 2/3", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleMemberHeldEvent("r1", aId));      // dalga bitti — derlenen kimse yok
+        Assert.Null(vm.ActiveLineText);
+    }
+
     /// <summary>[Task 4] <see cref="StreamComposer"/> çekirdeği: <c>StartBuilding</c>'in <c>detail</c> parametresi
     /// aktif metne eklenir; AYNI proje üzerinde yalnız detay değişirse generation ARTMAZ (daktilo yeniden
     /// koşmasın — id/ad DEĞİŞMEDİ). Farklı bir projeye geçişte (id/ad değişimi) generation her zamanki gibi artar.</summary>

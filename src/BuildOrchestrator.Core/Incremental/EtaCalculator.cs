@@ -12,10 +12,12 @@ namespace BuildOrchestrator.Core.Incremental;
 /// ARTI queued cycle (SCC) üyelerinin süre tahminleri toplamının <see cref="CycleRoundPolicy.BaselineRounds"/>
 /// katı. Overhead paralelliğe BÖLÜNMEDEN, bölümden SONRA eklenir (bkz. design-v1 prototype <c>SimEngine.eta()</c>:
 /// <c>remain / Math.max(1,maxPar) + (building.length ? 400 : 0)</c>). <b>Cycle katkısı da paralelliğe
-/// BÖLÜNMEZ</b> [cycle rounds/Task 10]: bir SCC'nin üyeleri motor tarafında SIRALI invoke edilir (biri diğerinin
-/// az önce yazdığı DLL'i okur — eşzamanlı OLAMAZ) ve küme en az <see cref="CycleRoundPolicy.BaselineRounds"/> tur
-/// çalışır (iki ardışık yeşil tur yakınsama şartı — bkz. <see cref="CycleRoundPolicy"/>); bu yüzden queued
-/// cycle süresi paralellik varsayımının ve tek-tur varsayımının DIŞINDA, kendi terimiyle eklenir.</item>
+/// BÖLÜNMEZ</b> [cycle rounds/Task 10]: bir SCC'nin turları bariyerli dalgalarla koşar ve dalga genişliği grubun iç
+/// şekline bağlıdır — doğrudan komşular asla birlikte derlenmez, bazı dalgalar tek üyeliktir; düz bölme onlar
+/// için fazla vaat ederdi. Küme için <see cref="CycleRoundPolicy.BaselineRounds"/> tur bütçelenir (yüzey kanıtı
+/// grubu tek turda da yakınsatabilir; tahmin bu yönde bilerek KARAMSARDIR — geç biten ETA erken bitenden iyidir,
+/// ARCHITECTURE §8.4). Bu yüzden queued cycle süresi paralellik varsayımının ve tek-tur varsayımının DIŞINDA,
+/// kendi terimiyle eklenir.</item>
 /// <item><b>EMA yumuşatma</b> ardışık tick'ler arası: <c>newEta = 0.75·previousEta + 0.25·rawEstimate</c>
 /// (<see cref="PreviousWeight"/>/<see cref="RawWeight"/>). İlk tick (previousEta yok) → doğrudan ham tahmin.</item>
 /// <item><b>Gösterim:</b> en yakın 5 saniyeye yuvarlanır; <see cref="AlmostDoneThresholdMs"/> (4000ms) ALTI →
@@ -65,10 +67,10 @@ public static class EtaCalculator
     /// <param name="parallelism">Eşzamanlı build slotu sayısı; 1'den küçükse 1'e clamp edilir (savunmacı — sıfıra bölme YOK).</param>
     /// <param name="cycleQueuedDurationEstimatesMs">
     /// [cycle rounds/Task 10] Henüz başlamamış cycle (SCC) üyelerinin süre tahminleri — bilinmiyorsa <c>null</c>.
-    /// <paramref name="queuedDurationEstimatesMs"/>'ten AYRI tutulur: bu üyeler paralel DEĞİL sıralı invoke
-    /// edilir ve küme en az <see cref="CycleRoundPolicy.BaselineRounds"/> tur çalışır, bu yüzden katkıları
-    /// <paramref name="parallelism"/>'e bölünmeden, <see cref="CycleRoundPolicy.BaselineRounds"/> ile çarpılarak
-    /// eklenir (bkz. sınıf özeti).
+    /// <paramref name="queuedDurationEstimatesMs"/>'ten AYRI tutulur: bu üyelerin turları değişken genişlikte
+    /// bariyerli dalgalarla koşar ve küme için <see cref="CycleRoundPolicy.BaselineRounds"/> tur bütçelenir, bu
+    /// yüzden katkıları <paramref name="parallelism"/>'e bölünmeden, <see cref="CycleRoundPolicy.BaselineRounds"/>
+    /// ile çarpılarak eklenir (bkz. sınıf özeti).
     /// </param>
     /// <returns>
     /// Ham tahmin (ms), YUVARLANMIŞ (<see cref="Math.Round(double, MidpointRounding)"/>, AwayFromZero). Hiçbir
@@ -112,8 +114,8 @@ public static class EtaCalculator
 
         double raw = (queuedSum + buildingRemaining) / par;
         if (building.Count > 0) raw += BuildingOverheadMs; // [Δ8] bölümden SONRA eklenir, paralelliğe bölünmez
-        // [cycle rounds/Task 10] Cycle katkısı paralelliğe BÖLÜNMEZ (sıralı invoke) ve BaselineRounds ile
-        // çarpılır (yakınsama için gereken asgari tur sayısı) — tek doğruluk kaynağı CycleRoundPolicy'dir.
+        // [cycle rounds/Task 10] Cycle katkısı paralelliğe BÖLÜNMEZ (dalga genişliği grubun şekline bağlı) ve
+        // BaselineRounds ile çarpılır (bütçelenen tur sayısı) — tek doğruluk kaynağı CycleRoundPolicy'dir.
         raw += cycleQueuedSum * CycleRoundPolicy.BaselineRounds;
 
         return RoundToLong(raw);

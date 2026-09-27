@@ -240,10 +240,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// Derleme başarılı ama çıktı bir kuşak geride OLABİLİR. RENDER Task 9'undur — burası yalnız veri taşır.</summary>
     [ObservableProperty] private bool _cycleUnsettled;
 
-    /// <summary>[cycle rounds/I2] Bu satır bir SCC üyesidir, grubu ŞU AN koşuyor ama SIRASI KENDİSİNDE DEĞİL:
-    /// motor grubun üyelerini sıralı invoke eder ve ara tur sonuçlarını yayınlamaz, bu yüzden üye grubun tüm
-    /// ömrü boyunca <see cref="ProjectRowState.Started"/>'ta kalır — o an gerçekten derlenen tek üye, grubun EN
-    /// SON <c>projectStarted</c> alanıdır.
+    /// <summary>[cycle rounds/I2] Bu satır bir SCC üyesidir, grubu ŞU AN koşuyor ama kendisi DERLENMİYOR: motor ara
+    /// tur sonuçlarını yayınlamaz, bu yüzden üye grubun tüm ömrü boyunca <see cref="ProjectRowState.Started"/>'ta
+    /// kalır. Hangi üyelerin o an derlendiğini motorun iki ilanı söyler: <c>projectStarted</c> bayrağı indirir,
+    /// <c>cycleMemberHeld</c> ("turdaki derlemesi bitti, grubunu bekliyor") kaldırır — bayrağın TEK yazıcısı
+    /// o ilandır (bkz. <c>RunViewModel.OnCycleMemberHeld</c>). Bir dalgadaki üyeler birlikte derlenir, yani aynı
+    /// anda birden çok üye derleniyor olabilir.
     /// <para><b>[DEĞİŞEN KURAL]</b> Bayrak önce yalnız <see cref="RunCounters"/>'ın <c>Building</c>'ini
     /// sınırlıyordu ve <see cref="Status"/>'a BİLEREK dokunmuyordu. Ölçülen sonuç: 15 üyeli bir grupta listede
     /// 15, grafta 15 dönen spinner — sayaç chip'i "1 building" derken. Ekran, aracın aynı anda on beş iş
@@ -257,8 +259,8 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>
     /// Bu satır ŞU AN gerçekten derleniyor mu. <b>"Motor durumu <see cref="ProjectRowState.Started"/>" ile
-    /// AYNI ŞEY DEĞİLDİR</b>: bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için
-    /// grup bitene kadar HEPSİ Started'ta kalır (bkz. <see cref="CycleWaiting"/>).
+    /// AYNI ŞEY DEĞİLDİR</b>: bir SCC'nin ara tur sonuçları yayılmadığı için üyeleri grup bitene kadar HEPSİ
+    /// Started'ta kalır; turdaki derlemesi biten üye grubunu bekler (bkz. <see cref="CycleWaiting"/>).
     ///
     /// <para>Predicate TEK yerdedir ve ALTI yüzey onu okur: <see cref="Status"/>'un Building dalı,
     /// <see cref="RunCounters"/>'ın Building kovası, sticky şeridin building chip'leri, kartın nefes katmanı,
@@ -304,7 +306,7 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// gerçekten derleyen koşu (<c>RunMode.Cycles</c>) geldiğinde aynı satırlar sonuçlarını da gizlerdi.</para></summary>
     public Controls.GraphStatus Status => State switch
     {
-        // Grubu koşuyor ama SIRASI kendisinde değil: gerçekten derlenen tek üye vardır (bkz. IsCompiling).
+        // Grubu koşuyor ama kendisi derlenmiyor (turdaki derlemesi bitti, grubunu bekliyor) — bkz. IsCompiling.
         ProjectRowState.Started => IsCompiling ? Controls.GraphStatus.Building : Controls.GraphStatus.Queued,
         ProjectRowState.Succeeded => Controls.GraphStatus.Succeeded,
         ProjectRowState.Failed => Controls.GraphStatus.Failed,
@@ -466,9 +468,10 @@ public sealed partial class RunViewModel : ObservableObject
     private readonly Dictionary<string, long> _projectStartedAtMs = new(StringComparer.OrdinalIgnoreCase);
 
     // [cycle rounds/I2] SCC üyelik haritası — topolojiden (WorkspaceTopologyEvent.Cycles) kurulur, Core'un
-    // AYNI gövdesiyle (CycleGroups) çünkü motor da grubu ondan sürer. Tek tüketicisi "bu Started üye grubunun
-    // SIRASINI mı bekliyor" sorusudur: üyeler sıralı invoke edildiği için grubun EN SON projectStarted alanı
-    // dışındaki her üyesi beklemededir. Topoloji hiç gelmediyse null — o hâlde InCycle satır da yoktur.
+    // AYNI gövdesiyle (CycleGroups) çünkü motor da grubu ondan sürer. Grup sorularını cevaplar: aktif satırın
+    // üye/tur detayı (turu başlatan liderin grubu mu), Cycles koşusunun açılış kırılımı (üye mi önkoşul mu),
+    // yakınsamayan grubun üyeleri, bakım kutusunun sayıları. "Hangi üye şu an derleniyor" sorusunu SORMAZ —
+    // onu motorun ilanları söyler (OnCycleMemberHeld). Topoloji hiç gelmediyse null — o hâlde InCycle satır da yoktur.
     private CycleGroups? _cycleGroups;
 
     // [D2/T38] Sticky şeridin "wb/fin/allClean"i için SABİT willBuild kümesi: prototipte (BuildApp.jsx) willBuild
@@ -1776,6 +1779,7 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled, trusted: e.Trusted); break;
             case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, evidence: e.Evidence); break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
+            case CycleMemberHeldEvent e: OnCycleMemberHeld(e); break;
             case CycleCompletedEvent e: OnCycleCompleted(e); break;
             case RunCompletedEvent e: OnRunCompleted(e); break;
             case RunStoppedEvent: OnRunStopped(); break;
@@ -1962,15 +1966,26 @@ public sealed partial class RunViewModel : ObservableObject
         var row = EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started);
         row.State = ProjectRowState.Started;
         row.SkipReason = null;    // bu koşuda GERÇEKTEN derleniyor — önceki segmentin atlama gerekçesi geçersiz
-        row.CycleWaiting = false; // sıra ONDA: bu event'in anlamı tam olarak budur
+        row.CycleWaiting = false; // motor onu şimdi derliyor: bu event'in anlamı tam olarak budur
         _projectStartedAtMs[e.ProjectId] = _nowMs();
-        // [cycle rounds/I2] Bir SCC üyesi başladıysa, KARDEŞLERİ artık beklemededir: grup içinde eşzamanlı
-        // invoke YOKTUR (biri diğerinin az önce yazdığı DLL'i okur). Ara tur sonuçları yayılmadığı için
-        // kardeşler Started'ta KALIR — bayrak, "Started" ile "şu an derleniyor"u ayıran tek şeydir.
-        foreach (string sibling in _cycleGroups?.MembersOf(e.ProjectId) ?? [])
-            if (!string.Equals(sibling, e.ProjectId, StringComparison.OrdinalIgnoreCase)
-                && FindRow(sibling) is { State: ProjectRowState.Started } waiting)
-                waiting.CycleWaiting = true;
+        RefreshRunSurface();
+    }
+
+    /// <summary>
+    /// [cycle rounds/dalga görünürlüğü] Bir SCC üyesinin turdaki derlemesi bitti; sonucu grubun kararına kadar
+    /// tutulur (ara tur yayılmaz), bu yüzden satır Started'ta KALIR ve <see cref="ProjectRowViewModel.CycleWaiting"/>
+    /// "derleniyor"u "grubunu bekliyor"dan ayırır. Bayrağın TEK yazıcısı motorun bu ilanıdır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bayrak eskiden TAHMİN edilirdi: bir kardeş başladığında, başlamış öteki
+    /// üyeler "sırası geçti" sayılırdı — grup içinde eşzamanlı invoke yokken doğruydu. Turlar bariyerli
+    /// dalgalarla koştuğundan beri aynı dalgadaki üyeler birlikte derlenir: tahmin onları bekliyor gösteriyor,
+    /// işi bitmiş son başlayanı ise derleniyor tutuyordu. Paralellik sınırını motor korur: "başladı" yalnız slot
+    /// tutan üyeye, "bitti" slot bırakılmadan önce yazılır.</para>
+    /// </summary>
+    private void OnCycleMemberHeld(CycleMemberHeldEvent e)
+    {
+        // Savunmacı: sonucunu almış (terminal) bir satır grubunu beklemez — geç gelen bir ilan onu geri çevirmez.
+        if (FindRow(e.ProjectId) is not { State: ProjectRowState.Started } row) return;
+        row.CycleWaiting = true;
         RefreshRunSurface();
     }
 
@@ -2172,16 +2187,17 @@ public sealed partial class RunViewModel : ObservableObject
         // sıfırlanır (kümülatif bir toplam değildir).
         int completed = Projects.Count(p => p.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped)
             + _outOfScopeSkipCount;
-        // [cycle rounds/I2] "building" kovası PARALEL çalışan işler içindir (toplamı paralelliğe bölünür) —
-        // bir SCC üyesi oraya AİT DEĞİLDİR, koşuyor olsa bile: grubun üyeleri sıralı invoke edilir ve grup en
-        // az BaselineRounds tur çalışır. Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur
-        // çarpanını YOK EDİYORDU (üye Pending'den çıktığı an cycle kovasından da düşüyordu).
+        // [cycle rounds/I2] "building" kovası PARALEL çalışan sıradan işler içindir (toplamı paralelliğe bölünür)
+        // — bir SCC üyesi oraya AİT DEĞİLDİR, koşuyor olsa bile: grubun maliyeti turlarıyla birlikte kendi
+        // teriminde bütçelenir (dalga genişliği grubun şekline bağlıdır, küme BaselineRounds tur bütçelenir).
+        // Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur çarpanını YOK EDİYORDU (üye
+        // Pending'den çıktığı an cycle kovasından da düşüyordu).
         var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !p.InCycle).ToList();
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);
 
-        // [cycle rounds/Task 10] cycle (SCC) üyeleri EtaCalculator'a AYRI listeyle beslenir — onlar paralel
-        // değil sıralı invoke edilir ve küme en az iki tur çalışır (EtaCalculator kendi içinde
+        // [cycle rounds/Task 10] cycle (SCC) üyeleri EtaCalculator'a AYRI listeyle beslenir — turları değişken
+        // genişlikte dalgalarla koşar ve küme için iki tur bütçelenir (EtaCalculator kendi içinde
         // CycleRoundPolicy.BaselineRounds ile çarpar, paralelliğe bölmez). InCycle bayrağı satırda zaten var
         // (topoloji uzlaştırmasından, bkz. ProjectRowViewModel.InCycle) — burada YENİDEN türetilmez.
         // [I2] Henüz BAŞLAMAMIŞ (Pending) üyeler kadar KOŞAN (Started) üyeler de bu kovadadır: ikisinin de

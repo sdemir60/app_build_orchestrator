@@ -106,9 +106,14 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
     /// yayılmadığı için grup bitene kadar HEPSİ <c>Started</c>'ta kalır — <c>FrontierRowIndex</c> hep listedeki
     /// İLK üyeyi bulur, dead-band da devreye girince liste bir daha hiç kaymaz.</para>
     ///
-    /// <para>Doğru soru <c>ProjectRowViewModel.IsCompiling</c>'dir (Started <b>ve</b> sırası bekleyen değil) —
+    /// <para>Doğru soru <c>ProjectRowViewModel.IsCompiling</c>'dir (Started <b>ve</b> grubunu bekleyen değil) —
     /// aynı predicate'i satır glyph'i, sayaçlar, şerit chip'leri, kart nefesi ve süre sütunu da okur. Frontier
     /// o listenin kaçırılmış tüketicisiydi.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — dalgalı turlar]</b> Sıranın el değiştirmesi artık motorun iki ilanıdır: biten
+    /// üye için <c>CycleMemberHeldEvent</c>, başlayan için <c>ProjectStartedEvent</c>. Eskiden yalnız ikincisi
+    /// gelirdi ve App bekleyen üyeyi kardeşin başlamasından tahmin ederdi — aynı dalgadaki üyeler birlikte
+    /// derlendiğinden beri tahmin yanlıştı. Test motorun gerçekte gönderdiği sırayı verir; iddia aynıdır.</para>
     /// </summary>
     [StaFact]
     public void The_list_follows_the_turn_inside_a_running_cycle_group()
@@ -134,6 +139,7 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
         double atFirst = list.Scroll.VerticalOffset;
 
         // Sıra ikinci üyeye geçer. Grup bitmediği için BİRİNCİ üye hâlâ Started'tır — kusur tam burada çıkar.
+        vm.OnEvent(new CycleMemberHeldEvent("r1", nodes[20].Id));
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[50].Id, nodes[50].Name));
         DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > atFirst + 1, TimeSpan.FromSeconds(3));
         double atSecond = list.Scroll.VerticalOffset;

@@ -41,6 +41,17 @@ public class StickyRibbonTests
         vm.OnEvent(new BuildPreviewEvent([.. projects.Select(p => new BuildPreviewItem(p.id, p.name, true))]));
     }
 
+    /// <summary>[cycles] Motorun sıralı bir turda gönderdiği ilanlar: her üye başlar, derlemesi bitince grubunu
+    /// beklemeye geçer (<c>CycleMemberHeldEvent</c>); SON üye hâlâ derleniyordur.</summary>
+    private static void CompileInTurn(RunViewModel vm, (string id, string name)[] members)
+    {
+        for (int i = 0; i < members.Length; i++)
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", members[i].id, members[i].name));
+            if (i < members.Length - 1) vm.OnEvent(new CycleMemberHeldEvent("r1", members[i].id));
+        }
+    }
+
     /// <summary>[D5] Topolojiyi kurar → kısa-ad öneki (NamePrefix) satırlara itilir; chip'ler onu okur.</summary>
     private static void SetTopology(RunViewModel vm, params (string id, string name)[] projects) =>
         vm.OnEvent(new WorkspaceTopologyEvent(
@@ -330,13 +341,18 @@ public class StickyRibbonTests
 
     /// <summary>
     /// [cycles] Şeridin building chip'leri de "ŞU AN derleniyor" sorusunu sorar — "Started durumundadır"ı
-    /// DEĞİL. Bir SCC'nin üyeleri tek tek invoke edilir ve ara tur sonuçları yayılmadığı için grup bitene
-    /// kadar hepsi <c>Started</c>'ta kalır; şerit bunları çip yapsaydı 15 üyeli bir grupta dört çip + "+11"
-    /// gösterirdi — sayaç chip'i "1 building" derken. Üç yüzey (satır glyph'i, sayaç, şerit) TEK predicate'ten
-    /// (<c>ProjectRowViewModel.IsCompiling</c>) okur.
+    /// DEĞİL. Ara tur sonuçları yayılmadığı için bir SCC'nin üyeleri grup bitene kadar <c>Started</c>'ta kalır;
+    /// şerit bunları çip yapsaydı 15 üyeli bir grupta dört çip + "+11" gösterirdi — sayaç chip'i "1 building"
+    /// derken. Üç yüzey (satır glyph'i, sayaç, şerit) TEK predicate'ten (<c>ProjectRowViewModel.IsCompiling</c>)
+    /// okur.
+    /// <para><b>[DEĞİŞEN KURAL — dalgalı turlar]</b> Test eskiden üç başlama olayını arka arkaya verip "sıra
+    /// SON başlayanda" varsayımını sınıyordu; App bekleyen üyeyi kardeşinin başlamasından tahmin ederdi. Motor
+    /// artık her üyenin turdaki derlemesinin bitişini ilan eder (<c>CycleMemberHeldEvent</c>) — aynı dalgadaki
+    /// üyeler birlikte derlendiği için tahmin yanlış hâle gelmişti. Test motorun gerçekte gönderdiği sırayı
+    /// verir; iddia aynıdır.</para>
     /// </summary>
     [StaFact]
-    public void Building_chips_show_only_the_member_whose_turn_it_is_inside_a_running_cycle_group()
+    public void Building_chips_show_only_the_members_compiling_now_inside_a_running_cycle_group()
     {
         var vm = NewVm();
         var nodes = new[] { ("a", "A"), ("b", "B"), ("c", "C") };
@@ -344,7 +360,7 @@ public class StickyRibbonTests
             [.. nodes.Select(p => new ProjectNode(p.Item1, p.Item2, p.Item1, [], [], 0, null, null, true, null))],
             [["a", "b", "c"]], [], []));
         StartRun(vm, nodes);
-        foreach (var (id, name) in nodes) vm.OnEvent(new ProjectStartedEvent("r1", id, name)); // sıra C'de
+        CompileInTurn(vm, nodes); // A ve B derlendi, grubunu bekliyor; C derleniyor
 
         var (ribbon, window) = Realize(vm);
 
@@ -366,6 +382,9 @@ public class StickyRibbonTests
     /// eşitlik görüp <c>PropertyChanged</c> yaymaz, şerit de chip'lerini yalnız <c>Counters</c> bildirimiyle
     /// tazelediği için hiç haber almazdı. Satır kartları doğru güncelleniyordu (onlar satırın kendi
     /// <c>PropertyChanged</c>'ine bağlı) — kullanıcının gördüğü asimetri buydu.</para>
+    /// <para><b>[DEĞİŞEN KURAL — dalgalı turlar]</b> Sıranın el değiştirmesi artık motorun iki ilanıdır — biten
+    /// üye için <c>CycleMemberHeldEvent</c>, başlayan için <c>ProjectStartedEvent</c> (eskiden yalnız ikincisi
+    /// gelir, birincisi kardeşin başlamasından tahmin edilirdi; bkz. yukarıdaki testin notu).</para>
     /// </summary>
     [StaFact]
     public void Building_chip_follows_the_turn_as_it_moves_between_cycle_members()
@@ -376,13 +395,14 @@ public class StickyRibbonTests
             [.. nodes.Select(p => new ProjectNode(p.Item1, p.Item2, p.Item1, [], [], 0, null, null, true, null))],
             [["a", "b", "c"]], [], []));
         StartRun(vm, nodes);
-        foreach (var (id, name) in nodes) vm.OnEvent(new ProjectStartedEvent("r1", id, name)); // sıra C'de
+        CompileInTurn(vm, nodes); // C derleniyor
 
         var (ribbon, window) = Realize(vm); // şerit CANLI: bundan sonrasını bildirimle öğrenmek zorunda
         Assert.Equal("C", ChipLabel(ribbon.BuildingChips[0]));
 
         var before = vm.Counters;
-        vm.OnEvent(new ProjectStartedEvent("r1", "a", "A")); // sıra A'ya geçti
+        vm.OnEvent(new CycleMemberHeldEvent("r1", "c"));     // C'nin turu bitti...
+        vm.OnEvent(new ProjectStartedEvent("r1", "a", "A")); // ...sıra yeni turda A'ya geçti
 
         Assert.Equal(before, vm.Counters);                   // sayaç demeti değişmedi — kusurun kaynağı
         Assert.Single(ribbon.BuildingChips);

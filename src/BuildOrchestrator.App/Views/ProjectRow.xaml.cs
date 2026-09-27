@@ -244,9 +244,9 @@ public partial class ProjectRow : UserControl
             case nameof(ProjectRowViewModel.Status):
                 ApplyStatusVisuals(); // [Fix wave 1, Finding 1] queued dahil TEK eşleme yolundan gelir
                 ApplyDep();           // [cycles] üyelik rozetinin kapısı Status'tur — onunla birlikte tazelenir
-                // [cycles] CycleWaiting setter'ı Status'u da tetikler (RunViewModel.cs) — sıra kardeşe geçtiği ANDA
-                // nefes/süre burada da tazelenmeli. State case'i zaten çağırıyor; çift çağrı zararsız, iki metod
-                // da idempotent.
+                // [cycles] CycleWaiting setter'ı Status'u da tetikler (RunViewModel.cs) — üyenin turdaki derlemesi
+                // bittiği ANDA nefes/süre burada da tazelenmeli. State case'i zaten çağırıyor; çift çağrı zararsız,
+                // iki metod da idempotent.
                 ApplyBreathing();
                 ApplyDuration();
                 break;

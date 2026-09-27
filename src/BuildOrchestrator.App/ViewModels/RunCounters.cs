@@ -24,11 +24,12 @@ namespace BuildOrchestrator.App.ViewModels;
 /// okurdu; bu yüzden bayrak artık <see cref="ProjectRowViewModel.HasDepIssue"/> gibi statüden bağımsızdır.</para>
 ///
 /// <para>[cycle rounds/I2] <c>Building</c> "ŞU AN derlenen" demektir, "Started durumundaki satır" değil: bir
-/// SCC'nin üyeleri sıralı invoke edilir ve ara tur sonuçları yayılmadığı için grup bitene kadar HEPSİ
-/// <see cref="ProjectRowState.Started"/>'ta durur. Sırasını bekleyen üye (<see
+/// SCC'nin ara tur sonuçları yayılmadığı için üyeleri grup bitene kadar HEPSİ
+/// <see cref="ProjectRowState.Started"/>'ta durur. Turdaki derlemesi bitip grubunu bekleyen üye (<see
 /// cref="ProjectRowViewModel.CycleWaiting"/>) <c>Queued</c>'a taşınır — bölme değil TAŞIMA, toplam korunur.
 /// Aksi halde 32 üyeli bir SCC 4 worker'lı bir run'da "32 building" raporlardı ve şerit "finishing 32 in
-/// flight" derdi.</para>
+/// flight" derdi. Bir dalgada birden çok üye birlikte derlenebilir; sayının paralelliği aşmamasını motor
+/// garanti eder ("başladı" yalnız MSBuild slotunu tutan projeye yazılır).</para>
 ///
 /// <para>[design v1.20.0 §2.7] <b>İki tablo.</b> <c>Succeeded</c>/<c>Failed</c>/<c>Skipped</c> KOŞUNUN tablosudur —
 /// şeridin koşu özeti (<see cref="RibbonText"/>: "N failed · N succeeded · N skipped") onları okur ve değişmez.
