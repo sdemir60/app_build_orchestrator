@@ -12,9 +12,10 @@ namespace BuildOrchestrator.Tests.Supervisor;
 
 /// <summary>
 /// [cycle rounds] SCC (dairesel bağımlılık) tur döngüsü: üyeler artık pre-skip EDİLMEZ, tek iş kalemi olarak
-/// dispatch edilip sıralı turlarla derlenirler. Bu dosya davranış sözleşmesinin dört ayağını pinler:
-/// (1) turlar — tek yeşil tur yetmez, iki ardışık yeşil gerekir; (2) ara tur sonuçları YAYILMAZ; (3) üyeler
-/// build-order sırasıyla ve SIRALI invoke edilir; (4) yakınsamayan grup hiçbir şey persist etmez.
+/// dispatch edilip turlarla derlenirler. Bu dosya davranış sözleşmesinin dört ayağını pinler:
+/// (1) turlar — yüzey kanıtı yoksa tek yeşil tur yetmez, iki ardışık yeşil gerekir; (2) ara tur sonuçları
+/// YAYILMAZ (yalnız her derlemenin iki ucu ilan edilir); (3) üyeler build-order'da bariyerli dalgalarla
+/// invoke edilir — doğrudan komşular asla aynı anda; (4) yakınsamayan grup hiçbir şey persist etmez.
 ///
 /// Fixture: <see cref="RunCoordinatorTests"/>'in harness'ı, fake invoker'ı ve plan yardımcıları AYNEN
 /// kullanılır (<c>using static</c>) — koordinatörün test host'u tek yerdedir, kopya YASAK (CLAUDE.md).
@@ -1688,5 +1689,143 @@ public class CycleRoundsTests
                 invoker.Requests.Where(r => r.ProjectId == Id(py)).Select(r => r.NeedsRestore));
         }
         finally { Directory.Delete(projectDir, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- 17) "derleniyor" ilanı = tutulan slot
+    // App bir satırı ProjectStartedEvent ile "derleniyor"a alır, sonuçla ya da CycleMemberHeldEvent ile
+    // "derleniyor"dan çıkarır. Dalgalı turda bu iki ilan ekranın TEK kaynağıdır: kardeşin başlaması artık
+    // "sıra ondan geçti" demek değildir (aynı dalgadaki üyeler birlikte derlenir). Bu bölüm ilanların
+    // gerçeği söylediğini pinler: her derlemenin iki ucu ilan edilir ve ilan edilen derleme sayısı hiçbir
+    // anda koşunun paralelliğini aşmaz.
+
+    /// <summary>App'in "derleniyor" dediği küme — <see cref="ProjectStartedEvent"/> almış, henüz
+    /// <see cref="CycleMemberHeldEvent"/> ya da sonuç almamış projeler (App'in <c>IsCompiling</c> kuralının
+    /// olay akışındaki karşılığı). Akışın HER önekindeki en büyük boyunu döner.</summary>
+    private static int PeakAnnouncedCompiles(IReadOnlyList<IpcEvent> events)
+    {
+        var compiling = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int peak = 0;
+        foreach (var e in events)
+        {
+            switch (e)
+            {
+                case ProjectStartedEvent s:
+                    compiling.Add(s.ProjectId);
+                    peak = Math.Max(peak, compiling.Count);
+                    break;
+                case CycleMemberHeldEvent held: compiling.Remove(held.ProjectId); break;
+                case ProjectSucceededEvent done: compiling.Remove(done.ProjectId); break;
+                case ProjectFailedEvent done: compiling.Remove(done.ProjectId); break;
+            }
+        }
+        return peak;
+    }
+
+    /// <summary>
+    /// [dalga görünürlüğü] Her üye, turdaki derlemesi BİTTİĞİ anda "grubunu bekliyor" diye ilan edilir —
+    /// sonucu açıklanmadan (ara tur yine yayılmaz). Eskiden bu an hiç yayılmazdı ve App onu "kardeşi başladıysa
+    /// sırası geçmiştir" diye TAHMİN ediyordu; tahmin yalnız sıralı turda doğruydu. Dalgalı turda aynı anda
+    /// derlenen üyeler "bekliyor" görünüyor, işi biten üye ise sonraki dalga başlayana dek "derleniyor"
+    /// görünmeye devam ediyordu.
+    /// </summary>
+    [Fact]
+    public async Task every_member_is_announced_held_the_moment_its_compile_ends()
+    {
+        var rec = new RoundRecorder();
+        using var h = new Harness(TwoMemberCycle(), rec.Invoker((_, _) => Ok()));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // Her invoke'un iki ucu da ilan edilir; sonuçlar ise grup bitince, üye başına TEK kez gelir.
+        Assert.Equal(
+            ["cycleRound:A:1", "projectStarted:A", "cycleMemberHeld:A", "projectStarted:B", "cycleMemberHeld:B",
+             "cycleRound:A:2", "projectStarted:A", "cycleMemberHeld:A", "projectStarted:B", "cycleMemberHeld:B",
+             "projectSucceeded:A", "projectSucceeded:B"],
+            h.Events.Where(e => e is CycleRoundStartedEvent or ProjectStartedEvent or CycleMemberHeldEvent
+                or ProjectSucceededEvent or ProjectFailedEvent).Select(Describe));
+    }
+
+    /// <summary>
+    /// [dalga görünürlüğü] Üye ancak MSBuild sırasını (slot) TUTARKEN "derleniyor" diye ilan edilir ve "bitti"
+    /// ilanı slot bırakılmadan önce gider — ilan edilen derleme sayısı hiçbir anda koşunun paralelliğini
+    /// aşamaz. Eskiden ilan slot beklenmeden yapılıyordu: beş uydulu bir dalga paralellik 2'de beşini birden
+    /// "derleniyor" gösterirdi, oysa aynı anda yalnız ikisi derlenebilir.
+    /// </summary>
+    [Fact]
+    public async Task a_wave_never_announces_more_compiles_than_the_run_parallelism()
+    {
+        string[] names = ["Hub", "S1", "S2", "S3", "S4", "S5"];
+        var plan = HashModePlan(CyclePlanOf(names,
+            Node("Hub", deps: ["S1", "S2", "S3", "S4", "S5"], inCycle: true),
+            Node("S1", deps: ["Hub"], inCycle: true), Node("S2", deps: ["Hub"], inCycle: true),
+            Node("S3", deps: ["Hub"], inCycle: true), Node("S4", deps: ["Hub"], inCycle: true),
+            Node("S5", deps: ["Hub"], inCycle: true)), names);
+        var disk = new SurfaceDisk();
+        foreach (string name in names) disk.Set(name, name + "-api"); // yüzeyler oturmuş: tek tur
+        var bothSlotsTaken = Signal();
+        var release = Signal();
+        int arrived = 0;
+        var rec = new RoundRecorder();
+        // İlk iki uydu iki slotu da tutarken testin iznini bekler: dalganın kalanı bu sırada sıraya girer.
+        // Zamanlamaya bağlı değil — sıraya giren üyenin ilanı ya slottan ÖNCE (kusur) ya SONRA yapılır.
+        var invoker = rec.Invoker(async (name, _, _) =>
+        {
+            if (name == "Hub") return Ok();
+            if (Interlocked.Increment(ref arrived) == 2) bothSlotsTaken.TrySetResult();
+            await release.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 2), default);
+        await bothSlotsTaken.Task.WaitAsync(Limit);
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(6, rec.Calls.Count);
+        Assert.True(invoker.MaxConcurrent <= 2, $"parallelism 2 iken {invoker.MaxConcurrent} eşzamanlı invoke gözlendi");
+        int peak = PeakAnnouncedCompiles(h.Events);
+        Assert.True(peak <= 2, $"parallelism 2 iken {peak} proje aynı anda 'derleniyor' ilan edildi");
+    }
+
+    /// <summary>
+    /// [dalga görünürlüğü] Tekil proje de ancak bir MSBuild slotu TUTARKEN dispatch edilir: worker slotu işi
+    /// istemeden ÖNCE alır, sonucu yazdıktan SONRA bırakır. Eskiden proje slot beklenmeden dispatch ediliyor
+    /// ve "derleniyor" ilan ediliyordu — koşan bir dalga slotları doldurmuşken sıradaki proje ekranda
+    /// derleniyor görünür, sayaç paralelliği aşardı. Senaryo sahadaki kalıptır: bir grubun dalgası koşarken
+    /// başka bir grubun upstream'i (U) hazır hâle gelir.
+    /// </summary>
+    [Fact]
+    public async Task a_project_is_dispatched_only_while_it_holds_a_build_slot()
+    {
+        // G0 = H0 ↔ T1..T4 (yıldız), G1 = X ↔ Y; X, U'ya bağlı, U da P'ye. P ile G0 aynı anda başlar.
+        var plan = CyclesPlanOf([["H0", "T1", "T2", "T3", "T4"], ["X", "Y"]],
+            Node("H0", deps: ["T1", "T2", "T3", "T4"], inCycle: true),
+            Node("T1", deps: ["H0"], inCycle: true), Node("T2", deps: ["H0"], inCycle: true),
+            Node("T3", deps: ["H0"], inCycle: true), Node("T4", deps: ["H0"], inCycle: true),
+            Node("P"), Node("U", deps: ["P"]),
+            Node("X", deps: ["U", "Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true));
+        var t1Compiling = Signal();
+        var uCompiling = Signal();
+        var rec = new RoundRecorder();
+        // T1 dalgada bir slotu U derlenmeye başlayana dek tutar; P, T1 slotunu alana dek sürer. P bitince
+        // U hazırdır ama iki slottan biri T1'de, diğeri dalganın sıradaki üyesinde: U sırasını beklemelidir.
+        var invoker = rec.Invoker(async (name, round, _) =>
+        {
+            if (name == "T1" && round == 1) { t1Compiling.TrySetResult(); await uCompiling.Task; }
+            if (name == "P") await t1Compiling.Task;
+            if (name == "U") uCompiling.TrySetResult();
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 2), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(9, Assert.IsType<RunCompletedEvent>(h.Events[^1]).Succeeded);
+        Assert.True(invoker.MaxConcurrent <= 2, $"parallelism 2 iken {invoker.MaxConcurrent} eşzamanlı invoke gözlendi");
+        int peak = PeakAnnouncedCompiles(h.Events);
+        Assert.True(peak <= 2, $"parallelism 2 iken {peak} proje aynı anda 'derleniyor' ilan edildi");
     }
 }

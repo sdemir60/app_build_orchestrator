@@ -55,9 +55,13 @@ public class RunCoordinatorTests
     /// <summary>[cycle rounds] SCC TAŞIYAN plan — üyeler proje ADIYLA verilir, <see cref="Id"/> ile çevrilir.
     /// <see cref="PlanOf"/> ile aynı düğüm kurulumu; tek farkı <see cref="BuildPlan.Cycles"/>'ın dolu olması
     /// (<c>CycleGroups.From</c> yalnız oradan okur). Plan kurulumu tek yerde kalsın diye burada durur.</summary>
-    internal static RunPlan CyclePlanOf(string[] cycle, params ProjectNode[] nodes) =>
+    internal static RunPlan CyclePlanOf(string[] cycle, params ProjectNode[] nodes) => CyclesPlanOf([cycle], nodes);
+
+    /// <summary>[dalga görünürlüğü] Birden çok SCC taşıyan plan — <see cref="CyclePlanOf"/> bunun tek grupluk
+    /// hâlidir (düğüm kurulumu tek yerde).</summary>
+    internal static RunPlan CyclesPlanOf(string[][] cycles, params ProjectNode[] nodes) =>
         new(new BuildPlan([.. nodes.Select((n, i) => n with { BuildOrder = i })],
-            Cycles: [[.. cycle.Select(Id)]], Configuration: "Debug"), EmptyRefs());
+            Cycles: [.. cycles.Select(cycle => cycle.Select(Id).ToList())], Configuration: "Debug"), EmptyRefs());
 
     internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
 
@@ -82,6 +86,7 @@ public class RunCoordinatorTests
         ProjectFailedEvent p => $"projectFailed:{NameOf(p.ProjectId)}:{p.Reason}",
         ProjectSkippedEvent p => "projectSkipped:" + NameOf(p.ProjectId),
         CycleRoundStartedEvent c => $"cycleRound:{NameOf(c.ProjectId)}:{c.Round}",
+        CycleMemberHeldEvent c => "cycleMemberHeld:" + NameOf(c.ProjectId),
         RunStoppedEvent s => "runStopped:" + (s.WasHard ? "hard" : "graceful"),
         RunCompletedEvent c => "runCompleted:" + c.Outcome,
         ErrorEvent er => "error:" + er.Code,

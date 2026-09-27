@@ -261,6 +261,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(BuildPreviewEvent), "buildPreview")]
 [JsonDerivedType(typeof(WorkspaceTopologyEvent), "workspaceTopology")]
 [JsonDerivedType(typeof(CycleRoundStartedEvent), "cycleRoundStarted")]
+[JsonDerivedType(typeof(CycleMemberHeldEvent), "cycleMemberHeld")]
 [JsonDerivedType(typeof(CycleCompletedEvent), "cycleCompleted")]
 public abstract record IpcEvent;
 
@@ -459,9 +460,10 @@ public sealed record WorkspaceTopologyEvent(
 
 /// <summary>
 /// [cycle rounds] Bir SCC'nin (dairesel bağımlılık grubunun) yeni bir turu başladı. Grup TEK bir derleme
-/// birimidir: üyeleri her turda build-order sırasıyla ve sıralı derlenir, ara tur sonuçları YAYILMAZ — bu
-/// yüzden kullanıcının gördüğü tek ilerleme sinyali budur (üyelerin kendi <see cref="ProjectStartedEvent"/>'i
-/// her turda tekrarlanır, ama hangi TURDA olunduğunu yalnız bu olay söyler).
+/// birimidir: üyeleri her turda bariyerli dalgalarla derlenir (doğrudan kenarı olmayan üyeler aynı dalgada
+/// eşzamanlı), ara tur sonuçları YAYILMAZ — bu yüzden grubun kendi ilerleme sinyali budur (üyelerin
+/// <see cref="ProjectStartedEvent"/>/<see cref="CycleMemberHeldEvent"/> çifti her turda tekrarlanır, ama hangi
+/// TURDA olunduğunu yalnız bu olay söyler).
 /// </summary>
 /// <param name="ProjectId">Grubun build-order'daki İLK üyesi (lider) — konsol satırı grubu bu adla anar.</param>
 /// <param name="Round">Başlayan turun 1-tabanlı numarası.</param>
@@ -469,6 +471,17 @@ public sealed record WorkspaceTopologyEvent(
 /// <param name="MemberCount">Grubun bu turda derlenecek üye sayısı.</param>
 public sealed record CycleRoundStartedEvent(string RunId, string ProjectId, int Round, int RoundCap, int MemberCount)
     : IpcEvent;
+
+/// <summary>
+/// [cycle rounds] Bir SCC üyesinin BU TURDAKİ derlemesi bitti ve MSBuild sırasını (slot) bıraktı; sonucu grubun
+/// kararına kadar TUTULUR. Sonuç TAŞIMAZ — ara tur sonuçları yayılmaz kuralı aynen geçerlidir: üye bir sonraki
+/// turda yeniden derlenecekse yeniden <see cref="ProjectStartedEvent"/> alır, grup bitince TEK sonucunu alır.
+/// <para>App satırı "derleniyor"dan "grubunu bekliyor"a YALNIZ bununla taşır. Kardeşin başlaması bunu artık
+/// söyleyemez: bir dalgadaki üyeler aynı anda derlenir. Motor bu olayı slotu bırakmadan ÖNCE yazar ve
+/// <see cref="ProjectStartedEvent"/>'i yalnız slotu tutan projeye yazar — ekrandaki "derleniyor" sayısı bu
+/// yüzden hiçbir anda koşunun paralelliğini aşamaz.</para>
+/// </summary>
+public sealed record CycleMemberHeldEvent(string RunId, string ProjectId) : IpcEvent;
 
 /// <summary>[cycles] Bir SCC koşusunun nihai kararı — CycleRoundDecision'ın (Core) wire karşılığı; Continue
 /// (yarıda kesilme) bir karar DEĞİLDİR ve bu event hiç yayılmaz. camelCase METİN olarak yazılır.</summary>

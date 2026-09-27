@@ -1107,8 +1107,17 @@ public sealed class RunCoordinator(
             // kaçırılmaz (lost wakeup yok).
             var wake = run.Wake.Waiter;
             if (run.Scheduler.IsDone) return;
+            // [dalga görünürlüğü] Slot İŞ İSTENMEDEN önce alınır: tekil proje ancak bir MSBuild slotu tutarken
+            // dispatch edilir, yani "derleniyor" ilanı (BuildProjectAsync'teki ProjectStartedEvent) her zaman
+            // gerçekten başlayan bir derlemeyi anlatır. Eskiden slot invoke'un hemen önünde bekleniyordu:
+            // koşan bir SCC dalgası slotları doldurmuşken dispatch edilen proje sırasını beklerken de
+            // "derleniyor" görünürdü (ekranın sayacı paralelliği aşardı) ve beklerken düşen bir Stop'tan SONRA
+            // yeni bir MSBuild başlatırdı. Kimse bir slotu tutarken başka bir slot beklemez: kilitlenme yoktur.
+            try { await run.InvokeSlots.WaitAsync(ct); }
+            catch (OperationCanceledException) { return; } // Supervisor kapanıyor
             if (!run.Scheduler.TryDispatch(out string projectId))
             {
+                run.InvokeSlots.Release();
                 // [Kısıt 2] TryDispatch==false "run bitti" DEĞİL, "şu an hazır iş yok" demektir — bağımlılıklar
                 // hâlâ derleniyor olabilir. Burada dönmek run'ı sessizce kırpardı; bunun yerine park edilir.
                 try { await wake.WaitAsync(ct); }
@@ -1117,7 +1126,10 @@ public sealed class RunCoordinator(
             }
             // [cycle rounds] Dispatch edilen id bir SCC üyesiyse scheduler TÜM üyeleri in-flight işaretlemiştir
             // (bkz. ReadySetScheduler.TryDispatch) — o zaman iş kalemi tek bir proje değil, grubun TAMAMIDIR.
+            // Grup slotlarını üye başına kendisi alır (seviye üyeleri eşzamanlıdır): dispatch'in slotu hemen
+            // havuza döner.
             var members = run.Groups?.MembersOf(projectId) ?? [];
+            if (members.Count > 0) run.InvokeSlots.Release();
             try
             {
                 if (members.Count == 0) await BuildProjectAsync(run, projectId, ct);
@@ -1128,7 +1140,13 @@ public sealed class RunCoordinator(
                 else if (!TrySkipGroupWhileDependenciesStillFail(run, members))
                     await BuildCycleGroupAsync(run, members, ct);
             }
-            finally { run.Wake.WakeAll(); } // Complete edildi (ya da patladı) → parked worker'lar yeniden baksın
+            finally
+            {
+                // Tekil projenin slotu SONUCU yazıldıktan sonra bırakılır (BuildProjectAsync onu kendi
+                // finally'sinde raporlar): bir sonraki "derleniyor" ilanı, bu projenin sonucundan önce gelemez.
+                if (members.Count == 0) run.InvokeSlots.Release();
+                run.Wake.WakeAll(); // Complete edildi (ya da patladı) → parked worker'lar yeniden baksın
+            }
         }
     }
 
@@ -1162,7 +1180,7 @@ public sealed class RunCoordinator(
             // [Kısıt 1] Proje logu YALNIZCA bu projenin invoke'u bittikten sonra dispose edilir (dispose
             // sonrası AppendLine fırlatır — satır sessizce düşmez). Ömür BURADA, invoke'un içinde DEĞİL.
             using (var log = run.Logs.OpenProjectLog(projectId))
-                outcome = await InvokeOnceAsync(run, projectId, depIssues, log, ct);
+                outcome = await InvokeOnceAsync(run, projectId, depIssues, log, ct); // slot: WorkerAsync tutuyor
 
             result = outcome.Result;
             durationMs = outcome.DurationMs;
@@ -1444,13 +1462,14 @@ public sealed class RunCoordinator(
     /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda <see cref="CycleRoundLevels"/>'ın
     /// BARİYERLİ seviyeleriyle invoke edilir: komşu olmayan üyeler aynı seviyede eşzamanlı, HERHANGİ yönde
     /// doğrudan kenar komşuları asla — A, B.dll'i okurken B aynı dosyayı yazıyor olurdu; bariyerler örtüşmediği
-    /// için bu yapısal olarak imkânsızdır. Eşzamanlılık koşunun paralellik tavanını aşamaz (InvokeOnceAsync'teki
-    /// ortak semafor).
+    /// için bu yapısal olarak imkânsızdır. Eşzamanlılık koşunun paralellik tavanını aşamaz (üye, invoke'u
+    /// boyunca koşunun ortak semaforundan bir slot tutar).
     ///
     /// <para>ARA TUR SONUÇLARI YAYILMAZ. SCC tek bir derleme birimidir (§7.3, tek bileşik imza); yarı bitmiş bir
     /// birimi "bitti" saymak progress'i geri götürür ve ETA'yı yanıltır. Yalnız son turun sonucu raporlanır,
-    /// süre ise turların TOPLAMIDIR (gerçek maliyet). <see cref="ProjectStartedEvent"/> ise HER turda yayılır:
-    /// o üye o an gerçekten derleniyordur.</para>
+    /// süre ise turların TOPLAMIDIR (gerçek maliyet). Her turun iki ucu ise ilan edilir, sonuç taşımadan:
+    /// <see cref="ProjectStartedEvent"/> üye slotunu aldığında (o an gerçekten derleniyordur),
+    /// <see cref="CycleMemberHeldEvent"/> derlemesi bitip slotu bırakmadan önce (artık grubunu bekliyordur).</para>
     ///
     /// <para><see cref="ReadySetScheduler.Complete"/> dispatch edilmiş her üye için TAM BİR KEZ, <c>finally</c>
     /// içinden çağrılır (stop/iptal/beklenmeyen hata dahil) — biri atlanırsa <see cref="ReadySetScheduler.IsDone"/>
@@ -1609,30 +1628,49 @@ public sealed class RunCoordinator(
                                 read[dep] = surfaceState[dep];
                         member.ReadStates = read;
                     }
-                    TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
-                    run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
-                    // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
-                    // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
-                    var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
-                        suppressRestore: member.Result == BuildResult.Succeeded);
-                    member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
-                    member.Result = outcome.Result;
-                    if (outcome.Result != BuildResult.Succeeded)
-                        member.FailReason = outcome.FailReason;
-                    else if (hashMode && producers.Contains(id))
+
+                    // [dalga görünürlüğü] Üye MSBuild sırasını (slot) ALDIKTAN SONRA "derleniyor" ilan edilir,
+                    // "bitti, grubunu bekliyor" ilanı (CycleMemberHeldEvent) ise slot BIRAKILMADAN önce yazılır.
+                    // App satırı bu iki ilanla "derleniyor"a alıp çıkarır; ilan edilen derleme sayısı böylece
+                    // hiçbir anda koşunun paralelliğini aşamaz. Eskiden ilan slot beklenmeden yapılıyordu: sıraya
+                    // giren dalga üyeleri de "derleniyor" görünürdü (5 uydulu dalga, paralellik 2'de beşi birden).
+                    await run.InvokeSlots.WaitAsync(ct);
+                    bool announced = false;
+                    try
                     {
-                        // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
-                        // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
-                        string? fresh = SurfaceStateOf(id);
-                        if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
-                        else
+                        TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
+                        run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
+                        announced = true;
+                        // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
+                        // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
+                        var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
+                            suppressRestore: member.Result == BuildResult.Succeeded);
+                        member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
+                        member.Result = outcome.Result;
+                        if (outcome.Result != BuildResult.Succeeded)
+                            member.FailReason = outcome.FailReason;
+                        else if (hashMode && producers.Contains(id))
                         {
-                            // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
-                            hashMode = false;
-                            Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                                "cycle {0}: output surface unreadable — continuing with full rounds",
-                                Path.GetFileNameWithoutExtension(members[0])));
+                            // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
+                            // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
+                            string? fresh = SurfaceStateOf(id);
+                            if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
+                            else
+                            {
+                                // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
+                                hashMode = false;
+                                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
+                                    "cycle {0}: output surface unreadable — continuing with full rounds",
+                                    Path.GetFileNameWithoutExtension(members[0])));
+                            }
                         }
+                    }
+                    finally
+                    {
+                        // Ara tur sonucu yine YAYILMAZ: ilan sonuç taşımaz, yalnız "derleme bitti" der. İstisnayla
+                        // biten invoke de bitmiştir — grup onu kesip her üyeyi Failed raporlayana dek satır bekler.
+                        if (announced) run.Events.TryWrite(new CycleMemberHeldEvent(run.RunId, id));
+                        run.InvokeSlots.Release();
                     }
                 }
 
@@ -1954,6 +1992,10 @@ public sealed class RunCoordinator(
     /// Neden ayrı: SCC tur döngüsü aynı projeyi birden çok kez invoke eder ama sonucu YALNIZ son turda
     /// raporlar. İki yol aynı invoke gövdesini paylaşmazsa komut satırı/log/retry davranışı sessizce
     /// ayrışırdı (kopya YASAK, CLAUDE.md).
+    ///
+    /// <para>[dalga görünürlüğü] Çağıran bir MSBuild slotu (<see cref="RunContext.InvokeSlots"/>) TUTARAK
+    /// çağırır; bu metot slot almaz. Slotun sahibi, projeyi "derleniyor" ilan eden taraftır — ilan ile slot
+    /// aynı elde durmazsa sıraya giren bir proje de derleniyor görünür.</para>
     /// </summary>
     private async Task<InvokeOutcome> InvokeOnceAsync(
         RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct,
@@ -1982,13 +2024,9 @@ public sealed class RunCoordinator(
             Emit(run, projectId, log, commandLine);
         foreach (string warnLine in DepIssueWarnLines(depIssues))
             Emit(run, projectId, log, warnLine);
-        // [seviyeli turlar] MSBuild-child tavanı TEK kapıdan: tekil yolda N worker ↔ N slot (davranış aynı),
-        // bir SCC seviyesinin eşzamanlı üyeleri de aynı havuzdan alır — tavan hiçbir bileşimde aşılmaz.
-        // Slot, timeout saati başlamadan ÖNCE alınır (PerProjectTimeout invoker'ın içinde kurulur).
-        await run.InvokeSlots.WaitAsync(ct);
-        MsBuildInvokeResult invoke;
-        try { invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct); }
-        finally { run.InvokeSlots.Release(); }
+        // Slot çağıranın elindedir ve timeout saati başlamadan ÖNCE alınmıştır (PerProjectTimeout invoker'ın
+        // içinde kurulur) — sıra beklemek bir projenin süresine ya da zaman aşımına sayılmaz.
+        var invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
@@ -2303,7 +2341,9 @@ public sealed class RunCoordinator(
         IReadOnlyDictionary<string, BuildState>? LedgerAtStart,
         // [seviyeli turlar] Koşunun MSBuild-child tavanı: her invoke (tekil worker yolu da, bir SCC seviyesinin
         // eşzamanlı üyeleri de) bu semafordan slot alır — worker sayısı + seviye genişliği hiçbir bileşimde
-        // parallelism'i aşamaz. Tekil yolda N worker ↔ N slot: davranış birebir aynıdır.
+        // parallelism'i aşamaz. [dalga görünürlüğü] Slotu "derleniyor" ilanını yapan taraf tutar: worker tekil
+        // projeyi dispatch'ten ÖNCE alıp sonucundan SONRA bırakır, SCC üyesi ilanından önce alıp "bitti"
+        // ilanından sonra bırakır — ilan edilen derleme sayısı hiçbir anda slot sayısını aşamaz.
         SemaphoreSlim InvokeSlots,
         // [tek proje] projectId → bu koşuda derlenmeyen bayat bağımlılıkları (yalnız kapsamlı koşuda, yalnız
         // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
