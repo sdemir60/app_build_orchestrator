@@ -11,11 +11,17 @@ namespace BuildOrchestrator.App.Graph;
 /// 5× ölçeklenip bulanıklaşırdı. Bu yüzden katman <c>World</c>'ün KARDEŞİDİR ve hiçbir
 /// <c>RenderTransform</c> taşımaz; konum ise düğümün dünya noktasının kameradan GEÇİRİLMİŞ hâlidir.</para>
 ///
-/// <para><b>Kelepçe ANKRAJA uygulanır, kutuya değil</b> (BuildApp.jsx:470, :477) — kutu her zaman ankraja
-/// ORTALANIR. Bir ara sürümde kelepçe kutunun tamamına uygulanıyordu ("node kenardayken bile tamamen okunur"
-/// okumasıyla) ve <b>ölçülen sonuç kabul edilemezdi</b>: 500px'lik bir panelde 30 karakterlik bir proje adı
-/// ~215px'lik bir kutu demektir, dolayısıyla kenardaki her düğümde tooltip düğümden onlarca piksel uzağa
-/// kayıyor ve hangi düğüme ait olduğu okunamıyordu. Ortalı durmak, kenarda kırpılmaktan önce gelir.</para>
+/// <para><b>Kutu ankraja ORTALANIR; tooltip sığmadığında yalnız TAŞTIĞI KADAR kayar.</b> Ankraj (düğümün
+/// ekran noktası) panelin iç payına kelepçelenir (BuildApp.jsx:470) ve kutu ona ortalanır — sığdığı her yerde
+/// hiçbir şey kaymaz. Tooltip bunun üstüne kutusunun TAMAMINI iç payın içinde tutar: yalnız ankraja ortalı
+/// kutunun yarısı kenar sütunlardaki düğümlerde panelin dışına taşıyor ve <c>Ground</c>'un kırpması o yarıyı
+/// siliyordu (kullanıcı gözlemi: "en sağdakinin üzerine hover olunca yarısı dışarıda kalıyor"). Kayan kutu
+/// kelepçeli ankrajı her zaman örter; iç payın içindeki bir düğümde ankraj düğümün kendisidir, yani tooltip
+/// düğümünün üstünde kalır. Yatayda kaymak kutuyu düğümün üstüne bindirmez (aradaki dikey boşluk durur);
+/// dikeyde bindirirdi, o yüzden dikeyde takla vardır. Bir ara sürümde kutunun tamamına uygulanan kelepçe
+/// tooltip'i düğümünden koparıyor görünmüştü — o gözlem, kutu genişliğinin her adda bayat ölçüldüğü dönemdeydi
+/// (bkz. <c>GraphView.PlaceOverlayBox</c>). Ad etiketi kaymaz: onun yerini kamera açar
+/// (<see cref="NameLabelTopLeft"/>).</para>
 ///
 /// <para><b>Kelepçe payı panelin İÇ PAYIDIR</b> (<see cref="QuietGraphLayout.ContentInset"/>, ayrı bir sayı
 /// değil): odak kipinde kamera yakınlaşıp düğümü kenara ittiğinde etiket köşeye YAPIŞMAZ, grafın kendi
@@ -47,8 +53,9 @@ public static class GraphOverlay
     }
 
     /// <summary>
-    /// Tooltip kutusunun SOL-ÜST köşesi: düğümün boyanmış üst kenarının 8px üstünde ve düğüme ortalı.
-    /// Üstte yer kalmadıysa düğümün ALTINA taklar.
+    /// Tooltip kutusunun SOL-ÜST köşesi: düğümün boyanmış üst kenarının <see cref="OverlayGapPx"/> üstünde ve
+    /// düğüme ortalı. Üstte yer kalmadıysa düğümün ALTINA taklar; ortalı kutu iç payın yan sınırlarından birini
+    /// aşacaksa yalnız aştığı kadar içeri kayar.
     /// </summary>
     /// <param name="halfExtent">Düğümün ekranda kapladığı YARIM yükseklik. Karenin yarısı DEĞİLDİR: vurgu
     /// ölçeği, taşan halka/yörünge ve kamera dahildir (bkz. <c>GraphView.PaintedHalfExtent</c>).</param>
@@ -57,7 +64,7 @@ public static class GraphOverlay
     {
         var screen = Project(contentCentre, camera);
         return new Point(
-            ClampAnchor(screen.X, panel.Width) - box.Width / 2,
+            ClampInside(ClampAnchor(screen.X, panel.Width) - box.Width / 2, box.Width, panel.Width),
             PlaceAbovePreferred(screen.Y, halfExtent + OverlayGapPx, box.Height, panel.Height));
     }
 
@@ -79,8 +86,8 @@ public static class GraphOverlay
             screen.Y + halfExtent + OverlayGapPx);
     }
 
-    /// <summary>Ankrajı (düğümün ekran noktasını) panelin iç payına çeker. Kutu buna ORTALANIR, yani düğüm
-    /// panelin dışına çıkmadıkça hiçbir şey kaymaz.</summary>
+    /// <summary>Ankrajı (düğümün ekran noktasını) panelin iç payına çeker; kutu buna ORTALANIR. Ad etiketinde
+    /// son söz budur — tooltip ayrıca kutusunu iç payın içine kaydırır (<see cref="ClampInside"/>).</summary>
     private static double ClampAnchor(double screenX, double panelWidth) => Math.Clamp(
         screenX, QuietGraphLayout.ContentInset,
         Math.Max(QuietGraphLayout.ContentInset, panelWidth - QuietGraphLayout.ContentInset));
@@ -102,8 +109,14 @@ public static class GraphOverlay
             : ClampInside(above, boxHeight, panelHeight);
     }
 
-    /// <summary>İki taraf da sığmadığında son çare: kutuyu panelin iç payının içinde tut.</summary>
-    private static double ClampInside(double top, double boxHeight, double panelHeight) => Math.Clamp(
-        top, QuietGraphLayout.ContentInset,
-        Math.Max(QuietGraphLayout.ContentInset, panelHeight - QuietGraphLayout.ContentInset - boxHeight));
+    /// <summary>
+    /// Kutuyu TEK eksende panelin iç payının içinde tutar: tooltip'in yatay kaymasının da, dikeyde iki taraf da
+    /// sığmadığındaki son çarenin de tek yolu.
+    ///
+    /// <para>Kutu iç payların arasından genişse baştaki (sol/üst) paya oturur. <c>Math.Max</c> şarttır:
+    /// <c>Math.Clamp</c> <c>min &gt; max</c> ile çağrılınca istisna fırlatır ve hover uygulamayı düşürürdü.</para>
+    /// </summary>
+    private static double ClampInside(double start, double boxExtent, double panelExtent) => Math.Clamp(
+        start, QuietGraphLayout.ContentInset,
+        Math.Max(QuietGraphLayout.ContentInset, panelExtent - QuietGraphLayout.ContentInset - boxExtent));
 }
