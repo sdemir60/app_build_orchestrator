@@ -38,10 +38,16 @@ public class CycleRoundsTests
         public IReadOnlyList<string> Calls { get { lock (_calls) return [.. _calls]; } }
 
         public FakeInvoker Invoker(Func<string, int, MsBuildInvokeResult> script) =>
-            Invoker((name, round, _) => Task.FromResult(script(name, round)));
+            Invoker((name, round, _, _) => Task.FromResult(script(name, round)));
 
         public FakeInvoker Invoker(Func<string, int, CancellationToken, Task<MsBuildInvokeResult>> script) =>
-            new(async (req, _, ct) =>
+            Invoker((name, round, _, ct) => script(name, round, ct));
+
+        /// <summary>Script invoke'un satır kanalını da alır — derleyici komut satırı yayan senaryolar için
+        /// (<see cref="CompilerLine"/>). Tur sayacı ve çağrı kaydı yalnız burada tutulur.</summary>
+        public FakeInvoker Invoker(
+            Func<string, int, Action<string>, CancellationToken, Task<MsBuildInvokeResult>> script) =>
+            new(async (req, onLine, ct) =>
             {
                 string name = NameOf(req.ProjectId);
                 int round;
@@ -51,7 +57,7 @@ public class CycleRoundsTests
                     _rounds[name] = round = seen + 1;
                     _calls.Add($"{name}#{round}");
                 }
-                return await script(name, round, ct);
+                return await script(name, round, onLine, ct);
             });
     }
 
@@ -1144,7 +1150,12 @@ public class CycleRoundsTests
 
         public static string PathOf(string name) => @"X:\surface\" + name + ".dll";
 
+        /// <summary>Üyenin paylaşılan klasördeki kopyası (post-build'in beslediği, tüketicinin HintPath'i).</summary>
+        public static string SharedPathOf(string name) => @"X:\shared\" + name + ".dll";
+
         public void Set(string name, string api) { lock (_byPath) _byPath[PathOf(name)] = api; }
+
+        public void SetShared(string name, string api) { lock (_byPath) _byPath[SharedPathOf(name)] = api; }
 
         public string? Read(string path)
         { lock (_byPath) return _byPath.TryGetValue(path, out string? api) ? api : ApiSurfaceHash.Absent; }
@@ -1153,10 +1164,29 @@ public class CycleRoundsTests
         public static IReadOnlyDictionary<string, ProjectOutputs> OutputsFor(params string[] names) =>
             names.ToDictionary(Id, n => new ProjectOutputs(PathOf(n), FedCandidates: []),
                 StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Kanıt yolu + paylaşılan kopya: Clean'in yalnız ilkini sildiği OSYS düzeni.</summary>
+        public static IReadOnlyDictionary<string, ProjectOutputs> OutputsWithSharedCopies(params string[] names) =>
+            names.ToDictionary(Id, n => new ProjectOutputs(PathOf(n), FedCandidates: [SharedPathOf(n)]),
+                StringComparer.OrdinalIgnoreCase);
     }
 
     private static RunPlan HashModePlan(RunPlan plan, params string[] names) =>
         plan with { Incremental = RunCoordinatorTests.Incremental(names) with { OutputsById = SurfaceDisk.OutputsFor(names) } };
+
+    private static RunPlan SharedCopyPlan(RunPlan plan, params string[] names) =>
+        plan with
+        {
+            Incremental = RunCoordinatorTests.Incremental(names)
+                with { OutputsById = SurfaceDisk.OutputsWithSharedCopies(names) },
+        };
+
+    /// <summary>Derleyicinin MSBuild çıktısına yazdığı komut satırı (gerçek logdaki biçim: boşluklu yol
+    /// tırnaklı). Koordinatör üyenin bir kardeşten hangi dosyayı okuduğunu buradan öğrenir.</summary>
+    private static string CompilerLine(params string[] references) =>
+        @"  C:\VS\MSBuild\Current\Bin\Roslyn\csc.exe /noconfig /nowarn:1701,1702 "
+        + string.Join(" ", references.Select(r => r.Contains(' ') ? $"/reference:\"{r}\"" : "/reference:" + r))
+        + @" /out:obj\Debug\Member.dll";
 
     /// <summary>
     /// <b>[DEĞİŞEN KURAL — iki tur her zaman değil.]</b> Eski iddia "yakınsama iki ardışık yeşil turdur" idi ve
@@ -1350,6 +1380,162 @@ public class CycleRoundsTests
 
         Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls);
         Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    // ---------------------------------------------------------------- 12c) okunan dosya kanıtı
+    // Bir kardeşin çıktısı birden çok dosyada durur (kendi bin'i + post-build'in beslediği paylaşılan kopyalar).
+    // Tüketicinin gerçekte hangisini okuduğunu derleyicinin komut satırı kesin söyler; tur sonu kararı o dosyaya
+    // bakar. Komut satırı yoksa, derleme başarısızsa ya da okunan dosya bilinen kopyalardan biri değilse karar
+    // eskisi gibi TÜM kopyaların toplamına bakar (aşağıdaki koruma testleri).
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — okunan dosya kanıtı.]</b> Eski kural: bir kardeşin yüzeyi, kanıt yolu ile beslenen
+    /// kopyaların TOPLAMIYDI; tüketici hangisini okursa okusun ikisi birlikte izlenirdi. Clean üreticinin kendi
+    /// bin çıktısını silip paylaşılan kopyaya dokunmadığı için "yok → var" geçişi tüketiciyi bayat sayıyor, API'si
+    /// hiç değişmemiş grup ikinci turu ödüyordu. Sahada ölçüldü: Clean sonrası Resolve'da 17 üyeli UI grubunun
+    /// 14 üyesi ~111 sn boyunca ikinci kez derlendi; hepsi kardeşi paylaşılan kopyadan okuyordu.
+    /// </summary>
+    [Fact]
+    public async Task after_a_clean_a_group_that_compiled_against_the_shared_copies_converges_in_one_round()
+    {
+        var disk = new SurfaceDisk();
+        disk.SetShared("A", "a1");                            // Clean: kendi bin çıktıları yok, kopyalar duruyor
+        disk.SetShared("B", "b1");
+        var plan = SharedCopyPlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, onLine, _) =>
+        {
+            onLine(CompilerLine(SurfaceDisk.SharedPathOf(name == "A" ? "B" : "A"))); // kardeşi kopyasından okudu
+            string api = name == "A" ? "a1" : "b1";           // gövde yeniden derlendi, yüzey aynı
+            disk.Set(name, api);                              // kendi bin çıktısı geri geldi
+            disk.SetShared(name, api);                        // post-build kopyası
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1"], rec.Calls);              // okunan kopya değişmedi: ikinci tur yok
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+        Assert.Equal(1, completed.Rounds);
+    }
+
+    [Fact] // Komut satırı yoksa (derleyici koşmadı ya da satır okunamadı) hangi dosyanın okunduğu bilinmez: eski kural.
+    public async Task without_a_compiler_line_a_reader_is_still_judged_on_every_copy()
+    {
+        var disk = new SurfaceDisk();
+        disk.SetShared("A", "a1");
+        disk.SetShared("B", "b1");
+        var plan = SharedCopyPlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) =>
+        {
+            string api = name == "A" ? "a1" : "b1";
+            disk.Set(name, api);
+            disk.SetShared(name, api);
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // A, B'nin kendi çıktısı yokken derlendi; o dosya sonra geldi: A ikinci turu öder.
+        Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    /// <summary>Kanıt tahmin değil, derleyicinin okuduğu dosyadır: A, B'yi kendi bin çıktısından okudu
+    /// (ör. ProjectReference) ve B'nin derlemesi o dosyanın API'sini değiştirdi — paylaşılan kopya değişmese de
+    /// A bayattır. csproj'daki HintPath'e bakıp kopyayı izleyen bir kural bunu kaçırırdı.</summary>
+    [Fact]
+    public async Task a_reader_that_compiled_against_the_siblings_own_output_is_judged_on_that_file()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");
+        disk.SetShared("A", "a1");
+        disk.Set("B", "b-old");
+        disk.SetShared("B", "b-lib");                         // B'nin derlemesinin tazelemediği bir kopya
+        var plan = SharedCopyPlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, onLine, _) =>
+        {
+            if (name == "A")
+            {
+                onLine(CompilerLine(SurfaceDisk.PathOf("B")));
+                disk.Set("A", "a1");
+                disk.SetShared("A", "a1");
+            }
+            else
+            {
+                onLine(CompilerLine(SurfaceDisk.SharedPathOf("A")));
+                disk.Set("B", "b-new");                       // yalnız kendi çıktısı değişir
+            }
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    /// <summary>Başarısız üye kardeşlerinin TÜM kopyalarıyla yargılanır: Clean sonrası patlayan A'nın bir tur
+    /// daha hakkı kalır (B'nin kendi çıktısı bu turda geldi). Okunan kopyaya daraltılsaydı A "girdisi oturmuş
+    /// hata" sayılır, grup ilk turda no progress olur ve A kanıtlı kırmızı yanardı.</summary>
+    [Fact]
+    public async Task a_failed_reader_is_still_judged_on_every_copy_of_its_sibling()
+    {
+        var disk = new SurfaceDisk();
+        disk.SetShared("A", "a1");
+        disk.SetShared("B", "b1");
+        var plan = SharedCopyPlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, round, onLine, _) =>
+        {
+            onLine(CompilerLine(SurfaceDisk.SharedPathOf(name == "A" ? "B" : "A")));
+            if (name == "A" && round == 1) return Task.FromResult(Exit(1)); // başarısız üye çıktı yazmaz
+            string api = name == "A" ? "a1" : "b1";
+            disk.Set(name, api);
+            disk.SetShared(name, api);
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls.Take(3));
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+        Assert.Empty(h.Events.OfType<ProjectFailedEvent>());
+    }
+
+    [Fact] // Derleyici kardeşin adını taşıyan ama bilinen kopyalardan olmayan bir dosya okuduysa: eski kural.
+    public async Task a_reference_outside_the_known_copies_keeps_the_reader_on_every_copy()
+    {
+        var disk = new SurfaceDisk();
+        disk.SetShared("A", "a1");
+        disk.SetShared("B", "b1");
+        var plan = SharedCopyPlan(TwoMemberCycle(), "A", "B");
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _, onLine, _) =>
+        {
+            onLine(CompilerLine(@"X:\elsewhere\" + (name == "A" ? "B" : "A") + ".dll"));
+            string api = name == "A" ? "a1" : "b1";
+            disk.Set(name, api);
+            disk.SetShared(name, api);
+            return Task.FromResult(Ok());
+        });
+        using var h = new Harness(plan, invoker, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);
     }
 
     // ---------------------------------------------------------------- 13) restore-once

@@ -1502,10 +1502,9 @@ public sealed class RunCoordinator(
 
         // [API kısa devresi] Grup-içi kenarların YÜZEY takibi. Kaynak turlar arasında değişmez; bir üyenin
         // sonucunu yalnız OKUDUĞU grup-içi çıktı yüzeyinin değişmesi değiştirebilir. Kimin kimi okuduğu plan
-        // kenarlarından gelir (kenar, üye terminal olsa da kenardır — allMembers); "okunan dosyalar" ise
-        // üreticinin kanıt yolu + beslenen kopyalarıdır (IncrementalPlan.OutputsById): tüketicinin HintPath'i
-        // paylaşılan kopyaya bakar ve başarılı derlemenin copy event'leri onu tazeler — yalnız kanıt yolunu
-        // saymak, bayat kalmış bir paylaşılan kopyanın üstünü örterdi.
+        // kenarlarından gelir (kenar, üye terminal olsa da kenardır — allMembers); üreticinin dosyaları ise kanıt
+        // yolu + beslenen kopyalarıdır (IncrementalPlan.OutputsById) ve yüzey DOSYA BAŞINA tutulur: hangisinin
+        // okunduğunu üyenin derleyici satırı söyler (CycleReadFiles) — bilinmiyorsa hepsi izlenir.
         var memberSet = new HashSet<string>(allMembers, StringComparer.OrdinalIgnoreCase);
         var siblingDeps = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (string id in members)
@@ -1514,18 +1513,19 @@ public sealed class RunCoordinator(
                 : [];
 
         var outputsById = run.Incremental?.OutputsById;
-        string? SurfaceStateOf(string producerId)
+        // Üreticinin bilinen dosyaları → dosya başına yüzey özeti; tek bir okunamayan dosya kanıt değildir (null).
+        IReadOnlyDictionary<string, string>? SurfaceStateOf(string producerId)
         {
             if (outputsById is null || !outputsById.TryGetValue(producerId, out var outputs)) return null;
             var files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { outputs.Evidence };
             foreach (string fed in outputs.FedCandidates) files.Add(fed);
-            var parts = new List<string>(files.Count);
+            var state = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string file in files)
             {
                 if (_apiSurface(file) is not { } hash) return null; // okunamayan dosya kanıt değildir
-                parts.Add(file + "=" + hash);
+                state[file] = hash;
             }
-            return string.Join("\n", parts);
+            return state;
         }
 
         var producers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1537,7 +1537,9 @@ public sealed class RunCoordinator(
         // türetilememiş ya da dosya bozuk/kilitli) grup bugünkü tam-tur davranışında kalır: kısmi bilgiyle
         // verilecek erken bir karar kanıt değil tahmin olurdu. "Dosya yok" ise okunabilir bir DURUMDUR
         // (ApiSurfaceHash.Absent) — hiç derlenmemiş bir grup da kısa devreden yararlanır.
-        var surfaceState = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Üretici → dosya başına yüzey. Tazelenen üreticinin haritası BÜTÜNÜYLE değiştirilir (yerinde
+        // güncellenmez): bir üyenin okuma anı kaydı haritayı referansla tutar ve sonradan kaymaz.
+        var surfaceState = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         bool hashMode = outputsById is not null && producers.Count > 0;
         foreach (string producerId in producers)
         {
@@ -1616,17 +1618,29 @@ public sealed class RunCoordinator(
                     if (StopRequested) { cutShort = true; return; }
 
                     var member = state[id];
+                    Dictionary<string, IReadOnlyDictionary<string, string>>? read = null;
+                    List<string>? compiled = null;
                     if (hashMode)
                     {
                         // Üyenin ŞU AN okuyacağı kardeş yüzeyleri — tur sonu bayatlık kararının referansı.
                         // Kilit: aynı seviyedeki bir üye KENDİ yüzeyini yazarken sözlük okunuyor olabilir
                         // (farklı anahtar, aynı gövde); üyenin kendi bağımlılıkları komşu ayrımı gereği bu
                         // seviyede DEĞİLDİR, değerleri seviye boyunca sabittir.
-                        var read = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        read = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
                         lock (surfaceState)
                             foreach (string dep in siblingDeps[id])
                                 read[dep] = surfaceState[dep];
-                        member.ReadStates = read;
+                        member.ReadStates = read; // derleme bitince okunan kopyaya daraltılır (aşağıda)
+                        compiled = [];
+                    }
+
+                    // [okunan dosya kanıtı] Derleyicinin komut satırı, üyenin kardeşleri hangi dosyalardan
+                    // okuduğunu söyler. Satırlar pump thread'lerinden gelir; kilit, derleme sonundaki okumanın
+                    // hepsini görmesini garanti eder.
+                    void ObserveCompilerLine(string line)
+                    {
+                        if (CompilerReferences.Parse(line) is { } references)
+                            lock (compiled!) compiled.AddRange(references);
                     }
 
                     // [dalga görünürlüğü] Üye MSBuild sırasını (slot) ALDIKTAN SONRA "derleniyor" ilan edilir,
@@ -1648,16 +1662,28 @@ public sealed class RunCoordinator(
                         // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
                         // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
                         var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
-                            suppressRestore: member.Result == BuildResult.Succeeded);
+                            suppressRestore: member.Result == BuildResult.Succeeded,
+                            observeLine: compiled is null ? null : ObserveCompilerLine);
                         member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
                         member.Result = outcome.Result;
+                        if (read is not null)
+                        {
+                            List<string> references;
+                            lock (compiled!) references = [.. compiled];
+                            bool succeeded = outcome.Result == BuildResult.Succeeded;
+                            var tracked = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var (dep, files) in read)
+                                tracked[dep] = CycleReadFiles.Tracked([.. files.Keys], references, succeeded)
+                                    .ToDictionary(file => file, file => files[file], StringComparer.OrdinalIgnoreCase);
+                            member.ReadStates = tracked;
+                        }
                         if (outcome.Result != BuildResult.Succeeded)
                             member.FailReason = outcome.FailReason;
                         else if (hashMode && producers.Contains(id))
                         {
                             // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
                             // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
-                            string? fresh = SurfaceStateOf(id);
+                            var fresh = SurfaceStateOf(id);
                             if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
                             else
                             {
@@ -1701,7 +1727,8 @@ public sealed class RunCoordinator(
                         failed.Add(id);
 
                 // staleNow: son invoke'unda okuduğu bir kardeş yüzeyi ŞU AN farklı olan üyeler — yani bir tur
-                // daha derlemenin sonucunu DEĞİŞTİREBİLECEĞİ üyeler. Karar saf policy'de (CycleRoundPolicy).
+                // daha derlemenin sonucunu DEĞİŞTİREBİLECEĞİ üyeler. Karşılaştırılan, üyenin izlediği dosyalardır
+                // (CycleReadFiles). Karar saf policy'de (CycleRoundPolicy).
                 HashSet<string>? staleNow = null;
                 if (hashMode)
                 {
@@ -1711,8 +1738,7 @@ public sealed class RunCoordinator(
                         var read = state[id].ReadStates;
                         if (read is null) { staleNow.Add(id); continue; } // savunmacı: kaydı olmayan bayat sayılır
                         foreach (string dep in siblingDeps[id])
-                            if (!read.TryGetValue(dep, out string? seen)
-                                || !string.Equals(seen, surfaceState[dep], StringComparison.Ordinal))
+                            if (!read.TryGetValue(dep, out var seen) || Moved(seen, surfaceState[dep]))
                             {
                                 staleNow.Add(id);
                                 break;
@@ -1957,9 +1983,20 @@ public sealed class RunCoordinator(
         /// <summary>Grubun tüm turları boyunca açık kalan proje logu; açılamadıysa null.</summary>
         public ProjectLogFile? Log { get; set; }
 
-        /// <summary>[API kısa devresi] Üyenin SON invoke'u başlarken okuduğu kardeş yüzeyleri
-        /// (üretici → yüzey durumu); hash-mode kapalıyken null. Tur sonu bayatlık kararının referansıdır.</summary>
-        public Dictionary<string, string>? ReadStates { get; set; }
+        /// <summary>[API kısa devresi] Üyenin SON invoke'u başlarken okuduğu kardeş yüzeyleri (üretici → izlenen
+        /// dosya → yüzey özeti); hash-mode kapalıyken null. İzlenen dosyalar derleme bitince derleyicinin okuduğu
+        /// kopyaya daraltılır (<see cref="CycleReadFiles"/>). Tur sonu bayatlık kararının referansıdır.</summary>
+        public Dictionary<string, IReadOnlyDictionary<string, string>>? ReadStates { get; set; }
+    }
+
+    /// <summary>[okunan dosya kanıtı] Okuma anında kaydedilen dosyalardan biri şimdi farklı mı? Yalnız kayıttaki
+    /// dosyalara bakılır: üyenin okumadığı bir kopyanın değişmesi onu bayat yapmaz.</summary>
+    private static bool Moved(IReadOnlyDictionary<string, string> seen, IReadOnlyDictionary<string, string> now)
+    {
+        foreach (var (file, hash) in seen)
+            if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -2001,9 +2038,12 @@ public sealed class RunCoordinator(
     /// çağırır; bu metot slot almaz. Slotun sahibi, projeyi "derleniyor" ilan eden taraftır — ilan ile slot
     /// aynı elde durmazsa sıraya giren bir proje de derleniyor görünür.</para>
     /// </summary>
+    /// <param name="observeLine">[okunan dosya kanıtı] MSBuild'in her satırı loga yazıldıktan sonra buna da
+    /// verilir (döngü turu derleyicinin referanslarını buradan toplar). Pump thread'lerinden çağrılır; invoker
+    /// döndükten sonra satır gelmez (<c>MsBuildInvoker</c>'ın mandalı).</param>
     private async Task<InvokeOutcome> InvokeOnceAsync(
         RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct,
-        bool suppressRestore = false)
+        bool suppressRestore = false, Action<string>? observeLine = null)
     {
         // Proje kimliği (tam csproj yolu) derlenen dosyanın kendisidir; proje kendi (VS-parity) obj'inde derlenir.
         var request = new MsBuildInvokeRequest(
@@ -2030,7 +2070,11 @@ public sealed class RunCoordinator(
             Emit(run, projectId, log, warnLine);
         // Slot çağıranın elindedir ve timeout saati başlamadan ÖNCE alınmıştır (PerProjectTimeout invoker'ın
         // içinde kurulur) — sıra beklemek bir projenin süresine ya da zaman aşımına sayılmaz.
-        var invoke = await run.Invoker.InvokeAsync(request, line => Emit(run, projectId, log, line), ct);
+        var invoke = await run.Invoker.InvokeAsync(request, line =>
+        {
+            Emit(run, projectId, log, line);
+            observeLine?.Invoke(line);
+        }, ct);
 
         return invoke.ExitCode == 0 && !invoke.TimedOut && !invoke.Killed
             ? new InvokeOutcome(BuildResult.Succeeded, invoke.DurationMs, null)
