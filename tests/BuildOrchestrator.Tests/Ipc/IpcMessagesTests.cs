@@ -261,6 +261,17 @@ public class IpcMessagesTests
         Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
+    // [dalga görünürlüğü] "Bu üyenin turdaki derlemesi bitti, grubunu bekliyor" — sonuç TAŞIMAZ (ara tur
+    // yayılmaz); App satırı derleniyor'dan bununla çıkarır. Round-trip ve ayırt edicisi pinlenir.
+    [Fact]
+    public void CycleMemberHeldEvent_roundtrips_with_its_discriminator()
+    {
+        IpcEvent ev = new CycleMemberHeldEvent("r1", @"C:\p\a.csproj");
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"cycleMemberHeld\"", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+    }
+
     // [Task 3/cycles] Grubun nihai kararı — decision.log'un tel karşılığı. Outcome camelCase METİN olarak
     // gitmeli (JsonStringEnumConverter): "noProgress" pinlenir ki tel formatı sessizce sayıya kaymasın.
     [Fact]

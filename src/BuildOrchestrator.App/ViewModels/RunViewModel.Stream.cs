@@ -159,8 +159,9 @@ public sealed partial class RunViewModel
                         // için hem gramer hem anlam olarak yanlıştı (paralellik onu tarif etmez).
                         _ when RunTargetId is { } targetId => StreamText.SingleProjectStarted(mode, ResolveName(targetId)),
                         // [cycles/Task 4] Bu koşu bir build DEĞİLDİR ve paralellik onu tarif etmez: bir SCC'nin
-                        // üyeleri sıralı derlenir. Kırılım dirty ∩ üyelik'ten (_cycleGroups.IsMember) — kalan
-                        // upstream/prerequisite'tir; kullanıcı "neden bu kadar proje derleniyor"u burada okur.
+                        // turları, genişliği grubun iç şekline bağlı dalgalarla koşar. Kırılım dirty ∩ üyelik'ten
+                        // (_cycleGroups.IsMember) — kalan upstream/prerequisite'tir; kullanıcı "neden bu kadar proje
+                        // derleniyor"u burada okur.
                         RunMode.Cycles => StreamText.CyclesStarted(
                             members: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) == true),
                             prerequisites: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) != true)),
@@ -188,6 +189,14 @@ public sealed partial class RunViewModel
                     detail = StreamText.CycleMemberDetail(_cycleMemberIndex, _cycleRoundMemberCount, _cycleRound, _cycleRoundCap);
                 }
                 _stream.StartBuilding(e.ProjectId, e.Name, _nowMs(), detail); // building → yalnız aktif satırda görünür (tampon satırı YOK)
+                SyncActiveLine();
+                break;
+
+            // [dalga görünürlüğü] Üyenin turdaki derlemesi bitti: aktif satır ondan çıkar — hâlâ derlenen en son
+            // başlayana geçer ya da boşalır. Tampon satırı YAZILMAZ: ara tur sonucu yayılmaz, grubun hükmünü
+            // üye sonuçları ve CycleCompletedEvent söyler.
+            case CycleMemberHeldEvent e:
+                _stream.FinishBuilding(e.ProjectId, _nowMs());
                 SyncActiveLine();
                 break;
 

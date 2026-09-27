@@ -117,7 +117,7 @@ public partial class ConsoleHeader : UserControl
     /// <see cref="StatusGlyph.BrushKeyFor"/>'dur — glyph'in KENDİ tablosu; ikinci bir kopya AÇILMAZ.
     ///
     /// <para><b>[DEĞİŞEN KURAL]</b> Yazı ve rengi eskiden <c>ConsoleStatus.Name/BrushKey(row.State)</c> ile
-    /// motorun dar <c>ProjectRowState</c> sözlüğünden geliyordu: bir döngü grubunda sırası kendisinde olmayan
+    /// motorun dar <c>ProjectRowState</c> sözlüğünden geliyordu: bir döngü grubunda derlenmeyen (grubunu bekleyen)
     /// Started üye satırda/ikonda Queued görünürken yazı hâlâ "Building" diyordu (State hâlâ Started) — ikon ile
     /// yazı ayrışıyordu. Kullanıcı kararıyla üçü de tek kaynaktan okunur; kullanılmaz kalan <c>ConsoleStatus</c>
     /// sınıfı silindi.</para></summary>

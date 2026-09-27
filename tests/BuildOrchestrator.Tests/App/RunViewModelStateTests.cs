@@ -1075,17 +1075,23 @@ public class RunViewModelStateTests
     // ---------------------------------------------------------------- [cycles] koşan SCC'nin SATIR görseli
 
     /// <summary>
-    /// [cycles] <b>Sırasını bekleyen üye derleniyor GÖRÜNMEZ.</b> Bir SCC'nin üyeleri sıralı invoke edilir ve
-    /// ara tur sonuçları yayılmadığı için grup bitene kadar hepsi motor durumunda <c>Started</c> kalır — ama
-    /// o an gerçekten derlenen TEK üye vardır. Bekleyen üyeler kuyrukta gösterilir.
+    /// [cycles] <b>Grubunu bekleyen üye derleniyor GÖRÜNMEZ.</b> Ara tur sonuçları yayılmadığı için bir SCC'nin
+    /// üyeleri grup bitene kadar motor durumunda <c>Started</c> kalır; hangisinin ŞU AN derlendiğini motorun iki
+    /// ilanı söyler — <c>ProjectStartedEvent</c> satırı "derleniyor"a alır, <c>CycleMemberHeldEvent</c> ("turdaki
+    /// derlemesi bitti, grubunu bekliyor") çıkarır. Bekleyen üye kuyrukta gösterilir.
     ///
-    /// <para><b>[DEĞİŞEN KURAL]</b> <c>CycleWaiting</c> eskiden bilerek yalnız sayacı etkiliyordu ("GÖRSEL
-    /// durumu DEĞİŞTİRMEZ"). Ölçülen sonuç: 15 üyeli bir grupta listede 15, grafta 15 dönen spinner —
-    /// sayaç chip'i "1 building" derken. Ekran, aracın aynı anda on beş iş yaptığını söylüyordu; bir iş
-    /// yapıyordu. Satır ile sayaç artık AYNI soruyu aynı şekilde cevaplar.</para>
+    /// <para><b>[DEĞİŞEN KURAL — dalgalı turlar]</b> Eski iddia: "üyeler sıralı invoke edilir, o an derlenen TEK
+    /// üye vardır — en son başlayan"; App bir kardeş başladığında öncekileri bekliyor sayardı. Turlar artık
+    /// bariyerli dalgalarla koşar ve aynı dalgadaki üyeler BİRLİKTE derlenir: eski kural onları sarı saatle
+    /// gösteriyor, işi bitmiş son başlayanı ise dönmeye devam ettiriyordu. Paralellik sınırı artık motorda
+    /// korunur — üye ancak slot tutarken "başladı" ilan edilir (CycleRoundsTests §17).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — önceki]</b> <c>CycleWaiting</c> eskiden bilerek yalnız sayacı etkiliyordu
+    /// ("GÖRSEL durumu DEĞİŞTİRMEZ"). Ölçülen sonuç: 15 üyeli bir grupta listede 15, grafta 15 dönen spinner —
+    /// sayaç chip'i "1 building" derken. Satır ile sayaç artık AYNI soruyu aynı şekilde cevaplar.</para>
     /// </summary>
     [Fact]
-    public async Task A_member_waiting_its_turn_inside_a_running_group_renders_queued_not_building()
+    public async Task Members_of_a_running_group_compile_together_until_the_engine_holds_each_one()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
@@ -1093,17 +1099,23 @@ public class RunViewModelStateTests
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
-        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));   // sıra C'de
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));   // tek dalga: üçü birlikte derleniyor
 
         var a = vm.Projects.Single(p => p.Id == A);
+        var b = vm.Projects.Single(p => p.Id == B);
         var c = vm.Projects.Single(p => p.Id == C);
+        Assert.All([a, b, c], row => Assert.Equal(GraphStatus.Building, row.Status));
+        Assert.Equal(3, vm.Counters.Building);
+
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));       // A'nın derlemesi bitti — sonucu grubun kararını bekler
 
         Assert.True(a.CycleWaiting);
-        Assert.Equal(GraphStatus.Queued, a.Status);     // bekleyen
-        Assert.Equal(GraphStatus.Building, c.Status);   // sırası ONDA
+        Assert.Equal(GraphStatus.Queued, a.Status);          // bekleyen
+        Assert.Equal(GraphStatus.Building, b.Status);        // dalga arkadaşları hâlâ derleniyor
+        Assert.Equal(GraphStatus.Building, c.Status);
         // Satır ile sayaç aynı şeyi söyler — bu testin ASIL iddiası; ikisi ayrışamaz.
-        Assert.Equal(1, vm.Counters.Building);
-        Assert.Equal(1, vm.Projects.Count(p => p.Status == GraphStatus.Building));
+        Assert.Equal(2, vm.Counters.Building);
+        Assert.Equal(2, vm.Projects.Count(p => p.Status == GraphStatus.Building));
     }
 
     /// <summary>[cycles] Koşu uçuştayken PLANLANMIŞ bir döngü üyesi de kuyrukta görünür — sıradan bir proje
@@ -1155,20 +1167,25 @@ public class RunViewModelStateTests
     {
         // [I2] Kusur: ProjectStarted HER turda ve HER üye için yayılır, ara tur sonucu ise HİÇ yayılmaz —
         // dolayısıyla grup bitene kadar bütün üyeler Started'ta birikir. 32 üyeli bir SCC 4 worker'lı bir
-        // run'da "32 building" raporluyordu ve şerit "finishing 32 in flight" yazıyordu; bir SCC ise TEK bir
-        // iş kalemidir, o an derlenen tek bir üyesi vardır.
+        // run'da "32 building" raporluyordu ve şerit "finishing 32 in flight" yazıyordu.
+        // [DEĞİŞEN KURAL — dalgalı turlar] Eskiden App "yalnız SON başlayan üye derleniyor" diye tahmin ederdi
+        // (bu test üç başlama olayını arka arkaya verip 1 building bekliyordu). Motor artık her derlemenin bitişini
+        // de ilan eder (CycleMemberHeldEvent) ve "başladı"yı yalnız slot tutan üyeye yazar; sayaç ilanları sayar,
+        // sınırı motor korur (CycleRoundsTests §17). Test motorun gerçekte gönderdiği sırayı verir.
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         StartCycleGroup(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug", 0));
 
         vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
         vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
         vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));
 
-        Assert.Equal(1, vm.Counters.Building);              // yalnız SON başlayan üye gerçekten derleniyor
+        Assert.Equal(1, vm.Counters.Building);              // derlenmesi süren tek üye C
         Assert.True(vm.Counters.Building <= vm.Parallelism); // hiçbir koşulda worker sayısını aşamaz
-        Assert.Equal(3, vm.Counters.Queued);                // A + B (sıra bekliyor) + D (hiç başlamadı)
+        Assert.Equal(3, vm.Counters.Queued);                // A + B (grubunu bekliyor) + D (hiç başlamadı)
         Assert.Equal(4, vm.Counters.Total);
 
         // Grup bitince bayrak DÜŞER: bekleyen üye sonsuza dek "queued" görünmez.

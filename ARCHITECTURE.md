@@ -394,7 +394,7 @@ Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` �
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
-`projectSkipped` · `cycleRoundStarted` · `cycleCompleted` · `runStopped` · `runCompleted`.
+`projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
@@ -452,8 +452,17 @@ per-round results are never published (§8.8), so the round number is the only p
 its members still emit their own `projectStarted` on every round they compile in, because they really are
 compiling then.
 
-`cycleCompleted` follows once a group has an actual verdict — converged, no progress (the same members failed
-twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
+`cycleMemberHeld` closes that compile without publishing anything about it: the member's compile in this round
+has ended and its result is held for the group's verdict. It carries no result, and a member that compiles
+again in a later round gets a fresh `projectStarted`. Within a round it is the only signal that a member has
+stopped compiling — members of one wave compile together, so a sibling starting says nothing about who has
+finished. The engine
+writes `projectStarted` only for a project that holds a build slot and writes `cycleMemberHeld` before it
+releases the slot, so the number of projects announced as compiling never exceeds the run's parallelism.
+
+`cycleCompleted` follows once a group has an actual verdict — converged, no progress (another round provably
+could not change the result: a failure whose read surfaces had settled, or without surface evidence the same
+members failing twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
 representative `cycleRoundStarted` used, so the line stays clickable), the member count, the rounds run, the
 last round's failure count and the summed duration of every member across every round. It is never published
 for a group cut short by a stop or an unexpected error: neither is evidence that the group cannot converge, and
@@ -1324,6 +1333,13 @@ nothing parks on a wake signal instead of returning, and every completion (and e
 workers. The signal to wait on is captured *before* the condition is checked, so a wakeup arriving between the
 check and the park cannot be lost. There is no polling anywhere in this loop.
 
+A worker takes one of the run's build slots — the same budget a cycle round's levels draw from (below) —
+*before* it asks the scheduler for work, and gives it back only once that project's result has been reported;
+when the work turns out to be a strongly-connected component the slot goes straight back, because the members
+take slots of their own. A project is therefore never dispatched just to queue for a slot: its `projectStarted`
+always means a compiler child is starting, and a stop never finds a dispatched project still waiting for its
+turn. Nobody holds one slot while waiting for another, so the ordering cannot deadlock.
+
 **Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`. An
 exception escaping that region would leave the project in flight forever, `IsDone` would never become true and
 the run would hang — so even the display-name lookup is written not to throw.
@@ -1384,10 +1400,13 @@ while members joined by a direct edge in *either* direction never do — one wou
 is in the middle of writing, and since a level completes fully before the next starts, that overlap is
 structurally impossible. A forward edge (to a producer earlier in build order) orders its consumer onto a
 later level, so it reads this round's fresh output exactly as the old fully-sequential loop did; a back edge
-imposes no order, because its consumer reads the previous generation either way. On a real 17-member group
-the internal critical path is 6, so a round costs ~6 waves instead of 17 sequential compiles. Level
+imposes no order, because its consumer reads the previous generation either way. On a real 17-member group a
+round runs in about half as many waves as the group has members, instead of one compile after another. Level
 concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the perf
 profile's parallelism), so no combination of workers and level width ever exceeds the configured parallelism.
+A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
+held (§5.3): what the screen counts as compiling is exactly what holds a slot, and the members of a level still
+queued for one are announced nothing.
 The first round invokes every member; whether anyone is invoked again is a question of evidence, and a later
 round compiles only the members for whom the answer is yes. Each member's log file is opened once and kept
 open for every round: opening it per round would truncate the previous rounds away and restart the line
@@ -1423,12 +1442,13 @@ between rounds can change `packages.config` — only a member that failed carrie
 **Intermediate rounds are not published.** A member gets no `projectSucceeded`/`projectFailed` until the group
 is finished, and then exactly one, carrying the **sum** of its rounds as the duration — the real cost, not the
 last round's. Publishing per round would send progress backwards, a project going from succeeded back to
-building, and would give the same project two result lines in the event stream. `projectStarted` is still
-emitted on every round the member compiles in, because it really is compiling then, and `cycleRoundStarted`
-announces the round itself (§5.3). Those starts accumulate — with no intermediate results, a member stays started for the whole
-life of the group — so the App reads only the most recent start *within a component* as actually compiling and
-counts the rest of the component as still queued. Without that, a 32-member component would report 32
-projects building on a four-worker run.
+building, and would give the same project two result lines in the event stream. Each compile is still
+announced at both ends, without a result: `projectStarted` on every round the member compiles in, because it
+really is compiling then, and `cycleMemberHeld` when that compile ends; `cycleRoundStarted` announces the round
+itself (§5.3). With no intermediate results a member stays started for the whole life of the group, so the held
+announcement is what tells the App the member is waiting for its group rather than compiling — the App counts
+it as queued from then on. Without that, a 32-member component would report 32 projects building on a
+four-worker run.
 
 **A group that did not converge persists no success.** Only `Converged` is trusted with a fresh signature: on
 no-progress, on the ceiling, on a stop, on cancellation and on an unexpected exception, every member is
@@ -1443,13 +1463,15 @@ unevidenced and grey. Without surface proof the old rule holds unchanged — a m
 that fails with `exit N` looks like evidence from its text alone, but nothing can rule the stale-sibling
 explanation out, so it is not, and no row turns red only for the next Sync to turn it grey.
 
-**A stop cuts the group where it lands, not at the end of the round.** The member already compiling drains, as
-everywhere else; the members after it in the round are never invoked at all. A group runs its own loop rather
+**A stop cuts the group where it lands, not at the end of the round.** The members already compiling drain, as
+everywhere else; a member that has not started is never invoked at all. A group runs its own loop rather
 than going back to the scheduler for each member, so the scheduler's stop gate does not cover it and the gate
 has to be repeated inside the loop — without it a stop kept spawning a fresh `MSBuild.exe` for every remaining
-member, which is the one place the application broke §4.5's promise that nothing new is dispatched. Cutting
-mid-round costs nothing, because an interrupted group discards every member's result anyway: the round that
-used to be carried to completion was thrown away when it ended.
+member, which is the one place the application broke §4.5's promise that nothing new is dispatched. The gate
+stands where a member actually starts, after it has taken its build slot: the members of a wave queued for a
+slot passed any earlier check before the stop landed, and would otherwise start the moment a slot came free.
+Cutting mid-round costs nothing, because an interrupted group discards every member's result anyway: the round
+that used to be carried to completion was thrown away when it ended.
 
 A round cut short is also **never put to the round policy**. Feeding it a partial round is the sharp edge here:
 in a second round whose members had all been clean so far, the policy would answer *converged* while some
@@ -1472,8 +1494,9 @@ guaranteed red, and that was wrong for a single reason: the only way into a `Cyc
 appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
 the cycle or the environment may well have changed — so refusing a retry on an unchanged source signature
 claims more than the evidence supports. Hitting the ceiling is not recorded at all, by the same standard of
-evidence: no progress means the identical set failed twice, which is proof that more rounds cannot help, while
-the ceiling means the group was still moving when the budget ran out.
+evidence: no progress is proof that more rounds cannot help — a failure whose read surfaces had settled, or,
+without surface evidence, the identical set failing twice — while the ceiling means the group was still moving
+when the budget ran out.
 
 Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
@@ -2578,7 +2601,7 @@ The counts are taken when a run event arrives, not on each step of the marking w
 the scope the badges still show the state from before it; they catch up when the run starts. The run's own
 preview clears the marks first and counts second, so a marked row the run does not queue is counted in its own
 bucket from that moment.
-Building counts only what is compiling right now — a queued row, or a cycle member waiting its turn, is not
+Building counts only what is compiling right now — a queued row, or a cycle member waiting for its group, is not
 building. There is no skipped chip: being skipped is not a state — a skipped row keeps its standing's colour —
 and the `—` glyph belongs to run-story surfaces only. The run's own tally (succeeded · failed · skipped ·
 dependency-affected) stays where it is, in the ribbon's completion line.
@@ -3261,7 +3284,7 @@ lines.
   `MainWindow.TrackHeaderRow` subscribes to exactly the one selected `ProjectRowViewModel`'s `PropertyChanged`
   (swapping the subscription, never stacking two) and calls `ConsoleHeader.RefreshStatus` on
   `State`/`Status`/`DepIssues`/`InCycle` alone — `Status` is listed on its own because it can change while `State`
-  does not (a cycle group handing its turn to this member flips `IsCompiling`) — every other row notification
+  does not (a cycle member's compile starting or ending within a round flips `IsCompiling`) — every other row notification
   (`Marked`, `Fade`, …) is not the header's concern and is ignored, the same filtered `switch` idiom
   `ProjectRow.OnVmPropertyChanged` already uses for its own row. `RefreshStatus` touches only the glyph, the status
   word and the two badges; it does not re-run the project-name/copy-log/mode side of `ShowProjectLog`, so a status
@@ -4141,14 +4164,17 @@ Two questions are kept apart on purpose: the `⚠` chip and the `warn` filter co
 while the ribbon's run summary — `(N dependency-affected)` — counts only the projects this run found a
 dependency issue on, because it is the story of the run.
 
-A member waiting its turn inside a running group reads `Queued` (clock glyph), not `Building`. Members are
-invoked one at a time and intermediate rounds are never published (§8.8), so the whole group sits in the
-engine's `Started` state for the group's whole life while exactly one member is really compiling. Painting them
-all as building made a 15-member group show fifteen spinners on the list and fifteen orbiting nodes on the
-graph while the counter chip said one — the screen claiming fifteen things were happening when one was. Six
+A member waiting for its group inside a running group reads `Queued` (clock glyph), not `Building`.
+Intermediate rounds are never published (§8.8), so the whole group sits in the engine's `Started` state for the
+group's whole life; which members are really compiling comes from the engine's own announcements — a member
+compiles from its `projectStarted` until its `cycleMemberHeld` (§5.3), and the members of one wave compile
+together. The App never infers this from a sibling starting: in a wave the members compile alongside each
+other, so such an inference paints them as queued and keeps the one that has already finished spinning.
+Painting every started member as building instead made a 15-member group show fifteen spinners on the list
+and fifteen orbiting nodes on the graph while the counter chip said one. Six
 surfaces ask that same question — the row glyph, the counter chip, the ribbon's building chips, the row's own
 breath layer, its live duration column and the list's frontier following — and all six now read one predicate
-(`IsCompiling`: `Started` and not waiting its turn); written separately, they had drifted into disagreeing,
+(`IsCompiling`: `Started` and not held); written separately, they had drifted into disagreeing,
 sometimes on the number, sometimes on whether anything was happening at all. Following was the last to join:
 reading the raw engine state, it pinned the frontier to the first member of a group and, with the dead-band,
 never moved again — during a `Cycles` run the list simply stopped following the build. A waiting member's row does not breathe, and its duration column
@@ -4952,7 +4978,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
 | Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |

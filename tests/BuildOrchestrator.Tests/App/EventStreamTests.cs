@@ -350,6 +350,34 @@ public class EventStreamTests
         Assert.Equal("A building… · member 1/2 · round 2/3", vm.ActiveLineText); // sayaç 1'e döndü
     }
 
+    /// <summary>[dalga görünürlüğü] Aktif satır ŞU AN derleneni anlatır: bir üyenin turdaki derlemesi bitince
+    /// (<c>CycleMemberHeldEvent</c>) satır, hâlâ derlenen en son başlayan dalga arkadaşına geçer; kimse
+    /// kalmadıysa boşalır. Eskiden bu an yayılmıyordu ve işi biten üye, bir sonraki başlama olayına dek
+    /// "building…" diye kalıyordu.</summary>
+    [Fact]
+    public void Active_line_moves_off_a_member_once_the_engine_holds_it()
+    {
+        var vm = NewVm();
+        const string hubId = @"C:\p\hub.csproj";
+        const string aId = @"C:\p\a.csproj";
+        const string bId = @"C:\p\b.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(hubId, "Hub", 0, inCycle: true), Node(aId, "A", 1, inCycle: true), Node(bId, "B", 2, inCycle: true)],
+            [[hubId, aId, bId]], [], []));
+
+        // Seçici tur: yalnız bayat bağlanan A ile B derlenir; ikisi yalnız Hub'ı okur, aynı dalgada birlikte.
+        vm.OnEvent(new CycleRoundStartedEvent("r1", hubId, Round: 2, RoundCap: 3, MemberCount: 2));
+        vm.OnEvent(new ProjectStartedEvent("r1", aId, "A"));
+        vm.OnEvent(new ProjectStartedEvent("r1", bId, "B"));
+        Assert.Equal("B building… · member 2/2 · round 2/3", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleMemberHeldEvent("r1", bId));      // B bitti — A hâlâ derleniyor
+        Assert.Equal("A building… · member 1/2 · round 2/3", vm.ActiveLineText);
+
+        vm.OnEvent(new CycleMemberHeldEvent("r1", aId));      // dalga bitti — derlenen kimse yok
+        Assert.Null(vm.ActiveLineText);
+    }
+
     /// <summary>[Task 4] <see cref="StreamComposer"/> çekirdeği: <c>StartBuilding</c>'in <c>detail</c> parametresi
     /// aktif metne eklenir; AYNI proje üzerinde yalnız detay değişirse generation ARTMAZ (daktilo yeniden
     /// koşmasın — id/ad DEĞİŞMEDİ). Farklı bir projeye geçişte (id/ad değişimi) generation her zamanki gibi artar.</summary>
@@ -427,6 +455,31 @@ public class EventStreamTests
         Assert.Equal(StreamText.CycleCompleted(outcome, 2, 2, 1, 4200), line.Text);
         Assert.Equal(expectedKind, line.Kind);
         Assert.Equal(leaderId, line.ProjectId);
+    }
+
+    /// <summary>
+    /// [cycles] Karar satırı yalnız koşunun KANITLADIĞINI söyler ve sayıları doğru çekimler.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski no-progress satırı <c>cycle failed — same {n} members failing twice ·
+    /// {r} rounds</c> idi. Yüzey kanıtı kararı TEK turda da verir (girdisi oturmuşken patlayan üye bir sonraki
+    /// denemede birebir aynı girdiyle patlar); o turda satır "iki kez" diyerek olmamış bir şeyi anlatıyor, tekil
+    /// sayıları da "1 members · 1 rounds" diye yazıyordu. Sahada görüldü: CS1061'le kırılan iki üyeli grup
+    /// <c>same 1 members failing twice · 1 rounds</c> gösterdi. Yeni satır iki kanıt yolunun ortak hükmünü söyler
+    /// — bir deneme daha aynı biçimde patlar — ve kaç üyeden kaçının patladığını verir. decision.log'un aynı
+    /// düzeltmesi CycleRoundsTests'te pinlidir.</para>
+    /// </summary>
+    [Fact]
+    public void Cycle_verdict_lines_state_only_what_the_run_proved()
+    {
+        Assert.Equal("cycle converged — 17 members · 1 round · 3m 58s",
+            StreamText.CycleCompleted(CycleOutcome.Converged, members: 17, rounds: 1, failed: 0, durationMs: 238_000));
+        Assert.Equal("cycle converged — 2 members · 2 rounds · 4.2s",
+            StreamText.CycleCompleted(CycleOutcome.Converged, members: 2, rounds: 2, failed: 0, durationMs: 4200));
+        Assert.Equal("cycle failed — 1 of 2 members failing · a retry would fail the same way · 1 round",
+            StreamText.CycleCompleted(CycleOutcome.NoProgress, members: 2, rounds: 1, failed: 1, durationMs: 4200));
+        Assert.Equal("cycle failed — 2 of 4 members failing · a retry would fail the same way · 2 rounds",
+            StreamText.CycleCompleted(CycleOutcome.NoProgress, members: 4, rounds: 2, failed: 2, durationMs: 4200));
+        Assert.Equal("cycle round cap reached — output may be one generation behind · 3 rounds",
+            StreamText.CycleCompleted(CycleOutcome.CapReached, members: 4, rounds: 3, failed: 0, durationMs: 4200));
     }
 
     // ============================================================ [Task 12 PİN] — resolve cycles şerit metni (VM besleme)

@@ -359,12 +359,14 @@ Everything past that scope collapses into a single line, `N outside cycle scope 
 line per project — those are Build's job, and Build is what you press next.
 
 The run reads like any other beyond that: each round prints its own line, `cycle round R/K — N members`, and
-while a member is actually compiling the active line names it and its place in the group,
-`member I/N · round R/K`. A member waiting its turn shows the clock glyph, no breathing highlight, and a
-duration column that stays at `—` — only the member actually compiling is doing anything, and the group's own
-round line is what moves. When the group has a verdict the event stream says which one it got — converged, no
-progress (repeating the failed compiles could only repeat their result), or hit the round cap — with how many
-rounds it took. Cycle rows show the normal
+while members are actually compiling the active line names the latest of them and its place in the group,
+`member I/N · round R/K`. The members of one wave compile at the same time, each with its own spinner, and the
+count of projects shown compiling never exceeds the run's parallelism. A member whose compile in the round has
+finished waits for its group: it shows the clock glyph, no breathing highlight, and a duration column that
+stays at `—`, because its result is only settled when the whole group is — every member gets its result at the
+same moment, when the group's verdict arrives. The event stream then says which verdict it
+got — converged, no progress (repeating the failed compiles could only repeat their result), or hit the round
+cap — with how many rounds it took. Cycle rows show the normal
 build icons — green, red, the spinner — and carry a single amber warning triangle to say where they sit. Its
 tooltip is one line (`In a dependency cycle`); the loop itself is named in the project log,
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
