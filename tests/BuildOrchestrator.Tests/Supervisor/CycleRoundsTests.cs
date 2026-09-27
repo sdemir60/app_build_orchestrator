@@ -1613,10 +1613,12 @@ public class CycleRoundsTests
             // Build-order D → A → B. D, A'yı ESKİ nesliyle okur (a-old) ve patlar; A yeşildir ama yüzeyi
             // DEĞİŞİR (a-old → a-new) ⇒ D bayat (bir tur daha hak ederdi). B, A'nın NİHAİ yüzeyini (a-new)
             // okuyup patlar ⇒ umutsuz — grubun kaderini B belirler (NoProgress, tur 1).
+            // B'nin D'yi de okuması fikstürün parçasıdır: dalga planı en çok okunanı öne alır; D, A kadar
+            // okunmasa A önce derlenir ve D taze a-new'i okurdu — senaryonun "bayat okuyan" üyesi kalmazdı.
             var plan = HashModePlan(CyclePlanOf(["D", "A", "B"],
                 Node("D", deps: ["A"], inCycle: true),
                 Node("A", deps: ["D", "B"], inCycle: true),
-                Node("B", deps: ["A"], inCycle: true)), "A", "B", "D");
+                Node("B", deps: ["A", "D"], inCycle: true)), "A", "B", "D");
             var rec = new RoundRecorder();
             var invoker = rec.Invoker((name, _) =>
             {
@@ -1738,6 +1740,48 @@ public class CycleRoundsTests
         Assert.True(invoker.MaxConcurrent <= 2,
             $"parallelism 2 iken {invoker.MaxConcurrent} eşzamanlı invoke gözlendi");
         Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
+    [Fact] // [en çok okunan önce] Build-order'da sonda duran merkez ilk dalgada derlenir; okuyucuları taze çıktıyı okur.
+    public async Task the_most_read_member_compiles_first_even_when_it_comes_last_in_build_order()
+    {
+        var plan = CyclePlanOf(["S1", "S2", "Hub"],
+            Node("S1", deps: ["Hub"], inCycle: true),
+            Node("S2", deps: ["Hub"], inCycle: true),
+            Node("Hub", deps: ["S1", "S2"], inCycle: true));
+        var rec = new RoundRecorder();
+        using var h = new Harness(plan, rec.Invoker((_, _) => Ok()));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["Hub#1", "S1#1", "S2#1"], rec.Calls.Take(3));
+    }
+
+    /// <summary>
+    /// [paylaşılan kopya çakışması] Adı bir başka projenin adının noktalı öneki olan üye ("Sales" ↔ "Sales.Print"),
+    /// yaygın <c>copy $(TargetName).*</c> post-build'iyle o projenin paylaşılan kopyasını da yeniden yazar (sahada:
+    /// UI.General → UI.General.Common, UI.NewSales → NewSales.Stock/Pricing). Kopya yazılırken aynı dosyayı okuyan
+    /// derleyici ya kilide takılır ya yarım dosya görür; kenar olmasa da ikisi aynı dalgada derlenmez.
+    /// </summary>
+    [Fact]
+    public async Task a_member_that_may_rewrite_a_copy_another_member_reads_never_compiles_beside_it()
+    {
+        var plan = CyclePlanOf(["Hub", "Sales", "Report"],
+            Node("Sales.Print"),
+            Node("Hub", deps: ["Sales", "Report"], inCycle: true),
+            Node("Sales", deps: ["Hub"], inCycle: true),
+            Node("Report", deps: ["Hub", "Sales.Print"], inCycle: true));
+        var rec = new RoundRecorder();
+        // Gerçek bir await noktası: aynı dalgadaki iki üye birlikte uçuşa girer ve MaxConcurrent bunu yakalar.
+        var invoker = rec.Invoker(async (_, _, _) => { await Task.Yield(); return Ok(); });
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(1, invoker.MaxConcurrent);                // Sales ile Report ayrı dalgalarda
+        Assert.Equal(4, Assert.IsType<RunCompletedEvent>(h.Events[^1]).Succeeded);
     }
 
     // ---------------------------------------------------------------- 15) grup koşullu atlama

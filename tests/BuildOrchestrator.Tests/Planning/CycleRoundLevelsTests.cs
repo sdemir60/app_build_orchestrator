@@ -4,10 +4,11 @@ namespace BuildOrchestrator.Tests.Planning;
 
 /// <summary>
 /// [seviyeli turlar] <see cref="CycleRoundLevels"/>: bir SCC turunun bariyerli seviye planı. Pinlenen sözleşme:
-/// (1) ileri kenar sıralar (tüketici üreticiden sonraki seviyede), (2) HERHANGİ yönde doğrudan komşular aynı
-/// seviyede olamaz (torn read yapısal olarak imkânsız), (3) geri kenar sıralamaz (eski nesil okunur — sıralı
-/// turun semantiği), (4) determinizm ve build-order korunur, (5) kapsam dışı bağımlılık kısıt üretmez.
-/// Saf fonksiyon — WPF/process YOK.
+/// (1) HERHANGİ yönde doğrudan komşular aynı seviyede olamaz (torn read yapısal olarak imkânsız), (2) en çok
+/// okunan üye önce yerleşir — okuyucuları onun bu turdaki taze çıktısını okur; eşitlikte daha çok komşusu olan,
+/// sonra build-order, (3) her üye çakışmadığı en erken seviyeye girer, (4) başkasının paylaşılan kopyasını
+/// yazabilen üye o kopyanın sahibiyle ve okuyucularıyla aynı seviyede olamaz, (5) seviye içi sıra build-order'dır,
+/// plan deterministiktir, kapsam dışı bağımlılık kısıt üretmez. Saf fonksiyon — WPF/process YOK.
 /// </summary>
 public class CycleRoundLevelsTests
 {
@@ -29,8 +30,8 @@ public class CycleRoundLevelsTests
         Assert.Equal([["Hub"], ["S1", "S2", "S3"]], Levels(levels));
     }
 
-    [Fact] // Halka (A→B→C→A): ileri kenarlar zinciri sıralar — hiç paralellik yoktur, seviyeler tekil kalır.
-    public void a_ring_stays_fully_sequential()
+    [Fact] // Üçlü halka (A→B→C→A): her çift komşu — hiç paralellik yoktur, seviyeler tekil kalır.
+    public void a_ring_of_three_stays_fully_sequential()
     {
         var levels = CycleRoundLevels.Compute(["A", "B", "C"],
             Deps(("A", ["C"]), ("B", ["A"]), ("C", ["B"])));
@@ -38,14 +39,45 @@ public class CycleRoundLevelsTests
         Assert.Equal([["A"], ["B"], ["C"]], Levels(levels));
     }
 
-    [Fact] // Komşu ayrımı yönden bağımsızdır: yalnız GERİ kenarla bağlı çift bile aynı seviyeye konmaz.
-    public void a_back_edge_neighbor_is_pushed_to_a_later_level()
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — en çok okunan önce.]</b> Eski kural seviyeleri build-order'da tek geçişte kurardı:
+    /// build-order'da ÖNCE gelen üreticiyi okuyan tüketici ondan sonraki seviyeye itilir, geri kenar sıralamazdı.
+    /// Build-order döngü içinde keyfidir (alfabetik yol), bu yüzden plan keyfi uzuyordu. Sahada ölçüldü: 17 üyeli
+    /// UI grubu 9 dalgada derleniyor, dördünde tek üye çalışıyordu; 15 kardeşin okuduğu UI.General yedinci
+    /// dalgadaydı ve 12 okuyucusu onun eski neslini okuyordu. Yeni kural en çok okunanı önce yerleştirir: aynı
+    /// grup mümkün olan en az dalgada (6) biter, UI.General'i eski nesliyle okuyan kalmaz.
+    /// </summary>
+    [Fact]
+    public void the_most_read_member_compiles_first_so_its_readers_see_this_rounds_output()
     {
-        // A, B'nin eski neslini okur (geri kenar); B'nin ileri bağımlılığı yok — sıralama kısıtı da yok.
-        // Yine de A ile B aynı seviyede OLAMAZ: B derlenirken A aynı DLL'i okuyor olurdu.
+        // Hub build-order'da SONDA ama üç üye onu okuyor.
+        var levels = CycleRoundLevels.Compute(["A", "B", "C", "Hub"],
+            Deps(("A", ["Hub"]), ("B", ["Hub"]), ("C", ["Hub"]), ("Hub", ["A"])));
+
+        Assert.Equal([["Hub"], ["A", "B", "C"]], Levels(levels));
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — okunan önce.]</b> Eski iddia: A, B'nin eski neslini okur (geri kenar) ve build-order'da
+    /// önce geldiği için ÖNCE derlenir — [[A], [B]]. Yeni kural okunanı öne alır: B önce derlenir ve A onun bu
+    /// turdaki çıktısını okur. Komşu ayrımı aynen durur: ikisi asla aynı seviyede değildir.
+    /// </summary>
+    [Fact]
+    public void a_producer_compiles_before_a_reader_nobody_reads()
+    {
         var levels = CycleRoundLevels.Compute(["A", "B"], Deps(("A", ["B"])));
 
-        Assert.Equal([["A"], ["B"]], Levels(levels));
+        Assert.Equal([["B"], ["A"]], Levels(levels));
+    }
+
+    [Fact] // Dörtlü halka: build-order'daki ileri zincir artık seviye sayısını dikte etmez — komşu olmayanlar birleşir.
+    public void a_ring_of_four_compiles_in_two_levels()
+    {
+        // B→A, C→B, D→C, A→D: eski kural build-order'daki ileri kenarlarla dört seviye kurardı.
+        var levels = CycleRoundLevels.Compute(["A", "B", "C", "D"],
+            Deps(("A", ["D"]), ("B", ["A"]), ("C", ["B"]), ("D", ["C"])));
+
+        Assert.Equal([["A", "C"], ["B", "D"]], Levels(levels));
     }
 
     [Fact] // İki bağımsız ikili tek SCC'de: çiftler kendi içinde sıralı, çapraz üyeler aynı seviyede birleşir.
@@ -69,16 +101,56 @@ public class CycleRoundLevelsTests
         Assert.Equal([["B", "C"]], Levels(levels));
     }
 
-    [Fact] // Birleşim tam turdur, sıra build-order kalır, plan deterministiktir.
-    public void the_union_is_the_round_in_build_order_and_the_plan_is_deterministic()
+    [Fact] // Her üye tam bir kez yerleşir, seviye içi sıra build-order'dır, plan deterministiktir.
+    public void every_member_is_placed_once_each_level_keeps_build_order_and_the_plan_is_deterministic()
     {
-        string[] round = ["Hub", "S1", "S2", "S3"];
-        var deps = Deps(("Hub", ["S1", "S2", "S3"]), ("S1", ["Hub"]), ("S2", ["Hub"]), ("S3", ["Hub"]));
+        string[] round = ["A", "B", "C", "Hub"];
+        var deps = Deps(("A", ["Hub"]), ("B", ["Hub"]), ("C", ["Hub"]), ("Hub", ["A"]));
 
         var first = CycleRoundLevels.Compute(round, deps);
         var second = CycleRoundLevels.Compute(round, deps);
 
-        Assert.Equal(round, first.SelectMany(l => l));
+        Assert.Equal(round.Order(), first.SelectMany(l => l).Order());
+        Assert.All(first, level => Assert.Equal(round.Where(level.Contains), level));
         Assert.Equal(Levels(first), Levels(second));
+    }
+
+    // ---------------------------------------------------------------- paylaşılan kopya çakışması
+
+    private static readonly Dictionary<string, string> Names = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["s"] = "Acme.Sales", ["sp"] = "Acme.Sales.Pricing", ["r"] = "Acme.Report", ["x"] = "Acme.Salesforce",
+        ["print"] = "Acme.Sales.Print",
+    };
+
+    private static Func<string, string, bool> Collisions(params (string Id, string[] DependsOn)[] edges) =>
+        CycleRoundLevels.SharedCopyCollisions(id => Names[id], Deps(edges));
+
+    /// <summary>Yaygın post-build <c>copy $(TargetName).*</c> kendi çıktısının yanında bin'deki "Ad.*" dosyalarını
+    /// da kopyalar: "Acme.Sales" derlenirken paylaşılan klasördeki Acme.Sales.Pricing kopyası da yeniden yazılır
+    /// (sahada: UI.General → UI.General.Common, UI.NewSales → NewSales.Stock ve NewSales.Pricing). Kenar yoktur
+    /// ama iki derleme aynı dosyaya dokunur — aynı seviyede olamazlar.</summary>
+    [Fact]
+    public void a_member_that_may_rewrite_another_members_copy_never_shares_its_level()
+    {
+        var levels = CycleRoundLevels.Compute(["s", "sp"], Deps(), Collisions());
+
+        Assert.Equal([["s"], ["sp"]], Levels(levels));
+    }
+
+    [Fact] // Kopyayı OKUYAN da çakışır — kopyanın sahibi turda olmasa, hatta gruptan olmasa da.
+    public void a_member_that_may_rewrite_a_copy_never_shares_a_level_with_its_reader()
+    {
+        var levels = CycleRoundLevels.Compute(["s", "r"], Deps(), Collisions(("r", ["print"])));
+
+        Assert.Equal([["s"], ["r"]], Levels(levels));
+    }
+
+    [Fact] // Önek noktayla biter: "Acme.Sales" ile "Acme.Salesforce" aynı kopyaya dokunmaz.
+    public void a_name_that_merely_starts_the_same_does_not_collide()
+    {
+        var levels = CycleRoundLevels.Compute(["s", "x"], Deps(), Collisions());
+
+        Assert.Equal([["s", "x"]], Levels(levels));
     }
 }

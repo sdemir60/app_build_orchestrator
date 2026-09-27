@@ -1461,9 +1461,9 @@ public sealed class RunCoordinator(
     /// <summary>
     /// [cycle rounds] Bir SCC'nin tüm yaşam döngüsü. Üyeler her turda <see cref="CycleRoundLevels"/>'ın
     /// BARİYERLİ seviyeleriyle invoke edilir: komşu olmayan üyeler aynı seviyede eşzamanlı, HERHANGİ yönde
-    /// doğrudan kenar komşuları asla — A, B.dll'i okurken B aynı dosyayı yazıyor olurdu; bariyerler örtüşmediği
-    /// için bu yapısal olarak imkânsızdır. Eşzamanlılık koşunun paralellik tavanını aşamaz (üye, invoke'u
-    /// boyunca koşunun ortak semaforundan bir slot tutar).
+    /// doğrudan kenar komşuları (ve birbirinin paylaşılan kopyasına dokunabilenler) asla — A, B.dll'i okurken B
+    /// aynı dosyayı yazıyor olurdu; bariyerler örtüşmediği için bu yapısal olarak imkânsızdır. Eşzamanlılık
+    /// koşunun paralellik tavanını aşamaz (üye, invoke'u boyunca koşunun ortak semaforundan bir slot tutar).
     ///
     /// <para>ARA TUR SONUÇLARI YAYILMAZ. SCC tek bir derleme birimidir (§7.3, tek bileşik imza); yarı bitmiş bir
     /// birimi "bitti" saymak progress'i geri götürür ve ETA'yı yanıltır. Yalnız son turun sonucu raporlanır,
@@ -1511,6 +1511,13 @@ public sealed class RunCoordinator(
             siblingDeps[id] = run.NodeById.TryGetValue(id, out var node)
                 ? [.. node.Dependencies.Where(memberSet.Contains)]
                 : [];
+
+        // [paylaşılan kopya çakışması] Kenar olmadan da aynı dalgada derlenemeyecek üyeler: adları üzerinden
+        // birbirinin (ya da okuduğu projelerin) paylaşılan kopyasını yazabilenler. Adlar ve TÜM bağımlılıklar
+        // plandan gelir; kural Core'da.
+        var mayCollide = CycleRoundLevels.SharedCopyCollisions(
+            id => NameOf(run, id),
+            id => run.NodeById.TryGetValue(id, out var node) ? node.Dependencies : []);
 
         var outputsById = run.Incremental?.OutputsById;
         // Üreticinin bilinen dosyaları → dosya başına yüzey özeti; tek bir okunamayan dosya kanıt değildir (null).
@@ -1604,10 +1611,11 @@ public sealed class RunCoordinator(
                 bool cutShort = false;
                 // [seviyeli turlar] Üyeler CycleRoundLevels'ın BARİYERLİ seviyeleriyle derlenir: komşu olmayan
                 // üyeler aynı seviyede EŞZAMANLI (koşunun paralellik tavanı InvokeOnceAsync'teki ortak
-                // sema-forla korunur), HERHANGİ yönde doğrudan kenar komşuları asla — biri diğerinin DLL'ini
-                // okurken öteki aynı dosyayı yazamaz; bariyerler örtüşmediği için torn read yapısal olarak
-                // imkânsızdır. Bir seviye TAMAMEN bitmeden sonraki başlamaz — sıralı turun okuma semantiği
-                // (ileri kenar taze, geri kenar önceki nesil) birebir korunur.
+                // sema-forla korunur), HERHANGİ yönde doğrudan kenar komşuları ve paylaşılan kopyaya dokunanlar
+                // (mayCollide) asla — biri diğerinin DLL'ini okurken öteki aynı dosyayı yazamaz; bariyerler
+                // örtüşmediği için torn read yapısal olarak imkânsızdır. Bir seviye TAMAMEN bitmeden sonraki
+                // başlamaz: önceki seviyedeki kardeş taze, sonrakindeki önceki nesliyle okunur — hangisinin bir
+                // tur daha gerektirdiğine tur sonu kararı bakar.
                 async Task CompileOneAsync(string id)
                 {
                     // [§4.5] Stop istendiyse turun KALAN üyeleri de dispatch EDİLMEZ. Graceful stop'un
@@ -1704,7 +1712,7 @@ public sealed class RunCoordinator(
                     }
                 }
 
-                foreach (var level in CycleRoundLevels.Compute(toBuild, id => siblingDeps[id]))
+                foreach (var level in CycleRoundLevels.Compute(toBuild, id => siblingDeps[id], mayCollide))
                 {
                     if (StopRequested) { cutShort = true; break; }
                     if (level.Count == 1) await CompileOneAsync(level[0]);
