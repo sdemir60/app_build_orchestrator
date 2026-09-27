@@ -1398,10 +1398,22 @@ handed a strongly-connected component runs the whole group. Within a round the m
 levels** (`CycleRoundLevels`): members with no direct edge between them compile concurrently on one level,
 while members joined by a direct edge in *either* direction never do — one would be reading the DLL the other
 is in the middle of writing, and since a level completes fully before the next starts, that overlap is
-structurally impossible. A forward edge (to a producer earlier in build order) orders its consumer onto a
-later level, so it reads this round's fresh output exactly as the old fully-sequential loop did; a back edge
-imposes no order, because its consumer reads the previous generation either way. On a real 17-member group a
-round runs in about half as many waves as the group has members, instead of one compile after another. Level
+structurally impossible. Two members can touch one file without an edge between them, too. The common
+post-build step `copy $(TargetName).*` copies every `Name.*` file in the output folder, the copy-local
+`Name.Other.dll` of a reference included, so a project whose name is a dotted prefix of another project's name
+may rewrite that project's shared copy while it builds. Such a member never shares a level with that project
+or with anything that reads it. The rule reads names only, never the post-build text: it can refuse a pairing
+that was safe and cost a little parallelism, and it cannot see a copy that follows another pattern (§20).
+
+Members are placed **most-read first** — ties go to the member with more neighbours, then to build order —
+each on the earliest level where nothing it collides with already stands. A member reads what a sibling on an
+earlier level produced in this round, and the previous generation of a sibling on a later level; both are
+sound, because the stopping rule below decides who needs another round. Putting the members many siblings read
+first keeps the plan short and leaves few readers on a previous generation, so an API change in a widely read
+member buys a second round for few of its readers, if any. Build order inside a cycle is arbitrary — it is
+the project path — so a plan that followed it would string the most-read members out one per level; on a real
+17-member group the most-read-first plan reaches the fewest levels its edges allow, about a third as many as
+the group has members. Level
 concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the perf
 profile's parallelism), so no combination of workers and level width ever exceeds the configured parallelism.
 A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
@@ -1417,11 +1429,21 @@ previous round's failures and — when the engine can prove it — the members w
 Both of its early exits rest on one fact: the source does not change between rounds, so a member's result can
 only change if the **API surface** of a sibling output it compiled against changes. Before each invoke the
 engine records the surface state of every intra-group dependency the member is about to read — the
-dependency's evidence path *and* its fed copies (§7.6), hashed over declarations alone (`ApiSurfaceHash`: no
-IL, no MVID, no compiler-generated names, signatures resolved to type names rather than raw blobs so a
-renumbered ref table cannot masquerade as change; the assembly version counts only under a strong name, so a
-wildcard `AssemblyVersion` does not defeat the proof) — and at the end of the round compares those records
-with the disk. Everyone green and nobody stale means **converged**: every member provably compiled against
+dependency's evidence path *and* its fed copies (§7.6), each file hashed over declarations alone
+(`ApiSurfaceHash`: no IL, no MVID, no compiler-generated names, signatures resolved to type names rather than
+raw blobs so a renumbered ref table cannot masquerade as change; the assembly version counts only under a
+strong name, so a wildcard `AssemblyVersion` does not defeat the proof). When the compile ends, the record
+keeps only the file the member really read. The compiler says which one: MSBuild prints the compiler's command
+line, and its `/reference:` list is the outcome of reference resolution, whatever `HintPath`,
+`ProjectReference`, reference path or import led there (`CompilerReferences`). A *Clean* is where this
+matters: it deletes a project's own output and leaves the shared copies its readers link against, so the own
+output coming back is a change in a file no reader read — judged on every copy, it would buy the group a
+second round with no API moved. Every copy stays in the record, the conservative reading, when the compile
+failed (whether another round can help is judged on the widest evidence), when there is no command line (the
+compiler did not run, or its line could not be read), when the compiler read no file of the dependency's name
+(the reference was not found, and the file may yet appear), and when the file it read is none of the
+dependency's known copies (`CycleReadFiles`). At the end of the round the records are compared with the disk.
+Everyone green and nobody stale means **converged**: every member provably compiled against
 final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
 whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
 progress** — in the first round when the failure is hopeless from the start, which is what keeps a broken
@@ -1575,6 +1597,9 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
 - No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
   Studio would (§9.4).
+- No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
+  its `/reference:` list to learn which sibling file a member really compiled against (§8.8). Losing that line
+  costs precision only: the round then judges the member on every copy.
 - Projects from an external root (§10.4) get **exactly this list**. They are ordinary nodes whose
   dependencies this tool builds itself, so nothing about the contract changes.
 
@@ -4760,6 +4785,11 @@ do, and how the interface works around each — useful to know before attempting
   new output look older than the ledger's last run, or an input older than the output. These are accepted.
 - **Visual Studio and the tool must not build the same project at once.** Both write the same `obj` and the
   same output; neither can tell, and nothing arbitrates between them.
+- **A post-build step that copies more than its own output is seen by name only.** Inside a cycle round a
+  member whose name is a dotted prefix of another project's name is kept off the level of that project and of
+  its readers (§8.8), because the common `copy $(TargetName).*` rewrites that project's shared copy. Any other
+  copy of a foreign file — another pattern, or two projects outside one cycle compiling at the same time — is
+  not arbitrated; the retry of §9.5 covers MSBuild's own copy task only.
 - **No field-level IPC schema validation** (§5.4).
 - **Symlinks/junctions are not followed or detected** during the scan, and a `.csproj` may reference files
   outside the repository root. Both are accepted risks — the repository is trusted by definition.
@@ -4971,7 +5001,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
-| Barriered level plan inside a cycle round (forward-edge ordering, any-direction neighbor separation) | `Core/Planning/CycleRoundLevels.cs` |
+| Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
+| Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure) | `Core/Planning/CycleReadFiles.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
@@ -4993,6 +5024,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
+| Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
 
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
