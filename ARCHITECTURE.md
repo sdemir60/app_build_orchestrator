@@ -1199,9 +1199,15 @@ by its bare name (`Up`); a root whose "still failing" verdict came only from the
 function, not a second guess re-derived from the same data (`ConditionalRebuild.DescribeStillFailingRoots`).
 
 The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
-a row's target compiles unconditionally (§8.1); a member of a cycle group compiles with its group, since skipping
-one member would leave the group half built. A record written before roots were stored carries no roots and
-compiles on every `Build` as it always did.
+a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped *alone*, since that
+would leave the group half built. The group as a whole, though, answers the same question **atomically** at its
+dispatch: when every member is either up to date or dirty *only* because it waits on recorded roots, and every
+one of those roots still fails by the table above, the whole group is skipped member by member as
+`skipped — dependency still failing` — rebuilding it would only relink everyone to the same stale root outputs
+(measured: a broken prerequisite made a 17-member group re-pay ~98 s of rounds on every *Resolve cycles* press).
+One member dirty for any other reason, or one recovered root, builds the whole group exactly as before, and the
+skip touches no ledger record — the group compiles the moment a root recovers. A record written before roots
+were stored carries no roots and compiles on every `Build` as it always did.
 
 ### 8.4 ETA
 
@@ -1211,9 +1217,9 @@ The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), display
 replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
 no history the ribbon shows progress and elapsed time without an estimate.
 
-Cycle members are the one term that is **not** divided by parallelism: their work is sequential by
-construction and the estimate budgets the baseline round count (§8.8), so both assumptions the division
-encodes are false for them. A group whose output surfaces prove settled can finish in a single round (§8.8);
+Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
+whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
+so the flat division the other term encodes would overpromise for them. A group whose output surfaces prove settled can finish in a single round (§8.8);
 the estimate keeps the two-round budget anyway, in the same direction the rest of this section already
 accepts — an ETA that runs long is the better failure. A member counts in that term from the moment it is planned until its group is finished — while the group
 runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
@@ -1372,12 +1378,20 @@ such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n
 building glyph, and before the first round starts (while the cycle's stale upstream compiles) it says
 `preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
 group needs, and the interface reports that rather than promising a fixed count. A worker that is
-handed a strongly-connected component runs the whole group. Every member is
-invoked in build order and **one at a time** — never concurrently, because one member reads the DLL another is
-in the middle of writing. The first round invokes every member; whether anyone is invoked again is a question
-of evidence, and a later round compiles only the members for whom the answer is yes. Each member's log file is
-opened once and kept open for every round: opening it per round would truncate the previous rounds away and
-restart the line numbers.
+handed a strongly-connected component runs the whole group. Within a round the members run in **barriered
+levels** (`CycleRoundLevels`): members with no direct edge between them compile concurrently on one level,
+while members joined by a direct edge in *either* direction never do — one would be reading the DLL the other
+is in the middle of writing, and since a level completes fully before the next starts, that overlap is
+structurally impossible. A forward edge (to a producer earlier in build order) orders its consumer onto a
+later level, so it reads this round's fresh output exactly as the old fully-sequential loop did; a back edge
+imposes no order, because its consumer reads the previous generation either way. On a real 17-member group
+the internal critical path is 6, so a round costs ~6 waves instead of 17 sequential compiles. Level
+concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the perf
+profile's parallelism), so no combination of workers and level width ever exceeds the configured parallelism.
+The first round invokes every member; whether anyone is invoked again is a question of evidence, and a later
+round compiles only the members for whom the answer is yes. Each member's log file is opened once and kept
+open for every round: opening it per round would truncate the previous rounds away and restart the line
+numbers.
 
 The stopping rule is a pure function in Core, given the round number, the members currently failing, the
 previous round's failures and — when the engine can prove it — the members whose read surfaces went stale.
@@ -1529,7 +1543,12 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   shell-out does not spawn extra nodes). They stay on because with a compiler server the emit happens in a
   long-lived `VBCSCompiler` **outside** the job, which reintroduces the torn-DLL risk that §4.5 exists to
   eliminate. Correctness was chosen over the 2.9×; revisiting it requires a mechanism that closes the emit
-  window, not just a faster number.
+  window, not just a faster number. That mechanism was looked for and does not exist on the current toolset:
+  the server's pipe name is derived from the user and the compiler directory with no external override
+  anywhere in the toolset (task assembly, `csc.exe`, `VBCSCompiler.exe` — verified on VS 18), and the client
+  uses the server only for the built-in tool path, so a private toolset copy cannot create a private pipe
+  either. A per-run server therefore cannot be isolated from Visual Studio's in either direction — ours would
+  serve VS's builds and die with the run's job, or VS's would emit outside the job.
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
 - No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
   Studio would (§9.4).
@@ -4923,6 +4942,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
+| Barriered level plan inside a cycle round (forward-edge ordering, any-direction neighbor separation) | `Core/Planning/CycleRoundLevels.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |

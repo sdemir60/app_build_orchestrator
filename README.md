@@ -343,12 +343,13 @@ back. The console reports each step's result; a failed restore shows MSBuild's e
 output.
 
 Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members
-compile one after another, and a member compiles again only when the **API surface** of a sibling output it
-built against has actually changed. A body-only change settles in a single round; an API change costs a
-second, narrower round; three rounds is the ceiling, and a member that fails while its inputs are provably
-settled stops the run at once — an identical compile cannot end differently. Even so the worst case is
-members × rounds of sequential compiling, which next to an ordinary incremental build is a large and
-unpredictable bill. Behind a button you decide when to pay it.
+compile in barriered waves (members that don't reference each other directly share a wave and compile in
+parallel, up to the run's parallelism; direct neighbours never overlap), and a member compiles again only
+when the **API surface** of a sibling output it built against has actually changed. A body-only change
+settles in a single round; an API change costs a second, narrower round; three rounds is the ceiling, and a
+member that fails while its inputs are provably settled stops the run at once — an identical compile cannot
+end differently. Even so the worst case is members × rounds of compiling, which next to an ordinary
+incremental build is a large and unpredictable bill. Behind a button you decide when to pay it.
 
 Such a run compiles the cycles **and whatever they depend on that is out of date** — otherwise a member would
 be compiled against a stale DLL, come back green, and then be recorded as up to date so that no later build
@@ -376,7 +377,9 @@ sibling output it read was already final is the proven culprit — it turns red 
 breaks the cycle is visible at a glance while its innocent siblings wait in grey.
 
 Pressing the button again is always a real attempt. A cycle that has settled is skipped as up to date, so the
-press costs nothing when nothing changed; a cycle that did *not* settle is tried again from round one, and the
+press costs nothing when nothing changed; a cycle whose only reason to rebuild is a **broken prerequisite** is
+skipped too (`dependency still failing`, with the culprit named) until that root recovers — rebuilding it
+would only relink every member to the same stale output; a cycle that did *not* settle is tried again from round one, and the
 run log says why it is worth the rounds (`retrying — did not converge at this signature`). The engine
 remembers a failed convergence, but only to report it — refusing to retry would mean the button silently doing
 nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
