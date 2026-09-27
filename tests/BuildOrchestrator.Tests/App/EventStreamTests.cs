@@ -457,6 +457,31 @@ public class EventStreamTests
         Assert.Equal(leaderId, line.ProjectId);
     }
 
+    /// <summary>
+    /// [cycles] Karar satırı yalnız koşunun KANITLADIĞINI söyler ve sayıları doğru çekimler.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski no-progress satırı <c>cycle failed — same {n} members failing twice ·
+    /// {r} rounds</c> idi. Yüzey kanıtı kararı TEK turda da verir (girdisi oturmuşken patlayan üye bir sonraki
+    /// denemede birebir aynı girdiyle patlar); o turda satır "iki kez" diyerek olmamış bir şeyi anlatıyor, tekil
+    /// sayıları da "1 members · 1 rounds" diye yazıyordu. Sahada görüldü: CS1061'le kırılan iki üyeli grup
+    /// <c>same 1 members failing twice · 1 rounds</c> gösterdi. Yeni satır iki kanıt yolunun ortak hükmünü söyler
+    /// — bir deneme daha aynı biçimde patlar — ve kaç üyeden kaçının patladığını verir. decision.log'un aynı
+    /// düzeltmesi CycleRoundsTests'te pinlidir.</para>
+    /// </summary>
+    [Fact]
+    public void Cycle_verdict_lines_state_only_what_the_run_proved()
+    {
+        Assert.Equal("cycle converged — 17 members · 1 round · 3m 58s",
+            StreamText.CycleCompleted(CycleOutcome.Converged, members: 17, rounds: 1, failed: 0, durationMs: 238_000));
+        Assert.Equal("cycle converged — 2 members · 2 rounds · 4.2s",
+            StreamText.CycleCompleted(CycleOutcome.Converged, members: 2, rounds: 2, failed: 0, durationMs: 4200));
+        Assert.Equal("cycle failed — 1 of 2 members failing · a retry would fail the same way · 1 round",
+            StreamText.CycleCompleted(CycleOutcome.NoProgress, members: 2, rounds: 1, failed: 1, durationMs: 4200));
+        Assert.Equal("cycle failed — 2 of 4 members failing · a retry would fail the same way · 2 rounds",
+            StreamText.CycleCompleted(CycleOutcome.NoProgress, members: 4, rounds: 2, failed: 2, durationMs: 4200));
+        Assert.Equal("cycle round cap reached — output may be one generation behind · 3 rounds",
+            StreamText.CycleCompleted(CycleOutcome.CapReached, members: 4, rounds: 3, failed: 0, durationMs: 4200));
+    }
+
     // ============================================================ [Task 12 PİN] — resolve cycles şerit metni (VM besleme)
 
     /// <summary>[Task 12 PİN] RunStarted(Cycles) + CycleRoundStarted(1/3) sonrası <c>vm.RibbonLine.Text</c>

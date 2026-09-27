@@ -168,8 +168,12 @@ public static class StreamText
     /// <para>[API kısa devresi] Sonraki turlar yalnız bayat bağlanan üyeleri derlediği için sayı artık 1
     /// olabilir — satır tekil yazılır (§14.6 ton kuralı: "1 members" kopya-yapıştır kokusudur).</para>
     public static string CycleRound(int round, int cap, int memberCount) =>
-        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2} {3}", round, cap, memberCount,
-            memberCount == 1 ? "member" : "members");
+        string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2}", round, cap, Counted(memberCount, "member"));
+
+    /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c>) — döngü satırlarının TEK çekim kuralı;
+    /// tekil sayı artık olağan bir durumdur (tek turda biten grup, tek üyeli seçici tur).</summary>
+    private static string Counted(int count, string noun) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} {1}{2}", count, noun, count == 1 ? "" : "s");
 
     /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>
     /// parametresinin TEK metin kaynağı: <c>member {index}/{count} · round {round}/{cap}</c>. Kopya YASAK
@@ -179,16 +183,22 @@ public static class StreamText
 
     /// <summary>[Task 3/cycles] <c>CycleCompletedEvent</c>'in TEK metin kaynağı — grubun neden öyle bittiğini
     /// (yakınsadı / ilerleme yok / tavana dayandı) ekrana taşır. Kind eşlemesi (Converged→Ok, NoProgress→Fail,
-    /// CapReached→Info) çağıranda (<c>RunViewModel.Stream</c>) yapılır — burada yalnız METİN.</summary>
+    /// CapReached→Info) çağıranda (<c>RunViewModel.Stream</c>) yapılır — burada yalnız METİN.
+    /// <para><b>[DEĞİŞEN KURAL]</b> No-progress satırı eskiden "same N members failing twice" derdi. Yüzey kanıtı
+    /// kararı TEK turda da verir (girdisi oturmuşken patlayan üye aynı girdiyle yine patlar), bu yüzden "iki
+    /// kez" olmamış bir şeyi anlatabiliyordu. Satır artık iki kanıt yolunun ORTAK hükmünü söyler: bir deneme
+    /// daha aynı biçimde patlar.</para></summary>
     public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs) =>
         outcome switch
         {
             CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
-                "cycle converged — {0} members · {1} rounds · {2}", members, rounds, DurationFormat.Duration(durationMs)),
+                "cycle converged — {0} · {1} · {2}", Counted(members, "member"), Counted(rounds, "round"),
+                DurationFormat.Duration(durationMs)),
             CycleOutcome.NoProgress => string.Format(CultureInfo.InvariantCulture,
-                "cycle failed — same {0} members failing twice · {1} rounds", failed, rounds),
+                "cycle failed — {0} of {1} failing · a retry would fail the same way · {2}", failed,
+                Counted(members, "member"), Counted(rounds, "round")),
             CycleOutcome.CapReached => string.Format(CultureInfo.InvariantCulture,
-                "cycle round cap reached — output may be one generation behind · {0} rounds", rounds),
+                "cycle round cap reached — output may be one generation behind · {0}", Counted(rounds, "round")),
             _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, "unknown cycle outcome"),
         };
 }
