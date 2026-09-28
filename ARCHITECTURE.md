@@ -1558,9 +1558,10 @@ when the budget ran out.
 Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
-being load-bearing. Within a `Cycles` run no member can reach
-that state — a dependency issue needs a *failed* dependency (§8.3) and nothing outside the group is built —
-but the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
+being load-bearing. A converged member can carry a dependency issue too — its transitive upstream compiles in
+the same `Cycles` run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
+with a note and its roots (§8.3), so the memory is lost the same way, as a side effect of that same fresh build
+state; the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
 Which member's signature stands for the group is decided in one place for both the writing and the reading
 side, since the two hold the component in different orders. In the mode the App actually sends every member

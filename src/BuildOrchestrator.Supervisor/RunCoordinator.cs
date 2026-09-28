@@ -673,9 +673,10 @@ public sealed class RunCoordinator(
         // (kopya YASAK).
         var schedulerSeed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
-        // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
-        // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
-        // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild'de boş kalır.
+        // [Task 19] Build VE Cycles modlarında construction anında Skipped sayılan pre-skip'ler (cycle pre-skip'i
+        // gibi dependent'ları için resolved) — Build'de incremental "up to date" (WillBuild==false, cycle DIŞI)
+        // projeler; Cycles'ta AYRICA kapsam dışı projeler (SkipReasons.OutOfCycleScope) VE grup düzeyinde güncel
+        // SCC üyeleri (SkipReasons.UpToDate). ProjectSkippedEvent ile raporlanır. Rebuild'de boş kalır.
         // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır: App'e giden ayırt edici bayrak
         // Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır. Onu true
         // yapan tek kaynak yakınsamama hafızasının SCC pre-skip'iydi; o kalktı (bkz. Cycles tohumundaki
@@ -961,8 +962,9 @@ public sealed class RunCoordinator(
             // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
                 DecideSkipped(projectId, reason);
-            // [Task 19] Build modunda incremental "up to date" skip'ler (cycle pre-skip ile AYNI konumda, ilk
-            // dispatch'ten ÖNCE): dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
+            // [Task 19] Build VE Cycles modlarının pre-skip'leri (cycle pre-skip ile AYNI konumda, ilk
+            // dispatch'ten ÖNCE) — Build'de incremental "up to date", Cycles'ta AYRICA kapsam dışı ve grup
+            // düzeyinde güncel SCC üyeleri: dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 

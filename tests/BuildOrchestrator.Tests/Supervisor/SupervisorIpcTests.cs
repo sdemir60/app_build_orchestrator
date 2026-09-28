@@ -26,14 +26,16 @@ public static class TestPaths
 
     /// <summary>[cycle rounds] GERÇEK bir run'ın TAMAMLANMASINI bekleyen e2e testlerinin hang-guard'ı — bir
     /// PERF BÜTÇESİ DEĞİL, sonsuz beklemeyi test hatasına çeviren üst sınır (iddiaların hiçbiri süreye
-    /// bakmaz). <b>Neden genişledi:</b> tek kullanıcısı <c>RunViewModelTests</c>'in Rebuild e2e testiydi ve
-    /// 15 sn bekliyordu; o test X↔Y cycle fixture'ı sayesinde eskiden HİÇ <c>MSBuild.exe</c> child'ı
-    /// doğurmuyordu (üyeler pre-skip ediliyordu). Dairesel bağımlılıklar artık turlarla DERLENDİĞİ için aynı
-    /// fixture 2 tur × 2 üye = 4 gerçek invoke yapar: tek başına ~2 sn, ama TÜM süit paralel koşarken 15 sn
-    /// aşıldı ve test sebepsiz kırmızı verdi (ölçüm: task-6 fix turu, <c>Category!=Acceptance</c> koşumu).
-    /// Aynı iş yükünü bekleyen kardeş e2e testi (<c>RunCoordinatorTests</c>) zaten 30 sn'lik bir guard
-    /// kullanıyor ve yük altında geçiyor; buradaki pay <see cref="WideStartupTimeout"/> ile aynı tutuldu —
-    /// bu test AYRICA gerçek bir EngineHost başlatır.</summary>
+    /// bakmaz). Tek kullanıcısı <c>RunViewModelTests.Rebuild_wires_through_the_real_engine_and_populates_rows</c>.
+    /// <b>Bugün bu testte hiçbir <c>MSBuild.exe</c> child'ı doğmaz:</b> turlar kendi moduna taşındığı için
+    /// (<c>RunMode.Cycles</c>) Rebuild artık testin X↔Y cycle fixture'ındaki iki üyeyi de "in dependency cycle"
+    /// ile pre-skip eder (testin kendi yorumu aynı gerekçeyi taşır — rounds Rebuild'e katlıyken bu fixture
+    /// GERÇEKTEN derleniyordu, 60 sn'lik pay o dönemden kalır). Guard yine de geniş tutulur: test GERÇEK bir
+    /// Supervisor process'ini uçtan uca çalıştırır (spawn + <c>engineReady</c> el sıkışması + IPC + MSBuild
+    /// toolset çözümü) ve TÜM süit paralel koşarken bu adımların kendisi yavaşlayabilir. Aynı iş yükünü
+    /// bekleyen kardeş e2e testi (<c>RunCoordinatorTests</c>) zaten 30 sn'lik bir guard kullanıyor ve yük
+    /// altında geçiyor; buradaki pay <see cref="WideStartupTimeout"/> ile aynı tutuldu — bu test AYRICA gerçek
+    /// bir EngineHost başlatır.</summary>
     public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
 
     /// <summary>[final review M8] Eski worktree havuzunun TEST kökü: diskte OLMAYAN, süreç başına tek bir geçici yol.

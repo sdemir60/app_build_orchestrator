@@ -281,10 +281,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// üçgeni onu buradan okur (iki yüzey kendi yolunu KURMAZ).</summary>
     [ObservableProperty] private string _cyclePath = "";
 
-    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
-    /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
-    /// AYNEN taşınır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır
-    /// (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER Task 9'undur.</summary>
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup BU run'da turlarını YAKINSAMADAN
+    /// (NoProgress) bitirdi — kaynağı <see cref="OnCycleCompleted"/>, grubun sonuç olayından yazılır (bkz. o
+    /// metodun XML yorumu). <see cref="ProjectSkippedEvent.CycleUnconverged"/> bugün hep <c>false</c> gelir
+    /// (motor artık geçmiş bir yakınsamama hafızasına bakıp pre-skip ETMEZ) — bu alan onu değil, ŞU koşunun
+    /// kendi tur sonucunu taşır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir
+    /// alandır (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER
+    /// Task 9'undur.</summary>
     [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +

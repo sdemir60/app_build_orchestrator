@@ -331,7 +331,7 @@ public class RunViewModelStateTests
         Assert.Null(vm.RunErrorMessage);
     }
 
-    // ---------------------------------------------------------------- seçim / filtre asimetrisi
+    // ---------------------------------------------------------------- seçim / filtre kuralı
 
     [Fact]
     public async Task Selecting_the_same_project_twice_clears_the_selection()
@@ -453,7 +453,7 @@ public class RunViewModelStateTests
     /// filtreli kalır. Grafın koşu boyunca filtreyi YOK SAYMASI ayrı bir kuraldır (GraphFilterRunSuspendTests).
     /// </summary>
     [Fact]
-    public async Task Build_and_retry_clear_the_selection_but_keep_the_filter_and_the_search()
+    public async Task Build_and_rebuild_clear_the_selection_but_keep_the_filter_and_the_search()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };

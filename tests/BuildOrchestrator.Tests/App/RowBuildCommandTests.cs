@@ -34,7 +34,7 @@ public class RowBuildCommandTests
     /// <summary><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-19]</b> Eski ad/iddia:
     /// <c>Build_project_sends_a_scoped_build_and_clears_selection_and_filter</c> — satırdan tetiklenen koşu
     /// filtreyi de düşürüyordu. Değişme gerekçesi: tam koşudaki kuralın aynısı — Build filtreyi silmez, yalnız
-    /// seçim düşer (bkz. <c>RunViewModelStateTests.Build_and_retry_clear_the_selection_but_keep_the_filter_and_the_search</c>).</summary>
+    /// seçim düşer (bkz. <c>RunViewModelStateTests.Build_and_rebuild_clear_the_selection_but_keep_the_filter_and_the_search</c>).</summary>
     [Fact]
     public async Task Build_project_sends_a_scoped_build_clears_the_selection_and_keeps_the_filter()
     {
