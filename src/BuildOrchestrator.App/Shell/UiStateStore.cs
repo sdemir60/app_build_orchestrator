@@ -29,7 +29,7 @@ public sealed class UiState
     /// <summary>[T35] Sağ kolon satır split'i (konsol/stream).</summary>
     public double RightPct { get; set; } = 50;
 
-    // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar; Autostart'ı yazan UI henüz yok) ----
+    // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar) ----
     public string? RepositoryRoot { get; set; }
     public string? Configuration { get; set; }
 
@@ -90,7 +90,19 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
-    public bool Autostart { get; set; }
+    /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
+    /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
+    /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI
+    /// gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı (kapalı).
+    /// Okuma yalnız <see cref="ShellSwitches.StartWithWindows"/> üzerindendir — bu alan doğrudan okunmaz.
+    /// <para><b>Şema göçü:</b> alan eskiden <c>bool</c>'du; diskteki <c>true</c>/<c>false</c> aynen okunur.</para></summary>
+    public bool? Autostart { get; set; }
+
+    /// <summary>[P4] Settings → General → STARTUP → <c>Start minimized to tray</c>: Windows ile açılışta pencere
+    /// gösterilmeden tepside mi başlansın. <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog
+    /// varsayılanı (kapalı: pencere açılır). Okuma yalnız <see cref="ShellSwitches.StartMinimizedToTray"/>
+    /// üzerindendir.</summary>
+    public bool? StartMinimizedToTray { get; set; }
 }
 
 /// <summary>

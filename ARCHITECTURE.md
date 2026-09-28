@@ -110,6 +110,11 @@ the tray balloons and the About dialog all draw from it — a guard forbids the 
 in any App source file. The copyright is read as one string rather than composed from a year and a company,
 because a copyright year is not a runtime value.
 
+Windows reads the same name off the executable: the App's `.csproj` sets `AssemblyTitle` to `$(Product)`, so the
+file description — the name Task Manager shows for the process and for the startup entry of §12.3 — is the
+product name rather than the SDK default, the assembly name. The Supervisor keeps its own name, so the two
+processes stay distinguishable.
+
 The supervisor folder name is declared **once**, as the `SupervisorFolderName` MSBuild property in the App's
 `.csproj`, and travels to runtime as an `AssemblyMetadata` attribute that `Services/SupervisorLayout` reads
 back. It is never spelled again in C#.
@@ -2131,11 +2136,16 @@ floor (§4.5).
 ### 12.1 Startup routes and composition
 
 Argument parsing has one owner and three routes, in priority order: `--font-ab` (a developer shell for the font
-comparison — no DI, no engine, deliberately outside the single-instance gate), `--autostart` (start hidden in
-the tray), normal. An unrecognized argument is swallowed.
+comparison — no DI, no engine, deliberately outside the single-instance gate), start hidden in the tray, and
+normal. `--autostart` is only the marker the Windows startup entry (§12.3) passes to say *Windows started me*:
+whether such a start stays hidden in the tray or shows the window is decided by the saved *Start minimized to
+tray* switch, which the App reads from `ui-state.json` before it picks the route. One source of truth — changing
+the switch never rewrites the startup entry. With the switch off, a Windows start opens the window like any
+other; a start by hand always shows the window. An unrecognized argument is swallowed.
 
 The composition root registers the `EngineHost` (resolving the Supervisor path from the assembly metadata of
-§3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service and the view models. Two application-wide
+§3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service, the
+autostart service (the one owner of the Windows startup entry, §12.3) and the view models. Two application-wide
 singletons are exposed statically because their owners have no constructor seam: the reduced-motion settings and
 the hero-motion coordinator.
 
@@ -2230,7 +2240,26 @@ conflict disables it silently; the tray icon still restores the window. There is
 but the loss is no longer invisible: the About screen marks that shortcut row *unavailable* when the
 registration did not take.
 
-Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No admin rights, no HKLM, no service.
+**Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
+no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
+by `--autostart` (§12.1). The saved switch is the app's wish, and every start reconciles the value with it: an
+executable that has moved is re-pointed on its next launch, and a registry that refuses the write — a policy,
+security software — is skipped rather than taking the start down. A Windows start that meets a running instance
+follows the second-instance rule above, and either kind of start runs the startup Sync of §12.1.
+
+The switch shows what Windows will actually do, not the saved wish: no value reads off, a value reads on —
+unless the user turned the app off in Task Manager's *Startup apps* (or Settings → Apps → Startup). Windows
+keeps that decision beside the value, under `...\Explorer\StartupApproved\Run`, as a binary value whose first
+byte is odd when the entry is disabled (Task Manager writes `03` and the time it was turned off, `02` when it is
+turned back on; no value counts as enabled). Then the switch reads off and its description says it was turned
+off in Task Manager.
+
+*Save* touches the entry only when the switch was changed in the dialog. Turning it on writes the value and
+removes Task Manager's mark, because the latest explicit decision wins; turning it off deletes the value. A save
+that leaves the switch alone changes neither the entry nor the saved wish, so a decision taken in Task Manager is
+never overridden in passing — and the per-start reconciliation never touches the mark at all. If Windows refuses
+the write, the console says so in one line and the saved wish stays as it was. Task Manager lists the entry
+under the product name (§3.3).
 
 Coming back to the window — from the tray, the overlay, a notification or any other window — raises the window's
 activation, and activation is a trigger for the automatic Sync: when more than five seconds have passed since
@@ -2999,10 +3028,19 @@ to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
 no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
-switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Only
-*Pull before build* and *Stash and switch branches* drive behaviour so far; the other four switches live in the
-draft alone (§20). *Stash and switch branches* follows the pull switch's rules: saved with *Save*, carried to
-the engine on the next checkout, and a console note written only when its value actually changed.
+switch's own disabled opacity and stops taking input while its parent is off, without moving anything.
+*Pull before build*, *Stash and switch branches*, *Start with Windows* and *Start minimized to tray* drive
+behaviour; *Close to tray* and *Show notifications* live in the draft alone (§20). *Stash and switch branches*
+follows the pull switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console
+note written only when its value actually changed.
+
+The two startup switches are **shell switches** — they drive the window and the start, not the engine. One table
+(`ShellSwitches`) says, for each, where it is saved in `ui-state.json`, which key carries it in the settings
+file and what its console note reads (`Start with Windows on — …`); the draft walks that table when it opens,
+exports, imports and saves, so a new shell switch is a row there. Behaviour reads the saved value through the
+same table. *Start with Windows* is the one exception to "the dialog opens on the saved value": it opens on the
+Windows startup entry and is applied only when changed (§12.3). A row's description can give way to a note
+about the row's current state — today only Task Manager's disabled mark (§12.3).
 
 **Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
 required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
@@ -3092,11 +3130,13 @@ anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, layers[{ name, pattern }] }`, the external array sitting
+pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, layers[{ name, pattern }] }`,
+the external array sitting
 between the root and the layers (the field order the file is written in, not just a key that happens to be present) and holding only
 cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
 every external card, and returns every General switch to its default — *Pull before build* to on, *Stash and
-switch branches* to off. Of General, only those two travel in the file. All
+switch branches* and the two startup switches to off. Of General, those four travel in the file, so saving an
+imported file that has *Start with Windows* on turns it on for that machine — deliberately. All
 three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
@@ -3110,8 +3150,9 @@ name` or `Check the highlighted pattern`, in that order of priority. The draft d
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits `pullExternalBeforeBuild` or `stashOnBranchSwitch` leaves that switch where it is, the same
-rule the external list already follows: a file cannot silently reset a setting it does not carry.
+A file that omits `pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows` or `startMinimizedToTray`
+leaves that switch where it is, the same rule the external list already follows: a file cannot silently reset a
+setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
@@ -4582,9 +4623,10 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, autostart, tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray* (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
-Autostart additionally writes one `HKCU\...\Run` value.
+*Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
+disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
 
 The three ledgers are **shared by every workspace**, so neither maintenance operation deletes a file; both work
 by key.
@@ -4855,9 +4897,9 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
-- **Four General switches are not wired yet.** *Start with Windows*, *Start minimized to tray*, *Close to tray*
-  and *Show notifications* live only in the Settings draft: they are not saved, exported or imported, and change
-  no behaviour — every time the dialog opens they are back at their defaults.
+- **Two General switches are not wired yet.** *Close to tray* and *Show notifications* live only in the
+  Settings draft: they are not saved, exported or imported, and change no behaviour — every time the dialog
+  opens they are back at their defaults.
 
 ---
 
@@ -4982,10 +5024,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
-| Argument parsing (`--font-ab`, `--autostart`) | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
+| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
-| Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
+| Single instance, tray icon, global hotkey, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
+| Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
@@ -5155,6 +5198,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
+| General shell switches (*Start with Windows*, *Start minimized to tray*) — where each is saved, which file key carries it, its console note | `App/Shell/ShellSwitches.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 

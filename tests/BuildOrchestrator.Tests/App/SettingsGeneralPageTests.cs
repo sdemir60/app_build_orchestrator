@@ -6,6 +6,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Media;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Model;
@@ -17,10 +19,14 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para><b>Kullanıcı kararı 1:</b> <c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>,
-/// <c>Show notifications</c> YALNIZ taslakta yaşar — kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana döner.
-/// <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>) ve <c>Stash and switch branches</c>
-/// (<see cref="StashOnBranchSwitchTests"/>) ise gerçek bayraklardır.</para>
+/// <para><b>Kullanıcı kararı 1:</b> <c>Close to tray</c> ve <c>Show notifications</c> YALNIZ taslakta yaşar —
+/// kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana döner. <c>Pull before build</c>
+/// (<see cref="PullBeforeBuildTests"/>), <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitchTests"/>),
+/// <c>Start with Windows</c> ve <c>Start minimized to tray</c> (<see cref="StartWithWindowsTests"/>) ise gerçektir.</para>
+/// <para><b>[DEĞİŞEN KURAL — P4, kullanıcı kararı 2026-09-29]</b> ESKİ: iki başlangıç anahtarı da yalnız taslaktaydı
+/// (dört anahtar birlikte). Artık kalıcıdır ve davranışa bağlıdır (Windows ile başlama, tepside açılış).</para>
+/// <para>TODO(close-to-tray merge): P3 branch'i Close to tray ve Show notifications'ı da kalıcı yaptı; merge'de
+/// "kaydedilmez" diyen iki test kalkar, P3'ün kalıcılık testleri yerini alır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsGeneralPageTests
@@ -139,16 +145,19 @@ public class SettingsGeneralPageTests
         Assert.True(draft.PullExternalsBeforeBuild);
     }
 
-    /// <summary>Dört yeni anahtar ayar dosyasına GİRMEZ (kullanıcı kararı 1): hepsi çevrilse de export JSON'u
-    /// varsayılanla aynıdır. Gerçek bayraklar (pull, stash — kendi testleri: <see cref="PullBeforeBuildTests"/>,
-    /// <see cref="StashOnBranchSwitchTests"/>) çevrilmez.</summary>
+    /// <summary>Close to tray ve Show notifications ayar dosyasına GİRMEZ (kullanıcı kararı 1): ikisi çevrilse de export
+    /// JSON'u varsayılanla aynıdır.
+    /// <para><b>[DEĞİŞEN KURAL — P4]</b> Eski iddia (<c>The_four_new_switches_are_not_written_to_the_settings_file</c>):
+    /// dört anahtarın dördü de dosyaya girmezdi. Start with Windows ve Start minimized to tray artık dosyaya yazılır
+    /// ve okunur (<see cref="StartWithWindowsTests.The_startup_switches_round_trip_through_the_settings_file"/>).</para>
+    /// <para>TODO(close-to-tray merge): P3 bu iki anahtarı da dosyaya yazar — bu test merge'de kalkar.</para></summary>
     [Fact]
-    public void The_four_new_switches_are_not_written_to_the_settings_file()
+    public void Close_to_tray_and_show_notifications_are_not_written_to_the_settings_file()
     {
         var untouched = new SettingsDraftViewModel(null, @"D:\repo");
         var flipped = new SettingsDraftViewModel(null, @"D:\repo");
         foreach (var row in flipped.GeneralGroups.SelectMany(g => g.Rows)
-                     .Where(r => r.Definition.Setting is not (GeneralSetting.PullBeforeBuild or GeneralSetting.StashOnBranchSwitch)))
+                     .Where(r => r.Definition.Setting is GeneralSetting.CloseToTray or GeneralSetting.ShowNotifications))
             row.IsOn = !row.IsOn;
 
         Assert.Equal(untouched.ToFile().ToJson(), flipped.ToFile().ToJson());
@@ -279,16 +288,20 @@ public class SettingsGeneralPageTests
         Assert.Equal(height, row.ActualHeight);
     }
 
-    /// <summary>Dört yeni anahtar Save'de UiState'e GİRMEZ ve yeniden açılışta varsayılana döner.</summary>
+    /// <summary>Close to tray ve Show notifications Save'de UiState'e GİRMEZ ve yeniden açılışta varsayılana döner.
+    /// <para><b>[DEĞİŞEN KURAL — P4]</b> Eski iddia (<c>The_four_new_switches_are_not_saved_and_reopen_on_their_defaults</c>):
+    /// dört anahtar da kaydedilmezdi. Start with Windows ve Start minimized to tray artık kaydedilir ve kayıtlı
+    /// değerle açılır (<see cref="The_startup_switches_are_saved_and_reopen_on_the_saved_value"/>).</para>
+    /// <para>TODO(close-to-tray merge): P3 bu iki anahtarı da kaydeder — bu test merge'de kalkar.</para></summary>
     [StaFact]
-    public void The_four_new_switches_are_not_saved_and_reopen_on_their_defaults()
+    public void Close_to_tray_and_show_notifications_are_not_saved_and_reopen_on_their_defaults()
     {
         string SavedState(bool flip)
         {
             var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
             using var _scope = scope;
             if (flip)
-                foreach (var name in new[] { "Start with Windows", "Start minimized to tray", "Close to tray", "Show notifications" })
+                foreach (var name in new[] { "Close to tray", "Show notifications" })
                     SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
 
             Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
@@ -301,6 +314,59 @@ public class SettingsGeneralPageTests
         }
 
         Assert.Equal(SavedState(flip: false), SavedState(flip: true));
+    }
+
+    /// <summary>[P4] İki başlangıç anahtarı Save'de UiState'e yazılır ve diyalog yeniden açılınca kayıtlı değerle
+    /// gelir (switch'e tıklamanın bağladığı gerçek yol).</summary>
+    [StaFact]
+    public void The_startup_switches_are_saved_and_reopen_on_the_saved_value()
+    {
+        var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
+        SwitchNamed(dialog, "Start minimized to tray").IsChecked = true;
+
+        Click(dialog.Save);
+        Assert.Equal(Visibility.Collapsed, dialog.Visibility);
+        Assert.True(store.State.Autostart);
+        Assert.True(store.State.StartMinimizedToTray);
+
+        dialog.Open(run, store, () => null);
+        dialog.UpdateLayout();
+        Assert.Equal([true, true, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+    }
+
+    /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>
+    [StaFact]
+    public void Saving_start_with_windows_on_writes_the_windows_startup_entry()
+    {
+        var registry = new FakeAutostartRegistry();
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(autostart: registry.Service());
+        using var _scope = scope;
+        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
+
+        Click(dialog.Save);
+
+        Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
+    }
+
+    /// <summary>[P4] Görev Yöneticisi'nde kapatılmış kayıt: Start with Windows satırı kapalı açılır, açıklaması
+    /// Windows'un kararını ve anahtarın ne yapacağını söyler; bağımlı satır (üst kapalı) söner.</summary>
+    [StaFact]
+    public void An_entry_turned_off_in_task_manager_shows_off_with_the_task_manager_note()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            saved: new UiState { Autostart = true }, autostart: registry.Service());
+        using var _scope = scope;
+
+        var row = RowNamed(dialog, "Start with Windows");
+        Assert.False(SwitchOf(row).IsChecked);
+        Assert.Contains(DsResources.Descendants(row).OfType<TextBlock>(),
+            t => t.Text == "Turned off in Task Manager's Startup apps — switch it on to start with Windows again.");
+        Assert.False(SwitchOf(RowNamed(dialog, "Start minimized to tray")).IsEnabled);
     }
 
     // ---------------------------------------------------------------- External projects

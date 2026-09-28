@@ -1,19 +1,27 @@
+using BuildOrchestrator.App.Shell;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <see cref="StartWithWindows"/>,
-/// <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/> ve <see cref="ShowNotifications"/> yalnız diyalog
-/// taslağında yaşar — kaydedilmez, ayar dosyasına yazılmaz/okunmaz, konsola not düşmez ve hiçbir davranışı
-/// (autostart, tray, bildirim) sürmez; her açılışta varsayılana döner. Yalnız <see cref="PullBeforeBuild"/>
-/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
-/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para></summary>
+/// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <see cref="CloseToTray"/> ve
+/// <see cref="ShowNotifications"/> yalnız diyalog taslağında yaşar — kaydedilmez, ayar dosyasına yazılmaz/okunmaz,
+/// konsola not düşmez ve hiçbir davranışı (tray, bildirim) sürmez; her açılışta varsayılana döner.
+/// <see cref="PullBeforeBuild"/> (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve
+/// <see cref="StashOnBranchSwitch"/> (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para>
+/// <para><b>[DEĞİŞEN KURAL — P4, kullanıcı kararı 2026-09-29]</b> ESKİ: <see cref="StartWithWindows"/> ve
+/// <see cref="StartMinimizedToTray"/> de yalnız taslaktaydı. Artık <see cref="ShellSwitches"/> tablosu üzerinden
+/// kalıcıdır ve davranışa bağlıdır: Windows ile başlama (Windows'un başlangıç kaydı) ve Windows ile açılışta tepside
+/// başlama.</para>
+/// <para>TODO(close-to-tray merge): P3 branch'i <see cref="CloseToTray"/> ve <see cref="ShowNotifications"/>'ı da aynı
+/// tabloya taşıdı — merge'de ilk paragraf kalkar.</para></summary>
 public enum GeneralSetting
 {
-    /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
+    /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartWithWindows"/>) — Windows'un başlangıç
+    /// kaydını Save anında yazar/siler.</summary>
     StartWithWindows,
-    /// <summary>Henüz bağlı değil — yalnız taslak. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
+    /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartMinimizedToTray"/>) — Windows ile açılışta
+    /// pencere mi tepside mi. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
     StartMinimizedToTray,
     /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
     CloseToTray,
@@ -75,6 +83,11 @@ public static class GeneralSettingsCatalog
                 "A tray notification when a build finishes — succeeded or failed.", Default: true),
         ]),
     ];
+
+    /// <summary>Kataloğun TEK satırı — <see cref="ShellSwitch.Note"/>'un etiketi (kopya YASAK) buradan okur, bir
+    /// literal olarak tekrarlamaz.</summary>
+    public static GeneralSettingDefinition Definition(GeneralSetting setting) =>
+        Groups.SelectMany(g => g.Rows).Single(r => r.Setting == setting);
 }
 
 /// <summary>General sayfasındaki bir satırın taslak durumu — <c>Ds.Settings.ToggleRow</c> şablonu buna bağlanır.</summary>
@@ -89,8 +102,17 @@ public sealed partial class GeneralSettingRowViewModel : ObservableObject
 
     public GeneralSettingDefinition Definition { get; }
     public string Label => Definition.Label;
-    public string Description => Definition.Description;
+
+    /// <summary>Satırın açıklaması: kataloğun metni; [P4] bir <see cref="Note"/> varsa onun yerine not.</summary>
+    public string Description => Note ?? Definition.Description;
+
     public string SwitchName => Definition.SwitchName;
+
+    /// <summary>[P4] Satırın o anki durumunu anlatan, açıklamanın YERİNE geçen not — ör. Görev Yöneticisi'nde devre
+    /// dışı bırakılmış Start with Windows. <c>null</c> ⇒ kataloğun açıklaması.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Description))]
+    private string? _note;
 
     /// <summary>Grubun ilk satırı üstte hairline taşımaz.</summary>
     public bool IsFirstInGroup { get; }
