@@ -166,9 +166,12 @@ public class AccessibilityTests
         Assert.Equal(AccessibilityNames.CopyLog, AutomationProperties.GetName(header.CopyLogButton));
     }
 
-    /// <summary>[A13/T5 · n3] `⌄ latest` pill'i üç panelde ORTAK bir kontroldür; "latest" etiketi tek başına
-    /// ekran okuyucuya hiçbir şey söylemez → adı HANGİ akışın sonuna gidildiğini bilen host verir ve üç ad
-    /// FARKLIdır. Ad, kabuğa değil TIKLANAN butona konur (UIA'da buton öğesi odur).</summary>
+    /// <summary>[A13/T5 · n3] `⌄ latest` pill'i iki panelde (konsol, event stream) ORTAK bir kontroldür; "latest"
+    /// etiketi tek başına ekran okuyucuya hiçbir şey söylemez → adı HANGİ akışın sonuna gidildiğini bilen host
+    /// verir ve üç ad FARKLIdır. Ad, kabuğa değil TIKLANAN butona konur (UIA'da buton öğesi odur).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-28]</b> Eski iddia: üç pill (proje listesi dahil) üç
+    /// farklı ad taşır. Proje listesinin pill'i kaldırıldı — hiç görünür olmuyordu ve tıklaması bağlı değildi;
+    /// kural kalan iki pill için aynıdır.</para></summary>
     [StaFact]
     public void Each_latest_pill_names_the_stream_it_jumps_to()
     {
@@ -176,14 +179,12 @@ public class AccessibilityTests
         var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null));
         var shell = window.Shell;
 
-        string projects = AutomationProperties.GetName(shell.PART_ProjectsPill.PillButton);
         string console = AutomationProperties.GetName(shell.ConsoleViewControl.Pill.PillButton);
         string events = AutomationProperties.GetName(shell.EventStreamControl.Pill.PillButton);
 
-        Assert.Equal(AccessibilityNames.LatestProjects, projects);
         Assert.Equal(AccessibilityNames.LatestConsole, console);
         Assert.Equal(AccessibilityNames.LatestEvents, events);
-        Assert.Equal(3, new[] { projects, console, events }.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(2, new[] { console, events }.Distinct(StringComparer.Ordinal).Count());
     }
 
     /// <summary>[A13/T5 · n4] Settings katman kartının iki input'u adlanır. Kolon başlıkları (LAYER NAME /
@@ -464,8 +465,7 @@ public class AccessibilityTests
                  {
                      AccessibilityNames.GraphNode("OSYS.Base", "Not synced"), // n1
                      AccessibilityNames.CopyLog,                              // n2
-                     AccessibilityNames.LatestProjects,                       // n3
-                     AccessibilityNames.LatestConsole,
+                     AccessibilityNames.LatestConsole,                        // n3
                      AccessibilityNames.LatestEvents,
                      AccessibilityNames.LayerName,                            // n4
                      AccessibilityNames.LayerPattern,

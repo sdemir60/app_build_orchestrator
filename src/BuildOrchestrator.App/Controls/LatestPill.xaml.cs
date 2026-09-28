@@ -32,7 +32,7 @@ public partial class LatestPill : UserControl
 
     /// <summary>
     /// [A13/T5] Ekran-okuyucu adı. Pill'in ROLÜNÜ ("en sona git") kontrol bilir, ama HANGİ akışın sonuna
-    /// gidildiğini (projeler / konsol / event stream) yalnız host bilir — bu yüzden metni host verir; desen,
+    /// gidildiğini (konsol / event stream) yalnız host bilir — bu yüzden metni host verir; desen,
     /// <c>ShellRoot</c>'un <c>DsSplitter</c>'lara ad vermesiyle AYNIdır. Metinler
     /// <see cref="AccessibilityNames"/>'tedir (çağırma yerinde literal YAZILMAZ).
     ///
