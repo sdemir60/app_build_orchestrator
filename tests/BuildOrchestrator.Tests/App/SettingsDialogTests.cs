@@ -313,50 +313,25 @@ public class SettingsDialogTests
         Assert.Empty(store.State.LayerPatterns);
     }
 
-    /// <summary>[D7 · K10] "Change…": kök değişir, durumlar sıfırlanır, YENİ kökte otomatik Sync başlar.
-    /// <para><b>Kapsam değişti:</b> bu test artık YALNIZ kabuğun "Choose Folder" yolunu pinler. Settings
-    /// diyaloğunun "Change…" düğmesi bu yola girmez — orada seçim Save'e ertelenir
-    /// (<c>Picking_a_folder_only_updates_the_draft</c> / <c>Saving_applies_the_pending_repository_root_and_syncs_once</c>).</para></summary>
-    [Fact]
-    public async Task Changing_the_repository_resets_state_and_starts_a_sync_at_the_new_root()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        run.OnEvent(new ProjectStartedEvent("r1", @"C:\old\a.csproj", "A")); // eski repo'da bir satır (Started)
-        Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
-
-        // [A13/T2 · 2.2] Sync ARTIK İKİ komut gönderir (sync + listBranches) — "son gönderilen" yerine TÜMÜ
-        // toplanır ve aranan komut TÜRÜNE göre seçilir. Assert GEVŞEMEDİ, KESİNLEŞTİ: Sync'in yeni kökte
-        // gittiği hâlâ aynı sıkılıkta pinlenir, üstüne envanterin de istendiği eklenir.
-        var sent = new List<IpcCommand>();
-        run.DebugOnCommandSent = sent.Add;
-
-        await run.ChangeRepositoryAsync(@"D:\new\repo");
-
-        Assert.Equal(@"D:\new\repo", run.RootPath);
-        Assert.True(run.HasWorkspace);
-        Assert.All(run.Projects, p => Assert.Equal(ProjectRowState.Pending, p.State)); // durumlar sıfırlandı (hollow)
-        var sync = Assert.Single(sent.OfType<SyncWorkspaceCommand>());                 // otomatik Sync gönderildi
-        Assert.Equal(@"D:\new\repo", sync.RootPath);                                   // yeni kökte
-        Assert.Equal(@"D:\new\repo", Assert.Single(sent.OfType<ListBranchesCommand>()).RootPath);
-    }
-
-    [Fact] // [D7 re-review][Fix3] Aynı kökü (case-insensitive — Windows yolu) YENİDEN seçmek no-op olmalı.
-    public async Task Repicking_the_current_repository_root_is_a_no_op()
+    [Fact] // Aynı kökü farklı harf durumuyla kaydetmek kök değişimi DEĞİLDİR (IsRepositoryChange, Windows yolu);
+           // Save yine TEK Sync gönderir (Applying_settings_sends_one_sync_that_carries_the_new_layer_patterns),
+           // ama kök ve satırlar yerinde kalır.
+    public async Task Saving_the_current_repository_root_in_another_case_keeps_the_root_and_the_rows()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         run.OnEvent(new ProjectStartedEvent("r1", @"D:\repo\a.csproj", "A")); // aktif bir satır (Started)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);
 
-        IpcCommand? sent = null;
-        run.DebugOnCommandSent = c => sent = c;
+        var sent = new List<IpcCommand>();
+        run.DebugOnCommandSent = sent.Add;
 
-        await run.ChangeRepositoryAsync(@"d:\REPO"); // aynı kök, farklı harf durumu
+        await run.ApplySettingsAsync([], @"d:\REPO", []); // aynı kök, farklı harf durumu
 
-        Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi
+        Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi (harf durumu korunur)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);  // satırlar sıfırlanmadı (hollow YOK)
-        Assert.Null(sent);                                                         // yeniden Sync GÖNDERİLMEDİ
+        Assert.DoesNotContain("Repository root →", run.GetRunDocumentText());      // konsolda kök notu YOK
+        Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath); // Save yine TEK Sync gönderir, ESKİ yazımla
     }
 
     [Fact] // Save = senkronize et: yalnız katmanlar değişse (kök AYNI) bile TEK Sync gider ve YENİ pattern'leri taşır.
@@ -514,9 +489,10 @@ public class SettingsDialogTests
         Assert.Contains(RunViewModel.RepositoryChangeDeferredLine(runInFlight: false), run.GetRunDocumentText());
     }
 
-    /// <summary>[final review M3] Choose Folder da aynı kapıdadır: bir Sync uçuştayken kök değişmez ve Sync gitmez.</summary>
+    /// <summary>[final review M3] Pull ve koşu testlerinin eşi: bir Sync uçuştayken Save katmanları uygular ama
+    /// kök ertelenir — ikinci bir Sync çift Sync olurdu.</summary>
     [Fact]
-    public async Task Choosing_a_folder_while_a_sync_is_in_flight_changes_nothing()
+    public async Task Applying_settings_while_a_sync_is_in_flight_defers_the_repository_change_and_sends_no_sync()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -525,10 +501,13 @@ public class SettingsDialogTests
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;
 
-        await run.ChangeRepositoryAsync(@"D:\new\repo");
+        IReadOnlyList<LayerPattern> patterns = [new LayerPattern(0, "^A", "Alpha")];
+        await run.ApplySettingsAsync(patterns, @"D:\new\repo", []);
 
+        Assert.Same(patterns, run.LayerPatterns);
         Assert.Equal(@"D:\repo", run.RootPath);
         Assert.Empty(sent);
+        Assert.Contains(RunViewModel.RepositoryChangeDeferredLine(runInFlight: false), run.GetRunDocumentText());
     }
 
     [Fact] // Erteleme notu YALNIZ gerçekten bekleyen bir kök değişimi varsa yazılır — sıradan (katman-only)

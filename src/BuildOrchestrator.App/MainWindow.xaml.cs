@@ -154,9 +154,10 @@ public partial class MainWindow : Window
         // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
         // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
         // [D7 M3] Son repo'yu SEED et — DOĞRUDAN RootPath set'i yalnız OnRootPathChanged'i (Empty→Boot) sürer,
-        // komut göndermez (ChangeRepositoryAsync DEĞİL). [spec 2026-09-18 §6.2] Açılışın Sync'i motor İLK kez
-        // hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır. İlk-koşuda (kayıtlı repo yok →
-        // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
+        // komut göndermez (Settings Save'in kök değişimi gibi Sync başlatmaz). [spec 2026-09-18 §6.2] Açılışın
+        // Sync'i motor İLK kez hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır.
+        // İlk-koşuda (kayıtlı repo yok → { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository"
+        // daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
         // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
@@ -1034,8 +1035,7 @@ public partial class MainWindow : Window
     // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
     // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
     // düğmesine geçti. Kalıcı durumdan gelen kök DOĞRUDAN RootPath set'iyle seed edilir (yukarıda, D7 M3 —
-    // seed-but-idle, hiçbir komut göndermez); RunViewModel.ChangeRepositoryAsync'in üretimde çağıranı YOKTUR,
-    // yalnız testlerden sürülür.
+    // seed'in kendisi komut göndermez; açılışın Sync'i motor hazır olunca RunViewModel.OnEngineReady'den gider).
 
     /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
     /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);
@@ -1074,7 +1074,7 @@ public partial class MainWindow : Window
 
     /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
-    /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
+    /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
     {

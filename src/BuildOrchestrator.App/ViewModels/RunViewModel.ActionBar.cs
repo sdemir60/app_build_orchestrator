@@ -192,10 +192,10 @@ public sealed partial class RunViewModel
     ///
     /// <para>(a) <b>Koşu ya da workspace işi uçuşta</b> (<see cref="WorkspaceIdle"/> değil): katmanlar yine uygulanır
     /// ama kök DEĞİŞMEZ ve Sync GİTMEZ — koşan bir build'in ya da uçuştaki bir Sync/Clean/Optimize/checkout/pull'un
-    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu (<see cref="ChangeRepositoryAsync"/>
-    /// de aynı kapıda no-op'tur). Bekleyen GERÇEK bir kök değişimi varsa konsola TEK satır düşer
-    /// (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi seçimi "Change…" anında ONAYLAMIŞ olur
-    /// (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan söylerdi. Değişim yoksa satır
+    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu. Bekleyen GERÇEK bir kök
+    /// değişimi varsa konsola TEK satır düşer (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi
+    /// seçimi "Change…" anında ONAYLAMIŞ olur (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya
+    /// yalan söylerdi. Değişim yoksa satır
     /// YAZILMAZ — katman-only bir Save'de gürültü olurdu. [final review M3] Eskiden kapı yalnız koşuyu soruyordu:
     /// pull uçuşken Save ikinci bir Sync gönderirdi.</para>
     ///
@@ -239,28 +239,13 @@ public sealed partial class RunViewModel
         await SyncAfterRootChangeAsync(rootChanged);
     }
 
-    /// <summary>[D7 · K10] Kabuğun "Choose Folder" yolu: yeni bir repo kökü seçilince kökü değiştirir, proje
-    /// durumlarını sıfırlar (yeni repo = yeni taban) ve HEMEN Sync başlatır — burada bir Save yoktur. Settings
-    /// diyaloğu bu yolu KULLANMAZ; orada seçim Save'e ertelenir (<see cref="ApplySettingsAsync"/>). Klasör
-    /// seçici çağıranın enjekte ettiği bir seam'dir — bu metot yalnız sonucu (yol) alır.</summary>
-    public async Task ChangeRepositoryAsync(string path)
-    {
-        if (!WorkspaceIdle) return; // [final review M3] koşu YA DA workspace işi uçuştayken kök çekilmez
-        if (!ApplyRepositoryRoot(path)) return;
-        // [D3/T5 · design v1.13.2] Appended — ilk kurulumda not YOK (konsol zaten boş), sonraki bir kök
-        // değişiminde ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE KENDİ notunu yazdı; bir temizlik onu da silerdi.
-        await SyncAfterRootChangeAsync(rootChanged: true);
-    }
-
-    /// <summary>[spec 2026-09-18 §6.2] Settings Save ve Choose Folder'ın Sync'i (<see cref="SyncMode.Appended"/>).
-    /// Kök GERÇEKTEN değiştiyse plan yüzeyi önce boşaltılır (<see cref="ClearPlanSurface"/>): Sync artık listeyi
-    /// kendisi boşaltmaz ve eski reponun (kararsız) satırları yeni reponun topolojisi gelene dek ekranda kalırdı.
-    /// <para>İki çağıran: <see cref="ApplySettingsAsync"/> bayrağı <see cref="ApplyRepositoryRoot"/>'un sonucundan
-    /// geçer (katman-only bir Save'de <c>false</c> — yüzey boşalmaz) ve motor erişilemezken buraya hiç gelmez: o
-    /// yolda satırlar yalnız kararları düşmüş hâlde kalır (<see cref="ResetRowsToHollow"/>), çünkü onları geri
-    /// getirecek bir topoloji gelmeyecektir. <see cref="ChangeRepositoryAsync"/> yalnız kök gerçekten değiştiyse
-    /// buraya iner ve her zaman <c>true</c> geçer; motor erişilemezlik kapısı YOKTUR — gönderim düşer, yüzey boş
-    /// ve faz Boot kalır, yeni kök bir sonraki Sync'le dolar.</para></summary>
+    /// <summary>[spec 2026-09-18 §6.2] Settings Save'in Sync'i (<see cref="SyncMode.Appended"/>). Kök GERÇEKTEN
+    /// değiştiyse plan yüzeyi önce boşaltılır (<see cref="ClearPlanSurface"/>): Sync artık listeyi kendisi
+    /// boşaltmaz ve eski reponun (kararsız) satırları yeni reponun topolojisi gelene dek ekranda kalırdı.
+    /// <para>Tek çağıran <see cref="ApplySettingsAsync"/>'tir: bayrağı <see cref="ApplyRepositoryRoot"/>'un
+    /// sonucundan geçer (katman-only bir Save'de <c>false</c> — yüzey boşalmaz) ve motor erişilemezken buraya
+    /// hiç gelmez: o yolda satırlar yalnız kararları düşmüş hâlde kalır (<see cref="ResetRowsToHollow"/>), çünkü
+    /// onları geri getirecek bir topoloji gelmeyecektir.</para></summary>
     private Task SyncAfterRootChangeAsync(bool rootChanged)
     {
         if (rootChanged) ClearPlanSurface();
@@ -269,8 +254,7 @@ public sealed partial class RunViewModel
 
     /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
     /// geçişini sürer), satırlar hollow'a sıfırlanır, willBuild kümesi temizlenir ve run yüzeyi tazelenir.
-    /// Sync GÖNDERMEZ — o kararı çağıran verir (Choose Folder hemen, Settings Save'de tek Sync içinde). İki
-    /// yolun ortak adımı burada TEK yerdedir (kopya yasağı).
+    /// Sync GÖNDERMEZ — Sync'i çağıran (<see cref="ApplySettingsAsync"/>) Save'in TEK Sync'i içinde gönderir.
     /// <para>Boş yol ya da AYNI kökün yeniden seçilmesi NO-OP'tur ve <c>false</c> döner — aksi halde her satır
     /// boşuna hollow'a sıfırlanır ve gereksiz bir Sync gönderilirdi. Kararı <see cref="IsRepositoryChange"/>
     /// verir.</para></summary>

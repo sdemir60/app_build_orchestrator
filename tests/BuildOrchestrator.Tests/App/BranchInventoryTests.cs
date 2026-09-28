@@ -42,8 +42,8 @@ public class BranchInventoryTests
 
     // ---------------------------------------------------------------- gönderim (SAF VM)
 
-    /// <summary>Sync = "workspace bilgisini tazele" anıdır ve TEK huniden geçer: ilk repo seçimi
-    /// (<c>ChangeRepositoryAsync</c> → <c>SyncAsync</c>), Settings→Save ve elle Sync hepsi buradan akar.
+    /// <summary>Sync = "workspace bilgisini tazele" anıdır ve TEK huniden geçer: ilk repo seçimi ve kök değişimi
+    /// (Settings → Save → <c>ApplySettingsAsync</c>), açılış ve elle Sync hepsi buradan akar.
     /// Envanter ORADA istenmezse chip sonsuza dek boş kalır.</summary>
     [Fact]
     public async Task Sync_also_asks_the_supervisor_for_the_branch_inventory()
@@ -59,18 +59,20 @@ public class BranchInventoryTests
         Assert.Single(sent.OfType<SyncWorkspaceCommand>()); // Sync'in kendisi de gitmeye devam eder
     }
 
-    /// <summary>Repo değişince liste BAYATLAR — yeni kökün envanteri istenmeli (yeni kökün yoluyla).</summary>
+    /// <summary>Repo değişince liste BAYATLAR — Settings Save'in kök değişimi yeni kökün envanterini ister (yeni
+    /// kökün yoluyla).</summary>
     [Fact]
-    public async Task Changing_the_repository_re_asks_for_the_inventory_with_the_new_root()
+    public async Task Saving_a_new_repository_root_re_asks_for_the_inventory_with_the_new_root()
     {
         var vm = NewVm();
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
 
-        await vm.ChangeRepositoryAsync(@"D:\other-repo");
+        await vm.ApplySettingsAsync([], @"D:\other-repo", []);
 
         var list = Assert.Single(sent.OfType<ListBranchesCommand>());
         Assert.Equal(@"D:\other-repo", list.RootPath);
+        Assert.Equal(@"D:\other-repo", vm.RootPath);
     }
 
     // ---------------------------------------------------------------- seed (SAF VM)

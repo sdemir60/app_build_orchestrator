@@ -1183,7 +1183,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>
     /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
-    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save / kök değişimi
+    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save (kök değişimi dahil)
     /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; kendiliğinden Sync
     /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un
     /// özetindedir (spec 2026-09-18 §6.2).
@@ -1259,8 +1259,8 @@ public sealed partial class RunViewModel : ObservableObject
         else ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
-        // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
-        // Settings→Save → ApplySettingsAsync) zaten buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
+        // BAYATLAR, ve repo'yu değiştiren tek yol (Settings → Save → ApplySettingsAsync; ilk kurulum dahil) zaten
+        // buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
         // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
