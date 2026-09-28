@@ -35,10 +35,12 @@ public class StartWithWindowsTests
         new(null, Root, saved: saved, autostart: autostart);
 
     /// <summary>Save'in tezgâhı — kurulum TEK yerde (kopya YASAK): motoru HİÇ başlatılmayan bir koşu VM'i (konsol
-    /// notları için; var olmayan supervisor yolu), bellek-içi store ve sahte Windows kaydı.</summary>
+    /// notları için), bellek-içi store ve sahte Windows kaydı. Konak <c>new EngineHost(TestPaths.SupervisorExe)</c>
+    /// biçiminde kurulur: <see cref="Supervisor.SupervisorIsolationGuardTests"/> başlatılmayan konağı bu biçimden
+    /// tanır.</summary>
     private sealed class SaveBench : IAsyncDisposable
     {
-        private readonly EngineHost _engine = new(TestPaths.SupervisorExe);
+        private readonly EngineHost _engine = new EngineHost(TestPaths.SupervisorExe);
 
         public SaveBench() => Run = new RunViewModel(_engine, NeverTickingBatcher(), () => "r1") { RootPath = Root };
 
