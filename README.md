@@ -140,9 +140,17 @@ the running instance first — tray icon → Exit).
    opens the dialog with the file picker already up.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4) and *Stash and switch branches* (see step 3) are the ones that work today; *Start with Windows*,
-   *Start minimized to tray*, *Close to tray* and *Show notifications* are shown but not wired yet, are not saved,
-   and reset whenever the dialog opens.
+   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows* and *Start minimized to tray*
+   work; *Close to tray* and *Show notifications* are shown but not wired yet, are not saved, and reset whenever
+   the dialog opens.
+
+   *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
+   always shows what Windows will actually do. *Start minimized to tray* (available while *Start with Windows* is
+   on) decides how that start looks: on, the app starts hidden in the tray; off, the window opens. Starting the
+   app yourself always opens the window. If you turn the app off in Task Manager's *Startup apps*, the switch
+   reads off and says so; switching it back on and saving turns it back on there too. Both switches travel in an
+   exported settings file, so saving an imported file that has *Start with Windows* on turns it on for that
+   machine.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file). Everything found under a card joins the same project list and
@@ -517,8 +525,9 @@ and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
-never taken for a finished one. Autostart, when enabled, writes to
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service.
+never taken for a finished one. *Start with Windows*, when on, writes one value to
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service — and turning it on
+also clears Task Manager's *disabled* mark for that value, if it has one.
 
 Older versions kept a pool of git worktrees under `worktrees\`. Nothing uses it any more; if the folder is
 still there, the console says so once per session. Delete it to reclaim the space, then run
