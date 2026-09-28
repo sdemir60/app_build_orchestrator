@@ -3,8 +3,8 @@ using System.Linq;
 namespace BuildOrchestrator.Contracts.Model;
 
 // It-1 domain DTO'ları — A9 şeklini sabitler. Core → Contracts referansı üzerinden Core bu tipleri üretir.
-// It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
-// DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
+// It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent); RunMode (Rebuild/Build/Cycles/Clean) ve
+// DependentMode IpcMessages.cs'dedir; BranchRef git-yüzeyi DTO'su burada.
 
 public enum HintPathClass { Edge, ExternalThirdParty, ExternalPlatformBin, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }

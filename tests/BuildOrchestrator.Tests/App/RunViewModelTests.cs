@@ -1591,7 +1591,8 @@ public class RunViewModelTests
         // (RunActive) devredeydi; CurrentSha guard'dan ÖNCE, koşulsuz atanırdı. Test bu yüzden RunStartedEvent'ten
         // sonra, RunCompleted'SİZ kuruluyordu — "segment 2" hâlâ sürüyor varsayımıyla. Değişme gerekçesi: Continue
         // `a2ff12e`'de koddan kalktı; motor koşu başına TEK BuildPreviewEvent yayınlıyor, runStarted'ın hemen
-        // ardından ve ilk proje olayından önce (RunCoordinator.cs:895→926→988) — "segment 2" üretimde hiç
+        // ardından ve ilk proje olayından önce (RunCoordinator: RunStartedEvent → BuildPreviewEvent → ilk proje
+        // olayı, tek FIFO akış) — "segment 2" üretimde hiç
         // oluşmuyordu (rapor §4), guard erişilemezdi ve silindi. CurrentSha zaten guard'dan bağımsız her
         // önizlemeden koşulsuz yazılıyordu; bu test artık gerçek senaryoyu pinler: koşu BİTTİKTEN sonra
         // (RunActive=false — ör. pencereye dönüşün tetiklediği sessiz Sync) gelen bir önizleme, terminal bir
@@ -2154,7 +2155,8 @@ public class RunViewModelTests
     /// (RunActive VE satır Succeeded/Failed/Skipped ise WillBuild/Reason/DependencyRoots/InRunQueue'yu atla) bunu
     /// engelliyordu. Değişme gerekçesi: Continue <c>a2ff12e</c>'de koddan kalktı; motor koşu başına TEK
     /// <see cref="BuildPreviewEvent"/> yayınlıyor, runStarted'ın hemen ardından ve ilk proje olayından önce
-    /// (RunCoordinator.cs:895→926→988). Bir sonraki koşunun önizlemesi zaten TIKLAMA ANINDA nötrlenmiş
+    /// (RunCoordinator: RunStartedEvent → BuildPreviewEvent → ilk proje olayı, tek FIFO akış). Bir sonraki
+    /// koşunun önizlemesi zaten TIKLAMA ANINDA nötrlenmiş
     /// (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c> gönderimden ÖNCE <c>NeutralizeRows()</c> çağırır —
     /// dolayısıyla guard'ın koşulu (RunActive VE satır terminal) üretimde hiç oluşmuyordu (rapor §4); guard
     /// erişilemezdi ve silindi. Bu test artık gerçek tıklama yolunu (<see cref="RunViewModel.BuildCommand"/>) sürer

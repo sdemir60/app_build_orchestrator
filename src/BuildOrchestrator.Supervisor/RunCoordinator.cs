@@ -25,11 +25,12 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
     IncrementalPlan? Incremental = null);
 
 /// <summary>
-/// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
+/// [Task 19 wiring] Her koşunun incremental karar verileri: her projenin planlama
 /// anında hesaplanmış <see cref="Contracts.Model.BuildSignature"/> (byte-stable) imzası + HEAD commit + branch.
 /// <see cref="RunCoordinator"/> bir proje <c>projectSucceeded</c> olduğunda bu bilgiyle <see
 /// cref="Core.State.BuildStateStore"/>'a <see cref="BuildState"/> persist eder — böylece BİR SONRAKİ Build
 /// incremental olur. <c>null</c> Incremental (ör. testlerdeki basit planner) → persist YOK, pre-skip YOK.
+/// Clean modunda ise başarı persist EDİLMEZ, kayıt SİLİNİR (<c>ForgetBuildStateOnClean</c>).
 /// [A2 fix-1] Bu yalnız BAŞARI yolu içindir: başarısızlıkta yapılan invalidasyon (bkz.
 /// <c>InvalidateBuildStateOnFailure</c>) imza/HEAD gerektirmez, mevcut kaydı yerinde günceller.
 /// </summary>
@@ -68,7 +69,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 
 /// <summary>
 /// [T4/T55] Run'ın yürütme kalbi: plan → N paralel worker → proje-başına <c>MSBuild.exe</c> shell-out →
-/// disk log + IPC event → Stop/Continue. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
+/// disk log + IPC event → Stop. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
 /// bin/OutDir'den yalnız başarılı bir derlemeden sonra beslenen kopya adaylarının boyutu ve zamanı okunur
 /// (<see cref="OutputEvidence.LearnFedOutputs"/>), bellek ring buffer YOK — tek log kaynağı disktir [D4].
 ///
@@ -96,8 +97,8 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bloklamaz).</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
-/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; Continue AYNI writer'ı (aynı run
-/// dizinini) kullanır — log dikişi bozulmaz.</param>
+/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; HER koşu kendi writer'ını
+/// (kendi run dizinini) açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK.</param>
 /// <param name="nowMs">MONOTONİK zaman kaynağı (üretimde <c>Environment.TickCount64</c>); duvar saati
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
@@ -275,7 +276,8 @@ public sealed class RunCoordinator(
     /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
     /// <c>projectFailed("stopped")</c> raporlanır. <b>Interrupt</b> (branch değişti): Graceful'un kendisi + koşu
     /// kesilmiş sayılır — bundan sonra biten sonuçlar deftere yazılmaz (bkz. <see cref="ReportProjectResult"/>).
-    /// Terminate edilmiş Job yeni process kabul ettiği için ikisi de Continue'ya açıktır.</para>
+    /// Terminate edilmiş Job yeni process kabul ettiği için ikisinden sonra da bir sonraki koşu aynı inner
+    /// job'da başlayabilir.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
     {
@@ -834,7 +836,7 @@ public sealed class RunCoordinator(
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
-        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her taze koşuda tetiklenir:
+        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir:
         // her proje kendi varsayılan obj'inde derlenir. onRetry ile AYNI ikili-yazım deseni: hem decision.log
         // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
         StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
@@ -871,10 +873,10 @@ public sealed class RunCoordinator(
         // taşınır; burada AYRICA hesaplanmaz.
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
         // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
-        // önizlemenin tamamı tek okumadan beslenir. (Bir Build segmenti store'u toplam İKİ kez okur: yukarıdaki
-        // [Task 7] yakınsamama hafızası taraması ve buradaki önizleme; ikisi ayrı sorulardır ve Build DIŞINDAKİ
-        // modlarda ilki hiç çalışmaz.) Segment 2'nin okuduğu
-        // map segment 1'in persist'lerini İÇERİR — yani derlenmiş satırların sol yarısı taze commit'e döner.
+        // önizlemenin tamamı tek okumadan beslenir. (Cycles modunda store toplam İKİ kez okunur: yukarıdaki
+        // [Task 7] yakınsamama hafızası taraması YALNIZ Cycles'ta koşar; diğer modlarda store burada TEK kez
+        // okunur.) İkinci bir okuma YOKTUR — önizleme her koşuda BU KOŞUNUN başındaki defteri okur, yani
+        // derlenmiş satırların sol yarısı taze commit'e döner.
         var builtCommits = stateStore?.Load();
         // Önizleme BU KOŞUNUN yapacağını anlatır, planlayıcının soyut "dirty mi" cevabını değil: pre-skip
         // edilmiş her proje WillBuild=false gösterilir. İki yer arasındaki fark aksi halde kullanıcıya YALAN
@@ -1027,7 +1029,7 @@ public sealed class RunCoordinator(
             int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded);
             int failed = completed.Count(kv => kv.Value == BuildResult.Failed);
             int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
-            // [T54] Run genelinde (Continue segmentleri DAHİL, kümülatif) dependency-affected proje sayısı —
+            // [T54] Bu koşunun dependency-affected proje sayısı —
             // depIssues'u boş OLMAYAN projeler. Kendisi failed bir kök, kendi depIssue'unu taşımaz (sayılmaz).
             // [koşullu yeniden derleme] "dependency still failing" ile atlanan proje de birikime köklerini yazar
             // (dependent'ları miras alsın diye) ama bu koşuda DERLENMEDİ — sayılmaz.
@@ -1864,8 +1866,9 @@ public sealed class RunCoordinator(
     ///
     /// <para><b>YALNIZ <see cref="CycleRoundDecision.NoProgress"/> ⇒ YAZ.</b> TÜM üyelerin alanına o anki
     /// bileşik imza yazılır; bir sonraki <c>Build</c> aynı imzayı görürse grup <see
-    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip edilir, kaynak DEĞİŞMEDEN turlar tekrar
-    /// TÜKETİLMEZ. Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır —
+    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile TANINIR ve decision.log'a bir "retrying" satırı
+    /// düşülür — [Task 7 · DEĞİŞEN KURAL] artık BLOKLAMAZ: grup yine dispatch edilir, yalnız RAPORLANIR.
+    /// Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır —
     /// <see cref="InvalidateBuildStateOnFailure"/> yalnız MEVCUT kayıtları günceller, yenisini AÇMAZ.</para>
     ///
     /// <para><b><see cref="CycleRoundDecision.CapReached"/> ⇒ YAZMA.</b> İki karar aynı şey DEĞİLDİR ve ayrım
@@ -2336,8 +2339,8 @@ public sealed class RunCoordinator(
         ChannelWriter<IpcEvent> Events,
         IMsBuildInvoker Invoker,
         string MsBuildExePath,
-        // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
-        // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
+        // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur; koşu başına TEK birikim, ömrü o
+        // koşuyla sınırlıdır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
         ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
         // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).

@@ -938,7 +938,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kabuğun işidir (GraphView.IsFilterSuspended), VM'in değil.
         SelectedProjectId = null;
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
-        // bir not düşer. Motor runStarted'a kadar (taze segmentte: tarama → graf → topo →
+        // bir not düşer. Motor runStarted'a kadar (tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
         // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
         var previousPhase = Phase;
@@ -1445,8 +1445,9 @@ public sealed partial class RunViewModel : ObservableObject
     // [design v1.7.0 §3.1] Sürdürme ve yeniden deneme AYRI birer komut DEĞİLDİR: Stop'tan sonra da hata
     // sonrasında da kullanıcı Build'e basar. Öldürülen ve başarısız projelerin stored BuildState'i
     // geçersizleştiği için yeniden derlenirler; yeşil bitenler "up to date" atlanır; hata etkilenmiş
-    // bağımlılar imzalarını hiç persist etmedikleri için kümeye kendiliğinden girer. Motor tarafında da
-    // karşılıkları yoktur (RunMode üç değerlidir).
+    // bağımlılar imzalarını bir bağımlılık notu + kökleriyle persist eder ve kök düzelene kadar beklerler
+    // (WaitingForDependency — ConditionalRebuild, SkipReasons.DependencyStillFailing); her Build'de yeniden
+    // derlenmezler. Motor tarafında da karşılıkları yoktur (RunMode dört değerlidir: Rebuild/Build/Cycles/Clean).
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
@@ -1883,7 +1884,9 @@ public sealed partial class RunViewModel : ObservableObject
         // koreografisinin işaretlediği satır nesnelerini ortasında yok ediyor ve listeyi remount ediyordu
         // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
         // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
-        // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
+        // Build/Cycles/Clean'de burada İKİNCİ bir nötrleme YOKTUR: BeginRunAsync tıklama anında NeutralizeRows()
+        // zaten TÜM satırları nötrlemiştir; korunan yalnız satır NESNELERİ ve preview'ın üzerine yazdığı
+        // çıktı-durumu alanlarıdır (CurrentSha, OwnFilesChanged, LocalEdits — bkz. OnBuildPreview).
         // [Task 1 review fix — I-1] clearMarks: false — bu an itibariyle (IsRunning=true'nun property-changed
         // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
         // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
@@ -1891,7 +1894,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (e.Mode == RunMode.Rebuild) NeutralizeRows(clearMarks: false);
         ClearPreviewSets(); // [D2] önizleme kümeleri bu run için taze — hemen ardından BuildPreviewEvent doldurur
         _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
-        // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
+        // [Task 17] ETA state bu run için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
@@ -2003,7 +2006,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var row = EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started);
         row.State = ProjectRowState.Started;
-        row.SkipReason = null;    // bu koşuda GERÇEKTEN derleniyor — önceki segmentin atlama gerekçesi geçersiz
+        row.SkipReason = null;    // Savunmacı: NeutralizeRows tıklamada zaten temizler; bir koşuda proje ya atlanır ya derlenir
         row.CycleWaiting = false; // motor onu şimdi derliyor: bu event'in anlamı tam olarak budur
         _projectStartedAtMs[e.ProjectId] = _nowMs();
         RefreshRunSurface();
@@ -2097,10 +2100,10 @@ public sealed partial class RunViewModel : ObservableObject
         row.DepIssues = depIssues; // [Task 17] BU koşunun listesi — HasRunDepIssue ve (defter notuyla birlikte) WarningRoots bundan
         row.SkipReason = null;     // atlanmadı, derlendi
         row.CycleUnsettled = cycleUnsettled; // [cycle rounds/Task 8] ProjectFailedEvent bu alanı taşımaz → varsayılan false
-        // [cycle rounds/Task 9 review fix 1] Proje bu run'da GERÇEKTEN invoke edildi (Succeeded ya da Failed
-        // fark etmez) — önceki bir segmentten kalma "hiç invoke edilmeden pre-skip edildi" bayrağı artık
-        // YANLIŞ; satır nesneleri segmentler arası hayatta kaldığı için (Projects.Clear() yalnız Rebuild'de)
-        // burada temizlenmezse "az önce düzelen proje" render katmanında kalıcı-kırık gibi görünürdü.
+        // [cycle rounds/Task 9 review fix 1] Savunmacı: NeutralizeRows her işlem başında ZATEN temizler ve
+        // OnRunStarted'da Projects.Clear() YOKTUR (liste YERİNDE nötrlenir, boşaltılmaz — design v1.11.0 §9-4);
+        // ama proje bu run'da GERÇEKTEN invoke edildiyse (Succeeded ya da Failed fark etmez) bu bayrak burada
+        // AYRICA sıfırlanmazsa "hiç invoke edilmeden pre-skip edildi" izlenimi kalıcı-kırık gibi görünürdü.
         row.CycleUnconverged = false;
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık

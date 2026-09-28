@@ -210,7 +210,8 @@ turned red. Draining costs the remaining time of the slowest in-flight project a
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
 pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
 
-`runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
+`runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
+`runCompleted` (the next Build counts from zero).
 
 Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
@@ -399,8 +400,8 @@ Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `proj
 `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
 
-`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
-segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
+`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
+(§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
 transcript, and a run's planning window is not a Sync.
 
 `cleanProgress` shares its shape with `syncProgress` — a line and a level — but is a channel of its own for
@@ -1285,8 +1286,8 @@ line, and a strange line stitch in MSBuild output cannot desynchronize the chunk
 
 ### 8.6 Planning pipeline
 
-Planning is entirely Core's work; the Supervisor's composition root only wires it. For a fresh run
-(`Build`/`Rebuild`) the sequence is:
+Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the
+sequence is:
 
 ```
 update external working copies (§10.4)            ← before everything: a fast-forward can bring new
@@ -2326,7 +2327,7 @@ states themselves are stale. The silence line sits below the death and above the
 only one describing the *present*: the others are facts about something that already finished, and all of them
 assume a working engine. It is amber rather than red and carries no glyph — a drain that is merely slow is not
 a failure — and it clears itself the moment the engine speaks or the wait ends. A rejected request is not a
-failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
+failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
@@ -5049,7 +5050,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
@@ -5060,7 +5061,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
-| Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
+| Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |

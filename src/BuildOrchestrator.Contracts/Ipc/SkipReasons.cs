@@ -1,7 +1,7 @@
 namespace BuildOrchestrator.Contracts.Ipc;
 
 /// <summary>
-/// <see cref="ProjectSkippedEvent.Reason"/>'ın taşıyabileceği dört yalın gerekçe — TEK doğruluk kaynağı.
+/// <see cref="ProjectSkippedEvent.Reason"/>'ın taşıyabileceği beş yalın gerekçe — TEK doğruluk kaynağı.
 /// Contracts'ta yaşar çünkü hem Supervisor (<c>RunCoordinator</c>) hem Core (<c>ReadySetScheduler</c> —
 /// Core zaten Contracts'a referans verir) YAZAR, App
 /// (<c>StreamText</c>/<c>RunViewModel.Stream</c>) OKUR — üç katmanda da aynı literal iki kez tanımlanırsa

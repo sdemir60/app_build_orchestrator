@@ -339,7 +339,7 @@ public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Suc
 public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
-/// <summary>[planlama görünürlüğü] Bir run'ın TAZE segmentinde, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
+/// <summary>[planlama görünürlüğü] Her run'da, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
 /// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
 /// kaynak. <c>syncProgress</c>'ten AYRI bir kanaldır: bu pencere Sync DEĞİLDİR ve App'in Sync yüzeyini
