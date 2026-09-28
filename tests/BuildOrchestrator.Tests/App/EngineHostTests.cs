@@ -45,7 +45,7 @@ public class EngineHostTests
         Assert.NotEqual(ready1.Pid, ready2.Pid);
         await Task.WhenAny(readyEvent.Task, Task.Delay(TimeSpan.FromSeconds(5))); // üst sınır, poll değil
         Assert.True(readyEvent.Task.IsCompletedSuccessfully, "restarted engine's engineReady never reached EventReceived");
-        Assert.Equal(ready2.Pid, readyEvent.Task.Result.Pid);
+        Assert.Equal(ready2.Pid, (await readyEvent.Task).Pid);
         var pong = new TaskCompletionSource<PongEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.EventReceived += e => { if (e is PongEvent p) pong.TrySetResult(p); };
         await host.SendAsync(new PingCommand(1));

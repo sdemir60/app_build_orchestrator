@@ -926,7 +926,7 @@ public partial class ActionBarTests
 
         Assert.Equal(Visibility.Visible, bar.Split.Visibility);
         Assert.Same(vm.BuildCommand, bar.Split.PrimaryCommand);
-        Assert.Equal("Build", ((StackPanel)bar.Split.PrimaryContent).Children.OfType<TextBlock>().Single().Text);
+        Assert.Equal("Build", Assert.IsType<StackPanel>(bar.Split.PrimaryContent).Children.OfType<TextBlock>().Single().Text);
         GC.KeepAlive(window);
     }
 

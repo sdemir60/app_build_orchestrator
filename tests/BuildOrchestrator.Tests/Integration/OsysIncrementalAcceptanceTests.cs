@@ -284,8 +284,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         //  (c) hiçbiri Run 1'de başarılı değildir — her başarı satır yazar ve defter kipindedir.
         Assert.True(run2UpToDateFromLedger.SetEquals(cleanRowIds),
             Inv($"defterden 'up to date' pre-skip kümesi ({run2UpToDateFromLedger.Count}) ≠ Run 1'de NOTSUZ BAŞARI persist edilen satırlar ({cleanRowIds.Count} / toplam {stateAfterRun1.Count}) — incremental çalışmıyor: fark = {string.Join(", ", run2UpToDateFromLedger.Except(cleanRowIds, StringComparer.OrdinalIgnoreCase).Concat(cleanRowIds.Except(run2UpToDateFromLedger, StringComparer.OrdinalIgnoreCase)).Select(Path.GetFileNameWithoutExtension))}"));
-        Assert.Empty(builtOutside.Where(stateAfterRun1.ContainsKey));             // (b)
-        Assert.Empty(builtOutside.Where(run1Succeeded.Contains));                 // (c)
+        Assert.DoesNotContain(builtOutside, stateAfterRun1.ContainsKey);             // (b)
+        Assert.DoesNotContain(builtOutside, run1Succeeded.Contains);                 // (c)
         // Bu bir ÜST SINIR (⊆) iddiasıdır: "Run 2 yalnız meşru kümeden derleyebilir". İfade EDEMEDİĞİ şey,
         // kümenin TAMAMININ gerçekten derlendiği (eşitlik) — bir carrier, DAHA ÖNCEKİ bir koşudan kalan
         // Succeeded kaydı sayesinde meşru olarak skip de EDİLEBİLİR (bu testte Run 1 sıfır state ile başladığı

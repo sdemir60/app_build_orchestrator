@@ -166,7 +166,7 @@ public class OptimizeDispatchTests
 
         Assert.Equal(0, exit);
         var all = NdjsonWire.Parse(stdout.Text);
-        var rejection = Assert.Single(all.OfType<ErrorEvent>().Where(e => e.Code == "optimizeRejected"));
+        var rejection = Assert.Single(all.OfType<ErrorEvent>(), e => e.Code == "optimizeRejected");
         Assert.Contains("run", rejection.Message, StringComparison.OrdinalIgnoreCase);
 
         // Red BİR İŞ YAPMAZ: optimize akışı hiç başlamaz, disk aynen durur.

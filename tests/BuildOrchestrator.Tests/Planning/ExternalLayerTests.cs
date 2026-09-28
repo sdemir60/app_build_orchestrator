@@ -16,18 +16,18 @@ namespace BuildOrchestrator.Tests.Planning;
 /// </summary>
 public class ExternalLayerTests
 {
-    private static ProjectNode Main(string name, string[]? deps = null) =>
+    private static ProjectNode MainRepo(string name, string[]? deps = null) =>
         new(Id: name, Name: name, ProjectPath: name, SolutionNames: [], Dependencies: deps ?? [],
             BuildOrder: 0, LayerIndex: null, LayerName: null, InCycle: false, WillBuild: null);
 
     private static ProjectNode External(string name, string[]? deps = null) =>
-        Main(name, deps) with { IsExternal = true };
+        MainRepo(name, deps) with { IsExternal = true };
 
     [Fact]
     public void An_external_project_lands_in_the_reserved_layer_even_with_no_patterns_configured()
     {
         // Katmansız kurulumda bile hariciler ayrılır: "en üstte" sözü pattern'lere bağlı olamaz.
-        var result = LayerEngine.AssignLayers([Main("A"), External("Mail")], []);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), External("Mail")], []);
 
         var mail = result.Nodes.Single(n => n.Name == "Mail");
         Assert.Equal(ExternalProjectsConventions.LayerName, mail.LayerName);
@@ -38,7 +38,7 @@ public class ExternalLayerTests
     [Fact]
     public void Externals_come_first_in_build_order()
     {
-        var result = LayerEngine.AssignLayers([Main("A"), Main("B"), External("Mail")], []);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), MainRepo("B"), External("Mail")], []);
 
         Assert.Equal(["Mail", "A", "B"], result.Nodes.Select(n => n.Name));
         Assert.Equal([0, 1, 2], result.Nodes.Select(n => n.BuildOrder)); // Nodes[i].BuildOrder == i korunur
@@ -49,7 +49,7 @@ public class ExternalLayerTests
     {
         LayerPattern[] patterns = [new(Order: 0, Regex: "Mail", Name: "Messaging")];
 
-        var result = LayerEngine.AssignLayers([Main("A"), External("Mail")], patterns);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), External("Mail")], patterns);
 
         var mail = result.Nodes.Single(n => n.Name == "Mail");
         Assert.Equal(ExternalProjectsConventions.LayerName, mail.LayerName);
@@ -62,7 +62,7 @@ public class ExternalLayerTests
         // Other, ana reponun sınıflanmamış projeleri içindir; harici oraya karışırsa listede en ALTA düşerdi.
         LayerPattern[] patterns = [new(Order: 0, Regex: "^A$", Name: "Alpha")];
 
-        var result = LayerEngine.AssignLayers([Main("A"), Main("Zzz"), External("Mail")], patterns);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), MainRepo("Zzz"), External("Mail")], patterns);
 
         Assert.Equal(ExternalProjectsConventions.LayerName, result.Nodes.Single(n => n.Name == "Mail").LayerName);
         Assert.Equal(LayerEngine.OtherLayerName, result.Nodes.Single(n => n.Name == "Zzz").LayerName);
@@ -74,7 +74,7 @@ public class ExternalLayerTests
     {
         LayerPattern[] patterns = [new(Order: 0, Regex: "^A$", Name: "Alpha")];
 
-        var result = LayerEngine.AssignLayers([Main("A"), External("Mail")], patterns);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), External("Mail")], patterns);
 
         Assert.True(result.Nodes.Single(n => n.Name == "Mail").LayerIndex
                     < result.Nodes.Single(n => n.Name == "A").LayerIndex);
@@ -84,7 +84,7 @@ public class ExternalLayerTests
     public void A_workspace_without_externals_and_without_patterns_is_returned_untouched()
     {
         // Mevcut davranış bayt-bayt korunur: harici yoksa ve pattern yoksa liste HİÇ dokunulmadan döner.
-        ProjectNode[] nodes = [Main("A"), Main("B")];
+        ProjectNode[] nodes = [MainRepo("A"), MainRepo("B")];
 
         var result = LayerEngine.AssignLayers(nodes, []);
 
@@ -96,7 +96,7 @@ public class ExternalLayerTests
     public void A_repository_project_depending_on_an_external_raises_no_reverse_layer_warning()
     {
         // Beklenen yön budur: ana proje harici projenin çıktısına bağlıdır, yani harici ÜSTTE (küçük indeks).
-        var result = LayerEngine.AssignLayers([Main("A", ["Mail"]), External("Mail")], []);
+        var result = LayerEngine.AssignLayers([MainRepo("A", ["Mail"]), External("Mail")], []);
 
         Assert.Empty(result.Warnings);
     }
@@ -108,7 +108,7 @@ public class ExternalLayerTests
         // scheduler bağımlılığa yine uyar). Kullanıcının pattern'lerini/kartlarını gözden geçirmesi gerekir.
         LayerPattern[] patterns = [new(Order: 0, Regex: "^A$", Name: "Alpha")];
 
-        var result = LayerEngine.AssignLayers([Main("A"), External("Mail", ["A"])], patterns);
+        var result = LayerEngine.AssignLayers([MainRepo("A"), External("Mail", ["A"])], patterns);
 
         Assert.Contains(result.Warnings, w => w.Contains("reverse layer dependency"));
     }

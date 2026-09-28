@@ -285,7 +285,7 @@ public class NotesDialogTests
             // tarih sürümün 6px altında (line-height 1 → satır kutusu = punto)
             Assert.Equal(6.0, TopIn(date, left) - (TopIn(version, left) + version.ActualHeight), precision: 3);
 
-            Assert.Empty(DsResources.Descendants(Column(grid, 2)).OfType<TextBlock>().Where(t => t.Text == ReleaseNotes.All[0].Date));
+            Assert.DoesNotContain(DsResources.Descendants(Column(grid, 2)).OfType<TextBlock>(), t => t.Text == ReleaseNotes.All[0].Date);
         }
     }
 

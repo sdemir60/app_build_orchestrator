@@ -1062,7 +1062,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        bool buildChanged = false, rebuildChanged = false, retryChanged = false;
+        bool buildChanged = false, rebuildChanged = false;
         vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 

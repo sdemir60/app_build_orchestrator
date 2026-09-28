@@ -196,7 +196,7 @@ public class DsControlTemplateTests
 
     private sealed class NeverExecutableCommand : System.Windows.Input.ICommand
     {
-        public event EventHandler? CanExecuteChanged;
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
         public bool CanExecute(object? parameter) => false;
         public void Execute(object? parameter) => throw new NotSupportedException();
     }

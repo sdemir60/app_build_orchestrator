@@ -283,7 +283,7 @@ public class AboutDialogTests
         string xaml = System.IO.File.ReadAllText(
             System.IO.Path.Combine(RepoPaths.AppSrcRoot, "Views", "AboutDialog.xaml"));
         foreach (string measure in new[] { "\"27\"", "Width=\"124\"", "\"18,0,0,0\"" })
-            Assert.Equal(1, System.Text.RegularExpressions.Regex.Matches(xaml, System.Text.RegularExpressions.Regex.Escape(measure)).Count);
+            Assert.Single(System.Text.RegularExpressions.Regex.Matches(xaml, System.Text.RegularExpressions.Regex.Escape(measure)));
         Assert.DoesNotContain("x:Key=\"IdentityRow\"", xaml);
     }
 
