@@ -94,7 +94,7 @@ public class CleanCommandTests
         var vm = NewVm();
         SeedTopology(vm);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.False(vm.CleanCommand.CanExecute(null));
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -283,7 +283,7 @@ public class CleanCommandTests
     public async Task Clean_clears_the_stream_left_over_from_the_previous_operation()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
         Assert.True(vm.StreamEventCount > 0, "ön-koşul: event stream'de ÖNCEKİ işlemden iz yok — vakum");
@@ -328,7 +328,7 @@ public class CleanCommandTests
     {
         var vm = NewVm();
         SeedTopology(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1234));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1234));

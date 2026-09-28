@@ -127,7 +127,7 @@ public class EventStreamTests
     {
         const string id = @"C:\p\a.csproj";
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 1200)); // → tıklanabilir "A built (1.2s)" ok satırı
 
@@ -152,7 +152,7 @@ public class EventStreamTests
         var vm = NewVm();
         var (view, window, _) = Realize(vm, forceAnimations: true);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 0, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 0, 4, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 0, 0, 100)); // hatasız "Completed …" done satırı
 
         var row = view.Rows.Last();
@@ -187,7 +187,7 @@ public class EventStreamTests
         var vm = NewVm();
         var (view, window, _) = Realize(vm, forceAnimations: true);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));    // aktif satır → "B building…"
         // Gerçek yol: ProjectSucceeded ÖNCE PushStream SONRA FinishBuilding çağırır. Aktif proje (B) bittiği
@@ -210,7 +210,7 @@ public class EventStreamTests
         for (int i = 0; i < 28; i++) items.Add(new BuildPreviewItem($@"C:\p\skip{i}.csproj", $"S{i}", false));
 
         // TotalProjects=36 (plan.Nodes.Count, skip'ler DAHİL) ama yalnız 8 proje will-build.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 36, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 36, 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([.. items]));
 
         var line = vm.StreamEvents.Single(s => s.Text.StartsWith("Build started"));
@@ -226,7 +226,7 @@ public class EventStreamTests
     public void A_full_clean_opens_the_stream_with_clean_started()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 3, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 3, 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
             new BuildPreviewItem(@"C:\p\b.csproj", "B", true),
@@ -288,7 +288,7 @@ public class EventStreamTests
             [Node(upstreamId, "U", 0), Node(m1Id, "M1", 1, inCycle: true), Node(m2Id, "M2", 2, inCycle: true)],
             [[m1Id, m2Id]], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(upstreamId, "U", true),
             new BuildPreviewItem(m1Id, "M1", true),
@@ -515,7 +515,7 @@ public class EventStreamTests
     {
         var vm = NewVm();
         const string leaderId = @"C:\p\m1.csproj";
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(leaderId, "M1", WillBuild: true)]));
 
         vm.OnEvent(new CycleRoundStartedEvent("r1", leaderId, Round: 1, RoundCap: 3, MemberCount: 2));
@@ -549,7 +549,7 @@ public class EventStreamTests
     public void A_dependency_still_failing_skip_streams_like_an_ordinary_skip()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
 
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\down.csproj", SkipReasons.DependencyStillFailing));
@@ -571,7 +571,7 @@ public class EventStreamTests
     {
         const string id = @"C:\p\b.csproj";
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "B"));
 
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 3400, DepIssues: ["A"]));
@@ -588,7 +588,7 @@ public class EventStreamTests
     public void A_cycles_run_collapses_out_of_scope_skips_into_a_single_line_before_the_next_stream_event()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
 
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\s1.csproj", SkipReasons.OutOfCycleScope));
@@ -614,14 +614,14 @@ public class EventStreamTests
     public void A_new_run_does_not_leak_a_stale_out_of_scope_count_from_an_unfinished_cycles_run()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 3, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\s1.csproj", SkipReasons.OutOfCycleScope));
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\s2.csproj", SkipReasons.OutOfCycleScope));
         // Motor burada ÖLDÜ — RunCompletedEvent hiç gelmedi (eski kodda sayaç HİÇ sıfırlanmıyor).
         int before = vm.StreamEvents.Count;
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\x.csproj", "X", true)]));
 
         // Yeni run'ın açılış satırı, reset'ten sonra PUSH edilen İLK (ve TEK) satır olmalı — önünde/arkasında
@@ -637,7 +637,7 @@ public class EventStreamTests
     public void A_build_run_does_not_aggregate_up_to_date_skips_each_gets_its_own_line()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 3, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([]));
 
         vm.OnEvent(new ProjectSkippedEvent("r1", @"C:\p\x.csproj", SkipReasons.UpToDate));
@@ -664,7 +664,7 @@ public class EventStreamTests
             [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
             [[m1, m2]], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(m1, "M1", WillBuild: true),
             new BuildPreviewItem(m2, "M2", WillBuild: true),
@@ -694,7 +694,7 @@ public class EventStreamTests
             [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
             [[m1, m2]], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(m1, "M1", WillBuild: true),
             new BuildPreviewItem(m2, "M2", WillBuild: true),
@@ -714,7 +714,7 @@ public class EventStreamTests
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node(a, "A", 0)], [], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", WillBuild: true)]));
         vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
@@ -735,7 +735,7 @@ public class EventStreamTests
             [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
             [[m1, m2]], [], []));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(m1, "M1", WillBuild: true),
             new BuildPreviewItem(m2, "M2", WillBuild: true),
@@ -757,7 +757,7 @@ public class EventStreamTests
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node(CleanHintA, "A", 0), Node(CleanHintM1, "M1", 1, inCycle: true), Node(CleanHintM2, "M2", 2, inCycle: true)],
             [[CleanHintM1, CleanHintM2]], [], []));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 3, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(CleanHintA, "A", WillBuild: true),
             new BuildPreviewItem(CleanHintM1, "M1", WillBuild: true),
@@ -828,7 +828,7 @@ public class EventStreamTests
 
         var plain = NewVm();
         plain.OnEvent(new WorkspaceTopologyEvent([Node(CleanHintA, "A", 0)], [], [], []));
-        plain.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        plain.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 1, Parallelism: 4, "Debug"));
         plain.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(CleanHintA, "A", WillBuild: true)]));
         Cleaned(plain, CleanHintA, "A");
         plain.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
@@ -847,7 +847,7 @@ public class EventStreamTests
     public async Task A_user_stop_followed_by_the_stopped_completion_streams_the_stopped_line()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 1, "Debug"));
 
         await vm.StopCommand.ExecuteAsync(null); // kullanıcının Stop tıklaması
 
@@ -881,7 +881,7 @@ public class EventStreamTests
     {
         const string id = @"C:\p\a.csproj";
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 1200)); // → glyph'li, tıklanabilir bir satır
 
@@ -907,7 +907,7 @@ public class EventStreamTests
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node("a", "A", 0)], [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem("a", "A", true)]));
         vm.OnEvent(new ProjectStartedEvent("r1", "a", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", "a", 100));

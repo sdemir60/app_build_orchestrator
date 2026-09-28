@@ -79,7 +79,7 @@ public class GraphWillBuildFeedTests
         var content = MainWindowHost.Realize(window);
         Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // ön-koşul
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         content.UpdateLayout();
         Assert.NotEmpty(VisualOf(window, "Dirty").Square.StrokeDashArray); // işlem başladı ama karar yok
 
@@ -176,7 +176,7 @@ public class GraphWillBuildFeedTests
 
         // Satırdan Build: yalnız A hedef. runStarted, bu koşunun kendi önizlemesinden ÖNCE gelir — MainWindow'un
         // IsRunning aboneliği (gerçek kablo) burada senkron tetiklenir.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
 
         // [I-1] Kapsam (A) amber KALMALI — runStarted, önizleme gelene dek işareti SİLMEMELİ.
         Assert.True(a.Marked);
@@ -215,7 +215,7 @@ public class GraphWillBuildFeedTests
 
         a.Marked = true; // dalga ikisini de yaktı (kapsam tüm workspace)
         b.Marked = true;
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         // Motorun planı: A kuyrukta, B güncel — kuyruğa girmez.
         vm.OnEvent(new BuildPreviewEvent(
         [
@@ -250,7 +250,7 @@ public class GraphWillBuildFeedTests
         a.Marked = true; // dalganın çıktısı simüle edilir
         Assert.Equal(VisualStatus.Marked, a.VisualStatus); // ön-koşul
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
 
         Assert.True(a.Marked); // OnRunStarted'ın Rebuild'e özel NeutralizeRows'u işareti EZMEMELİ
         Assert.True(a.VisualStatus is VisualStatus.Marked or VisualStatus.Queued);
@@ -294,7 +294,7 @@ public class GraphWillBuildFeedTests
 
         // Event script'i RunViewModelStateTests.A_second_build_keeps_the_greens_of_the_first'teki diziyle AYNI
         // kalıp: build preview + reason'lar, sonra proje eventleri, sonra RunCompleted.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(MainWindowHost.IdOf("Ok"), "Ok", true, Reason: WillBuildReason.SignatureChanged),
             new BuildPreviewItem(MainWindowHost.IdOf("Bad"), "Bad", true, Reason: WillBuildReason.SignatureChanged),

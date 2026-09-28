@@ -328,7 +328,7 @@ public class BranchCheckoutTests
         vm.OnEvent(new WorkspaceTopologyEvent([new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, false, null)], [], [], []));
         Assert.True(vm.CanSwitchBranch);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.False(vm.CanSwitchBranch);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;

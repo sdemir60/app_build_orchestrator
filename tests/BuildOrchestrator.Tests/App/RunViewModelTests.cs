@@ -162,7 +162,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning=true
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug")); // IsRunning=true
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
 
         var row = Assert.Single(vm.Projects);
@@ -197,7 +197,7 @@ public class RunViewModelTests
         Assert.True(stale.WillBuild); // ön-koşul: B hâlâ "dirty" — bayat bilgi koşu boyunca KORUNUR
 
         // Satırdan Build: yalnız A hedef. runStarted, kendi önizlemesinden ÖNCE gelir.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, target.Status); // önizleme YOK → kuyruk yok
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Discovered, stale.Status);
 
@@ -232,7 +232,7 @@ public class RunViewModelTests
         const string rootId = @"C:\p\up.csproj";
         const string waitingId = @"C:\p\down.csproj";
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(rootId, "Up", true, null, WillBuildReason.LastFailed),
@@ -289,7 +289,7 @@ public class RunViewModelTests
         var upToDateDep = vm.Projects.Single(p => p.Id == upToDateDepId);
         var outOfScope = vm.Projects.Single(p => p.Id == outOfScopeId);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 1, "Debug"));
         // Cycles'ta motorun plan'ı TÜM workspace'i kapsar (tek-proje Build'in aksine) — kapsam dışı da
         // WillBuild=false ile önizlemede GÖRÜNÜR (RunCoordinator.cs'in seed mekanizması); yalnız InRunQueue
         // kararı üyelikle daralır.
@@ -350,7 +350,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string outOfScopeId = @"C:\p\outofscope.csproj";
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(outOfScopeId, "OutOfScope", false)]));
         vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
 
@@ -372,7 +372,7 @@ public class RunViewModelTests
         const string memberId = @"C:\p\member.csproj";
         var outOfScopeIds = new[] { @"C:\p\out0.csproj", @"C:\p\out1.csproj", @"C:\p\out2.csproj" };
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1 + outOfScopeIds.Length, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1 + outOfScopeIds.Length, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(memberId, "Member", true),
@@ -406,7 +406,7 @@ public class RunViewModelTests
         const string out1 = @"C:\p\out1.csproj";
         const string out2 = @"C:\p\out2.csproj";
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 3, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 3, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(memberId, "Member", true),
@@ -441,7 +441,7 @@ public class RunViewModelTests
         ]));
 
         // Satırdan Build: yalnız A hedef — motorun önizlemesi (Task 1) yalnız hedefi taşır.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
@@ -460,7 +460,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         var row = Assert.Single(vm.Projects);
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
@@ -476,7 +476,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         var row = Assert.Single(vm.Projects);
         Assert.Equal(BuildOrchestrator.App.Controls.GraphStatus.Queued, row.Status); // ön-koşul: kuyrukta
@@ -495,7 +495,7 @@ public class RunViewModelTests
         long clock = 0;
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => clock);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 2, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 2, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A")); // building (started at 0)
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\b.csproj", 1000)); // terminal, DurationMs=1000
@@ -551,15 +551,19 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 2) elapsed
 
+    // [DEĞİŞEN KURAL] Eskiden bu test, ElapsedMs'in runStarted'ın taşıdığı bir taban değerden devraldığını
+    // pinliyordu ("geçen süre motorun gönderdiği tabandan devam eder"). Gerekçe: o taban yalnız Continue'da
+    // sıfırdan farklı olabiliyordu; Continue a2ff12e ile koddan kalktığından beri taban hep sıfırdı, bu yüzden
+    // Task 5'te kontrattan da kaldırıldı — artık her koşu kendi saatinden SIFIRDAN başlar.
     [Fact]
-    public async Task RunStarted_sets_ElapsedMs_from_ElapsedMsAtStart()
+    public async Task RunStarted_starts_the_elapsed_clock_from_zero()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug", ElapsedMsAtStart: 4200));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug"));
 
-        Assert.Equal(4200, vm.ElapsedMs);
+        Assert.Equal(0, vm.ElapsedMs);
         Assert.True(vm.IsRunning);
     }
 
@@ -568,7 +572,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, DurationMs: 9999));
 
@@ -787,7 +791,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0)); // koşu başladı: IsRunning=true
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug")); // koşu başladı: IsRunning=true
 
         vm.OnEvent(new ErrorEvent("runFailed", "koşu beklenmedik bir istisnayla düştü"));
 
@@ -815,7 +819,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
 
         vm.OnEvent(new ErrorEvent("runInProgress", "zaten koşuyor"));
 
@@ -867,7 +871,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         var stopped = new TaskCompletionSource<RunStoppedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
         engine.EventReceived += e => { if (e is RunStoppedEvent s) stopped.TrySetResult(s); };
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // App'in "run aktif" inancı
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug")); // App'in "run aktif" inancı
 
         await vm.StopCommand.ExecuteAsync(null);
 
@@ -891,7 +895,7 @@ public class RunViewModelTests
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         Assert.Equal(AppPhase.Running, vm.Phase);   // ön-koşul
         Assert.True(vm.StopCommand.CanExecute(null));
 
@@ -910,7 +914,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         AppPhase? phaseAtSend = null;
         vm.DebugOnCommandSent = _ => phaseAtSend = vm.Phase;
 
@@ -928,7 +932,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe); // BAŞLATILMAZ → SendAsync fırlar
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
 
         await vm.StopCommand.ExecuteAsync(null);
 
@@ -944,7 +948,7 @@ public class RunViewModelTests
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
         Assert.True(vm.RebuildCommand.CanExecute(null));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -965,7 +969,7 @@ public class RunViewModelTests
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
         vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0)); // IsRunning false→true
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug")); // IsRunning false→true
 
         Assert.True(rebuildChanged); // CanRebuild = !IsRunning
         Assert.True(stopChanged);    // CanStop = IsRunning — Kısıt 3: kullanıcı Stop'a hiç basamaz olmasın diye
@@ -978,7 +982,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         bool stopChanged = false;
         vm.StopCommand.CanExecuteChanged += (_, _) => stopChanged = true;
 
@@ -1011,7 +1015,7 @@ public class RunViewModelTests
         Assert.True(vm.StopCommand.CanExecute(null));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
 
         Assert.True(vm.StopCommand.CanExecute(null)); // runStarted sonrası da Stop erişilebilir kalmalı
         Assert.False(vm.RebuildCommand.CanExecute(null));
@@ -1100,13 +1104,13 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         long fakeNow = 1_000_000;
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", ElapsedMsAtStart: 500));
-        Assert.Equal(500, vm.ElapsedMs);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
+        Assert.Equal(0, vm.ElapsedMs);
 
         fakeNow += 250;
         vm.TickElapsed();
 
-        Assert.Equal(750, vm.ElapsedMs);
+        Assert.Equal(250, vm.ElapsedMs);
     }
 
     [Fact]
@@ -1115,7 +1119,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         long fakeNow = 1_000_000;
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, DurationMs: 4242));
 
         fakeNow += 10_000;
@@ -1155,7 +1159,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         Assert.True(vm.IsRunning);
 
         vm.OnEngineExited(139);
@@ -1188,7 +1192,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         Assert.False(vm.IsRunning);
         Assert.True(vm.RebuildCommand.CanExecute(null));
@@ -1224,7 +1228,7 @@ public class RunViewModelTests
         vm.OnEngineExited(139);
         Assert.False(string.IsNullOrWhiteSpace(vm.EngineDiedMessage)); // önce kama-sonrası mesaj var
 
-        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 1, 1, "Debug", 0)); // sonraki run gerçekten başladı
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 1, 1, "Debug")); // sonraki run gerçekten başladı
 
         Assert.Null(vm.EngineDiedMessage); // eski ölüm mesajı artık geçerli engine durumunu YANLIŞ yansıtmamalı
     }
@@ -1235,7 +1239,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         Assert.Equal(AppPhase.Running, vm.Phase); // gerçekten mid-run
 
         vm.OnEngineExited(139);
@@ -1530,7 +1534,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug"));
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 1, 0, 0, 500, DepIssueCount: 2));
 
@@ -1601,7 +1605,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, oldSha)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // satır artık terminal + clean
@@ -1626,7 +1630,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.NeverBuilt)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Cycle"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
@@ -1654,7 +1658,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Member", false, Reason: WillBuildReason.UpToDate)]));
         vm.OnEvent(new ProjectSkippedEvent("r1", projectId, SkipReasons.UpToDate));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 1, 0, 50));
@@ -1680,7 +1684,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Broken", true, Reason: WillBuildReason.SignatureChanged)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Broken"));
         vm.OnEvent(new ProjectFailedEvent("r1", projectId, 100, "exit 1", Evidence: true));
@@ -1714,7 +1718,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Cycle", true, Reason: WillBuildReason.NeverBuilt)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Cycle"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
@@ -2169,7 +2173,7 @@ public class RunViewModelTests
         MainWindowHost.AcceptSends(vm);
 
         // Birinci koşu: preview (dirty) → started → succeeded (canlı clean geçişi).
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, Reason: WillBuildReason.SignatureChanged)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
@@ -2183,7 +2187,7 @@ public class RunViewModelTests
         Assert.Equal(ProjectRowState.Pending, row.State); // artık terminal değil
 
         // Bu koşunun kendi önizlemesi nötrlenmiş satıra iner ve kararı yazar.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, Reason: WillBuildReason.SignatureChanged)]));
 
         Assert.True(row.WillBuild);
@@ -2198,7 +2202,7 @@ public class RunViewModelTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug"));
 
         Assert.Equal("0/3 · 0s", vm.EtaText);
     }
@@ -2209,7 +2213,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 3, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
 
         // A 10s sürdü; B/C henüz hiç başlamadı (queued=2) → ortalama=10s, (10s+10s)/1 parallelism = 20s, +0 (building yok)
@@ -2225,7 +2229,7 @@ public class RunViewModelTests
         long fakeNow = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 1, "Debug", ElapsedMsAtStart: 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 2, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
 
@@ -2390,7 +2394,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400));
 
@@ -2441,7 +2445,7 @@ public class RunViewModelTests
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         // [topoloji kapısı] Koşan bir run ancak bir Sync'ten SONRA var olabilir — senaryo bu yüzden topolojiyle kurulur.
         VmTopology.Seed(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         Assert.True(vm.IsRunning);
 
@@ -2490,7 +2494,7 @@ public class RunViewModelTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
 
         vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
@@ -2695,7 +2699,7 @@ public class RunViewModelTests
         const string projectId = A;
 
         // Build koşusu bitti: proje Succeeded + temiz.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(projectId, "A", 0)], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "A", true, Reason: WillBuildReason.NeverBuilt)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "A"));
@@ -2861,7 +2865,7 @@ public class RunViewModelTests
     {
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => head(), () => new FakeHeadWatcher());
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0, LogDirectory: RunLogDirectory));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", LogDirectory: RunLogDirectory));
         vm.OnEvent(new BuildPreviewEvent([ // motor runStarted'ın hemen ardından önizlemeyi yayınlar: kapsam = B
             new BuildPreviewItem(A, "A", false, Reason: WillBuildReason.UpToDate),
             new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
@@ -3042,7 +3046,7 @@ public class RunViewModelTests
         var posted = new Queue<Action>();
         var vm = SyncedTwoRowVm(engine);
         vm.EnableAutoSync(posted.Enqueue, _ => new Core.Git.HeadState("feature", CommittedSha), () => new FakeHeadWatcher());
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(A, "A", true, Reason: WillBuildReason.SignatureChanged, OwnFilesChanged: true),
             new BuildPreviewItem(B, "B", true, Reason: WillBuildReason.WaitingForDependency, Conditional: true),
@@ -3148,7 +3152,7 @@ public class RunViewModelTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
         Assert.Equal(AppPhase.Done, vm.Phase); // ön-koşul
         string? opBefore = vm.CurrentOperation;
@@ -3175,7 +3179,7 @@ public class RunViewModelTests
         using var sandbox = new SupervisorSandbox();
         await using var engine = await StartedEngineAsync(sandbox);
         var vm = SyncedTwoRowVm(engine);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         vm.OnEvent(new ErrorEvent("runFailed", "msbuild crashed"));
         Assert.Equal("msbuild crashed", vm.RunErrorMessage); // ön-koşul
         string ribbonBefore = vm.RibbonLine.Text;

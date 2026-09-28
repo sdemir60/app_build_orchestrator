@@ -150,7 +150,7 @@ public class RowBuildCommandTests
         // Gönderim motorsuz harness'ta senkron düşer ve kilit inerken hedef bırakılır; stream satırı bu yüzden
         // hedefi AÇIKÇA kurulmuş bir koşuda sınanır (kardeş test The_stream_opens_a_scoped_run_… ile aynı desen).
         vm.RunTargetId = A;
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
         Assert.Contains(vm.StreamEvents, l => l.Text == "Clean started — a (single project)");
     }
@@ -167,7 +167,7 @@ public class RowBuildCommandTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
 
         var cleaned = NewVm(engine);
-        cleaned.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        cleaned.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug"));
         cleaned.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
         cleaned.OnEvent(new ProjectStartedEvent("r1", A, "a"));
         cleaned.OnEvent(new ProjectSucceededEvent("r1", A, 120));
@@ -176,7 +176,7 @@ public class RowBuildCommandTests
         Assert.True(Row(cleaned, A).WillBuild);   // temizlendi -> yine derlenecek
 
         var built = NewVm(engine);                // kontrol grubu: sıradan Build AYNI olay dizisiyle
-        built.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
+        built.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug"));
         built.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
         built.OnEvent(new ProjectStartedEvent("r2", A, "a"));
         built.OnEvent(new ProjectSucceededEvent("r2", A, 120));
@@ -196,7 +196,7 @@ public class RowBuildCommandTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", false, null, WillBuildReason.UpToDate)]));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", A, "a"));
         vm.OnEvent(new ProjectSucceededEvent("r1", A, 120));
 
@@ -230,7 +230,7 @@ public class RowBuildCommandTests
         vm.RunTargetId = A;
         vm.IsStarting = true;
         Assert.True(Row(vm, A).IsRunTarget);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(Row(vm, A).IsRunTarget);
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 10));
         Assert.Null(vm.RunTargetId);
@@ -250,7 +250,7 @@ public class RowBuildCommandTests
         Assert.All(vm.Projects, r => Assert.True(r.IsRunLocked));
         Assert.False(vm.BuildProjectCommand.CanExecute(A));
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0)); // IsStarting düşer, IsRunning kalkar
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug")); // IsStarting düşer, IsRunning kalkar
         Assert.All(vm.Projects, r => Assert.True(r.IsRunLocked));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\late.csproj", "Late")); // koşu ortasında doğan satır
         Assert.True(Row(vm, @"C:\p\late.csproj").IsRunLocked);
@@ -282,7 +282,7 @@ public class RowBuildCommandTests
         var vm = NewVm(engine);
         vm.RunTargetId = A;
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "a", true)]));
 
         Assert.Contains(vm.StreamEvents, l => l.Text == "Rebuild started — a (single project)");

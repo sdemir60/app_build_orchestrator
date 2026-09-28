@@ -89,7 +89,7 @@ public sealed class TrayIndicatorBinderTests
             MainWindowHost.Node("B", 1),
         };
         vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug"));
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(MainWindowHost.IdOf("A"), "A", true),

@@ -668,7 +668,6 @@ public sealed class RunCoordinator(
         // [cycle rounds] Scheduler'ın TOHUMU: Build/Cycles'ta "up to date" pre-skip tohumu, aksi halde null
         // (taze, tohumsuz). Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir yerde kurulur (kopya YASAK).
         Dictionary<string, BuildResult>? schedulerSeed = null;
-        long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
@@ -814,7 +813,6 @@ public sealed class RunCoordinator(
                 }
                 if (seed.Count > 0) schedulerSeed = seed;
             }
-            elapsedAtStart = 0;
             clock = new RunClock(nowMs);
         }
 
@@ -866,7 +864,7 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, elapsedAtStart, appliedCap, LogDirectory: logs.RunDirectory));
+            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
@@ -938,9 +936,9 @@ public sealed class RunCoordinator(
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,
-            "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5} elapsedAtStart={6}ms",
+            "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5}",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
-            perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap), elapsedAtStart));
+            perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.

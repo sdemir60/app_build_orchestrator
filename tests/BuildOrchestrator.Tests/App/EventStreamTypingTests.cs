@@ -56,7 +56,7 @@ public class EventStreamTypingTests
     /// önce bir taban satır bırakılır; ölçülen ikincisidir.</summary>
     private EventStreamRow WrittenRow(RunViewModel vm, EventStreamView view)
     {
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true)])); // taban satır
         _clock += 10_000;                                                        // fırtına penceresi kapandı
         vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));

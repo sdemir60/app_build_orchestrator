@@ -343,7 +343,6 @@ public class RunCoordinatorTests
         Assert.Equal(3, started.TotalProjects);
         Assert.Equal(1, started.Parallelism);
         Assert.Equal("Debug", started.Configuration);
-        Assert.Equal(0, started.ElapsedMsAtStart);
 
         // [T54] A, B'ye doğrudan bağımlı ve B failed → A depIssues=[B] taşır; warn satırı log'un 2. satırında.
         var succeededA = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "A");

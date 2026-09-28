@@ -56,7 +56,7 @@ public class FrontierFollowResumeTests(ITestOutputHelper output)
         long[] clock = [0];
         list.NowMs = () => clock[0]; // idle penceresi deterministik sürülür (D8)
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[frontierIndex].Id, nodes[frontierIndex].Name));
         DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > 1, TimeSpan.FromSeconds(3));
         return (window, vm, list, nodes, clock);

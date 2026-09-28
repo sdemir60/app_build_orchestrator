@@ -355,11 +355,11 @@ public class MaintenanceBoxTests
         var vm = NewVm();
         var (box, window) = Realize(vm);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.IsType<Viewbox>(box.ResolveButton.Content); // Build, Resolve'un işi DEĞİL
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 10));
 
-        vm.OnEvent(new RunStartedEvent("r2", RunMode.Cycles, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Cycles, 1, 1, "Debug"));
 
         Assert.IsType<BuildOrchestrator.App.Controls.BuildingSpinner>(box.ResolveButton.Content);
         Assert.Same(box.FindResource("Brush.AmberSoft"),

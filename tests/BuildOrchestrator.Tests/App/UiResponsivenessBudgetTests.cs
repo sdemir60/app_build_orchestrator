@@ -108,7 +108,7 @@ public class UiResponsivenessBudgetTests(ITestOutputHelper output)
         vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha12345", false, nodes.Count, 0));
         content.UpdateLayout();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", null));
 
         double worst = 0;
         string worstName = "";

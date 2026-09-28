@@ -296,7 +296,7 @@ public enum RunOutcome { Completed, Stopped }
 /// <param name="LogDirectory">[spec 2026-09-18 §6.2] Bu koşunun disk log klasörü (<c>RunLogWriter.RunDirectory</c>);
 /// branch değişimiyle kesilen koşunun özet satırı onu anar. Bilinmiyorsa <c>null</c>.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
+    string Configuration, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");

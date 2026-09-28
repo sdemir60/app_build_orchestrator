@@ -55,7 +55,7 @@ public sealed class TrayMenuTests
         var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { });
         var stop = StopItem(menu);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
 
         Assert.True(stop.IsEnabled);
 
@@ -76,7 +76,7 @@ public sealed class TrayMenuTests
         var vm = NewVm();
         var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { });
         var stop = StopItem(menu);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(stop.IsEnabled); // ön-koşul: madde GERÇEKTEN tıklanabilir
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;

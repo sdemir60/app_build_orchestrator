@@ -459,7 +459,6 @@ public sealed partial class RunViewModel : ObservableObject
     // sayısını bunlarla düzeltir) ve run'ın kapanış satırı (motorun kendi <c>Skipped</c> sayısından bunu düşer
     // — bkz. RunViewModel.Stream.cs'in RunCompletedEvent dalı).
     private int _outOfScopeSkipCount;
-    private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
     // [Task 17] ETA: EtaCalculator saf/stateless'tir (D3 — hiçbir alan/saat tutmaz) — EMA'nın önceki (smoothed)
@@ -1725,7 +1724,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (IsRunning && _elapsedStartMs is { } startMs)
         {
-            ElapsedMs = _elapsedBaseMs + (_nowMs() - startMs);
+            ElapsedMs = _nowMs() - startMs;
             // [T53-UI] Building satırların CANLI süresi (kart süre kolonu + glyph tooltip) — done olunca
             // OnProjectDone kesin DurationMs'i ezer. Kaynak: _projectStartedAtMs (ETA ile AYNI, ekstra state yok).
             long now = _nowMs();
@@ -1874,9 +1873,11 @@ public sealed partial class RunViewModel : ObservableObject
         // [runFailed] Aynı gerekçe: yeni bir run GERÇEKTEN başladı (round-trip kanıtı) — önceki run'ın hata
         // gerekçesi artık geçmiştir ve şeridi bu run'ın ilerlemesine bırakmalıdır.
         RunErrorMessage = null;
-        _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
-        ElapsedMs = e.ElapsedMsAtStart;
+        // [DEĞİŞEN KURAL] eskiden runStarted'ın taşıdığı bir taban değerden devralınırdı (yalnız Continue'da
+        // sıfırdan farklıydı); o alan a2ff12e'den beri hep sıfırdı ve kontrattan kalktı — her koşu kendi
+        // saatinden sıfırdan başlar.
+        ElapsedMs = 0;
         // [design v1.11.0 §9-4] Rebuild yeni bir tabana döner — ama listeyi BOŞALTARAK değil, YERİNDE
         // nötrleyerek. [DEĞİŞEN KURAL] Burada eskiden <c>Projects.Clear()</c> vardı; o, açılış
         // koreografisinin işaretlediği satır nesnelerini ortasında yok ediyor ve listeyi remount ediyordu
