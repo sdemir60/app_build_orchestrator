@@ -1,25 +1,33 @@
+using BuildOrchestrator.App.Shell;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <see cref="StartWithWindows"/>,
-/// <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/> ve <see cref="ShowNotifications"/> yalnız diyalog
-/// taslağında yaşar — kaydedilmez, ayar dosyasına yazılmaz/okunmaz, konsola not düşmez ve hiçbir davranışı
-/// (autostart, tray, bildirim) sürmez; her açılışta varsayılana döner. Yalnız <see cref="PullBeforeBuild"/>
-/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
-/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para></summary>
+/// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <see cref="StartWithWindows"/> ve
+/// <see cref="StartMinimizedToTray"/> yalnız diyalog taslağında yaşar — kaydedilmez, ayar dosyasına
+/// yazılmaz/okunmaz, konsola not düşmez ve hiçbir davranışı (autostart, tray) sürmez; her açılışta varsayılana
+/// döner. <see cref="PullBeforeBuild"/> (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve
+/// <see cref="StashOnBranchSwitch"/> (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para>
+/// <para><b>[DEĞİŞEN KURAL — P3, kullanıcı kararı 2026-09-28]</b> ESKİ: <see cref="CloseToTray"/> ve
+/// <see cref="ShowNotifications"/> de yukarıdaki iki anahtar gibi yalnız taslakta yaşardı. Artık
+/// <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: Save'de yazılır, diyalog kayıtlı değeri gösterir,
+/// Export/Import taşır, değişince konsola not düşer. Yalnız DAVRANIŞLARI (pencere kapanışı, tray balloon) henüz
+/// bağlı değildir — sonraki görevler <see cref="ShellSwitches.CloseToTray"/>/<see cref="ShellSwitches.ShowNotifications"/>'ı
+/// bağlayacaktır.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
     StartWithWindows,
     /// <summary>Henüz bağlı değil — yalnız taslak. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
     StartMinimizedToTray,
-    /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
+    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.CloseToTray"/>) — davranışı (pencere
+    /// kapanışının kendisi) henüz bağlı değil.</summary>
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,
-    /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
+    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.ShowNotifications"/>) — davranışı
+    /// (tray balloon'un kendisi) henüz bağlı değil.</summary>
     ShowNotifications,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
     /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>
@@ -75,6 +83,11 @@ public static class GeneralSettingsCatalog
                 "A tray notification when a build finishes — succeeded or failed.", Default: true),
         ]),
     ];
+
+    /// <summary>[P3 · Task 1] Kataloğun TEK satırı — <see cref="ShellSwitch.Note"/>'un etiketi (kopya YASAK) buradan
+    /// okur, bir literal olarak tekrarlamaz.</summary>
+    public static GeneralSettingDefinition Definition(GeneralSetting setting) =>
+        Groups.SelectMany(g => g.Rows).Single(r => r.Setting == setting);
 }
 
 /// <summary>General sayfasındaki bir satırın taslak durumu — <c>Ds.Settings.ToggleRow</c> şablonu buna bağlanır.</summary>

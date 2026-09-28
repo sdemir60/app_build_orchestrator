@@ -121,14 +121,19 @@ public partial class SettingsDialog : ModalDialog
 
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
-    /// gerçek diyalog açmaz — E1'deki IOsActions.PickFolder gelene dek OpenFolderDialog doğrudan çağrılır).</summary>
+    /// gerçek diyalog açmaz — E1'deki IOsActions.PickFolder gelene dek OpenFolderDialog doğrudan çağrılır).
+    /// <para>[Task 1] Taslak <c>store.Load()</c> ile kurulur: kabuk anahtarları (Close to tray, Show notifications)
+    /// yalnız <see cref="UiState"/>'te yaşar — <see cref="RunViewModel"/>'in kendi bir yüzü YOKTUR (pull/stash'in
+    /// aksine), bu yüzden taslağın <c>saved</c> tohumu <paramref name="run"/>'dan değil <paramref name="store"/>'dan
+    /// gelir.</para></summary>
     public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
     {
         _run = run;
         _store = store;
         _pickFolder = pickFolder;
         _draft = new SettingsDraftViewModel(
-            run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch);
+            run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch,
+            store.Load());
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();

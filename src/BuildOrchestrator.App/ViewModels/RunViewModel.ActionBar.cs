@@ -217,14 +217,22 @@ public sealed partial class RunViewModel
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
     /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
     /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i.</param>
+    /// <param name="settingNotes">[Task 1] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
+    /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Close to tray, Show notifications) konsol notları —
+    /// <see cref="ApplyStashOnBranchSwitch"/>'ten HEMEN SONRA, idle kapısından ÖNCE <see cref="AppendRunLine"/> ile
+    /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
+    /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
-        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false)
+        IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
+        IReadOnlyList<string>? settingNotes = null)
     {
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
+        if (settingNotes is not null)
+            foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)
         {
             if (IsRepositoryChange(repositoryRoot)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));

@@ -90,6 +90,19 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
+    /// <summary>[P3 · Task 1] Settings → General → STARTUP: pencere kapatılınca uygulama tepsiye küçülüp arka planda
+    /// mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="UpdateExternals"/> ile AYNI gerekçeyle
+    /// NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı. Okuma yalnız
+    /// <see cref="BuildOrchestrator.App.Shell.ShellSwitches.CloseToTray"/> üzerindendir — bu alan doğrudan okunmaz.
+    /// <para>Davranışı (pencere kapanışının kendisi) HENÜZ bağlı değildir — bu tip yalnız KALICILIĞI taşır.</para></summary>
+    public bool? CloseToTray { get; set; }
+
+    /// <summary>[P3 · Task 1] Settings → General → NOTIFICATIONS: bir build bittiğinde (başarılı ya da başarısız) tray
+    /// bildirimi gösterilsin mi. <see cref="CloseToTray"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı.
+    /// Okuma yalnız <see cref="BuildOrchestrator.App.Shell.ShellSwitches.ShowNotifications"/> üzerindendir.
+    /// <para>Davranışı (tray balloon'un kendisi) HENÜZ bağlı değildir — bu tip yalnız KALICILIĞI taşır.</para></summary>
+    public bool? ShowNotifications { get; set; }
+
     public bool Autostart { get; set; }
 }
 

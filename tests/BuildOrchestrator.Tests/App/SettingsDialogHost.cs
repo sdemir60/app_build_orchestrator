@@ -44,9 +44,12 @@ internal static class SettingsDialogHost
     /// istemci alanı (886) onu 838'e daraltırdı. 1000, tasarım genişliğini kelepçeye TAKILMADAN sığdırır.</param>
     /// <param name="windowHeight">Host penceresinin yüksekliği — AboutDialogHost/NotesDialogHost'un AYNI kararı
     /// (700 yükseklik): istemci alanı − 48, 576px'lik sabit yüksekliği kelepçeye takılmadan taşır.</param>
+    /// <param name="saved">[Task 1] <see cref="FakeStore"/>'u <see cref="Open"/>'dan ÖNCE tohumlar — kabuk
+    /// anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı değerden açılışını realize eden testler içindir;
+    /// <c>null</c> ⇒ store varsayılan (boş) <see cref="UiState"/> ile kalır.</param>
     public static (SettingsDialog dialog, RunViewModel run, FakeStore store, IDisposable scope) OpenRealized(
         Action<RunViewModel>? configure = null, Func<string?>? pickFolder = null,
-        double windowWidth = 1000, double windowHeight = 700)
+        double windowWidth = 1000, double windowHeight = 700, UiState? saved = null)
     {
         var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -57,6 +60,7 @@ internal static class SettingsDialogHost
         var window = DsResources.Realize(host, dialog, windowWidth, windowHeight);
 
         var store = new FakeStore();
+        if (saved is not null) store.Save(saved);
         dialog.Open(run, store, pickFolder ?? (() => null));
         dialog.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
 
