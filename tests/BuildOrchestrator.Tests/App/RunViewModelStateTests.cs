@@ -415,7 +415,7 @@ public class RunViewModelStateTests
     }
 
     /// <summary>[D3/T5 · design v1.13.2 §9] "Konsol + event stream her işlemde temizlenir, ardından yalnız o
-    /// işlemin satırları yazılır" — Build/Rebuild/Cycles bunu <c>BeginRunAsync(clearBuffers:true)</c> ile zaten
+    /// işlemin satırları yazılır" — Build/Rebuild/Cycles bunu <c>BeginRunAsync</c> ile zaten (koşulsuz)
     /// yapıyordu. Sync ise TIKLAMA ANINDA (motorun cevabı beklenmeden, pill'in kendisiyle AYNI an) konsolu VE
     /// event stream'i temizlemiyordu — bir önceki işlemin tortusu, Sync'in kendi <c>syncProgress</c> satırlarının
     /// ÜZERİNE yazılıyordu (bkz. <c>RunViewModel.cs:784-793</c>'teki mid-Sync run guard'ının gerekçesi: "…ama

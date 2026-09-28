@@ -1580,18 +1580,21 @@ public class RunViewModelTests
     }
 
     [Fact]
-    public async Task A_later_segments_preview_refreshes_the_current_sha_of_an_already_terminal_row()
+    public async Task A_post_run_preview_refreshes_the_current_sha_of_an_already_terminal_row()
     {
-        // [W1 · Task 1] OnBuildPreview'daki terminal-satır `continue` guard'ı YALNIZ WillBuild'i korur (segment 1'in
-        // canlı succeeded→clean geçişi ezilmesin) VE YALNIZ koşu sürerken (RunActive) — bu yüzden run burada
-        // GERÇEKTEN sürüyor olmalı (RunStartedEvent + henüz RunCompleted YOK), aksi halde bu artık "segment 2"
-        // değil, koşu bittikten sonraki bağımsız bir tazeleme olurdu (bkz. aşağıdaki A_post_run_preview_* testleri).
-        // CurrentSha guard'dan ÖNCE atanır: segment 2'nin okuduğu build-state segment 1'in persist'ini içerir,
-        // yani derlenmiş satırın sol yarısı ancak burada tazelenebilir.
-        // [DEĞİŞEN KURAL — Task 1] Eski iddia: guard KOŞULSUZDU — terminal satırın WillBuild'i HİÇBİR önizlemeyle
-        // yazılmazdı; test bu yüzden RunStartedEvent'siz kuruluyordu. Değişme gerekçesi: koşu bittikten sonra gelen
-        // önizleme (pencereye dönüşün sessiz Sync'i) de guard'a çarpıyor, arka planda değişen proje yeşil kalıyordu.
-        // Koruma artık yalnız koşu sürerken geçerli; bu test onu o koşulda pinler.
+        // [DEĞİŞEN KURAL — Task 4/5] Eski iddia: OnBuildPreview'daki terminal-satır `continue` guard'ı YALNIZ
+        // WillBuild'i korurdu (segment 1'in canlı succeeded→clean geçişi ezilmesin) VE YALNIZ koşu sürerken
+        // (RunActive) devredeydi; CurrentSha guard'dan ÖNCE, koşulsuz atanırdı. Test bu yüzden RunStartedEvent'ten
+        // sonra, RunCompleted'SİZ kuruluyordu — "segment 2" hâlâ sürüyor varsayımıyla. Değişme gerekçesi: Continue
+        // `a2ff12e`'de koddan kalktı; motor koşu başına TEK BuildPreviewEvent yayınlıyor, runStarted'ın hemen
+        // ardından ve ilk proje olayından önce (RunCoordinator.cs:895→926→988) — "segment 2" üretimde hiç
+        // oluşmuyordu (rapor §4), guard erişilemezdi ve silindi. CurrentSha zaten guard'dan bağımsız her
+        // önizlemeden koşulsuz yazılıyordu; bu test artık gerçek senaryoyu pinler: koşu BİTTİKTEN sonra
+        // (RunActive=false — ör. pencereye dönüşün tetiklediği sessiz Sync) gelen bir önizleme, terminal bir
+        // satırın CurrentSha'sını da tazeler (kardeş testler A_post_run_preview_refreshes_a_succeeded_rows_standing
+        // / _a_skipped_rows_standing WillBuild/Standing'i pinler, bu test CurrentSha'yı pinler). Guard kaldırılmadan
+        // ÖNCE de, kaldırıldıktan SONRA da yeşildir (değişmez pini, kusur fix'i değil — guard bu senaryoyu hiç
+        // etkilemiyordu).
         const string oldSha = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const string newSha = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         const string projectId = @"C:\p\dirty.csproj";
@@ -1602,14 +1605,15 @@ public class RunViewModelTests
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, oldSha)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100)); // satır artık terminal + clean
-
-        // Continue segmenti: preview BAYAT willBuild=true taşır ama build-state TAZE commit'i taşır. Run HÂLÂ
-        // sürüyor (RunCompleted henüz gelmedi) — guard bu yüzden hâlâ devrede.
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, newSha)]));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100)); // RunActive → false
 
         var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Succeeded, row.State); // ön-koşul: satır terminal, koşu bitti
+
+        // Koşu bittikten sonra gelen önizleme (ör. sessiz Sync) TAZE commit'i taşır.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, newSha)]));
+
         Assert.Equal(newSha, row.CurrentSha); // sha TAZELENDİ
-        Assert.False(row.WillBuild);          // ama canlı succeeded→clean geçişi KORUNDU
     }
 
     [Fact]
@@ -2138,26 +2142,52 @@ public class RunViewModelTests
         Assert.Null(Assert.Single(vm.Projects).WillBuild);
     }
 
-    [Fact] // [Review fix, Task 17] RunCoordinator, Continue segmentinde AYNI (dondurulmuş) plan'dan türetilmiş
-           // buildPreview'ı YENİDEN yayınlar (Projects Continue'da temizlenmez) — bu yeniden-yayın, segment 1'de
-           // gerçekleşen succeeded→clean canlı geçişini EZMEMELİ
-    public async Task BuildPreviewEvent_on_a_Continue_segment_does_not_clobber_an_already_clean_row()
+    /// <summary>
+    /// [DEĞİŞEN KURAL — Task 4/5] Eski iddia: <c>RunCoordinator</c> "segment"in başında AYNI (dondurulmuş)
+    /// plan'dan türetilmiş <see cref="BuildPreviewEvent"/>'i YENİDEN yayınlıyordu ve <see cref="RunViewModel.Projects"/>
+    /// Continue'da temizlenmediği için önceki segmentin canlı succeeded→clean geçişi bu bayat yeniden-yayınla
+    /// ezilebiliyordu; <see cref="RunViewModel.OnBuildPreview"/>'daki bir terminal-satır `continue` guard'ı
+    /// (RunActive VE satır Succeeded/Failed/Skipped ise WillBuild/Reason/DependencyRoots/InRunQueue'yu atla) bunu
+    /// engelliyordu. Değişme gerekçesi: Continue <c>a2ff12e</c>'de koddan kalktı; motor koşu başına TEK
+    /// <see cref="BuildPreviewEvent"/> yayınlıyor, runStarted'ın hemen ardından ve ilk proje olayından önce
+    /// (RunCoordinator.cs:895→926→988). Bir sonraki koşunun önizlemesi zaten TIKLAMA ANINDA nötrlenmiş
+    /// (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c> gönderimden ÖNCE <c>NeutralizeRows()</c> çağırır —
+    /// dolayısıyla guard'ın koşulu (RunActive VE satır terminal) üretimde hiç oluşmuyordu (rapor §4); guard
+    /// erişilemezdi ve silindi. Bu test artık gerçek tıklama yolunu (<see cref="RunViewModel.BuildCommand"/>) sürer
+    /// ve yeni değişmezi pinler: önceki koşuda Succeeded olan satır yeni tıklamada Pending'e döner, ardından BU
+    /// koşunun kendi RunStarted+BuildPreview'ı WillBuild/Reason'ını yazar. Guard kaldırılmadan ÖNCE de,
+    /// kaldırıldıktan SONRA da yeşildir (değişmez pini, kusur fix'i değil — guard bu senaryoyu hiç etkilemiyordu:
+    /// tıklama anında nötrlenen satır zaten terminal değildir).
+    /// </summary>
+    [Fact]
+    public async Task A_new_builds_preview_lands_on_the_row_it_just_neutralized()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         const string projectId = @"C:\p\dirty.csproj";
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm, projectId);
+        MainWindowHost.AcceptSends(vm);
 
-        // segment 1: preview (dirty) → started → succeeded (canlı clean geçişi)
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+        // Birinci koşu: preview (dirty) → started → succeeded (canlı clean geçişi).
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, Reason: WillBuildReason.SignatureChanged)]));
         vm.OnEvent(new ProjectStartedEvent("r1", projectId, "Dirty"));
         vm.OnEvent(new ProjectSucceededEvent("r1", projectId, 100));
-        Assert.False(Assert.Single(vm.Projects).WillBuild); // clean
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
+        var row = Assert.Single(vm.Projects);
+        Assert.Equal(ProjectRowState.Succeeded, row.State); // ön-koşul: satır terminal
+        Assert.False(row.WillBuild);                        // ön-koşul: clean
 
-        // Sonraki koşu aynı (bayat) planı yeniden preview eder — WillBuild=true (dirty)
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", ElapsedMsAtStart: 0));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true)]));
+        // İkinci Build TIKLAMASI — gerçek yol: BeginRunAsync gönderimden önce NeutralizeRows() çağırır.
+        await vm.BuildCommand.ExecuteAsync(null);
+        Assert.Equal(ProjectRowState.Pending, row.State); // artık terminal değil
 
-        Assert.False(Assert.Single(vm.Projects).WillBuild); // succeeded→clean geçişi HÂLÂ ayakta — ezilmedi
+        // Bu koşunun kendi önizlemesi nötrlenmiş satıra iner ve kararı yazar.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(projectId, "Dirty", true, Reason: WillBuildReason.SignatureChanged)]));
+
+        Assert.True(row.WillBuild);
+        Assert.Equal(WillBuildReason.SignatureChanged, row.WillBuildReason);
     }
 
     // ---------------------------------------------------------------- 10) [Task 17] ETA text (Core.Incremental.EtaCalculator)
