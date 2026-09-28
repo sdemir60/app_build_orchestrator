@@ -299,6 +299,15 @@ public sealed partial class RunViewModel
                         if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));
                     }
                 }
+                // [Clean · kullanıcı kararı 2026-09-28] Clean döngü üyelerini de temizler, ama düz Build onları
+                // derlemez — sırayı hatırlatan TEK bilgi satırı, Completed/Stopped satırının hemen ardından. Yalnız
+                // GERÇEKTEN temizlenen üye sayılır (koşunun ulaşmadığı ya da temizliği patlayan değil); hiç yoksa satır
+                // yok. Konsola yazılmaz: konsol işlemin ham logudur.
+                if (RunIsClean)
+                {
+                    int cleanedMembers = Projects.Count(p => p.InCycle && p.State == ProjectRowState.Succeeded);
+                    if (cleanedMembers > 0) PushStream(StreamKind.Info, null, StreamText.CleanedCyclesHint(cleanedMembers));
+                }
                 _stream.EndRun();
                 SyncActiveLine();
                 // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.

@@ -745,6 +745,96 @@ public class EventStreamTests
         Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
     }
 
+    // ============================================================ [Clean] Clean sonu Resolve cycles ipucu
+
+    private const string CleanHintA = @"C:\p\a.csproj", CleanHintM1 = @"C:\p\m1.csproj", CleanHintM2 = @"C:\p\m2.csproj";
+
+    /// <summary>Clean ipucu testlerinin ortak sahnesi: sıradan A ve iki üyeli bir döngü (M1 ⇄ M2); ardından motorun
+    /// gönderdiği biçimde bir tam Clean başlar (önizleme hepsine <c>true</c>).</summary>
+    private static RunViewModel FullCleanOverACycle()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(CleanHintA, "A", 0), Node(CleanHintM1, "M1", 1, inCycle: true), Node(CleanHintM2, "M2", 2, inCycle: true)],
+            [[CleanHintM1, CleanHintM2]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 3, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(CleanHintA, "A", WillBuild: true),
+            new BuildPreviewItem(CleanHintM1, "M1", WillBuild: true),
+            new BuildPreviewItem(CleanHintM2, "M2", WillBuild: true),
+        ]));
+        return vm;
+    }
+
+    private static void Cleaned(RunViewModel vm, string id, string name)
+    {
+        vm.OnEvent(new ProjectStartedEvent("r1", id, name));
+        vm.OnEvent(new ProjectSucceededEvent("r1", id, 20));
+    }
+
+    /// <summary>
+    /// [Clean · kullanıcı kararı 2026-09-28] Build menüsünün Clean'i döngü üyelerini de temizler, ama düz Build bir
+    /// SCC'yi ASLA derlemez (üyeler <c>skipped — in dependency cycle</c> olur, onlara bağlı projeler silinmiş
+    /// çıktıya takılabilir). Bu yüzden Clean bitince, <c>Completed</c> satırının HEMEN ARDINDAN, sırayı hatırlatan
+    /// TEK bir bilgi satırı gelir — yalnız akışta, konsolda değil; düğme yok, davranış değişmez.
+    /// </summary>
+    [Fact]
+    public void A_full_clean_that_cleaned_cycle_members_points_to_resolve_cycles_after_completed()
+    {
+        var vm = FullCleanOverACycle();
+        Cleaned(vm, CleanHintA, "A");
+        Cleaned(vm, CleanHintM1, "M1");
+        Cleaned(vm, CleanHintM2, "M2");
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 3, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
+
+        var lines = vm.StreamEvents.ToList();
+        int completedIndex = lines.FindIndex(l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
+        int hintIndex = lines.FindIndex(l => l.Text == "2 cycle projects cleaned — run Resolve cycles before Build");
+        Assert.True(completedIndex >= 0, "Completed satırı bulunamadı");
+        Assert.Equal(completedIndex + 1, hintIndex); // Completed'ın HEMEN ardından
+        Assert.Equal(StreamKind.Info, lines[hintIndex].Kind);
+        Assert.Null(lines[hintIndex].ProjectId);
+        Assert.DoesNotContain("Resolve cycles", vm.GetRunDocumentText(), StringComparison.Ordinal); // konsola YAZILMAZ
+    }
+
+    /// <summary>Durdurulan bir Clean'de de temizlenen üyeler Resolve cycles'ı bekler — satır <c>Stopped</c>'ın
+    /// ardından gelir ve yalnız GERÇEKTEN temizlenenleri sayar (koşunun ulaşmadığı üye sayılmaz).</summary>
+    [Fact]
+    public void A_stopped_full_clean_counts_only_the_cycle_members_it_actually_cleaned()
+    {
+        var vm = FullCleanOverACycle();
+        Cleaned(vm, CleanHintM1, "M1");
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 2, DurationMs: 500));
+
+        var lines = vm.StreamEvents.ToList();
+        int stoppedIndex = lines.FindIndex(l => l.Text.StartsWith("Stopped", StringComparison.Ordinal));
+        Assert.True(stoppedIndex >= 0, "Stopped satırı bulunamadı");
+        Assert.Equal("1 cycle projects cleaned — run Resolve cycles before Build", lines.ElementAtOrDefault(stoppedIndex + 1)?.Text);
+    }
+
+    /// <summary>Temizliği PATLAYAN üye "temizlendi" sayılmaz (kendi kırmızı satırı akışta zaten durur); döngü
+    /// üyesine dokunmayan bir Clean'de ise satır HİÇ yoktur — boş bir ipucu gürültü olurdu.</summary>
+    [Fact]
+    public void Only_successfully_cleaned_cycle_members_count_and_none_means_no_hint()
+    {
+        var vm = FullCleanOverACycle();
+        Cleaned(vm, CleanHintA, "A");
+        Cleaned(vm, CleanHintM1, "M1");
+        vm.OnEvent(new ProjectStartedEvent("r1", CleanHintM2, "M2"));
+        vm.OnEvent(new ProjectFailedEvent("r1", CleanHintM2, 20, "exit 1", Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 2, Failed: 1, Skipped: 0, Queued: 0, DurationMs: 500));
+        Assert.Contains(vm.StreamEvents, l => l.Text == "1 cycle projects cleaned — run Resolve cycles before Build");
+
+        var plain = NewVm();
+        plain.OnEvent(new WorkspaceTopologyEvent([Node(CleanHintA, "A", 0)], [], [], []));
+        plain.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 1, Parallelism: 4, "Debug", 0));
+        plain.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(CleanHintA, "A", WillBuild: true)]));
+        Cleaned(plain, CleanHintA, "A");
+        plain.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
+        Assert.DoesNotContain(plain.StreamEvents, l => l.Text.Contains("Resolve cycles", StringComparison.Ordinal));
+    }
+
     // ============================================================ [T10 PİN] Stop → akış satırı (kablolama)
 
     /// <summary>[T10 PİN] Kullanıcı Stop'a basar (motor yok → gönderim <c>TrySendAsync</c>'te sessizce düşer;
