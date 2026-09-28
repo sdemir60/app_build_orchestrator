@@ -609,7 +609,7 @@ public class EventStreamTests
     /// sıfırlanıyordu — motor bir Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı
     /// kalır ve BİR SONRAKİ run'ın ilk <c>PushStream</c>'i (burada "Build started") önüne eski bir "N outside
     /// cycle scope — skipped" satırı sızdırır. Fix: <c>RunStartedEvent</c> de sayacı sıfırlar — her yeni
-    /// run/segment temiz başlar.</summary>
+    /// run temiz başlar.</summary>
     [Fact]
     public void A_new_run_does_not_leak_a_stale_out_of_scope_count_from_an_unfinished_cycles_run()
     {

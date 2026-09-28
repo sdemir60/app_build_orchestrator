@@ -6,7 +6,7 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [E5/T46 · K6 birebir] Klavye kısayol semantiğinin SAF karar kapısı (<see cref="KeyboardShortcuts"/>) —
 /// otorite design-v1 <c>BuildApp.jsx:1305-1315</c> + v7 K6. F5'in duruma göre dallanması (Rebuild/Stop/
-/// Continue/Build), Ctrl+F filtre odağı, Esc zincirinin KATMAN sırası ve NEGATİF-PIN'ler (çift-Shift YOK,
+/// Build), Ctrl+F filtre odağı, Esc zincirinin KATMAN sırası ve NEGATİF-PIN'ler (çift-Shift YOK,
 /// Ctrl+P YOK) burada pinlenir. WPF gerekmez (enum'lar WindowsBase) → hızlı [Fact].
 /// </summary>
 public class KeyboardShortcutTests

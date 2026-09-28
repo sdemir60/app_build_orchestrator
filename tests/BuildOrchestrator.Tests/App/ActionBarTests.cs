@@ -732,7 +732,7 @@ public partial class ActionBarTests
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton
-    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a Build/Continue
+    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build
     /// sunulmuş olurdu), etiketi "Stopping…" olur ve <c>StopCommand</c> pasifleştiği için buton disable
     /// olur — ikinci bir tıklama ikinci bir stopRun üretmez. Faz doğrudan set edilir: buraya NASIL
     /// girildiği (StopCommand → gerçek Supervisor) kardeş süitte pinli, burada sürülen GÖRÜNÜM.</summary>

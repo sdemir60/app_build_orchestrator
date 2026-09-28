@@ -276,7 +276,7 @@ public class CleanCommandTests
     }
 
     /// <summary>[design v1.13.2 §9] "Konsol + event stream HER işlemde temizlenir" — Clean de bir işlemdir ve
-    /// <c>SyncCoreAsync(clearBuffers:true)</c> ile AYNI iki metodu tıklama anında çağırır
+    /// <c>SyncCoreAsync(SyncMode.Manual)</c> ile AYNI iki metodu tıklama anında çağırır
     /// (<see cref="RunViewModelStateTests.Sync_clears_the_console_and_stream_left_over_from_the_previous_operation"/>'ın
     /// Clean ikizi). Planın ilk hâli stream'i "mevcut sözleşme" diye koruyordu; o sözleşme v1.13.2 ile değişti.</summary>
     [Fact]
@@ -393,7 +393,7 @@ public class CleanCommandTests
 
         Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
         // Konsol KORUNUR: kullanıcı kendi tetiklediği Clean'in transkriptini Sync satırlarının üstünde görmeye
-        // devam eder (pull'un clearBuffers:false gerekçesi).
+        // devam eder (pull'un SyncMode.Appended gerekçesi).
         Assert.Contains("build state reset", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 

@@ -1113,7 +1113,7 @@ public sealed partial class RunViewModel : ObservableObject
         _ => "run",
     };
 
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
     private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild); // seçim orada düşer (filtre korunur)
     // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
@@ -1130,11 +1130,11 @@ public sealed partial class RunViewModel : ObservableObject
     // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
     // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
     // [clean] Clean uçuştayken de hiçbir run başlatılamaz: silme, MSBuild'in yazdığı bin/obj ile yarışırdı.
-    private bool CanRebuildOrRetry() => CanStartRun() && !WorkspaceBusy;
+    private bool CanStartRunOnIdleWorkspace() => CanStartRun() && !WorkspaceBusy;
 
-    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
-    // (gerekçe CanRebuildOrRetry'ın yorumundadır).
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
+    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanStartRunOnIdleWorkspace'tir: Build de Sync penceresinde bekler
+    // (gerekçe CanStartRunOnIdleWorkspace'in yorumundadır).
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
     private Task BuildAsync() => BeginRunAsync(RunMode.Build); // seçim orada düşer (filtre korunur)
 
     /// <summary>[Clean] Build menüsünün <i>Clean</i> maddesi — Visual Studio'nun <i>Clean Solution</i>'ı: satır
@@ -1144,7 +1144,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<c>Core/Planning/CleanRunScope</c>). Onay sormaz (satır Clean'i ve Visual Studio da sormaz), bitince Sync
     /// zincirlemez; koşu sürerken Stop çalışır. Kapısı Build/Rebuild ile AYNIdır. Bakım kutusunun Clean'inden
     /// (<see cref="CleanCommand"/> — bin/obj silen, MSBuild çağırmayan workspace sıfırlaması) AYRI bir iştir.</summary>
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
     private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
@@ -1157,7 +1157,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// ne kadar.</para>
     ///
     /// <para><see cref="RebuildCommand"/> ile AYNI guard'a tabidir
-    /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
+    /// (<see cref="CanStartRunOnIdleWorkspace"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
     private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles); // seçim orada düşer (filtre korunur)
@@ -1167,7 +1167,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// derlenir: tek projelik kapsamda incremental karar sorulmaz (<c>Core/Planning/ProjectRunScope</c>,
     /// <c>WillBuild = true</c>; ARCHITECTURE §8.1). <see cref="RebuildProjectCommand"/>'dan farkı MSBuild
     /// hedefidir (<c>-t:Build</c> / <c>-t:Rebuild</c>). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI
-    /// (<see cref="CanRebuildOrRetry"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
+    /// (<see cref="CanStartRunOnIdleWorkspace"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
     /// başlatılamaz.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, projectId);
@@ -1185,12 +1185,12 @@ public sealed partial class RunViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task CleanProjectAsync(string? projectId) => BeginRunAsync(RunMode.Clean, projectId);
 
-    private bool CanRunProject(string? projectId) => projectId is not null && CanRebuildOrRetry();
+    private bool CanRunProject(string? projectId) => projectId is not null && CanStartRunOnIdleWorkspace();
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
-    private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
+    private bool CanBuildCycles() => CanStartRunOnIdleWorkspace() && HasCycles;
 
     /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
     /// açan Sync (<see cref="SyncMode.Manual"/>). [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de koşar; bölümün
@@ -2330,7 +2330,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para>Eskiden runStarted görülmüşse burada ERKEN DÖNÜLÜR, faz <c>runCompleted</c>'a bırakılırdı. Bu,
     /// fazın çözülmesini bir OLAY SIRALAMASI varsayımına bağlıyordu ve <c>runCompleted</c>'ın gelmediği her
     /// durumda <c>Stopping</c> asılı kalıyordu (kullanıcı bildirimi). Varsayıma gerek YOKTUR: koordinatör
-    /// <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan sonra yazar (<c>RunSegmentAsync</c>
+    /// <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan sonra yazar (<c>PlanAndRunAsync</c>
     /// finally + <c>_finishing</c> kapısı; sahiplenemediği durumda ise host anında yazar) — bu olay görüldüğünde
     /// koşan bir şey KALMAMIŞTIR. Arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara görüntü oluşmaz;
     /// gelmezse de faz doğru yerde kalır.</para></summary>

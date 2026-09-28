@@ -1295,7 +1295,7 @@ update external working copies (§10.4)            ← before everything: a fast
   → scan (once, main root + every external root)
   → evaluate (cached) → producer map
   → edges → solution map → topological order → BuildPlan
-  → (Build only) incremental pass: per-project signature + willBuild
+  → incremental pass (every mode): per-project signature + willBuild
   → RunPlan { plan, solutionRefs, incremental }
 ```
 

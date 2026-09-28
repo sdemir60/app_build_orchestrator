@@ -160,7 +160,7 @@ public sealed class RunCoordinator(
     // taşımayan (P2 öncesi / harness) run'lar job'a hiç dokunmamalıdır.
     private bool _perfApplied;
     // [Fix round 1 — KÖK 1] PLANLAMA PENCERESİNDE gelmiş perf niyeti. startRun kabul edilir edilmez _runActive
-    // true olur, ama cap ancak plan kurulduktan SONRA (RunSegmentAsync'in apply noktası) uygulanır; 177 projede
+    // true olur, ama cap ancak plan kurulduktan SONRA (PlanAndRunAsync'in apply noktası) uygulanır; 177 projede
     // bu pencere SANİYELERDİR ve perf chip'i o sırada canlıdır. Buraya yazılan niyet run başlarken komuttaki
     // PerfMode'u EZER (kullanıcının SON sözü). Apply noktasında tüketilir; [Fix round 2 — YENİ 1] run
     // kapanışında İKİ kez temizlenir (ReleasePerf + son kilit), çünkü ikisinin arasındaki `await pump`
@@ -203,7 +203,7 @@ public sealed class RunCoordinator(
     /// referansı ya da en son run dizini) yakalanır. Büyük bir proje logunun okunması artık stopRun/startRun
     /// gibi AYNI kilidi paylaşan ilgisiz çağrıları bloklamaz. Doğruluk korunur: <see cref="RunLogWriter"/> kendi
     /// iç kilitlerini (<c>_projectsGate</c>, <c>ProjectLogFile</c>'ın kendi kilidi) taşır — bu metod dönmeden
-    /// SONRA <c>_logs.Dispose()</c> çağrılsa bile (bkz. RunSegmentAsync'in finally'si, dispose HER ZAMAN
+    /// SONRA <c>_logs.Dispose()</c> çağrılsa bile (bkz. PlanAndRunAsync'in finally'si, dispose HER ZAMAN
     /// worker'lar join olduktan sonra ayrı bir noktada yapılır) yakalanan <see cref="RunLogWriter"/> referansı
     /// burada canlı tutulur (GC toplamaz) ve <c>SnapshotProjectLog</c> kendi kilidiyle Dispose ile serileşir —
     /// canlı-writer anlık görüntüsü hâlâ tutarlıdır.</para>
@@ -342,7 +342,7 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [T20-b/K11] KOŞARKEN perf profilini değiştirir (<c>setPerfMode</c>). <b>Canlı değişen YALNIZ CPU cap +
-    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="RunSegmentAsync"/>'in worker
+    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="PlanAndRunAsync"/>'in worker
     /// dizisi) ve dinamik bir slot mekanizması YOKTUR — yeni profilin paralelliği ancak BİR SONRAKİ run'da
     /// geçerli olur. App bu ayrımı kullanıcıya konsol notuyla söyler.
     /// <para>[Fix round 1 — KÖK 1] Cap HENÜZ uygulanmamışken (plan hâlâ kuruluyor) gelen niyet KAYBOLMAZ:
@@ -590,7 +590,7 @@ public sealed class RunCoordinator(
             // [Task 10 fix I2] Açılış kurtarması defter yazımında patladıysa PLANLAMADAN önce yeniden denenir —
             // kesilmiş projenin kaydı geçersizlenmeden planlanırsa yarım çıktısı "güncel" sayılabilirdi.
             if (stateStore is not null) TrackInFlight(ledger => ledger.RetryRecovery(stateStore, DateTimeOffset.UtcNow));
-            await RunSegmentAsync(cmd, events.Writer, ct);
+            await PlanAndRunAsync(cmd, events.Writer, ct);
         }
         catch (Exception ex)
         {
@@ -602,7 +602,7 @@ public sealed class RunCoordinator(
             // [T20-b/K11 · Fix round 1 — minor 2] Cap'i EN BAŞTA geri al. Bu finally run'ın TEK huni
             // noktasıdır (erken planFailed/msbuildNotFound dönüşleri ve beklenmeyen exception dahil); aşağıdaki
             // `await pump` beklenmedik bir şekilde fırlarsa bile uygulanmış bir cap Supervisor ömrü boyunca
-            // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (RunSegmentAsync döndü), yani kısılacak bir
+            // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (PlanAndRunAsync döndü), yani kısılacak bir
             // MSBuild child'ı kalmamıştır.
             ReleasePerf();
             // [spec 2026-09-18 §5.5] Uçuş defteri HER çıkışta boşalır (normal, stop, planFailed, beklenmeyen hata):
@@ -662,7 +662,7 @@ public sealed class RunCoordinator(
         }
     }
 
-    private async Task RunSegmentAsync(StartRunCommand cmd, ChannelWriter<IpcEvent> events, CancellationToken ct)
+    private async Task PlanAndRunAsync(StartRunCommand cmd, ChannelWriter<IpcEvent> events, CancellationToken ct)
     {
         RunPlan runPlan;
         RunLogWriter logs;
@@ -1865,7 +1865,7 @@ public sealed class RunCoordinator(
     /// [Task 7] Yakınsamama hafızasının TEK yazıcısı — <see cref="BuildState.NonConvergentSignature"/>.
     ///
     /// <para><b>YALNIZ <see cref="CycleRoundDecision.NoProgress"/> ⇒ YAZ.</b> TÜM üyelerin alanına o anki
-    /// bileşik imza yazılır; bir sonraki <c>Build</c> aynı imzayı görürse grup <see
+    /// bileşik imza yazılır; bir sonraki <c>Cycles</c> koşusu aynı imzayı görürse grup <see
     /// cref="BuildStateStore.IsCycleNonConvergent"/> ile TANINIR ve decision.log'a bir "retrying" satırı
     /// düşülür — [Task 7 · DEĞİŞEN KURAL] artık BLOKLAMAZ: grup yine dispatch edilir, yalnız RAPORLANIR.
     /// Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır —
@@ -1876,9 +1876,11 @@ public sealed class RunCoordinator(
     /// SIKIŞMA kanıtıdır ve yeniden denemeyi reddetmeyi haklı çıkarır. CapReached ise "hâlâ hareket var ama
     /// BÜTÇE bitti" demektir — kanıt değil, kesinti. Hatırlansaydı tavanın kendi gerekçesi geçersiz olurdu:
     /// tavan "bilgi kaybettirmez, çünkü turlar diskteki duruma göre idempotenttir ve bir sonraki <c>Build</c>
-    /// kaldığı yerden devam eder" diyerek meşrudur, ama pre-skip edilen bir grupta o devam HİÇ gelmez. Tam
-    /// olarak yakınsamakta olan bir grup (tur1 {A,B}, tur2 {A}, tur3 temiz) bir tur kala donar ve tek çıkış
-    /// ilgisiz bir kaynak değişikliği olurdu. Bedel kabul edilmiştir: dört-altı tur isteyen bir döngü,
+    /// kaldığı yerden devam eder" diyerek meşrudur. <b>Tarihçe:</b> hafıza eskiden pre-skip de EDERDİ (bkz.
+    /// Cycles tohumundaki <c>[Task 7 · DEĞİŞEN KURAL]</c> notu) — o dönemde hatırlanan bir CapReached, tam
+    /// olarak yakınsamakta olan bir grubu (tur1 {A,B}, tur2 {A}, tur3 temiz) bir tur kala dondururdu; tek
+    /// çıkış ilgisiz bir kaynak değişikliği olurdu. Kural o riskten kalma — bugün hafıza yalnız RAPORLAR,
+    /// artık bloklamıyor olsa da kural değişmedi. Bedel kabul edilmiştir: dört-altı tur isteyen bir döngü,
     /// oturana dek sonraki birkaç Build'de de turlarını harcar.</para>
     ///
     /// <para><b>Converged (ve CapReached) ⇒ SİL.</b> [M3] Yakınsama hafızayı geçersiz kılar. Bunun ÇOĞU üye için zaten bir yan
@@ -1889,7 +1891,7 @@ public sealed class RunCoordinator(
     /// tuzak. Bu yüzden silme AÇIKÇA burada, hafızanın kendi yazıcısında yapılır (yan etkiye bırakılmaz).</para>
     ///
     /// <para><b>İmza temsilcisi</b> <see cref="CycleGroups.SignatureRepresentative"/>'dendir ve OKUYAN taraf
-    /// (Build'in pre-skip taraması) AYNI yardımcıyı çağırır — iki taraf kendi <c>[0]</c>'ını seçseydi listeler
+    /// (Cycles koşusunun kendi tanıma taraması) AYNI yardımcıyı çağırır — iki taraf kendi <c>[0]</c>'ını seçseydi listeler
     /// farklı sıralı olduğu için üye-başına imzanın ayrıştığı modda farklı imzalara bakarlardı. <b>Safe</b>
     /// (App'in gönderdiği tek mod) modda zaten TÜM üyeler AYNI bileşik imzayı taşır, bu yüzden seçim orada
     /// önemsizdir; <b>Fast</b> modda ise üyeler ortak imza taşımaz (<c>IncrementalPlanner</c> bileşen haritasını
@@ -2339,7 +2341,7 @@ public sealed class RunCoordinator(
         ChannelWriter<IpcEvent> Events,
         IMsBuildInvoker Invoker,
         string MsBuildExePath,
-        // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur; koşu başına TEK birikim, ömrü o
+        // [T54] projectId → depIssues birikimi (PlanAndRunAsync'te kurulur; koşu başına TEK birikim, ömrü o
         // koşuyla sınırlıdır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
         ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.

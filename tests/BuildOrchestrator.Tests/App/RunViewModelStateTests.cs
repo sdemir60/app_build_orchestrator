@@ -217,7 +217,7 @@ public class RunViewModelStateTests
     // yani "stop çalışmıyor" kusurunun daha kötü bir biçimi.
 
     [Fact] // normal akış: uçuştaki child'lar bitti → engine run'ı kapattı
-    public async Task RunCompleted_takes_the_phase_out_of_stopping_and_offers_continue()
+    public async Task RunCompleted_takes_the_phase_out_of_stopping()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
@@ -235,7 +235,7 @@ public class RunViewModelStateTests
     /// az sonra gelecek, faz orada yazılır"), görülmemişse dinlenme fazına düşerdi. Bu, fazın çözülmesini bir
     /// OLAY SIRALAMASI varsayımına bağlıyordu ve kullanıcı "Stop dedim, Stopping'te kaldı" durumunu bildirdi.
     /// <b>Değişme gerekçesi:</b> koordinatör <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan
-    /// sonra yazar (<c>RunSegmentAsync</c>'in finally'si, <c>_finishing</c> kapısı) — yani bu olay görüldüğünde
+    /// sonra yazar (<c>PlanAndRunAsync</c>'in finally'si, <c>_finishing</c> kapısı) — yani bu olay görüldüğünde
     /// koşan bir şey KALMAMIŞTIR. Tek dallı kural, fazın asılı kalma ihtimalini varsayıma değil YAPIYA bağlar;
     /// arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara bir görüntü de oluşmaz.</para></summary>
     [Fact]
@@ -905,7 +905,7 @@ public class RunViewModelStateTests
     /// aynı run dokümanına akıyor ve okuyucuda iki hikâye iç içe geçiyordu. Rebuild'in bu yüzden bloklandığı
     /// zaten yazılıydı; Build'in serbest kalması aynı bedeli ödüyordu.</para>
     ///
-    /// <para>Kapı artık TEK predicate'tir (<c>CanRebuildOrRetry</c> → <c>SyncBusy</c>) ve üç run komutunun
+    /// <para>Kapı artık TEK predicate'tir (<c>CanStartRunOnIdleWorkspace</c> → <c>SyncBusy</c>) ve üç run komutunun
     /// üçünü de kapsar. Sync saniyeler sürdüğü için pratikte görünmez: Sync biter bitmez üçü de geri açılır
     /// (aşağıdaki <c>Sync_completing_reenables…</c> testi).</para>
     /// </summary>

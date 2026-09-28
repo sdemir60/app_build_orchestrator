@@ -11,10 +11,10 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [Task 12] RunViewModel: event → satır/proje durumu, elapsed, log yükleme dikişi, Stop/Continue komut
+/// [Task 12] RunViewModel: event → satır/proje durumu, elapsed, log yükleme dikişi, Stop komut
 /// gönderimi. <see cref="RunViewModel.OnEvent"/> HERHANGİ bir thread'den (test thread'i dahil) doğrudan
 /// çağrılabilir — VM'in kendisi Dispatcher/AvalonEdit türü TAŞIMAZ (UI-thread-agnostic çekirdek).
-/// Determinizm [D8]: sleep/poll yok — Stop/Continue testleri gerçek Supervisor process'i üzerinden
+/// Determinizm [D8]: sleep/poll yok — Stop testleri gerçek Supervisor process'i üzerinden
 /// TaskCompletionSource ile event bekler (EngineHostTests/RunCoordinatorTests ile aynı desen).
 /// </summary>
 public class RunViewModelTests
@@ -852,7 +852,7 @@ public class RunViewModelTests
         Assert.True(vm.BuildCommand.CanExecute(null)); // kullanıcı tekrar deneyebilir
     }
 
-    // ---------------------------------------------------------------- 6) Stop/Continue komut gönderimi (gerçek Supervisor)
+    // ---------------------------------------------------------------- 6) Stop komut gönderimi (gerçek Supervisor)
 
     /// <summary>Stop <c>StopKind.Graceful</c> gönderir: yeni proje dispatch edilmez, uçuştaki child'lar
     /// post-build copy dahil BİTİRİLİR.
@@ -1043,7 +1043,7 @@ public class RunViewModelTests
 
     [Fact] // [Fix wave 3] RunCoordinator.ExecuteRunAsync'in dış catch'i planlama SIRASINDA (runStarted'dan ÖNCE)
            // beklenmedik bir istisnada "runFailed" ErrorEvent'i yayınlar — bu kod eskiden RunEndingErrorCodes'ta
-           // yoktu, bu yüzden IsStarting kalıcı true kalır, Rebuild/Continue sonsuza dek kilitli kalırdı.
+           // yoktu, bu yüzden IsStarting kalıcı true kalır, Rebuild sonsuza dek kilitli kalırdı.
     public async Task RunFailed_error_during_planning_reenables_Rebuild_and_disables_Stop()
     {
         // bkz. yukarıdaki iki test — gerçek (başlatılmış) engine gerekir ki runFailed geldiğinde IsStarting
@@ -1267,7 +1267,7 @@ public class RunViewModelTests
     }
 
     [Fact] // [Fix wave 1, Finding 1 deseniyle tutarlı] CanExecuteChanged GERÇEKTEN ateşlenmeli, yoksa gerçek pencerede buton hiç yeniden sorgulanmaz
-    public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_Stop_and_Continue()
+    public async Task OnEngineExited_raises_CanExecuteChanged_for_Rebuild_and_Stop()
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout); // [B1/F1] gerçek engine BAŞLATILIYOR — bkz. sınıf başındaki sabit
@@ -2482,7 +2482,7 @@ public class RunViewModelTests
         Assert.False(vm.IsStarting);
         // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
         // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir; RebuildCommand artık
-        // buna da bakıyor (CanRebuildOrRetry) — mid-Sync clearBuffers'ın canlı transkripti bozma riskiyle
+        // buna da bakıyor (CanStartRunOnIdleWorkspace) — mid-Sync clearBuffers'ın canlı transkripti bozma riskiyle
         // TUTARLI biçimde burada da engelli kalır.
         Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
@@ -2503,7 +2503,7 @@ public class RunViewModelTests
 
         Assert.False(vm.IsRunning);
         // [Fix wave 1, C2 review Finding 1] Sync HÂLÂ GERÇEKTEN uçuşta (Phase == Syncing, aşağıda doğrulanır) —
-        // RebuildCommand artık _syncInFlight'a da baktığından (CanRebuildOrRetry) burada BİLEREK engelli kalır:
+        // RebuildCommand artık _syncInFlight'a da baktığından (CanStartRunOnIdleWorkspace) burada BİLEREK engelli kalır:
         // run bitmiş olsa da canlı Sync transkripti hâlâ SyncProgressEvent ile büyüyor olabilir.
         Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz

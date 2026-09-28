@@ -54,7 +54,7 @@ public sealed class ReadySetScheduler
     /// <summary>
     /// [T55] Koşu başı pre-skip tohum ctor'u: yeniden planlama/tarama/sıralama YOK. <paramref name="seed"/>
     /// koşunun BAŞINDA zaten karara bağlanmış sonuçları taşır (Build modunda "up to date" pre-skip, Cycles
-    /// modunda kapsam dışı/güncel upstream/güncel SCC — bkz. RunCoordinator.RunSegmentAsync); tohumdaki id'ler
+    /// modunda kapsam dışı/güncel upstream/güncel SCC — bkz. RunCoordinator.PlanAndRunAsync); tohumdaki id'ler
     /// dispatch EDİLMEZ ve bağımlıları için baştan çözülmüş sayılır.
     ///
     /// Cycle/pre-skip DAVRANIŞI korunur: <paramref name="seed"/> bir SCC üyesini zaten taşıyorsa burada YENİDEN

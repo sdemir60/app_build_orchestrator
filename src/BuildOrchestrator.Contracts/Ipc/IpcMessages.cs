@@ -597,6 +597,6 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
     }
 }
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
-/// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
+/// <c>PlanAndRunAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>
 public sealed record BuildPreviewEvent(IReadOnlyList<BuildPreviewItem> Items) : IpcEvent;
