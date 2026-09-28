@@ -7,7 +7,8 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// design v1.3.0 §2.3 "İlk açılış (Sync sonrası)": node'lar DERLEME SIRASIYLA belirir — gecikme =
-/// build-order index × 9ms (max 520ms); dalga üstten alta, soldan sağa akar.
+/// build-order index × 9ms, dalganın tamamı en çok 520ms (büyük grafta aralık daralır); dalga üstten alta, soldan
+/// sağa akar.
 ///
 /// <para><b>Eski iddia:</b> gecikme KATMAN başınaydı (55ms/katman, tavan 330), yani bir bantta 40 düğüm
 /// aynı anda beliriyordu ve dalga "soldan sağa" akmıyordu.</para>
@@ -34,17 +35,30 @@ public class GraphRevealTests
         Assert.Equal(2 * GraphView.RevealStepMs, view.RevealDelayOf("C"));
     }
 
-    /// <summary>Tavan gerçekten uygulanır: 58. düğümden sonrası aynı anda belirir (§2.3 "max 520ms").</summary>
+    /// <summary>
+    /// <b>Dalga grafın TAMAMINA yayılır, tavanda yığılmaz.</b> Tempo 9ms/düğümdür ama dalganın tamamı §2.3'ün
+    /// 520ms'sini aşmaz: büyük grafta aralık daralır ve son düğüm tam tavanda başlar — hiçbir düğüm bir öncekiyle
+    /// aynı anda başlamaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı gözlemi]</b> Eski iddia (<c>Everything_past_the_cap_appears_together</c>):
+    /// tavan DÜĞÜM başınaydı — gecikme <c>min(sıra × 9, 520)</c> — ve 58. düğümden sonrası aynı anda belirirdi.
+    /// Gerçek çalışma alanında (184 proje) bu, düğümlerin 126'sı (%68) demekti: ilk bant (Types, 42 proje) akarak
+    /// seriliyor, Business'ın ortasından sonrası ile Orchestration, UI ve Other bantları TEK karede "pat" diye
+    /// geliyordu. Toplam süre ve 58 düğüme kadarki tempo aynı kaldı.</para>
+    /// </summary>
     [StaFact]
-    public void Everything_past_the_cap_appears_together()
+    public void The_wave_spreads_over_the_whole_graph_instead_of_piling_up_at_the_cap()
     {
         var (nodes, edges) = SyntheticGraph.Build(200, 6, 1.6);
         var view = GraphTestView.Realized(new Size(900, 520), () => true);
         view.SetGraph(nodes, edges);
 
-        Assert.Equal(GraphView.RevealDelayCapMs, view.RevealDelayOf(nodes[100].Name));
-        Assert.Equal(GraphView.RevealDelayCapMs, view.RevealDelayOf(nodes[199].Name));
-        Assert.True(view.RevealDelayOf(nodes[10].Name) < GraphView.RevealDelayCapMs);
+        var delays = nodes.Select(n => view.RevealDelayOf(n.Name)!.Value).ToList();
+        Assert.Equal(0.0, delays[0]);
+        Assert.Equal(GraphView.RevealDelayCapMs, delays[^1], 6); // dalga tavanda BİTER
+        for (int i = 1; i < delays.Count; i++)
+            Assert.True(delays[i] > delays[i - 1],
+                $"{i}. düğüm {i - 1}. düğümle aynı anda başlıyor ({delays[i]:0.###} ms) — dalga yığılıyor");
     }
 
     /// <summary>Beliriş GERÇEKTEN oynar: gecikme boyunca opaklık 0 tutulur ve düğüm 5px yukarıdan gelir.</summary>

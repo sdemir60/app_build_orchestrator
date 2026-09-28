@@ -35,11 +35,13 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public partial class GraphView : UserControl
 {
-    /// <summary>[quiet] Açılış dalgasında DÜĞÜM başına gecikme (§2.3: "gecikme = build-order index × 9ms").
+    /// <summary>[quiet] Açılış dalgasının TEMPOSU: düğüm başına en fazla bu kadar gecikme (§2.3: "gecikme =
+    /// build-order index × 9ms"); büyük grafta aralık daralır, bkz. <see cref="RevealStaggerMs"/>.
     /// <b>Eski kural KATMAN başınaydı</b> (55ms/katman, tavan 330) — v1.3.0 dalgayı derleme sırasına bağladı,
     /// yani dalga üstten alta VE soldan sağa akar.</summary>
     public const double RevealStepMs = 9.0;
-    /// <summary>Dalganın tavanı (§2.3: "max 520ms") — 58. düğümden sonrası aynı anda belirir.</summary>
+    /// <summary>Dalganın tavanı (§2.3: "max 520ms") — son düğüm en geç bu anda başlar. Tavan DALGAYI sınırlar,
+    /// tek tek düğümü kelepçelemez (bkz. <see cref="RevealStaggerMs"/>).</summary>
     public const double RevealDelayCapMs = 520.0;
     /// <summary>Bir düğümün beliriş süresi (prototip <c>bo-reveal .3s</c>). [W2 fix-1] Değer
     /// <see cref="RevealStagger.RevealMs"/>'in derleme-zamanı ALIAS'ıdır — liste satırıyla (ProjectRow) ASLA
@@ -1587,11 +1589,28 @@ public partial class GraphView : UserControl
 
     // ---------------------------------------------------------------- ilk açılış dalgası
 
+    /// <summary>
+    /// Açılış dalgasında iki ardışık düğüm arasındaki gecikme: <see cref="RevealStepMs"/>, ama dalganın tamamı
+    /// <see cref="RevealDelayCapMs"/>'yi aşmaz — büyük grafta aralık daralır (<c>tavan / (n − 1)</c>). Tek düğümde
+    /// gecikme yoktur. Marking ve neon dalgalarıyla (<see cref="MarkingChoreography.StaggerMs"/>,
+    /// <see cref="EndFinale.StaggerMs"/>) AYNI biçim — tempo, ama zincir tavanı aşmaz; yuvarlanmaz, çünkü
+    /// yuvarlamak büyük grafta tavanı aşardı.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı gözlemi]</b> Tavan eskiden DÜĞÜM başına bir kelepçeydi
+    /// (<c>min(sıra × 9, 520)</c>) ve 58. düğümden sonrası aynı anda beliriyordu: 184 projelik gerçek çalışma
+    /// alanında düğümlerin %68'i — ilk bant akarken alttaki bantlar tek karede "pat" diye geliyordu. 58 düğüme
+    /// kadar tempo ve dalganın toplam süresi değişmedi.</para>
+    /// </summary>
+    internal static double RevealStaggerMs(int count) =>
+        count > 1 ? Math.Min(RevealStepMs, RevealDelayCapMs / (count - 1)) : 0;
+
     /// <summary>Bir düğümün beliriş gecikmesi: BUILD-ORDER indeksinden (besleme sırası), katmandan DEĞİL.
     /// Dalga bu yüzden grafın okuma yönünü (üstten alta, soldan sağa) izler — bantlar da build-order'a göre
     /// dizildiği için ikisi aynı sırayı verir.</summary>
-    internal static double RevealDelayMs(int buildOrderIndex) =>
-        Math.Min(buildOrderIndex * RevealStepMs, RevealDelayCapMs);
+    /// <param name="buildOrderIndex">Düğümün besleme sırasındaki yeri.</param>
+    /// <param name="count">Dalgadaki düğüm sayısı — aralığı o belirler (<see cref="RevealStaggerMs"/>).</param>
+    internal static double RevealDelayMs(int buildOrderIndex, int count) =>
+        buildOrderIndex * RevealStaggerMs(count);
 
     private void PlayRevealStagger()
     {
@@ -1599,7 +1618,7 @@ public partial class GraphView : UserControl
         // damgalanır ve hero alınmaya çalışılır. Başka bir hero sürerken dekoratif dalga ATLANIR.
         var (animate, gen) = _reveal.Begin(AnimationsEnabledProvider(), ActiveHeroCoordinator, RevealHeroKey);
 
-        double maxDelay = RevealDelayMs(Math.Max(0, _slotOrder.Count - 1));
+        double maxDelay = RevealDelayMs(Math.Max(0, _slotOrder.Count - 1), _slotOrder.Count);
 
         for (int index = 0; index < _slotOrder.Count; index++)
         {
@@ -1613,7 +1632,7 @@ public partial class GraphView : UserControl
                 continue;
             }
 
-            double delay = RevealDelayMs(index);
+            double delay = RevealDelayMs(index, _slotOrder.Count);
             visual.RevealDelayMs = delay;
             ApplyRevealTo(visual, delay);
         }
