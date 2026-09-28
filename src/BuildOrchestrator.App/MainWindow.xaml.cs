@@ -1223,7 +1223,8 @@ public partial class MainWindow : Window
         if (_closeBalloon.ClaimShow()) _tray?.ShowClosedToTrayNotification();
     }
 
-    /// <summary>[E2/T16] Autostart ile açılış: pencere GÖSTERİLMEDEN tepside (gizli) başlar. HWND'i erkenden
+    /// <summary>[E2/T16 · P4] Windows ile açılış (<c>--autostart</c>) ve Start minimized to tray açık: pencere
+    /// GÖSTERİLMEDEN tepside (gizli) başlar (kararı <see cref="StartupArgs.Decide"/> verir). HWND'i erkenden
     /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
     /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
