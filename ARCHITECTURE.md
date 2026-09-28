@@ -3083,8 +3083,10 @@ that state. The root is still applied because it is local state that persists, a
 engine returns carries it.
 
 A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
-required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
-starts there anyway and the note would be noise.
+required` — and the old repository's state goes with it: the rows fall back to hollow, the plan surface empties
+(§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
+branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
+anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
