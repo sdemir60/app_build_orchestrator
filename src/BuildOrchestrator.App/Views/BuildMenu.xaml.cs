@@ -49,7 +49,8 @@ public partial class BuildMenu : UserControl
     /// <summary>[test yüzeyi] O anki (VM durumundan türetilmiş) menü modeli — koşullu maddeler + F5 rozetinin yeri.</summary>
     internal IReadOnlyList<BuildMenuItem> Items { get; private set; } = [];
 
-    /// <summary>[test yüzeyi] Çizilmiş satırlar — pasif maddenin (Clean) enable/tooltip durumu buradan okunur.</summary>
+    /// <summary>[test yüzeyi] Çizilmiş satırlar — enable/hover/tooltip durumu buradan okunur, tıklama kablajı
+    /// buradan sınanır.</summary>
     internal IEnumerable<Border> Rows => PART_Rows.Children.Cast<Border>();
 
     /// <summary>[D6] Menü her açılışında 140ms pop-in (BuildApp.jsx:33) — ActionBar, IsMenuOpen true olunca çağırır.</summary>
@@ -74,8 +75,9 @@ public partial class BuildMenu : UserControl
     /// Build zaten stale set'i (değişen + hatalı + hiç derlenmemiş + hatalıların bağımlıları) derler, iki
     /// yüzey aynı işi sunuyordu. Menü KOŞULSUZDUR: her fazda aynı üç madde, aynı açıklamalar; F5 rozeti de
     /// her fazda Build'de kalır. Tek değişken <paramref name="total"/>'dir (Rebuild'in açıklaması).</para>
-    /// <para>[design v1.11.0 §2.7-11] Üçüncü madde <b>Clean</b>'dir: VS'in <i>Clean Solution</i>'ı — yalnız
-    /// <c>msbuild /t:Clean</c>, cache'lere dokunmaz. Bakım kutusundaki DERİN Clean'in yerine GEÇMEZ.</para></summary>
+    /// <para>[design v1.11.0 §2.7-11] Üçüncü madde <b>Clean</b>'dir: VS'in <i>Clean Solution</i>'ı — grafın her
+    /// projesinde yalnız <c>msbuild /t:Clean</c>, cache'lere dokunmaz (<see cref="RunViewModel.CleanAllCommand"/>).
+    /// Bakım kutusundaki DERİN Clean'in yerine GEÇMEZ.</para></summary>
     internal static IReadOnlyList<BuildMenuItem> ComposeItems(int total)
     {
         // [About] Rozet metni ARTIK literal DEĞİL: ShortcutCatalog jesti bağlama tablosundan türetir, böylece
@@ -144,19 +146,9 @@ public partial class BuildMenu : UserControl
             Child = grid,
         };
         row.SetResourceReference(Border.CornerRadiusProperty, "Radius.Sm");
-        // [design v1.11.0 §2.7-11] Bu maddenin arka ucu henüz yazılmadı: madde yerinde durur, PASİFTİR ve
-        // tooltip nedeni söyler. Hover zemini de takılmaz — tıklanabilirmiş gibi görünmesi, basılıp hiçbir
-        // şey olmamasından daha kötü olurdu. (Bakım kutusundaki Clean DERİN Clean'dir ve motoru VARDIR; bu
-        // madde Visual Studio'nun /t:Clean'i, ayrı bir iş — bkz. AccessibilityNames.CleanSolutionTooltip.)
-        if (item.Kind == "clean")
-        {
-            row.IsEnabled = false;
-            row.Opacity = DisabledOpacity;
-            row.Cursor = Cursors.Arrow;
-            row.ToolTip = AccessibilityNames.CleanSolutionTooltip;
-            ToolTipService.SetShowOnDisabled(row, true); // pasif kontrolde WPF tooltip'i varsayılan olarak saklar
-            return row;
-        }
+        // [Clean] Clean, Visual Studio'nun Clean Solution'ıdır ve açıklaması satıra sığmayan kapsamını (MSBuild
+        // hedefi, cache'ler) tooltip'te söyler — bakım kutusunun DERİN Clean'iyle karışmasın diye.
+        if (item.Kind == "clean") row.ToolTip = AccessibilityNames.CleanSolutionTooltip;
         HoverBackground.Attach(row);
         string kind = item.Kind;
         row.MouseLeftButtonUp += (_, _) => Invoke(kind);
@@ -169,6 +161,7 @@ public partial class BuildMenu : UserControl
         {
             "build" => _vm?.BuildCommand,
             "rebuild" => _vm?.RebuildCommand,
+            "clean" => _vm?.CleanAllCommand,
             _ => null,
         };
         ItemInvoked?.Invoke(); // menüyü kapat (BuildApp.jsx her maddede setBuildMenu(false))
@@ -183,8 +176,4 @@ public partial class BuildMenu : UserControl
         "clean" => "Icon.Brush",     // :2417 <I.brush/>
         _ => "Icon.Play",            // build <I.play/>
     };
-
-    /// <summary>Pasif menü maddesinin opaklığı — prototipte satır menüsünün <c>busy</c> hâliyle aynı değer
-    /// (design-v1.11.0 BuildApp.jsx:609 <c>opacity: busy ? 0.45 : 1</c>).</summary>
-    internal const double DisabledOpacity = 0.45;
 }

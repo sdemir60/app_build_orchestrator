@@ -106,8 +106,14 @@ public static class StreamText
     }
 
     /// <summary>build-data.js:309 — <c>Build started — {n} projects, parallelism {p}</c>.</summary>
-    public static string BuildStarted(int projects, int parallelism) =>
-        string.Format(CultureInfo.InvariantCulture, "Build started — {0} projects, parallelism {1}", projects, parallelism);
+    public static string BuildStarted(int projects, int parallelism) => RunStarted("Build", projects, parallelism);
+
+    /// <summary>[Clean] Build menüsünün Clean'inin (kapsamsız <c>RunMode.Clean</c>) açılış satırı —
+    /// <see cref="BuildStarted"/>'ın biçimi, fiili ise işin kendisi: bu koşu hiçbir şey derlemez.</summary>
+    public static string CleanStarted(int projects, int parallelism) => RunStarted("Clean", projects, parallelism);
+
+    private static string RunStarted(string verb, int projects, int parallelism) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} projects, parallelism {2}", verb, projects, parallelism);
 
     /// <summary>[tek proje · design §3.8] Satırdan tetiklenen koşunun açılış satırı — prototip
     /// (<c>build-data.js</c> <c>_startProjectNow</c>: <c>Build — {name} (single project)</c>) ile aynı

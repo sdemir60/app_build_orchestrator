@@ -1,9 +1,9 @@
 using System.Windows;
-using System.Windows.Controls;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
 
 namespace BuildOrchestrator.Tests.App;
@@ -18,8 +18,9 @@ namespace BuildOrchestrator.Tests.App;
 /// Rebuild'i kendi ailesinin rotate-cw'sine (<c>Icon.Rebuild</c>) taşıdı — eski iddiayı pinleyen testler bu
 /// dosyada YENİ kurala göre yeniden yazıldı.</para>
 ///
-/// <para><b>Clean'in arka ucu henüz yazılmadı</b> (bakım kutusundaki Clean/Optimize ile aynı karar): madde
-/// tasarımdaki yerinde durur, pasiftir ve tooltip nedenini söyler.</para>
+/// <para><b>Clean</b> Visual Studio'nun <i>Clean Solution</i>'ıdır: satır menüsündeki Clean bir proje için ne
+/// yapıyorsa bunu grafın TÜM projeleri için yapar — kapsamsız bir <c>RunMode.Clean</c> koşusu. Madde Build ve
+/// Rebuild gibi çizilir ve aynı kapıdan geçer.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class BuildMenuTests
@@ -56,21 +57,62 @@ public class BuildMenuTests
         Assert.Equal("Icon.Brush", BuildMenu.IconKeyFor("clean"));
     }
 
-    /// <summary>Arka ucu olmayan madde pasif çizilir ve nedeni tooltip'te durur — bakım kutusunun
-    /// Clean/Optimize düğmeleriyle AYNI karar (basılıp hiçbir şey olmaması yokluğu sessizce gizlerdi).</summary>
+    /// <summary>
+    /// Clean, kardeşleri gibi CANLI çizilir: etkin, el imleci, tam opaklık ve aynı hover zemini. Tooltip işi
+    /// adlandırır — motor proje başına koşar, bu yüzden "every project" der (solution düzeyinde bir MSBuild
+    /// izlenimi verilmez, ARCHITECTURE §13.2).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-28]</b> Eski ad/iddia:
+    /// <c>Clean_is_drawn_disabled_with_a_reason_in_its_tooltip</c> — madde pasifti (0.45 opaklık, hover yok) ve
+    /// tooltip <c>"… on every solution; caches are untouched — not available yet"</c> diyordu, çünkü arka ucu
+    /// yazılmamıştı. Değişme gerekçesi: motor yazıldı — madde kapsamsız bir <c>RunMode.Clean</c> koşusu
+    /// gönderir (<see cref="Picking_clean_sends_an_unscoped_clean_run_and_closes_the_menu"/>); pasif çizmek artık
+    /// var olan bir işi gizlerdi.</para>
+    /// </summary>
     [StaFact]
-    public void Clean_is_drawn_disabled_with_a_reason_in_its_tooltip()
+    public void Clean_is_drawn_live_like_its_siblings_and_its_tooltip_names_the_job()
     {
         var vm = NewVm();
         var (menu, window) = Realize(vm);
 
         var rows = menu.Rows.ToList();
         Assert.Equal(3, rows.Count);
-        Assert.True(rows[0].IsEnabled);
-        Assert.True(rows[1].IsEnabled);
-        Assert.False(rows[2].IsEnabled);
-        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.CleanSolutionTooltip, rows[2].ToolTip);
-        Assert.True(ToolTipService.GetShowOnDisabled(rows[2])); // pasif kontrolde WPF tooltip'i saklardı
+        Assert.All(rows, r => Assert.True(r.IsEnabled));
+        Assert.All(rows, r => Assert.Equal(System.Windows.Input.Cursors.Hand, r.Cursor));
+        Assert.All(rows, r => Assert.Equal(1.0, r.Opacity));
+        Assert.All(rows, r => Assert.IsType<System.Windows.Media.SolidColorBrush>(r.Background)); // hover zemini takılı
+        string tooltip = Assert.IsType<string>(rows[2].ToolTip);
+        Assert.Equal(BuildOrchestrator.App.AccessibilityNames.CleanSolutionTooltip, tooltip);
+        Assert.Equal("Clean — msbuild /t:Clean on every project; caches are untouched", tooltip);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Clean maddesi kapsamsız bir <c>RunMode.Clean</c> koşusu gönderir (<c>ScopeProjectId = null</c> — grafın
+    /// tamamı) ve menüyü kapatır. Kablaj GERÇEK fare olayıyla sınanır. Pill <c>CLEAN</c> yazar; konsol notu
+    /// hedef adı TAŞIMAZ (tam koşu).
+    /// </summary>
+    [StaFact]
+    public void Picking_clean_sends_an_unscoped_clean_run_and_closes_the_menu()
+    {
+        var vm = NewVm();
+        VmTopology.Seed(vm, @"C:\p\a.csproj", @"C:\p\b.csproj");
+        var (menu, window) = Realize(vm);
+        bool closed = false;
+        menu.ItemInvoked += () => closed = true;
+        StartRunCommand? sent = null;
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent = s; };
+
+        menu.Rows.ToList()[2].RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(
+            System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+        { RoutedEvent = UIElement.MouseLeftButtonUpEvent });
+
+        Assert.True(closed);
+        Assert.NotNull(sent);
+        Assert.Equal((RunMode.Clean, (string?)null), (sent!.Mode, sent.ScopeProjectId));
+        Assert.Equal(OperationLabel.Clean, vm.CurrentOperation);
+        string console = vm.GetRunDocumentText();
+        Assert.Contains("clean requested", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("single project", console, StringComparison.Ordinal);
         GC.KeepAlive(window);
     }
 }

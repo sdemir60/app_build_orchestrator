@@ -57,11 +57,16 @@ public static class NextPreview
         evidence ? WillBuildReason.LastFailed : WillBuildReason.NeverBuilt;
 
     /// <summary>
-    /// Proje BU KOŞUDA başarıyla TEMİZLENDİ. Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor
-    /// defter kaydını siler (<c>BuildStateStore.Remove</c>) ve kayıt yoksa <see cref="WillBuildEvaluator"/>
-    /// <see cref="WillBuildReason.NeverBuilt"/> okur.
+    /// Proje BU KOŞUDA temizlendi — ya da temizliği patladı. İki yolda da defterde bu projenin başarısı kalmaz:
+    /// Clean'in başarısı "derlendi" değil "çıktıları silindi"dir ve motor kaydı siler (<c>BuildStateStore.Remove</c>);
+    /// patlayan bir <c>-t:Clean</c> derleyiciyi hiç çağırmadığı için kanıt sayılmaz ve kayıt kanıtsız hata olur.
+    /// <see cref="WillBuildEvaluator"/> ikisini de <see cref="WillBuildReason.NeverBuilt"/> okur. <c>WillBuild</c>
+    /// bir sonraki DÜZ Build'in cevabıdır: döngü üyesi onun kapsamı dışında olduğu için <c>false</c>, diğer her
+    /// proje <c>true</c>. Koşullu değildir. Clean koşusunun kendi önizlemesi bu bayrağı YAZMAZ (her projeye
+    /// <c>true</c> verir, çünkü o koşu hepsini temizler) — bayrağı sonuç buradan yazar.
     /// </summary>
-    public static WillBuildReason AfterClean => WillBuildReason.NeverBuilt;
+    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterClean(bool inCycle) =>
+        (!WillBuildEvaluator.OutOfScope(inCycle, buildCycles: false), WillBuildReason.NeverBuilt, false);
 
     /// <summary>
     /// Configuration değişti: configuration imzaya girer, yani imza her kayıtta değişir. Kaydında bir başarı olan
