@@ -32,7 +32,9 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 - **Nested Job Object:** App outer job sahibi, Supervisor içinde, `MSBuild.exe` inner job'da. Managed
   parent-watcher / PID heuristiği yok.
 - **OutDir'e dokunulmaz.** Hiçbir çıktı yolu değiştirilmez (ne `OutDir` ne `obj`); her koşu çalışma ağacında
-  derlenir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
+  derlenir. Araç OutDir'e kendisi hiçbir şey yazmaz, kopyalamaz, silmez. Tek istisna kullanıcının bastığı
+  Clean'dir (satır menüsündeki ve Build menüsündeki `-t:Clean`): MSBuild projenin kendi kaydettiği çıktıları
+  oradan da siler — Visual Studio'nun Clean'i gibi; bu kural ihlali değildir. Araç kendi derlediği projede yalnız DİSKTEKİ kaynak İÇERİĞİNE bakar; başkasının (ör. VS'nin)
   derlediği çıktıda tarihlere bakılır; çıktının tarihi tek başına "güncel" demeye asla yetmez. Sürüm kontrolü
   karara girmez (git yalnız fetch, branch, checkout ve harici güncelleme içindir); kaynak dosyanın boyut+mtime
   bilgisi içerik kararında yalnız özet önbelleğinin anahtarıdır. Harici köklerden gelen projeler sıradan
