@@ -122,10 +122,12 @@ public enum DependentMode { Safe, Fast }
 /// kümedir; eski NDJSON satırları alansız çözülür.
 /// <para>Dolu iken motor planı TEK düğüme indirger (<c>Core.Planning.ProjectRunScope</c>): bağımlılıklar
 /// DERLENMEZ, kapsam dışı projeler koşuya hiç girmez (skip satırı yok, sayaç yok). Hedef tam koşuyla AYNI
-/// motor yolundan geçer — Build modunda incremental kural, Rebuild'de koşulsuz. Bayat (kirli) bağımlılıklar
-/// dep-issue olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu
-/// bayat bir DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi
-/// derlenir; döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// motor yolundan geçer ama incremental karar sorulmaz: Build'de de Rebuild'de de güncel olsa da derlenir
+/// (<c>WillBuild = true</c>, ARCHITECTURE §8.1); ikisini MSBuild hedefi ayırır (<c>-t:Build</c> /
+/// <c>-t:Rebuild</c>). Clean'de hedefte <c>-t:Clean</c> koşar. Bayat (kirli) bağımlılıklar dep-issue
+/// olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu bayat bir
+/// DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi derlenir;
+/// döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
 /// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
 /// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür.</remarks>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,

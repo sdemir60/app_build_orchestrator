@@ -125,8 +125,9 @@ public partial class App : Application
         // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
         _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
 
-        // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside temiz başlar (oto-Sync YOK — normal
-        // açılışta da yok); aksi halde bugünkü davranış (normal göster). Karar yukarıdaki TEK dikişten gelir.
+        // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside başlar; aksi halde bugünkü davranış
+        // (normal göster). İki yolda da açılışın Sync'i motor hazır olunca koşar (RunViewModel.OnEngineReady).
+        // Karar yukarıdaki TEK dikişten gelir.
         if (route == StartupRoute.StartInTray) window.StartInTray();
         else window.Show();
     }

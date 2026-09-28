@@ -192,12 +192,11 @@ public sealed partial class RunViewModel
     ///
     /// <para>(a) <b>Koşu ya da workspace işi uçuşta</b> (<see cref="WorkspaceIdle"/> değil): katmanlar yine uygulanır
     /// ama kök DEĞİŞMEZ ve Sync GİTMEZ — koşan bir build'in ya da uçuştaki bir Sync/Clean/Optimize/checkout/pull'un
-    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu. Bekleyen GERÇEK bir kök
-    /// değişimi varsa konsola TEK satır düşer (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi
-    /// seçimi "Change…" anında ONAYLAMIŞ olur (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya
-    /// yalan söylerdi. Değişim yoksa satır
-    /// YAZILMAZ — katman-only bir Save'de gürültü olurdu. [final review M3] Eskiden kapı yalnız koşuyu soruyordu:
-    /// pull uçuşken Save ikinci bir Sync gönderirdi.</para>
+    /// kökünü altından çekmek doğru değildir, ikinci bir Sync de çift Sync olurdu. Bekleyen GERÇEK bir kök değişimi
+    /// varsa konsola TEK satır düşer (<see cref="RepositoryChangeDeferredLine"/>): diyaloğun yol etiketi seçimi
+    /// "Change…" anında ONAYLAMIŞ olur (etiket taslaktan okur), dolayısıyla sessiz bir düşürme kullanıcıya yalan
+    /// söylerdi. Değişim yoksa satır YAZILMAZ — katman-only bir Save'de gürültü olurdu. [final review M3] Eskiden kapı
+    /// yalnız koşuyu soruyordu: pull uçuşken Save ikinci bir Sync gönderirdi.</para>
     ///
     /// <para>(b) <b>Kök yok</b>: gidecek bir kök yoksa Sync anlamsızdır. Bu kapı <see cref="ApplyRepositoryRoot"/>
     /// çağrısından SONRA gelmek ZORUNDADIR — ilk repo Settings'ten seçildiğinde <see cref="RootPath"/> tam da
@@ -207,7 +206,7 @@ public sealed partial class RunViewModel
     ///
     /// <para>(c) <b>Motor erişilemez</b> (<see cref="IsEngineUnavailable"/>): Sync GİTMEZ. Gerekçe orada
     /// yazılıdır — gönderim zaten hataya düşer ve şeritteki KALICI mesajla çelişen ikinci bir hata satırı
-    /// üretirdi; Sync/Build/Rebuild/Retry/Continue düğmelerinin o durumda devre dışı kalmasıyla AYNI mantık.
+    /// üretirdi; Sync/Build/Rebuild düğmelerinin o durumda devre dışı kalmasıyla AYNI mantık.
     /// Save bir düğme DEĞİLDİR (CanExecute'la kapatılamaz), bu yüzden kapı metodun İÇİNDE durur. Katmanlar ve
     /// kök yine de uygulanır: ikisi de motora dokunmaz, kök kalıcı duruma yazılır (UiState.RepositoryRoot) ve
     /// motor geri geldiğinde ilk Sync onu taşır — motorun yokluğu bir kök seçimini YANLIŞ yapmaz.</para></summary>

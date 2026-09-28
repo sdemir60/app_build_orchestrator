@@ -7,7 +7,7 @@ using System.Windows.Media.Animation;
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [T59] `⌄ latest` pill görsel kontrolü — konsol + (ileride) event stream ORTAK kullanır (design-v1 §2.5/§2.6).
+/// [T59] `⌄ latest` pill görsel kontrolü — konsol ve event stream ORTAK kullanır (design-v1 §2.5/§2.6).
 /// Görünürlük/tıklama davranışı host'a (ör. ConsoleView) aittir; bu control yalnız görsel + <see cref="Click"/>.
 /// </summary>
 public partial class LatestPill : UserControl

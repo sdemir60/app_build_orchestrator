@@ -45,8 +45,8 @@ public sealed class TrayMenuTests
         Assert.False(StopItem(menu).IsEnabled);
     }
 
-    /// <summary>Madde koşu boyunca komutu TAKİP eder: run başlayınca etkinleşir, Stop'a basılıp faz
-    /// <see cref="AppPhase.Stopping"/>'e geçince (ikinci bir <c>stopRun</c> önlenir diye) yeniden pasifleşir —
+    /// <summary>Madde koşu boyunca komutu TAKİP eder: run başlayınca etkinleşir, Stop'a basılmış gibi faz
+    /// <see cref="AppPhase.Stopping"/>'e alınınca (ikinci bir <c>stopRun</c> önlenir diye) yeniden pasifleşir —
     /// ActionBar'ın Stop düğmesiyle AYNI kural (<c>CanStop = (IsRunning || IsStarting) && Phase != Stopping</c>).</summary>
     [StaFact]
     public void Tray_stop_follows_the_stop_command_through_a_run()

@@ -29,7 +29,7 @@ public class SplitButton : Control
         => DefaultStyleKeyProperty.OverrideMetadata(
             typeof(SplitButton), new FrameworkPropertyMetadata(typeof(SplitButton)));
 
-    /// <summary>Sol yarımın içeriği (BuildApp.jsx:1593 — ikon + "Build"/"Continue").</summary>
+    /// <summary>Sol yarımın içeriği (BuildApp.jsx:1593 — ikon + "Build").</summary>
     public static readonly DependencyProperty PrimaryContentProperty = DependencyProperty.Register(
         nameof(PrimaryContent), typeof(object), typeof(SplitButton));
 

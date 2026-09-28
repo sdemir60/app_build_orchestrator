@@ -9,7 +9,8 @@ internal enum StartupRoute
     ShowWindow,
 
     /// <summary>[E2/T16] <c>--autostart</c>: pencere GÖSTERİLMEDEN tepside (gizli) başlar
-    /// (<see cref="MainWindow.StartInTray"/>). Oto-Sync YOKtur — normal açılışta da yok.</summary>
+    /// (<see cref="MainWindow.StartInTray"/>). Açılışın Sync'i normal açılıştaki gibi motor
+    /// hazır olunca koşar (<c>RunViewModel.OnEngineReady</c>).</summary>
     StartInTray,
 
     /// <summary>[T65/K9] <c>--font-ab</c>: font A/B karar penceresi. DI/EngineHost kurulmaz, Supervisor spawn

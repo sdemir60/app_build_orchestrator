@@ -17,9 +17,9 @@ public sealed partial class RunViewModel
     private readonly StreamComposer _stream = new();
     // BuildApp.jsx:677 — ilk newest satır daktilo ETMEZ (prevNewest==null); sonrakiler (fırtına/hata değilse) eder.
     private bool _streamHadNewest;
-    // [D3 §2] "Build started"/"Continue" anlatı satırı RunStarted'dan BuildPreview'a ERTELENİR — will-build sayısı
+    // [D3 §2] koşunun başlangıç anlatı satırı ("Build started" ailesi) RunStarted'dan BuildPreview'a ERTELENİR — will-build sayısı
     // (RunStartedEvent.TotalProjects DEĞİL, o skip'leri de sayar) ancak BuildPreview işlendikten SONRA hazırdır.
-    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (Continue re-emit'te çift satır olmaz).
+    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır).
     private RunMode? _pendingRunStartMode;
 
     // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
@@ -122,7 +122,7 @@ public sealed partial class RunViewModel
             case RunStartedEvent e:
                 _stream.EndRun(); // yeni koşu/segment: aktif + building sıfırlanır (tampon sayacı KORUNUR)
                 SyncActiveLine();
-                // [D3 §2] "Build started"/"Continue" satırını BuildPreviewEvent'e ERTELE — will-build sayısı orada
+                // [D3 §2] başlangıç satırını ("Build started" ailesi) BuildPreviewEvent'e ERTELE — will-build sayısı orada
                 // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
@@ -228,7 +228,7 @@ public sealed partial class RunViewModel
 
             // [cycle rounds/Task 8] Bir SCC'nin turu başladı — grubun tek ilerleme sinyali. ProjectId LİDERİN
             // id'sidir (satır ona bağlı/tıklanabilir, ok/fail/skip satırlarıyla AYNI desen). Kind=Info: ne
-            // başarı ne hata, BuildStarted/Continue satırlarıyla AYNI amber ▸ anlatı tonu.
+            // başarı ne hata, BuildStarted satırıyla AYNI amber ▸ anlatı tonu.
             case CycleRoundStartedEvent e:
                 // [Task 4] Yeni turun ilerleme takibi kurulur — sayaç 0'dan başlar, grubun İLK ProjectStartedEvent'i
                 // (round-order'daki ilk üye) onu 1'e taşır. [Review fix — Finding 1] Lider id'si de yakalanır —

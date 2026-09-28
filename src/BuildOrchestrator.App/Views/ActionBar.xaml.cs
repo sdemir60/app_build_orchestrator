@@ -565,7 +565,7 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         // Kilit penceresinin TAMAMINDA (running VEYA planlama/starting) Stop göster — StopCommand da o pencerede
-        // etkindir (CanStop = IsRunning || IsStarting). Aksi halde split-button (Build/Continue).
+        // etkindir (CanStop = IsRunning || IsStarting). Aksi halde split-button (Build).
         bool locked = _vm?.IsMidRunLocked ?? false;
         PART_Stop.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
         PART_Split.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;

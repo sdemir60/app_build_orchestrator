@@ -29,7 +29,7 @@ public sealed class UiState
     /// <summary>[T35] Sağ kolon satır split'i (konsol/stream).</summary>
     public double RightPct { get; set; } = 50;
 
-    // ---- İş akışı tercihleri (ileride Settings/action-bar task'larının bağlayacağı yüzey) ----
+    // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar; Autostart'ı yazan UI henüz yok) ----
     public string? RepositoryRoot { get; set; }
     public string? Configuration { get; set; }
 
@@ -41,10 +41,10 @@ public sealed class UiState
     [JsonConverter(typeof(LegacyTolerantStringConverter))]
     public string? PerfMode { get; set; }
 
-    /// <summary>[design v1.9.0 §2.10] Kullanıcının What is new sekmesinde EN SON gördüğü sürüm. Bu değer
-    /// çalışan sürümden farklıysa title bar in ⓘ düğmesinde 5px amber bir nokta durur ve About doğrudan o
-    /// sekmede açılır. Prototipteki <c>localStorage delta-bo-seen-version-v1</c> in karşılığıdır — kalıcı
-    /// durumun tek yeri burasıdır.</summary>
+    /// <summary>[design v1.13.0] Kullanıcının What's new diyaloğunda (<c>NotesDialog</c>) EN SON gördüğü sürüm.
+    /// Çalışan sürümden farklıysa başlık çubuğundaki ✨ What's new düğmesinde 5px amber bir nokta durur; diyalog
+    /// açıldığı anda bu değer yazılır ve nokta söner. Prototipteki <c>localStorage delta-bo-seen-version-v1</c>'in
+    /// karşılığıdır — kalıcı durumun tek yeri burasıdır.</summary>
     public string? SeenVersion { get; set; }
 
     /// <summary>[D7] Settings editörünün katman tanımları (Order/Regex/Name) — Save'de yazılır, startup'ta

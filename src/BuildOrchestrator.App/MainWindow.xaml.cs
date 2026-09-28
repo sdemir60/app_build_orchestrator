@@ -305,7 +305,7 @@ public partial class MainWindow : Window
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
-            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) bu sinyale bağlıdır.
+            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
             // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
             _vm.OnEngineExited(code);
         });
@@ -395,7 +395,7 @@ public partial class MainWindow : Window
         var commandForIntent = new Dictionary<WindowIntent, ICommand>
         {
             [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
-            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Continue/Build (duruma göre)
+            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Build (duruma göre)
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
             [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (her zaman Shortcuts'ta)
             [WindowIntent.ShowNotes] = new RelayCommand(OnNotesRequested),   // Ctrl+F1 → What's new (toggle)
@@ -405,7 +405,7 @@ public partial class MainWindow : Window
             InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
     }
 
-    /// <summary>Çıplak F5: koşarken → Stop, stopped'ta → Continue, aksi → Build (v7 K6). Karar SAF
+    /// <summary>Çıplak F5: koşarken → Stop, koşmayan her durumda → Build (v7 K6). Karar SAF
     /// <see cref="KeyboardShortcuts.Resolve"/>'te; burada yalnız uygulanır (CanExecute reddederse no-op).</summary>
     private void OnF5Pressed() =>
         DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked));
@@ -1222,9 +1222,8 @@ public partial class MainWindow : Window
     /// <summary>[E2/T16] Autostart ile açılış: pencere GÖSTERİLMEDEN tepside (gizli) başlar. HWND'i erkenden
     /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
-    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Oto-Sync YOKtur (normal açılışta da yok — [D7 M3]
-    /// RepositoryRoot açılışta SEED edilir/hatırlanır ama SEED-BUT-IDLE: doğrudan RootPath set'i yalnız Empty→Boot
-    /// sürer, Sync tetiklemez; autostart yolu bugünkü "temiz" başlangıcı tepside korur).</summary>
+    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
+    /// olunca koşar (<c>RunViewModel.OnEngineReady</c>); RepositoryRoot'un seed'i ([D7 M3]) kendisi komut göndermez.</summary>
     public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
@@ -1236,7 +1235,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Tepsi → Exit: GERÇEK çıkış. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
-    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>dotnet build</c> child'ları.</summary>
+    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>MSBuild.exe</c> child'ları.</summary>
     private void ExitApplication()
     {
         _exiting = true;
