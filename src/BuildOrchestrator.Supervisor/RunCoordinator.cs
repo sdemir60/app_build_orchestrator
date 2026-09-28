@@ -665,10 +665,9 @@ public sealed class RunCoordinator(
         RunPlan runPlan;
         RunLogWriter logs;
         RunClock clock;
-        // [cycle rounds] Scheduler'ın TOHUMU: resume'da devralınan snapshot, Build'de "up to date" pre-skip
-        // tohumu, aksi halde null (taze, tohumsuz). Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir
-        // yerde kurulur — üç ayrı kurulum, üçünde de aynı CycleGroups'u vermeyi unutmaya açıktı (kopya YASAK).
-        RunSnapshot? schedulerSeed = null;
+        // [cycle rounds] Scheduler'ın TOHUMU: Build/Cycles'ta "up to date" pre-skip tohumu, aksi halde null
+        // (taze, tohumsuz). Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir yerde kurulur (kopya YASAK).
+        Dictionary<string, BuildResult>? schedulerSeed = null;
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
@@ -813,7 +812,7 @@ public sealed class RunCoordinator(
                     seed[n.Id] = BuildResult.Skipped;
                     upToDateSkips.Add((n.Id, SkipReasons.UpToDate, CycleUnconverged: false));
                 }
-                if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
+                if (seed.Count > 0) schedulerSeed = seed;
             }
             elapsedAtStart = 0;
             clock = new RunClock(nowMs);
@@ -955,8 +954,9 @@ public sealed class RunCoordinator(
             void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false) =>
                 ReportSkipped(events, logs, cmd.RunId, projectId, nodeById[projectId].Name, reason, cycleUnconverged);
 
-            // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
-            // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
+            // Cycle üyeleri (construction anında Skipped) — PreSkipped: Rebuild/Build'de döngü üyelerini taşır
+            // ("in dependency cycle"; Build tohumu SCC üyelerini hiç taşımaz), Cycles'ta boştur (gruplar
+            // turlarla derlenir — BuildCycleGroupAsync), Clean'de boştur (plan döngü işaretsiz, CleanRunScope).
             // Bu liste yalnız "grup DIŞARIDA hiç dispatch edilmedi" pre-skip'ini taşır (kill switch/SCC yok) —
             // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
@@ -1007,17 +1007,17 @@ public sealed class RunCoordinator(
             catch (Exception ex)
             {
                 // Worker'lar normalde fırlatmaz (her proje kendi sonucunu raporlar). Yine de fırlarsa: run ASILI
-                // KALMAZ — aşağıdaki finally snapshot alıp runCompleted yazar; kalanlar Queued olarak raporlanır.
+                // KALMAZ — aşağıdaki finally kalan sayısını okuyup runCompleted yazar; kalanlar Queued olarak raporlanır.
                 Decide(logs, "a worker terminated unexpectedly: " + ex.Message);
             }
         }
         finally
         {
-            // [Kısıt 4] Snapshot ANCAK tüm worker'lar join olduktan sonra alınır (her in-flight proje sonucunu
-            // raporlamıştır) — hem graceful hem hard için. Böylece Queued kesindir, "öldürüldü" ≠ "raporlandı"
-            // belirsizliği yoktur.
+            // [Kısıt 4] Kalan sayısı ANCAK tüm worker'lar join olduktan sonra okunur (her in-flight proje
+            // sonucunu raporlamıştır) — hem graceful hem hard için. Böylece kalan sayısı kesindir, "öldürüldü"
+            // ≠ "raporlandı" belirsizliği yoktur.
             clock.Pause();
-            var snapshotAtEnd = scheduler.TakeSnapshot(clock.ElapsedMs);
+            int unfinished = scheduler.UnfinishedCount;
 
             StopKind? stopKind;
             // _finishing: bundan sonra TryRequestStop sahiplenmez. _stopAcked: runStopped'ı BURADA yazıyoruz,
@@ -1040,10 +1040,10 @@ public sealed class RunCoordinator(
             if (stopKind is not null)
                 events.TryWrite(new RunStoppedEvent(cmd.RunId, WasHard: stopKind == StopKind.Hard));
             events.TryWrite(new RunCompletedEvent(cmd.RunId, outcome, succeeded, failed, skipped,
-                snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
+                unfinished, clock.ElapsedMs, depIssueCount));
             Decide(logs, string.Format(CultureInfo.InvariantCulture,
                 "run {0} finished: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
-                cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
+                cmd.RunId, outcome, succeeded, failed, skipped, unfinished, clock.ElapsedMs, depIssueCount));
 
             // [design v1.7.0 §3.1] Koşu bittiğinde HER ŞEY temizlenir — devredilecek bir segment yoktur.
             // Eskiden Stop/hata sonrası plan/logs/birikimler saklanırdı, çünkü Continue ve RetryFailed AYNI
@@ -1458,10 +1458,11 @@ public sealed class RunCoordinator(
     /// </summary>
     private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
     {
-        // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. resume edilmiş bir run'dan
-        // devralınan) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete çağırmak
-        // fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır — ama
-        // grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
+        // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. tohumla Skipped girilmiş —
+        // Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
+        // savunmacıdır) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete
+        // çağırmak fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır —
+        // ama grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
         var completedAtDispatch = run.Scheduler.Completed;
         var members = allMembers
             .Where(id => run.NodeById.ContainsKey(id) && !completedAtDispatch.ContainsKey(id))

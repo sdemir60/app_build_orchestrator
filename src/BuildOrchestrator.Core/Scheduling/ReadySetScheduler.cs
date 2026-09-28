@@ -22,7 +22,7 @@ using BuildOrchestrator.Contracts.Model;
 /// hariç), dispatch build-order'daki İLK dispatch edilebilir üyeyi verirken TÜM üyeleri in-flight işaretler.
 ///
 /// Saf Core state: I/O, process, async, log YOK [D3]. Thread-safety: TryDispatch/Complete/RequestStop ve tüm
-/// okuma üyeleri (QueuedProjectIds/Completed/IsDone/InFlight) tek bir lock (_gate) altında senkronize edilir.
+/// okuma üyeleri (QueuedProjectIds/Completed/IsDone/InFlight/UnfinishedCount) tek bir lock (_gate) altında senkronize edilir.
 /// Task 9, bunu N paralel worker'dan sürdüğü için gerekli; hot path olmadığından (177 proje, saniyede birkaç
 /// çağrı) tek kilit yeterli ve basit — ince taneli kilitleme veya lock-free yapı YAGNI.
 /// </summary>
@@ -39,49 +39,44 @@ public sealed class ReadySetScheduler
 
     private bool _stopRequested;
 
-    // [Task 18] Boş bir snapshot: Completed boş, Queued/ElapsedMs bu ctor tarafından hiç okunmaz (yalnız
-    // Completed kullanılır — bkz. resume ctor'un doc'u). Fresh ctor'u resume ctor'un ÜZERİNE (this(plan,
-    // EmptySnapshot)) kurmak için var: iki neredeyse-birebir ctor gövdesi TEK gövdeye iner, davranış AYNI kalır
-    // (boş Completed ile başlayan resume ctor, eski fresh ctor'un yaptığı HER ŞEYİ birebir yapar — cycle
-    // guard'daki `!_completed.ContainsKey` kontrolü boş sözlükte her zaman true'dur, fresh ctor'un koşulsuz
-    // eklemesiyle aynı sonucu verir).
-    private static readonly RunSnapshot EmptySnapshot =
-        new(new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase), [], 0);
+    // [Task 18] Boş tohum: tohumsuz ctor, tohumlu ctor'a boş bir Completed sözlüğüyle devreder (tek gövde) —
+    // iki neredeyse-birebir ctor gövdesi TEK gövdeye iner, davranış AYNI kalır (boş seed ile başlayan ctor,
+    // eski fresh ctor'un yaptığı HER ŞEYİ birebir yapar — cycle guard'daki `!_completed.ContainsKey` kontrolü
+    // boş sözlükte her zaman true'dur, fresh ctor'un koşulsuz eklemesiyle aynı sonucu verir).
+    private static readonly IReadOnlyDictionary<string, BuildResult> EmptySeed =
+        new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
 
     public ReadySetScheduler(BuildPlan plan, CycleGroups? cycleGroups = null)
-        : this(plan, EmptySnapshot, cycleGroups)
+        : this(plan, EmptySeed, cycleGroups)
     {
     }
 
     /// <summary>
-    /// [T55] Continue (resume) ctor'u: AYNI plan'dan devam eder — yeniden planlama/tarama/sıralama YOK.
-    /// <paramref name="snapshot"/>.Completed olduğu gibi devralınır (bu projeler bir daha ASLA dispatch
-    /// edilmez); geri kalan her şey (Completed'ta olmayan) build-order sırasıyla queued sayılır — bu,
-    /// <paramref name="snapshot"/>.Queued alanının kendisi kullanılmadan da _completed üyeliğinden türetilir,
-    /// çünkü TakeSnapshot ile Queued zaten "Completed'ta olmayanlar" olacak şekilde üretilir (partisyon
-    /// invaryantı) — burada ayrıca kullanılması gereken tek şey Completed'tır.
+    /// [T55] Koşu başı pre-skip tohum ctor'u: yeniden planlama/tarama/sıralama YOK. <paramref name="seed"/>
+    /// koşunun BAŞINDA zaten karara bağlanmış sonuçları taşır (Build modunda "up to date" pre-skip, Cycles
+    /// modunda kapsam dışı/güncel upstream/güncel SCC — bkz. RunCoordinator.RunSegmentAsync); tohumdaki id'ler
+    /// dispatch EDİLMEZ ve bağımlıları için baştan çözülmüş sayılır.
     ///
-    /// Cycle/pre-skip DAVRANIŞI korunur: normal akışta (TakeSnapshot'tan gelen snapshot) cycle üyeleri zaten
-    /// önceki construction'da Skipped olarak Completed'a yazılmıştı, bu yüzden burada YENİDEN pre-skip
-    /// edilmezler (PreSkipped bu construction için boş kalır — hiçbir şey YENİ pre-skip edilmedi). Ama
-    /// savunmacı: snapshot Completed'ta cycle üyelerini taşımıyorsa (örn. elle kurulmuş bir snapshot, ya da
-    /// [Task 18] fresh ctor'un devrettiği <see cref="EmptySnapshot"/>), yine de burada pre-skip edilirler —
-    /// aksi halde bağımlılıkları birbirine dairesel olduğu için asla ready olamazlar ve run kilitlenir (plan
-    /// A6, fresh ctor ile aynı garanti — artık TEK gövde, iki ayrı garanti değil).
+    /// Cycle/pre-skip DAVRANIŞI korunur: <paramref name="seed"/> bir SCC üyesini zaten taşıyorsa burada YENİDEN
+    /// pre-skip edilmez (PreSkipped bu construction için boş kalır). Ama Build tohumu SCC üyelerini BİLEREK hiç
+    /// taşımaz — bu yüzden <paramref name="cycleGroups"/> null iken (kill switch kapalı) tohumda olmayan
+    /// InCycle bir düğüm burada "in dependency cycle" ile pre-skip edilir: bu savunmacı bir edge case DEĞİL,
+    /// Build'in NORMAL yoludur — aksi halde bağımlılıkları birbirine dairesel olduğu için asla ready olamazlar
+    /// ve run kilitlenir (plan A6).
     ///
     /// <paramref name="cycleGroups"/> [cycle rounds]: null (varsayılan) = kill switch KAPALI, yukarıdaki
     /// pre-skip davranışı BİREBİR korunur — mevcut tüm çağrı yerleri hiç değişmeden aynı sonucu almaya devam
     /// eder. Doldurulduğunda SCC'ler artık pre-skip EDİLMEZ; bunun yerine <see cref="IsReadyLocked"/> ve
     /// <see cref="TryDispatch"/> her SCC'yi TEK iş kalemi olarak ele alır (bkz. ilgili doc'lar).
     /// </summary>
-    public ReadySetScheduler(BuildPlan plan, RunSnapshot snapshot, CycleGroups? cycleGroups = null)
+    public ReadySetScheduler(BuildPlan plan, IReadOnlyDictionary<string, BuildResult> seed, CycleGroups? cycleGroups = null)
     {
         ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(seed);
 
         _nodesInOrder = plan.Nodes;
         _byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
-        _completed = new Dictionary<string, BuildResult>(snapshot.Completed, StringComparer.OrdinalIgnoreCase);
+        _completed = new Dictionary<string, BuildResult>(seed, StringComparer.OrdinalIgnoreCase);
         _inFlight = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _preSkipped = new List<(string, string)>();
         _groups = cycleGroups;
@@ -229,27 +224,20 @@ public sealed class ReadySetScheduler
     }
 
     /// <summary>
-    /// [T55] Stop/Continue sınırını aşacak run state'ini alır (<paramref name="elapsedMs"/>, çağıran
-    /// tarafından <see cref="RunClock.ElapsedMs"/>'ten geçirilir — bu class saat tutmaz [D3]).
+    /// Tamamlanmamış (<see cref="Completed"/>'ta OLMAYAN) düğüm sayısı, in-flight DAHİL — dispatch edilmiş ama
+    /// henüz <see cref="Complete"/> çağrılmamış bir proje ne tamamlanmış sayılabilir (sonucu henüz yok) ne de
+    /// sessizce kaybolabilir. Koşu sonunda (worker'lar join olduktan sonra) okunur; <c>RunCompletedEvent</c>'in
+    /// Queued alanı bu değerden gelir.
     ///
-    /// Queued = plan'daki, Completed'ta OLMAYAN tüm node id'leri, build-order sıralı — bu, dispatch edilmiş
-    /// ama henüz Complete çağrılmamış (in-flight) projeleri DAHİL eder. Kasıtlı: gerçek Stop akışında engine
-    /// snapshot'ı ancak in-flight tükendikten sonra alır (IsDone), ama Task 9 bu metodu worker'lar hâlâ
-    /// koşarken de çağırabilir (thread-safety gereksinimi) — o anda in-flight olan bir proje ne tamamlanmış
-    /// sayılabilir (sonucu henüz yok) ne de sessizce kaybolabilir; bu yüzden "henüz kesin bitmemiş her şey"
-    /// Queued'a düşer. Sonuç: her node id tam olarak Completed VEYA Queued'dadır — asla ikisinde birden, asla
-    /// hiçbirinde (bkz. ContinueRunTests.take_snapshot_mid_run_keeps_in_flight_project_in_queued_not_lost).
-    ///
-    /// Not: bu, QueuedProjectIds property'sinden farklıdır — o "hiç dispatch edilmemiş" demektir ve in-flight'ı
-    /// hariç tutar (farklı bir soruya cevap verir: "TryDispatch'in bu run'da hiç vermediği projeler").
+    /// Not: bu, <see cref="QueuedProjectIds"/>'ten farklıdır — o "hiç dispatch edilmemiş" demektir ve
+    /// in-flight'ı HARİÇ tutar (farklı bir soruya cevap verir: "TryDispatch'in bu run'da hiç vermediği
+    /// projeler").
     /// </summary>
-    public RunSnapshot TakeSnapshot(long elapsedMs)
+    public int UnfinishedCount
     {
-        lock (_gate)
+        get
         {
-            var completed = new Dictionary<string, BuildResult>(_completed, StringComparer.OrdinalIgnoreCase);
-            var queued = _nodesInOrder.Where(n => !_completed.ContainsKey(n.Id)).Select(n => n.Id).ToList();
-            return new RunSnapshot(completed, queued, elapsedMs);
+            lock (_gate) return _nodesInOrder.Count(n => !_completed.ContainsKey(n.Id));
         }
     }
 
