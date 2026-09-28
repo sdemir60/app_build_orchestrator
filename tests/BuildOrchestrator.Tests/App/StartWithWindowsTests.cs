@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.App.Services;
@@ -368,6 +369,18 @@ public class StartWithWindowsTests
         registry.Service().Apply(true);
 
         Assert.Equal(AutostartState.DisabledInStartupApps, registry.Service().State);
+    }
+
+    /// <summary>Görev Yöneticisi → Başlangıç uygulamaları (ve İşlemler sekmesi) bir Run kaydını hedef exe'nin dosya
+    /// açıklamasıyla (FileDescription) adlandırır. Açıklama SDK varsayılanında kalınca derleme adı
+    /// ("BuildOrchestrator.App") görünürdü; ürün adı tek kaynaktan gelir (Directory.Build.props → Product).</summary>
+    [Fact]
+    public void Task_manager_lists_the_startup_entry_under_the_product_name()
+    {
+        string exe = Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.App.exe");
+        Assert.True(File.Exists(exe), $"the app host is not next to the tests: {exe}"); // ön-koşul
+
+        Assert.Equal(AppIdentity.Product, FileVersionInfo.GetVersionInfo(exe).FileDescription);
     }
 
     /// <summary>Kablo: MainWindow, DI'dan aldığı servisi Settings diyaloğuna verir (üretimde tek örnek — açılışın
