@@ -168,7 +168,7 @@ public class AccessibilityTests
 
     /// <summary>[A13/T5 · n3] `⌄ latest` pill'i iki panelde (konsol, event stream) ORTAK bir kontroldür; "latest"
     /// etiketi tek başına ekran okuyucuya hiçbir şey söylemez → adı HANGİ akışın sonuna gidildiğini bilen host
-    /// verir ve üç ad FARKLIdır. Ad, kabuğa değil TIKLANAN butona konur (UIA'da buton öğesi odur).
+    /// verir ve iki ad FARKLIdır. Ad, kabuğa değil TIKLANAN butona konur (UIA'da buton öğesi odur).
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-28]</b> Eski iddia: üç pill (proje listesi dahil) üç
     /// farklı ad taşır. Proje listesinin pill'i kaldırıldı — hiç görünür olmuyordu ve tıklaması bağlı değildi;
     /// kural kalan iki pill için aynıdır.</para></summary>
