@@ -2,7 +2,7 @@ using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Tests.Scheduling;
 
-// [T55] RunClock: segment segment biriktiren saat, zaman kaynağı enjekte edilir (Func<long>).
+// [T55] RunClock: bir koşunun süre saati, zaman kaynağı enjekte edilir (Func<long>).
 // Thread.Sleep / poll-until-elapsed YASAK [D8] — testler sahte bir sayacı elle ilerletir.
 public class RunClockTests
 {
@@ -26,23 +26,32 @@ public class RunClockTests
         Assert.Equal(2500, clock.ElapsedMs);
     }
 
+    // [DEĞİŞEN KURAL] Eskiden: "elapsed, accumulatedMs tohumunun üzerine mevcut segmentin süresi eklenerek
+    // hesaplanır" — tohum Continue'nun önceki segmentten devraldığı ElapsedMs'ti. Neden değişti: Continue modu
+    // a2ff12e ile koddan kalktı, RunClock'u tohumlayan tek üretici oydu — ctor artık böyle bir parametre almıyor.
+    // Bugünkü kural: RunClock her koşu için TAZE kurulur (ctor'da seed yok), elapsed yalnız Start'tan bu yana
+    // geçen süredir.
     [Fact]
-    public void elapsed_while_running_includes_current_segment_on_top_of_accumulated()
+    public void elapsed_while_running_is_only_the_time_since_start_no_seed()
     {
         long now = 100;
-        var clock = new RunClock(() => now, accumulatedMs: 4200);
+        var clock = new RunClock(() => now);
 
         clock.Start();
         now = 900;
-        Assert.Equal(4200 + 800, clock.ElapsedMs); // UI çalışırken de okuyabilmeli — mevcut segment dahil
+        Assert.Equal(800, clock.ElapsedMs); // UI çalışırken de okuyabilmeli — yalnız bu koşunun geçen süresi
     }
 
+    // [DEĞİŞEN KURAL] Eskiden: "Start'tan önceki değer accumulatedMs tohumuydu" (Continue'da UI'nin süre
+    // sayacı sıfırlanmadan kaldığı yerden gösterilirdi). Neden değişti: yukarıdaki testle aynı gerekçe —
+    // tohum üreticisi Continue modu a2ff12e ile kalktı. Bugünkü kural: Start hiç çağrılmadıysa geçen süre
+    // sıfırdır — bir sonraki koşu her zaman sıfırdan sayar.
     [Fact]
-    public void elapsed_before_first_start_is_only_the_accumulated_seed()
+    public void elapsed_before_first_start_is_zero()
     {
-        var clock = new RunClock(() => 999_999, accumulatedMs: 250);
+        var clock = new RunClock(() => 999_999);
 
-        Assert.Equal(250, clock.ElapsedMs);
+        Assert.Equal(0, clock.ElapsedMs);
     }
 
     [Fact]
