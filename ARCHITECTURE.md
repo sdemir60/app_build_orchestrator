@@ -1067,9 +1067,18 @@ never shows a "skipped" row and is never counted in the run's skipped total —
 the engine's own pre-skip for it is not this run's business, so its status and colour do not change (§13.2).
 Only a project genuinely inside the scope — a cycle member or the upstream this run pulled in — that comes
 back `skipped — up to date` reads as a result. The project's own page is the one place the pre-skip does
-reach: opening it states the same reason the engine gave, because every pre-skipped project's will-build flag
-reads `false` for the run's whole life regardless of why (§13.2) — a page that stayed silent about the reason
-would read a possibly-dirty, merely-out-of-scope project as `Up to date`, which is not the same claim.
+reach: opening it states the same reason the engine gave, because the row's will-build flag cannot say it —
+a page that described the row by that flag would call a dirty, merely-out-of-scope project `Will build` and a
+clean one `Up to date`, and neither is about this run.
+
+A `Cycles` run's own preview does not write that flag, nor the conditional mark that pairs with it. The preview
+answers for this run — `false` for every project outside the scope, whatever its state, and the members' own
+verdict inside it — while the row's flag answers for the next plain `Build` (§7.4): it is what a Sync wrote,
+kept live by the projects this run actually compiles, and it is what that `Build` lights its opening wave from
+(§14.5). Written into the rows, this run's answers would outlive it: the `Build` pressed next would light the
+members that had failed here, which it never compiles, and leave dark the dirty projects the cycles did not
+need, which would then turn queued all at once as its run began. The preview's reason, its own-files fact and
+its roots describe the disk rather than the run, and are written as from any other preview.
 
 The same containment reaches the queue colour, the run's own closing line and the two run-scoped counters
 (§13.2, §14.3): a workspace with hundreds of unrelated projects leaves hundreds of grey-forever rows that must
@@ -2708,12 +2717,12 @@ its standing colour until its own `projectStarted` arrives, exactly the "queued 
 operation's own plan" rule §14.3 states for `WillBuild`, narrowed one step further for this one mode. A row
 genuinely outside the scope never turns colour at all, and it never turns `Skipped` either: the engine's own
 pre-skip for it (`skipped — not needed by a dependency cycle`, folded into the stream's one collapsed line,
-§8.1) does not reach the row's status or colour, the state filters, or the run's skipped total — those read the
-row exactly as a Sync left it, for the run's whole life. The one place the pre-skip does reach is the row's own
-project page: it states the same reason, because the run's own preview already forced the row's will-build flag
-`false` (every pre-skipped project's is, regardless of why, §8.1) and a page that said nothing would read a
-possibly-dirty, merely-out-of-scope project as `Up to date`. Only a row the run actually touched — a member, or
-the upstream it pulled in — can end the run coloured or counted.
+§8.1) does not reach the row's status or colour, the state filters, the run's skipped total or its will-build
+flag — those read the row exactly as a Sync left it, for the run's whole life and after it, which is what keeps
+the `Build` pressed next lighting the projects it will compile (§8.1). The one place the pre-skip does reach is
+the row's own project page: it states the same reason, because a page that described the row by its
+will-build flag would be answering for the next `Build` rather than for this run. Only a row the run actually
+touched — a member, or the upstream it pulled in — can end the run coloured or counted.
 
 The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
 you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
@@ -3821,10 +3830,14 @@ the run itself the camera stays still. (§2.3 puts a mono hint line in the botto
 the panel reads more quietly without it.)
 
 **Opening.** Whenever the graph is built — a Sync with a new structure, a Sync that starts the screen over, the
-Sync that follows a Clean — the nodes appear in build order, each one delayed by `index × 9 ms`, capped at
-520 ms, rising 5 px over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the
-bands are read in. It is a hero (`sync-reveal`, shared with the project list), so it yields if another hero
-is already playing, and reduced motion places everything instantly.
+Sync that follows a Clean — the nodes appear in build order, each one 9 ms after the one before, rising 5 px
+over 300 ms. The wave therefore runs top-down and left-to-right, the same direction the bands are read in. The
+whole wave is capped at 520 ms: on a graph too large for 9 ms a node the step shrinks to `520 / (n − 1)`, so the
+last node still starts on the cap — the same shape as the marking wave's and the neon chain's tempo (§14.5). The
+cap bounds the wave, not each node. Clamping every delay at 520 ms instead would bring every node past the 58th
+in at once, which on a workspace of a couple of hundred projects is most of the graph: the top bands flow in
+and everything below them lands in a single frame. It is a hero (`sync-reveal`, shared with the project list),
+so it yields if another hero is already playing, and reduced motion places everything instantly.
 
 **Nothing is drawn while the panel is hidden.** In the `list` and `focus` layout modes the graph is
 collapsed, and the status stream keeps arriving every 200 ms. Both feeding methods gate on the panel's own

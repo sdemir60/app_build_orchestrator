@@ -5,7 +5,7 @@ namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
 /// [W2/It-5] Açılış reveal stagger'ının hero + kuşak + release muhasebesi — TEK yer.
-/// <see cref="Graph.GraphView"/> (katman stagger'ı) ve <see cref="StickyLayerList"/> (satır stagger'ı) bu üçlüyü
+/// <see cref="Graph.GraphView"/> (düğüm stagger'ı) ve <see cref="StickyLayerList"/> (satır stagger'ı) bu üçlüyü
 /// gövde olarak BİREBİR aynı yazmıştı: hero al / kuşak damgala / pencere sonunda generation-guarded bırak.
 /// KADEMELEME'nin kendisi (hangi öğe ne kadar gecikmeyle belirir) burada DEĞİLDİR — o iki sahipte kasten farklıdır
 /// (graf: 9ms/düğüm, dalganın tamamı en çok 520ms; liste: 10ms/satır · tavan 380).
