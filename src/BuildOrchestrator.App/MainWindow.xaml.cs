@@ -1117,9 +1117,8 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
         // [T62] Tepsi: X artık kapatmaz (K5) → uygulama tepsiden yönetilir.
-        _tray = new AppTrayIcon();
+        _tray = new AppTrayIcon(_vm.StopCommand);
         _tray.RestoreRequested += ShowFromTray;
-        _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
         SetUpTrayBuildIndicator(_tray);

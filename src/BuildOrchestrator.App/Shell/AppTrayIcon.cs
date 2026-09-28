@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
@@ -11,7 +12,7 @@ namespace BuildOrchestrator.App.Shell;
 /// <summary>
 /// [T62/K5 · A13.2] Sistem tepsisi ikonu — WPF'te <c>NotifyIcon</c> yoktur, onaylı paket <c>H.NotifyIcon.Wpf</c>
 /// (feasibility §3.2). Bu sınıf yalnız KABUKTUR: ikon + menü + balloon; ne yapılacağına karar veren yok, olayları
-/// dışarı verir (<see cref="RestoreRequested"/>/<see cref="StopRequested"/>/<see cref="ExitRequested"/>).
+/// dışarı verir (<see cref="RestoreRequested"/>/<see cref="ExitRequested"/>).
 ///
 /// <para><b>İkon:</b> 16px ELLE ayarlanmış raster (<c>Assets/tray-icon-16.ico</c>) — 64px SVG'nin otomatik
 /// küçültülmesi amber "D"yi bozar (feasibility §3.2). [T64] Çok boyutlu <c>app-icon.ico</c> (pencere/taskbar)
@@ -43,17 +44,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// yeniden çözmek gereksiz GDI nesnesi üretirdi. <see cref="Dispose"/> bırakır.</summary>
     private readonly System.Drawing.Icon _largeIcon;
 
-    public AppTrayIcon()
+    public AppTrayIcon(ICommand stopCommand)
     {
         _largeIcon = LoadBalloonIcon();
 
-        var stop = new MenuItem { Header = "Stop" };
-        stop.Click += (_, _) => StopRequested?.Invoke();
-        var exit = new MenuItem { Header = "Exit" };
-        exit.Click += (_, _) => ExitRequested?.Invoke();
-        var menu = new ContextMenu();
-        menu.Items.Add(stop);
-        menu.Items.Add(exit);
+        var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke());
 
         _icon = new TaskbarIcon
         {
@@ -70,6 +65,23 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
+    /// <summary>[seam] Menü TEK yerden kurulur: <c>TaskbarIcon</c> (dolayısıyla ctor) headless testte
+    /// kurulamaz (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki
+    /// gerçek bir tepsi kurmadan sınanabilsin. Stop maddesi MainWindow'un eski kapısını aynen taşır
+    /// (<c>Click</c> içinde <c>CanExecute</c> sorulur) — maddeyi doğrudan komuta bağlamak ayrı bir adımdır.</summary>
+    internal static ContextMenu CreateMenu(ICommand stop, Action exit)
+    {
+        var stopItem = new MenuItem { Header = "Stop" };
+        stopItem.Click += (_, _) => { if (stop.CanExecute(null)) stop.Execute(null); };
+        var exitItem = new MenuItem { Header = "Exit" };
+        exitItem.Click += (_, _) => exit();
+
+        var menu = new ContextMenu();
+        menu.Items.Add(stopItem);
+        menu.Items.Add(exitItem);
+        return menu;
+    }
+
     /// <summary>Gömülü uygulama ikonundan (<see cref="AppIdentity.AppIconUri"/> — adres TEK kaynaktan, pencere
     /// ikonu da onu okur) istenen kareyi çözer. <c>System.Drawing.Icon</c> veriyi ctor'da kendi içine kopyalar,
     /// bu yüzden akış hemen bırakılabilir.</summary>
@@ -84,8 +96,6 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
     public event Action? RestoreRequested;
-    /// <summary>Tepsi menüsü → Stop (koşan derlemeyi graceful durdur).</summary>
-    public event Action? StopRequested;
     /// <summary>Tepsi menüsü → Exit (GERÇEK çıkış → kaskat kill).</summary>
     public event Action? ExitRequested;
 

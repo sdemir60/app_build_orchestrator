@@ -42,7 +42,8 @@ public sealed class TrayBalloonProbeTests(ITestOutputHelper output)
         AppTrayIcon? tray = null;
         try
         {
-            log.Add(Try("tepsi ikonunu kur", () => tray = new AppTrayIcon()));
+            log.Add(Try("tepsi ikonunu kur",
+                () => tray = new AppTrayIcon(new CommunityToolkit.Mvvm.Input.RelayCommand(() => { }, () => false))));
             if (tray is null) return log;
 
             // (1) Bu turda eklenen yol: ürünün büyük ikonu + satırın baş/gövde ayrımı.
