@@ -1,3 +1,4 @@
+using System.IO;
 using BuildOrchestrator.Core.Git;
 
 namespace BuildOrchestrator.Tests.App;
@@ -32,4 +33,14 @@ internal sealed class FakeHeadWatcher : IHeadWatcher
     }
 
     public void Dispose() => Disposed = true;
+
+    /// <summary>İçinde <c>.git</c> klasörü olan geçici kök — <see cref="GitDirectory.Resolve"/> onu git deposu sayar,
+    /// yani koordinatör bu sahteyi yalnız böyle bir köke bağlarken başlatır. Koordinatör ve VM testlerinin TEK
+    /// kurulumu (kopya YASAK).</summary>
+    public static TempDir GitRoot()
+    {
+        var dir = new TempDir();
+        Directory.CreateDirectory(Path.Combine(dir.Path, ".git"));
+        return dir;
+    }
 }

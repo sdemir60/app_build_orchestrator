@@ -627,7 +627,8 @@ public sealed partial class RunViewModel : ObservableObject
         ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
         runError: RunErrorMessage, engineOverdue: EngineOverdueMessage, syncFetches: _syncMode.Fetches(),
-        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
+        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap,
+        exitPending: ExitPending);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a

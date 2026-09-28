@@ -36,7 +36,8 @@ public sealed partial class RunViewModel : IAutoSyncPort
         _autoSync.Attach(RootPath);
     }
 
-    /// <summary>Kabuk kapanıyor: izleyici bırakılır.</summary>
+    /// <summary>Kabuk kapanıyor ya da [P3 · Task 2] tam çıkış istendi (<see cref="RequestExit"/>): izleyici
+    /// bırakılır. İdempotent — ikinci çağrı no-op'tur.</summary>
     internal void DisableAutoSync()
     {
         _autoSync?.Dispose();
@@ -56,9 +57,15 @@ public sealed partial class RunViewModel : IAutoSyncPort
     /// <summary>
     /// "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull bayraklarının her
     /// geçişi (<see cref="NotifySyncGatedCommands"/>) ve koşu kilidinin her geçişi (<see cref="PropagateRunLock"/>)
-    /// buraya iner. Koordinatör bekleyen tetiği meşguliyet bitince yeniden değerlendirir.
+    /// buraya iner. İki tüketicisi vardır: koordinatör bekleyen tetiği meşguliyet bitince yeniden değerlendirir;
+    /// [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur (<see cref="EvaluateExit"/>). Çıkış beklerken
+    /// koordinatör yoktur (<see cref="RequestExit"/> onu kapatır), yani sıra iki tüketiciyi etkilemez.
     /// </summary>
-    private void NotifyAutoSyncGate() => _autoSync?.OnWorkspaceIdle();
+    private void NotifyAutoSyncGate()
+    {
+        _autoSync?.OnWorkspaceIdle();
+        EvaluateExit();
+    }
 
     /// <summary>[spec 2026-09-18 §6.2] Dışarıdan gelen branch değişimi: checkout'un cevabıyla AYNI yol
     /// (<see cref="SyncMode.BranchChange"/> + bölümün ilk satırı), kapı <see cref="SyncSilentlyAsync"/>'inkiyle aynı.</summary>

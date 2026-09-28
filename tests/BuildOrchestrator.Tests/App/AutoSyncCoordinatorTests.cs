@@ -1,4 +1,3 @@
-using System.IO;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Git;
@@ -410,7 +409,7 @@ public sealed class AutoSyncCoordinatorTests
     [Fact]
     public void An_unavailable_watcher_is_reported_once_per_root()
     {
-        using var dir = GitRoot();
+        using var dir = FakeHeadWatcher.GitRoot();
         var h = new Harness(() => new FakeHeadWatcher { Starts = false });
 
         h.Coordinator.Attach(dir.Path);
@@ -425,8 +424,8 @@ public sealed class AutoSyncCoordinatorTests
     [Fact]
     public void A_callback_from_a_replaced_or_disposed_watcher_is_dropped()
     {
-        using var first = GitRoot();
-        using var second = GitRoot();
+        using var first = FakeHeadWatcher.GitRoot();
+        using var second = FakeHeadWatcher.GitRoot();
         var watchers = new List<FakeHeadWatcher>();
         var h = Harness.SyncedOnMain(() => { var w = new FakeHeadWatcher(); watchers.Add(w); return w; });
         h.Head = new HeadState("main", ShaB);
@@ -449,7 +448,7 @@ public sealed class AutoSyncCoordinatorTests
     [Fact]
     public async Task Activation_retries_a_watcher_that_could_not_start()
     {
-        using var dir = GitRoot();
+        using var dir = FakeHeadWatcher.GitRoot();
         var watchers = new List<FakeHeadWatcher>();
         var h = Harness.SyncedOnMain(() =>
         {
@@ -465,13 +464,5 @@ public sealed class AutoSyncCoordinatorTests
         Assert.Equal(2, watchers.Count); // bir başarısız, bir başarılı; başarılıdan sonra yeniden denenmez
         Assert.NotNull(watchers[1].OnSettled);
         Assert.Single(h.Port.ConsoleLines);
-    }
-
-    /// <summary>İçinde <c>.git</c> klasörü olan geçici kök — <see cref="GitDirectory.Resolve"/> onu git deposu sayar.</summary>
-    private static TempDir GitRoot()
-    {
-        var dir = new TempDir();
-        Directory.CreateDirectory(Path.Combine(dir.Path, ".git"));
-        return dir;
     }
 }
