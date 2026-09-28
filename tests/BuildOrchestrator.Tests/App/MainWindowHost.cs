@@ -35,7 +35,10 @@ internal static class MainWindowHost
     /// Pencerenin ctor'unda olan biteni (kalıcı durumdan repo/branch/perf seed'i — <c>MainWindow.xaml.cs:126</c>)
     /// gözlemek isteyen tek yol budur: <c>New</c> döndüğünde seed ÇOKTAN akmıştır, sonradan takılan bir prob onu
     /// göremez. Verilmezse davranış birebir eskisi gibidir.</param>
-    public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null)
+    /// <param name="autostart">[P4] Pencerenin Windows başlangıç kaydı servisi (üretimde DI verir). Verilmezse
+    /// <c>null</c> — Windows yüzeyi yok; gerçek registry'ye giden bir servis testte ASLA kurulmaz.</param>
+    public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
+        AutostartService? autostart = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -45,7 +48,7 @@ internal static class MainWindowHost
         };
         beforeVm?.Invoke(vm);
         var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
-        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store), vm);
+        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
     }
 
     /// <summary>
