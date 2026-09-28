@@ -35,7 +35,7 @@ public sealed partial class RunViewModel
     // [Task 4] Cycle round ilerleme takibi — aktif satırdaki "member i/N · round r/cap" detayının kaynağı.
     // _cycleRoundCap == 0 ⇒ bu run'da henüz bir CycleRoundStartedEvent gelmedi (round AKTİF DEĞİL) — upstream/
     // prerequisite projeler bu run'ın ilk aşamasında builds eder ve detay almaz. RunStarted/RunCompleted'ta
-    // sıfırlanır (bir sonraki run/segment temiz başlasın).
+    // sıfırlanır (bir sonraki run temiz başlasın).
     // [Review fix — Finding 1] Motor (RunCoordinator) eşzamanlı SCC'leri SERİLEŞTİRMEZ ve Cycles modunda
     // paralellik kelepçelemez — ≥2 grup aynı anda koşabilir, bu yüzden "tek aktif grup" varsayımı YANLIŞTIR.
     // _cycleRoundLeaderId turu başlatan LİDERİ tutar; ProjectStartedEvent bu sayaçları yalnız O LİDERİN grubuna
@@ -120,10 +120,10 @@ public sealed partial class RunViewModel
         switch (ev)
         {
             case RunStartedEvent e:
-                _stream.EndRun(); // yeni koşu/segment: aktif + building sıfırlanır (tampon sayacı KORUNUR)
+                _stream.EndRun(); // yeni koşu: aktif + building sıfırlanır (tampon sayacı KORUNUR)
                 SyncActiveLine();
                 // [D3 §2] başlangıç satırını ("Build started" ailesi) BuildPreviewEvent'e ERTELE — will-build sayısı orada
-                // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler, RunCoordinator.cs:456). Burada
+                // hazır (BuildPreview RunStarted'ı hemen izler — yayın sırası: BuildPreviewEvent'in doc'u). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
                 // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE
@@ -131,20 +131,21 @@ public sealed partial class RunViewModel
                 // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
                 // gerekir.
                 OnPropertyChanged(nameof(IsResolvingCycles)); // bakım kutusunun Resolve spinner'ı bunu okur
-                // [Task 4] Yeni run/segment: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
+                // [Task 4] Yeni run: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
                 _cycleRoundLeaderId = null;
                 // [Review fix — Finding 2] _outOfScopeSkips YALNIZ RunCompletedEvent'te sıfırlanıyordu; motor bir
                 // Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı kalır ve BİR SONRAKİ
                 // run'ın ilk PushStream'ine eski bir "N outside cycle scope — skipped" satırı sızdırırdı. Her yeni
-                // run/segment temiz başlasın diye burada da sıfırlanır.
+                // run temiz başlasın diye burada da sıfırlanır.
                 _outOfScopeSkips = 0;
                 break;
 
             case BuildPreviewEvent:
                 // [D3 §2] Ertelenen run-start satırını burada yay — OnBuildPreview (OnEvent'te BUNDAN ÖNCE) hem
                 // önizleme kümelerini doldurdu hem RefreshRunSurface ile FinishedOfWillBuild'i tazeledi. Pending'i
-                // TEMİZLE ki re-emit edilen bir BuildPreview çift satır yaymasın.
+                // TEMİZLE ki koşudan SONRA gelen bir Sync önizlemesi (BuildPreviewEvent'in tek diğer üreticisi,
+                // SyncWorkspaceService) başlangıç satırını ikinci kez yaymasın.
                 // [final review — C1 · DEĞİŞEN KURAL] Açılış satırının sayısı KESİN kümeden (_willBuildIds)
                 // DEĞİL, koşunun PLANINDAN (_dirtyIds — koşullu projeler dahil) gelir: kesin küme Task 4'ten beri
                 // koşulluyu dışlıyor ve dirty kümesi tamamen koşullu olan bir koşu konsolu "Build started — 0

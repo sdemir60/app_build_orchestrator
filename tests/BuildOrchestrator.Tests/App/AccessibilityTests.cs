@@ -371,7 +371,7 @@ public class AccessibilityTests
             "WPF ScrollBar şablonunun parçaları (ok RepeatButton'ları + Track Thumb'ı): adları framework'ün kendi " +
             "scroll pattern'inden gelir, uygulamanın verdiği bir metin değildir."),
         (el => el is ButtonBase { Name: "PART_Primary", TemplatedParent: SplitButton },
-            "Build split-button'ın SOL yarımı: görünür etiketi ('Build'/'Continue') ActionBar'da dinamik kurulur, " +
+            "Build split-button'ın SOL yarımı: görünür etiketi HER ZAMAN 'Build'dir ve ActionBar'da (code-behind'dan) kurulur, " +
             "UIA adı SplitButton'a yeni bir DP ister → T5 kapsamı dışı BORÇ (task raporunda Concerns)."),
     ];
 

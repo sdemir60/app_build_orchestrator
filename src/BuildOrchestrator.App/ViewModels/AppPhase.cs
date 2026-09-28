@@ -24,7 +24,7 @@ public enum AppPhase
     /// <summary>Sync bitti, derleme başlamadı: proje durumları bilinir (dirty/clean).</summary>
     Idle,
 
-    /// <summary>Run istendi ama motor henüz <c>runStarted</c> yazmadı: taze bir segmentte bu pencerede
+    /// <summary>Run istendi ama motor henüz <c>runStarted</c> yazmadı: her koşuda bu pencerede
     /// planlama koşar (tarama → graf → topo → incremental) ve 177 projelik bir
     /// workspace'te saniyeler sürer. Tıklamanın kaydedildiğini gösteren TEK yüzey budur — pencere eskiden
     /// fazsızdı: konsol <c>BeginRunAsync</c> tarafından temizleniyor, şerit önceki metinde donuyordu.

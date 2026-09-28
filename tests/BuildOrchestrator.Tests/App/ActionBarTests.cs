@@ -137,7 +137,7 @@ public partial class ActionBarTests
         bar.UpdateLayout();
         Assert.True(bar.BehindChip.IsEnabled);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         bar.UpdateLayout();
 
         Assert.Equal(Visibility.Visible, bar.BehindChip.Visibility);
@@ -618,7 +618,7 @@ public partial class ActionBarTests
         Assert.Equal(Visibility.Collapsed, spinner.Visibility);
         Assert.Same(bar.FindResource("Brush.DotClean"), dot.Fill);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
 
         // Koşarken TAKAS: spinner görünür, nokta gizli.
@@ -655,7 +655,7 @@ public partial class ActionBarTests
         Assert.Equal(0, vm.Counters.Warn);
         Assert.Equal(Visibility.Collapsed, bar.WarnChip.Visibility);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100, ["dependent B henüz derlenmedi"]));
 
@@ -717,7 +717,7 @@ public partial class ActionBarTests
         Assert.Equal(Visibility.Visible, bar.Split.Visibility);
         Assert.Equal(Visibility.Collapsed, bar.StopButton.Visibility);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(vm.IsRunning); // ön-koşul: gerçekten koşuyor
 
         Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
@@ -732,7 +732,7 @@ public partial class ActionBarTests
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton
-    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a Build/Continue
+    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build
     /// sunulmuş olurdu), etiketi "Stopping…" olur ve <c>StopCommand</c> pasifleştiği için buton disable
     /// olur — ikinci bir tıklama ikinci bir stopRun üretmez. Faz doğrudan set edilir: buraya NASIL
     /// girildiği (StopCommand → gerçek Supervisor) kardeş süitte pinli, burada sürülen GÖRÜNÜM.</summary>
@@ -741,7 +741,7 @@ public partial class ActionBarTests
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.Equal("Stop", StopLabel(bar));      // ön-koşul
         Assert.True(bar.StopButton.IsEnabled);
 
@@ -833,7 +833,7 @@ public partial class ActionBarTests
         Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
 
         // Bir failure sonrası da aynı üç madde (Retry yüzeyi yok).
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 100, "exit 1"));
         Assert.Equal(["build", "rebuild", "clean"], menu.Items.Select(i => i.Kind));
@@ -868,7 +868,7 @@ public partial class ActionBarTests
         Assert.Equal("All 3 projects — cache ignored", menu.Items.Single(i => i.Kind == "rebuild").Desc);
 
         // stopped → açıklama DEĞİŞMEZ (Build kaldığı yerden sürdürür, baştan başlamaz).
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 3, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 3, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
         Assert.Equal("Only stale projects", menu.Items.Single(i => i.Kind == "build").Desc);
@@ -886,7 +886,7 @@ public partial class ActionBarTests
         var (menu, window) = RealizeMenu(vm);
         Assert.Equal("F5", menu.Items.Single(i => i.Kind == "build").Kbd);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 0));
         Assert.Equal(AppPhase.Stopped, vm.Phase);
 
@@ -920,7 +920,7 @@ public partial class ActionBarTests
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 1, 10));
         Assert.Equal(AppPhase.Stopped, vm.Phase); // ön-koşul
 
@@ -943,7 +943,7 @@ public partial class ActionBarTests
         Assert.True(bar.Segment.IsEnabled);
         Assert.True(bar.PerfChip.IsEnabled);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(vm.IsRunning);
 
         Assert.False(bar.BranchChip.IsEnabled);   // T12: branch/config KİLİTLİ

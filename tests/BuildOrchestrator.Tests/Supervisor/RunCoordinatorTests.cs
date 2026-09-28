@@ -19,7 +19,7 @@ using BuildOrchestrator.Tests.MsBuild;
 namespace BuildOrchestrator.Tests.Supervisor;
 
 /// <summary>
-/// [T4/T55] RunCoordinator: plan → N paralel worker → proje-başına invoke → disk log + IPC event → stop/continue.
+/// [T4/T55] RunCoordinator: plan → N paralel worker → proje-başına invoke → disk log + IPC event → stop.
 /// Gerçek MSBuild YOK (Task 5/13'ün işi) — sahte <see cref="IMsBuildInvoker"/> ile deterministik: hiçbir testte
 /// sleep/poll yok [D8], eşzamanlılık ve stop anları TaskCompletionSource ile kesin olarak kurulur.
 /// </summary>
@@ -343,7 +343,6 @@ public class RunCoordinatorTests
         Assert.Equal(3, started.TotalProjects);
         Assert.Equal(1, started.Parallelism);
         Assert.Equal("Debug", started.Configuration);
-        Assert.Equal(0, started.ElapsedMsAtStart);
 
         // [T54] A, B'ye doğrudan bağımlı ve B failed → A depIssues=[B] taşır; warn satırı log'un 2. satırında.
         var succeededA = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => NameOf(e.ProjectId) == "A");
@@ -373,7 +372,7 @@ public class RunCoordinatorTests
     }
 
     /// <summary>
-    /// [planlama görünürlüğü] Taze bir segmentte planlama (tarama → graf → topo →
+    /// [planlama görünürlüğü] Her koşuda planlama (tarama → graf → topo →
     /// incremental) <c>runStarted</c>'tan ÖNCE koşar ve 177 projelik bir workspace'te saniyeler sürer. O
     /// pencere eskiden TEK event bile üretmiyordu: App konsolu temizleyip <c>IsStarting</c>'e giriyor,
     /// şerit önceki metinde donuyordu — "Build'e bastım hiçbir şey olmadı".
@@ -429,7 +428,7 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
         int afterFirst = h.Events.OfType<PlanProgressEvent>().Count();
-        Assert.Equal(1, afterFirst); // taze segment satırını bastı (vakum değil)
+        Assert.Equal(1, afterFirst); // ilk koşu kendi satırını bastı (vakum değil)
 
         await h.Sut.StartAsync(Start(parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -973,7 +972,7 @@ public class RunCoordinatorTests
         var release = Signal();
         var invoker = new FakeInvoker(async (req, _, _) =>
         {
-            if (NameOf(req.ProjectId) != "A") return Ok();   // yalnız 1. segmentin projesi kapıda bekler
+            if (NameOf(req.ProjectId) != "A") return Ok();   // yalnız ilk koşunun projesi kapıda bekler
             inFlight.TrySetResult();
             await release.Task;
             return Ok();
@@ -986,9 +985,9 @@ public class RunCoordinatorTests
         release.SetResult();
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        var firstSegment = h.Events;
+        var firstRun = h.Events;
         Assert.Equal(["projectSkipped:X", "projectSkipped:Y"],
-            firstSegment.OfType<ProjectSkippedEvent>().Select(Describe));
+            firstRun.OfType<ProjectSkippedEvent>().Select(Describe));
         Assert.Equal(["A"], invoker.Requests.Select(r => NameOf(r.ProjectId))); // cycle üyeleri asla dispatch edilmez
 
         await h.Sut.StartAsync(Start(), default);
@@ -997,7 +996,7 @@ public class RunCoordinatorTests
         // [DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resume edilmiş scheduler'ın PreSkipped'i boştur,
         // X/Y için TEKRAR projectSkipped yazılmaz". Sürdürme segmenti diye bir şey kalmadı: ikinci koşu TAZEDİR
         // ve döngü üyelerini kendi planında yeniden pre-skip eder — her koşu ne atladığını kendi başına söyler.
-        var second = h.Events.Skip(firstSegment.Count).ToList();
+        var second = h.Events.Skip(firstRun.Count).ToList();
         Assert.Equal(["projectSkipped:X", "projectSkipped:Y"], second.OfType<ProjectSkippedEvent>().Select(Describe));
         var done = Assert.IsType<RunCompletedEvent>(second[^1]);
         Assert.Equal(2, done.Skipped);   // X, Y
@@ -1048,8 +1047,8 @@ public class RunCoordinatorTests
             if (e is RunCompletedEvent) break;
         }
 
-        // [planlama görünürlüğü] Eski iddia: akış <c>runStarted</c> ile BAŞLARDI. Değişme gerekçesi: taze bir
-        // segmentte planlama (tarama → graf → topo → incremental) runStarted'tan ÖNCE koşar ve 177 projelik
+        // [planlama görünürlüğü] Eski iddia: akış <c>runStarted</c> ile BAŞLARDI. Değişme gerekçesi: her
+        // koşuda planlama (tarama → graf → topo → incremental) runStarted'tan ÖNCE koşar ve 177 projelik
         // gerçek bir workspace'te saniyeler sürer; o pencerede tek event bile üretilmediği için App konsolu
         // boş, şerit önceki metinde donuyordu. Sıra artık planlama satırlarıyla BAŞLAR. Bu test o kablajı
         // GERÇEK Supervisor process'i üzerinden görür — in-process harness'ta planner sahtedir.
@@ -1353,8 +1352,8 @@ public class RunCoordinatorTests
             releaseQ.SetResult();
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            int warnsAfterSegment1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(1, warnsAfterSegment1); // 1. (fresh) segment TEK BİR KEZ warn eder
+            int warnsAfterRun1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(1, warnsAfterRun1); // 1. koşu TEK BİR KEZ warn eder
 
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -1363,8 +1362,8 @@ public class RunCoordinatorTests
             // teşhis/warn YOK". Sürdürme segmenti kalmadı: her koşu tazedir, obj'yi yeniden teşhis eder ve
             // bayatlık HÂLÂ duruyorsa yeniden uyarır — susmak, kullanıcının ikinci koşuda sorunu görmemesi
             // demek olurdu.
-            int warnsAfterSegment2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(2, warnsAfterSegment2);
+            int warnsAfterRun2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            Assert.Equal(2, warnsAfterRun2);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1709,7 +1708,7 @@ public class RunCoordinatorTests
     public async Task The_run_start_preview_carries_each_projects_last_built_commit_from_the_state_store()
     {
         // [W1] Sync yolu BuiltCommit'i doldurup run yolu boş bıraksaydı, Build'e basar basmaz her kartın sha
-        // slotunun sol yarısı sıfırlanırdı (buildPreview her run/segment başında YENİDEN yayınlanır ve satırı
+        // slotunun sol yarısı sıfırlanırdı (buildPreview her run başında YENİDEN yayınlanır ve satırı
         // uzlaştırır). Kayıtlı proje değeri taşır, kaydı olmayan null kalır.
         string cacheRoot = NewCacheRoot();
         try
@@ -2223,7 +2222,7 @@ public class RunCoordinatorTests
     }
 
     // Cap, hard stop yolunda da geri alınmalı: orada job Terminate edilir ama JOB'IN KENDİSİ yaşamaya devam
-    // eder (yeni process kabul eder) — cap kalsaydı bir sonraki run/Continue kısıtlı başlardı.
+    // eder (yeni process kabul eder) — cap kalsaydı bir sonraki run kısıtlı başlardı.
     [Fact]
     public async Task The_cap_is_released_on_the_hard_stop_path_too()
     {

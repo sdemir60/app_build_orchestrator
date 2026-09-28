@@ -296,7 +296,7 @@ public enum RunOutcome { Completed, Stopped }
 /// <param name="LogDirectory">[spec 2026-09-18 §6.2] Bu koşunun disk log klasörü (<c>RunLogWriter.RunDirectory</c>);
 /// branch değişimiyle kesilen koşunun özet satırı onu anar. Bilinmiyorsa <c>null</c>.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
-    string Configuration, long ElapsedMsAtStart, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
+    string Configuration, int? CpuCapPercent = null, string? LogDirectory = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
@@ -323,12 +323,13 @@ public sealed record ProjectSucceededEvent(string RunId, string ProjectId, long 
 /// NDJSON satırları kanıtsız (gri) okunur.</param>
 public sealed record ProjectFailedEvent(string RunId, string ProjectId, long DurationMs, string Reason,
     IReadOnlyList<string>? DepIssues = null, bool Evidence = false) : IpcEvent;
-/// <param name="CycleUnconverged">[cycle rounds/Task 8] Bu skip, bir SCC'nin ÖNCEKİ bir Build'de yakınsamayıp
-/// aynı bileşik imzada bir daha hiç tur harcanmadan pre-skip edildiğini işaretler (bkz. <c>RunCoordinator</c>'ın
-/// <see cref="SkipReasons.CycleNonConvergent"/> seed'i). <b>Ayrı bir tipli alandır, Reason metninden
-/// ÇIKARILMAZ</b> — sıradan "güncel" (up-to-date) skip'iyle Reason dışında hiçbir farkı olmadığı için App'in
-/// metin eşleştirmesi yapması YASAKTIR (tek doğruluk kaynağı <see cref="SkipReasons"/>). Varsayılan
-/// <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
+/// <param name="CycleUnconverged">[cycle rounds/Task 8] BUGÜN her zaman <c>false</c>'tur: motor artık bir
+/// SCC'nin geçmişte yakınsamadığı bir bileşik imzayı görünce onu pre-skip ETMEZ, yalnız decision.log'a
+/// RAPOR düşer (bkz. <c>RunCoordinator</c>'ın Cycles tohumundaki [Task 7 · DEĞİŞEN KURAL] notu) —
+/// <see cref="SkipReasons.CycleNonConvergent"/> da bugün hiçbir üretici tarafından yazılmaz. "Kalıcı kırık
+/// döngü" satırını App bugün bu alandan değil, o SCC'nin BU run'daki tur sonucundan (yakınsamama) çıkarır.
+/// Alan ve varsayılan değeri geriye dönük uyum için KORUNUR: bu alandan ÖNCE yazılmış NDJSON satırları aynen
+/// çözülmeye devam eder.</param>
 public sealed record ProjectSkippedEvent(string RunId, string ProjectId, string Reason, bool CycleUnconverged = false) : IpcEvent;
 /// <param name="DepIssueCount">Run genelinde depIssues taşıyan proje-sonucu sayısı. [It-3]</param>
 public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Succeeded, int Failed, int Skipped,
@@ -339,7 +340,7 @@ public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Suc
 public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
-/// <summary>[planlama görünürlüğü] Bir run'ın TAZE segmentinde, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
+/// <summary>[planlama görünürlüğü] Her run'da, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
 /// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
 /// kaynak. <c>syncProgress</c>'ten AYRI bir kanaldır: bu pencere Sync DEĞİLDİR ve App'in Sync yüzeyini
@@ -597,6 +598,6 @@ public sealed record BuildPreviewItem(string ProjectId, string Name, bool? WillB
     }
 }
 /// <param name="Items">Plan'ın build-order'ındaki TÜM düğümler (Cycle üyeleri DAHİL) — RunCoordinator bunu
-/// <c>RunSegmentAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
+/// <c>PlanAndRunAsync</c>'te planlama bittikten hemen sonra, <c>runStarted</c>'dan SONRA ama ilk
 /// <c>projectStarted</c>/<c>projectSkipped</c>'ten ÖNCE yayınlar.</param>
 public sealed record BuildPreviewEvent(IReadOnlyList<BuildPreviewItem> Items) : IpcEvent;

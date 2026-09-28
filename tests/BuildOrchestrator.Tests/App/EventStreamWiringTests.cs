@@ -68,7 +68,7 @@ public class EventStreamWiringTests
         var (view, window) = RealizeEmpty(vm);
 
         // Olaylar realize'den SONRA akar → satır ARTIMLI (CollectionChanged/Insert) koldan doğar.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", ProjectId, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", ProjectId, 1200)); // tıklanabilir "A built (1.2s)" satırı
 
@@ -90,7 +90,7 @@ public class EventStreamWiringTests
         var (view, window) = RealizeEmpty(vm);
 
         vm.OnEvent(new SyncCompletedEvent("main", "abc", false, 1, 0, ToBuildCount: 1, UpToDateCount: 0)); // sync satırı: ProjectId YOK
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", ProjectId, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", ProjectId, 1200));
 

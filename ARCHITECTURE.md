@@ -215,7 +215,8 @@ turned red. Draining costs the remaining time of the slowest in-flight project a
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
 pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
 
-`runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
+`runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
+`runCompleted` (the next Build counts from zero).
 
 Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
@@ -404,8 +405,8 @@ Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `proj
 `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
 
-`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
-segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
+`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
+(§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
 transcript, and a run's planning window is not a Sync.
 
 `cleanProgress` shares its shape with `syncProgress` — a line and a level — but is a channel of its own for
@@ -1290,8 +1291,7 @@ line, and a strange line stitch in MSBuild output cannot desynchronize the chunk
 
 ### 8.6 Planning pipeline
 
-Planning is entirely Core's work; the Supervisor's composition root only wires it. For a fresh run
-(`Build`/`Rebuild`) the sequence is:
+Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the sequence is:
 
 ```
 update external working copies (§10.4)            ← before everything: a fast-forward can bring new
@@ -1299,13 +1299,14 @@ update external working copies (§10.4)            ← before everything: a fast
   → scan (once, main root + every external root)
   → evaluate (cached) → producer map
   → edges → solution map → topological order → BuildPlan
-  → (Build only) incremental pass: per-project signature + willBuild
+  → incremental pass (every mode): per-project signature + willBuild
   → RunPlan { plan, solutionRefs, incremental }
 ```
 
-The update step is skipped when the user has turned it off and by a `Cycles` run, which is a repair pass over
-existing strongly connected components and has no business updating anyone's working copy. The *scan* still
-covers the external roots in every mode, so the graph a Cycles run repairs is the same graph a Build sees.
+The update step is skipped when the user has turned it off and by a `Cycles` or `Clean` run: one is a repair
+pass over existing strongly connected components, the other only deletes output, and neither has any business
+updating anyone's working copy (§10.4). The *scan* still covers the external roots in every mode, so the graph
+either run works against is the same graph a Build sees.
 
 **One tree, one identity.** A run always builds the working tree at the repository root — whatever branch is
 checked out there — so a project's id, its full csproj path, is also where it is compiled. Everything flows by
@@ -1495,7 +1496,7 @@ there, because a member compiled in the first round may have bound to a method t
 identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
-idempotent against what is on disk and the next `Build` picks up where this one left off. Restore is not
+idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
 repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
 between rounds can change `packages.config` — only a member that failed carries the restore prologue again
 (§9.3), because the failure may have been the restore's own.
@@ -1562,9 +1563,10 @@ when the budget ran out.
 Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
-being load-bearing. Within a `Cycles` run no member can reach
-that state — a dependency issue needs a *failed* dependency (§8.3) and nothing outside the group is built —
-but the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
+being load-bearing. A converged member can carry a dependency issue too — its transitive upstream compiles in
+the same `Cycles` run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
+with a note and its roots (§8.3), so the memory is lost the same way, as a side effect of that same fresh build
+state; the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
 Which member's signature stands for the group is decided in one place for both the writing and the reading
 side, since the two hold the component in different orders. In the mode the App actually sends every member
@@ -2355,7 +2357,7 @@ states themselves are stale. The silence line sits below the death and above the
 only one describing the *present*: the others are facts about something that already finished, and all of them
 assume a working engine. It is amber rather than red and carries no glyph — a drain that is merely slow is not
 a failure — and it clears itself the moment the engine speaks or the wait ends. A rejected request is not a
-failure and does not take this path — declining a request with nothing to resume leaves the `stopped` line
+failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
@@ -3121,8 +3123,10 @@ that state. The root is still applied because it is local state that persists, a
 engine returns carries it.
 
 A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
-required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
-starts there anyway and the note would be noise.
+required` — and the old repository's state goes with it: the rows fall back to hollow, the plan surface empties
+(§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
+branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
+anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
@@ -5090,7 +5094,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
@@ -5101,7 +5105,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
-| Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
+| Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |

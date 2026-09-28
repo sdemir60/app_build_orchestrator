@@ -79,7 +79,7 @@ public class CursorHopTests
     {
         var vm = NewVm();
         var view = RealizeStream(motion: false, vm, out var window);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
 
@@ -137,7 +137,7 @@ public class CursorHopTests
         var view = RealizeStream(motion: true, vm, out var window);
         var first = ((Rectangle)view.ActiveCursorGlyph).Fill;
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
 

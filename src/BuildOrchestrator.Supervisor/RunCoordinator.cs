@@ -25,11 +25,12 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
     IncrementalPlan? Incremental = null);
 
 /// <summary>
-/// [Task 19 wiring] Bir fresh (Rebuild/Build) run için incremental karar verileri: her projenin planlama
+/// [Task 19 wiring] Her koşunun incremental karar verileri: her projenin planlama
 /// anında hesaplanmış <see cref="Contracts.Model.BuildSignature"/> (byte-stable) imzası + HEAD commit + branch.
 /// <see cref="RunCoordinator"/> bir proje <c>projectSucceeded</c> olduğunda bu bilgiyle <see
 /// cref="Core.State.BuildStateStore"/>'a <see cref="BuildState"/> persist eder — böylece BİR SONRAKİ Build
 /// incremental olur. <c>null</c> Incremental (ör. testlerdeki basit planner) → persist YOK, pre-skip YOK.
+/// Clean modunda ise başarı persist EDİLMEZ, kayıt SİLİNİR (<c>ForgetBuildStateOnClean</c>).
 /// [A2 fix-1] Bu yalnız BAŞARI yolu içindir: başarısızlıkta yapılan invalidasyon (bkz.
 /// <c>InvalidateBuildStateOnFailure</c>) imza/HEAD gerektirmez, mevcut kaydı yerinde günceller.
 /// </summary>
@@ -68,7 +69,7 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 
 /// <summary>
 /// [T4/T55] Run'ın yürütme kalbi: plan → N paralel worker → proje-başına <c>MSBuild.exe</c> shell-out →
-/// disk log + IPC event → Stop/Continue. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
+/// disk log + IPC event → Stop. Planlama YOK (Core'un işi [D3]), in-process MSBuild YOK [§0/§3],
 /// bin/OutDir'den yalnız başarılı bir derlemeden sonra beslenen kopya adaylarının boyutu ve zamanı okunur
 /// (<see cref="OutputEvidence.LearnFedOutputs"/>), bellek ring buffer YOK — tek log kaynağı disktir [D4].
 ///
@@ -96,8 +97,8 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// bloklamaz).</para></param>
 /// <param name="msbuildFactory">MSBuild takımını (ham invoker + exe yolu) LAZY çözer: vswhere/VS yoksa Supervisor
 /// yine ayağa kalkar, hata ancak <c>startRun</c>'da <c>error(msbuildNotFound)</c> olarak bildirilir.</param>
-/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; Continue AYNI writer'ı (aynı run
-/// dizinini) kullanır — log dikişi bozulmaz.</param>
+/// <param name="logFactory">Run başına TEK <see cref="RunLogWriter"/> üretir; HER koşu kendi writer'ını
+/// (kendi run dizinini) açar — "aynı writer'ı paylaşan" bir sonraki koşu senaryosu YOK.</param>
 /// <param name="nowMs">MONOTONİK zaman kaynağı (üretimde <c>Environment.TickCount64</c>); duvar saati
 /// KULLANILMAZ — geri atlarsa elapsed negatife düşerdi.</param>
 /// <param name="console">Konsol (stderr) uyarı/özet kanalı. stdout YALNIZ NDJSON'dır [D4], bu yüzden buradan
@@ -159,7 +160,7 @@ public sealed class RunCoordinator(
     // taşımayan (P2 öncesi / harness) run'lar job'a hiç dokunmamalıdır.
     private bool _perfApplied;
     // [Fix round 1 — KÖK 1] PLANLAMA PENCERESİNDE gelmiş perf niyeti. startRun kabul edilir edilmez _runActive
-    // true olur, ama cap ancak plan kurulduktan SONRA (RunSegmentAsync'in apply noktası) uygulanır; 177 projede
+    // true olur, ama cap ancak plan kurulduktan SONRA (PlanAndRunAsync'in apply noktası) uygulanır; 177 projede
     // bu pencere SANİYELERDİR ve perf chip'i o sırada canlıdır. Buraya yazılan niyet run başlarken komuttaki
     // PerfMode'u EZER (kullanıcının SON sözü). Apply noktasında tüketilir; [Fix round 2 — YENİ 1] run
     // kapanışında İKİ kez temizlenir (ReleasePerf + son kilit), çünkü ikisinin arasındaki `await pump`
@@ -177,19 +178,7 @@ public sealed class RunCoordinator(
     private bool _capDrained;
 
     // --- Koşan run'ın state'i (koşu bitince temizlenir; proje logu okuması run boyunca buradan gider) ---
-    private RunPlan? _plan;
-    private string? _root;
     private RunLogWriter? _logs;
-    // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları.
-    private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
-    // [Task-13] projectId → Failed'a düştüğü AN ki reason "stopped" mıydı (torn-DLL guard). RunSnapshot/BuildResult
-    // reason TAŞIMAZ — bu yüzden reason bilgisi ayrı, run segmentleri arası kümülatif bu sözlükte izlenir (aynı
-    // _depIssuesById gibi Continue/RetryFailed segmentleri BOYUNCA aynı örnek paylaşılır). Bir proje sonradan
-    // FARKLI bir sonuçla (Succeeded ya da başka reason'la Failed) tamamlanırsa buradan silinir (bkz.
-    // BuildProjectAsync). NOT: RetryPlanning re-queue bir girdiyi Queued'a çevirirken bu seti güncellemez, bu
-    // yüzden geçici olarak bayat bir "stopped" girdisi kalabilir; RequeueStoppedFailed'ın savunmacı re-check'i
-    // (yalnız hâlâ Failed olanları re-queue eder) bunu zararsız kılar.
-    private ConcurrentDictionary<string, byte>? _stoppedFailedIds;
     // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
     // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.
     private string? _lastRunDirectory;
@@ -200,7 +189,8 @@ public sealed class RunCoordinator(
     public Task RunCompletion { get { lock (_gate) return _runTask; } }
 
     /// <summary>
-    /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif/resumable run varsa canlı writer'dan (in-memory sayaçla
+    /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif koşu varsa (ya da runStarted'a varmadan dönmüş bir
+    /// koşunun hâlâ açık writer'ı varsa) canlı writer'dan (in-memory sayaçla
     /// ATOMİK — bkz. <see cref="RunLogWriter.SnapshotProjectLog"/>) okunur; run tamamen bitmişse (writer Dispose
     /// edilmiş, <c>_logs</c> null) en son run dizininden PATH-tabanlı okunur (bkz.
     /// <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) — dizin hâlâ diskte durduğu için sonradan bir proje
@@ -213,7 +203,7 @@ public sealed class RunCoordinator(
     /// referansı ya da en son run dizini) yakalanır. Büyük bir proje logunun okunması artık stopRun/startRun
     /// gibi AYNI kilidi paylaşan ilgisiz çağrıları bloklamaz. Doğruluk korunur: <see cref="RunLogWriter"/> kendi
     /// iç kilitlerini (<c>_projectsGate</c>, <c>ProjectLogFile</c>'ın kendi kilidi) taşır — bu metod dönmeden
-    /// SONRA <c>_logs.Dispose()</c> çağrılsa bile (bkz. RunSegmentAsync'in finally'si, dispose HER ZAMAN
+    /// SONRA <c>_logs.Dispose()</c> çağrılsa bile (bkz. PlanAndRunAsync'in finally'si, dispose HER ZAMAN
     /// worker'lar join olduktan sonra ayrı bir noktada yapılır) yakalanan <see cref="RunLogWriter"/> referansı
     /// burada canlı tutulur (GC toplamaz) ve <c>SnapshotProjectLog</c> kendi kilidiyle Dispose ile serileşir —
     /// canlı-writer anlık görüntüsü hâlâ tutarlıdır.</para>
@@ -266,17 +256,6 @@ public sealed class RunCoordinator(
         if (rejection is not null) await writer.WriteAsync(rejection, ct);
     }
 
-    private bool SameRootLocked(string rootPath) =>
-        Canonical(rootPath) is string root && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Bozuk yol (boş/geçersiz karakter) fırlatmaz, null döner: bu, IPC dispatch loop'undan (StartAsync)
-    /// çağrılır — hatalı bir komut tüm Supervisor'ı düşürmemeli.</summary>
-    private static string? Canonical(string path)
-    {
-        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
-        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException) { return null; }
-    }
-
     /// <summary>
     /// [clean/optimize] Salt-okur sonda: bir koşu slotu dolu mu (planlama penceresi DAHİL). Tüketicileri
     /// <c>cleanWorkspace</c> ve <c>optimizeWorkspace</c>'in reddetme kapılarıdır — ikisi de diski değiştirir ve
@@ -297,7 +276,8 @@ public sealed class RunCoordinator(
     /// <see cref="DrainCapLocked"/>). <b>Hard:</b> inner Job ANINDA terminate edilir; in-flight projeler
     /// <c>projectFailed("stopped")</c> raporlanır. <b>Interrupt</b> (branch değişti): Graceful'un kendisi + koşu
     /// kesilmiş sayılır — bundan sonra biten sonuçlar deftere yazılmaz (bkz. <see cref="ReportProjectResult"/>).
-    /// Terminate edilmiş Job yeni process kabul ettiği için ikisi de Continue'ya açıktır.</para>
+    /// Terminate edilmiş Job yeni process kabul ettiği için ikisinden sonra da bir sonraki koşu aynı inner
+    /// job'da başlayabilir.</para>
     /// </summary>
     public bool TryRequestStop(StopKind kind)
     {
@@ -362,7 +342,7 @@ public sealed class RunCoordinator(
 
     /// <summary>
     /// [T20-b/K11] KOŞARKEN perf profilini değiştirir (<c>setPerfMode</c>). <b>Canlı değişen YALNIZ CPU cap +
-    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="RunSegmentAsync"/>'in worker
+    /// priority'dir</b>: worker'lar run başında bir kez yaratılır (bkz. <see cref="PlanAndRunAsync"/>'in worker
     /// dizisi) ve dinamik bir slot mekanizması YOKTUR — yeni profilin paralelliği ancak BİR SONRAKİ run'da
     /// geçerli olur. App bu ayrımı kullanıcıya konsol notuyla söyler.
     /// <para>[Fix round 1 — KÖK 1] Cap HENÜZ uygulanmamışken (plan hâlâ kuruluyor) gelen niyet KAYBOLMAZ:
@@ -610,7 +590,7 @@ public sealed class RunCoordinator(
             // [Task 10 fix I2] Açılış kurtarması defter yazımında patladıysa PLANLAMADAN önce yeniden denenir —
             // kesilmiş projenin kaydı geçersizlenmeden planlanırsa yarım çıktısı "güncel" sayılabilirdi.
             if (stateStore is not null) TrackInFlight(ledger => ledger.RetryRecovery(stateStore, DateTimeOffset.UtcNow));
-            await RunSegmentAsync(cmd, events.Writer, ct);
+            await PlanAndRunAsync(cmd, events.Writer, ct);
         }
         catch (Exception ex)
         {
@@ -622,7 +602,7 @@ public sealed class RunCoordinator(
             // [T20-b/K11 · Fix round 1 — minor 2] Cap'i EN BAŞTA geri al. Bu finally run'ın TEK huni
             // noktasıdır (erken planFailed/msbuildNotFound dönüşleri ve beklenmeyen exception dahil); aşağıdaki
             // `await pump` beklenmedik bir şekilde fırlarsa bile uygulanmış bir cap Supervisor ömrü boyunca
-            // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (RunSegmentAsync döndü), yani kısılacak bir
+            // SIZMAZ. Bu noktada tüm worker'lar zaten join olmuştur (PlanAndRunAsync döndü), yani kısılacak bir
             // MSBuild child'ı kalmamıştır.
             ReleasePerf();
             // [spec 2026-09-18 §5.5] Uçuş defteri HER çıkışta boşalır (normal, stop, planFailed, beklenmeyen hata):
@@ -682,24 +662,26 @@ public sealed class RunCoordinator(
         }
     }
 
-    private async Task RunSegmentAsync(StartRunCommand cmd, ChannelWriter<IpcEvent> events, CancellationToken ct)
+    private async Task PlanAndRunAsync(StartRunCommand cmd, ChannelWriter<IpcEvent> events, CancellationToken ct)
     {
         RunPlan runPlan;
         RunLogWriter logs;
         RunClock clock;
-        // [cycle rounds] Scheduler'ın TOHUMU: resume'da devralınan snapshot, Build'de "up to date" pre-skip
-        // tohumu, aksi halde null (taze, tohumsuz). Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir
-        // yerde kurulur — üç ayrı kurulum, üçünde de aynı CycleGroups'u vermeyi unutmaya açıktı (kopya YASAK).
-        RunSnapshot? schedulerSeed = null;
-        long elapsedAtStart;
+        // [cycle rounds] Scheduler'ın TOHUMU — koşu başında karara bağlanmış pre-skip'ler: Build'de "up to date";
+        // Cycles'ta kapsam içi "up to date" (grup düzeyinde güncel SCC dahil) ve kapsam dışı (OutOfCycleScope).
+        // Rebuild/Clean'de BOŞ kalır. Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir yerde kurulur
+        // (kopya YASAK).
+        var schedulerSeed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
-        ConcurrentDictionary<string, byte> stoppedFailedIds;
-        // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
-        // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
-        // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild'de boş kalır.
-        // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır — bu listeye HEM sıradan
-        // güncel skip'ler HEM de yakınsamama hafızasından gelen SCC pre-skip'leri düşer; App'e giden ayırt
-        // edici bayrak Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır.
+        // [Task 19] Build VE Cycles modlarında construction anında Skipped sayılan pre-skip'ler (cycle pre-skip'i
+        // gibi dependent'ları için resolved) — Build'de incremental "up to date" (WillBuild==false, cycle DIŞI)
+        // projeler; Cycles'ta AYRICA kapsam dışı projeler (SkipReasons.OutOfCycleScope) VE grup düzeyinde güncel
+        // SCC üyeleri (SkipReasons.UpToDate). ProjectSkippedEvent ile raporlanır. Rebuild'de boş kalır.
+        // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır: App'e giden ayırt edici bayrak
+        // Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır. Onu true
+        // yapan tek kaynak yakınsamama hafızasının SCC pre-skip'iydi; o kalktı (bkz. Cycles tohumundaki
+        // [Task 7 · DEĞİŞEN KURAL]) — listeye bugün yalnız "up to date" ve Cycles'ın kapsam dışı skip'leri düşer
+        // ve alan hep false taşınır.
         var upToDateSkips = new List<(string ProjectId, string Reason, bool CycleUnconverged)>();
         // [tek proje] Hedefin bu koşuda DERLENMEYEN bayat bağımlılıkları (yalnız kapsamlı koşuda dolu) —
         // dispatch'te dep-issue hesabına girer (bkz. ComputeDepIssues).
@@ -740,13 +722,10 @@ public sealed class RunCoordinator(
 
             lock (_gate)
             {
-                _logs?.Dispose(); // terk edilmiş (artık sürdürülmeyecek) önceki run'ın writer'ı
-                _plan = runPlan;
-                _root = Canonical(cmd.RootPath);
+                _logs?.Dispose(); // runStarted'a varmadan dönmüş önceki koşunun (msbuildNotFound ya da beklenmeyen hata) kapanmamış writer'ı — finally'si hiç koşmadı
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
-                depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
-                stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
+                depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
             }
             // [tek proje] decision.log kapsamı adıyla anar: "neden tek proje derlendi" sorusu diskten okunur.
             if (staleDependenciesById is not null)
@@ -757,13 +736,13 @@ public sealed class RunCoordinator(
             //
             // [cycles] Cycles modunda KAPSAM daralır: iş yalnız SCC'ler VE onların transitif upstream'idir
             // (gerekçe CycleRunScope'ta) — kapsam dışı her proje koşulsuz pre-skip edilir. Kapsam İÇİNDEKİLER
-            // sıradan incremental kurala tabidir; SCC'ler ayrıca iki kapıdan geçebilir — daha önce aynı bileşik
-            // imzada yakınsamamış olmak, ya da grup olarak güncel olmak.
+            // sıradan incremental kurala tabidir; SCC'ler ayrıca grup kapısından geçer — grup olarak güncelse
+            // tohumlanır. (Daha önce aynı bileşik imzada yakınsamamış olmak eskiden ikinci bir kapıydı; bugün yalnız
+            // raporlanır — aşağıdaki [Task 7 · DEĞİŞEN KURAL].)
             bool cyclesRun = cmd.Mode == RunMode.Cycles;
             var cycleScope = cyclesRun ? CycleRunScope.Of(runPlan.Plan) : null;
             if (cmd.Mode == RunMode.Build || cyclesRun)
             {
-                var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
                 // Grup düzeyinde "güncel" bulunan SCC üyeleri — aşağıdaki tek pre-skip döngüsünün cycle
                 // üyelerine açtığı KAPIDIR. Build modunda boş kalır (kapı kapalı: Build bir SCC'yi derlemez ve
                 // onları tohumlamak ReadySetScheduler'ın "in dependency cycle" gerekçesini YUTARDI).
@@ -818,7 +797,6 @@ public sealed class RunCoordinator(
                 }
                 foreach (var n in runPlan.Plan.Nodes)
                 {
-                    if (seed.ContainsKey(n.Id)) continue;   // yakınsamama hafızası zaten karar verdi
                     // KAPSAM kapısı — iki modda AYRI ve bilerek öyle:
                     // · Cycles: kapsam dışı kalan BURADA tohumlanır ve kendi gerekçesiyle raporlanır.
                     // · Build:  SCC üyesi HİÇ tohumlanmaz, çünkü onu zaten ReadySetScheduler kendi
@@ -826,7 +804,7 @@ public sealed class RunCoordinator(
                     //   iki farklı durum ekranda aynı görünürdü.
                     if (cyclesRun && !cycleScope!.Contains(n.Id))
                     {
-                        seed[n.Id] = BuildResult.Skipped;
+                        schedulerSeed[n.Id] = BuildResult.Skipped;
                         upToDateSkips.Add((n.Id, SkipReasons.OutOfCycleScope, CycleUnconverged: false));
                         continue;
                     }
@@ -836,12 +814,10 @@ public sealed class RunCoordinator(
                     // ve bu kapıya hiç uğramaz — kendi WillBuild'i onu temsil eder.
                     if (n.InCycle && !cycleUpToDate.Contains(n.Id)) continue;
                     if (n.WillBuild != false) continue;
-                    seed[n.Id] = BuildResult.Skipped;
+                    schedulerSeed[n.Id] = BuildResult.Skipped;
                     upToDateSkips.Add((n.Id, SkipReasons.UpToDate, CycleUnconverged: false));
                 }
-                if (seed.Count > 0) schedulerSeed = new RunSnapshot(seed, [], 0);
             }
-            elapsedAtStart = 0;
             clock = new RunClock(nowMs);
         }
 
@@ -854,16 +830,14 @@ public sealed class RunCoordinator(
         var groups = cmd.Mode == RunMode.Cycles && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
             ? withCycles
             : null;
-        var scheduler = schedulerSeed is null
-            ? new ReadySetScheduler(runPlan.Plan, groups)
-            : new ReadySetScheduler(runPlan.Plan, schedulerSeed, groups);
+        var scheduler = new ReadySetScheduler(runPlan.Plan, schedulerSeed, groups);
 
         MsBuildToolset toolset;
         try { toolset = await msbuildFactory(ct); }
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
-        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her taze koşuda tetiklenir:
+        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir:
         // her proje kendi varsayılan obj'inde derlenir. onRetry ile AYNI ikili-yazım deseni: hem decision.log
         // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
         StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
@@ -893,24 +867,23 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, elapsedAtStart, appliedCap, LogDirectory: logs.RunDirectory));
+            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
         // taşınır; burada AYRICA hesaplanmaz.
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
         // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
-        // önizlemenin tamamı tek okumadan beslenir. (Bir Build segmenti store'u toplam İKİ kez okur: yukarıdaki
-        // [Task 7] yakınsamama hafızası taraması ve buradaki önizleme; ikisi ayrı sorulardır ve Build DIŞINDAKİ
-        // modlarda ilki hiç çalışmaz.) Segment 2'nin okuduğu
-        // map segment 1'in persist'lerini İÇERİR — yani derlenmiş satırların sol yarısı taze commit'e döner.
+        // önizlemenin tamamı tek okumadan beslenir. Yukarıdaki [Task 7] yakınsamama hafızası taraması store'u
+        // ayrıca okur; o yalnız Cycles'ta koşar ve ayrı bir soruyu cevaplar.
         var builtCommits = stateStore?.Load();
         // Önizleme BU KOŞUNUN yapacağını anlatır, planlayıcının soyut "dirty mi" cevabını değil: pre-skip
         // edilmiş her proje WillBuild=false gösterilir. İki yer arasındaki fark aksi halde kullanıcıya YALAN
-        // söylerdi — amber "derlenecek" noktası, hemen ardından "skipped" olarak geçen bir satırda. Build
-        // modunda bu projeksiyon çoğunlukla no-op'tur (tohum zaten WillBuild==false'tan doğar); ayrıştığı iki
-        // yer, gerekçesi imzadan DEĞİL koşu-zamanlama kuralından gelen skip'lerdir: yakınsamama hafızası ve
-        // Cycles modunun kapsam dışı bıraktığı projeler.
+        // söylerdi — amber "derlenecek" noktası, hemen ardından "skipped" olarak geçen bir satırda. Tohum
+        // "up to date" skip'lerinde zaten WillBuild==false'tan doğar, orada bu projeksiyon no-op'tur; ayrıştığı
+        // tek yer, gerekçesi imzadan DEĞİL koşu kapsamından gelen skip'lerdir: Cycles modunun kapsam dışı
+        // bıraktığı projeler. (Yakınsamama hafızası eskiden ikinci bir kaynaktı; artık pre-skip etmiyor — bkz.
+        // Cycles tohumundaki [Task 7 · DEĞİŞEN KURAL].)
         var preSkipped = upToDateSkips.Select(s => s.ProjectId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         // [Faz 3/Task 6] Planın kararına giren çıktı kontrolü (Program.ComputeIncremental) — yoksa kanıtsız.
         OutputCheck? CheckOf(string id) => runPlan.Incremental?.ChecksById?.GetValueOrDefault(id);
@@ -965,9 +938,9 @@ public sealed class RunCoordinator(
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));
         Decide(logs, string.Format(CultureInfo.InvariantCulture,
-            "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5} elapsedAtStart={6}ms",
+            "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5}",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
-            perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap), elapsedAtStart));
+            perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.
@@ -975,20 +948,23 @@ public sealed class RunCoordinator(
         {
             // [A13/B2] Skip satırının metni TEK yerde: iki döngü de aynı cümleyi kuruyordu, çeviri sonrası
             // birebir aynı literal iki kez yaşardı (kopya YASAK, CLAUDE.md).
-            // [cycle rounds/Task 8] cycleUnconverged TİPLİ bir parametredir, Reason'dan ÇIKARILMAZ — çağıranın
-            // hangi listeden geldiğini (yakınsamama hafızası mı, sıradan güncel skip mi) zaten bildiği için
-            // burada yalnız ProjectSkippedEvent'e AYNEN taşınır.
+            // [cycle rounds/Task 8] cycleUnconverged TİPLİ bir parametredir, Reason'dan ÇIKARILMAZ — çağıran değeri
+            // kendi listesinden bilir, burada yalnız ProjectSkippedEvent'e AYNEN taşınır. Bugün iki çağıranın ikisi
+            // de false verir: onu true yapan yakınsamama hafızası pre-skip'i kalktı (bkz. Cycles tohumundaki
+            // [Task 7 · DEĞİŞEN KURAL]).
             void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false) =>
                 ReportSkipped(events, logs, cmd.RunId, projectId, nodeById[projectId].Name, reason, cycleUnconverged);
 
-            // Cycle üyeleri (construction anında Skipped) — resume edilmiş scheduler'ın PreSkipped'i BOŞTUR,
-            // bu yüzden Continue'da tekrar yazılmazlar (yalnız snapshot onları taşımıyorsa savunmacı olarak yazılır).
+            // Cycle üyeleri (construction anında Skipped) — PreSkipped: Rebuild/Build'de döngü üyelerini taşır
+            // ("in dependency cycle"; Build tohumu SCC üyelerini hiç taşımaz), Cycles'ta boştur (gruplar
+            // turlarla derlenir — BuildCycleGroupAsync), Clean'de boştur (plan döngü işaretsiz, CleanRunScope).
             // Bu liste yalnız "grup DIŞARIDA hiç dispatch edilmedi" pre-skip'ini taşır (kill switch/SCC yok) —
             // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
                 DecideSkipped(projectId, reason);
-            // [Task 19] Build modunda incremental "up to date" skip'ler (cycle pre-skip ile AYNI konumda, ilk
-            // dispatch'ten ÖNCE): dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
+            // [Task 19] Build VE Cycles modlarının pre-skip'leri (cycle pre-skip ile AYNI konumda, ilk
+            // dispatch'ten ÖNCE) — Build'de incremental "up to date", Cycles'ta AYRICA kapsam dışı ve grup
+            // düzeyinde güncel SCC üyeleri: dependent'ları için scheduler'da zaten Skipped/resolved tohumlandı.
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
@@ -1008,7 +984,6 @@ public sealed class RunCoordinator(
                     cpuFloor: new CoordinatorCpuFloor(this)),
                 toolset.MsBuildExePath,
                 depIssuesById, // [T54]
-                stoppedFailedIds, // [Task-13]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
@@ -1034,17 +1009,17 @@ public sealed class RunCoordinator(
             catch (Exception ex)
             {
                 // Worker'lar normalde fırlatmaz (her proje kendi sonucunu raporlar). Yine de fırlarsa: run ASILI
-                // KALMAZ — aşağıdaki finally snapshot alıp runCompleted yazar; kalanlar Queued olarak raporlanır.
+                // KALMAZ — aşağıdaki finally kalan sayısını okuyup runCompleted yazar; kalanlar Queued olarak raporlanır.
                 Decide(logs, "a worker terminated unexpectedly: " + ex.Message);
             }
         }
         finally
         {
-            // [Kısıt 4] Snapshot ANCAK tüm worker'lar join olduktan sonra alınır (her in-flight proje sonucunu
-            // raporlamıştır) — hem graceful hem hard için. Böylece Queued kesindir, "öldürüldü" ≠ "raporlandı"
-            // belirsizliği yoktur.
+            // [Kısıt 4] Kalan sayısı ANCAK tüm worker'lar join olduktan sonra okunur (her in-flight proje
+            // sonucunu raporlamıştır) — hem graceful hem hard için. Böylece kalan sayısı kesindir, "öldürüldü"
+            // ≠ "raporlandı" belirsizliği yoktur.
             clock.Pause();
-            var snapshotAtEnd = scheduler.TakeSnapshot(clock.ElapsedMs);
+            int unfinished = scheduler.UnfinishedCount;
 
             StopKind? stopKind;
             // _finishing: bundan sonra TryRequestStop sahiplenmez. _stopAcked: runStopped'ı BURADA yazıyoruz,
@@ -1056,8 +1031,8 @@ public sealed class RunCoordinator(
             int succeeded = completed.Count(kv => kv.Value == BuildResult.Succeeded);
             int failed = completed.Count(kv => kv.Value == BuildResult.Failed);
             int skipped = completed.Count(kv => kv.Value == BuildResult.Skipped);
-            // [T54] Run genelinde (Continue segmentleri DAHİL, kümülatif) dependency-affected proje sayısı —
-            // depIssues'u boş OLMAYAN projeler. Kendisi failed bir kök, kendi depIssue'unu taşımaz (sayılmaz).
+            // [T54] Bu koşunun dependency-affected proje sayısı — depIssues'u boş OLMAYAN projeler. Kendisi failed
+            // bir kök, kendi depIssue'unu taşımaz (sayılmaz).
             // [koşullu yeniden derleme] "dependency still failing" ile atlanan proje de birikime köklerini yazar
             // (dependent'ları miras alsın diye) ama bu koşuda DERLENMEDİ — sayılmaz.
             int depIssueCount = depIssuesById.Count(
@@ -1067,10 +1042,10 @@ public sealed class RunCoordinator(
             if (stopKind is not null)
                 events.TryWrite(new RunStoppedEvent(cmd.RunId, WasHard: stopKind == StopKind.Hard));
             events.TryWrite(new RunCompletedEvent(cmd.RunId, outcome, succeeded, failed, skipped,
-                snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
+                unfinished, clock.ElapsedMs, depIssueCount));
             Decide(logs, string.Format(CultureInfo.InvariantCulture,
                 "run {0} finished: outcome={1} succeeded={2} failed={3} skipped={4} queued={5} duration={6}ms depIssues={7}",
-                cmd.RunId, outcome, succeeded, failed, skipped, snapshotAtEnd.Queued.Count, clock.ElapsedMs, depIssueCount));
+                cmd.RunId, outcome, succeeded, failed, skipped, unfinished, clock.ElapsedMs, depIssueCount));
 
             // [design v1.7.0 §3.1] Koşu bittiğinde HER ŞEY temizlenir — devredilecek bir segment yoktur.
             // Eskiden Stop/hata sonrası plan/logs/birikimler saklanırdı, çünkü Continue ve RetryFailed AYNI
@@ -1078,7 +1053,7 @@ public sealed class RunCoordinator(
             // ne derleyeceğini persist edilmiş BuildState'ten bulur (öldürülen/başarısız projeler geçersiz,
             // yeşil bitenler güncel).
             // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-            lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; }
+            lock (_gate) _logs = null;
             logs.Dispose();
         }
     }
@@ -1326,7 +1301,6 @@ public sealed class RunCoordinator(
             if (invalidates) evidenceSignature = FailureEvidenceSignature(run, projectId, failReason, trustedResult);
             if (result == BuildResult.Succeeded)
             {
-                run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
                 // [DEĞİŞEN KURAL — A2] depIssue TAŞIYAN bir success bağımlılığının BAYAT çıktısına link'lidir ve
                 // yine derlenmelidir. Eskiden bu, "deftere HİÇ yazma" ile sağlanıyordu; ölçüldü ki o kural
                 // defterin ilerlemesini tamamen durduruyor (bir koşuda 24 hata depIssue'yu 96 projeye yaydı ve
@@ -1354,7 +1328,6 @@ public sealed class RunCoordinator(
             else
             {
                 string reason = failReason!;
-                MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
                 run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent,
                     Evidence: evidenceSignature is not null));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "{0}: failed — {1}{2}", name, reason,
@@ -1487,10 +1460,11 @@ public sealed class RunCoordinator(
     /// </summary>
     private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
     {
-        // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. resume edilmiş bir run'dan
-        // devralınan) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete çağırmak
-        // fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır — ama
-        // grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
+        // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. tohumla Skipped girilmiş —
+        // Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
+        // savunmacıdır) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete
+        // çağırmak fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır —
+        // ama grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
         var completedAtDispatch = run.Scheduler.Completed;
         var members = allMembers
             .Where(id => run.NodeById.ContainsKey(id) && !completedAtDispatch.ContainsKey(id))
@@ -1816,7 +1790,8 @@ public sealed class RunCoordinator(
             // [Task 7] Üye raporlamasından SONRA: yukarıdaki döngü zaten her üyeyi invalidate etmiştir
             // (trustedResult=false ⇒ InvalidateBuildStateOnFailure), bu yalnız ÜZERİNE, hangi bileşik imzada
             // pes edildiğini ayrıca kaydeder. reportFailure varsa bile denenir — bir üyenin raporlama hatası
-            // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Build yine boşuna turlar tüketirdi).
+            // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Cycles koşusu grubu yanlış raporlardı:
+            // yazılmamış bir NoProgress'i tanıyamaz, silinmemiş bayat bir hafızayı ise tanırdı).
             long totalDurationMs = members.Sum(id => state[id].DurationMs); // [Task 3] üye sürelerinin TOPLAMI
             RecordCycleOutcome(run, allMembers, members, decision, roundsRun, lastFailedCount, totalDurationMs);
             if (reportFailure is not null) ExceptionDispatchInfo.Capture(reportFailure).Throw();
@@ -1893,30 +1868,36 @@ public sealed class RunCoordinator(
     /// [Task 7] Yakınsamama hafızasının TEK yazıcısı — <see cref="BuildState.NonConvergentSignature"/>.
     ///
     /// <para><b>YALNIZ <see cref="CycleRoundDecision.NoProgress"/> ⇒ YAZ.</b> TÜM üyelerin alanına o anki
-    /// bileşik imza yazılır; bir sonraki <c>Build</c> aynı imzayı görürse grup <see
-    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile pre-skip edilir, kaynak DEĞİŞMEDEN turlar tekrar
-    /// TÜKETİLMEZ. Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır —
-    /// <see cref="InvalidateBuildStateOnFailure"/> yalnız MEVCUT kayıtları günceller, yenisini AÇMAZ.</para>
+    /// bileşik imza yazılır; bir sonraki <c>Cycles</c> koşusu aynı imzayı görürse grup <see
+    /// cref="BuildStateStore.IsCycleNonConvergent"/> ile TANINIR ve decision.log'a bir "retrying" satırı
+    /// düşülür — [Task 7 · DEĞİŞEN KURAL] artık BLOKLAMAZ: grup yine dispatch edilir, yalnız RAPORLANIR.
+    /// Kayıt hiç yoksa (SCC hiç derlenmemiş) burada taze bir <see cref="BuildState"/> açılır. Üyelerin raporu bu
+    /// yazımdan ÖNCE koşar ve oradaki <see cref="InvalidateBuildStateOnFailure"/> kaydı bugün zaten açar; bu dal
+    /// savunmacıdır — o yazım düşse de (warn-only) hafıza kaybolmaz.</para>
     ///
     /// <para><b><see cref="CycleRoundDecision.CapReached"/> ⇒ YAZMA.</b> İki karar aynı şey DEĞİLDİR ve ayrım
-    /// KANITA dayanır. NoProgress "aynı küme iki tur üst üste patladı" demektir: tur eklemek çözmez, bu bir
-    /// SIKIŞMA kanıtıdır ve yeniden denemeyi reddetmeyi haklı çıkarır. CapReached ise "hâlâ hareket var ama
-    /// BÜTÇE bitti" demektir — kanıt değil, kesinti. Hatırlansaydı tavanın kendi gerekçesi geçersiz olurdu:
-    /// tavan "bilgi kaybettirmez, çünkü turlar diskteki duruma göre idempotenttir ve bir sonraki <c>Build</c>
-    /// kaldığı yerden devam eder" diyerek meşrudur, ama pre-skip edilen bir grupta o devam HİÇ gelmez. Tam
-    /// olarak yakınsamakta olan bir grup (tur1 {A,B}, tur2 {A}, tur3 temiz) bir tur kala donar ve tek çıkış
-    /// ilgisiz bir kaynak değişikliği olurdu. Bedel kabul edilmiştir: dört-altı tur isteyen bir döngü,
-    /// oturana dek sonraki birkaç Build'de de turlarını harcar.</para>
+    /// KANITA dayanır. NoProgress "tur eklemek sonucu değiştiremez" demektir (bkz.
+    /// <see cref="CycleRoundDecision.NoProgress"/>) — bir SIKIŞMA kanıtı. CapReached ise "hâlâ hareket var ama
+    /// BÜTÇE bitti" demektir — kanıt değil, kesinti; tavan bilgi kaybettirmez, çünkü turlar diskteki duruma göre
+    /// idempotenttir ve bir sonraki <c>Cycles</c> koşusu kaldığı yerden devam eder. Hafıza bugün yalnız
+    /// RAPORLAR: bir sonraki <c>Cycles</c> koşusu grubu tanıyıp decision.log'a "did not converge at this
+    /// signature" yazar — CapReached yazılsaydı o satır hiç kanıtlanmamış bir sıkışmayı raporlardı.
+    /// <b>Tarihçe:</b> hafıza eskiden pre-skip de EDERDİ (bkz. Cycles tohumundaki
+    /// <c>[Task 7 · DEĞİŞEN KURAL]</c> notu) — o dönemde hatırlanan bir CapReached, tam olarak yakınsamakta olan
+    /// bir grubu (tur1 {A,B}, tur2 {A}, tur3 temiz) bir tur kala dondururdu; tek çıkış ilgisiz bir kaynak
+    /// değişikliği olurdu. Kural o riskten doğdu.</para>
     ///
-    /// <para><b>Converged (ve CapReached) ⇒ SİL.</b> [M3] Yakınsama hafızayı geçersiz kılar. Bunun ÇOĞU üye için zaten bir yan
-    /// etkisi vardır (<see cref="PersistBuildStateOnSuccess"/> taze bir <see cref="BuildState"/> KURAR, alan
-    /// doğal olarak null'a döner) ama o yol dep-issue TAŞIYAN bir üyede bilerek çalışmaz ([A2] kapısı): grup
-    /// yakınsasa bile o üyenin eski imzası kayıtta kalır, ve <c>Build</c>'in pre-skip'i TÜM üyeleri
-    /// istediği için grup aynı imzada sonsuza dek pre-skip edilirdi — kaynak değişmeden çıkışı olmayan bir
-    /// tuzak. Bu yüzden silme AÇIKÇA burada, hafızanın kendi yazıcısında yapılır (yan etkiye bırakılmaz).</para>
+    /// <para><b>Converged (ve CapReached) ⇒ SİL.</b> [M3] Gerçek bir tur kararı eski hafızayı geçersiz kılar.
+    /// Converged'de bu çoğunlukla bir yan etkiyle de olur: <see cref="PersistBuildStateOnSuccess"/> taze bir
+    /// <see cref="BuildState"/> KURAR ve alan doğal olarak null'a döner ([A2]'den beri dep-issue taşıyan başarı
+    /// da persist edilir). CapReached'te böyle bir yan etki YOKTUR: üyeler güvenilmez raporlanır ve
+    /// <see cref="InvalidateBuildStateOnFailure"/> kaydı <c>with {…}</c> ile günceller — alan KORUNUR. Açık silme
+    /// olmasa bir sonraki <c>Cycles</c> koşusu, grubun son kararı "hâlâ hareket vardı" iken, aynı imzada bayat bir
+    /// NoProgress kanıtını raporlardı. Bu yüzden silme AÇIKÇA burada, hafızanın kendi yazıcısında yapılır (yan
+    /// etkiye bırakılmaz).</para>
     ///
     /// <para><b>İmza temsilcisi</b> <see cref="CycleGroups.SignatureRepresentative"/>'dendir ve OKUYAN taraf
-    /// (Build'in pre-skip taraması) AYNI yardımcıyı çağırır — iki taraf kendi <c>[0]</c>'ını seçseydi listeler
+    /// (Cycles koşusunun kendi tanıma taraması) AYNI yardımcıyı çağırır — iki taraf kendi <c>[0]</c>'ını seçseydi listeler
     /// farklı sıralı olduğu için üye-başına imzanın ayrıştığı modda farklı imzalara bakarlardı. <b>Safe</b>
     /// (App'in gönderdiği tek mod) modda zaten TÜM üyeler AYNI bileşik imzayı taşır, bu yüzden seçim orada
     /// önemsizdir; <b>Fast</b> modda ise üyeler ortak imza taşımaz (<c>IncrementalPlanner</c> bileşen haritasını
@@ -1936,9 +1917,9 @@ public sealed class RunCoordinator(
     {
         if (run.StateStore is null) return null;
         // Kapı TEK karar: yalnız NoProgress bir SIKIŞMA kanıtıdır. CapReached buradan geçmediği için aşağıdaki
-        // temizleme dalına düşer — yani eski bir NoProgress hafızası da SİLİNİR. Bu kasıtlıdır: Rebuild ile
-        // aynı imzada koşup tavana dayanan bir grup, bayat hafızası duruyorken bir sonraki Build'de yine
-        // pre-skip edilirdi ve tavanın "sonraki Build devam eder" güvencesi ikinci kez delinirdi.
+        // temizleme dalına düşer — yani eski bir NoProgress hafızası da SİLİNİR. Bu kasıtlıdır: aynı imzada
+        // tavana dayanan (yani hâlâ hareket eden) bir grubun bayat hafızası dursaydı, bir sonraki Cycles koşusu
+        // onu "did not converge at this signature" diye raporlardı (bkz. doc'taki "SİL" paragrafı).
         bool nonConvergent = decision is CycleRoundDecision.NoProgress;
 
         string? signature = null;
@@ -2162,24 +2143,14 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [Task-13] <paramref name="reason"/>=="stopped" ise <paramref name="projectId"/>'i run'lar arası devredilen
-    /// <c>StoppedFailedIds</c> birikimine yazar (torn-DLL guard — bkz. Continue'un RetryPlanning.RequeueStoppedFailed
-    /// çağrısı); değilse (savunmacı — id daha önce stopped işaretliyken şimdi FARKLI bir reason'la Failed olduysa)
-    /// siler, aksi halde stale bir "stopped" izi Continue'da yanlışlıkla yeniden derlemeye yol açardı.
-    /// </summary>
-    private static void MarkStoppedFailed(RunContext run, string projectId, string reason)
-    {
-        if (reason == "stopped") run.StoppedFailedIds[projectId] = 0;
-        else run.StoppedFailedIds.TryRemove(projectId, out _);
-    }
-
-    /// <summary>
     /// [Task 19] Bir proje BAŞARIYLA derlendiğinde <see cref="BuildState"/> persist eder — BİR SONRAKİ Build
     /// koşusu bunu okuyup (imza eşit + Succeeded ⇒ skip) incremental olur. Persist YALNIZ hem <see
     /// cref="RunContext.StateStore"/> hem de bu proje için non-null bir imza (<see cref="IncrementalPlan"/>)
     /// varsa yapılır (testlerdeki basit planner → Incremental null → persist YOK, davranış nötr). [A2] Çağıran
-    /// AYRICA "depIssue taşımayan success" koşulunu uygular (bkz. BuildProjectAsync'teki gerekçe). §4: yalnız
-    /// build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
+    /// (<see cref="ReportProjectResult"/>) depIssue TAŞIYAN success'i de buraya getirir — kayıt not + köklerle
+    /// yazılır (<paramref name="depIssueRoots"/>; gerekçe orada); çağıranın kendi kapıları sonucun güvenilirliği
+    /// (trustedResult) ve Clean'dir. §4: yalnız build-state.json'a yazılır, DLL/bin/obj'ye dokunulmaz. Persist
+    /// I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// </summary>
     /// <param name="depIssueRoots">Bu başarı BAŞARISIZ (ya da bayat bırakılmış) bağımlılıkların çıktısına link'liyse
     /// o KÖKLERİN proje kimlikleri; değilse <c>null</c>. Kayda not + kökler olarak yazılır;
@@ -2378,13 +2349,9 @@ public sealed class RunCoordinator(
         ChannelWriter<IpcEvent> Events,
         IMsBuildInvoker Invoker,
         string MsBuildExePath,
-        // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
-        // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
+        // [T54] projectId → depIssues birikimi (PlanAndRunAsync'te kurulur; koşu başına TEK birikim, ömrü o
+        // koşuyla sınırlıdır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
         ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,
-        // [Task-13] projectId → "şu an Failed VE reason=stopped" işareti (BuildProjectAsync tarafından yazılır/
-        // silinir — bkz. o metodun sonundaki not). Continue segmentinin torn-DLL guard'ı için: RunSegmentAsync
-        // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
-        ConcurrentDictionary<string, byte> StoppedFailedIds,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
         // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).
         BuildStateStore? StateStore,

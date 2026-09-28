@@ -78,7 +78,7 @@ public sealed class EngineSilenceWatchdogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var (vm, clock) = NewVm(engine);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.Phase = AppPhase.Stopping;
 
         clock.Advance(RunViewModel.EngineSilenceThresholdMs);
@@ -258,7 +258,7 @@ public sealed class EngineSilenceWatchdogTests
         vm.TickElapsed();
         Assert.NotNull(vm.EngineOverdueMessage); // ön-koşul
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.TickElapsed();
 
         Assert.Null(vm.EngineOverdueMessage);
@@ -273,7 +273,7 @@ public sealed class EngineSilenceWatchdogTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var (vm, clock) = NewVm(engine);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.Equal(AppPhase.Running, vm.Phase); // ön-koşul
 
         clock.Advance(RunViewModel.EngineSilenceThresholdMs * 10);
@@ -315,7 +315,7 @@ public sealed class EngineSilenceWatchdogTests
         await using var engine = sandbox.IsolatedEngineHost();
         var (vm, clock) = NewVm(engine);
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu sessizlik kapısı
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.Phase = AppPhase.Stopping;
         clock.Advance(RunViewModel.EngineSilenceThresholdMs);
         vm.TickElapsed();

@@ -111,7 +111,7 @@ public sealed class EnginePreflightTests
         Assert.Contains("engine could not start", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 
-    /// <summary>[D1 review · A3] Motor erişilemezken Sync/Build/Rebuild/Retry/Continue ANLAMSIZ: tıklanınca
+    /// <summary>[D1 review · A3] Motor erişilemezken Sync/Build/Rebuild ANLAMSIZ: tıklanınca
     /// şeritteki kalıcı mesajla çelişen ikinci bir hata satırı üretirlerdi. Normal (doğmuş) motor ölümü BU
     /// DURUM DEĞİLDİR — orada "Restart engine" sunulur ve komutlar açık kalır (E2/T37 davranışı).</summary>
     [Fact]

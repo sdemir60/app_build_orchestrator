@@ -30,7 +30,7 @@ public class OperationConsoleClearTests
     /// <summary>Önceki bir koşunun izi: stream'de satırlar (gerçek olay yolu), belgede bir satır.</summary>
     private static void LeavePreviousOperationOnScreen(MainWindow window, RunViewModel vm)
     {
-        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectSucceededEvent("r0", MainWindowHost.IdOf("Alpha"), 100));
         vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Completed, 1, 0, 0, 0, 100));
         window.Shell.ConsoleViewControl.ShowRunDocument(PreviousLine);

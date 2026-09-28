@@ -5,7 +5,7 @@ using BuildOrchestrator.Contracts.Model;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [topoloji kapısı] Run komutlarının (Build/Rebuild/RetryFailed) ön-koşulu: elde bir topoloji olmalı
+/// [topoloji kapısı] Run komutlarının (Build/Rebuild/Cycles) ön-koşulu: elde bir topoloji olmalı
 /// (<see cref="RunViewModel.HasTopology"/>). Sync'siz bir Build motoru gerçekten derletir ama liste/graf/sayaç
 /// BOŞ kalır, bu yüzden kapı VM'de kapatıldı — kapı KONUSU OLMAYAN testler (run-state bırakma, engine ölümü,
 /// Sync guard'ı…) o ön-koşulu buradan kurar.

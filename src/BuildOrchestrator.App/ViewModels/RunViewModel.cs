@@ -281,10 +281,13 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// üçgeni onu buradan okur (iki yüzey kendi yolunu KURMAZ).</summary>
     [ObservableProperty] private string _cyclePath = "";
 
-    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup ÖNCEKİ bir Build'de yakınsamadığı için
-    /// bu run'da hiç invoke edilmeden pre-skip edildi — <see cref="ProjectSkippedEvent.CycleUnconverged"/>'tan
-    /// AYNEN taşınır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır
-    /// (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER Task 9'undur.</summary>
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup BU run'da turlarını YAKINSAMADAN
+    /// (NoProgress) bitirdi — kaynağı <see cref="OnCycleCompleted"/>, grubun sonuç olayından yazılır (bkz. o
+    /// metodun XML yorumu). <see cref="ProjectSkippedEvent.CycleUnconverged"/> bugün hep <c>false</c> gelir
+    /// (motor artık geçmiş bir yakınsamama hafızasına bakıp pre-skip ETMEZ) — bu alan onu değil, ŞU koşunun
+    /// kendi tur sonucunu taşır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir
+    /// alandır (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER
+    /// Task 9'undur.</summary>
     [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
@@ -459,7 +462,6 @@ public sealed partial class RunViewModel : ObservableObject
     // sayısını bunlarla düzeltir) ve run'ın kapanış satırı (motorun kendi <c>Skipped</c> sayısından bunu düşer
     // — bkz. RunViewModel.Stream.cs'in RunCompletedEvent dalı).
     private int _outOfScopeSkipCount;
-    private long _elapsedBaseMs;
     private long? _elapsedStartMs; // run başladığında _nowMs() — null iken hiç run başlamamış/durmuş
 
     // [Task 17] ETA: EtaCalculator saf/stateless'tir (D3 — hiçbir alan/saat tutmaz) — EMA'nın önceki (smoothed)
@@ -890,12 +892,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[C2] Ortak run başlatma yolu (Rebuild/Build/Cycles) — tek yerde toplanır:
     /// runId üret, konsolu run dokümanına al, <see cref="IsStarting"/>'i aç ve <see cref="StartRunCommand"/>'ı
     /// workspace hedefiyle (kök/configuration/layer patterns) gönder.
-    /// <para>[Fix wave 1(It-3), Finding 1] <paramref name="clearBuffers"/>=true iken önceki run'ın
-    /// <c>_liveLines/_projectText/_runText</c> tortusu temizlenir: aksi halde İKİNCİ run'da kart tıklamasında
-    /// dikiş filtresi (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve
-    /// OrderBy(LineNumber) eski+yeni'yi karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir:
-    /// ProjectLogEvent marshal'sız işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine
-    /// düşmeden ÖNCE varabilir.</para>
+    /// <para>[Fix wave 1(It-3), Finding 1] Önceki run'ın <c>_liveLines/_projectText/_runText</c> tortusu HER
+    /// çağrıda koşulsuz temizlenir: aksi halde İKİNCİ run'da kart tıklamasında dikiş filtresi (LineNumber
+    /// &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve OrderBy(LineNumber) eski+yeni'yi
+    /// karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent marshal'sız
+    /// işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine düşmeden ÖNCE varabilir.</para>
     /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
     /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para></summary>
     /// <param name="scopeProjectId">[tek proje · design §3.8] Satırdan tetiklenen koşunun hedefi; <c>null</c> =
@@ -904,14 +905,14 @@ public sealed partial class RunViewModel : ObservableObject
     /// Satırdan tetiklemek satıra tıklamak DEĞİLDİR: seçim tam koşudaki gibi düşer — graf odaktan fit
     /// görünüme, konsol ana loga döner; filtre korunur (kullanıcı kararı 2026-09-19); pill hedef adı taşımaz
     /// (v1.13.2).</param>
-    private async Task BeginRunAsync(RunMode mode, bool clearBuffers, string? scopeProjectId = null)
+    private async Task BeginRunAsync(RunMode mode, string? scopeProjectId = null)
     {
         string runId = _newRunId();
         _currentRunId = runId;
         // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
-        // yürüyen işlemin hikâyesidir. İkisi de <c>clearBuffers</c> dalında, birbirinin eşi iki adlandırılmış
-        // metotla (kopya YASAK) — <see cref="ClearConsoleForNewOperation"/> ile SyncCoreAsync AYNI metodu paylaşır.
-        if (clearBuffers) ClearStreamForNewOperation();
+        // yürüyen işlemin hikâyesidir. Önceki koşunun tortusu HER koşuda, koşulsuz temizlenir — birbirinin eşi
+        // iki adlandırılmış metotla (kopya YASAK) — <see cref="ClearConsoleForNewOperation"/> ile SyncCoreAsync AYNI metodu paylaşır.
+        ClearStreamForNewOperation();
         // [design v1.11.0 §9-4 `_neutralize`] Kapsam ÖNCE okunur, sonra nötrleme yapılır — prototipteki sıra
         // da budur (build-data.js:541-547: önce `st.will` yazılır, sonra `_neutralize()`).
         var target = scopeProjectId is null ? null : FindRow(scopeProjectId);
@@ -930,7 +931,7 @@ public sealed partial class RunViewModel : ObservableObject
         // sıra ters olsaydı hedef daha tıklama anında silinirdi. Tam koşuda açıkça null'dır.
         RunTargetId = scopeProjectId;
         IsStarting = true;
-        if (clearBuffers) ClearConsoleForNewOperation();
+        ClearConsoleForNewOperation();
         // [design doBuild — BuildApp.jsx:1199-1200] Seçim sıfırlanır. SIRA ÖNEMLİ: konsol temizliğinden SONRA
         // — seçim düşünce kabuk anlatı belgesini yeniden kurar (ShowRunConsole → SeedRunDocument); temizlik
         // ondan sonra gelseydi o kurulum bir önceki koşunun metnini tilt'le getirir, temizlik onu hemen silerdi
@@ -940,7 +941,7 @@ public sealed partial class RunViewModel : ObservableObject
         // kabuğun işidir (GraphView.IsFilterSuspended), VM'in değil.
         SelectedProjectId = null;
         // [planlama görünürlüğü] StopAsync'in simetriği: faz gönderimden ÖNCE yazılır ve konsola tek satırlık
-        // bir not düşer. Motor runStarted'a kadar (taze segmentte: tarama → graf → topo →
+        // bir not düşer. Motor runStarted'a kadar (tarama → graf → topo →
         // incremental) saniyeler harcayabilir; o pencerede ekranın tek kanıtı budur. Konsol notu buffer
         // temizliğinden SONRA yazılır — aksi halde ilk iş olarak silinirdi.
         var previousPhase = Phase;
@@ -1115,14 +1116,14 @@ public sealed partial class RunViewModel : ObservableObject
         _ => "run",
     };
 
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild, clearBuffers: true); // seçim orada düşer (filtre korunur)
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild); // seçim orada düşer (filtre korunur)
     // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
     // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
     private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
     // [Fix wave 1, C2 review Finding 1] Sync uçuştayken (bkz. SyncBusy) hiçbir run başlatılamaz: mid-Sync
-    // BeginRunAsync(clearBuffers:true) _runText/_liveLines/_projectText'i temizler, ama SyncProgressEvent
+    // BeginRunAsync _runText/_liveLines/_projectText'i (koşulsuz) temizler, ama SyncProgressEvent
     // hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
     //
     // [DEĞİŞEN KURAL] Build eskiden bu guard'ın DIŞINDAYDI — prototip doBuild'in kasıtlı asimetrisi
@@ -1132,12 +1133,12 @@ public sealed partial class RunViewModel : ObservableObject
     // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
     // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
     // [clean] Clean uçuştayken de hiçbir run başlatılamaz: silme, MSBuild'in yazdığı bin/obj ile yarışırdı.
-    private bool CanRebuildOrRetry() => CanStartRun() && !WorkspaceBusy;
+    private bool CanStartRunOnIdleWorkspace() => CanStartRun() && !WorkspaceBusy;
 
-    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanRebuildOrRetry'dır: Build de Sync penceresinde bekler
-    // (gerekçe CanRebuildOrRetry'ın yorumundadır).
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task BuildAsync() => BeginRunAsync(RunMode.Build, clearBuffers: true); // seçim orada düşer (filtre korunur)
+    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanStartRunOnIdleWorkspace'tir: Build de Sync penceresinde bekler
+    // (gerekçe CanStartRunOnIdleWorkspace'in yorumundadır).
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    private Task BuildAsync() => BeginRunAsync(RunMode.Build); // seçim orada düşer (filtre korunur)
 
     /// <summary>[Clean] Build menüsünün <i>Clean</i> maddesi — Visual Studio'nun <i>Clean Solution</i>'ı: satır
     /// menüsündeki Clean (<see cref="CleanProjectCommand"/>) bir proje için ne yapıyorsa grafın TÜM projeleri için
@@ -1146,8 +1147,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<c>Core/Planning/CleanRunScope</c>). Onay sormaz (satır Clean'i ve Visual Studio da sormaz), bitince Sync
     /// zincirlemez; koşu sürerken Stop çalışır. Kapısı Build/Rebuild ile AYNIdır. Bakım kutusunun Clean'inden
     /// (<see cref="CleanCommand"/> — bin/obj silen, MSBuild çağırmayan workspace sıfırlaması) AYRI bir iştir.</summary>
-    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
-    private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean, clearBuffers: true); // seçim orada düşer (filtre korunur)
+    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
     /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
@@ -1159,40 +1160,40 @@ public sealed partial class RunViewModel : ObservableObject
     /// ne kadar.</para>
     ///
     /// <para><see cref="RebuildCommand"/> ile AYNI guard'a tabidir
-    /// (<see cref="CanRebuildOrRetry"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
+    /// (<see cref="CanStartRunOnIdleWorkspace"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
     /// bozulmasını üretirdi.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
-    private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim orada düşer (filtre korunur)
+    private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles); // seçim orada düşer (filtre korunur)
 
     /// <summary>[tek proje · design v1.11.0 §3.8] Satırın play düğmesi ve ⋯ menüsünün <i>Build</i> maddesi:
     /// YALNIZ o projeyi derler — bağımlılıklar derlenmez, kapsam dışına dokunulmaz. Hedef güncel olsa da
     /// derlenir: tek projelik kapsamda incremental karar sorulmaz (<c>Core/Planning/ProjectRunScope</c>,
     /// <c>WillBuild = true</c>; ARCHITECTURE §8.1). <see cref="RebuildProjectCommand"/>'dan farkı MSBuild
     /// hedefidir (<c>-t:Build</c> / <c>-t:Rebuild</c>). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI
-    /// (<see cref="CanRebuildOrRetry"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
+    /// (<see cref="CanStartRunOnIdleWorkspace"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
     /// başlatılamaz.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
-    private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, clearBuffers: true, projectId);
+    private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, projectId);
 
     /// <summary>[tek proje] ⋯ menüsünün <i>Rebuild</i> maddesi: aynı kapsam, MSBuild'in kendi Rebuild'i
     /// (<c>-t:Rebuild</c> — önce temizler, sonra derler). Alt bardaki Rebuild'den farklıdır: orada "cache'i yok
     /// say" demektir ve proje başına <c>-t:Build</c> koşar (ARCHITECTURE §8.1).</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
-    private Task RebuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Rebuild, clearBuffers: true, projectId);
+    private Task RebuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Rebuild, projectId);
 
     /// <summary>[tek proje · design §3.8] ⋯ menüsünün <i>Clean</i> maddesi — Visual Studio'nun proje
     /// Clean'i: yalnız o projede <c>msbuild /t:Clean</c>. Hiçbir şey derlenmez, başka hiçbir projeye
     /// dokunulmaz; çıktılar gittiği için projenin defter kaydı silinir ve bir sonraki <i>Build</i> onu
     /// baştan derler. Kapısı Build/Rebuild ile AYNIdır.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
-    private Task CleanProjectAsync(string? projectId) => BeginRunAsync(RunMode.Clean, clearBuffers: true, projectId);
+    private Task CleanProjectAsync(string? projectId) => BeginRunAsync(RunMode.Clean, projectId);
 
-    private bool CanRunProject(string? projectId) => projectId is not null && CanRebuildOrRetry();
+    private bool CanRunProject(string? projectId) => projectId is not null && CanStartRunOnIdleWorkspace();
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
-    private bool CanBuildCycles() => CanRebuildOrRetry() && HasCycles;
+    private bool CanBuildCycles() => CanStartRunOnIdleWorkspace() && HasCycles;
 
     /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
     /// açan Sync (<see cref="SyncMode.Manual"/>). [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de koşar; bölümün
@@ -1208,7 +1209,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// özetindedir (spec 2026-09-18 §6.2).
     ///
     /// <para><b>Temizlik:</b> Manual ve BranchChange konsolu + event stream'i temizler — [design v1.13.2 §9]
-    /// BeginRunAsync(clearBuffers:true) ile AYNI iki metot (kopya YASAK), TIKLAMA ANINDA. Appended temizlemez:
+    /// BeginRunAsync ile AYNI iki metot (kopya YASAK), TIKLAMA ANINDA. Appended temizlemez:
     /// çağıranlar bu Sync'ten HEMEN ÖNCE KENDİ notunu yazar (<c>"Layer definitions updated — N layers"</c>,
     /// <c>"Repository root → … — Sync required"</c>) ya da önceki işlemin transkripti (pull, Clean, açılışın
     /// boot satırı) görünür kalmalıdır
@@ -1447,8 +1448,9 @@ public sealed partial class RunViewModel : ObservableObject
     // [design v1.7.0 §3.1] Sürdürme ve yeniden deneme AYRI birer komut DEĞİLDİR: Stop'tan sonra da hata
     // sonrasında da kullanıcı Build'e basar. Öldürülen ve başarısız projelerin stored BuildState'i
     // geçersizleştiği için yeniden derlenirler; yeşil bitenler "up to date" atlanır; hata etkilenmiş
-    // bağımlılar imzalarını hiç persist etmedikleri için kümeye kendiliğinden girer. Motor tarafında da
-    // karşılıkları yoktur (RunMode üç değerlidir).
+    // bağımlılar imzalarını bir bağımlılık notu + kökleriyle persist eder ve kök düzelene kadar beklerler
+    // (WaitingForDependency — ConditionalRebuild, SkipReasons.DependencyStillFailing); her Build'de yeniden
+    // derlenmezler. Motor tarafında da karşılıkları yoktur (RunMode dört değerlidir: Rebuild/Build/Cycles/Clean).
 
     /// <summary>[E2/T37] Şeridin kalıcı hata modundaki "Restart engine" aksiyonu: ölmüş engine process'ini yeniden
     /// başlatır (<see cref="EngineHost.RestartAsync"/>). Başarılıysa <see cref="EngineDiedMessage"/> temizlenir
@@ -1726,7 +1728,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (IsRunning && _elapsedStartMs is { } startMs)
         {
-            ElapsedMs = _elapsedBaseMs + (_nowMs() - startMs);
+            ElapsedMs = _nowMs() - startMs;
             // [T53-UI] Building satırların CANLI süresi (kart süre kolonu + glyph tooltip) — done olunca
             // OnProjectDone kesin DurationMs'i ezer. Kaynak: _projectStartedAtMs (ETA ile AYNI, ekstra state yok).
             long now = _nowMs();
@@ -1875,15 +1877,18 @@ public sealed partial class RunViewModel : ObservableObject
         // [runFailed] Aynı gerekçe: yeni bir run GERÇEKTEN başladı (round-trip kanıtı) — önceki run'ın hata
         // gerekçesi artık geçmiştir ve şeridi bu run'ın ilerlemesine bırakmalıdır.
         RunErrorMessage = null;
-        _elapsedBaseMs = e.ElapsedMsAtStart;
         _elapsedStartMs = _nowMs();
-        ElapsedMs = e.ElapsedMsAtStart;
+        // [DEĞİŞEN KURAL] eskiden runStarted'ın taşıdığı bir taban değerden devralınırdı (yalnız Continue'da
+        // sıfırdan farklıydı); o alan a2ff12e'den beri hep sıfırdı ve kontrattan kalktı — her koşu kendi
+        // saatinden sıfırdan başlar.
+        ElapsedMs = 0;
         // [design v1.11.0 §9-4] Rebuild yeni bir tabana döner — ama listeyi BOŞALTARAK değil, YERİNDE
         // nötrleyerek. [DEĞİŞEN KURAL] Burada eskiden <c>Projects.Clear()</c> vardı; o, açılış
         // koreografisinin işaretlediği satır nesnelerini ortasında yok ediyor ve listeyi remount ediyordu
         // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
         // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
-        // Build/Cycles'ta liste (önceki segmentin sonuçları) olduğu gibi korunur.
+        // Build/Cycles/Clean'de burada İKİNCİ bir nötrleme YOKTUR: BeginRunAsync tıklama anında NeutralizeRows()
+        // zaten TÜM satırları nötrlemiştir — neyin silinip neyin korunduğu NeutralizeRows'un kendi doc'undadır.
         // [Task 1 review fix — I-1] clearMarks: false — bu an itibariyle (IsRunning=true'nun property-changed
         // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
         // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
@@ -1891,7 +1896,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (e.Mode == RunMode.Rebuild) NeutralizeRows(clearMarks: false);
         ClearPreviewSets(); // [D2] önizleme kümeleri bu run için taze — hemen ardından BuildPreviewEvent doldurur
         _outOfScopeSkipCount = 0; // [Task 2 review fix M-1] AYNI noktada taze — bu run'ın kendi kümesi
-        // [Task 17] ETA state bu run/segment için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
+        // [Task 17] ETA state bu run için taze başlar — bkz. _previousEtaMs alanının XML yorumu.
         _previousEtaMs = null;
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
@@ -1902,17 +1907,21 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
-    /// [Review fix, Task 17] Satır zaten varsa bu savunmacı bir
-    /// edge case DEĞİL): <see cref="RunCoordinator"/> her segmentin başında AYNI (dondurulmuş, segment-1
-    /// zamanlı) plan'dan türetilmiş <see cref="BuildPreviewEvent"/>'i YENİDEN yayınlar, ve <see cref="Projects"/>
-    /// Continue'da temizlenmez (bkz. <see cref="OnRunStarted"/>). Satır bu VM instance'ında zaten TERMİNAL
-    /// (Succeeded/Failed/Skipped) ise ve koşu HÂLÂ sürüyorsa (<see cref="RunActive"/>) WillBuild GÜNCELLENMEZ
-    /// — aksi halde segment 1'de gerçekleşen succeeded→clean canlı geçişi (bkz. <see cref="OnProjectDone"/>),
-    /// segment 2'nin (bilerek bayat) preview değeriyle sessizce EZİLİRDİ.
-    /// <para>[Task 1 — sessiz Sync tazeleme] Koşu BİTTİKTEN sonra gelen her önizleme (pencereye dönüşün
-    /// tetiklediği sessiz Sync dahil) terminal satırların kararını da yazar: bu VM instance'ının hayatı
-    /// boyunca RunActive tekrar true olmadan gelen ikinci bir preview artık "segment 2" değil, kararı bugüne
-    /// taşıyan bağımsız bir tazelemedir — korumanın kapsamı yalnız koşu içidir.</para></summary>
+    /// <b>[DEĞİŞEN KURAL — Task 4/5]</b> Önizleme koşu başına yalnız BİR kez gelir (yayın sırası:
+    /// <see cref="BuildPreviewEvent"/>'in doc'u); koşu içinde ikinci bir üreticisi yoktur (Continue
+    /// <c>a2ff12e</c>'de koddan kalktı). Satır zaten varsa bu savunmacı bir edge case DEĞİLDİR: KOŞUNUN
+    /// önizlemesi TIKLAMA ANINDA zaten nötrlenmiş (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c>
+    /// gönderimden ÖNCE <see cref="NeutralizeRows"/> çağırır — dolayısıyla koşunun kendi önizlemesi işlendiği
+    /// anda satır hiçbir zaman TERMİNAL (Succeeded/Failed/Skipped) değildir. Koşu SONRASI gelen bir Sync
+    /// önizlemesi ise terminal satırlara da inebilir — sessiz Sync satırları nötrlemez (aşağıdaki paragraf).
+    /// Eski hâl burada satır TERMİNAL ve koşu HÂLÂ sürüyorsa (<see cref="RunActive"/>) WillBuild'i koruyan bir
+    /// guard taşırdı ("segment 2"nin bayat önizlemesi segment 1'in canlı succeeded→clean geçişini ezmesin diye);
+    /// koşulu üretimde hiç oluşmadığı için (yukarıdaki nötrleme zinciri) guard silindi.
+    /// <para>[Task 1 — sessiz Sync tazeleme] Satırın terminal olması önizlemeyi durdurmaz: koşu SONRASI gelen
+    /// bir önizleme (pencereye dönüşün tetiklediği sessiz Sync dahil) de satırın kararını yazar — gerekçe ve
+    /// kökler (Reason/DependencyRoots) her önizlemeden, plan bayrağı (WillBuild/Conditional)
+    /// <see cref="PreviewWritesPlanFlag"/> açıkken (koşu dışında hep açıktır). Böylece arka planda değişen bir
+    /// proje (özellikle döngü üyesi) yeşil/"up to date" takılı kalmaz.</para></summary>
     private void OnBuildPreview(BuildPreviewEvent e)
     {
         foreach (var item in e.Items)
@@ -1922,10 +1931,8 @@ public sealed partial class RunViewModel : ObservableObject
             // KESİN derlenecekler kümesine GİRMEZ: köküyle birlikte atlanabilir. Paydaş TEK yerden okur —
             // InRunQueueFor'un Build/Rebuild dalıyla AYNI bayrak (kopya YASAK).
             NotePreviewDecision(item.ProjectId, item.WillBuild, item.Conditional); // [D2 · final review — C1]
-            // [W1] CurrentSha ataması, aşağıdaki terminal-satır guard'ından ÖNCE ve ondan BAĞIMSIZ yapılır: o
-            // guard yalnız WillBuild'i korumak içindir (segment 1'in canlı succeeded→clean geçişi ezilmesin).
-            // Sha'nın böyle bir koruma İHTİYACI YOKTUR — tersine, segment 2'nin okuduğu değer segment 1'in
-            // persist'ini içerdiği için terminal satırların sol yarısı ancak burada TAZELENİR.
+            // [W1] CurrentSha her önizlemeden koşulsuz yazılır: build-state'in o an neyi bildiğini taşır, satırın
+            // durumundan (terminal olsun olmasın) bağımsızdır.
             row.CurrentSha = item.BuiltCommit;
             row.OwnFilesChanged = item.OwnFilesChanged;      // [v1.16.0] modified ↔ affected ayrımı
             // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-20] Önizlemenin üç zaman alanı (LastBuiltAt, FailedAt,
@@ -1936,12 +1943,6 @@ public sealed partial class RunViewModel : ObservableObject
             // o yazılsaydı her koşu Sync'in "local" işaretini silerdi. Ayrım olayın geldiği ANDAKİ koşu
             // durumundandır (RunActive); `_currentRunId` bunu söylemez (yalnız motor ölümünde null'lanır).
             if (!RunActive) row.LocalEdits = item.LocalEdits;
-            // [Task 1 — sessiz Sync tazeleme] Guard YALNIZ koşu sürerken geçerlidir: segment 1'in canlı
-            // succeeded→clean geçişi segment 2'nin bayat önizlemesiyle ezilmesin. Koşu bittiğinde (RunActive
-            // false) — ör. pencereye dönüşün tetiklediği sessiz Sync — terminal satırın kararı da her
-            // önizlemeyle TAZELENİR: aksi halde arka planda değişen bir proje (özellikle döngü üyesi) yeşil/
-            // "up to date" kalır, yalnız elle Sync düzeltir.
-            if (RunActive && row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
             // [Resolve → Build] Plan bayrağı (WillBuild + Conditional) bir sonraki DÜZ Build'in cevabıdır: Sync'in
             // önizlemesi yazar, koşunun canlı geçişleri (OnProjectDone) tazeler. Resolve koşusunun önizlemesi ise
             // yalnız KENDİ koşusunu anlatır — kapsam dışı her projeye, kirli olsa da, false; üyelere kendi kararı —
@@ -1955,16 +1956,15 @@ public sealed partial class RunViewModel : ObservableObject
                 row.WillBuild = item.WillBuild;
                 row.Conditional = item.Conditional;     // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
             }
-            row.WillBuildReason = item.Reason;          // gerekçe de AYNI (terminal satır) guard'ın içinde
-            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — Reason'la AYNI guard
-            // [Task 1 review fix round 1] InRunQueue AYRI bir kanaldır (run-scoped) ve yukarıdaki karar
-            // alanlarıyla (WillBuild/Reason/Conditional/DependencyRoots) AYNI guard'ı PAYLAŞAMAZ: onlar koşu
-            // bittikten sonra da tazelenir (bu task), InRunQueue ise YALNIZ koşu sürerken yükselir — belgelenen
-            // değişmez (bkz. alanın kendi XML yorumu + PropagateRunActive'in "koşu biterken kuyruk da düşer"
-            // satırı) budur. RunActive burada AYRICA sorulmazsa koşu bittikten sonra gelen bir önizleme (sessiz
-            // Sync) InRunQueue'yu sessizce yeniden yükseltir — bugün gözlemlenemez (TEK okuyucu Status'un
-            // IsRunActive && InRunQueue dalı, terminal State ondan önce eşleşir) ama alanın kendi doğruluğu
-            // okuyucudan BAĞIMSIZ korunmalı.
+            row.WillBuildReason = item.Reason;          // [Task 4] gerekçe her önizlemeden koşulsuz yazılır (yukarıdaki not)
+            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — gerekçeyle AYNI kural
+            // [Task 1 review fix round 1] InRunQueue AYRI bir kanaldır (run-scoped): yukarıdaki karar alanları
+            // önizlemeden yazılır (Reason/DependencyRoots koşulsuz, WillBuild/Conditional PreviewWritesPlanFlag
+            // açıkken), InRunQueue ise YALNIZ koşu sürerken yükselir — belgelenen değişmez (bkz. alanın kendi XML
+            // yorumu + PropagateRunActive'in "koşu biterken kuyruk da düşer" satırı) budur. RunActive burada AYRICA
+            // sorulmazsa koşu bittikten sonra gelen bir önizleme (sessiz Sync) InRunQueue'yu sessizce yeniden
+            // yükseltir — bugün gözlemlenemez (TEK okuyucu Status'un IsRunActive && InRunQueue dalı, terminal State
+            // ondan önce eşleşir) ama alanın kendi doğruluğu okuyucudan BAĞIMSIZ korunmalı.
             row.InRunQueue = RunActive && InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten VE YALNIZ koşu sürerken
         }
         RaiseRowDecisionsChanged();                          // graf renk girdisini buradan öğrenir
@@ -2009,7 +2009,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         var row = EnsureRow(e.ProjectId, e.Name, ProjectRowState.Started);
         row.State = ProjectRowState.Started;
-        row.SkipReason = null;    // bu koşuda GERÇEKTEN derleniyor — önceki segmentin atlama gerekçesi geçersiz
+        row.SkipReason = null;    // Savunmacı: NeutralizeRows tıklamada zaten temizler; bir koşuda proje ya atlanır ya derlenir
         row.CycleWaiting = false; // motor onu şimdi derliyor: bu event'in anlamı tam olarak budur
         _projectStartedAtMs[e.ProjectId] = _nowMs();
         RefreshRunSurface();
@@ -2103,10 +2103,10 @@ public sealed partial class RunViewModel : ObservableObject
         row.DepIssues = depIssues; // [Task 17] BU koşunun listesi — HasRunDepIssue ve (defter notuyla birlikte) WarningRoots bundan
         row.SkipReason = null;     // atlanmadı, derlendi
         row.CycleUnsettled = cycleUnsettled; // [cycle rounds/Task 8] ProjectFailedEvent bu alanı taşımaz → varsayılan false
-        // [cycle rounds/Task 9 review fix 1] Proje bu run'da GERÇEKTEN invoke edildi (Succeeded ya da Failed
-        // fark etmez) — önceki bir segmentten kalma "hiç invoke edilmeden pre-skip edildi" bayrağı artık
-        // YANLIŞ; satır nesneleri segmentler arası hayatta kaldığı için (Projects.Clear() yalnız Rebuild'de)
-        // burada temizlenmezse "az önce düzelen proje" render katmanında kalıcı-kırık gibi görünürdü.
+        // [cycle rounds/Task 9 review fix 1] Savunmacı: NeutralizeRows her işlem başında ZATEN temizler ve
+        // OnRunStarted'da Projects.Clear() YOKTUR (liste YERİNDE nötrlenir, boşaltılmaz — design v1.11.0 §9-4);
+        // ama proje bu run'da GERÇEKTEN invoke edildiyse (Succeeded ya da Failed fark etmez) bu bayrak burada
+        // AYRICA sıfırlanmazsa "hiç invoke edilmeden pre-skip edildi" izlenimi kalıcı-kırık gibi görünürdü.
         row.CycleUnconverged = false;
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
         // [Task 17][v7Δ8] "succeeded→clean" CANLI geçiş: proje bu run içinde başarıyla derlendiği ANDA artık
@@ -2333,7 +2333,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para>Eskiden runStarted görülmüşse burada ERKEN DÖNÜLÜR, faz <c>runCompleted</c>'a bırakılırdı. Bu,
     /// fazın çözülmesini bir OLAY SIRALAMASI varsayımına bağlıyordu ve <c>runCompleted</c>'ın gelmediği her
     /// durumda <c>Stopping</c> asılı kalıyordu (kullanıcı bildirimi). Varsayıma gerek YOKTUR: koordinatör
-    /// <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan sonra yazar (<c>RunSegmentAsync</c>
+    /// <c>runStopped</c>'ı zaten TÜM in-flight sonuçlarını raporladıktan sonra yazar (<c>PlanAndRunAsync</c>
     /// finally + <c>_finishing</c> kapısı; sahiplenemediği durumda ise host anında yazar) — bu olay görüldüğünde
     /// koşan bir şey KALMAMIŞTIR. Arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara görüntü oluşmaz;
     /// gelmezse de faz doğru yerde kalır.</para></summary>

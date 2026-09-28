@@ -66,7 +66,7 @@ public class IpcMessagesTests
     {
         IpcEvent[] events =
         [
-            new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug", 4200),
+            new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug"),
             new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"),
             new ProjectLogEvent("r1", @"C:\p\a.csproj", 1, "  A.cs(3,5): error CS0103: ..."),
             new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 2400),
@@ -763,14 +763,33 @@ public class IpcMessagesTests
     [Fact]
     public void RunStartedEvent_carries_the_applied_cpu_cap_and_omits_it_when_uncapped()
     {
-        var capped = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0, CpuCapPercent: 70);
+        var capped = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", CpuCapPercent: 70);
         string json = JsonSerializer.Serialize<IpcEvent>(capped, IpcJson.Options);
         Assert.Contains("\"cpuCapPercent\":70", json);
         Assert.Equal(capped, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
 
-        var uncapped = new RunStartedEvent("r1", RunMode.Build, 3, 6, "Debug", 0);
+        var uncapped = new RunStartedEvent("r1", RunMode.Build, 3, 6, "Debug");
         Assert.Null(uncapped.CpuCapPercent);
         Assert.DoesNotContain("cpuCapPercent", JsonSerializer.Serialize<IpcEvent>(uncapped, IpcJson.Options));
+    }
+
+    // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi. Pinlenen, toleranslı
+    // okuyucudur: IpcJson.Options bilinmeyen alanı YOK SAYAR (UnmappedMemberHandling ayarlanmaz, varsayılan
+    // Skip'tir) — bilinmeyen ya da kontrattan kalkmış bir alan çözümlemeyi bozmamalı. Satırdaki elapsedMsAtStart
+    // bunun örneğidir.
+    [Fact]
+    public void RunStartedEvent_still_deserializes_an_older_NDJSON_line_carrying_the_removed_elapsedMsAtStart_field()
+    {
+        var back = Assert.IsType<RunStartedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"runStarted","runId":"r1","mode":"build","totalProjects":3,"parallelism":4,"configuration":"Debug","elapsedMsAtStart":4200,"cpuCapPercent":70}""",
+            IpcJson.Options));
+
+        Assert.Equal("r1", back.RunId);
+        Assert.Equal(RunMode.Build, back.Mode);
+        Assert.Equal(3, back.TotalProjects);
+        Assert.Equal(4, back.Parallelism);
+        Assert.Equal("Debug", back.Configuration);
+        Assert.Equal(70, back.CpuCapPercent);
     }
 
     // [A5/T69] Sync artık will-build pass'ini de koşar; §3.1 konsol satırları ("N changed projects, M to build" /

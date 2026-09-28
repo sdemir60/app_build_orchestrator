@@ -120,7 +120,7 @@ public class HiddenCursorClockTests
         Assert.False(Ticking(view.ActiveCursorGlyph)); // non-vacuous
 
         // Tepsideyken bir koşu başlar: her olay aktif satırı tazeler ve başlatıcıyı yeniden çağırır.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
 
         Assert.False(Ticking(view.ActiveCursorGlyph));

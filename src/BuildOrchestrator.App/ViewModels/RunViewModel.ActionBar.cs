@@ -268,9 +268,10 @@ public sealed partial class RunViewModel
     private bool ApplyRepositoryRoot(string? path)
     {
         if (!IsRepositoryChange(path)) return false;
-        // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer: durum SIFIRLANMAZ,
-        // kullanıcı Sync'ler. (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada zaten otomatik bir
-        // Sync akışı başlar ve not gürültü olurdu.)
+        // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer; eski reponun durumu da gider:
+        // satırlar hollow'a döner, son Sync HEAD'i unutulur ve Save'in TEK Sync'i yeni kökte başlar (plan
+        // yüzeyini SyncAfterRootChangeAsync boşaltır). (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada
+        // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu.)
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();

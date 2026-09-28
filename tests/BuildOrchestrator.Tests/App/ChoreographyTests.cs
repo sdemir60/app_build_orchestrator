@@ -712,7 +712,7 @@ public class ChoreographyTests
         Assert.Equal(["Up", "Out"], vm.ScopeFor(RunMode.Build).Select(r => r.Name)); // ön-koşul: Sync'in planı
 
         // Resolve: kapsam = üyeler + onların upstream'i (Up). Out ve Wait kapsam dışıdır.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(up, "Up", true, Reason: WillBuildReason.SignatureChanged),
             new BuildPreviewItem(m1, "M1", true, Reason: WillBuildReason.SignatureChanged),
@@ -823,7 +823,7 @@ public class ChoreographyTests
             new BuildPreviewItem($@"C:\p\{n}.csproj", n, false, Reason: WillBuildReason.UpToDate))]));
         Assert.Empty(vm.ScopeFor(RunMode.Build)); // ön-koşul: Sync'e göre derlenecek bir şey yok
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 4, Parallelism: 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([.. names.Select(n =>
             new BuildPreviewItem($@"C:\p\{n}.csproj", n, true, Reason: WillBuildReason.UpToDate))]));
         return vm;

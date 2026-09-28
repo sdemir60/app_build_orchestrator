@@ -3,8 +3,8 @@ using System.Linq;
 namespace BuildOrchestrator.Contracts.Model;
 
 // It-1 domain DTO'ları — A9 şeklini sabitler. Core → Contracts referansı üzerinden Core bu tipleri üretir.
-// It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent) ve RunRequest.mode genişlemesi (Build/RetryFailed,
-// DependentMode) artık IpcMessages.cs'de sabit; BranchRef git-yüzeyi DTO'su burada.
+// It-3: depIssues (ProjectSucceededEvent/ProjectFailedEvent); RunMode (Rebuild/Build/Cycles/Clean) ve
+// DependentMode IpcMessages.cs'dedir; BranchRef git-yüzeyi DTO'su burada.
 
 public enum HintPathClass { Edge, ExternalThirdParty, ExternalPlatformBin, Unclassified }
 public enum BuildResult { Succeeded, Failed, Skipped }
@@ -143,12 +143,13 @@ public sealed record BuildState(
     long? LastDurationMs = null,             // T70 (It-3) burada alan olarak hazır
     // [Task 7] Bir SCC'nin (bu proje üyesiyken) turlarda SIKIŞTIĞI (NoProgress — aynı küme iki tur üst üste
     // patladı) bileşik imza. Tavana dayanmak (CapReached) buraya YAZILMAZ: o "bütçe bitti ama hâlâ hareket
-    // var" demektir ve tavanın meşruiyeti zaten "bir sonraki Build kaldığı yerden devam eder"e dayanır.
+    // var" demektir ve tavanın meşruiyeti zaten "bir sonraki Cycles koşusu kaldığı yerden devam eder"e dayanır.
     // BuiltSignature'dan KASITLI olarak AYRI: o alan yalnız SON BAŞARIYLA derlenen (Fast modun
     // frozen-upstream tabanı olarak okuduğu) imzayı taşır — ikisi aynı alanda karışırsa Fast'teki dependent'lar
     // hiç derlenmemiş bir imzayı "temiz" sanır. Bu alan currentSignature ile eşleştiğinde (bkz.
-    // BuildStateStore.IsCycleNonConvergent) grup bir daha turlarla DENENMEZ; gerçek bir tur kararına ulaşan
-    // (Converged/CapReached) her koşu ise alanı temizler.
+    // BuildStateStore.IsCycleNonConvergent) bir sonraki Cycles koşusu grubu TANIR ve yalnız RAPORLAR
+    // (decision.log) — grup yine turlarla denenir; gerçek bir tur kararına ulaşan (Converged/CapReached) her
+    // koşu ise alanı temizler.
     string? NonConvergentSignature = null,
     // [v1.16.0] Bu proje derlendiğinde KENDİ girdi dosyalarının içerik özeti (upstream'siz, cfg'siz).
     // BuiltSignature'dan AYRI durur çünkü ayrı bir soruyu cevaplar: "bu projenin KENDİ dosyaları değişti mi?"

@@ -305,6 +305,56 @@ public class ReadySetSchedulerTests
         Assert.All(scheduler.PreSkipped, p => Assert.Equal(SkipReasons.InDependencyCycle, p.Reason));
     }
 
+    // [T2] Koşu başı pre-skip tohum ctor'u: tohumdaki id dispatch edilmez ve bağımlısı için baştan çözülmüş
+    // sayılır; tohumda olmayan InCycle düğüm, gruplar null iken (kill switch kapalı) "in dependency cycle" ile
+    // pre-skip edilir — bu Build'in NORMAL yoludur (Build tohumu SCC üyelerini hiç taşımaz), savunmacı değil.
+    [Fact]
+    public void seeded_ctor_treats_seeded_ids_as_resolved_and_still_pre_skips_unseeded_cycle_members()
+    {
+        var plan = Plan(
+            N("Dep", buildOrder: 0),
+            N("A", deps: ["Dep"], buildOrder: 1),
+            N("X", deps: ["Y"], buildOrder: 2, inCycle: true),
+            N("Y", deps: ["X"], buildOrder: 3, inCycle: true));
+        var seed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dep"] = BuildResult.Skipped,
+        };
+
+        var sut = new ReadySetScheduler(plan, seed);
+
+        Assert.Equal(BuildResult.Skipped, sut.Completed["Dep"]);
+        Assert.True(sut.TryDispatch(out var first));
+        Assert.Equal("A", first); // Dep tohumda ⇒ zaten çözülmüş sayılır, hiç dispatch edilmeden A ready olur
+
+        // X/Y seed'te YOK, gruplar null ⇒ eski "fresh ctor" davranışı birebir: construction anında pre-skip.
+        Assert.Equal(2, sut.PreSkipped.Count);
+        Assert.Contains(("X", SkipReasons.InDependencyCycle), sut.PreSkipped);
+        Assert.Contains(("Y", SkipReasons.InDependencyCycle), sut.PreSkipped);
+    }
+
+    // [T2] UnfinishedCount, Completed'ta OLMAYAN düğümleri sayar — in-flight DAHİL. QueuedProjectIds'ten
+    // BİLEREK farklıdır: o "hiç dispatch edilmemiş" demektir ve dispatch anında A'yı listeden düşürür; ama A
+    // henüz Complete edilmediği sürece UnfinishedCount onu saymaya devam etmelidir (ne tamamlanmış sayılabilir
+    // ne de sessizce kaybolabilir) — RunCoordinator bu sayıyı worker'lar join olduktan SONRA okur, ama scheduler
+    // kendisi bu değeri her an (worker'lar hâlâ koşarken de) doğru vermelidir.
+    [Fact]
+    public void unfinished_count_still_counts_a_dispatched_project_until_it_completes()
+    {
+        var plan = Plan(N("A", buildOrder: 0), N("B", buildOrder: 1));
+        var sut = new ReadySetScheduler(plan);
+
+        Assert.Equal(2, sut.UnfinishedCount);
+
+        Assert.True(sut.TryDispatch(out var a));
+        Assert.Equal("A", a);
+        Assert.DoesNotContain("A", sut.QueuedProjectIds); // dispatch edildi ⇒ artık "hiç dispatch edilmemiş" değil
+        Assert.Equal(2, sut.UnfinishedCount);              // ama hâlâ unfinished: in-flight, Complete edilmedi
+
+        sut.Complete("A", BuildResult.Succeeded);
+        Assert.Equal(1, sut.UnfinishedCount);               // A artık Completed
+    }
+
     [Fact]
     public async Task concurrent_try_dispatch_from_many_workers_never_double_dispatches()
     {
