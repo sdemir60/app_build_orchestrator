@@ -11,8 +11,9 @@ namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
 /// [T62/K5 · A13.2] Sistem tepsisi ikonu — WPF'te <c>NotifyIcon</c> yoktur, onaylı paket <c>H.NotifyIcon.Wpf</c>
-/// (feasibility §3.2). Bu sınıf yalnız KABUKTUR: ikon + menü + balloon; ne yapılacağına karar veren yok, olayları
-/// dışarı verir (<see cref="RestoreRequested"/>/<see cref="ExitRequested"/>).
+/// (feasibility §3.2). Bu sınıf yalnız KABUKTUR: ikon + menü + balloon; ne yapılacağına karar veren yok.
+/// <see cref="RestoreRequested"/>/<see cref="ExitRequested"/> olaydır; Stop maddesi verilen komuta bağlıdır ve
+/// etkinliği CanExecute'tan gelir (ActionBar'daki Stop düğmesiyle AYNI kaynak — ikinci bir kapı YAZILMAZ).
 ///
 /// <para><b>İkon:</b> 16px ELLE ayarlanmış raster (<c>Assets/tray-icon-16.ico</c>) — 64px SVG'nin otomatik
 /// küçültülmesi amber "D"yi bozar (feasibility §3.2). [T64] Çok boyutlu <c>app-icon.ico</c> (pencere/taskbar)
@@ -65,14 +66,15 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
-    /// <summary>[seam] Menü TEK yerden kurulur: <c>TaskbarIcon</c> (dolayısıyla ctor) headless testte
-    /// kurulamaz (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki
-    /// gerçek bir tepsi kurmadan sınanabilsin. Stop maddesi MainWindow'un eski kapısını aynen taşır
-    /// (<c>Click</c> içinde <c>CanExecute</c> sorulur) — maddeyi doğrudan komuta bağlamak ayrı bir adımdır.</summary>
+    /// <summary>Menü TEK yerden kurulur: <c>TaskbarIcon</c> (dolayısıyla ctor) headless testte kurulamaz
+    /// (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki gerçek bir
+    /// tepsi kurmadan sınanabilsin. Stop maddesi <paramref name="stop"/>'a DOĞRUDAN bağlanır (<c>Command</c>) —
+    /// etkinliği WPF'in kendi komut kapısından gelir, ikinci bir <c>CanExecute</c> sorgusu burada YAZILMAZ
+    /// (eski hâl <c>MainWindow</c>'da ayrı bir kapı taşıyordu — bkz. bu sınıfın özeti). Uygulamada özel
+    /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.</summary>
     internal static ContextMenu CreateMenu(ICommand stop, Action exit)
     {
-        var stopItem = new MenuItem { Header = "Stop" };
-        stopItem.Click += (_, _) => { if (stop.CanExecute(null)) stop.Execute(null); };
+        var stopItem = new MenuItem { Header = "Stop", Command = stop };
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (_, _) => exit();
 
