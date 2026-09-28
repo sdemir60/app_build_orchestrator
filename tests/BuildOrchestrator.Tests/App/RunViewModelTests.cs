@@ -555,13 +555,19 @@ public class RunViewModelTests
     // pinliyordu ("geçen süre motorun gönderdiği tabandan devam eder"). Gerekçe: o taban yalnız Continue'da
     // sıfırdan farklı olabiliyordu; Continue a2ff12e ile koddan kalktığından beri taban hep sıfırdı, bu yüzden
     // Task 5'te kontrattan da kaldırıldı — artık her koşu kendi saatinden SIFIRDAN başlar.
+    // Ayırt edicilik: taze bir VM'de ElapsedMs zaten 0'dır, yani RunStarted'dan sonra 0 beklemek tek başına
+    // sıfırlamayı pinlemez. Test bu yüzden önce süresi 9999 ms olan bir koşuyu bitirir; ikinci koşunun
+    // RunStarted'ı o değeri SIFIRLAMALIDIR.
     [Fact]
     public async Task RunStarted_starts_the_elapsed_clock_from_zero()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
-
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 177, 6, "Debug"));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 177, 0, 0, 0, DurationMs: 9999));
+        Assert.Equal(9999, vm.ElapsedMs); // ön-koşul: ekranda önceki koşunun süresi durur
+
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 177, 6, "Debug"));
 
         Assert.Equal(0, vm.ElapsedMs);
         Assert.True(vm.IsRunning);
@@ -1098,6 +1104,9 @@ public class RunViewModelTests
 
     // ---------------------------------------------------------------- 6c) [Fix wave 1] TickElapsed enjekte edilen saatle deterministik
 
+    // Ayırt edicilik: tick'in tabanı BU koşunun başlangıcıdır. Önce 9999 ms süren bir koşu biter ve aradan zaman
+    // geçer; tick ne önceki koşunun süresinin üstüne eklemeli ne de önceki koşunun başlangıcından saymalı — ikisi
+    // de 250 dışında bir sayı verirdi (sırasıyla 10249 ve 12250). Taze bir VM'de bu iki hata görünmezdi.
     [Fact]
     public async Task TickElapsed_uses_the_injected_clock_deterministically()
     {
@@ -1105,7 +1114,10 @@ public class RunViewModelTests
         long fakeNow = 1_000_000;
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => fakeNow);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Rebuild, 1, 1, "Debug"));
-        Assert.Equal(0, vm.ElapsedMs);
+        fakeNow += 5_000;
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, DurationMs: 9999));
+        fakeNow += 7_000;
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 1, 1, "Debug"));
 
         fakeNow += 250;
         vm.TickElapsed();
@@ -1290,8 +1302,9 @@ public class RunViewModelTests
     public async Task Rebuild_wires_through_the_real_engine_and_populates_rows()
     {
         string root = Directory.CreateTempSubdirectory("bo-vm-rebuild-").FullName;
-        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — [cycle rounds] artık
-        // pre-skip edilmez, turlarla derlenir.
+        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — Rebuild onu derlemez;
+        // turlar yalnız Cycles modunda koşar, üyeler "in dependency cycle" ile pre-skip edilir (aşağıdaki
+        // [DEĞİŞEN KURAL]).
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -1316,8 +1329,9 @@ public class RunViewModelTests
         };
 
         await vm.RebuildCommand.ExecuteAsync(null);
-        // [cycle rounds] Hang-guard; 15 sn idi. Fixture artık GERÇEKTEN derliyor (2 tur × 2 üye) — gerekçe ve
-        // ölçüm sabitin tek sahibinde: TestPaths.WideRunTimeout. İddiaların hiçbiri süreye bakmaz.
+        // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
+        // TestPaths.WideRunTimeout. 15 sn idi; turlar Rebuild'e katlıyken bu fixture gerçekten derleniyordu (2 tur
+        // × 2 üye). Bugün Rebuild üyeleri pre-skip eder ve bu fixture'da hiçbir proje derlenmez.
         var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
@@ -1486,12 +1500,14 @@ public class RunViewModelTests
         Assert.False(row.CycleUnconverged);
     }
 
-    /// <summary>[cycle rounds/Task 9 review fix 1] Kök neden: <c>CycleUnconverged</c>'i yazan TEK yer
-    /// <see cref="RunViewModel"/>'in <c>OnProjectSkipped</c>'idir; satır nesneleri segmentler arası HAYATTA
-    /// KALIR (<c>Projects.Clear()</c> yalnız <see cref="RunMode.Rebuild"/>'de) — kaynak düzeltilip proje
-    /// GERÇEKTEN derlenirse bayat bayrak temizlenmezse "az önce düzelen proje" kalıcı-kırık gibi render edilir
-    /// (Task 9'un önlemeye çalıştığı yanlış bilginin TERSİ). <c>OnProjectDone</c> artık her terminal derleme
-    /// sonucunda (Succeeded/Failed — ikisi de proje GERÇEKTEN invoke edildi demektir) bayrağı temizler.</summary>
+    /// <summary>[cycle rounds/Task 9 review fix 1] Satır nesneleri koşudan koşuya YAŞAR — liste yerinde
+    /// nötrlenir, <c>OnRunStarted</c>'da <c>Projects.Clear()</c> yoktur — ve <c>CycleUnconverged</c>'i her
+    /// koşunun başında (tıklamada) <c>NeutralizeRows</c> zaten temizler. <c>OnProjectDone</c>'daki temizlik bu
+    /// yüzden savunmacıdır: proje GERÇEKTEN derlendiyse (Succeeded/Failed — ikisi de invoke edildi demektir)
+    /// bayrak, arada nötrleme olmasa da düşer; düşmeseydi "az önce düzelen proje" kalıcı-kırık gibi render
+    /// edilirdi (Task 9'un önlemeye çalıştığı yanlış bilginin TERSİ). Bayrak burada ön-koşul olarak
+    /// <c>ProjectSkippedEvent.CycleUnconverged</c> ile kurulur (motor bu alanı bugün hep <c>false</c> gönderir;
+    /// üretimde bayrağın kaynağı <c>OnCycleCompleted</c>'in NoProgress'idir).</summary>
     [Fact]
     public async Task ProjectSucceeded_after_a_prior_CycleUnconverged_skip_clears_the_flag()
     {
@@ -1590,16 +1606,14 @@ public class RunViewModelTests
         // WillBuild'i korurdu (segment 1'in canlı succeeded→clean geçişi ezilmesin) VE YALNIZ koşu sürerken
         // (RunActive) devredeydi; CurrentSha guard'dan ÖNCE, koşulsuz atanırdı. Test bu yüzden RunStartedEvent'ten
         // sonra, RunCompleted'SİZ kuruluyordu — "segment 2" hâlâ sürüyor varsayımıyla. Değişme gerekçesi: Continue
-        // `a2ff12e`'de koddan kalktı; motor koşu başına TEK BuildPreviewEvent yayınlıyor, runStarted'ın hemen
-        // ardından ve ilk proje olayından önce (RunCoordinator: RunStartedEvent → BuildPreviewEvent → ilk proje
-        // olayı, tek FIFO akış) — "segment 2" üretimde hiç
-        // oluşmuyordu (rapor §4), guard erişilemezdi ve silindi. CurrentSha zaten guard'dan bağımsız her
-        // önizlemeden koşulsuz yazılıyordu; bu test artık gerçek senaryoyu pinler: koşu BİTTİKTEN sonra
-        // (RunActive=false — ör. pencereye dönüşün tetiklediği sessiz Sync) gelen bir önizleme, terminal bir
-        // satırın CurrentSha'sını da tazeler (kardeş testler A_post_run_preview_refreshes_a_succeeded_rows_standing
-        // / _a_skipped_rows_standing WillBuild/Standing'i pinler, bu test CurrentSha'yı pinler). Guard kaldırılmadan
-        // ÖNCE de, kaldırıldıktan SONRA da yeşildir (değişmez pini, kusur fix'i değil — guard bu senaryoyu hiç
-        // etkilemiyordu).
+        // `a2ff12e`'de koddan kalktı; motor koşu başına TEK BuildPreviewEvent yayınlıyor (yayın sırası:
+        // BuildPreviewEvent'in doc'u) — "segment 2" üretimde hiç oluşmuyordu, guard erişilemezdi ve silindi (kanıt
+        // zinciri: .claude/outputs/2026-09-28-22-30-continue-remnants-investigation.md §4). CurrentSha zaten guard'dan
+        // bağımsız her önizlemeden koşulsuz yazılıyordu; bu test artık gerçek senaryoyu pinler: koşu BİTTİKTEN sonra
+        // (RunActive=false — ör. pencereye dönüşün tetiklediği sessiz Sync) gelen bir önizleme, terminal bir satırın
+        // CurrentSha'sını da tazeler. Kardeş testler (A_post_run_preview_refreshes_a_succeeded_rows_standing /
+        // _a_skipped_rows_standing) WillBuild/Standing'i pinler, bu test CurrentSha'yı. Guard kaldırılmadan ÖNCE de,
+        // kaldırıldıktan SONRA da yeşildir (değişmez pini, kusur fix'i değil — guard bu senaryoyu hiç etkilemiyordu).
         const string oldSha = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         const string newSha = "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         const string projectId = @"C:\p\dirty.csproj";
@@ -2154,11 +2168,10 @@ public class RunViewModelTests
     /// ezilebiliyordu; <see cref="RunViewModel.OnBuildPreview"/>'daki bir terminal-satır `continue` guard'ı
     /// (RunActive VE satır Succeeded/Failed/Skipped ise WillBuild/Reason/DependencyRoots/InRunQueue'yu atla) bunu
     /// engelliyordu. Değişme gerekçesi: Continue <c>a2ff12e</c>'de koddan kalktı; motor koşu başına TEK
-    /// <see cref="BuildPreviewEvent"/> yayınlıyor, runStarted'ın hemen ardından ve ilk proje olayından önce
-    /// (RunCoordinator: RunStartedEvent → BuildPreviewEvent → ilk proje olayı, tek FIFO akış). Bir sonraki
-    /// koşunun önizlemesi zaten TIKLAMA ANINDA nötrlenmiş
-    /// (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c> gönderimden ÖNCE <c>NeutralizeRows()</c> çağırır —
-    /// dolayısıyla guard'ın koşulu (RunActive VE satır terminal) üretimde hiç oluşmuyordu (rapor §4); guard
+    /// <see cref="BuildPreviewEvent"/> yayınlıyor (yayın sırası o tipin doc'undadır). Bir sonraki koşunun önizlemesi
+    /// zaten TIKLAMA ANINDA nötrlenmiş (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c> gönderimden ÖNCE
+    /// <c>NeutralizeRows()</c> çağırır — dolayısıyla guard'ın koşulu (RunActive VE satır terminal) üretimde hiç
+    /// oluşmuyordu (<c>.claude/outputs/2026-09-28-22-30-continue-remnants-investigation.md</c> §4); guard
     /// erişilemezdi ve silindi. Bu test artık gerçek tıklama yolunu (<see cref="RunViewModel.BuildCommand"/>) sürer
     /// ve yeni değişmezi pinler: önceki koşuda Succeeded olan satır yeni tıklamada Pending'e döner, ardından BU
     /// koşunun kendi RunStarted+BuildPreview'ı WillBuild/Reason'ını yazar. Guard kaldırılmadan ÖNCE de,
@@ -2482,8 +2495,8 @@ public class RunViewModelTests
         Assert.False(vm.IsStarting);
         // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
         // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir; RebuildCommand artık
-        // buna da bakıyor (CanStartRunOnIdleWorkspace) — mid-Sync clearBuffers'ın canlı transkripti bozma riskiyle
-        // TUTARLI biçimde burada da engelli kalır.
+        // buna da bakıyor (CanStartRunOnIdleWorkspace) — mid-Sync başlayan bir run'ın tampon temizliğinin
+        // (BeginRunAsync, koşulsuz) canlı transkripti bozma riskiyle TUTARLI biçimde burada da engelli kalır.
         Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
     }

@@ -1286,8 +1286,7 @@ line, and a strange line stitch in MSBuild output cannot desynchronize the chunk
 
 ### 8.6 Planning pipeline
 
-Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the
-sequence is:
+Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the sequence is:
 
 ```
 update external working copies (§10.4)            ← before everything: a fast-forward can bring new
@@ -1299,9 +1298,10 @@ update external working copies (§10.4)            ← before everything: a fast
   → RunPlan { plan, solutionRefs, incremental }
 ```
 
-The update step is skipped when the user has turned it off and by a `Cycles` run, which is a repair pass over
-existing strongly connected components and has no business updating anyone's working copy. The *scan* still
-covers the external roots in every mode, so the graph a Cycles run repairs is the same graph a Build sees.
+The update step is skipped when the user has turned it off and by a `Cycles` or `Clean` run: one is a repair
+pass over existing strongly connected components, the other only deletes output, and neither has any business
+updating anyone's working copy (§10.4). The *scan* still covers the external roots in every mode, so the graph
+either run works against is the same graph a Build sees.
 
 **One tree, one identity.** A run always builds the working tree at the repository root — whatever branch is
 checked out there — so a project's id, its full csproj path, is also where it is compiled. Everything flows by
@@ -1491,7 +1491,7 @@ there, because a member compiled in the first round may have bound to a method t
 identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
-idempotent against what is on disk and the next `Build` picks up where this one left off. Restore is not
+idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
 repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
 between rounds can change `packages.config` — only a member that failed carries the restore prologue again
 (§9.3), because the failure may have been the restore's own.

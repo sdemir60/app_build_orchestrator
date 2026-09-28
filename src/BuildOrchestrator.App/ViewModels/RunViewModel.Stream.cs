@@ -123,8 +123,7 @@ public sealed partial class RunViewModel
                 _stream.EndRun(); // yeni koşu: aktif + building sıfırlanır (tampon sayacı KORUNUR)
                 SyncActiveLine();
                 // [D3 §2] başlangıç satırını ("Build started" ailesi) BuildPreviewEvent'e ERTELE — will-build sayısı orada
-                // hazır (BuildPreview deterministik olarak RunStarted'ı hemen izler — RunCoordinator: RunStartedEvent
-                // → BuildPreviewEvent → ilk proje olayı, tek FIFO akış). Burada
+                // hazır (BuildPreview RunStarted'ı hemen izler — yayın sırası: BuildPreviewEvent'in doc'u). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
                 // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE

@@ -773,10 +773,10 @@ public class IpcMessagesTests
         Assert.DoesNotContain("cpuCapPercent", JsonSerializer.Serialize<IpcEvent>(uncapped, IpcJson.Options));
     }
 
-    // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi — ama IpcJson.Options
-    // bilinmeyen alanı YOK SAYAR (UnmappedMemberHandling ayarlanmaz, varsayılan Skip'tir): P2/Task 5 öncesi
-    // yazılmış, hâlâ o alanı taşıyan eski bir runStarted NDJSON satırı (arşiv log ya da yeniden başlayan bir
-    // Supervisor) bugün de sorunsuz çözülmeli.
+    // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi. Pinlenen, toleranslı
+    // okuyucudur: IpcJson.Options bilinmeyen alanı YOK SAYAR (UnmappedMemberHandling ayarlanmaz, varsayılan
+    // Skip'tir) — bilinmeyen ya da kontrattan kalkmış bir alan çözümlemeyi bozmamalı. Satırdaki elapsedMsAtStart
+    // bunun örneğidir.
     [Fact]
     public void RunStartedEvent_still_deserializes_an_older_NDJSON_line_carrying_the_removed_elapsedMsAtStart_field()
     {

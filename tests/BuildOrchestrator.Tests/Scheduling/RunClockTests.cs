@@ -39,7 +39,7 @@ public class RunClockTests
 
         clock.Start();
         now = 900;
-        Assert.Equal(800, clock.ElapsedMs); // UI çalışırken de okuyabilmeli — yalnız bu koşunun geçen süresi
+        Assert.Equal(800, clock.ElapsedMs); // saat çalışırken okunan değer: yalnız Start'tan bu yana geçen süre
     }
 
     // [DEĞİŞEN KURAL] Eskiden: "Start'tan önceki değer accumulatedMs tohumuydu" (Continue'da UI'nin süre

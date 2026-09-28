@@ -14,10 +14,13 @@ namespace BuildOrchestrator.Core.Scheduling;
 /// atmaz — savunmacı: bu class'ı sürecek akış tek Start/tek Pause çağırsa da, ReadySetScheduler'ın
 /// dangling-dependency toleransıyla aynı ilkeyle çift-tetiklemeye karşı çökmez.
 ///
-/// Thread-safety: tek bir lock (_gate). Start/Pause tek bir kontrol akışından (engine loop) çağrılır, ama
-/// ElapsedMs Task 9'un UI thread'inden (poll) — Start'ı çağıran thread'den FARKLI bir thread'den — okunabilir;
-/// lock bu okumayı güvenli hale getirir. Hot path değildir (saniyede birkaç UI tick), bu yüzden tek kilit
-/// yeterli — ince taneli senkronizasyon YAGNI.
+/// Thread-safety: tek bir lock (_gate). Üretimde saati tek bir async akış sürer: Start <c>runStarted</c>'dan
+/// hemen önce, Pause ve iki ElapsedMs okuması koşunun <c>finally</c>'sinde (worker'lar join olduktan sonra).
+/// Akış <c>await</c>'ler arasında başka bir thread-pool thread'inde sürebilir, ama erişimler SIRALIDIR —
+/// eşzamanlı okuyucu yoktur. App'in canlı elapsed sayacı ayrı bir process'tedir ve bu saati hiç okumaz (kendi
+/// saatiyle sayar, bitişte <c>runCompleted.DurationMs</c>'i gösterir). Kilit bu yüzden savunmacıdır ve
+/// zararsızdır: sınıfın "herhangi bir thread'den okunabilir" sözleşmesini çağıranın düzenine bağlamaz, koşu
+/// başına bir Start, bir Pause ve iki okumada maliyeti yoktur.
 /// </summary>
 public sealed class RunClock
 {

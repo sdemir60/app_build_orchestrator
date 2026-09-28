@@ -1885,8 +1885,7 @@ public sealed partial class RunViewModel : ObservableObject
         // (design v1.10.0 §3.8: "liste yerinden oynamaz"). Komut yolundan gelen bir Rebuild burayı zaten
         // nötrlenmiş bulur — çağrı, koşuyu başka bir yol başlattığında da tabanın temiz olmasını garanti eder.
         // Build/Cycles/Clean'de burada İKİNCİ bir nötrleme YOKTUR: BeginRunAsync tıklama anında NeutralizeRows()
-        // zaten TÜM satırları nötrlemiştir; korunan yalnız satır NESNELERİ ve preview'ın üzerine yazdığı
-        // çıktı-durumu alanlarıdır (CurrentSha, OwnFilesChanged, LocalEdits — bkz. OnBuildPreview).
+        // zaten TÜM satırları nötrlemiştir — neyin silinip neyin korunduğu NeutralizeRows'un kendi doc'undadır.
         // [Task 1 review fix — I-1] clearMarks: false — bu an itibariyle (IsRunning=true'nun property-changed
         // kaskadı YUKARIDA çoktan bitti) dalganın işaretlediği kapsam MainWindow tarafından BİLEREK KORUNMUŞTUR
         // (bkz. NeutralizeRows'un clearMarks parametresinin yorumu); burada tekrar silersek I-1'in kapattığı
@@ -1905,19 +1904,21 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
-    /// <b>[DEĞİŞEN KURAL — Task 4/5]</b> Önizleme koşu başına yalnız BİR kez gelir — <see cref="RunCoordinator"/>
-    /// onu runStarted'ın hemen ardından ve ilk proje-başına event'ten (<c>projectStarted</c>/<c>projectSkipped</c>)
-    /// ÖNCE yayınlar; koşu içinde ikinci bir üreticisi yoktur (Continue <c>a2ff12e</c>'de koddan kalktı). Satır
-    /// zaten varsa bu savunmacı bir edge case DEĞİLDİR: yeni bir koşunun önizlemesi TIKLAMA ANINDA zaten
-    /// nötrlenmiş (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c> gönderimden ÖNCE
-    /// <see cref="NeutralizeRows"/> çağırır — dolayısıyla bu event işlendiği anda satır hiçbir zaman TERMİNAL
-    /// (Succeeded/Failed/Skipped) değildir. Eski hâl burada satır TERMİNAL ve koşu HÂLÂ sürüyorsa
-    /// (<see cref="RunActive"/>) WillBuild'i koruyan bir guard taşırdı ("segment 2"nin bayat önizlemesi segment
-    /// 1'in canlı succeeded→clean geçişini ezmesin diye); koşulu üretimde hiç oluşmadığı için (yukarıdaki
-    /// nötrleme zinciri) guard silindi.
-    /// <para>[Task 1 — sessiz Sync tazeleme] Koşu içi ya da koşu SONRASI (pencereye dönüşün tetiklediği sessiz
-    /// Sync dahil) fark etmeksizin HER önizleme satırın kararını (WillBuild/Reason/DependencyRoots) yazar: arka
-    /// planda değişen bir proje (özellikle döngü üyesi) yeşil/"up to date" takılı kalmaz.</para></summary>
+    /// <b>[DEĞİŞEN KURAL — Task 4/5]</b> Önizleme koşu başına yalnız BİR kez gelir (yayın sırası:
+    /// <see cref="BuildPreviewEvent"/>'in doc'u); koşu içinde ikinci bir üreticisi yoktur (Continue
+    /// <c>a2ff12e</c>'de koddan kalktı). Satır zaten varsa bu savunmacı bir edge case DEĞİLDİR: KOŞUNUN
+    /// önizlemesi TIKLAMA ANINDA zaten nötrlenmiş (<c>Pending</c>) bir satıra iner — <c>BeginRunAsync</c>
+    /// gönderimden ÖNCE <see cref="NeutralizeRows"/> çağırır — dolayısıyla koşunun kendi önizlemesi işlendiği
+    /// anda satır hiçbir zaman TERMİNAL (Succeeded/Failed/Skipped) değildir. Koşu SONRASI gelen bir Sync
+    /// önizlemesi ise terminal satırlara da inebilir — sessiz Sync satırları nötrlemez (aşağıdaki paragraf).
+    /// Eski hâl burada satır TERMİNAL ve koşu HÂLÂ sürüyorsa (<see cref="RunActive"/>) WillBuild'i koruyan bir
+    /// guard taşırdı ("segment 2"nin bayat önizlemesi segment 1'in canlı succeeded→clean geçişini ezmesin diye);
+    /// koşulu üretimde hiç oluşmadığı için (yukarıdaki nötrleme zinciri) guard silindi.
+    /// <para>[Task 1 — sessiz Sync tazeleme] Satırın terminal olması önizlemeyi durdurmaz: koşu SONRASI gelen
+    /// bir önizleme (pencereye dönüşün tetiklediği sessiz Sync dahil) de satırın kararını yazar — gerekçe ve
+    /// kökler (Reason/DependencyRoots) her önizlemeden, plan bayrağı (WillBuild/Conditional)
+    /// <see cref="PreviewWritesPlanFlag"/> açıkken (koşu dışında hep açıktır). Böylece arka planda değişen bir
+    /// proje (özellikle döngü üyesi) yeşil/"up to date" takılı kalmaz.</para></summary>
     private void OnBuildPreview(BuildPreviewEvent e)
     {
         foreach (var item in e.Items)
@@ -1955,13 +1956,12 @@ public sealed partial class RunViewModel : ObservableObject
             row.WillBuildReason = item.Reason;          // [Task 4] gerekçe her önizlemeden koşulsuz yazılır (yukarıdaki not)
             row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — gerekçeyle AYNI kural
             // [Task 1 review fix round 1] InRunQueue AYRI bir kanaldır (run-scoped): yukarıdaki karar alanları
-            // (WillBuild/Reason/Conditional/DependencyRoots) her önizlemeden koşulsuz yazılır, InRunQueue ise
-            // YALNIZ koşu sürerken yükselir — belgelenen değişmez (bkz. alanın kendi XML yorumu +
-            // PropagateRunActive'in "koşu biterken kuyruk da düşer" satırı) budur. RunActive burada AYRICA
-            // sorulmazsa koşu bittikten sonra gelen bir önizleme (sessiz
-            // Sync) InRunQueue'yu sessizce yeniden yükseltir — bugün gözlemlenemez (TEK okuyucu Status'un
-            // IsRunActive && InRunQueue dalı, terminal State ondan önce eşleşir) ama alanın kendi doğruluğu
-            // okuyucudan BAĞIMSIZ korunmalı.
+            // önizlemeden yazılır (Reason/DependencyRoots koşulsuz, WillBuild/Conditional PreviewWritesPlanFlag
+            // açıkken), InRunQueue ise YALNIZ koşu sürerken yükselir — belgelenen değişmez (bkz. alanın kendi XML
+            // yorumu + PropagateRunActive'in "koşu biterken kuyruk da düşer" satırı) budur. RunActive burada AYRICA
+            // sorulmazsa koşu bittikten sonra gelen bir önizleme (sessiz Sync) InRunQueue'yu sessizce yeniden
+            // yükseltir — bugün gözlemlenemez (TEK okuyucu Status'un IsRunActive && InRunQueue dalı, terminal State
+            // ondan önce eşleşir) ama alanın kendi doğruluğu okuyucudan BAĞIMSIZ korunmalı.
             row.InRunQueue = RunActive && InRunQueueFor(item, _currentRunMode, row.InCycle); // [Task 1/2] kuyruk YALNIZ bu event'ten VE YALNIZ koşu sürerken
         }
         RaiseRowDecisionsChanged();                          // graf renk girdisini buradan öğrenir

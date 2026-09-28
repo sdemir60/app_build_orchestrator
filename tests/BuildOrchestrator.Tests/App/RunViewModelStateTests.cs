@@ -10,8 +10,8 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync vs Build/Retry
-/// seçim-filtre asimetrisi, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
+/// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync ile Build/Rebuild'in
+/// seçim-filtre kuralı, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
 /// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
@@ -915,8 +915,6 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         Assert.True(vm.BuildCommand.CanExecute(null)); // ön-koşul: Sync'ten ÖNCE açık
 
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
@@ -949,17 +947,15 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 
-        // [Not] Bu Sync'in İÇİNDE ayrıca bir WorkspaceTopologyEvent GÖNDERİLMEZ: IsRunning false iken satır
-        // durumlarını Pending'e resetler (Sync = yeni taban) — bu testin konusu DEĞİL. Baştaki
-        // VmTopology.Seed satır event'lerinden ÖNCE koştuğu için bu kısıtı bozmaz.
+        // [Not] Bu Sync'in İÇİNDE ayrıca bir WorkspaceTopologyEvent GÖNDERİLMEZ: topolojinin gelişi Rebuild'in
+        // CanExecuteChanged'ini KENDİSİ tetikler (OnWorkspaceTopology) — gönderilseydi bildirimin SyncCompleted'tan
+        // geldiği ayırt edilemezdi.
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
         Assert.True(vm.RebuildCommand.CanExecute(null));
@@ -972,8 +968,6 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
@@ -988,8 +982,6 @@ public class RunViewModelStateTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
-        vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
@@ -1042,16 +1034,28 @@ public class RunViewModelStateTests
         Assert.False(vm.BuildCommand.CanExecute(null));
     }
 
-    // Kapı her run komutunu kapsar: satırlar bir şekilde dolmuş olsa
-    // bile (ör. eski bir koşunun event'leri) topoloji YOKSA yeni bir run başlatılamaz.
+    /// <summary>
+    /// Kapı her run komutunu kapsar: satırlar bir şekilde dolmuş olsa bile (ör. eski bir koşunun event'leri)
+    /// topoloji YOKSA yeni bir run başlatılamaz — ne Build ne Rebuild. Kapı satırlara değil topolojinin
+    /// varlığına bakar (<see cref="RunViewModel.HasTopology"/>).
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia:
+    /// <c>Retry_failed_is_disabled_without_a_topology_even_with_a_failed_row</c> — başarısız bir satır varken bile
+    /// topolojisiz <c>RetryFailed</c> devre dışıdır. Değişme gerekçesi: RetryFailed <c>a2ff12e</c>'de koddan kalktı;
+    /// tek assert'i komutla birlikte silindi ve test assert'siz kaldı — hiçbir şey pinlemiyordu. Aynı kural bugünkü
+    /// run komutlarına pinlenir.</para>
+    /// </summary>
     [Fact]
-    public async Task Retry_failed_is_disabled_without_a_topology_even_with_a_failed_row()
+    public async Task Run_commands_stay_disabled_without_a_topology_even_when_rows_exist()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         vm.OnEvent(new ProjectStartedEvent("r0", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r0", @"C:\p\a.csproj", 100, "exit 1"));
+        Assert.Single(vm.Projects);      // ön-koşul: satır VAR…
+        Assert.False(vm.HasTopology);    // …ama topoloji yok
 
+        Assert.False(vm.BuildCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
     }
 
     // Kapı bir CanExecute değişimidir: topoloji GELDİĞİNDE butonların yeniden sorgulanması gerekir — CommunityToolkit

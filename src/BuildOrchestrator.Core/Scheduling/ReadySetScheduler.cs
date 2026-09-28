@@ -57,12 +57,12 @@ public sealed class ReadySetScheduler
     /// modunda kapsam dışı/güncel upstream/güncel SCC — bkz. RunCoordinator.PlanAndRunAsync); tohumdaki id'ler
     /// dispatch EDİLMEZ ve bağımlıları için baştan çözülmüş sayılır.
     ///
-    /// Cycle/pre-skip DAVRANIŞI korunur: <paramref name="seed"/> bir SCC üyesini zaten taşıyorsa burada YENİDEN
-    /// pre-skip edilmez (PreSkipped bu construction için boş kalır). Ama Build tohumu SCC üyelerini BİLEREK hiç
-    /// taşımaz — bu yüzden <paramref name="cycleGroups"/> null iken (kill switch kapalı) tohumda olmayan
-    /// InCycle bir düğüm burada "in dependency cycle" ile pre-skip edilir: bu savunmacı bir edge case DEĞİL,
-    /// Build'in NORMAL yoludur — aksi halde bağımlılıkları birbirine dairesel olduğu için asla ready olamazlar
-    /// ve run kilitlenir (plan A6).
+    /// Cycle/pre-skip DAVRANIŞI: <paramref name="cycleGroups"/> null iken (kill switch kapalı) tohumda OLMAYAN her
+    /// InCycle düğüm burada "in dependency cycle" ile pre-skip edilir. Build tohumu SCC üyelerini BİLEREK hiç
+    /// taşımaz, bu yüzden bu savunmacı bir edge case DEĞİL, Build'in NORMAL yoludur — aksi halde bağımlılıkları
+    /// birbirine dairesel olduğu için asla ready olamazlar ve run kilitlenir (plan A6). Tohumda ZATEN olan bir
+    /// üye ise yeniden pre-skip edilmez ve <see cref="PreSkipped"/>'e yazılmaz; gruplar null iken bu dal yalnız
+    /// savunmacıdır — üretimde SCC üyesini tohumlayan tek mod Cycles'tır ve orada gruplar doludur.
     ///
     /// <paramref name="cycleGroups"/> [cycle rounds]: null (varsayılan) = kill switch KAPALI, yukarıdaki
     /// pre-skip davranışı BİREBİR korunur — mevcut tüm çağrı yerleri hiç değişmeden aynı sonucu almaya devam

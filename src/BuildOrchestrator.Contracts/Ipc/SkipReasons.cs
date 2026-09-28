@@ -21,7 +21,9 @@ public static class SkipReasons
     /// <summary>Build/Rebuild modunda bir SCC üyesi — turlar yalnız Cycles modunda koşar.</summary>
     public const string InDependencyCycle = "in dependency cycle";
 
-    /// <summary>[cycle rounds/Task 8] SCC daha önce aynı bileşik imzada yakınsamadı, bir daha tur harcamadan pre-skip edildi.</summary>
+    /// <summary>[cycle rounds/Task 8] Eskiden: SCC daha önce aynı bileşik imzada yakınsamadığı için tur harcanmadan
+    /// pre-skip edildi. O pre-skip kalktı (yakınsamama hafızası artık yalnız RAPORLAR — bkz. <c>RunCoordinator</c>'ın
+    /// Cycles tohumu); motor bu gerekçeyi bugün yaymaz, App onu hâlâ okur (<c>ConsoleEmptyState</c>).</summary>
     public const string CycleNonConvergent = "cycle did not converge at this signature";
 
     /// <summary>Koşullu proje (dep-issue notlu, imzası değişmemiş): kayıtlı kök bağımlılıklarının hepsi hâlâ hatalı —

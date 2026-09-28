@@ -30,7 +30,7 @@ public enum CycleRoundDecision
 ///
 /// Neden tavan 3 yeterli: tur 1-2 yeşilse Converged zaten 2'de olur; tur 1-2 aynı kümede patlarsa NoProgress
 /// 2'de durur. 3. tur yalnız "tur 1 patladı, sonra düzeldi" dalı için vardır. Turlar diskteki duruma göre
-/// idempotent olduğu için düşük tavan bilgi kaybettirmez — sonraki Build kaldığı yerden devam eder.
+/// idempotent olduğu için düşük tavan bilgi kaybettirmez — sonraki Cycles koşusu kaldığı yerden devam eder.
 /// </summary>
 public static class CycleRoundPolicy
 {
