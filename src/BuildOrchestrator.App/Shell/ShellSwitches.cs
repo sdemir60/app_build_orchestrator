@@ -34,8 +34,9 @@ internal sealed record ShellSwitch(
 /// gezerek <see cref="SettingsDraftViewModel.ToFile"/>/<see cref="SettingsDraftViewModel.LoadFrom"/>/
 /// <see cref="SettingsDraftViewModel.CommitAsync"/>'i sürer — yeni bir kabuk anahtarı = buraya bir satır.
 ///
-/// <para><b>Yalnız KALICILIK.</b> Bu tip anahtarların DEĞERİNİ taşır; pencere kapanışını ya da tray balloon'u
-/// BAĞLAMAZ — sonraki görevler <see cref="CloseToTray"/>/<see cref="ShowNotifications"/>'ı okuyacaktır.</para>
+/// <para><b>Yalnız KALICILIK.</b> Bu tip anahtarların DEĞERİNİ taşır, davranışı kendisi BAĞLAMAZ — okuyucular değeri
+/// her soruda TAZE okur: <see cref="CloseToTray"/>'ı pencere kapanışı okur (<c>MainWindow.OnClosing</c> →
+/// <see cref="WindowCloseRule"/>); <see cref="ShowNotifications"/>'ı sonraki görev (tray balloon yolları) okuyacaktır.</para>
 /// </summary>
 internal static class ShellSwitches
 {
@@ -54,13 +55,14 @@ internal static class ShellSwitches
             OffClause: "no tray notifications are shown"),
     ];
 
-    /// <summary>Anahtarın GEÇERLİ değeri: kayıtlı ?? katalog varsayılanı. Sonraki görevlerin okuyacağı TEK kapı
+    /// <summary>Anahtarın GEÇERLİ değeri: kayıtlı ?? katalog varsayılanı. Davranış okuyucularının TEK kapısı
     /// (<see cref="CloseToTray"/>, <see cref="ShowNotifications"/> bunun birer kısaltmasıdır).</summary>
     public static bool IsOn(UiState state, GeneralSetting setting) =>
         Find(setting).Read(state) ?? GeneralSettingsCatalog.Definition(setting).Default;
 
-    /// <summary>[sonraki görev] Pencere kapanış yolunun okuyacağı kapı — burada davranışa BAĞLANMAZ, yalnız
-    /// kalıcı değeri verir.</summary>
+    /// <summary>[P3 · Task 3] Pencere kapanış yolunun kapısı: <c>MainWindow.OnClosing</c> her × / Alt+F4 / sistem
+    /// menüsü Kapat'ta TAZE okur ve <see cref="WindowCloseRule"/>'a verir — açık ⇒ pencere tepsiye gizlenir, kapalı ⇒
+    /// güvenli tam çıkış.</summary>
     public static bool CloseToTray(UiState state) => IsOn(state, GeneralSetting.CloseToTray);
 
     /// <summary>[sonraki görev] Üç tray-balloon yolunun okuyacağı kapı — burada davranışa BAĞLANMAZ, yalnız kalıcı

@@ -12,8 +12,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <para><b>[DEĞİŞEN KURAL — P3, kullanıcı kararı 2026-09-28]</b> ESKİ: <see cref="CloseToTray"/> ve
 /// <see cref="ShowNotifications"/> de yukarıdaki iki anahtar gibi yalnız taslakta yaşardı. Artık
 /// <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: Save'de yazılır, diyalog kayıtlı değeri gösterir,
-/// Export/Import taşır, değişince konsola not düşer. Yalnız DAVRANIŞLARI (pencere kapanışı, tray balloon) henüz
-/// bağlı değildir — sonraki görevler <see cref="ShellSwitches.CloseToTray"/>/<see cref="ShellSwitches.ShowNotifications"/>'ı
+/// Export/Import taşır, değişince konsola not düşer. Close to tray pencere kapanışını da sürer
+/// (<c>MainWindow.OnClosing</c> <see cref="ShellSwitches.CloseToTray"/>'ı okur); Show notifications'ın davranışı
+/// (tray balloon) henüz bağlı değildir — sonraki görev <see cref="ShellSwitches.ShowNotifications"/>'ı
 /// bağlayacaktır.</para></summary>
 public enum GeneralSetting
 {
@@ -21,8 +22,8 @@ public enum GeneralSetting
     StartWithWindows,
     /// <summary>Henüz bağlı değil — yalnız taslak. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
     StartMinimizedToTray,
-    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.CloseToTray"/>) — davranışı (pencere
-    /// kapanışının kendisi) henüz bağlı değil.</summary>
+    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.CloseToTray"/>) — [Task 3] pencere
+    /// kapanışını sürer: açık ⇒ × tepsiye gizler, kapalı ⇒ güvenli tam çıkış.</summary>
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,

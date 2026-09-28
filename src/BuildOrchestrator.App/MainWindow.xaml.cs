@@ -50,7 +50,9 @@ public partial class MainWindow : Window
     // uygulamayı hiç tepsiye indirmeden kullanabilir ve o zaman bir HWND'e hiç ödeme yapılmaz.
     private TrayBuildOverlayWindow? _trayOverlay;
     private TrayBuildIndicatorController? _trayIndicator;
-    private bool _exiting; // tepsi Exit'i (gerçek çıkış) ile X'i (tepsiye küçült) ayıran TEK bayrak
+    // [P3 · Task 3] Gerçek kapanış başladı: çıkış hazır (ExitNow — Shutdown kuyrukta) ya da Windows oturumu kapanıyor
+    // (OnSessionEnding). WindowCloseRule'un Close dalının TEK girdisi — bundan sonra her Closing pencereyi gerçekten kapatır.
+    private bool _exiting;
 
     // [D5/T50] Graf ↔ VM köprüsü. GraphView düğümleri AD ile anahtarlar, VM seçimi ID (yol) ile; iki yönlü ad↔id
     // haritası topoloji değişince yeniden kurulur. _suppressGraphSelection: VM→view seçim itişinin GraphView'de
@@ -375,6 +377,14 @@ public partial class MainWindow : Window
         // [T49 FINAL PASS] Null-kontrol yalnız headless realize testi içindir (orada Application YOKTUR); üretimde
         // Application.Current her zaman kuruludur ve abonelik AYNEN kurulur.
         if (Application.Current is { } app) app.SessionEnding += OnSessionEnding;
+
+        // [P3 · Task 3] Güvenli tam çıkış: VM uçuştaki iş bitince (hiç yoksa hemen) ExitReady der ve kabuk o andan sonra
+        // KOŞULSUZ kapanır — yeniden deneme yoktur, olay bir kez gelir. Olay bir Closing'in ya da VM durum geçişinin
+        // ORTASINDA gelebildiği için Shutdown dispatcher kuyruğuna ertelenir: WPF, Closing sürerken aynı pencereyi
+        // kapatmaya kalkan Shutdown'ı InvalidOperationException ile reddeder. İki çağrı da test dikişidir.
+        ShutdownApplication = () => Dispatcher.BeginInvoke(() => Application.Current?.Shutdown());
+        BringForward = ShowFromTray;
+        _vm.ExitReady += (_, _) => ExitNow();
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
@@ -1116,10 +1126,11 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_WINDOW_CORNER_PREFERENCE, ref round, sizeof(int));
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
-        // [T62] Tepsi: X artık kapatmaz (K5) → uygulama tepsiden yönetilir.
+        // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
+        // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
         _tray = new AppTrayIcon(_vm.StopCommand);
         _tray.RestoreRequested += ShowFromTray;
-        _tray.ExitRequested += ExitApplication;
+        _tray.ExitRequested += ExitFromTray;
 
         SetUpTrayBuildIndicator(_tray);
 
@@ -1212,7 +1223,8 @@ public partial class MainWindow : Window
         else SystemCommands.MaximizeWindow(this);
     }
 
-    /// <summary>[K5] `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray balloon'u.</summary>
+    /// <summary>[K5] Close to tray açıkken `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray
+    /// balloon'u. Kararı <see cref="OnClosing"/> verir (<see cref="WindowCloseRule"/>).</summary>
     private void MinimizeToTray()
     {
         Hide();
@@ -1234,29 +1246,67 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    /// <summary>Tepsi → Exit: GERÇEK çıkış. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
-    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>MSBuild.exe</c> child'ları.</summary>
-    private void ExitApplication()
+    /// <summary>[P3 · Task 3] Uygulamayı kapatan TEK çağrı (test dikişi; üretim değeri ctor'da kurulur): üretimde
+    /// <c>Application.Shutdown</c> dispatcher kuyruğuna ERTELENİR — gerekçe ctor'daki <c>ExitReady</c> aboneliğinde.
+    /// Testler sayaçlı bir sahteyle değiştirir; uygulama kapanmaz.</summary>
+    internal Action ShutdownApplication { get; set; }
+
+    /// <summary>[P3 · Task 3] Çıkış beklerken pencereyi öne getiren çağrı (test dikişi): üretimde
+    /// <see cref="ShowFromTray"/>. Testler pencere GÖSTERMEZ, sayaçlı bir sahteyle değiştirir.</summary>
+    internal Action BringForward { get; set; }
+
+    /// <summary>[P3 · Task 3] Çıkış hazır (<see cref="RunViewModel.ExitReady"/>): bundan sonra her Closing pencereyi
+    /// gerçekten kapatır ve uygulama KOŞULSUZ kapanır. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
+    /// outer Job (KILL_ON_JOB_CLOSE) — bekleyişten sonra geride kalanı (Supervisor, susmuş bir motorun child'ları)
+    /// toplar.</summary>
+    private void ExitNow()
     {
         _exiting = true;
-        Application.Current.Shutdown();
+        ShutdownApplication();
+    }
+
+    /// <summary>[P3 · Task 3] Tepsi → Exit: HER ZAMAN güvenli tam çıkış — Close to tray'e bakılmaz, menüdeki Exit'in
+    /// anlamı zaten "tamamen kapat"tır. Uçuşta iş varsa çıkış onu bekler ve pencere ÖNE gelir: gizli bir pencerede
+    /// bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü. İş yoksa uygulama pencere gösterilmeden kapanır.
+    ///
+    /// <para><c>!_exiting</c> koşulu: bekleyiş AYNI çağrıda da bitebilir — açılış koreografisindeyken Stop bekleyen
+    /// koşuyu senkron geri alır ve <c>ExitReady</c> <c>RequestExit</c>'in içinden gelir. <c>ExitPending</c> geri
+    /// dönmediği için yalnız ona bakmak, kapanış zaten başlamışken pencereyi bir kare için öne getirirdi.</para></summary>
+    internal void ExitFromTray()
+    {
+        _vm.RequestExit();
+        if (_vm.ExitPending && !_exiting) BringForward();
     }
 
     /// <summary>[M-3 fix wave] Oturum kapanışı GERÇEK bir çıkıştır — tray/balloon YASAK. <c>e.Cancel</c>'a
-    /// DOKUNULMAZ: yalnız aşağı akan <c>Closing</c>'in tray'e sapmasını önleriz.</summary>
+    /// DOKUNULMAZ: yalnız aşağı akan <c>Closing</c>'in tray'e sapmasını önleriz. [P3 · Task 3] Güvenli çıkışın
+    /// bekleyişine de girilmez: oturum kapanışında uygulama anında kapanır (Windows beklemez).</summary>
     private void OnSessionEnding(object? sender, SessionEndingCancelEventArgs e) => _exiting = true;
 
+    /// <summary>[P3 · Task 3] × / Alt+F4 / sistem menüsü Kapat — ve Shutdown'ın kendi kapanışı — buraya iner. Karar
+    /// <see cref="WindowCloseRule"/>'da; burada yalnız uygulanır. Close to tray her kapatmada TAZE okunur: Settings'te
+    /// kaydedilen değer bir sonraki ×'ta geçerlidir.</summary>
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
-        // [K5] X / Alt+F4 / sistem menüsü Kapat → tepsiye küçült. Yalnız tepsi Exit'i (veya Application.Shutdown)
-        // gerçekten kapatır.
-        if (!_exiting)
+        var action = WindowCloseRule.Decide(_exiting, _vm.ExitPending, ShellSwitches.CloseToTray(_uiState.Load()));
+        if (action == CloseAction.Close)
         {
-            e.Cancel = true;
-            MinimizeToTray();
+            base.OnClosing(e);
             return;
         }
-        base.OnClosing(e);
+        // Tam çıkışta da bu kapanış iptal edilir: pencereyi kapatan, çıkış hazır olunca gelen Shutdown'dır (ExitNow).
+        e.Cancel = true;
+        switch (action)
+        {
+            case CloseAction.HideToTray:
+                MinimizeToTray();
+                break;
+            case CloseAction.RequestExit:
+                _vm.RequestExit(); // uçuşta iş yoksa ExitReady → ExitNow bu çağrının içinden gelir
+                break;
+            case CloseAction.Stay: // çıkış zaten bekliyor: pencere görünür kalır, ikinci bir durdurma gitmez
+                break;
+        }
     }
 
     /// <summary>Kabuk kaynakları BURADA bırakılır: pencere gerçekten kapandığında tam bir kez çalışır ve
@@ -1276,5 +1326,5 @@ public partial class MainWindow : Window
 
     private void OnMinimize(object s, RoutedEventArgs e) => SystemCommands.MinimizeWindow(this);
     private void OnMaximizeRestore(object s, RoutedEventArgs e) => ToggleMaximizeRestore();
-    private void OnClose(object s, RoutedEventArgs e) => Close(); // OnClosing X'i tepsiye çevirir [K5]
+    private void OnClose(object s, RoutedEventArgs e) => Close(); // karar OnClosing'de (WindowCloseRule) [K5 · P3]
 }

@@ -110,7 +110,8 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
     public event Action? RestoreRequested;
-    /// <summary>Tepsi menüsü → Exit (GERÇEK çıkış → kaskat kill).</summary>
+    /// <summary>Tepsi menüsü → Exit: güvenli tam çıkış — uçuştaki iş beklenir, sonra uygulama kapanır
+    /// (<c>MainWindow.ExitFromTray</c> → <c>RunViewModel.RequestExit</c>).</summary>
     public event Action? ExitRequested;
 
     /// <summary>

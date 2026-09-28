@@ -94,7 +94,8 @@ public sealed class UiState
     /// mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="UpdateExternals"/> ile AYNI gerekçeyle
     /// NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı. Okuma yalnız
     /// <see cref="BuildOrchestrator.App.Shell.ShellSwitches.CloseToTray"/> üzerindendir — bu alan doğrudan okunmaz.
-    /// <para>Davranışı (pencere kapanışının kendisi) HENÜZ bağlı değildir — bu tip yalnız KALICILIĞI taşır.</para></summary>
+    /// <para>Davranışı (pencere kapanışının kendisi) <c>MainWindow.OnClosing</c> bağlar
+    /// (<see cref="BuildOrchestrator.App.Shell.WindowCloseRule"/>) — bu tip yalnız KALICILIĞI taşır.</para></summary>
     public bool? CloseToTray { get; set; }
 
     /// <summary>[P3 · Task 1] Settings → General → NOTIFICATIONS: bir build bittiğinde (başarılı ya da başarısız) tray
