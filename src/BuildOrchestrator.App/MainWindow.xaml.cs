@@ -1151,10 +1151,14 @@ public partial class MainWindow : Window
     /// <para>Kurulum tepsi ikonunun YANINDA durur çünkü ikisi aynı şeyin parçasıdır: uygulama tepsideyken
     /// nasıl görünür ve nasıl konuşur. Autostart yolu (<see cref="StartInTray"/>) da kendiliğinden kapsanır —
     /// pencere hiç gösterilmediği için <c>IsVisibleChanged</c> hiç "görünür" demez ve ilk koşuda gösterge
-    /// doğru şekilde tepside belirir.</para></summary>
+    /// doğru şekilde tepside belirir.</para>
+    ///
+    /// <para>[P3 · Task 4] Üçüncü parametre (<c>notificationsOn</c>) <see cref="ShellSwitches.ShowNotifications"/>'ı
+    /// <c>_uiState.Load()</c>'tan TAZE okuyan bir kapatmadır — balon anında sorulur, burada değil.</para></summary>
     private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
     {
-        var controller = new TrayBuildIndicatorController(new LazyOverlayView(this), notifier)
+        var controller = new TrayBuildIndicatorController(
+            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()))
         {
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
@@ -1224,7 +1228,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[K5] Close to tray açıkken `X` pencereyi KAPATMAZ — tepsiye küçültür; YALNIZ ilk seferde OS tray
-    /// balloon'u. Kararı <see cref="OnClosing"/> verir (<see cref="WindowCloseRule"/>).</summary>
+    /// balloon'u. Kararı <see cref="OnClosing"/> verir (<see cref="WindowCloseRule"/>). [P3 · Task 4] İlk sefer
+    /// bile olsa Show notifications kapalıyken balon YOK — <see cref="FirstCloseBalloonGate.ClaimShow"/> bunu da
+    /// sorar.</summary>
     private void MinimizeToTray()
     {
         Hide();

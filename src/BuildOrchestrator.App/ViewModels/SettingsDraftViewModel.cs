@@ -91,8 +91,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// notifications</c> de yukarıdaki iki anahtar gibi yalnız taslaktaydı. Artık <see cref="ShellSwitches"/>
     /// tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi onları tohumlar, <see cref="CommitAsync"/>
     /// yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer konsola not düşer. Close to tray pencere
-    /// kapanışını da sürer (<c>MainWindow.OnClosing</c>); Show notifications'ın davranışı (tray balloon) henüz bağlı
-    /// değildir.</para></summary>
+    /// kapanışını da sürer (<c>MainWindow.OnClosing</c>); [Task 4] Show notifications'ın davranışı (üç
+    /// tray-balloon yolu) da artık bağlıdır.</para></summary>
     public IReadOnlyList<GeneralSettingGroupViewModel> GeneralGroups { get; }
 
     private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];

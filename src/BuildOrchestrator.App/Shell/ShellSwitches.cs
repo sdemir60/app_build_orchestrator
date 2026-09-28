@@ -36,7 +36,8 @@ internal sealed record ShellSwitch(
 ///
 /// <para><b>Yalnız KALICILIK.</b> Bu tip anahtarların DEĞERİNİ taşır, davranışı kendisi BAĞLAMAZ — okuyucular değeri
 /// her soruda TAZE okur: <see cref="CloseToTray"/>'ı pencere kapanışı okur (<c>MainWindow.OnClosing</c> →
-/// <see cref="WindowCloseRule"/>); <see cref="ShowNotifications"/>'ı sonraki görev (tray balloon yolları) okuyacaktır.</para>
+/// <see cref="WindowCloseRule"/>); <see cref="ShowNotifications"/>'ı [P3 · Task 4] üç tray-balloon yolu
+/// (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>) okur.</para>
 /// </summary>
 internal static class ShellSwitches
 {
@@ -65,8 +66,9 @@ internal static class ShellSwitches
     /// güvenli tam çıkış.</summary>
     public static bool CloseToTray(UiState state) => IsOn(state, GeneralSetting.CloseToTray);
 
-    /// <summary>[sonraki görev] Üç tray-balloon yolunun okuyacağı kapı — burada davranışa BAĞLANMAZ, yalnız kalıcı
-    /// değeri verir.</summary>
+    /// <summary>[P3 · Task 4] Üç tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı)
+    /// TEK kapısı — burada davranışa BAĞLANMAZ (yalnız kalıcı değeri verir), üçü de bunu balonun TAM gösterileceği
+    /// anda TAZE okur.</summary>
     public static bool ShowNotifications(UiState state) => IsOn(state, GeneralSetting.ShowNotifications);
 
     /// <summary>Save: <see cref="All"/>'daki HER anahtarı <paramref name="state"/>'e yazar (değişmemiş olsa bile) ve

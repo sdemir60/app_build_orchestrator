@@ -11,9 +11,10 @@ namespace BuildOrchestrator.Tests.App;
 /// [P3 · Task 1] Settings → General → <c>Close to tray</c> ve <c>Show notifications</c>'ın KALICILIĞI:
 /// <see cref="ShellSwitches"/> tablosu üzerinden Save'de <c>ui-state.json</c>'a yazılır, diyalog her açılışta
 /// kayıtlı değeri gösterir, Export/Import taşır (dosyada anahtar yoksa formdaki değer korunur) ve değer değişince
-/// konsola tek satır not düşer (değişmezse sessiz). <b>Davranışları (pencere kapanışı, tray balloon) BAĞLANMAZ</b> —
-/// sonraki görevler <see cref="ShellSwitches.CloseToTray"/>/<see cref="ShellSwitches.ShowNotifications"/>'ı
-/// okuyacaktır.
+/// konsola tek satır not düşer (değişmezse sessiz). <b>Davranışları bu dosyada BAĞLANMAZ</b> — pencere kapanışını
+/// <c>MainWindow.OnClosing</c> [Task 3], üç tray-balloon yolunu <c>FirstCloseBalloonGate</c>/
+/// <c>TrayBuildIndicatorController</c>/<c>SecondInstanceGate</c> [Task 4] okur (<see cref="ShellSwitches.CloseToTray"/>/
+/// <see cref="ShellSwitches.ShowNotifications"/> üzerinden).
 ///
 /// <para>Uçtan uca desen <see cref="StashOnBranchSwitchTests"/>'in aynısıdır; farkı, tek bir bayrak yerine bir
 /// TABLO (<see cref="ShellSwitches.All"/>) ile iki anahtarın AYNI ANDA kalıcı olmasıdır.</para>

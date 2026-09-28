@@ -13,9 +13,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <see cref="ShowNotifications"/> de yukarıdaki iki anahtar gibi yalnız taslakta yaşardı. Artık
 /// <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: Save'de yazılır, diyalog kayıtlı değeri gösterir,
 /// Export/Import taşır, değişince konsola not düşer. Close to tray pencere kapanışını da sürer
-/// (<c>MainWindow.OnClosing</c> <see cref="ShellSwitches.CloseToTray"/>'ı okur); Show notifications'ın davranışı
-/// (tray balloon) henüz bağlı değildir — sonraki görev <see cref="ShellSwitches.ShowNotifications"/>'ı
-/// bağlayacaktır.</para></summary>
+/// (<c>MainWindow.OnClosing</c> <see cref="ShellSwitches.CloseToTray"/>'ı okur); [Task 4] Show notifications'ın
+/// davranışı (üç tray-balloon yolu) da artık <see cref="ShellSwitches.ShowNotifications"/> üzerinden
+/// bağlıdır.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
@@ -27,8 +27,8 @@ public enum GeneralSetting
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,
-    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.ShowNotifications"/>) — davranışı
-    /// (tray balloon'un kendisi) henüz bağlı değil.</summary>
+    /// <summary>[Task 1 · Task 4] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.ShowNotifications"/>) —
+    /// davranışı (üç tray-balloon yolu) bağlıdır.</summary>
     ShowNotifications,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
     /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>

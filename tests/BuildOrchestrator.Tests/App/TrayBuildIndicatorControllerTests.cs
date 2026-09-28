@@ -1,5 +1,7 @@
 ﻿using System.IO;
+using System.Text.RegularExpressions;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.Tests.App;
@@ -79,11 +81,16 @@ public sealed class TrayBuildIndicatorControllerTests
         public readonly FakeNotifier Notifier;
         public readonly TrayBuildIndicatorController Controller;
 
+        /// <summary>[P3 · Task 4] Controller'ın <c>notificationsOn</c> dikişi — varsayılan AÇIK (üretimin
+        /// varsayılan kararıyla aynı), testler koşu SIRASINDA bile değiştirebilsin diye alan olarak durur (TAZE
+        /// okuma iddiasını sınamak için).</summary>
+        public bool NotificationsOn = true;
+
         public Fixture()
         {
             View = new FakeView(Recorder);
             Notifier = new FakeNotifier(Recorder);
-            Controller = new TrayBuildIndicatorController(View, Notifier);
+            Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn);
         }
 
         public List<string> Log => Recorder.Log;
@@ -303,6 +310,37 @@ public sealed class TrayBuildIndicatorControllerTests
         Assert.Equal("failed", f.Notifier.LastLine?.Glyph);
     }
 
+    // ---------------------------------------------------------------- show notifications kapısı
+
+    /// <summary>[P3 · Task 4] Show notifications kapalıyken biten bir koşu balon ÜRETMEZ, ama göstergenin kendisi
+    /// (çıkış evresi → gizlenme) aynen çalışır — ayar yalnız BİLDİRİMİ bastırır, göstergeyi DEĞİL.</summary>
+    [Fact]
+    public void With_notifications_off_a_finished_run_shows_no_balloon_but_the_indicator_still_runs()
+    {
+        var f = new Fixture { NotificationsOn = false };
+        f.RunningInTray();
+
+        f.Controller.SetPhase(AppPhase.Done);
+        f.View.FinishExit();
+
+        Assert.Equal(["BeginExit", "HideNow"], f.Log); // gösterge tam koreografisini oynar
+        Assert.Equal(0, f.Notifier.Count);
+    }
+
+    /// <summary>[P3 · Task 4] Kapı KURULUŞTA değil, balonun tam gösterileceği anda TAZE okunur: koşu ortasında
+    /// kapatılan bir switch, koşu BAŞLARKEN açık olsa bile o koşunun balonunu bastırır.</summary>
+    [Fact]
+    public void The_setting_is_read_when_the_run_finishes()
+    {
+        var f = new Fixture().RunningInTray(); // NotificationsOn açık kurulur
+
+        f.NotificationsOn = false; // kullanıcı koşu SÜRERKEN switch'i kapattı
+        f.Controller.SetPhase(AppPhase.Done);
+        f.View.FinishExit();
+
+        Assert.Equal(0, f.Notifier.Count);
+    }
+
     // ---------------------------------------------------------------- reduced motion
 
     [Fact]
@@ -361,5 +399,25 @@ public sealed class TrayBuildIndicatorControllerTests
             Path.Combine(RepoPaths.AppSrcRoot, "Services", "TrayBuildIndicatorController.cs"));
 
         Assert.DoesNotContain("using System.Windows", source, StringComparison.Ordinal);
+    }
+
+    // ---------------------------------------------------------------- kaynak (kablo)
+
+    /// <summary>
+    /// [P3 · Task 4] Üretimdeki TEK kurulum yeri: <c>MainWindow.SetUpTrayBuildIndicator</c>, controller'ı ZORUNLU
+    /// üçüncü parametreyle (<c>notificationsOn</c>) kurar — <see cref="ShellSwitches.ShowNotifications"/>'ı
+    /// <c>_uiState.Load()</c>'tan TAZE okuyan bir kapatma. Parametre varsayılansız olduğu için bu kablo
+    /// UNUTULAMAZ; pin bunu ÇALIŞTIRMAZ, kaynaktaki METNİNİ arar (gerekçe: gerçek <c>MainWindow</c> HWND/tepsi
+    /// ister, headless süitte kurulamaz — <see cref="TrayMenuTests.MainWindow_wires_the_tray_stop_item_to_the_run_view_models_stop_command"/>
+    /// ile AYNI desen).
+    /// </summary>
+    [Fact]
+    public void MainWindow_wires_the_indicator_to_the_live_notifications_switch()
+    {
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "MainWindow.xaml.cs"));
+        var wiring = new Regex(
+            @"new TrayBuildIndicatorController\(\s*new LazyOverlayView\(this\), notifier, \(\) => ShellSwitches\.ShowNotifications\(_uiState\.Load\(\)\)\)");
+
+        Assert.Single(wiring.Matches(source));
     }
 }

@@ -101,7 +101,9 @@ public sealed class UiState
     /// <summary>[P3 · Task 1] Settings → General → NOTIFICATIONS: bir build bittiğinde (başarılı ya da başarısız) tray
     /// bildirimi gösterilsin mi. <see cref="CloseToTray"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı.
     /// Okuma yalnız <see cref="BuildOrchestrator.App.Shell.ShellSwitches.ShowNotifications"/> üzerindendir.
-    /// <para>Davranışı (tray balloon'un kendisi) HENÜZ bağlı değildir — bu tip yalnız KALICILIĞI taşır.</para></summary>
+    /// <para>[P3 · Task 4] Davranışı (üç tray-balloon yolu — ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance
+    /// uyarısı) artık <see cref="BuildOrchestrator.App.Shell.ShellSwitches.ShowNotifications"/> üzerinden bağlıdır;
+    /// bu tip yalnız KALICILIĞI taşır, kararı okuyucular verir.</para></summary>
     public bool? ShowNotifications { get; set; }
 
     public bool Autostart { get; set; }
@@ -185,6 +187,8 @@ public sealed class JsonUiStateStore(string path) : IUiStateStore
 /// [T62/K5] "X pencereyi kapatmaz, tepsiye küçültür" bilgilendirmesi YALNIZ ilk kapatmada gösterilir
 /// (uygulama içi toast design §8'de yasak — OS tray balloon'u). Kapı: ilk çağrıda <c>true</c> döner ve bayrağı
 /// KALICI olarak işaretler, sonraki her çağrıda <c>false</c>.
+/// <para>[P3 · Task 4] Show notifications kapalıyken ilk kapatmada bile balon YOK — kapı bunu da sorar. Bu dalda
+/// bayrak KAYDEDİLMEZ: switch sonradan açılırsa kullanıcı bilgilendirmeyi yine bir kez görür.</para>
 /// </summary>
 public sealed class FirstCloseBalloonGate(IUiStateStore store)
 {
@@ -192,6 +196,7 @@ public sealed class FirstCloseBalloonGate(IUiStateStore store)
     {
         var state = store.Load();
         if (state.TrayBalloonShown) return false;
+        if (!ShellSwitches.ShowNotifications(state)) return false;
         state.TrayBalloonShown = true;
         store.Save(state);
         return true;
