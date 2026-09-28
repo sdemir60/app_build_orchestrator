@@ -799,7 +799,9 @@ A cycle member is evaluated by the same three rules; what it evaluates is the co
 (§7.3), so a group's members move together. The run's scope is the one short circuit: outside a `Cycles` run
 every member reads `false`, which is the truth — nothing in that run will compile them.
 
-During a run the value is live: the moment a project succeeds it turns `false`.
+During a run the value is live: the moment a project succeeds it turns `false`. A Clean is the exception by
+nature — its success means the outputs are gone, so a cleaned project turns `true` (a cycle member stays `false`,
+the scope short circuit above), the same value the next Sync gives it (§8.1).
 
 **`true` is not always a promise.** A project whose last success was linked against a failed dependency, whose
 signature has not moved and whose ledger note names the root dependencies reads `true` with the reason
@@ -1250,7 +1252,9 @@ were stored carries no roots and compiles on every `Build` as it always did.
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
-400 ms when anything is building, plus the cycle members' estimates multiplied by the baseline round count.
+400 ms when anything is building, plus — in a `Cycles` run — the cycle members' estimates multiplied by the
+baseline round count. That term belongs to the run where rounds actually run: a Clean cleans a cycle member once,
+as an ordinary project (§8.1), so there it is plain queued work.
 The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
 replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
 no history the ribbon shows progress and elapsed time without an estimate.
@@ -1676,7 +1680,7 @@ lazily, so a workspace with nothing to restore never pays for a `vswhere` search
 
 ### 9.4 `OutDir` and `obj`
 
-**`OutDir` is never touched and never passed to MSBuild.** The tool reads build output in three places, all
+**The tool never touches `OutDir` and never passes it to MSBuild.** It reads build output in three places, all
 for the output evidence (§7.6), and only times and lengths: the file at the project's own output path as its
 csproj declares it, together with the fed copies it has learned; after a successful build, every fed-output
 candidate, to learn which ones that build refreshed; and, in time mode, the times of the project's own
@@ -2414,8 +2418,9 @@ is always faint, so the word reads first. The longer sentence (`Its own files ch
 `Up to date — built outside this tool`) is a plain tooltip, in the same language as the icon buttons. The slot
 is **empty** only when the decision is genuinely unknown — no Sync yet, or the engine produced no reason.
 
-The label also follows the run live: the moment a project succeeds its row reads `up to date`, and a
-failure the engine counts as evidence reads `failed`. A failure that is not evidence — a timeout, a
+The label also follows the run live: the moment a project succeeds its row reads `up to date` (a Clean's
+success reads `never built` — its outputs are gone, §8.1), and a failure the engine counts as evidence reads
+`failed`. A failure that is not evidence — a timeout, a
 stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge — reads
 `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will say.
 The verdict travels with the failure event (`Evidence`) and is decided by the same gate that writes the ledger;

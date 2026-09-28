@@ -21,9 +21,6 @@ public class SingleProjectRunTests
     private static StartRunCommand Scoped(string target, RunMode mode = RunMode.Build, string runId = "r1") =>
         Start(mode, parallelism: 2, runId) with { ScopeProjectId = Id(target) };
 
-    private static List<string> LogTextsFor(Harness h, string name) => h.Events.OfType<ProjectLogEvent>()
-        .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
-
     [Fact]
     public async Task Only_the_target_enters_the_run_and_the_others_are_never_mentioned()
     {

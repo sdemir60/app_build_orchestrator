@@ -36,7 +36,7 @@ public class TooltipDelayTests
     {
         AppTooltipDefaults.Apply();
 
-        var owner = new Button { ToolTip = "Build in progress — wait or stop it first", IsEnabled = false };
+        var owner = new Button { ToolTip = BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, IsEnabled = false };
 
         Assert.True(ToolTipService.GetShowOnDisabled(owner));
     }

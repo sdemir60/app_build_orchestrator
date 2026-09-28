@@ -1979,7 +1979,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// bayrağı projenin SONUCU yazar (<see cref="OnProjectDone"/> → <c>NextPreview.AfterClean</c>); koşunun
     /// ulaşmadığı satır Sync'in dediği kalır. Kuyruk (<see cref="InRunQueueFor"/>) ve önizleme kümeleri bu kapıdan
     /// ETKİLENMEZ — onlar zaten bu koşunun kendisidir.</summary>
-    private bool PreviewWritesPlanFlag => !(RunActive && _currentRunMode is RunMode.Cycles or RunMode.Clean);
+    private bool PreviewWritesPlanFlag => !(IsResolvingCycles || RunActive && RunIsClean);
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
     /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
@@ -2131,21 +2131,13 @@ public sealed partial class RunViewModel : ObservableObject
             // BuildStateStore.Remove); patlayan bir Clean de kanıtsız hata yazar. İki yolda da proje "hiç
             // derlenmemiş" hâline döner. Clean önizlemesi plan bayrağına yazmadığı için (PreviewWritesPlanFlag)
             // üçlünün TAMAMINI burası yazar — döngü üyesi bir sonraki düz Build'in kapsamında değildir.
-            var after = NextPreview.AfterClean(row.InCycle);
-            row.WillBuild = after.WillBuild;
-            row.Conditional = after.Conditional;
-            row.DependencyRoots = null;
-            row.WillBuildReason = after.Reason;
+            ApplyNextPreview(row, NextPreview.AfterClean(row.InCycle), waitingRoots: null);
         }
         else if (state == ProjectRowState.Succeeded)
         {
             // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin
             // yeşil üyesi) defterde kanıtsız hatadır — satır Sync'in okuyacağı NeverBuilt'i şimdiden der.
-            var after = NextPreview.AfterSuccess(row.InCycle, trusted, depIssues);
-            row.WillBuild = after.WillBuild;
-            row.Conditional = after.Conditional;
-            row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? depIssues : null;
-            row.WillBuildReason = after.Reason;
+            ApplyNextPreview(row, NextPreview.AfterSuccess(row.InCycle, trusted, depIssues), waitingRoots: depIssues);
         }
         else // Failed
         {
@@ -2172,6 +2164,19 @@ public sealed partial class RunViewModel : ObservableObject
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
         RefreshRunSurface();
+    }
+
+    /// <summary>Motorun bir sonraki önizlemesinin cevabını (<see cref="NextPreview"/>'ın üçlüsü) satıra yazan TEK yer:
+    /// üçü BİRLİKTE yazılır — ayrı ayrı yazılsalar sessizce ayrışabilirlerdi. Kökler yalnız
+    /// <see cref="WillBuildReason.WaitingForDependency"/>'de anlamlıdır (etiketin tooltip'i); diğer her gerekçede
+    /// düşer.</summary>
+    private static void ApplyNextPreview(ProjectRowViewModel row,
+        (bool WillBuild, WillBuildReason Reason, bool Conditional) after, IReadOnlyList<string>? waitingRoots)
+    {
+        row.WillBuild = after.WillBuild;
+        row.Conditional = after.Conditional;
+        row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? waitingRoots : null;
+        row.WillBuildReason = after.Reason;
     }
 
     /// <summary>Satır aramasının TEK kuralı. Proje Id'leri Windows DOSYA YOLLARIDIR, dolayısıyla
@@ -2236,7 +2241,11 @@ public sealed partial class RunViewModel : ObservableObject
         // teriminde bütçelenir (dalga genişliği grubun şekline bağlıdır, küme BaselineRounds tur bütçelenir).
         // Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur çarpanını YOK EDİYORDU (üye
         // Pending'den çıktığı an cycle kovasından da düşüyordu).
-        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !p.InCycle).ToList();
+        // [Clean] Döngü kovası yalnız TURLARIN koştuğu Cycles koşusuna aittir. Build menüsünün Clean'i üyeleri de
+        // temizler ama motor Clean'de döngü anlamını düşürür (Core/Planning/CleanRunScope): üye bir kez, sıradan
+        // bir proje gibi paralel işlenir. (Build/Rebuild'de üyeler zaten pre-skip edilir, burada hiç sayılmaz.)
+        bool roundsRun = _currentRunMode == RunMode.Cycles;
+        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !(roundsRun && p.InCycle)).ToList();
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);
 
@@ -2248,8 +2257,9 @@ public sealed partial class RunViewModel : ObservableObject
         // kalan maliyeti "grup, turlarıyla birlikte" terimidir. Geçen süre kasıtlı olarak DÜŞÜLMEZ — tur
         // döngüsünde her üyenin kendi başlangıcı her turda sıfırlanır, tek bir turun elapsed'i grubun kalanı
         // hakkında bir şey söylemez; tahmin bu yönde bilerek KARAMSARDIR (bkz. ARCHITECTURE.md §8.4).
-        int cycleQueuedCount = Projects.Count(
-            p => p.InCycle && p.State is ProjectRowState.Pending or ProjectRowState.Started);
+        int cycleQueuedCount = roundsRun
+            ? Projects.Count(p => p.InCycle && p.State is ProjectRowState.Pending or ProjectRowState.Started)
+            : 0;
         cycleQueuedCount = Math.Min(cycleQueuedCount, queuedCount); // savunmacı — total henüz satırlaşmamış projeler içerebilir
         int ordinaryQueuedCount = queuedCount - cycleQueuedCount;
 

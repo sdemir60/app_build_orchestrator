@@ -29,9 +29,6 @@ public class FullCleanRunTests
         Node("A", deps: ["B", "Lib"], inCycle: true, willBuild: false),
         Node("B", deps: ["A"], inCycle: true, willBuild: false));
 
-    private static List<string> LogTextsFor(Harness h, string name) => h.Events.OfType<ProjectLogEvent>()
-        .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
-
     /// <summary>Grafta ne varsa temizlenir: döngü üyeleri önden atlanmaz (tur da koşmaz — Clean derlemez),
     /// harici proje sıradan bir proje gibi temizlenir. Her istek MSBuild'in Clean hedefidir.</summary>
     [Fact]

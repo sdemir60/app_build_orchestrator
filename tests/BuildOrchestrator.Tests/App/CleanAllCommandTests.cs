@@ -1,4 +1,3 @@
-using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -24,8 +23,7 @@ public class CleanAllCommandTests
     public async Task Clean_all_opens_and_closes_exactly_when_build_does()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1")
-        { RootPath = @"D:\repo" };
+        var vm = new RunViewModel(engine, MainWindowHost.NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
         int buildChanged = 0, cleanChanged = 0;
         vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged++;
         vm.CleanAllCommand.CanExecuteChanged += (_, _) => cleanChanged++;

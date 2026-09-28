@@ -106,22 +106,31 @@ public static class StreamText
     }
 
     /// <summary>build-data.js:309 — <c>Build started — {n} projects, parallelism {p}</c>.</summary>
-    public static string BuildStarted(int projects, int parallelism) => RunStarted("Build", projects, parallelism);
+    public static string BuildStarted(int projects, int parallelism) => RunStarted(RunMode.Build, projects, parallelism);
 
     /// <summary>[Clean] Build menüsünün Clean'inin (kapsamsız <c>RunMode.Clean</c>) açılış satırı —
     /// <see cref="BuildStarted"/>'ın biçimi, fiili ise işin kendisi: bu koşu hiçbir şey derlemez.</summary>
-    public static string CleanStarted(int projects, int parallelism) => RunStarted("Clean", projects, parallelism);
+    public static string CleanStarted(int projects, int parallelism) => RunStarted(RunMode.Clean, projects, parallelism);
 
-    private static string RunStarted(string verb, int projects, int parallelism) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} projects, parallelism {2}", verb, projects, parallelism);
+    private static string RunStarted(RunMode mode, int projects, int parallelism) =>
+        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} projects, parallelism {2}", Verb(mode), projects, parallelism);
 
     /// <summary>[tek proje · design §3.8] Satırdan tetiklenen koşunun açılış satırı — prototip
     /// (<c>build-data.js</c> <c>_startProjectNow</c>: <c>Build — {name} (single project)</c>) ile aynı
     /// sözcükler, <see cref="BuildStarted"/>'ın "started" biçiminde: <c>Build started — {name} (single project)</c>
     /// / <c>Rebuild started — …</c>. Paralellik yazılmaz: tek projeyi tarif etmez.</summary>
     public static string SingleProjectStarted(RunMode mode, string name) =>
-        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} (single project)",
-            mode switch { RunMode.Rebuild => "Rebuild", RunMode.Clean => "Clean", _ => "Build" }, name);
+        string.Format(CultureInfo.InvariantCulture, "{0} started — {1} (single project)", Verb(mode), name);
+
+    /// <summary>Açılış satırlarının fiili — mod → sözcük eşlemesinin TEK yeri (kopya YASAK). Tam Rebuild'in
+    /// satırı prototip gibi Build'inkidir (<see cref="BuildStarted"/>); "Rebuild" yalnız satırdan tetiklenen
+    /// koşuda yazılır.</summary>
+    private static string Verb(RunMode mode) => mode switch
+    {
+        RunMode.Rebuild => "Rebuild",
+        RunMode.Clean => "Clean",
+        _ => "Build",
+    };
 
     /// <summary>[cycles] Bir <c>RunMode.Cycles</c> koşusunun açılış satırı. "Build started"ı yeniden
     /// kullanmaz: bu koşu bir build DEĞİLDİR ve kullanıcıyı bekleten şey de proje sayısı değil, TUR sayısıdır —
