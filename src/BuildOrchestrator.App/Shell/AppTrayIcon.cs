@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Media.Imaging;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
+using CommunityToolkit.Mvvm.Input;
 using H.NotifyIcon;
 using H.NotifyIcon.Core;
 
@@ -45,6 +46,13 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// yeniden çözmek gereksiz GDI nesnesi üretirdi. <see cref="Dispose"/> bırakır.</summary>
     private readonly System.Drawing.Icon _largeIcon;
 
+    /// <summary>Hiçbir zaman çalıştırılamayan Stop komutu — arkasında RunViewModel/engine olmayan bir tepsi
+    /// içindir (ör. ikinci instance'ın geçici balloon tray'i). Kopya YASAK: aynı <c>RelayCommand(() => { },
+    /// () => false)</c> eskiden App.xaml.cs'te ve test tarafında ayrı ayrı yazılıyordu; artık TEK örnek
+    /// buradadır. Statik/paylaşılan TEK örnek güvenlidir: WPF'in <c>MenuItem</c>'ı <c>ICommand.CanExecuteChanged</c>'e
+    /// zayıf bir event manager üzerinden abone olur.</summary>
+    internal static readonly ICommand NoRunToStop = new RelayCommand(() => { }, () => false);
+
     public AppTrayIcon(ICommand stopCommand)
     {
         _largeIcon = LoadBalloonIcon();
@@ -66,6 +74,10 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
+    /// <summary>Tepsi menüsündeki Stop maddesinin başlığı — kopya YASAK: metin TEK yerde tanımlanır, testler
+    /// de (<c>TrayMenuTests.StopItem</c>) buradan okur.</summary>
+    internal const string StopHeader = "Stop";
+
     /// <summary>Menü TEK yerden kurulur: <c>TaskbarIcon</c> (dolayısıyla ctor) headless testte kurulamaz
     /// (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki gerçek bir
     /// tepsi kurmadan sınanabilsin. Stop maddesi <paramref name="stop"/>'a DOĞRUDAN bağlanır (<c>Command</c>) —
@@ -74,7 +86,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.</summary>
     internal static ContextMenu CreateMenu(ICommand stop, Action exit)
     {
-        var stopItem = new MenuItem { Header = "Stop", Command = stop };
+        var stopItem = new MenuItem { Header = StopHeader, Command = stop };
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (_, _) => exit();
 

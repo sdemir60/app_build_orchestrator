@@ -6,7 +6,6 @@ using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Processes;
-using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BuildOrchestrator.App;
@@ -88,9 +87,9 @@ public partial class App : Application
             // Öne getirilemedi → SESSİZ KALMA: tek-satırlık OS balloon göster. ShowNotification balloon'u
             // explorer.exe'ye ASENKRON teslim eder; tray'i AYNI dispatcher turn'ünde yıkarsak (Shutdown → OnExit →
             // Dispose → NIM_DELETE) balloon milisaniyeler içinde iptal olur. Bu yüzden yıkımı ERTELE (aşağıda).
-            // Bu geçici tray'in arkasında hiç RunViewModel/engine yoktur (DI aşağıda, bu döngüden SONRA kurulur) —
+            // Bu geçici tray'in arkasında hiç RunViewModel/engine yoktur (bu dal DI kurulmadan return eder) —
             // yani durdurulacak bir run hiçbir zaman olamaz. Stop bu yüzden hep kapalı bir komutla kurulur.
-            _secondInstanceTray = new AppTrayIcon(new RelayCommand(() => { }, () => false));
+            _secondInstanceTray = new AppTrayIcon(AppTrayIcon.NoRunToStop);
             // [About] Ürün adı ve global kısayol jesti tek kaynaktan (kopya YASAK): AppIdentity.Product ve
             // HotkeyBinding.DefaultGesture. Kısayol ayarlanabilir olduğundan metne gömülü "Alt+B" bayatlardı.
             _secondInstanceTray.ShowNotification(

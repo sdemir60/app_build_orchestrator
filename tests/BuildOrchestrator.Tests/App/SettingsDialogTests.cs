@@ -330,7 +330,7 @@ public class SettingsDialogTests
 
         Assert.Equal(@"D:\repo", run.RootPath);                                    // kök değişmedi (harf durumu korunur)
         Assert.Equal(ProjectRowState.Started, Assert.Single(run.Projects).State);  // satırlar sıfırlanmadı (hollow YOK)
-        Assert.DoesNotContain("Repository root →", run.GetRunDocumentText());      // konsolda kök notu YOK
+        Assert.DoesNotContain(RunViewModel.RepositoryRootChangedLine(@"d:\REPO"), run.GetRunDocumentText());      // konsolda kök notu YOK
         Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath); // Save yine TEK Sync gönderir, ESKİ yazımla
     }
 

@@ -28,7 +28,7 @@ public sealed class TrayMenuTests
         { RootPath = @"D:\repo" };
 
     private static MenuItem StopItem(ContextMenu menu) =>
-        menu.Items.Cast<MenuItem>().Single(i => (string)i.Header == "Stop");
+        menu.Items.Cast<MenuItem>().Single(i => (string)i.Header == AppTrayIcon.StopHeader);
 
     // ---------------------------------------------------------------- etkinlik = CanExecute
 
@@ -91,12 +91,12 @@ public sealed class TrayMenuTests
 
     // ---------------------------------------------------------------- kablo (kaynak)
 
-    /// <summary>[kaynak] <c>MainWindow</c>, tepsiyi TAM BİR kez kurar ve <c>StopCommand</c>'ı doğrudan verir —
-    /// ikinci bir kapı (eski <c>if (CanExecute) Execute()</c> lambdası) MainWindow tarafında YAZILMAZ. Kural
-    /// kaynağın KENDİSİNDE pinlenir çünkü <see cref="AppTrayIcon"/> kurulamaz (ctor'u gerçek bir
-    /// <c>TaskbarIcon</c> yaratır, headless süitte tepsi yoktur) —
-    /// <c>TrayIndicatorBinderTests.Clicking_a_balloon_takes_the_same_restore_path_as_the_tray_icon</c> ile AYNI
-    /// gerekçe/desen.</summary>
+    /// <summary>[kaynak] <c>MainWindow</c>, tepsiyi TAM BİR kez kurar ve Stop maddesine doğrudan
+    /// <see cref="RunViewModel.StopCommand"/>'ı verir — action bar'ın Stop düğmesinin okuduğu AYNI örnek,
+    /// yani maddenin etkin/pasif durumunun TEK kaynağı vardır. Kural kaynağın KENDİSİNDE pinlenir çünkü
+    /// <see cref="AppTrayIcon"/> kurulamaz (ctor'u gerçek bir <c>TaskbarIcon</c> yaratır, headless süitte tepsi
+    /// yoktur) — <c>TrayIndicatorBinderTests.Clicking_a_balloon_takes_the_same_restore_path_as_the_tray_icon</c>
+    /// ile AYNI gerekçe/desen.</summary>
     [Fact]
     public void MainWindow_wires_the_tray_stop_item_to_the_run_view_models_stop_command()
     {
