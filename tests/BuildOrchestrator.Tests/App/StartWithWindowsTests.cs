@@ -255,6 +255,121 @@ public class StartWithWindowsTests
         Assert.False(registry.Exists(AutostartService.DefaultValueName));
     }
 
+    // ---------------------------------------------------------------- Görev Yöneticisi (StartupApproved\Run)
+
+    /// <summary>Windows'un işareti: <c>StartupApproved\Run</c>'daki ikili değerin ilk baytı TEK ise kayıt devre dışıdır.
+    /// Görev Yöneticisi kapatınca <c>03</c> + kapatıldığı an, açınca <c>02</c> + sıfırlar yazar (aşağıdaki iki değer bir
+    /// Windows 11 makinesinden okundu); değer yoksa Windows kaydı etkin sayar.</summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("02 00 00 00 00 00 00 00 00 00 00 00", false)]
+    [InlineData("03 00 00 00 34 25 E4 74 1F 3C DC 01", true)]
+    [InlineData("06 00 00 00 00 00 00 00 00 00 00 00", false)]
+    [InlineData("07 00 00 00 00 00 00 00 00 00 00 00", true)]
+    public void Task_managers_marker_reads_as_disabled_when_its_first_byte_is_odd(string? hex, bool disabled)
+    {
+        byte[]? data = hex is null ? null : Convert.FromHexString(hex.Replace(" ", "", StringComparison.Ordinal));
+
+        Assert.Equal(disabled, StartupApproval.IsDisabled(data));
+    }
+
+    /// <summary>Gerçek durumun üç hâli: kayıt yok → kapalı; kayıt var → açık; kayıt var ama Görev Yöneticisi'nde devre
+    /// dışı → Windows onu başlatmaz.</summary>
+    [Fact]
+    public void The_windows_state_is_off_on_or_disabled_in_startup_apps()
+    {
+        var registry = new FakeAutostartRegistry();
+        var service = registry.Service();
+        Assert.Equal(AutostartState.Off, service.State);
+
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        Assert.Equal(AutostartState.On, service.State);
+
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        Assert.Equal(AutostartState.DisabledInStartupApps, service.State);
+    }
+
+    /// <summary>Görev Yöneticisi'nde kapatılmış kayıt: anahtar KAPALI açılır (Windows onu başlatmayacak) ve satırın
+    /// açıklaması bunu söyler; kayıt etkinken satır kataloğun açıklamasını taşır.</summary>
+    [Fact]
+    public void An_entry_turned_off_in_task_manager_opens_off_with_a_note_that_says_so()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        var enabled = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState { Autostart = true }, autostart: registry.Service());
+        Assert.Equal(GeneralSettingsCatalog.Definition(GeneralSetting.StartWithWindows).Description,
+            enabled.GeneralRow(GeneralSetting.StartWithWindows).Description);
+
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState { Autostart = true }, autostart: registry.Service());
+
+        var row = draft.GeneralRow(GeneralSetting.StartWithWindows);
+        Assert.False(row.IsOn);
+        Assert.Equal(SettingsDraftViewModel.StartWithWindowsDisabledInStartupAppsNote, row.Description);
+    }
+
+    /// <summary>[Kullanıcı kararı — seçenek 1] Görev Yöneticisi'nde kapatılmış kaydı Settings'te açıp Save → Görev
+    /// Yöneticisi'nin "devre dışı" işareti kaldırılır: Windows uygulamayı yeniden başlatır, Görev Yöneticisi "Etkin"
+    /// gösterir. Kullanıcının en son, açıkça verdiği karar budur.</summary>
+    [Fact]
+    public async Task Switching_it_back_on_clears_task_managers_mark_and_starts_with_windows_again()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        store.Save(new UiState { Autostart = true });
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
+
+        await draft.CommitAsync(run, store);
+
+        Assert.Equal(AutostartState.On, registry.Service().State);
+        Assert.True(ShellSwitches.StartWithWindows(store.State));
+        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows on — the app starts when you sign in to Windows"));
+    }
+
+    /// <summary>Görev Yöneticisi'nin kararı SESSİZCE ezilmez: anahtara dokunulmayan bir Save (başka bir ayar için)
+    /// ne Windows kaydına ne tercihe dokunur — kayıt Görev Yöneticisi'nde "devre dışı" olarak kalır ve kullanıcı onu
+    /// orada da yeniden açabilir.</summary>
+    [Fact]
+    public async Task A_save_that_does_not_touch_the_switch_keeps_task_managers_choice()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        int writesBefore = registry.Writes;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        store.Save(new UiState { Autostart = true });
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
+
+        await draft.CommitAsync(run, store);
+
+        Assert.Equal(writesBefore, registry.Writes);
+        Assert.Equal(AutostartState.DisabledInStartupApps, registry.Service().State);
+        Assert.True(store.State.Autostart);
+    }
+
+    /// <summary>Açılışın uzlaştırması (her açılışta Run değerini yeniden yazar) Görev Yöneticisi'nin işaretine
+    /// DOKUNMAZ — işareti yalnız kullanıcının Settings'te anahtarı açması kaldırır.</summary>
+    [Fact]
+    public void The_startup_reconcile_does_not_override_task_managers_choice()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+
+        registry.Service().Apply(true);
+
+        Assert.Equal(AutostartState.DisabledInStartupApps, registry.Service().State);
+    }
+
     /// <summary>Kablo: MainWindow, DI'dan aldığı servisi Settings diyaloğuna verir (üretimde tek örnek — açılışın
     /// uzlaştırması da onu kullanır).</summary>
     [StaFact]

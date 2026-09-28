@@ -14,6 +14,10 @@ internal sealed class FakeAutostartRegistry : IAutostartRegistry
 
     private readonly Dictionary<string, string> _run = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Görev Yöneticisi → Başlangıç uygulamaları'nda "devre dışı" işaretli değerler
+    /// (<c>HKCU\...\Explorer\StartupApproved\Run</c>).</summary>
+    private readonly HashSet<string> _disabledInStartupApps = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Verildiyse her YAZIM bunu fırlatır — Windows'un kaydı reddettiği durum (ör. bir politika ya da
     /// güvenlik yazılımı <c>HKCU\...\Run</c>'ı kilitlemiş).</summary>
     public Exception? FailWritesWith { get; set; }
@@ -39,6 +43,18 @@ internal sealed class FakeAutostartRegistry : IAutostartRegistry
     public bool Exists(string name) => _run.ContainsKey(name);
 
     public string? CommandFor(string name) => _run.TryGetValue(name, out var v) ? v : null;
+
+    public bool IsStartupDisabled(string name) => _disabledInStartupApps.Contains(name);
+
+    public void ClearStartupDisabled(string name)
+    {
+        Write();
+        _disabledInStartupApps.Remove(name);
+    }
+
+    /// <summary>Kullanıcının Görev Yöneticisi'nde "Devre dışı bırak"a basması — Windows'un kendi yazımıdır, bu yüzden
+    /// <see cref="Writes"/>'a sayılmaz.</summary>
+    public void DisableInStartupApps(string name) => _disabledInStartupApps.Add(name);
 
     private void Write()
     {

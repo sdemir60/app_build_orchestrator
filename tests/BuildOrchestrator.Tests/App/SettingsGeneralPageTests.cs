@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Model;
@@ -347,6 +348,25 @@ public class SettingsGeneralPageTests
         Click(dialog.Save);
 
         Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
+    }
+
+    /// <summary>[P4] Görev Yöneticisi'nde kapatılmış kayıt: Start with Windows satırı kapalı açılır, açıklaması
+    /// Windows'un kararını ve anahtarın ne yapacağını söyler; bağımlı satır (üst kapalı) söner.</summary>
+    [StaFact]
+    public void An_entry_turned_off_in_task_manager_shows_off_with_the_task_manager_note()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(
+            saved: new UiState { Autostart = true }, autostart: registry.Service());
+        using var _scope = scope;
+
+        var row = RowNamed(dialog, "Start with Windows");
+        Assert.False(SwitchOf(row).IsChecked);
+        Assert.Contains(DsResources.Descendants(row).OfType<TextBlock>(),
+            t => t.Text == "Turned off in Task Manager's Startup apps — switch it on to start with Windows again.");
+        Assert.False(SwitchOf(RowNamed(dialog, "Start minimized to tray")).IsEnabled);
     }
 
     // ---------------------------------------------------------------- External projects

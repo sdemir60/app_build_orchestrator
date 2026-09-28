@@ -102,8 +102,17 @@ public sealed partial class GeneralSettingRowViewModel : ObservableObject
 
     public GeneralSettingDefinition Definition { get; }
     public string Label => Definition.Label;
-    public string Description => Definition.Description;
+
+    /// <summary>Satırın açıklaması: kataloğun metni; [P4] bir <see cref="Note"/> varsa onun yerine not.</summary>
+    public string Description => Note ?? Definition.Description;
+
     public string SwitchName => Definition.SwitchName;
+
+    /// <summary>[P4] Satırın o anki durumunu anlatan, açıklamanın YERİNE geçen not — ör. Görev Yöneticisi'nde devre
+    /// dışı bırakılmış Start with Windows. <c>null</c> ⇒ kataloğun açıklaması.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Description))]
+    private string? _note;
 
     /// <summary>Grubun ilk satırı üstte hairline taşımaz.</summary>
     public bool IsFirstInGroup { get; }

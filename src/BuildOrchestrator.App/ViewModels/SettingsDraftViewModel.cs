@@ -106,6 +106,11 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// kaydına ve tercihe dokunur.</summary>
     private readonly bool _startWithWindowsOpenedOn;
 
+    /// <summary>[P4] Görev Yöneticisi'nde devre dışı bırakılmış kayıtta Start with Windows satırının açıklaması —
+    /// anahtar kapalı görünür ve açmak işareti kaldırır (kullanıcı kararı, seçenek 1).</summary>
+    public const string StartWithWindowsDisabledInStartupAppsNote =
+        "Turned off in Task Manager's Startup apps — switch it on to start with Windows again.";
+
     /// <summary>[P4] Windows kaydı yazılamadığında konsolun tek satırı — nedeni Windows'un kendi cümlesidir.</summary>
     internal static string StartWithWindowsNotChangedLine(string reason) => $"Start with Windows not changed — {reason}";
 
@@ -161,7 +166,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         _autostart = autostart;
         if (autostart is not null)
-            GeneralRow(GeneralSetting.StartWithWindows).IsOn = autostart.State == AutostartState.On;
+        {
+            var windows = autostart.State;
+            var row = GeneralRow(GeneralSetting.StartWithWindows);
+            row.IsOn = windows == AutostartState.On;
+            if (windows == AutostartState.DisabledInStartupApps) row.Note = StartWithWindowsDisabledInStartupAppsNote;
+        }
         _startWithWindowsOpenedOn = GeneralRow(GeneralSetting.StartWithWindows).IsOn;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
