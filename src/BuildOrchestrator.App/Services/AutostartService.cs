@@ -82,6 +82,8 @@ public sealed class RegistryAutostartRegistry : IAutostartRegistry
 /// yazılır, <c>false</c> iken silinir. <see cref="Apply"/> IDEMPOTENT'tir — her açılışta güvenle çağrılabilir
 /// (tercih ile registry'yi hizalar). Değer adı ve komut (exe yolu + autostart argümanı) çağırandan enjekte edilir
 /// (App.xaml.cs) — servis konum/komut bilmez, yalnız seam'i sürer.
+/// <para>[P4] Uygulamada TEK örnektir (DI): Settings'in Start with Windows anahtarı da onu kullanır — gerçek durumu
+/// <see cref="State"/>'ten gösterir, Save'de <see cref="TryTurn"/> ile kaydı anında yazar.</para>
 /// </summary>
 public sealed class AutostartService(IAutostartRegistry registry, string valueName, string command)
 {

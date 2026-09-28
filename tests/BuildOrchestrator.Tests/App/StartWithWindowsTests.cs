@@ -23,7 +23,41 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class StartWithWindowsTests
 {
+    private const string Root = @"D:\repo";
+    private const string Entry = AutostartService.DefaultValueName;
+    private const string OnNote = "Start with Windows on — the app starts when you sign in to Windows";
+    private const string OffNote = "Start with Windows off — signing in to Windows no longer starts the app";
+
     private static int Count(string text, string value) => Regex.Matches(text, Regex.Escape(value)).Count;
+
+    /// <summary>Taslak — diyaloğun kurduğu gibi (<c>SettingsDialog.Open</c>).</summary>
+    private static SettingsDraftViewModel NewDraft(UiState? saved = null, AutostartService? autostart = null) =>
+        new(null, Root, saved: saved, autostart: autostart);
+
+    /// <summary>Save'in tezgâhı — kurulum TEK yerde (kopya YASAK): motoru HİÇ başlatılmayan bir koşu VM'i (konsol
+    /// notları için; var olmayan supervisor yolu), bellek-içi store ve sahte Windows kaydı.</summary>
+    private sealed class SaveBench : IAsyncDisposable
+    {
+        private readonly EngineHost _engine = new(TestPaths.SupervisorExe);
+
+        public SaveBench() => Run = new RunViewModel(_engine, NeverTickingBatcher(), () => "r1") { RootPath = Root };
+
+        public RunViewModel Run { get; }
+        public SettingsDialogHost.FakeStore Store { get; } = new();
+        public FakeAutostartRegistry Registry { get; } = new();
+        public string ConsoleText => Run.GetRunDocumentText();
+
+        /// <summary>Diyaloğun açılışı: store'dan tohumlanan taslak; <paramref name="windows"/> ⇒ Windows kaydı yüzeyi
+        /// (üretimde hep vardır; yalnız kalıcılığı sınayan testler onu kapatır).</summary>
+        public SettingsDraftViewModel Open(bool windows = true) => NewDraft(Store.Load(), windows ? Registry.Service() : null);
+
+        public Task SaveAsync(SettingsDraftViewModel draft) => draft.CommitAsync(Run, Store);
+
+        /// <summary>Uygulamanın kaydı Windows'ta var (bir önceki Save'in ya da açılışın yazdığı gibi).</summary>
+        public void RegisterEntry() => Registry.Set(Entry, FakeAutostartRegistry.Command);
+
+        public ValueTask DisposeAsync() => _engine.DisposeAsync();
+    }
 
     // ---------------------------------------------------------------- tablo: kayıtlı / varsayılan
 
@@ -68,8 +102,7 @@ public class StartWithWindowsTests
     [Fact]
     public void The_draft_opens_on_the_saved_values()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\repo",
-            saved: new UiState { Autostart = true, StartMinimizedToTray = true });
+        var draft = NewDraft(new UiState { Autostart = true, StartMinimizedToTray = true });
 
         Assert.True(draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
         Assert.True(draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn);
@@ -82,44 +115,38 @@ public class StartWithWindowsTests
     [Fact]
     public async Task Save_writes_the_changed_startup_switch_and_notes_only_that_one()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load());
+        await using var bench = new SaveBench();
+        var draft = bench.Open(windows: false);
         draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true; // Start with Windows kapalı kalır
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.True(store.State.StartMinimizedToTray);
-        Assert.False(ShellSwitches.StartWithWindows(store.State));
-        string console = run.GetRunDocumentText();
-        Assert.Equal(1, Count(console,
+        Assert.True(bench.Store.State.StartMinimizedToTray);
+        Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText,
             "Start minimized to tray on — signing in to Windows starts the app in the tray, without a window"));
-        Assert.DoesNotContain("Start with Windows", console, StringComparison.Ordinal);
+        Assert.DoesNotContain("Start with Windows", bench.ConsoleText, StringComparison.Ordinal);
     }
 
     /// <summary>Start with Windows açılıp kaydedilir ve not düşer; yeniden açılan diyalogda kapatılınca o da yazılır.</summary>
     [Fact]
     public async Task Turning_start_with_windows_on_and_off_saves_it_and_notes_each_change()
     {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load());
+        await using var bench = new SaveBench();
+        var draft = bench.Open(windows: false);
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.True(ShellSwitches.StartWithWindows(store.State));
-        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows on — the app starts when you sign in to Windows"));
+        Assert.True(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText, OnNote));
 
-        var reopened = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load());
+        var reopened = bench.Open(windows: false);
         Assert.True(reopened.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
         reopened.GeneralRow(GeneralSetting.StartWithWindows).IsOn = false;
-        await reopened.CommitAsync(run, store);
+        await bench.SaveAsync(reopened);
 
-        Assert.False(ShellSwitches.StartWithWindows(store.State));
-        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows off — signing in to Windows no longer starts the app"));
+        Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText, OffNote));
     }
 
     // ---------------------------------------------------------------- dosya biçimi
@@ -127,7 +154,7 @@ public class StartWithWindowsTests
     [Fact]
     public void The_startup_switches_round_trip_through_the_settings_file()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\repo");
+        var draft = NewDraft();
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
         draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
 
@@ -135,7 +162,7 @@ public class StartWithWindowsTests
         Assert.Contains("\"startWithWindows\": true", json, StringComparison.Ordinal);
         Assert.Contains("\"startMinimizedToTray\": true", json, StringComparison.Ordinal);
 
-        var loaded = new SettingsDraftViewModel(null, @"D:\repo");
+        var loaded = NewDraft();
         loaded.LoadFrom(SettingsFile.TryParse(json)!);
 
         Assert.True(loaded.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
@@ -147,11 +174,11 @@ public class StartWithWindowsTests
     [Fact]
     public void A_file_without_the_startup_switches_leaves_the_form_untouched()
     {
-        var draft = new SettingsDraftViewModel(null, @"D:\repo");
+        var draft = NewDraft();
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
         draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
 
-        draft.LoadFrom(SettingsFile.From(@"D:\repo", []));
+        draft.LoadFrom(SettingsFile.From(Root, []));
 
         Assert.True(draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
         Assert.True(draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn);
@@ -165,13 +192,10 @@ public class StartWithWindowsTests
     public void The_draft_shows_the_windows_startup_entry_rather_than_the_saved_preference()
     {
         var registry = new FakeAutostartRegistry();
-        var missing = new SettingsDraftViewModel(null, @"D:\repo",
-            saved: new UiState { Autostart = true }, autostart: registry.Service());
-        Assert.False(missing.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
+        Assert.False(NewDraft(new UiState { Autostart = true }, registry.Service()).GeneralRow(GeneralSetting.StartWithWindows).IsOn);
 
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        var present = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState(), autostart: registry.Service());
-        Assert.True(present.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
+        registry.Set(Entry, FakeAutostartRegistry.Command);
+        Assert.True(NewDraft(new UiState(), registry.Service()).GeneralRow(GeneralSetting.StartWithWindows).IsOn);
     }
 
     /// <summary>Anahtarı açıp Save → Windows'un başlangıç kaydı ANINDA yazılır (yeniden başlatma beklenmez): tırnaklı
@@ -179,39 +203,33 @@ public class StartWithWindowsTests
     [Fact]
     public async Task Turning_start_with_windows_on_writes_the_windows_startup_entry_at_once()
     {
-        var registry = new FakeAutostartRegistry();
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        var draft = bench.Open();
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
-        Assert.True(ShellSwitches.StartWithWindows(store.State));
-        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows on — the app starts when you sign in to Windows"));
+        Assert.Equal(FakeAutostartRegistry.Command, bench.Registry.CommandFor(Entry));
+        Assert.True(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText, OnNote));
     }
 
     /// <summary>Anahtarı kapatıp Save → kayıt ANINDA silinir; tercih kapanır ve not düşer.</summary>
     [Fact]
     public async Task Turning_start_with_windows_off_removes_the_windows_startup_entry_at_once()
     {
-        var registry = new FakeAutostartRegistry();
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        store.Save(new UiState { Autostart = true });
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        bench.RegisterEntry();
+        bench.Store.Save(new UiState { Autostart = true });
+        var draft = bench.Open();
         Assert.True(draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn); // ön-koşul: açık açıldı
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = false;
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.False(registry.Exists(AutostartService.DefaultValueName));
-        Assert.False(ShellSwitches.StartWithWindows(store.State));
-        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows off — signing in to Windows no longer starts the app"));
+        Assert.False(bench.Registry.Exists(Entry));
+        Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText, OffNote));
     }
 
     /// <summary>Anahtara DOKUNULMADAN başka bir ayar için Save → Windows kaydına da tercihe de dokunulmaz, not
@@ -220,19 +238,16 @@ public class StartWithWindowsTests
     [Fact]
     public async Task A_save_that_does_not_touch_start_with_windows_leaves_the_entry_and_the_preference_alone()
     {
-        var registry = new FakeAutostartRegistry();
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        store.Save(new UiState { Autostart = true });
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        bench.Store.Save(new UiState { Autostart = true });
+        var draft = bench.Open();
         draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.Equal(0, registry.Writes);
-        Assert.True(store.State.Autostart);
-        Assert.DoesNotContain("Start with Windows", run.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal(0, bench.Registry.Writes);
+        Assert.True(bench.Store.State.Autostart);
+        Assert.DoesNotContain("Start with Windows", bench.ConsoleText, StringComparison.Ordinal);
     }
 
     /// <summary>Windows kaydı yazamazsa Save uygulamayı DÜŞÜRMEZ: konsola nedenle tek satır düşer, tercih DEĞİŞMEZ
@@ -240,20 +255,17 @@ public class StartWithWindowsTests
     [Fact]
     public async Task When_windows_refuses_the_startup_entry_the_save_does_not_crash_and_says_so()
     {
-        var registry = new FakeAutostartRegistry { FailWritesWith = new UnauthorizedAccessException("Access is denied.") };
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        bench.Registry.FailWritesWith = new UnauthorizedAccessException("Access is denied.");
+        var draft = bench.Open();
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
 
-        Assert.Null(await Record.ExceptionAsync(() => draft.CommitAsync(run, store)));
+        Assert.Null(await Record.ExceptionAsync(() => bench.SaveAsync(draft)));
 
-        string console = run.GetRunDocumentText();
-        Assert.Equal(1, Count(console, "Start with Windows not changed — Access is denied."));
-        Assert.DoesNotContain("Start with Windows on", console, StringComparison.Ordinal);
-        Assert.False(ShellSwitches.StartWithWindows(store.State));
-        Assert.False(registry.Exists(AutostartService.DefaultValueName));
+        Assert.Equal(1, Count(bench.ConsoleText, "Start with Windows not changed — Access is denied."));
+        Assert.DoesNotContain("Start with Windows on", bench.ConsoleText, StringComparison.Ordinal);
+        Assert.False(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.False(bench.Registry.Exists(Entry));
     }
 
     // ---------------------------------------------------------------- Görev Yöneticisi (StartupApproved\Run)
@@ -284,10 +296,10 @@ public class StartWithWindowsTests
         var service = registry.Service();
         Assert.Equal(AutostartState.Off, service.State);
 
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        registry.Set(Entry, FakeAutostartRegistry.Command);
         Assert.Equal(AutostartState.On, service.State);
 
-        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        registry.DisableInStartupApps(Entry);
         Assert.Equal(AutostartState.DisabledInStartupApps, service.State);
     }
 
@@ -297,15 +309,13 @@ public class StartWithWindowsTests
     public void An_entry_turned_off_in_task_manager_opens_off_with_a_note_that_says_so()
     {
         var registry = new FakeAutostartRegistry();
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        var enabled = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState { Autostart = true }, autostart: registry.Service());
+        registry.Set(Entry, FakeAutostartRegistry.Command);
         Assert.Equal(GeneralSettingsCatalog.Definition(GeneralSetting.StartWithWindows).Description,
-            enabled.GeneralRow(GeneralSetting.StartWithWindows).Description);
+            NewDraft(new UiState { Autostart = true }, registry.Service()).GeneralRow(GeneralSetting.StartWithWindows).Description);
 
-        registry.DisableInStartupApps(AutostartService.DefaultValueName);
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState { Autostart = true }, autostart: registry.Service());
+        registry.DisableInStartupApps(Entry);
+        var row = NewDraft(new UiState { Autostart = true }, registry.Service()).GeneralRow(GeneralSetting.StartWithWindows);
 
-        var row = draft.GeneralRow(GeneralSetting.StartWithWindows);
         Assert.False(row.IsOn);
         Assert.Equal(SettingsDraftViewModel.StartWithWindowsDisabledInStartupAppsNote, row.Description);
     }
@@ -316,21 +326,18 @@ public class StartWithWindowsTests
     [Fact]
     public async Task Switching_it_back_on_clears_task_managers_mark_and_starts_with_windows_again()
     {
-        var registry = new FakeAutostartRegistry();
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        registry.DisableInStartupApps(AutostartService.DefaultValueName);
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        store.Save(new UiState { Autostart = true });
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        bench.RegisterEntry();
+        bench.Registry.DisableInStartupApps(Entry);
+        bench.Store.Save(new UiState { Autostart = true });
+        var draft = bench.Open();
         draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.Equal(AutostartState.On, registry.Service().State);
-        Assert.True(ShellSwitches.StartWithWindows(store.State));
-        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows on — the app starts when you sign in to Windows"));
+        Assert.Equal(AutostartState.On, bench.Registry.Service().State);
+        Assert.True(ShellSwitches.StartWithWindows(bench.Store.State));
+        Assert.Equal(1, Count(bench.ConsoleText, OnNote));
     }
 
     /// <summary>Görev Yöneticisi'nin kararı SESSİZCE ezilmez: anahtara dokunulmayan bir Save (başka bir ayar için)
@@ -339,22 +346,19 @@ public class StartWithWindowsTests
     [Fact]
     public async Task A_save_that_does_not_touch_the_switch_keeps_task_managers_choice()
     {
-        var registry = new FakeAutostartRegistry();
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        registry.DisableInStartupApps(AutostartService.DefaultValueName);
-        int writesBefore = registry.Writes;
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        var store = new SettingsDialogHost.FakeStore();
-        store.Save(new UiState { Autostart = true });
-        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        await using var bench = new SaveBench();
+        bench.RegisterEntry();
+        bench.Registry.DisableInStartupApps(Entry);
+        bench.Store.Save(new UiState { Autostart = true });
+        int writesBefore = bench.Registry.Writes;
+        var draft = bench.Open();
         draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
 
-        await draft.CommitAsync(run, store);
+        await bench.SaveAsync(draft);
 
-        Assert.Equal(writesBefore, registry.Writes);
-        Assert.Equal(AutostartState.DisabledInStartupApps, registry.Service().State);
-        Assert.True(store.State.Autostart);
+        Assert.Equal(writesBefore, bench.Registry.Writes);
+        Assert.Equal(AutostartState.DisabledInStartupApps, bench.Registry.Service().State);
+        Assert.True(bench.Store.State.Autostart);
     }
 
     /// <summary>Açılışın uzlaştırması (her açılışta Run değerini yeniden yazar) Görev Yöneticisi'nin işaretine
@@ -363,8 +367,8 @@ public class StartWithWindowsTests
     public void The_startup_reconcile_does_not_override_task_managers_choice()
     {
         var registry = new FakeAutostartRegistry();
-        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
-        registry.DisableInStartupApps(AutostartService.DefaultValueName);
+        registry.Set(Entry, FakeAutostartRegistry.Command);
+        registry.DisableInStartupApps(Entry);
 
         registry.Service().Apply(true);
 
@@ -383,8 +387,10 @@ public class StartWithWindowsTests
         Assert.Equal(AppIdentity.Product, FileVersionInfo.GetVersionInfo(exe).FileDescription);
     }
 
-    /// <summary>Kablo: MainWindow, DI'dan aldığı servisi Settings diyaloğuna verir (üretimde tek örnek — açılışın
-    /// uzlaştırması da onu kullanır).</summary>
+    // ---------------------------------------------------------------- kablo
+
+    /// <summary>MainWindow, DI'dan aldığı servisi Settings diyaloğuna verir (üretimde tek örnek — açılışın uzlaştırması
+    /// da onu kullanır).</summary>
     [StaFact]
     public void The_main_window_hands_its_autostart_service_to_the_settings_dialog()
     {
@@ -396,9 +402,9 @@ public class StartWithWindowsTests
         Assert.Same(service, window.SettingsOverlay.Autostart);
     }
 
-    /// <summary>Kablo (kaynak guard'ı — App headless kurulamaz): gerçek registry'ye giden yazıcı App ağacında TEK
-    /// yerde, composition root'ta kurulur ve DI'a TEK servis olarak girer; açılışın uzlaştırması da o servisi
-    /// kullanır (MainWindow onu DI'dan alıp Settings'e verir). Testler gerçek yazıcıyı ASLA kurmaz.</summary>
+    /// <summary>Kaynak guard'ı (App headless kurulamaz): gerçek registry'ye giden yazıcı App ağacında TEK yerde,
+    /// composition root'ta kurulur ve DI'a TEK servis olarak girer; açılışın uzlaştırması da o servisi kullanır
+    /// (MainWindow onu DI'dan alıp Settings'e verir). Testler gerçek yazıcıyı ASLA kurmaz.</summary>
     [Fact]
     public void The_real_registry_writer_is_built_once_in_the_composition_root_and_never_in_tests()
     {

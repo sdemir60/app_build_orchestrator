@@ -304,8 +304,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.
     /// <para>[P4] <see cref="ShellSwitches.Commit"/> kabuk anahtarlarını (Start with Windows, Start minimized to tray)
     /// AYNI <paramref name="store"/>'a yazar ve değişenlerin konsol notunu döner — <c>store.Save</c>'DEN ÖNCE
-    /// çağrılır (notlar değişimden ÖNCEKİ kayıtlı değere göre hesaplanır), notlar ise <see cref="RunViewModel.ApplySettingsAsync"/>'e
-    /// <c>settingNotes</c> olarak geçer.</para></summary>
+    /// çağrılır (notlar değişimden ÖNCEKİ kayıtlı değere göre hesaplanır; Start with Windows'unki diyaloğun
+    /// GÖSTERDİĞİ değere göre), notlar ise <see cref="RunViewModel.ApplySettingsAsync"/>'e <c>settingNotes</c> olarak
+    /// geçer. Start with Windows YALNIZ değiştirildiyse Windows kaydına ve tercihe dokunur (metin içindeki yorum).</para></summary>
     public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
