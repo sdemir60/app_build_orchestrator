@@ -177,19 +177,7 @@ public sealed class RunCoordinator(
     private bool _capDrained;
 
     // --- Koşan run'ın state'i (koşu bitince temizlenir; proje logu okuması run boyunca buradan gider) ---
-    private RunPlan? _plan;
-    private string? _root;
     private RunLogWriter? _logs;
-    // [T54] projectId → o projenin (dependency zincirinden) taşıdığı kök depIssue adları.
-    private ConcurrentDictionary<string, IReadOnlyList<string>>? _depIssuesById;
-    // [Task-13] projectId → Failed'a düştüğü AN ki reason "stopped" mıydı (torn-DLL guard). RunSnapshot/BuildResult
-    // reason TAŞIMAZ — bu yüzden reason bilgisi ayrı, run segmentleri arası kümülatif bu sözlükte izlenir (aynı
-    // _depIssuesById gibi Continue/RetryFailed segmentleri BOYUNCA aynı örnek paylaşılır). Bir proje sonradan
-    // FARKLI bir sonuçla (Succeeded ya da başka reason'la Failed) tamamlanırsa buradan silinir (bkz.
-    // BuildProjectAsync). NOT: RetryPlanning re-queue bir girdiyi Queued'a çevirirken bu seti güncellemez, bu
-    // yüzden geçici olarak bayat bir "stopped" girdisi kalabilir; RequeueStoppedFailed'ın savunmacı re-check'i
-    // (yalnız hâlâ Failed olanları re-queue eder) bunu zararsız kılar.
-    private ConcurrentDictionary<string, byte>? _stoppedFailedIds;
     // [T28] En son (aktif ya da tamamlanmış) run'ın dizini — _logs Dispose edilip null'landıktan SONRA da
     // hayatta kalır: run tamamen bitmiş olsa bile bir proje kartına tıklamak logunu diskten okuyabilsin diye.
     private string? _lastRunDirectory;
@@ -200,7 +188,8 @@ public sealed class RunCoordinator(
     public Task RunCompletion { get { lock (_gate) return _runTask; } }
 
     /// <summary>
-    /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif/resumable run varsa canlı writer'dan (in-memory sayaçla
+    /// [T28] <c>getProjectLog</c>'un tek kaynağı. Aktif koşu varsa (ya da runStarted'a varmadan dönmüş bir
+    /// koşunun hâlâ açık writer'ı varsa) canlı writer'dan (in-memory sayaçla
     /// ATOMİK — bkz. <see cref="RunLogWriter.SnapshotProjectLog"/>) okunur; run tamamen bitmişse (writer Dispose
     /// edilmiş, <c>_logs</c> null) en son run dizininden PATH-tabanlı okunur (bkz.
     /// <see cref="RunLogWriter.ReadProjectLogFromDisk"/>) — dizin hâlâ diskte durduğu için sonradan bir proje
@@ -264,17 +253,6 @@ public sealed class RunCoordinator(
             }
         }
         if (rejection is not null) await writer.WriteAsync(rejection, ct);
-    }
-
-    private bool SameRootLocked(string rootPath) =>
-        Canonical(rootPath) is string root && string.Equals(root, _root, StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>Bozuk yol (boş/geçersiz karakter) fırlatmaz, null döner: bu, IPC dispatch loop'undan (StartAsync)
-    /// çağrılır — hatalı bir komut tüm Supervisor'ı düşürmemeli.</summary>
-    private static string? Canonical(string path)
-    {
-        try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
-        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException) { return null; }
     }
 
     /// <summary>
@@ -693,7 +671,6 @@ public sealed class RunCoordinator(
         RunSnapshot? schedulerSeed = null;
         long elapsedAtStart;
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
-        ConcurrentDictionary<string, byte> stoppedFailedIds;
         // [Task 19] Build modunda incremental olarak "up to date" (WillBuild==false, cycle DIŞI) pre-skip edilen
         // projeler — cycle pre-skip'i gibi construction anında Skipped sayılır (dependent'ları için resolved),
         // ProjectSkippedEvent("skipped — up to date") ile raporlanır. Rebuild'de boş kalır.
@@ -740,13 +717,10 @@ public sealed class RunCoordinator(
 
             lock (_gate)
             {
-                _logs?.Dispose(); // terk edilmiş (artık sürdürülmeyecek) önceki run'ın writer'ı
-                _plan = runPlan;
-                _root = Canonical(cmd.RootPath);
+                _logs?.Dispose(); // runStarted'a varmadan dönmüş önceki koşunun (msbuildNotFound ya da beklenmeyen hata) kapanmamış writer'ı — finally'si hiç koşmadı
                 logs = _logs = logFactory(DateTimeOffset.Now);
                 _lastRunDirectory = logs.RunDirectory;
-                depIssuesById = _depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
-                stoppedFailedIds = _stoppedFailedIds = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase); // [Task-13] taze run → taze birikim
+                depIssuesById = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase); // [T54] taze run → taze birikim
             }
             // [tek proje] decision.log kapsamı adıyla anar: "neden tek proje derlendi" sorusu diskten okunur.
             if (staleDependenciesById is not null)
@@ -1008,7 +982,6 @@ public sealed class RunCoordinator(
                     cpuFloor: new CoordinatorCpuFloor(this)),
                 toolset.MsBuildExePath,
                 depIssuesById, // [T54]
-                stoppedFailedIds, // [Task-13]
                 stateStore, // [Task 19] projectSucceeded → BuildState persist (null ⇒ persist YOK, mevcut test davranışı)
                 runPlan.Incremental, // [Task 19] imza + HEAD + branch (persist için)
                 groups, // [cycle rounds] scheduler ile AYNI örnek — dispatch edilen id bir grup üyesi mi
@@ -1078,7 +1051,7 @@ public sealed class RunCoordinator(
             // ne derleyeceğini persist edilmiş BuildState'ten bulur (öldürülen/başarısız projeler geçersiz,
             // yeşil bitenler güncel).
             // [Kısıt 1] RunLogWriter ancak TÜM worker'lar join olduktan sonra dispose edilir.
-            lock (_gate) { _logs = null; _plan = null; _root = null; _depIssuesById = null; _stoppedFailedIds = null; }
+            lock (_gate) _logs = null;
             logs.Dispose();
         }
     }
@@ -1326,7 +1299,6 @@ public sealed class RunCoordinator(
             if (invalidates) evidenceSignature = FailureEvidenceSignature(run, projectId, failReason, trustedResult);
             if (result == BuildResult.Succeeded)
             {
-                run.StoppedFailedIds.TryRemove(projectId, out _); // [Task-13] artık Failed değil — eski işaret geçersiz
                 // [DEĞİŞEN KURAL — A2] depIssue TAŞIYAN bir success bağımlılığının BAYAT çıktısına link'lidir ve
                 // yine derlenmelidir. Eskiden bu, "deftere HİÇ yazma" ile sağlanıyordu; ölçüldü ki o kural
                 // defterin ilerlemesini tamamen durduruyor (bir koşuda 24 hata depIssue'yu 96 projeye yaydı ve
@@ -1354,7 +1326,6 @@ public sealed class RunCoordinator(
             else
             {
                 string reason = failReason!;
-                MarkStoppedFailed(run, projectId, reason); // [Task-13] Continue'un torn-DLL guard'ı için izlenir
                 run.Events.TryWrite(new ProjectFailedEvent(run.RunId, projectId, durationMs, reason, depIssuesForEvent,
                     Evidence: evidenceSignature is not null));
                 Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "{0}: failed — {1}{2}", name, reason,
@@ -2162,18 +2133,6 @@ public sealed class RunCoordinator(
     }
 
     /// <summary>
-    /// [Task-13] <paramref name="reason"/>=="stopped" ise <paramref name="projectId"/>'i run'lar arası devredilen
-    /// <c>StoppedFailedIds</c> birikimine yazar (torn-DLL guard — bkz. Continue'un RetryPlanning.RequeueStoppedFailed
-    /// çağrısı); değilse (savunmacı — id daha önce stopped işaretliyken şimdi FARKLI bir reason'la Failed olduysa)
-    /// siler, aksi halde stale bir "stopped" izi Continue'da yanlışlıkla yeniden derlemeye yol açardı.
-    /// </summary>
-    private static void MarkStoppedFailed(RunContext run, string projectId, string reason)
-    {
-        if (reason == "stopped") run.StoppedFailedIds[projectId] = 0;
-        else run.StoppedFailedIds.TryRemove(projectId, out _);
-    }
-
-    /// <summary>
     /// [Task 19] Bir proje BAŞARIYLA derlendiğinde <see cref="BuildState"/> persist eder — BİR SONRAKİ Build
     /// koşusu bunu okuyup (imza eşit + Succeeded ⇒ skip) incremental olur. Persist YALNIZ hem <see
     /// cref="RunContext.StateStore"/> hem de bu proje için non-null bir imza (<see cref="IncrementalPlan"/>)
@@ -2381,10 +2340,6 @@ public sealed class RunCoordinator(
         // [T54] projectId → depIssues birikimi (RunSegmentAsync'te kurulur, Continue segmentleri boyunca aynı
         // örnek paylaşılır). ConcurrentDictionary: N worker aynı anda FARKLI key'lere yazar, birbirinin key'ini okur.
         ConcurrentDictionary<string, IReadOnlyList<string>> DepIssuesById,
-        // [Task-13] projectId → "şu an Failed VE reason=stopped" işareti (BuildProjectAsync tarafından yazılır/
-        // silinir — bkz. o metodun sonundaki not). Continue segmentinin torn-DLL guard'ı için: RunSegmentAsync
-        // bunu Completed'tan Queued'a geri taşımak üzere okur (bkz. RetryPlanning.RequeueStoppedFailed).
-        ConcurrentDictionary<string, byte> StoppedFailedIds,
         // [Task 19] projectSucceeded → BuildState persist hedefi (null ⇒ persist YOK); imza/HEAD/branch kaynağı.
         // [A2 fix-1] AYRICA projectFailed → mevcut kaydın LastResult'ı Failed'a çekilir (stale pre-skip'i keser).
         BuildStateStore? StateStore,
