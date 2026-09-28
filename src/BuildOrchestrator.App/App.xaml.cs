@@ -87,7 +87,9 @@ public partial class App : Application
             // Öne getirilemedi → SESSİZ KALMA: tek-satırlık OS balloon göster. ShowNotification balloon'u
             // explorer.exe'ye ASENKRON teslim eder; tray'i AYNI dispatcher turn'ünde yıkarsak (Shutdown → OnExit →
             // Dispose → NIM_DELETE) balloon milisaniyeler içinde iptal olur. Bu yüzden yıkımı ERTELE (aşağıda).
-            _secondInstanceTray = new AppTrayIcon();
+            // Bu geçici tray'in arkasında hiç RunViewModel/engine yoktur (bu dal DI kurulmadan return eder) —
+            // yani durdurulacak bir run hiçbir zaman olamaz. Stop bu yüzden hep kapalı bir komutla kurulur.
+            _secondInstanceTray = new AppTrayIcon(AppTrayIcon.NoRunToStop);
             // [About] Ürün adı ve global kısayol jesti tek kaynaktan (kopya YASAK): AppIdentity.Product ve
             // HotkeyBinding.DefaultGesture. Kısayol ayarlanabilir olduğundan metne gömülü "Alt+B" bayatlardı.
             _secondInstanceTray.ShowNotification(
@@ -122,8 +124,9 @@ public partial class App : Application
         // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
         _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
 
-        // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside temiz başlar (oto-Sync YOK — normal
-        // açılışta da yok); aksi halde bugünkü davranış (normal göster). Karar yukarıdaki TEK dikişten gelir.
+        // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside başlar; aksi halde bugünkü davranış
+        // (normal göster). İki yolda da açılışın Sync'i motor hazır olunca koşar (RunViewModel.OnEngineReady).
+        // Karar yukarıdaki TEK dikişten gelir.
         if (route == StartupRoute.StartInTray) window.StartInTray();
         else window.Show();
     }

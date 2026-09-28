@@ -1739,7 +1739,7 @@ public class RunViewModelTests
     [Fact]
     public async Task A_finished_project_updates_the_facts_its_decision_label_reads()
     {
-        const string id = @"C:\p.csproj";
+        const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         vm.OnEvent(new BuildPreviewEvent(
@@ -2014,7 +2014,7 @@ public class RunViewModelTests
     [Fact]
     public async Task A_failed_project_reports_the_failure_as_its_reason()
     {
-        const string id = @"C:\p.csproj";
+        const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
         vm.OnEvent(new BuildPreviewEvent(
@@ -2773,8 +2773,8 @@ public class RunViewModelTests
         vm.DisableAutoSync();
     }
 
-    /// <summary>[review I2] Kök değişince eski kökün son Sync HEAD'i ve anları unutulur — yoksa yeni kökteki ilk
-    /// tetik eski branch'le kıyaslanıp sahte bir "Switched to" bölümü açardı.</summary>
+    /// <summary>[review I2] Kök değişince eski kökün son Sync HEAD'i ve anları unutulur (Settings Save'in kök
+    /// değişimi) — yoksa yeni kökteki ilk tetik eski branch'le kıyaslanıp sahte bir "Switched to" bölümü açardı.</summary>
     [Fact]
     public async Task A_root_change_forgets_the_last_sync_head()
     {
@@ -2782,11 +2782,11 @@ public class RunViewModelTests
         var vm = SyncedTwoRowVm(engine);
         Assert.NotNull(vm.LastSyncHead); // ön-koşul
 
-        await vm.ChangeRepositoryAsync(@"D:\other-repo");
+        await vm.ApplySettingsAsync([], @"D:\other-repo", []);
 
         Assert.Null(vm.LastSyncHead);
         Assert.Null(vm.LastSyncCompletedAtMs);
-        Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: kök değişiminin Sync'i gönderilemedi
+        Assert.Null(vm.LastSyncStartedAtMs); // motor başlamadı: Save'in Sync'i gönderilemedi
     }
 
     /// <summary>[spec 2026-09-18 §6.1 · karar 11 · PİN] Pencereye dönüşün eşiği son Sync'in ANINDAN

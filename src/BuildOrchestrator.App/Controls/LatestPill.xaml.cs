@@ -7,7 +7,7 @@ using System.Windows.Media.Animation;
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// [T59] `⌄ latest` pill görsel kontrolü — konsol + (ileride) event stream ORTAK kullanır (design-v1 §2.5/§2.6).
+/// [T59] `⌄ latest` pill görsel kontrolü — konsol ve event stream ORTAK kullanır (design-v1 §2.5/§2.6).
 /// Görünürlük/tıklama davranışı host'a (ör. ConsoleView) aittir; bu control yalnız görsel + <see cref="Click"/>.
 /// </summary>
 public partial class LatestPill : UserControl
@@ -32,7 +32,7 @@ public partial class LatestPill : UserControl
 
     /// <summary>
     /// [A13/T5] Ekran-okuyucu adı. Pill'in ROLÜNÜ ("en sona git") kontrol bilir, ama HANGİ akışın sonuna
-    /// gidildiğini (projeler / konsol / event stream) yalnız host bilir — bu yüzden metni host verir; desen,
+    /// gidildiğini (konsol / event stream) yalnız host bilir — bu yüzden metni host verir; desen,
     /// <c>ShellRoot</c>'un <c>DsSplitter</c>'lara ad vermesiyle AYNIdır. Metinler
     /// <see cref="AccessibilityNames"/>'tedir (çağırma yerinde literal YAZILMAZ).
     ///

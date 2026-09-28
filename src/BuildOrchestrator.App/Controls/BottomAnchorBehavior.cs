@@ -4,12 +4,12 @@ namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
 /// [T59] <see cref="BottomAnchorDecision"/>'ın (saf) kararını gerçek bir scroll host'a (ConsoleView'ın AvalonEdit
-/// TextEditor'ı, ileride Event Stream'in ScrollViewer'ı) bağlayan ORTAK orkestratör — "bir bottom-anchor mekanizması"
+/// TextEditor'ı ve EventStreamView'ın ScrollViewer'ı) bağlayan ORTAK orkestratör — "bir bottom-anchor mekanizması"
 /// (task-5 talimatı: konsolun mevcut <c>StickToBottom</c>'ıyla ÇAKIŞMAZ, ONUN üstüne kurulur — bkz. ConsoleView.xaml.cs).
 ///
 /// <para><b>Neden delegate-tabanlı (WPF türü YOK):</b> ScrollViewer ve AvalonEdit TextEditor FARKLI tiplerdir; bu
-/// sınıf ikisine de (ve ileride Event Stream'in host'una da) duck-typing'siz, WPF'e dokunmadan hizmet eder — bu
-/// yüzden testleri <c>[Fact]</c> (STA gerekmez), yalnız gerçek kablaj (ConsoleView) <c>[StaFact]</c>'tir.</para>
+/// sınıf ikisine de duck-typing'siz, WPF'e dokunmadan hizmet eder — bu yüzden testleri <c>[Fact]</c> (STA
+/// gerekmez), yalnız gerçek kablajlar (ConsoleView, EventStreamView) <c>[StaFact]</c>'tir.</para>
 /// </summary>
 public sealed class BottomAnchorBehavior
 {

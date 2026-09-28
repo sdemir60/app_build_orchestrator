@@ -79,13 +79,13 @@ public class ExternalRowsTests
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = NewVm(engine);
         vm.OnEvent(new WorkspaceTopologyEvent(
-            [ExternalNode("Mail", MailTarget), MainNode(@"D:epo.csproj", "A", 1)], [], [], []));
+            [ExternalNode("Mail", MailTarget), MainNode(@"D:\repo\a.csproj", "A", 1)], [], [], []));
 
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem(MailTarget, "Mail", false, "a1b2c3d", WillBuildReason.UpToDate,
                 OwnFilesChanged: false),
-            new BuildPreviewItem(@"D:epo.csproj", "A", true, "b7e91d4", WillBuildReason.SignatureChanged,
+            new BuildPreviewItem(@"D:\repo\a.csproj", "A", true, "b7e91d4", WillBuildReason.SignatureChanged,
                 OwnFilesChanged: true),
         ]));
 

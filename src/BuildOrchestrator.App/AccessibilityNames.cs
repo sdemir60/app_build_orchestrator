@@ -177,9 +177,8 @@ public static class AccessibilityNames
 
     // ---- [A13/T5] `⌄ latest` pill'leri ----
     // Pill'in ROLÜNÜ (en sona git) kontrol bilir, ama HANGİ akışın sonu olduğunu yalnız host bilir; bu yüzden
-    // üç ayrı metin vardır ve adı host verir (ShellRoot'un ayraçlara ad vermesiyle AYNI ilke). "latest"
-    // etiketi tek başına ekran okuyucuya hiçbir şey söylemez.
-    public const string LatestProjects = "Jump to the latest project";
+    // iki ayrı metin vardır (konsol, event stream) ve adı host verir (ShellRoot'un ayraçlara ad vermesiyle AYNI
+    // ilke). "latest" etiketi tek başına ekran okuyucuya hiçbir şey söylemez.
     public const string LatestConsole = "Jump to the latest console output";
     public const string LatestEvents = "Jump to the latest event";
 

@@ -538,7 +538,7 @@ public sealed partial class RunViewModel
     private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
-    /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in ve Choose Folder'ın kapısı; komut kapıları
+    /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
     /// bunu motor erişilebilirliğiyle birlikte sorar (<see cref="WorkspaceGateOpen"/>).</summary>
     private bool WorkspaceIdle => !IsMidRunLocked && !WorkspaceBusy;
 

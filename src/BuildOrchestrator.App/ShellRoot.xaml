@@ -43,7 +43,7 @@
 
         <controls:DsSplitter x:Name="PART_LeftSplitter" Grid.Row="1" LineOrientation="Horizontal" />
 
-        <!-- Projects paneli: PanelHeader + StickyLayerList + LatestPill (aynı Grid'de üst üste) -->
+        <!-- Projects paneli: üstte PanelHeader (dock); altında StickyLayerList ile davet/boş-durum katmanları aynı Grid'de üst üste -->
         <DockPanel Grid.Row="2">
           <controls:PanelHeader x:Name="PART_ProjectsHeader" DockPanel.Dock="Top" Text="PROJECTS">
             <controls:PanelHeader.LeftContent>
@@ -183,8 +183,6 @@
                        Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20"
                        TextWrapping="Wrap"
                        FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
-
-            <controls:LatestPill x:Name="PART_ProjectsPill" Visibility="Collapsed" />
           </Grid>
         </DockPanel>
       </Grid>

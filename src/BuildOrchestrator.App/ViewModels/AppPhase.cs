@@ -39,7 +39,7 @@ public enum AppPhase
     /// child'ları (post-build copy dahil) kendi tamamlanmalarını yapar. Graceful stop'un gözlenebilir
     /// penceresi — tıklamanın kaydedildiğini gösteren tek yüzey budur. <see cref="Running"/>'den ayrıdır
     /// (şerit "Building" demez, Stop butonu pasifleşir) ve <see cref="Stopped"/>'dan da ayrıdır (henüz
-    /// durmadı, Continue erişilebilir değil).</summary>
+    /// durmadı).</summary>
     Stopping,
 
     Done,

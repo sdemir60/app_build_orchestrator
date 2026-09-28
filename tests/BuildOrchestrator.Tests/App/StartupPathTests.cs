@@ -87,15 +87,15 @@ public class StartupPathTests
         Assert.Contains("App.xaml.cs", SourceGuard.ScannedAppFiles("*.cs"));
     }
 
-    // ---------------------------------------------------------------- t1: autostart SESSİZ başlar (Sync YOK)
+    // ---------------------------------------------------------------- t1: açılış seed'i motora komut göndermez
 
     [StaFact]
     public void A_remembered_repository_is_seeded_at_startup_without_sending_a_single_engine_command()
     {
-        // [t1 · asıl değer] Autostart yolunun tek anlamlı riski budur: oturum açılışında SESSİZCE bir Sync/build
-        // başlatmak kullanıcının makinesini yorar. Üretimde açılış repo'yu HATIRLAR (MainWindow.xaml.cs:126
-        // `_vm.RootPath = repo`) ama SEED-BUT-IDLE'dır — doğrudan RootPath set'i yalnız Empty→Boot sürer,
-        // ChangeRepositoryAsync (Sync tetikleyen yol) DEĞİLDİR.
+        // [t1] Açılış repo'yu HATIRLAR (MainWindow.xaml.cs `_vm.RootPath = repo`) ve seed'in KENDİSİ motora hiçbir
+        // komut göndermez — doğrudan RootPath set'i yalnız Empty→Boot sürer; Sync tetikleyen yol (Settings Save'in
+        // kök değişimi) DEĞİLDİR. Açılışın Sync'i motor hazır olunca RunViewModel.OnEngineReady'den gider (bu testte
+        // motor başlatılmaz; o kural RunViewModelTests.The_first_engine_ready_syncs_with_the_transcript'te pinli).
         //
         // Yol ÜRETİMDEKİ yoldur: kalıcı duruma gerçek store ile yazılır, pencere gerçek ctor'undan geçer.
         // Pencere Show() EDİLMEZ — bu testte de, autostart yolunda da (tepsi/hotkey yan etkisi yok).

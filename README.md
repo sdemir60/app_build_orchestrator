@@ -139,9 +139,10 @@ the running instance first — tray icon → Exit).
    run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
    opens the dialog with the file picker already up.
 
-   **General** holds switches in three groups — Startup, Build and Notifications. *Pull before build* (see
-   step 4) is the one that works today; *Start with Windows*, *Start minimized to tray*, *Close to tray* and
-   *Show notifications* are shown but not wired yet, are not saved, and reset whenever the dialog opens.
+   **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
+   (see step 4) and *Stash and switch branches* (see step 3) are the ones that work today; *Start with Windows*,
+   *Start minimized to tray*, *Close to tray* and *Show notifications* are shown but not wired yet, are not saved,
+   and reset whenever the dialog opens.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file). Everything found under a card joins the same project list and

@@ -926,7 +926,7 @@ public partial class ActionBarTests
 
         Assert.Equal(Visibility.Visible, bar.Split.Visibility);
         Assert.Same(vm.BuildCommand, bar.Split.PrimaryCommand);
-        Assert.Equal("Build", ((StackPanel)bar.Split.PrimaryContent).Children.OfType<TextBlock>().Single().Text);
+        Assert.Equal("Build", Assert.IsType<StackPanel>(bar.Split.PrimaryContent).Children.OfType<TextBlock>().Single().Text);
         GC.KeepAlive(window);
     }
 
@@ -961,7 +961,7 @@ public partial class ActionBarTests
         var (bar, window) = Realize(vm);
         Assert.True(bar.BranchChip.IsEnabled);
 
-        vm.OnEvent(new SyncStartedEvent(@"D:epo", "main"));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(bar.BranchChip.IsEnabled);
 
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));

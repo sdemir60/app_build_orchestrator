@@ -631,7 +631,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
-    // ABONE OLMAZ. Bu olmadan Stop/Continue butonları gerçek pencerede İLK bind sonrası ASLA yeniden
+    // ABONE OLMAZ. Bu olmadan Stop/Build butonları gerçek pencerede İLK bind sonrası ASLA yeniden
     // sorgulanmaz (StopCommand hep disabled kalırdı) — Kısıt 3'ü bozar.
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RebuildCommand))]
@@ -721,7 +721,7 @@ public sealed partial class RunViewModel : ObservableObject
     private bool _engineRestartable = true;
 
     /// <summary>[D1 review · A3] Motor ERİŞİLEMEZ: hiç doğamadı (supervisor yok ya da başlatılamıyor) —
-    /// <see cref="OnEngineUnavailable"/> bu durumu kurar. Sync/Build/Rebuild/Retry/Continue bu durumda
+    /// <see cref="OnEngineUnavailable"/> bu durumu kurar. Sync/Build/Rebuild bu durumda
     /// ANLAMSIZDIR: gönderim zaten hataya düşer ve şeritteki kalıcı mesajla ÇELİŞEN ikinci bir hata satırı
     /// üretirdi — bu yüzden komutlar devre dışıdır ("Restart engine"in gizlenmesiyle aynı mantık).
     /// <para>Normal (doğmuş) motor ölümü BU DURUM DEĞİLDİR: orada "Restart engine" sunulur ve komutlar açık
@@ -895,7 +895,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// dikiş filtresi (LineNumber &gt; ThroughLineNumber) eski run'ın kuyruk satırlarını da geçirir ve
     /// OrderBy(LineNumber) eski+yeni'yi karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir:
     /// ProjectLogEvent marshal'sız işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine
-    /// düşmeden ÖNCE varabilir. <b>Continue temizlemez</b> (önceki segmentin log/proje sonuçlarını korur).</para>
+    /// düşmeden ÖNCE varabilir.</para>
     /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
     /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para></summary>
     /// <param name="scopeProjectId">[tek proje · design §3.8] Satırdan tetiklenen koşunun hedefi; <c>null</c> =
@@ -1165,15 +1165,18 @@ public sealed partial class RunViewModel : ObservableObject
     private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles, clearBuffers: true); // seçim orada düşer (filtre korunur)
 
     /// <summary>[tek proje · design v1.11.0 §3.8] Satırın play düğmesi ve ⋯ menüsünün <i>Build</i> maddesi:
-    /// YALNIZ o projeyi derler — bağımlılıklar derlenmez, kapsam dışına dokunulmaz. Hedef tam koşuyla aynı
-    /// motor yolundan geçer (güncelse <c>up to date</c> atlanır; koşulsuz derlemek <see cref="RebuildProjectCommand"/>'ın
-    /// işidir). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI (<see cref="CanRebuildOrRetry"/>) +
-    /// bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu başlatılamaz.</summary>
+    /// YALNIZ o projeyi derler — bağımlılıklar derlenmez, kapsam dışına dokunulmaz. Hedef güncel olsa da
+    /// derlenir: tek projelik kapsamda incremental karar sorulmaz (<c>Core/Planning/ProjectRunScope</c>,
+    /// <c>WillBuild = true</c>; ARCHITECTURE §8.1). <see cref="RebuildProjectCommand"/>'dan farkı MSBuild
+    /// hedefidir (<c>-t:Build</c> / <c>-t:Rebuild</c>). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI
+    /// (<see cref="CanRebuildOrRetry"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
+    /// başlatılamaz.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, clearBuffers: true, projectId);
 
-    /// <summary>[tek proje] ⋯ menüsünün <i>Rebuild</i> maddesi: aynı kapsam, cache yok sayılır (tam Rebuild ile
-    /// aynı anlam) — hedef güncel olsa da derlenir.</summary>
+    /// <summary>[tek proje] ⋯ menüsünün <i>Rebuild</i> maddesi: aynı kapsam, MSBuild'in kendi Rebuild'i
+    /// (<c>-t:Rebuild</c> — önce temizler, sonra derler). Alt bardaki Rebuild'den farklıdır: orada "cache'i yok
+    /// say" demektir ve proje başına <c>-t:Build</c> koşar (ARCHITECTURE §8.1).</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task RebuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Rebuild, clearBuffers: true, projectId);
 
@@ -1199,7 +1202,7 @@ public sealed partial class RunViewModel : ObservableObject
 
     /// <summary>
     /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
-    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save / kök değişimi
+    /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save (kök değişimi dahil)
     /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; kendiliğinden Sync
     /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un
     /// özetindedir (spec 2026-09-18 §6.2).
@@ -1275,8 +1278,8 @@ public sealed partial class RunViewModel : ObservableObject
         else ReleaseSyncRequest();
         // [A13/T2 · 2.2] Branch envanteri BURADAN istenir — TEK huni. Gerekçe: (a) branch chip'inin tek gerçek
         // kaynağı <see cref="Branches"/>'tir ve o yalnız BranchListEvent ile dolar; (b) repo değişince liste
-        // BAYATLAR, ve repo'yu değiştiren HER yol (ilk klasör seçimi / Choose Folder → ChangeRepositoryAsync,
-        // Settings→Save → ApplySettingsAsync) zaten buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
+        // BAYATLAR, ve repo'yu değiştiren tek yol (Settings → Save → ApplySettingsAsync; ilk kurulum dahil) zaten
+        // buraya iner; (c) Sync salt-okurdur, tekrarı zararsızdır.
         // Ayrı bir komut olarak GİDER (Sync'in kendi event akışına karışmaz): Supervisor sıradaki komut olarak
         // işler ve hatası AYRI bir kodla döner ("branchListFailed", SupervisorHost.cs:138) — RunEndingErrorCodes'ta
         // ve SyncErrorCodes'ta OLMADIĞI için bir Sync hatası gibi yanlış atfedilemez.
@@ -1864,7 +1867,7 @@ public sealed partial class RunViewModel : ObservableObject
         Phase = AppPhase.Running; // [C2] Idle → Running
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planlama bitti — Stop artık IsRunning üzerinden erişilebilir
         // [Review fix, Task 16] EngineDiedMessage burada temizlenir: runStarted, VM'in CANLI engine instance'ıyla
-        // IPC round-trip yaptığının ilk somut kanıtıdır — RebuildAsync/ContinueAsync'de ERKEN temizlemek YANLIŞ
+        // IPC round-trip yaptığının ilk somut kanıtıdır — gönderim anında (BeginRunAsync) ERKEN temizlemek YANLIŞ
         // olurdu (gönderim henüz round-trip olmadan "iyimser" temizlik, engine hâlâ ölüyken bile mesajı silerdi).
         // Temizlenmezse EngineDiedMessage tek bir ölümden sonra SONSUZA DEK stale kalır — sıradaki N run tamamen
         // başarılı olsa bile "engine öldü" mesajı güncel engine sağlığını YANLIŞ yansıtmaya devam eder.
@@ -2291,7 +2294,7 @@ public sealed partial class RunViewModel : ObservableObject
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
-        DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde (Continue segmentleri dahil) kümülatif özet
+        DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde kümülatif özet
         RefreshRunSurface();
         // [T8 fix round 1 · I1] Koşunun kendiliğinden Sync için bitişi BURASIDIR (runStopped değil): faz ve akış
         // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz.

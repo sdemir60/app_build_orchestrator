@@ -154,9 +154,10 @@ public partial class MainWindow : Window
         // abonelik SONRA — seed'in kendisi kaydetme fırtınası tetiklemesin. Perf'te kalıcı değer yoksa VM varsayılanı
         // (Balanced/4, C2 F2) KORUNUR (SetPerfMode PerfMode + Parallelism'i birlikte tutar).
         // [D7 M3] Son repo'yu SEED et — DOĞRUDAN RootPath set'i yalnız OnRootPathChanged'i (Empty→Boot) sürer,
-        // komut göndermez (ChangeRepositoryAsync DEĞİL). [spec 2026-09-18 §6.2] Açılışın Sync'i motor İLK kez
-        // hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır. İlk-koşuda (kayıtlı repo yok →
-        // { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository" daveti korunur.
+        // komut göndermez (Settings Save'in kök değişimi gibi Sync başlatmaz). [spec 2026-09-18 §6.2] Açılışın
+        // Sync'i motor İLK kez hazır olunca gider (RunViewModel.OnEngineReady) — seed o andan önce yapılır.
+        // İlk-koşuda (kayıtlı repo yok → { Length: > 0 } guard'ı) Phase Empty KALIR ve E2 "Pick a repository"
+        // daveti korunur.
         if (saved.RepositoryRoot is { Length: > 0 } repo) _vm.RootPath = repo;
         if (saved.Configuration is { } cfg) _vm.Configuration = cfg;
         // [spec 2026-09-18 §1-7] Branch seed EDİLMEZ: değer checkout edilmiş branch'tir ve ilk envanterle okunur.
@@ -304,7 +305,7 @@ public partial class MainWindow : Window
 
         _engine.EngineExited += code => Dispatcher.Invoke(() =>
         {
-            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning/CanContinue) bu sinyale bağlıdır.
+            // [Task 16 — It-2 devir §8] VM'in run-state'i (IsStarting/IsRunning) bu sinyale bağlıdır.
             // Motor durumu görsel şeridi (sticky ribbon) T37'nin işidir — C1'de yalnız VM state'i güncellenir.
             _vm.OnEngineExited(code);
         });
@@ -394,7 +395,7 @@ public partial class MainWindow : Window
         var commandForIntent = new Dictionary<WindowIntent, ICommand>
         {
             [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
-            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Continue/Build (duruma göre)
+            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Build (duruma göre)
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
             [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (her zaman Shortcuts'ta)
             [WindowIntent.ShowNotes] = new RelayCommand(OnNotesRequested),   // Ctrl+F1 → What's new (toggle)
@@ -404,7 +405,7 @@ public partial class MainWindow : Window
             InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
     }
 
-    /// <summary>Çıplak F5: koşarken → Stop, stopped'ta → Continue, aksi → Build (v7 K6). Karar SAF
+    /// <summary>Çıplak F5: koşarken → Stop, koşmayan her durumda → Build (v7 K6). Karar SAF
     /// <see cref="KeyboardShortcuts.Resolve"/>'te; burada yalnız uygulanır (CanExecute reddederse no-op).</summary>
     private void OnF5Pressed() =>
         DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked));
@@ -1034,8 +1035,7 @@ public partial class MainWindow : Window
     // açmıyor, Settings'e yönlendiriyor ve kök orada (taslakta) düzenleniyor — uygulanması Save'e ertelenir
     // (RunViewModel.ApplySettingsAsync). Klasör seçicinin kendisi (PickFolder) Settings'in "Browse…"
     // düğmesine geçti. Kalıcı durumdan gelen kök DOĞRUDAN RootPath set'iyle seed edilir (yukarıda, D7 M3 —
-    // seed-but-idle, hiçbir komut göndermez); RunViewModel.ChangeRepositoryAsync'in üretimde çağıranı YOKTUR,
-    // yalnız testlerden sürülür.
+    // seed'in kendisi komut göndermez; açılışın Sync'i motor hazır olunca RunViewModel.OnEngineReady'den gider).
 
     /// <summary>[design v1.11.0 §2.7-4] Başlıktaki filtre chip'ini tazeler. Etiketin TEK kaynağı
     /// <see cref="ProjectFilter.ChipLabel"/>'dır — seçili KÜMEYİ <c>" + "</c> ile listeler (çoklu filtre);
@@ -1074,7 +1074,7 @@ public partial class MainWindow : Window
 
     /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
-    /// [D7 M3] RootPath değişimi (ilk klasör seçimi, Settings→Change, Choose Folder — hepsi RootPath'i set eder)
+    /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
     private void OnWorkflowPreferenceChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -1117,9 +1117,8 @@ public partial class MainWindow : Window
         Dwm.DwmSetWindowAttribute(hwnd, Dwm.DWMWA_BORDER_COLOR, ref border, sizeof(int));
 
         // [T62] Tepsi: X artık kapatmaz (K5) → uygulama tepsiden yönetilir.
-        _tray = new AppTrayIcon();
+        _tray = new AppTrayIcon(_vm.StopCommand);
         _tray.RestoreRequested += ShowFromTray;
-        _tray.StopRequested += () => { if (_vm.StopCommand.CanExecute(null)) _vm.StopCommand.Execute(null); };
         _tray.ExitRequested += ExitApplication;
 
         SetUpTrayBuildIndicator(_tray);
@@ -1223,9 +1222,8 @@ public partial class MainWindow : Window
     /// <summary>[E2/T16] Autostart ile açılış: pencere GÖSTERİLMEDEN tepside (gizli) başlar. HWND'i erkenden
     /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
-    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Oto-Sync YOKtur (normal açılışta da yok — [D7 M3]
-    /// RepositoryRoot açılışta SEED edilir/hatırlanır ama SEED-BUT-IDLE: doğrudan RootPath set'i yalnız Empty→Boot
-    /// sürer, Sync tetiklemez; autostart yolu bugünkü "temiz" başlangıcı tepside korur).</summary>
+    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
+    /// olunca koşar (<c>RunViewModel.OnEngineReady</c>); RepositoryRoot'un seed'i ([D7 M3]) kendisi komut göndermez.</summary>
     public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
@@ -1237,7 +1235,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Tepsi → Exit: GERÇEK çıkış. Kaskat: App.Shutdown → App.OnExit → EngineHost.DisposeAsync →
-    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>dotnet build</c> child'ları.</summary>
+    /// outer Job (KILL_ON_JOB_CLOSE) → Supervisor ve tüm <c>MSBuild.exe</c> child'ları.</summary>
     private void ExitApplication()
     {
         _exiting = true;

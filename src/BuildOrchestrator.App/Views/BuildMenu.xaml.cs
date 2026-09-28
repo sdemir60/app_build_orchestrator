@@ -9,7 +9,7 @@ using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Views;
 
-/// <summary>[D6/T40] Build menüsünün TEK maddesi (saf model — koşullu kurulum + F5 rozetinin yeri view'siz de
+/// <summary>[D6/T40] Build menüsünün TEK maddesi (saf model — maddelerin kurulumu + F5 rozetinin yeri view'siz de
 /// doğrulanabilir). <paramref name="Kbd"/> <c>null</c> ⇒ rozet YOK.</summary>
 public readonly record struct BuildMenuItem(string Kind, string Title, string Desc, string? Kbd);
 
@@ -46,7 +46,7 @@ public partial class BuildMenu : UserControl
         Loaded += (_, _) => RefreshRows();
     }
 
-    /// <summary>[test yüzeyi] O anki (VM durumundan türetilmiş) menü modeli — koşullu maddeler + F5 rozetinin yeri.</summary>
+    /// <summary>[test yüzeyi] O anki menü modeli — her fazda aynı üç madde + F5 rozetinin yeri (tek değişken: Rebuild açıklamasındaki toplam proje sayısı).</summary>
     internal IReadOnlyList<BuildMenuItem> Items { get; private set; } = [];
 
     /// <summary>[test yüzeyi] Çizilmiş satırlar — enable/hover/tooltip durumu buradan okunur, tıklama kablajı
