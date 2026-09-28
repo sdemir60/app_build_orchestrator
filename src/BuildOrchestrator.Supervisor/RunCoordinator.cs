@@ -725,6 +725,9 @@ public sealed class RunCoordinator(
             // [koşullu yeniden derleme] Önizlemenin kök ADLARI TAM plandan çözülür: kapsamlı koşuda düğüm haritası
             // yalnız hedefi taşır ve kök adları dosya adına düşerdi.
             nameById = runPlan.Plan.Nodes.ToDictionary(n => n.Id, n => n.Name, StringComparer.OrdinalIgnoreCase);
+            // [Clean] Clean'in bağımlılık anlamı yoktur: plan kenarsız ve döngüsüz kurulur (gerekçe CleanRunScope'ta).
+            // Kapsamdan ÖNCE uygulanır — satır Clean'i de aynı kuraldan geçer, hedefin bayat bağımlılık listesi boş çıkar.
+            if (cmd.Mode == RunMode.Clean) runPlan = runPlan with { Plan = CleanRunScope.Of(runPlan.Plan) };
             if (cmd.ScopeProjectId is { } scopeId)
             {
                 var scope = ProjectRunScope.Of(runPlan.Plan, scopeId);
