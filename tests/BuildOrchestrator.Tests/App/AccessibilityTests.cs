@@ -398,7 +398,7 @@ public class AccessibilityTests
     /// <para><b>Taranan üç kök (hepsi üretim yoluyla realize):</b>
     /// <list type="number">
     ///   <item><b>Kabuk</b> (<see cref="MainWindowHost"/>): graf düğümleri, proje kartları, ayraçlar, konsol
-    ///     başlığı, üç pill, title bar, Settings diyaloğu. <b>ActionBar alt-ağacı HARİÇ</b> — ActionBar adlarını
+    ///     başlığı, iki pill, title bar, Settings diyaloğu. <b>ActionBar alt-ağacı HARİÇ</b> — ActionBar adlarını
     ///     <c>Loaded</c>'da kurar, bu fixture ise pencereyi ASLA <c>Show</c> etmez (motor doğmasın diye); o yüzden
     ///     ActionBar aşağıda KENDİ kökünde, gerçekten realize edilerek taranır.</item>
     ///   <item><b>ActionBar</b>: sayaç chip'leri, sync/stop, split-button, Debug|Release, branch popover'ı.

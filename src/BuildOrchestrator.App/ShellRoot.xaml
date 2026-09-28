@@ -43,7 +43,7 @@
 
         <controls:DsSplitter x:Name="PART_LeftSplitter" Grid.Row="1" LineOrientation="Horizontal" />
 
-        <!-- Projects paneli: PanelHeader + StickyLayerList + LatestPill (aynı Grid'de üst üste) -->
+        <!-- Projects paneli: PanelHeader + StickyLayerList (aynı Grid'de üst üste) -->
         <DockPanel Grid.Row="2">
           <controls:PanelHeader x:Name="PART_ProjectsHeader" DockPanel.Dock="Top" Text="PROJECTS">
             <controls:PanelHeader.LeftContent>
