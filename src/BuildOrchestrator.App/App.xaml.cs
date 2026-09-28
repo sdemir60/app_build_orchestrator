@@ -118,7 +118,7 @@ public partial class App : Application
         // true → HKCU\...\Run altına "<exe> --autostart" yazılır, false → silinir. Registry erişimi seam arkasında.
         var uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath).Load();
         new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand())
-            .Apply(uiState.Autostart);
+            .Apply(ShellSwitches.StartWithWindows(uiState));
 
         var window = Services.GetRequiredService<MainWindow>();
         // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.

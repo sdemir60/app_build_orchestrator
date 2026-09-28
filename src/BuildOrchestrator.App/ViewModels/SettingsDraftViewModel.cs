@@ -81,12 +81,18 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
     /// doğar (sıra/metin burada yeniden yazılmaz).
-    /// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <c>Start with Windows</c>, <c>Start minimized
-    /// to tray</c>, <c>Close to tray</c> ve <c>Show notifications</c> yalnız bu taslakta yaşar — <see cref="CommitAsync"/>
-    /// onları yazmaz, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşımaz, konsola not düşmez; diyalog her açılışta
-    /// yeni bir taslak kurduğu için varsayılana dönerler. <see cref="ClearAll"/> onları da varsayılanına döndürür
-    /// (prototip parity). Yalnız <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>) ve <c>Stash and switch
-    /// branches</c> (<see cref="StashOnBranchSwitch"/>) gerçektir.</para></summary>
+    /// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <c>Close to tray</c> ve <c>Show notifications</c>
+    /// yalnız bu taslakta yaşar — <see cref="CommitAsync"/> onları yazmaz, <see cref="ToFile"/>/<see cref="LoadFrom"/>
+    /// taşımaz, konsola not düşmez; diyalog her açılışta yeni bir taslak kurduğu için varsayılana dönerler.
+    /// <see cref="ClearAll"/> onları da varsayılanına döndürür (prototip parity). <c>Pull before build</c>
+    /// (<see cref="PullExternalsBeforeBuild"/>) ve <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>)
+    /// gerçektir.</para>
+    /// <para><b>[DEĞİŞEN KURAL — P4, kullanıcı kararı 2026-09-29]</b> ESKİ: <c>Start with Windows</c> ve <c>Start
+    /// minimized to tray</c> de yalnız taslaktaydı. Artık <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR:
+    /// ctor'un <c>saved</c> parametresi onları tohumlar, <see cref="CommitAsync"/> yazar, <see cref="ToFile"/>/
+    /// <see cref="LoadFrom"/> taşır, değişen değer konsola not düşer.</para>
+    /// <para>TODO(close-to-tray merge): P3 Close to tray ve Show notifications'ı da aynı tabloya taşıdı — merge'de ilk
+    /// paragraf kalkar.</para></summary>
     public IReadOnlyList<GeneralSettingGroupViewModel> GeneralGroups { get; }
 
     private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];
@@ -125,14 +131,19 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// taslak da boş kalır.</summary>
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
+    /// <param name="saved">[P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
+    /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
+    /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
-        bool stashOnBranchSwitch = false)
+        bool stashOnBranchSwitch = false, UiState? saved = null)
     {
         _repositoryRoot = repositoryRoot;
         GeneralGroups = BuildGeneralGroups();
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         StashOnBranchSwitch = stashOnBranchSwitch;
+        if (saved is not null)
+            foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -180,9 +191,16 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 
-    /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar.</summary>
-    public SettingsFile ToFile() =>
-        SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch);
+    /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar. [P4] Kabuk anahtarları
+    /// (<see cref="ShellSwitches"/>) <see cref="SettingsFile.From"/>'un parametresi DEĞİLDİR — tablo satır satır
+    /// <see cref="ShellSwitch.WriteFile"/> ile AYRICA yazılır (yeni bir anahtar <see cref="SettingsFile.From"/>'un
+    /// imzasını büyütmez).</summary>
+    public SettingsFile ToFile()
+    {
+        var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch);
+        foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
+        return file;
+    }
 
     /// <summary>Bir ayar dosyasını <b>FORMA</b> yükler. Hiçbir şey UYGULANMAZ: Save'e kadar ne
     /// <see cref="RunViewModel"/> ne UiState değişir (§2.9 — onay dialogu da yoktur).
@@ -210,6 +228,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
+        // [P4] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
+        // dokunulmaz kalır — pull/stash'in deseninin tablo üzerinden tekrarı.
+        foreach (var s in ShellSwitches.All)
+            if (s.ReadFile(file) is { } v) GeneralRow(s.Setting).IsOn = v;
         // else: anahtar dosyada yok — mevcut harici liste KORUNUR (yukarıdaki XML doc).
     }
 
@@ -250,7 +272,11 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <summary>Kaydet (commit): taslağı <see cref="UiState.LayerPatterns"/> VE <see cref="UiState.ExternalProjects"/>'e
     /// (K5) AYNI commit'te persist eder ve TEK yoldan uygular — <see cref="RunViewModel.ApplySettingsAsync"/>
     /// katmanları, harici projeleri, bekleyen repo kökünü ve TEK Sync'i birlikte sürer. Cancel bu metodu
-    /// ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.</summary>
+    /// ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.
+    /// <para>[P4] <see cref="ShellSwitches.Commit"/> kabuk anahtarlarını (Start with Windows, Start minimized to tray)
+    /// AYNI <paramref name="store"/>'a yazar ve değişenlerin konsol notunu döner — <c>store.Save</c>'DEN ÖNCE
+    /// çağrılır (notlar değişimden ÖNCEKİ kayıtlı değere göre hesaplanır), notlar ise <see cref="RunViewModel.ApplySettingsAsync"/>'e
+    /// <c>settingNotes</c> olarak geçer.</para></summary>
     public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
@@ -260,8 +286,9 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
+        var settingNotes = ShellSwitches.Commit(state, s => GeneralRow(s).IsOn);
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
