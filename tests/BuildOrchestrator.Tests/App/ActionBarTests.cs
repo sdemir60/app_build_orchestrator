@@ -961,7 +961,7 @@ public partial class ActionBarTests
         var (bar, window) = Realize(vm);
         Assert.True(bar.BranchChip.IsEnabled);
 
-        vm.OnEvent(new SyncStartedEvent(@"D:epo", "main"));
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(bar.BranchChip.IsEnabled);
 
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
