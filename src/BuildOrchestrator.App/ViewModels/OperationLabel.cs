@@ -26,14 +26,14 @@ public static class OperationLabel
     public const string Rebuild = "REBUILD";
     /// <summary>Bakım kutusunun üçüncü ikonu (<c>RunMode.Cycles</c>). Prototiple aynı sözcük: <c>RESOLVE</c>.</summary>
     public const string Resolve = "RESOLVE";
-    /// <summary>Her <c>-t:Clean</c> koşusu — bugün satır menüsünün proje Clean'i (<c>RunMode.Clean</c>,
-    /// <see cref="ForRunMode"/>); Build menüsündeki <i>Clean Solution</i> de motoru geldiğinde aynı sözcüğü
-    /// kullanır (yalnız <c>/t:Clean</c>).</summary>
+    /// <summary>Her <c>-t:Clean</c> koşusu (<c>RunMode.Clean</c>, <see cref="ForRunMode"/>): Build menüsünün
+    /// <i>Clean Solution</i>'ı (grafın tüm projeleri) de satır menüsünün proje Clean'i de aynı sözcüğü yazar —
+    /// ikisi de yalnız <c>/t:Clean</c>'dir.</summary>
     public const string Clean = "CLEAN";
     /// <summary>Bakım kutusundaki Clean (<c>RunViewModel.CleanCommand</c>): keşfedilen HER projenin
     /// <c>bin</c>/<c>obj</c>'i + workspace'in build-state kayıtları, yalnız dosya sistemi silme (<c>/t:Clean</c>
-    /// yok). Artifacts/NuGet cache'e DOKUNMAZ — o, Optimize'ın konusudur. Menüdeki tek-proje <see cref="Clean"/>'i
-    /// (yalnız <c>/t:Clean</c>) ile karıştırılmasın diye ayrı sözcük (prototip: <c>DEEP CLEAN</c>).</summary>
+    /// yok). Artifacts/NuGet cache'e DOKUNMAZ — o, Optimize'ın konusudur. Menülerdeki <see cref="Clean"/> ile
+    /// (yalnız <c>/t:Clean</c>) karıştırılmasın diye ayrı sözcük (prototip: <c>DEEP CLEAN</c>).</summary>
     public const string DeepClean = "DEEP CLEAN";
     public const string Optimize = "OPTIMIZE";
     /// <summary>[spec 2026-09-18 §6.3] Branch chip'inden checkout (<c>RunViewModel.SelectBranch</c>). Başarıda

@@ -1193,18 +1193,25 @@ public class RunViewModelStateTests
         Assert.False(vm.Projects.Single(p => p.Id == A).CycleWaiting);
     }
 
+    /// <summary>
+    /// [I2] Kusur: cycle katkısı (paralelliğe BÖLÜNMEYEN, BaselineRounds ile ÇARPILAN terim) yalnız Pending
+    /// üyeleri sayıyordu. Grup dispatch edilir edilmez üyeler Started'a geçtiği ve orada KALDIĞI için,
+    /// çarpan tam da işin yapıldığı pencerede kayboluyor; üyeler paralelliğe bölünen building kovasına
+    /// düşüyordu. Sabit saat: 4 proje, D 1000ms'te bitti ⇒ gözlenen ortalama 1000ms.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski kurulum koşuyu <c>RunMode.Build</c> ile açıyordu: döngü kovası moddan
+    /// bağımsızdı, dolayısıyla mod önemsizdi. Artık kova yalnız turların GERÇEKTEN koştuğu <c>Cycles</c>
+    /// koşusuna aittir — gerekçe: Build menüsünün Clean'i döngü üyelerini tur koşmadan, sıradan paralel iş
+    /// olarak temizler (<see cref="A_full_clean_estimates_cycle_members_as_ordinary_parallel_work"/>). Bu test
+    /// kovanın kendi kuralını, onu kullanan tek koşuda pinler.</para>
+    /// </summary>
     [Fact]
     public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running()
     {
-        // [I2] Kusur: cycle katkısı (paralelliğe BÖLÜNMEYEN, BaselineRounds ile ÇARPILAN terim) yalnız Pending
-        // üyeleri sayıyordu. Grup dispatch edilir edilmez üyeler Started'a geçtiği ve orada KALDIĞI için,
-        // çarpan tam da işin yapıldığı pencerede kayboluyor; üyeler paralelliğe bölünen building kovasına
-        // düşüyordu. Sabit saat: 4 proje, D 1000ms'te bitti ⇒ gözlenen ortalama 1000ms.
         long now = 5_000;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now);
         StartCycleGroup(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug", 0));
         vm.OnEvent(new ProjectStartedEvent("r1", D, "D"));
         vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
 
@@ -1219,6 +1226,25 @@ public class RunViewModelStateTests
         // Grup KOŞARKEN de aynı terim: tahmin 6000'de kalır. Kusurlu hâlde üçü building kovasına düşer ve
         // 4'e bölünürdü — ham tahmin 3000/4 + 400 = 1150, EMA ile 4788.
         Assert.Equal(6000, vm.EtaMs);
+    }
+
+    /// <summary>[Clean] Build menüsünün Clean'i döngü üyelerini de temizler ama TUR KOŞMAZ: motor Clean'de döngü
+    /// anlamını düşürür (<c>Core/Planning/CleanRunScope</c>) ve her üye bir kez, sıradan bir proje gibi paralel
+    /// temizlenir. Tahmin de onları sıradan kuyruk sayar — tur çarpanı ve bölünmezlik yalnız Cycles koşusunundur
+    /// (<see cref="The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running"/>). Kusurlu hâlde aynı üç üye
+    /// 3 × 1000ms × BaselineRounds(2) = 6000ms okunurdu; gerçek iş 3 × 1000ms / 4 worker'dır.</summary>
+    [Fact]
+    public async Task A_full_clean_estimates_cycle_members_as_ordinary_parallel_work()
+    {
+        long now = 5_000;
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now);
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new ProjectStartedEvent("r1", D, "D"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
+
+        Assert.Equal(750, vm.EtaMs);
     }
 
     // ---------------------------------------------------------------- [Task 5] kümülatif renk · defter üçgeni · nötrleme

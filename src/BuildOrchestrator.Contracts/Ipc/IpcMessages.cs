@@ -92,8 +92,12 @@ public enum DependentMode { Safe, Fast }
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
 /// Çıktı kanıtı (ARCHITECTURE §7.6) silinen çıktıyı yalnız çıktı yolu türetilebilen projede görür
 /// (SDK-style'da göremez); kayıt kalsaydı bir sonraki Build böyle bir projeyi "güncel" sayıp atlardı. Kayıt
-/// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. Bugün
-/// yalnız satır menüsünden, <see cref="ScopeProjectId"/> ile birlikte gönderilir.</para></param>
+/// silinince yolu bilinen proje zaman kipine düşer ve silinmiş çıktısı <c>OutputMissing</c> okunur. İki
+/// yerden gönderilir: Build menüsünden <see cref="ScopeProjectId"/> OLMADAN — grafın TÜM projeleri, harici
+/// projeler ve döngü üyeleri dahil (Visual Studio'nun <i>Clean Solution</i>'ı) — ve satır menüsünden
+/// <see cref="ScopeProjectId"/> ile tek proje. Clean'in bağımlılık anlamı yoktur
+/// (<c>Core.Planning.CleanRunScope</c>): sıra beklenmez, döngü üyesi atlanmaz, dep-issue yazılmaz (satırdan
+/// Clean'de de bayat bağımlılık yoktur). Harici çalışma kopyaları Clean'de güncellenmez.</para></param>
 /// <param name="DependentMode">Genel incremental dependent-propagation kapısı (bkz. <c>IncrementalPlanner</c>
 /// Safe/Fast — Task 7): Build modunda WillBuild hesaplamasını besler (Safe = dirty+transitive cascade, Fast =
 /// yalnız dirty, cascade yok). Varsayılan Safe. [It-3]</param>
@@ -184,7 +188,10 @@ public sealed record SyncWorkspaceCommand(string RootPath, string Branch,
 /// <para><b>MSBuild <c>/t:Clean</c> ÇAĞRILMAZ</b> — yalnız dosya sistemi silme. Gerekçe: eski-stil
 /// projelerde <c>/t:Clean</c>'in sildiği küme (<c>FileListAbsolute.txt</c> kayıtlıları) bin/obj silmenin alt
 /// kümesidir; obj silinince o kayıt da gider; ve tracked çıktılar ortak OutDir'e yazılmışsa <c>/t:Clean</c>
-/// oradan da silerdi — "OutDir'e dokunulmaz" değişmezinin ihlali.</para>
+/// oradan da silerdi — bin/obj sıfırlaması ortak OutDir'e UZANMAMALIDIR. Bu gerekçe YALNIZ bu bakım
+/// Clean'ine aittir: <see cref="RunMode.Clean"/> koşuları (Build menüsünün ve satır menüsünün Clean'i) tam da
+/// <c>/t:Clean</c>'dir ve izli çıktıları yazıldıkları yerden — ortak OutDir dahil — Visual Studio'nun
+/// <i>Clean</i>'i gibi siler; kullanıcı bunu bilerek seçer.</para>
 /// <para>Bir koşu uçuştayken komut <c>error(cleanRejected)</c> ile REDDEDİLİR; App kapısıyla birlikte çift
 /// katmanlı korumadır. Komut döngüsünü Sync gibi bloklar (arka plan task açılmaz).</para>
 /// </summary>

@@ -29,14 +29,14 @@ public class TooltipDelayTests
         Assert.Equal(int.MaxValue, ToolTipService.GetShowDuration(owner));
     }
 
-    /// <summary>Devre dışı bırakılmış öğe de tooltip gösterir — bakım kutusunun Clean/Optimize butonları
-    /// tam olarak bunun için tooltip taşır ("not available yet").</summary>
+    /// <summary>Devre dışı bırakılmış öğe de tooltip gösterir — bakım kutusunun düğmeleri ve satır menüsünün
+    /// maddeleri koşu/Sync sürerken pasiftir ve NEDENİ ancak tooltip'ten okunur.</summary>
     [StaFact]
     public void A_disabled_owner_still_shows_its_tooltip()
     {
         AppTooltipDefaults.Apply();
 
-        var owner = new Button { ToolTip = "Clean — not available yet", IsEnabled = false };
+        var owner = new Button { ToolTip = BuildOrchestrator.App.AccessibilityNames.BuildBusyTooltip, IsEnabled = false };
 
         Assert.True(ToolTipService.GetShowOnDisabled(owner));
     }

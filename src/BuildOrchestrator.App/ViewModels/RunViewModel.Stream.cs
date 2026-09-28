@@ -165,6 +165,9 @@ public sealed partial class RunViewModel
                         RunMode.Cycles => StreamText.CyclesStarted(
                             members: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) == true),
                             prerequisites: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) != true)),
+                        // [Clean] Tam Clean hiçbir şey derlemez: satır işi kendi fiiliyle söyler (satır Clean'inin
+                        // "Clean started — a (single project)" satırıyla aynı dil).
+                        RunMode.Clean => StreamText.CleanStarted(_dirtyIds.Count, parallelism),
                         _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;

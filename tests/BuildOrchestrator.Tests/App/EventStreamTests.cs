@@ -218,6 +218,25 @@ public class EventStreamTests
         Assert.Equal("Build started — 8 projects, parallelism 4", line.Text);
     }
 
+    /// <summary>[Clean] Build menüsünün Clean'i akışı işin kendi fiiliyle açar — hiçbir şey derlemeyen bir koşu
+    /// için "Build started" yalan olurdu. Satır Clean'i zaten <c>Clean started — a (single project)</c> diyor
+    /// (<see cref="StreamText.SingleProjectStarted"/>): iki yol aynı fiili konuşur. Sayı, motorun Clean
+    /// önizlemesinin her projeye verdiği <c>true</c>'dan gelir — hepsi temizlenecek.</summary>
+    [Fact]
+    public void A_full_clean_opens_the_stream_with_clean_started()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, 3, 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true),
+            new BuildPreviewItem(@"C:\p\c.csproj", "C", true),
+        ]));
+
+        var line = Assert.Single(vm.StreamEvents, s => s.Text.Contains(" started — ", StringComparison.Ordinal));
+        Assert.Equal("Clean started — 3 projects, parallelism 4", line.Text);
+    }
+
     // [KALDIRILDI — design v1.7.0 §3.1] Eski test: "Continue satırı kalan will-build sayısını yazar".
     // Continue modu kaldırıldı; sürdürme ayrı bir segment değil, YENİ bir Build koşusudur ve onun satırı
     // yukarıdaki Build_started_line_uses_the_will_build_count tarafından zaten pinlenir.
