@@ -127,7 +127,10 @@ public sealed partial class ProjectRowViewModel : ObservableObject
 
     /// <summary>[Task 17][T53/v7Δ8] dirty=true, güncel(clean)=false, imza-yok/pre-Sync(hollow)=null.
     /// <see cref="BuildPreviewEvent"/> ile pre-populate edilir; proje succeeded olduğu ANDA (run içinde canlı)
-    /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).</summary>
+    /// <c>false</c>'a döner — bkz. <see cref="RunViewModel.OnProjectDone"/> ("succeeded→clean" geçişi).
+    /// <para>Bir sonraki DÜZ Build'in cevabıdır. Resolve koşusunun önizlemesi onu YAZMAZ: o yalnız kendi koşusunu
+    /// anlatır (kapsam dışına <c>false</c>, üyelere kendi kararı) ve yazılsaydı sonraki Build'in dalgası
+    /// (<see cref="RunViewModel.ScopeFor"/>) yanlış kümeyi yakardı — bkz. <see cref="RunViewModel.OnBuildPreview"/>.</para></summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Status))]
     [NotifyPropertyChangedFor(nameof(Standing))]
@@ -156,7 +159,9 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// ve <see cref="RunViewModel.InRunQueueFor"/>'un kuyruğu AYNI bayrağı okur (tek doğruluk kaynağı, kopya
     /// YASAK): koşullu proje ne dalgada ne kuyruktadır — WillBuild=true olsa da KESİN değildir.
     /// <see cref="ViewModels.DecisionLabel"/> da bunu okur: <see cref="WillBuildReason.WaitingForDependency"/>
-    /// TEK BAŞINA "bekliyor" demez, bu koşu GERÇEKTEN bekletiyorsa der.</summary>
+    /// TEK BAŞINA "bekliyor" demez, bu koşu GERÇEKTEN bekletiyorsa der.
+    /// <para><see cref="WillBuild"/>'le bir ÇİFTTİR: Resolve koşusunun önizlemesi ikisini de yazmaz (kapsam dışını
+    /// koşullu saymaz) — bkz. <see cref="RunViewModel.OnBuildPreview"/>.</para></summary>
     [ObservableProperty] private bool _conditional;
 
     /// <summary>[Task 4 · koşullu yeniden derleme] <see cref="WillBuildReason.WaitingForDependency"/> iken
@@ -1918,10 +1923,20 @@ public sealed partial class RunViewModel : ObservableObject
             // önizlemeyle TAZELENİR: aksi halde arka planda değişen bir proje (özellikle döngü üyesi) yeşil/
             // "up to date" kalır, yalnız elle Sync düzeltir.
             if (RunActive && row.State is ProjectRowState.Succeeded or ProjectRowState.Failed or ProjectRowState.Skipped) continue;
-            row.WillBuild = item.WillBuild;
-            row.WillBuildReason = item.Reason; // gerekçe planla AYNI guard'ın içinde — ikisi ayrışamaz
-            row.Conditional = item.Conditional;         // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
-            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — WillBuild/Reason'la AYNI guard
+            // [Resolve → Build] Plan bayrağı (WillBuild + Conditional) bir sonraki DÜZ Build'in cevabıdır: Sync'in
+            // önizlemesi yazar, koşunun canlı geçişleri (OnProjectDone) tazeler. Resolve koşusunun önizlemesi ise
+            // yalnız KENDİ koşusunu anlatır — kapsam dışı her projeye, kirli olsa da, false; üyelere kendi kararı —
+            // bu yüzden bayrağa YAZMAZ. Yazsaydı cevap koşudan sonra da kalır ve sonraki Build'in dalgası
+            // (ScopeFor) yanlış kümeyi yakardı. Ölçülen kusur: Resolve'un dokunmadığı 104 kirli projenin hiçbiri
+            // dalgada yanmadı, Resolve'da patlayan bir döngü üyesi yandı (ChoreographyTests.After_a_resolve_*).
+            // Gerekçe ve kökler moddan bağımsız disk olgularıdır; onlar her önizlemeden yazılır.
+            if (!IsResolvingCycles)
+            {
+                row.WillBuild = item.WillBuild;
+                row.Conditional = item.Conditional;     // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
+            }
+            row.WillBuildReason = item.Reason;          // gerekçe de AYNI (terminal satır) guard'ın içinde
+            row.DependencyRoots = item.DependencyRoots; // [Task 4] etiketin tooltip'i — Reason'la AYNI guard
             // [Task 1 review fix round 1] InRunQueue AYRI bir kanaldır (run-scoped) ve yukarıdaki karar
             // alanlarıyla (WillBuild/Reason/Conditional/DependencyRoots) AYNI guard'ı PAYLAŞAMAZ: onlar koşu
             // bittikten sonra da tazelenir (bu task), InRunQueue ise YALNIZ koşu sürerken yükselir — belgelenen
@@ -1997,11 +2012,10 @@ public sealed partial class RunViewModel : ObservableObject
         // Discovered) kalır: State dokunulmaz, koşu tablosunun atlandı sayacı (RunCounters.Skipped)
         // bu projeyi hiç GÖRMEZ; stream zaten bu gerekçeyi toplu tek satırda
         // birikiyordu (RunViewModel.Stream.cs, DEĞİŞMEDİ). [DEĞİŞEN KURAL — review fix I-1] SkipReason'a YİNE
-        // DE yazılır: motor bu run için WillBuild'i her pre-skip'te (kapsam dışı da GERÇEKTEN kirli de) false
-        // ZORLAR (RunCoordinator.cs — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan
-        // söylemesin"), yani State Pending'de kalınca satırın TEK kanıtı bu alandır — yazılmazsa
-        // ConsoleEmptyState.Pending() elde kalan tek bilgiden ("WillBuild=false") "Up to date" der, kapsam dışı
-        // ama GERÇEKTEN kirli bir proje için YALAN olurdu. SkipReason'ın App'teki TEK tüketicisi
+        // DE yazılır: State Pending'de kalınca satırın bu koşudaki TEK kanıtı bu alandır. Plan bayrağı (WillBuild)
+        // bunu söyleyemez — o bir sonraki düz Build'in cevabıdır ve Resolve'un önizlemesi onu yazmaz
+        // (OnBuildPreview); alan yazılmasa ConsoleEmptyState.Pending() satırı o plandan anlatır ("Will build" /
+        // "Up to date") ve bu koşu hakkında yanlış konuşurdu. SkipReason'ın App'teki TEK tüketicisi
         // ConsoleEmptyState'tir (bkz. ConsoleEmptyState.Pending/Reason) — sayaç/filtre State okur, bundan
         // ETKİLENMEZ. Bir sonraki run'ın NeutralizeRows'u bunu zaten temizliyor (kopya sıfırlama YOK). Kapsam
         // İÇİ gerçek bir "up to date" skip (SkipReasons.UpToDate) bu dalın DIŞINDA kalır ve aşağıdaki normal

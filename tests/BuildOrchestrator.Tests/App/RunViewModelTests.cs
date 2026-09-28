@@ -318,8 +318,8 @@ public class RunViewModelTests
         Assert.Equal(SkipReasons.UpToDate, upToDateDep.SkipReason);
 
         // Kapsam dışı pre-skip motorun kendi gerekçesiyle gelir; State'i HİÇ etkilemez (Pending kalır) ama
-        // [review fix I-1] SkipReason'ı YİNE DE taşır — satırın TEK kanıtı budur (WillBuild motor tarafından
-        // false ZORLANMIŞ, bkz. ConsoleEmptyState.Pending'in yorumu), ConsoleEmptyStateTests bunu ayrıca pinler.
+        // [review fix I-1] SkipReason'ı YİNE DE taşır — satırın bu koşudaki TEK kanıtı budur (WillBuild bir sonraki
+        // düz Build'in planıdır, bkz. ConsoleEmptyState.Pending'in yorumu), ConsoleModesTests bunu ayrıca pinler.
         vm.OnEvent(new ProjectSkippedEvent("r1", outOfScopeId, SkipReasons.OutOfCycleScope));
         Assert.Equal(ProjectRowState.Pending, outOfScope.State);
         Assert.Equal(SkipReasons.OutOfCycleScope, outOfScope.SkipReason);
@@ -340,9 +340,9 @@ public class RunViewModelTests
     }
 
     // [Task 2 review fix I-1] Kapsam dışı bir satırın SkipReason'ı State'ten BAĞIMSIZ taşınır — konsol sayfası
-    // motorun GERÇEKTEN söylediği gerekçeyi gösterir, ConsoleEmptyState'in WillBuild=false'tan (motor bunu
-    // TÜM pre-skip'ler için zorlar, kapsam dışı da güncel de) "Up to date" TÜRETMESİNİ engeller. Bu, satır
-    // seviyesinde ConsoleModesTests'in ayrı bir testinde de pinlenir (ConsoleEmptyState.Pending).
+    // motorun GERÇEKTEN söylediği gerekçeyi gösterir, ConsoleEmptyState'in satırı plan bayrağından (WillBuild —
+    // bir sonraki düz Build'in cevabı) anlatmasını engeller. Bu, satır seviyesinde ConsoleModesTests'in ayrı bir
+    // testinde de pinlenir (ConsoleEmptyState.Pending).
     [Fact]
     public async Task Out_of_cycle_scope_row_keeps_its_SkipReason_so_its_project_page_states_the_real_cause()
     {

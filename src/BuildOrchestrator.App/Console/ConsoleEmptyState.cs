@@ -109,11 +109,11 @@ public static class ConsoleEmptyState
     {
         // [Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e TAŞIMAZ
         // (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ama SkipReason'ı yine de taşır, tam da bu yüzden.
-        // Bu kontrol İLK sırada: aksi halde satırın önizleme anında ZORLANMIŞ WillBuild=false'u (RunCoordinator.cs
-        // — "amber 'derlenecek' noktası hemen ardından 'skipped' geçen satırda yalan söylemesin", tüm pre-skip
-        // edilenler için, kapsam dışı da güncel de aynı yoldan geçer) aşağıdaki "Up to date" dalına düşer ve
-        // GERÇEKTEN kirli ama kapsam dışı bir proje için yanlış konuşurdu. Metin Skipped dalındakiyle AYNI
-        // sabiti okur (kopya YASAK) — motor konuşsa da konuşmasa da kullanıcı aynı cümleyi görür.
+        // Bu kontrol İLK sırada: aşağıdaki dallar satırı plan bayrağından (WillBuild) anlatır ve o bayrak bir
+        // sonraki DÜZ Build'in cevabıdır — Resolve'un kendi önizlemesi onu yazmaz (RunViewModel.OnBuildPreview).
+        // Kontrol olmasa sayfa kapsam dışı kirli bir projeye "Will build", güncel olana "Up to date" derdi; ikisi
+        // de bu koşu hakkında değildir. Metin Skipped dalındakiyle AYNI sabiti okur (kopya YASAK) — motor konuşsa
+        // da konuşmasa da kullanıcı aynı cümleyi görür.
         if (row.SkipReason == SkipReasons.OutOfCycleScope) return OutOfCycleScopeText;
         // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman WillBuild=false verir (Build bir
         // döngüyü asla derlemez, ARCHITECTURE §7.4) — o "false"u "güncel" diye okumak yanlış olurdu.

@@ -92,20 +92,31 @@ public class GraphRenderTests
     // ---------------------------------------------------------------- ilk açılış dalgası
 
     /// <summary>
-    /// §2.3 "İlk açılış": gecikme = build-order index × 9ms, tavan 520ms.
+    /// §2.3 "İlk açılış": gecikme = build-order index × 9ms, ama dalganın tamamı 520ms'yi aşmaz — büyük grafta
+    /// aralık <c>520 / (n − 1)</c>'e daralır.
     ///
     /// <para><b>Eski iddia:</b> <c>The_layer_stagger_is_55ms_per_layer_capped_at_330ms</c> — gecikme KATMAN
     /// başınaydı, yani bir katmandaki 40 düğüm AYNI ANDA beliriyordu. v1.3.0 dalgayı DÜĞÜM başına yaptı ki
     /// grafın okuma yönünü (üstten alta, soldan sağa) izlesin.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı gözlemi]</b> Sonraki iddia
+    /// (<c>The_reveal_delay_is_nine_ms_per_build_order_index_capped_at_520</c>): tavan DÜĞÜM başınaydı
+    /// (<c>min(index × 9, 520)</c>) ve 58. düğümden sonrası 520'de aynı anda beliriyordu — 184 projelik gerçek
+    /// grafta düğümlerin %68'i. Gerekçe <see cref="GraphRevealTests"/>'in yayılma testinde. 58 ve daha az
+    /// düğümde sayılar değişmedi (ilk üç satır).</para>
     /// </summary>
     [Theory]
-    [InlineData(0, 0.0)]
-    [InlineData(1, 9.0)]
-    [InlineData(57, 513.0)]
-    [InlineData(58, 520.0)]   // 522 → tavan
-    [InlineData(1000, 520.0)]
-    public void The_reveal_delay_is_nine_ms_per_build_order_index_capped_at_520(int index, double expected)
-        => Assert.Equal(expected, GraphView.RevealDelayMs(index), 6);
+    [InlineData(0, 3, 0.0)]
+    [InlineData(1, 3, 9.0)]
+    [InlineData(57, 58, 513.0)]       // 57 aralık × 9 = 513 → tavanın altında, tempo aynı
+    [InlineData(1, 59, 520.0 / 58)]   // 58 aralık × 9 = 522 → aralık daralır
+    [InlineData(58, 59, 520.0)]       // son düğüm tam tavanda başlar
+    [InlineData(1, 184, 520.0 / 183)] // gerçek çalışma alanı: ~2.84ms
+    [InlineData(183, 184, 520.0)]
+    [InlineData(0, 1, 0.0)]           // tek düğüm: gecikme yok
+    public void The_reveal_delay_is_nine_ms_per_node_but_the_whole_wave_fits_in_520ms(
+        int index, int count, double expected)
+        => Assert.Equal(expected, GraphView.RevealDelayMs(index, count), 6);
 
     /// <summary>Beliriş 300ms ease-out ve 5px yukarıdandır — sabitler liste satırıyla ORTAK
     /// (<see cref="RevealStagger"/>), yani ikisi asla sürüklenemez.</summary>
