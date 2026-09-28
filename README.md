@@ -262,8 +262,8 @@ the running instance first — tray icon → Exit).
    - *Clean* — `msbuild /t:Clean` on every project, external projects and cycle members included; nothing is
      compiled and the caches are untouched. Like Visual Studio's *Clean Solution*, it deletes every output
      MSBuild recorded for a project, wherever it was written — a shared output folder included. Each cleaned
-     project reads *never built* until the next *Build* compiles it (*Resolve cycles*, for a cycle member). No
-     confirmation; *Stop* stops it.
+     project reads *never built* until the next *Build* compiles it — *Resolve cycles*, for a cycle member, and
+     when a Clean cleaned any, the event stream says so as it ends. No confirmation; *Stop* stops it.
 
    **Every operation opens the same way.** A short neutral moment, then the projects this operation will touch
    light amber one at a time in random order, then everything else fades back and the run begins. The run

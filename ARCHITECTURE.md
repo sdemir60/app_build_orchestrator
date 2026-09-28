@@ -1041,7 +1041,8 @@ as this run's work — the queue colour, the fixed progress denominator and the 
 until a project is actually cleaned. Like a `Cycles` run's preview, it does not write the rows' will-build flag
 (§7.4): each result writes it instead, with the answer the next Sync will give — to build again, except a cycle
 member, which a plain `Build` never compiles — and a row the run never reached, say after a Stop, keeps what the
-last Sync said.
+last Sync said. For the same reason the end of a Clean that cleaned cycle members is spelled out in the event
+stream: `N cycle projects cleaned — run Resolve cycles before Build` (§13.2).
 
 Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
 the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
@@ -2608,7 +2609,11 @@ before it. An automatic Sync clears nothing and adds at most one line of its own
 for a git operation (`waiting for git — …`). A git refusal adds one short `warn` line — a branch switch refused
 on a dirty tree, a pull refused (§10.3, §10.5): no glyph (the amber `▸`, like `sync` and `info`), text in the
 same amber the console gives a `warning:` line, and typed like `info` rather than printed at once like a
-failure; it carries no project, so it is not clickable.
+failure; it carries no project, so it is not clickable. A Clean that cleaned cycle members closes with one more
+`info` line right after its `Completed` or `Stopped` line — `N cycle projects cleaned — run Resolve cycles before
+Build` — because a plain `Build` never compiles a cycle (§8.1). It counts only the members actually cleaned (not
+one the run never reached, not one whose clean failed), is absent when there are none, and goes to the stream
+alone: the console keeps the operation's raw log.
 The **plan surface** — rows, graph nodes, the cycle map, the *to build* count — follows its own rule. No Sync
 empties the plan: the Sync button and a branch change only blank the list and the graph on screen and bring
 them back with the reveal (§10.2), and the other kinds reconcile the rows in place, replaying the reveal only
