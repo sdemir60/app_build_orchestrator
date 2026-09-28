@@ -21,9 +21,6 @@ public class SingleProjectRunTests
     private static StartRunCommand Scoped(string target, RunMode mode = RunMode.Build, string runId = "r1") =>
         Start(mode, parallelism: 2, runId) with { ScopeProjectId = Id(target) };
 
-    private static List<string> LogTextsFor(Harness h, string name) => h.Events.OfType<ProjectLogEvent>()
-        .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
-
     [Fact]
     public async Task Only_the_target_enters_the_run_and_the_others_are_never_mentioned()
     {
@@ -238,6 +235,31 @@ public class SingleProjectRunTests
             Assert.Null(target.FailedAt);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>
+    /// [Clean] Bayat bağımlılık kuralı DERLEMEYE özgüdür ve satır Clean'ine sızmaz: <c>-t:Clean</c> hiçbir şeye
+    /// link'lenmez, dolayısıyla "son bilinen çıktıya karşı derlendi" uyarısı ve ▲ yalan olurdu. Clean'in bağımlılık
+    /// anlamı yoktur (<c>Core.Planning.CleanRunScope</c>) — kapsam o planın ÜSTÜNDE kurulur ve hedefin bayat
+    /// bağımlılık listesi boş çıkar. (Derleyen kapsamlı koşunun kuralı DEĞİŞMEDİ:
+    /// <see cref="A_stale_dependency_becomes_a_dep_issue_with_a_warn_line_and_a_note_in_the_ledger"/>.)
+    /// </summary>
+    [Fact]
+    public async Task A_scoped_clean_carries_no_stale_dependency_issue()
+    {
+        var plan = PlanOf(
+            Node("Current", willBuild: false),
+            Node("Dirty", willBuild: true),
+            Node("Target", deps: ["Current", "Dirty"], willBuild: true));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Scoped("Target", RunMode.Clean), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Null(Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).DepIssues);
+        Assert.DoesNotContain(LogTextsFor(h, "Target"), line => line.StartsWith("warning:", StringComparison.Ordinal));
+        Assert.Equal(0, Assert.Single(h.Events.OfType<RunCompletedEvent>()).DepIssueCount);
     }
 
     /// <summary>Planda olmayan bir hedef (bayat topoloji: proje silinmiş/taşınmış) koşuyu HİÇ başlatmaz —

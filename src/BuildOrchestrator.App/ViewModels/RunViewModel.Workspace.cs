@@ -275,6 +275,7 @@ public sealed partial class RunViewModel
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
         RebuildProjectCommand.NotifyCanExecuteChanged();
         CleanProjectCommand.NotifyCanExecuteChanged();
+        CleanAllCommand.NotifyCanExecuteChanged(); // [Clean] Build menüsünün Clean'i Build'in kapısındadır
         CleanCommand.NotifyCanExecuteChanged(); // [clean] aynı kapıdan geçer — İKİNCİ bir liste açılmaz
         OptimizeCommand.NotifyCanExecuteChanged(); // [optimize] aynı kapı, aynı liste
         PullRepositoryCommand.NotifyCanExecuteChanged(); // [v1.16.0] chip de SyncBusy/CleanBusy'ye bağlıdır (CanPullRepository)
@@ -977,6 +978,7 @@ public sealed partial class RunViewModel
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da topoloji kapısındadır
         RebuildProjectCommand.NotifyCanExecuteChanged();
         CleanProjectCommand.NotifyCanExecuteChanged();
+        CleanAllCommand.NotifyCanExecuteChanged();
 
         RefreshRunSurface(); // [C2] liste yeniden kuruldu → sayaç/görünür-liste tazelensin
     }

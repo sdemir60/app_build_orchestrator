@@ -44,11 +44,6 @@ public static class AccessibilityNames
     public const string OptimizeButton = "Optimize";
     public const string ResolveCyclesButton = "Resolve cycles";
 
-    /// <summary>[karar 2026-08-13] Arka ucu henüz yazılmamış bir yüzeyin tooltip eki: düğme/madde tasarımdaki
-    /// yerinde ama pasif durur ve neden orada olduğunu söyler. Bugün TEK kullanıcısı Build menüsünün
-    /// <see cref="CleanSolutionTooltip"/>'idir; bakım kutusunun üç düğmesinin de motoru vardır.</summary>
-    private const string NotAvailableSuffix = " — not available yet";
-
     /// <summary>Clean'in KAPSAMINI söyler: ne silinir ve sonucu nedir. <c>/t:Clean</c> ve <c>artifacts/</c>
     /// ibareleri YOKTUR — motor MSBuild hedefi çağırmaz, yalnız keşfedilen projelerin <c>bin</c>/<c>obj</c>
     /// klasörlerini siler ve build-state'i sıfırlar (bkz. <c>CleanWorkspaceCommand</c>).</summary>
@@ -69,10 +64,11 @@ public static class AccessibilityNames
     /// yalnız dosya sistemi silme); bu ise Visual Studio'nun <i>Clean Solution</i>'ıdır — yalnız
     /// <c>msbuild /t:Clean</c>, cache'lere dokunmaz. İkisi birbirinin yerine GEÇMEZ, bu yüzden metin de
     /// tekrarlanmaz.
-    /// <para>Arka ucu henüz yazılmadı — madde tasarımdaki yerinde ama pasif durur (bakım kutusuyla aynı
-    /// karar).</para></summary>
+    /// <para>"every <b>project</b>" der, tasarım metnindeki "every solution" DEĞİL: motor proje başına koşar
+    /// (grafın her projesi, harici ve döngü üyesi dahil) ve arayüz solution düzeyinde bir MSBuild izlenimi
+    /// vermez (ARCHITECTURE §13.2).</para></summary>
     public const string CleanSolutionTooltip =
-        "Clean — msbuild /t:Clean on every solution; caches are untouched" + NotAvailableSuffix;
+        "Clean — msbuild /t:Clean on every project; caches are untouched";
 
     // ---- Proje satırı: build eylemleri (design v1.11.0 §2.4-4 · §3.8) ----
     /// <summary>Satırın birincil eylemi: yalnız o projeyi derler (bağımlılıkları DEĞİL — §3.8 v1.11.0). Boşta

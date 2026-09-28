@@ -25,6 +25,10 @@ public partial class ProjectRowMenu : UserControl
     private const double IconSlot = 13;
     private const double RowGap = 8;
 
+    /// <summary>Pasif (koşu uçuşta) maddenin opaklığı — prototipin <c>busy</c> hâli (design-v1.11.0
+    /// BuildApp.jsx:609 <c>opacity: busy ? 0.45 : 1</c>).</summary>
+    internal const double DisabledOpacity = 0.45;
+
     /// <summary>Menünün maddeleri — Build menüsüyle AYNI üçlü (aynı <c>Kind</c> anahtarları, aynı ikonlar).</summary>
     internal static readonly IReadOnlyList<(string Kind, string Label)> Items =
         [("build", "Build"), ("rebuild", "Rebuild"), ("clean", "Clean")];
@@ -114,7 +118,7 @@ public partial class ProjectRowMenu : UserControl
     {
         bool enabled = _runActionsEnabled;
         row.IsEnabled = enabled;
-        row.Opacity = enabled ? 1.0 : BuildMenu.DisabledOpacity; // prototip: busy ? 0.45 : 1
+        row.Opacity = enabled ? 1.0 : DisabledOpacity; // prototip: busy ? 0.45 : 1
         row.Cursor = enabled ? Cursors.Hand : Cursors.Arrow;
         row.ToolTip = enabled ? null : AccessibilityNames.BuildBusyTooltip;
     }

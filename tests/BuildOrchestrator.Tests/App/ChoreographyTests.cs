@@ -734,6 +734,101 @@ public class ChoreographyTests
         return vm;
     }
 
+    /// <summary>
+    /// [Clean] Build menüsünün Clean'i grafın TAMAMINI temizler; açılış dalgası da o kümeyi yakar — Build'in
+    /// stale set'ini DEĞİL (eskiden <c>ScopeFor</c>'ta Clean dalı yoktu ve Build'in kümesine düşüyordu). Döngü
+    /// üyesi ve harici proje dahil: motor da onları temizler (<c>Core.Planning.CleanRunScope</c>).
+    /// </summary>
+    [Fact]
+    public async Task A_full_clean_marks_every_row_including_cycle_members_and_externals()
+    {
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node("A", 0), Node("B", 1), Node("Cyc", 2, inCycle: true), Node("Ext", 3) with { IsExternal = true }],
+            [], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 4, 1));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\A.csproj", "A", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(@"C:\p\B.csproj", "B", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(@"C:\p\Cyc.csproj", "Cyc", false, Reason: WillBuildReason.UpToDate),
+            new BuildPreviewItem(@"C:\p\Ext.csproj", "Ext", false, Reason: WillBuildReason.UpToDate),
+        ]));
+        IReadOnlyList<ProjectRowViewModel> scope = [];
+        vm.OperationChoreography = s => { scope = s; return Task.CompletedTask; };
+
+        await vm.CleanAllCommand.ExecuteAsync(null);
+
+        Assert.Equal(["A", "B", "Cyc", "Ext"], scope.Select(r => r.Name));
+        Assert.Equal(["A", "B", "Cyc", "Ext"], vm.ScopeFor(RunMode.Clean).Select(r => r.Name));
+    }
+
+    /// <summary>
+    /// <b>Clean koşusunun önizlemesi plan bayrağına YAZMAZ</b> (Resolve'unkiyle aynı gerekçe): o önizleme her
+    /// projeye <c>true</c> verir çünkü BU koşu hepsini temizler — ama bir sonraki DÜZ Build'in cevabı o değildir.
+    /// Bayrağı projenin SONUCU yazar: başarıda defter kaydı silinir, hatada kanıtsız hata yazılır; ikisi de
+    /// <c>never built</c> okunur ve Build döngü üyesini ASLA derlemediği için üyenin bayrağı <c>false</c>'tur
+    /// (<c>NextPreview.AfterClean</c>, bir sonraki Sync'in diyeceğiyle aynı). Eskiden Clean önizlemesi bayrağa
+    /// yazıyordu ve temizlenen (ya da temizliği patlayan) döngü üyesi Build'in dalgasında boşuna yanıyordu.
+    /// </summary>
+    [Fact]
+    public void After_a_full_clean_the_build_wave_lights_the_cleaned_projects_but_not_the_cycle_members()
+    {
+        var vm = FullCleanStarted();
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\A.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\A.csproj", 20));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\B.csproj", "B"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\B.csproj", 20));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\M1.csproj", "M1"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\M1.csproj", 20));
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\M2.csproj", "M2"));
+        vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\M2.csproj", 20, "exit 1", Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 3, Failed: 1, Skipped: 0, Queued: 0,
+            DurationMs: 100));
+
+        Assert.Equal(["A", "B"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        Assert.All(vm.Projects, r => Assert.Equal(WillBuildReason.NeverBuilt, r.WillBuildReason));
+    }
+
+    /// <summary>Aynı kural, öbür yön: durdurulan bir Clean'in ULAŞMADIĞI satır hâlâ Sync'in dediğidir — çıktısı
+    /// yerinde, güncel. Clean önizlemesinin <c>true</c>'su ona yazılsaydı bir sonraki Build'in dalgası onu da
+    /// yakardı (motor sonra "up to date" diye atlardı).</summary>
+    [Fact]
+    public void A_stopped_full_clean_leaves_the_rows_it_did_not_reach_as_the_sync_planned()
+    {
+        var vm = FullCleanStarted();
+        vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\A.csproj", "A"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\A.csproj", 20));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 3,
+            DurationMs: 100));
+
+        Assert.Equal(["A"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        var untouched = vm.Projects.Single(r => r.Name == "B");
+        Assert.False(untouched.WillBuild);
+        Assert.Equal(WillBuildReason.UpToDate, untouched.WillBuildReason);
+    }
+
+    /// <summary>Clean testlerinin ortak sahnesi: iki sıradan proje (A, B) ve iki üyeli bir döngü (M1 ⇄ M2), hepsi
+    /// Sync'e göre güncel; ardından motorun gönderdiği biçimde bir tam Clean başlar — önizleme her projeye
+    /// <c>true</c> verir, gerekçeyi (disk olgusu) korur.</summary>
+    private static RunViewModel FullCleanStarted()
+    {
+        string[] names = ["A", "B", "M1", "M2"];
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node("A", 0), Node("B", 1), Node("M1", 2, inCycle: true), Node("M2", 3, inCycle: true)],
+            [[@"C:\p\M1.csproj", @"C:\p\M2.csproj"]], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 4, 1));
+        vm.OnEvent(new BuildPreviewEvent([.. names.Select(n =>
+            new BuildPreviewItem($@"C:\p\{n}.csproj", n, false, Reason: WillBuildReason.UpToDate))]));
+        Assert.Empty(vm.ScopeFor(RunMode.Build)); // ön-koşul: Sync'e göre derlenecek bir şey yok
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 4, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([.. names.Select(n =>
+            new BuildPreviewItem($@"C:\p\{n}.csproj", n, true, Reason: WillBuildReason.UpToDate))]));
+        return vm;
+    }
+
     /// <summary>Reduced-motion: koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam yalnız işaretlenir ve
     /// satırlar tam opak kalır.</summary>
     [Fact]

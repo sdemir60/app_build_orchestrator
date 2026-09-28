@@ -639,6 +639,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
@@ -660,6 +661,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
@@ -690,6 +692,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
@@ -709,6 +712,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(BuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(RebuildProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CleanAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(SyncCommand))]
     [NotifyCanExecuteChangedFor(nameof(BuildCyclesCommand))]
     [NotifyCanExecuteChangedFor(nameof(CleanCommand))]
@@ -1013,16 +1017,6 @@ public sealed partial class RunViewModel : ObservableObject
     private string? _pendingRunId;
 
     /// <summary>
-    /// [design v1.11.0 §9-4] Bir işlemin KAPSAMI — dalgada amber'a yanan küme.
-    /// <list type="bullet">
-    ///   <item><b>Build</b>: stale set (önizlemenin <c>WillBuild</c>'i true olan satırlar).</item>
-    ///   <item><b>Rebuild</b>: döngü dışı TÜM projeler (döngü üyeleri standart koşuya girmez — §3.2).</item>
-    ///   <item><b>Resolve cycles</b>: döngü üyeleri.</item>
-    /// </list>
-    /// Kapsam bir TAHMİN değildir: üçü de motorun aynı koşuda derleyeceği kümedir (motor kapsamı daraltırsa
-    /// koreografi zaten koşu başlarken biter ve statü kanalı devralır).
-    /// </summary>
-    /// <summary>
     /// [design v1.11.0 §9-4 <c>_neutralize</c> · design v1.20.0 §2.3] <b>Önceki koşunun KOŞU alanlarını
     /// siler</b> — ve yalnız onları: statü (<c>Pending</c>), süre, bu koşunun dependency listesi, döngü tur
     /// bayrakları, atlama gerekçesi ve koreografi işareti. Satırın ÇIKTI DURUMU (önizleme kararı
@@ -1072,15 +1066,27 @@ public sealed partial class RunViewModel : ObservableObject
         }
     }
 
-    /// <summary>[Task 4 — kök neden C] Build dalgası yalnız KESİN derlenecekleri yakar — koşullu (<see
-    /// cref="ProjectRowViewModel.Conditional"/>) bir proje kökü hâlâ hatalıysa atlanabilir, dolayısıyla dalgada
-    /// amber'a yanmaz. Bu, motorun kesin kuyruğuyla (<see cref="InRunQueueFor"/>'un Build dalı) AYNI bayraktan
-    /// türer — tek doğruluk kaynağı (kopya YASAK). Yalnız tam (kapsamsız) Build'te anlamlıdır: satırdan
-    /// tetiklenen hedef bu metoda hiç uğramaz (<see cref="BeginRunAsync"/> tek elemanlı bir liste kurar).</summary>
+    /// <summary>
+    /// [design v1.11.0 §9-4] Bir işlemin KAPSAMI — dalgada amber'a yanan küme.
+    /// <list type="bullet">
+    ///   <item><b>Build</b>: stale set (önizlemenin <c>WillBuild</c>'i true olan satırlar). [Task 4 — kök neden C]
+    ///   Yalnız KESİN derlenecekler: koşullu (<see cref="ProjectRowViewModel.Conditional"/>) bir proje kökü hâlâ
+    ///   hatalıysa atlanabilir, dolayısıyla dalgada amber'a yanmaz. Bu, motorun kesin kuyruğuyla
+    ///   (<see cref="InRunQueueFor"/>'un Build dalı) AYNI bayraktan türer — tek doğruluk kaynağı (kopya YASAK).</item>
+    ///   <item><b>Rebuild</b>: döngü dışı TÜM projeler (döngü üyeleri standart koşuya girmez — §3.2).</item>
+    ///   <item><b>Resolve cycles</b>: döngü üyeleri.</item>
+    ///   <item><b>Clean</b> (Build menüsünün): TÜM projeler — döngü üyeleri ve harici projeler dahil. Clean hiçbir
+    ///   şey derlemez ve bağımlılık anlamı yoktur (<c>Core/Planning/CleanRunScope</c>).</item>
+    /// </list>
+    /// Kapsam bir TAHMİN değildir: dördü de motorun aynı koşuda işleyeceği kümedir (motor kapsamı daraltırsa
+    /// koreografi zaten koşu başlarken biter ve statü kanalı devralır). Yalnız tam (kapsamsız) koşuda anlamlıdır:
+    /// satırdan tetiklenen hedef bu metoda hiç uğramaz (<see cref="BeginRunAsync"/> tek elemanlı bir liste kurar).
+    /// </summary>
     public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
     {
         RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
         RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
+        RunMode.Clean => [.. Projects],
         _ => [.. Projects.Where(r => r.WillBuild == true && !r.Conditional)],
     };
 
@@ -1132,6 +1138,16 @@ public sealed partial class RunViewModel : ObservableObject
     // (gerekçe CanRebuildOrRetry'ın yorumundadır).
     [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
     private Task BuildAsync() => BeginRunAsync(RunMode.Build, clearBuffers: true); // seçim orada düşer (filtre korunur)
+
+    /// <summary>[Clean] Build menüsünün <i>Clean</i> maddesi — Visual Studio'nun <i>Clean Solution</i>'ı: satır
+    /// menüsündeki Clean (<see cref="CleanProjectCommand"/>) bir proje için ne yapıyorsa grafın TÜM projeleri için
+    /// aynısı. Kapsamsız bir <see cref="RunMode.Clean"/> koşusudur: her projede <c>msbuild -t:Clean</c>, hiçbir şey
+    /// derlenmez, temizlenen her projenin defter kaydı silinir; harici projeler ve döngü üyeleri dahil
+    /// (<c>Core/Planning/CleanRunScope</c>). Onay sormaz (satır Clean'i ve Visual Studio da sormaz), bitince Sync
+    /// zincirlemez; koşu sürerken Stop çalışır. Kapısı Build/Rebuild ile AYNIdır. Bakım kutusunun Clean'inden
+    /// (<see cref="CleanCommand"/> — bin/obj silen, MSBuild çağırmayan workspace sıfırlaması) AYRI bir iştir.</summary>
+    [RelayCommand(CanExecute = nameof(CanRebuildOrRetry))]
+    private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean, clearBuffers: true); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
     /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
@@ -1933,7 +1949,8 @@ public sealed partial class RunViewModel : ObservableObject
             // (ScopeFor) yanlış kümeyi yakardı. Ölçülen kusur: Resolve'un dokunmadığı 104 kirli projenin hiçbiri
             // dalgada yanmadı, Resolve'da patlayan bir döngü üyesi yandı (ChoreographyTests.After_a_resolve_*).
             // Gerekçe ve kökler moddan bağımsız disk olgularıdır; onlar her önizlemeden yazılır.
-            if (!IsResolvingCycles)
+            // [Clean] Clean koşusunun önizlemesi de yalnız KENDİ koşusunu anlatır — bkz. PreviewWritesPlanFlag.
+            if (PreviewWritesPlanFlag)
             {
                 row.WillBuild = item.WillBuild;
                 row.Conditional = item.Conditional;     // [Task 4] dalga/kuyruk/etiket AYNI bayrağı okur
@@ -1957,6 +1974,15 @@ public sealed partial class RunViewModel : ObservableObject
         // durumunu gösterir. Önce türeseydi o satır bir sonraki olaya kadar hiçbir kovada sayılmazdı.
         RefreshRunSurface();
     }
+
+    /// <summary>[Resolve → Build · Clean] Koşunun önizlemesi PLAN BAYRAĞINA (<see cref="ProjectRowViewModel.WillBuild"/>
+    /// + <see cref="ProjectRowViewModel.Conditional"/>) yazar mı. Bayrak bir sonraki DÜZ Build'in cevabıdır; iki
+    /// koşunun önizlemesi o soruyu cevaplamaz, yalnız KENDİ koşusunu anlatır: Resolve kapsam dışına <c>false</c>,
+    /// üyelere kendi kararını verir; Clean her projeye <c>true</c> verir, çünkü o koşu hepsini temizler. Clean'de
+    /// bayrağı projenin SONUCU yazar (<see cref="OnProjectDone"/> → <c>NextPreview.AfterClean</c>); koşunun
+    /// ulaşmadığı satır Sync'in dediği kalır. Kuyruk (<see cref="InRunQueueFor"/>) ve önizleme kümeleri bu kapıdan
+    /// ETKİLENMEZ — onlar zaten bu koşunun kendisidir.</summary>
+    private bool PreviewWritesPlanFlag => !(IsResolvingCycles || RunActive && RunIsClean);
 
     /// <summary>[Task 1/2] Kuyruk üyeliğinin TEK karar yeri — <see cref="OnBuildPreview"/>'ın TEK çağıranı.
     /// Modun DIŞINDA (Build/Rebuild) <see cref="BuildPreviewItem.WillBuild"/>'e eşittir — koşullu proje hariç
@@ -2102,23 +2128,19 @@ public sealed partial class RunViewModel : ObservableObject
         // (gerçek WaitingForDependency) FLİP ETMESİNE yol açıyordu — üçünün BİRLİKTE, motorla AYNI kaynaktan
         // gelmesi bu boşluğu kapatır.
         if (state == ProjectRowState.Succeeded && trusted) NoteTrustedBuilt(projectId); // [T8] kesilen koşunun özeti
-        if (state == ProjectRowState.Succeeded && !RunIsClean)
+        if (RunIsClean)
+        {
+            // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını siler (bkz.
+            // BuildStateStore.Remove); patlayan bir Clean de kanıtsız hata yazar. İki yolda da proje "hiç
+            // derlenmemiş" hâline döner. Clean önizlemesi plan bayrağına yazmadığı için (PreviewWritesPlanFlag)
+            // üçlünün TAMAMINI burası yazar — döngü üyesi bir sonraki düz Build'in kapsamında değildir.
+            ApplyNextPreview(row, NextPreview.AfterClean(row.InCycle), waitingRoots: null);
+        }
+        else if (state == ProjectRowState.Succeeded)
         {
             // [final review I1] Motorun arkasında durmadığı başarı (trusted=false: yakınsamayan bir SCC'nin
             // yeşil üyesi) defterde kanıtsız hatadır — satır Sync'in okuyacağı NeverBuilt'i şimdiden der.
-            var after = NextPreview.AfterSuccess(row.InCycle, trusted, depIssues);
-            row.WillBuild = after.WillBuild;
-            row.Conditional = after.Conditional;
-            row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? depIssues : null;
-            row.WillBuildReason = after.Reason;
-        }
-        else if (state == ProjectRowState.Succeeded) // Clean
-        {
-            row.Conditional = false;
-            row.DependencyRoots = null;
-            // Clean'in başarısı "derlendi" değil "çıktıları silindi"dir: motor defter kaydını da siler, yani
-            // proje gerçekten "hiç derlenmemiş" hâline döner (bkz. BuildStateStore.Remove).
-            row.WillBuildReason = NextPreview.AfterClean;
+            ApplyNextPreview(row, NextPreview.AfterSuccess(row.InCycle, trusted, depIssues), waitingRoots: depIssues);
         }
         else // Failed
         {
@@ -2145,6 +2167,19 @@ public sealed partial class RunViewModel : ObservableObject
         _projectStartedAtMs.Remove(projectId);
         UpdateEta(); // [Task 17] her proje tamamlanışında ETA'yı yeniden hesapla
         RefreshRunSurface();
+    }
+
+    /// <summary>Motorun bir sonraki önizlemesinin cevabını (<see cref="NextPreview"/>'ın üçlüsü) satıra yazan TEK yer:
+    /// üçü BİRLİKTE yazılır — ayrı ayrı yazılsalar sessizce ayrışabilirlerdi. Kökler yalnız
+    /// <see cref="WillBuildReason.WaitingForDependency"/>'de anlamlıdır (etiketin tooltip'i); diğer her gerekçede
+    /// düşer.</summary>
+    private static void ApplyNextPreview(ProjectRowViewModel row,
+        (bool WillBuild, WillBuildReason Reason, bool Conditional) after, IReadOnlyList<string>? waitingRoots)
+    {
+        row.WillBuild = after.WillBuild;
+        row.Conditional = after.Conditional;
+        row.DependencyRoots = after.Reason == WillBuildReason.WaitingForDependency ? waitingRoots : null;
+        row.WillBuildReason = after.Reason;
     }
 
     /// <summary>Satır aramasının TEK kuralı. Proje Id'leri Windows DOSYA YOLLARIDIR, dolayısıyla
@@ -2209,7 +2244,11 @@ public sealed partial class RunViewModel : ObservableObject
         // teriminde bütçelenir (dalga genişliği grubun şekline bağlıdır, küme BaselineRounds tur bütçelenir).
         // Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur çarpanını YOK EDİYORDU (üye
         // Pending'den çıktığı an cycle kovasından da düşüyordu).
-        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !p.InCycle).ToList();
+        // [Clean] Döngü kovası yalnız TURLARIN koştuğu Cycles koşusuna aittir. Build menüsünün Clean'i üyeleri de
+        // temizler ama motor Clean'de döngü anlamını düşürür (Core/Planning/CleanRunScope): üye bir kez, sıradan
+        // bir proje gibi paralel işlenir. (Build/Rebuild'de üyeler zaten pre-skip edilir, burada hiç sayılmaz.)
+        bool roundsRun = _currentRunMode == RunMode.Cycles;
+        var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !(roundsRun && p.InCycle)).ToList();
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);
 
@@ -2221,8 +2260,9 @@ public sealed partial class RunViewModel : ObservableObject
         // kalan maliyeti "grup, turlarıyla birlikte" terimidir. Geçen süre kasıtlı olarak DÜŞÜLMEZ — tur
         // döngüsünde her üyenin kendi başlangıcı her turda sıfırlanır, tek bir turun elapsed'i grubun kalanı
         // hakkında bir şey söylemez; tahmin bu yönde bilerek KARAMSARDIR (bkz. ARCHITECTURE.md §8.4).
-        int cycleQueuedCount = Projects.Count(
-            p => p.InCycle && p.State is ProjectRowState.Pending or ProjectRowState.Started);
+        int cycleQueuedCount = roundsRun
+            ? Projects.Count(p => p.InCycle && p.State is ProjectRowState.Pending or ProjectRowState.Started)
+            : 0;
         cycleQueuedCount = Math.Min(cycleQueuedCount, queuedCount); // savunmacı — total henüz satırlaşmamış projeler içerebilir
         int ordinaryQueuedCount = queuedCount - cycleQueuedCount;
 

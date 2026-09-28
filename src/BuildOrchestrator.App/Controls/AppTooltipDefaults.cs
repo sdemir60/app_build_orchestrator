@@ -62,7 +62,7 @@ public static class AppTooltipDefaults
         ToolTipService.ShowDurationProperty.OverrideMetadata(
             typeof(FrameworkElement), new FrameworkPropertyMetadata(int.MaxValue));
         // Devre dışı öğede de görünür: bakım kutusunun düğmeleri mid-run/mid-sync pasiftir ve NEDENİ ancak
-        // tooltip'ten okunur; Build menüsünün Clean Solution maddesi de arka ucu yazılana dek böyle durur.
+        // tooltip'ten okunur; satır menüsünün maddeleri de koşu uçuştayken öyle durur.
         ToolTipService.ShowOnDisabledProperty.OverrideMetadata(
             typeof(FrameworkElement), new FrameworkPropertyMetadata(true));
     }

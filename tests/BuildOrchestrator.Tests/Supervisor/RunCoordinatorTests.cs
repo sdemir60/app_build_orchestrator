@@ -41,6 +41,11 @@ public class RunCoordinatorTests
     internal static string Id(string name) => Path.Combine(PlanRoot, name, name + ".csproj");
     internal static string NameOf(string projectId) => Path.GetFileNameWithoutExtension(projectId);
 
+    /// <summary>Bir projenin canlı log satırları (<see cref="ProjectLogEvent"/>), satır numarası sırasıyla — koordinatör
+    /// testlerinin ORTAK yardımcısı (kopya YASAK).</summary>
+    internal static List<string> LogTextsFor(Harness h, string name) => h.Events.OfType<ProjectLogEvent>()
+        .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
+
     // willBuild: varsayılan null = "imza yok / pre-Sync" (mevcut çağrıların tamamı); yalnız [Task 19] Build
     // pre-skip'ini kuran testler false/true verir.
     internal static ProjectNode Node(string name, string[]? deps = null, bool inCycle = false, bool? willBuild = null) =>
@@ -1168,21 +1173,18 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        List<string> LogTextsFor(string name) => h.Events.OfType<ProjectLogEvent>()
-            .Where(e => NameOf(e.ProjectId) == name).OrderBy(e => e.LineNumber).Select(e => e.Text).ToList();
-
         // B: satır 1 gerçek MSBuild komut satırı (v7Δ-7 invaryantı korunur) → satır 2 DOĞRUDAN uyarı → satır 3 gerçek çıktı.
-        var b = LogTextsFor("B");
+        var b = LogTextsFor(h, "B");
         Assert.Equal("warning: C failed in this run — last successful output referenced (C)", b[1]);
         Assert.Equal("gerçek derleme çıktısı B", b[2]);
 
         // A: C'ye doğrudan bağımlı değil (B'ye bağımlı) → DOLAYLI (zincir) uyarısı.
-        var a = LogTextsFor("A");
+        var a = LogTextsFor(h, "A");
         Assert.Equal("warning: failure in dependency chain (C) — referenced outputs may be stale", a[1]);
         Assert.Equal("gerçek derleme çıktısı A", a[2]);
 
         // C kendisi kök — kendi logunda hiç depIssue uyarı satırı YOK.
-        Assert.DoesNotContain(LogTextsFor("C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
+        Assert.DoesNotContain(LogTextsFor(h, "C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
     }
 
     [Fact]

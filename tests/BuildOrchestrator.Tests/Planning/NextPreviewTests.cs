@@ -68,13 +68,32 @@ public class NextPreviewTests
 
     // ---------------------------------------------------------------- AfterClean
 
-    /// <summary>Clean kaydı SİLER; kayıt yoksa evaluator <c>NeverBuilt</c> der.</summary>
-    [Fact]
-    public void a_cleaned_project_reads_never_built_like_a_missing_ledger_row()
+    /// <summary>
+    /// Clean'in sonucu — başarı da hata da — defterde bu projenin başarısını bırakmaz: başarıda kayıt SİLİNİR
+    /// (<c>BuildStateStore.Remove</c>), hatada kanıtsız hata yazılır (<c>-t:Clean</c> derleyiciyi çağırmaz, kanıt
+    /// sayılmaz). Evaluator ikisini de <c>NeverBuilt</c> okur; <c>WillBuild</c> kapsamın cevabıdır — düz Build
+    /// döngü üyesini derlemez, üye <c>false</c>'tur. Canlı geçiş bu ÜÇLÜYÜ evaluator'ın o iki kayda verdiği
+    /// cevapla BİREBİR üretir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski ad/iddia: <c>a_cleaned_project_reads_never_built_like_a_missing_ledger_row</c>
+    /// — eşleme yalnız gerekçeyi döndürürdü (<c>AfterClean == NeverBuilt</c>), satırın plan bayrağı Clean
+    /// önizlemesinin <c>true</c>'sunda kalırdı. Değişme gerekçesi: Build menüsünün Clean'i grafın tamamını
+    /// temizler ve önizlemesi her projeye <c>true</c> verir — bu, bir sonraki Build'in cevabı değildir; temizlenen
+    /// döngü üyesi Build'in dalgasında boşuna yanıyordu. Bayrağı artık sonuç yazar, gerekçeyle AYNI kaynaktan.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void a_clean_result_reads_what_the_next_sync_says_for_its_ledger_row(bool inCycle)
     {
-        Assert.Equal(WillBuildReason.NeverBuilt, NextPreview.AfterClean);
-        Assert.Equal(NextPreview.AfterClean,
-            WillBuildEvaluator.EvaluateWithReason(inCycle: false, "sig", state: null, buildCycles: false).Reason);
+        var (willBuild, reason, conditional) = NextPreview.AfterClean(inCycle);
+
+        var forgotten = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig", state: null, buildCycles: false);
+        var invalidated = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig",
+            new BuildState("A", BuiltSignature: "sig", LastResult: BuildResult.Failed, FailedSignature: null),
+            buildCycles: false);
+        Assert.Equal((forgotten.WillBuild, forgotten.Reason), (willBuild, reason));     // başarı: kayıt silindi
+        Assert.Equal((invalidated.WillBuild, invalidated.Reason), (willBuild, reason)); // hata: kanıtsız invalidate
+        Assert.False(conditional);
     }
 
     // ---------------------------------------------------------------- AfterConfigurationChange [R-Config · M6]

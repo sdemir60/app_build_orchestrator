@@ -165,6 +165,9 @@ public sealed partial class RunViewModel
                         RunMode.Cycles => StreamText.CyclesStarted(
                             members: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) == true),
                             prerequisites: _dirtyIds.Count(id => _cycleGroups?.IsMember(id) != true)),
+                        // [Clean] Tam Clean hiçbir şey derlemez: satır işi kendi fiiliyle söyler (satır Clean'inin
+                        // "Clean started — a (single project)" satırıyla aynı dil).
+                        RunMode.Clean => StreamText.CleanStarted(_dirtyIds.Count, parallelism),
                         _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
                     _pendingRunStartMode = null;
@@ -295,6 +298,15 @@ public sealed partial class RunViewModel
                         int n = Projects.Count(p => p.InCycle && p.WillBuild == true);
                         if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));
                     }
+                }
+                // [Clean · kullanıcı kararı 2026-09-28] Clean döngü üyelerini de temizler, ama düz Build onları
+                // derlemez — sırayı hatırlatan TEK bilgi satırı, Completed/Stopped satırının hemen ardından. Yalnız
+                // GERÇEKTEN temizlenen üye sayılır (koşunun ulaşmadığı ya da temizliği patlayan değil); hiç yoksa satır
+                // yok. Konsola yazılmaz: konsol işlemin ham logudur.
+                if (RunIsClean)
+                {
+                    int cleanedMembers = Projects.Count(p => p.InCycle && p.State == ProjectRowState.Succeeded);
+                    if (cleanedMembers > 0) PushStream(StreamKind.Info, null, StreamText.CleanedCyclesHint(cleanedMembers));
                 }
                 _stream.EndRun();
                 SyncActiveLine();

@@ -75,7 +75,9 @@ public sealed record ProjectRunScope(BuildPlan Plan, ProjectNode Target, IReadOn
             InCycle = false,
             // Hedef koşulsuz derlenir; gerekçe YALNIZ gerçekten kirliyken taşınır — güncel bir projede
             // hiçbir <see cref="WillBuildReason"/> doğru değildir (UpToDate + WillBuild=true çelişkidir) ve
-            // yüzey o durumda jenerik metne düşer.
+            // yüzey o durumda jenerik metne düşer. [Clean] Satır Clean'i bu planın ÜSTÜNDE kurulur ve CleanRunScope
+            // her düğüme zaten WillBuild=true verdiği için gerekçe orada HEP taşınır — bilerek: Clean derlemez,
+            // gerekçe bir disk olgusudur ve proje temizlenene kadar doğrudur.
             WillBuild = true,
             WillBuildReason = target.WillBuild == true ? target.WillBuildReason : null,
         };
