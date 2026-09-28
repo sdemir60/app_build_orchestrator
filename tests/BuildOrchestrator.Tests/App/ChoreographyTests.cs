@@ -652,6 +652,88 @@ public class ChoreographyTests
         Assert.Equal(["A"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
     }
 
+    /// <summary>
+    /// <b>Resolve'dan sonra basılan Build'in dalgası, O Build'in derleyeceğini yakar.</b> Satırın plan bayrağı
+    /// (<see cref="ProjectRowViewModel.WillBuild"/> + <see cref="ProjectRowViewModel.Conditional"/>) bir sonraki
+    /// DÜZ Build'in cevabıdır — Sync'in önizlemesi (ARCHITECTURE §7.4, §14.3) — ve dalganın kapsamı
+    /// (<see cref="RunViewModel.ScopeFor"/>) ondan okunur. Resolve koşusunun kendi önizlemesi ise yalnız KENDİ
+    /// koşusunu anlatır: kapsam dışı her projeye, kirli olsa da, <c>false</c> verir (motorun pre-skip'i,
+    /// <c>RunCoordinator</c>) ve koşullu bayrağı düşürür.
+    ///
+    /// <para><b>Ölçülen kusur (gerçek koşu, 2026-09-27 20:31 Resolve → 20:33 Build):</b> Resolve'un kapsam dışı
+    /// bıraktığı 104 projenin 104'ü de Build'de derlenecekti (Clean'den beri çıktıları yoktu), ama Resolve
+    /// önizlemesi bayraklarını <c>false</c>'a yazmıştı ve koşu bitince bayrak geri gelmedi. Build'in dalgası
+    /// hiçbirini yakmadı; koşu başlayınca hepsi kuyruk amber'ına TOPLUCA sıçradı. Koşullu (kökünü bekleyen) kapsam
+    /// dışı proje ise Sync'teki gibi dalganın DIŞINDA kalır — bayrağın iki yarısı birlikte korunur.</para>
+    /// </summary>
+    [Fact]
+    public void After_a_resolve_the_build_wave_still_lights_the_dirty_projects_the_resolve_left_alone()
+    {
+        var vm = ResolvedWorkspace();
+
+        Assert.Equal(["Out"], vm.ScopeFor(RunMode.Build).Where(r => !r.InCycle).Select(r => r.Name));
+    }
+
+    /// <summary>
+    /// Aynı kök neden, öbür yön: Resolve önizlemesi döngü üyesine kendi koşusunun kararını (<c>true</c>) yazar ve
+    /// Resolve'da PATLAYAN üye bu bayrağı koşudan sonra da taşır. Düz Build bir döngü üyesini ASLA derlemez
+    /// (<c>skipped — in dependency cycle</c>; ARCHITECTURE §7.4: Cycles dışında üye her zaman <c>false</c>) —
+    /// dalga o düğümü boşuna yakıyordu (gerçek koşuda <c>OSYS.Business.SparePart.Finance</c>).
+    /// </summary>
+    [Fact]
+    public void After_a_resolve_the_build_wave_does_not_light_a_cycle_member_that_failed_there()
+    {
+        var vm = ResolvedWorkspace();
+
+        Assert.DoesNotContain(vm.ScopeFor(RunMode.Build), r => r.InCycle);
+    }
+
+    /// <summary>Resolve→Build testlerinin ortak sahnesi: Sync'in önizlemesi (bir sonraki düz Build'in planı) →
+    /// motorun gönderdiği biçimde bir Resolve koşusu → koşu biter. İki önizleme de üreticilerinin gerçek
+    /// biçimindedir: Sync üyelere hep <c>false</c> verir (<c>SyncWorkspaceService</c>, <c>buildCycles: false</c>);
+    /// Resolve'unki üyelere kendi kararını verir, kapsam dışını ise <c>false</c>'a zorlar ve koşullu saymaz.</summary>
+    private static RunViewModel ResolvedWorkspace()
+    {
+        const string up = @"C:\p\Up.csproj", m1 = @"C:\p\M1.csproj", m2 = @"C:\p\M2.csproj",
+            outside = @"C:\p\Out.csproj", waiting = @"C:\p\Wait.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node("Up", 0), Node("M1", 1, inCycle: true), Node("M2", 2, inCycle: true), Node("Out", 3), Node("Wait", 4)],
+            [[m1, m2]], [], []));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 5, 1));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(up, "Up", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m1, "M1", false, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m2, "M2", false, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(outside, "Out", true, Reason: WillBuildReason.NeverBuilt),
+            new BuildPreviewItem(waiting, "Wait", true, Reason: WillBuildReason.WaitingForDependency,
+                Conditional: true, DependencyRoots: ["Root"]),
+        ]));
+        Assert.Equal(["Up", "Out"], vm.ScopeFor(RunMode.Build).Select(r => r.Name)); // ön-koşul: Sync'in planı
+
+        // Resolve: kapsam = üyeler + onların upstream'i (Up). Out ve Wait kapsam dışıdır.
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug", 0));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(up, "Up", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m1, "M1", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m2, "M2", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(outside, "Out", false, Reason: WillBuildReason.NeverBuilt),
+            new BuildPreviewItem(waiting, "Wait", false, Reason: WillBuildReason.WaitingForDependency,
+                DependencyRoots: ["Root"]),
+        ]));
+        vm.OnEvent(new ProjectSkippedEvent("r1", outside, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectSkippedEvent("r1", waiting, SkipReasons.OutOfCycleScope));
+        vm.OnEvent(new ProjectStartedEvent("r1", up, "Up"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", up, 100));
+        vm.OnEvent(new ProjectStartedEvent("r1", m1, "M1"));
+        vm.OnEvent(new ProjectStartedEvent("r1", m2, "M2"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", m1, 100));
+        vm.OnEvent(new ProjectFailedEvent("r1", m2, 100, "exit 1", Evidence: true));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 2, Failed: 1, Skipped: 2, Queued: 0,
+            DurationMs: 500));
+        return vm;
+    }
+
     /// <summary>Reduced-motion: koreografi HİÇ oynamaz (§1.3 "tüm süreler 0") — kapsam yalnız işaretlenir ve
     /// satırlar tam opak kalır.</summary>
     [Fact]

@@ -271,16 +271,22 @@ public class ConsoleModesTests
     }
 
     /// <summary>[Task 2 review fix I-1] Resolve cycles'ta kapsam dışı bir satır motorun pre-skip'ini State'e
-    /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve önizleme WillBuild'i FALSE zorlamıştır
-    /// (RunCoordinator.cs, tüm pre-skip'ler için — kapsam dışı da GERÇEKTEN güncel de aynı yoldan geçer). Satır
-    /// yine de SkipReason'ı taşır, tam bu yüzden: sayfa motorun GERÇEKTEN söylediği (kapsam dışı) gerekçeyi
-    /// gösterir, WillBuild=false'tan türeyen "Up to date" YALANINI DEĞİL — bir proje GERÇEKTEN kirli olsa bile.</summary>
-    [Fact]
-    public void Out_of_cycle_scope_pending_row_states_the_real_reason_not_up_to_date()
+    /// TAŞIMAZ (bkz. RunViewModel.OnProjectSkipped) — Pending kalır ve SkipReason'ı taşır. Sayfa motorun GERÇEKTEN
+    /// söylediği (kapsam dışı) gerekçeyi gösterir, satırın plan bayrağından türeyen cümleyi DEĞİL.
+    ///
+    /// <para><b>[DEĞİŞEN GİRDİ — Resolve → Build düzeltmesi]</b> Eski hâl yalnız <c>willBuild: false</c> ile
+    /// sınardı: Resolve önizlemesi bayrağı her pre-skip'te false'a zorlar ve satır bunu taşırdı, tehlike "Up to
+    /// date" yalanıydı. Önizleme artık bayrağı YAZMAZ (RunViewModel.OnBuildPreview): bayrak bir sonraki düz
+    /// Build'in cevabı olarak kalır — kirli projede <c>true</c>, güncel projede <c>false</c>. Tehlike ikisidir:
+    /// "Will build" de "Up to date" de bu koşu hakkında değildir; sayfa iki durumda da aynı gerekçeyi söyler.</para></summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Out_of_cycle_scope_pending_row_states_the_real_reason_not_up_to_date(bool willBuild)
     {
         Assert.Equal(
             ["Not needed by a dependency cycle — outside this run's scope.", "Never built by this tool"],
-            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false,
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: willBuild,
                 skipReason: SkipReasons.OutOfCycleScope)));
     }
 
