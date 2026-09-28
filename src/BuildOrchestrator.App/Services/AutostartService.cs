@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Security;
 using Microsoft.Win32;
 
 namespace BuildOrchestrator.App.Services;
@@ -55,10 +58,59 @@ public sealed class AutostartService(IAutostartRegistry registry, string valueNa
     /// <summary>Registry değer adı (HKCU\...\Run altındaki değerin adı).</summary>
     public const string DefaultValueName = "BuildOrchestrator";
 
-    /// <summary>Tercihe göre autostart değerini yazar (enabled) ya da kaldırır (disabled).</summary>
-    public void Apply(bool autostartEnabled)
+    /// <summary>Açılışın uzlaştırması: tercihe göre autostart değerini yazar (enabled) ya da kaldırır (disabled).
+    /// [P4] Windows kaydı yazamazsa (bir politika ya da güvenlik yazılımı <c>HKCU\...\Run</c>'ı kilitlemiş) SESSİZCE
+    /// geçer — uygulamanın açılışı bir tercih yüzünden düşmez; bir sonraki açılış yeniden dener.</summary>
+    public void Apply(bool autostartEnabled) => TryWrite(() => WriteRunValue(autostartEnabled), out _);
+
+    /// <summary>[P4] Windows'un GERÇEK durumu — Settings'in Start with Windows anahtarı bundan açılır (kayıtlı
+    /// tercihten değil): Run değeri varsa <see cref="AutostartState.On"/>, yoksa <see cref="AutostartState.Off"/>.
+    /// Okunamazsa <see cref="AutostartState.Off"/>.</summary>
+    public AutostartState State
     {
-        if (autostartEnabled) registry.Set(valueName, command);
+        get
+        {
+            try { return registry.Exists(valueName) ? AutostartState.On : AutostartState.Off; }
+            catch (Exception ex) when (IsRegistryRefusal(ex)) { return AutostartState.Off; }
+        }
+    }
+
+    /// <summary>[P4] Save'in yolu: kullanıcı Start with Windows'u değiştirdiğinde kayıt ANINDA yazılır (açık) ya da
+    /// silinir (kapalı) — yeniden başlatma beklenmez. Yazılamazsa <c>false</c> ve Windows'un nedeni
+    /// (<paramref name="failure"/>); fırlatmaz.</summary>
+    public bool TryTurn(bool on, [NotNullWhen(false)] out string? failure) => TryWrite(() => WriteRunValue(on), out failure);
+
+    private void WriteRunValue(bool on)
+    {
+        if (on) registry.Set(valueName, command);
         else registry.Remove(valueName);
     }
+
+    private static bool TryWrite(Action write, [NotNullWhen(false)] out string? failure)
+    {
+        try
+        {
+            write();
+            failure = null;
+            return true;
+        }
+        catch (Exception ex) when (IsRegistryRefusal(ex))
+        {
+            failure = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Registry'nin "yazamazsın/okuyamazsın" dediği üç istisna — başka bir istisna bir HATADIR ve yutulmaz.</summary>
+    private static bool IsRegistryRefusal(Exception ex) =>
+        ex is UnauthorizedAccessException or SecurityException or IOException;
+}
+
+/// <summary>[P4] Windows'un başlangıç kaydının gerçek durumu (<see cref="AutostartService.State"/>).</summary>
+public enum AutostartState
+{
+    /// <summary>Kayıt yok — Windows oturumu açılınca uygulama başlamaz.</summary>
+    Off,
+    /// <summary>Kayıt var — Windows oturumu açılınca uygulama başlar.</summary>
+    On,
 }

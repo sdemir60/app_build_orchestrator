@@ -96,12 +96,16 @@ public partial class MainWindow : Window
     /// yan etki bırakırdı). Bu dikiş, <paramref name="resourceScope"/> ile AYNI desende, o yolu teste
     /// yönlendirilebilir kılar.</para>
     /// </param>
+    /// <param name="autostart">[P4] Windows'un başlangıç kaydı servisi — ÜRETİMDE DI verir (App'in açılış
+    /// uzlaştırmasıyla AYNI örnek) ve Settings diyaloğuna geçer. <c>null</c> ⇒ Windows yüzeyi yok: gerçek registry'ye
+    /// giden yazıcı yalnız App'in composition root'unda kurulur, bu varsayılan onu ASLA kurmaz.</param>
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console,
-        ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null)
+        ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null, AutostartService? autostart = null)
     {
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
+        SettingsOverlay.Autostart = autostart;
         _engine = engine;
         _vm = vm;
         _console = console;

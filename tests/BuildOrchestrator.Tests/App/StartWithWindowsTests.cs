@@ -14,7 +14,12 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>Kalıcılık</b> close-to-tray işinin (P3) kurduğu desenledir — <see cref="ShellSwitches"/> tablosu: Save'de
 /// <c>ui-state.json</c>'a yazılır, diyalog her açılışta kayıtlı değeri gösterir, Export/Import taşır (dosyada anahtar
 /// yoksa formdaki değer korunur) ve değer değişince konsola tek satır not düşer (değişmezse sessiz).</para>
+///
+/// <para><b>Windows tarafı</b> gerçek registry'ye ASLA dokunmaz: <see cref="IAutostartRegistry"/> yerine
+/// <see cref="FakeAutostartRegistry"/>. Diyalog Start with Windows'u Windows'un GERÇEK kaydından gösterir ve Save
+/// kaydı ANINDA yazar — yalnız kullanıcı anahtarı değiştirdiyse.</para>
 /// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class StartWithWindowsTests
 {
     private static int Count(string text, string value) => Regex.Matches(text, Regex.Escape(value)).Count;
@@ -149,5 +154,134 @@ public class StartWithWindowsTests
 
         Assert.True(draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
         Assert.True(draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn);
+    }
+
+    // ---------------------------------------------------------------- Windows kaydı: gerçek durum + Save anında
+
+    /// <summary>Diyalog Start with Windows'u Windows'un GERÇEK kaydından gösterir, kayıtlı tercihten değil: tercih
+    /// "açık" ama Run değeri yoksa (ör. dışarıdan silinmiş) anahtar kapalı görünür; değer varsa açık.</summary>
+    [Fact]
+    public void The_draft_shows_the_windows_startup_entry_rather_than_the_saved_preference()
+    {
+        var registry = new FakeAutostartRegistry();
+        var missing = new SettingsDraftViewModel(null, @"D:\repo",
+            saved: new UiState { Autostart = true }, autostart: registry.Service());
+        Assert.False(missing.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
+
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        var present = new SettingsDraftViewModel(null, @"D:\repo", saved: new UiState(), autostart: registry.Service());
+        Assert.True(present.GeneralRow(GeneralSetting.StartWithWindows).IsOn);
+    }
+
+    /// <summary>Anahtarı açıp Save → Windows'un başlangıç kaydı ANINDA yazılır (yeniden başlatma beklenmez): tırnaklı
+    /// exe yolu + autostart argümanı; tercih kaydedilir ve konsola not düşer.</summary>
+    [Fact]
+    public async Task Turning_start_with_windows_on_writes_the_windows_startup_entry_at_once()
+    {
+        var registry = new FakeAutostartRegistry();
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
+
+        await draft.CommitAsync(run, store);
+
+        Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
+        Assert.True(ShellSwitches.StartWithWindows(store.State));
+        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows on — the app starts when you sign in to Windows"));
+    }
+
+    /// <summary>Anahtarı kapatıp Save → kayıt ANINDA silinir; tercih kapanır ve not düşer.</summary>
+    [Fact]
+    public async Task Turning_start_with_windows_off_removes_the_windows_startup_entry_at_once()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        store.Save(new UiState { Autostart = true });
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        Assert.True(draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn); // ön-koşul: açık açıldı
+        draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = false;
+
+        await draft.CommitAsync(run, store);
+
+        Assert.False(registry.Exists(AutostartService.DefaultValueName));
+        Assert.False(ShellSwitches.StartWithWindows(store.State));
+        Assert.Equal(1, Count(run.GetRunDocumentText(), "Start with Windows off — signing in to Windows no longer starts the app"));
+    }
+
+    /// <summary>Anahtara DOKUNULMADAN başka bir ayar için Save → Windows kaydına da tercihe de dokunulmaz, not
+    /// düşmez. Senaryo: tercih açık ama kayıt yok, diyalog kapalı gösterir; kullanıcı yalnız Start minimized'ı
+    /// değiştirir. Save'in "kapalı"yı sessizce tercihe yazması, kullanıcının vermediği bir karar olurdu.</summary>
+    [Fact]
+    public async Task A_save_that_does_not_touch_start_with_windows_leaves_the_entry_and_the_preference_alone()
+    {
+        var registry = new FakeAutostartRegistry();
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        store.Save(new UiState { Autostart = true });
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        draft.GeneralRow(GeneralSetting.StartMinimizedToTray).IsOn = true;
+
+        await draft.CommitAsync(run, store);
+
+        Assert.Equal(0, registry.Writes);
+        Assert.True(store.State.Autostart);
+        Assert.DoesNotContain("Start with Windows", run.GetRunDocumentText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>Windows kaydı yazamazsa Save uygulamayı DÜŞÜRMEZ: konsola nedenle tek satır düşer, tercih DEĞİŞMEZ
+    /// (bir sonraki açılış diyaloğu gerçek durumla açar) ve "on" notu yazılmaz — olmayan bir değişimi söylemez.</summary>
+    [Fact]
+    public async Task When_windows_refuses_the_startup_entry_the_save_does_not_crash_and_says_so()
+    {
+        var registry = new FakeAutostartRegistry { FailWritesWith = new UnauthorizedAccessException("Access is denied.") };
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var run = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        var store = new SettingsDialogHost.FakeStore();
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", saved: store.Load(), autostart: registry.Service());
+        draft.GeneralRow(GeneralSetting.StartWithWindows).IsOn = true;
+
+        Assert.Null(await Record.ExceptionAsync(() => draft.CommitAsync(run, store)));
+
+        string console = run.GetRunDocumentText();
+        Assert.Equal(1, Count(console, "Start with Windows not changed — Access is denied."));
+        Assert.DoesNotContain("Start with Windows on", console, StringComparison.Ordinal);
+        Assert.False(ShellSwitches.StartWithWindows(store.State));
+        Assert.False(registry.Exists(AutostartService.DefaultValueName));
+    }
+
+    /// <summary>Kablo: MainWindow, DI'dan aldığı servisi Settings diyaloğuna verir (üretimde tek örnek — açılışın
+    /// uzlaştırması da onu kullanır).</summary>
+    [StaFact]
+    public void The_main_window_hands_its_autostart_service_to_the_settings_dialog()
+    {
+        using var temp = new TempDir();
+        var service = new FakeAutostartRegistry().Service();
+
+        var (window, _) = New(temp, autostart: service);
+
+        Assert.Same(service, window.SettingsOverlay.Autostart);
+    }
+
+    /// <summary>Kablo (kaynak guard'ı — App headless kurulamaz): gerçek registry'ye giden yazıcı App ağacında TEK
+    /// yerde, composition root'ta kurulur ve DI'a TEK servis olarak girer; açılışın uzlaştırması da o servisi
+    /// kullanır (MainWindow onu DI'dan alıp Settings'e verir). Testler gerçek yazıcıyı ASLA kurmaz.</summary>
+    [Fact]
+    public void The_real_registry_writer_is_built_once_in_the_composition_root_and_never_in_tests()
+    {
+        var rule = new Regex(@"new\s+RegistryAutostartRegistry\s*\(");
+        string hit = Assert.Single(SourceGuard.ScanApp("*.cs", rule, skipCommentLines: true));
+        Assert.StartsWith("App.xaml.cs:", hit, StringComparison.Ordinal);
+        Assert.Empty(SourceGuard.ScanTests("*.cs", rule, skipCommentLines: true));
+
+        // Beklenen biçimler regex ile yazılır: düz metin olarak yazılsaydı yukarıdaki tarama bu dosyayı da yakalardı.
+        string app = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "App.xaml.cs"));
+        Assert.Matches(@"sc\.AddSingleton\(_ => new AutostartService\(new\s+RegistryAutostartRegistry\(\)", app);
+        Assert.Contains("Services.GetRequiredService<AutostartService>().Apply(", app, StringComparison.Ordinal);
     }
 }

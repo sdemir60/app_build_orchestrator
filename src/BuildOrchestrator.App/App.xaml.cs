@@ -111,14 +111,18 @@ public partial class App : Application
         sc.AddSingleton(sp => new RunViewModel(
             sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString(),
             osActions: new OsActions(new ProcessLauncher(), new ProcessRunner())));
+        // [P4] Windows'un başlangıç kaydının TEK servisi — açılışın uzlaştırması (aşağıda) ve Settings'in Start with
+        // Windows anahtarı (MainWindow ctor'u → SettingsDialog) aynı örneği kullanır. Gerçek registry yazıcısı YALNIZ
+        // burada kurulur; MainWindow'un varsayılanı "Windows yüzeyi yok"tur (testler gerçek kayda ulaşamaz).
+        sc.AddSingleton(_ => new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand()));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
 
         // [E2/T16] Autostart tercihini (UiState.Autostart) registry ile HİZALA (idempotent — her açılışta güvenli):
         // true → HKCU\...\Run altına "<exe> --autostart" yazılır, false → silinir. Registry erişimi seam arkasında.
+        // Exe taşındıysa değer burada yeni yola hizalanır; yazılamazsa açılış düşmez (AutostartService.Apply).
         var uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath).Load();
-        new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand())
-            .Apply(ShellSwitches.StartWithWindows(uiState));
+        Services.GetRequiredService<AutostartService>().Apply(ShellSwitches.StartWithWindows(uiState));
 
         var window = Services.GetRequiredService<MainWindow>();
         // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
@@ -149,11 +153,12 @@ public partial class App : Application
     }
 
     /// <summary>[E2/T16] Registry autostart değerine yazılacak komut: mevcut exe'nin tam yolu + <see cref="AutostartArg"/>.</summary>
-    private static string AutostartCommand()
-    {
-        string exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.App.exe");
-        return $"\"{exe}\" {AutostartArg}";
-    }
+    private static string AutostartCommand() =>
+        AutostartCommandFor(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.App.exe"));
+
+    /// <summary>[P4] Komutun biçiminin TEK yeri (saf — test edilebilsin diye ayrıldı): exe yolu TIRNAKLI (boşluklu
+    /// bir kurulum klasörü komutu bölmesin), ardından "Windows ile açıldım" işareti <see cref="AutostartArg"/>.</summary>
+    internal static string AutostartCommandFor(string exePath) => $"\"{exePath}\" {AutostartArg}";
 
     protected override void OnExit(ExitEventArgs e)
     {

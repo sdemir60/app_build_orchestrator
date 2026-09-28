@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
@@ -97,6 +98,17 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];
 
+    /// <summary>[P4] Windows'un başlangıç kaydı — verildiyse Start with Windows onun gerçek durumundan açılır ve Save
+    /// kaydı ANINDA yazar; <c>null</c> ⇒ Windows yüzeyi yok (yalnız kalıcılık — testler ve tasarım).</summary>
+    private readonly AutostartService? _autostart;
+
+    /// <summary>[P4] Start with Windows'un diyalog AÇILIRKEN gösterdiği değer — Save yalnız bundan farklıysa Windows
+    /// kaydına ve tercihe dokunur.</summary>
+    private readonly bool _startWithWindowsOpenedOn;
+
+    /// <summary>[P4] Windows kaydı yazılamadığında konsolun tek satırı — nedeni Windows'un kendi cümlesidir.</summary>
+    internal static string StartWithWindowsNotChangedLine(string reason) => $"Start with Windows not changed — {reason}";
+
     /// <summary>Bir General anahtarının taslak satırı.</summary>
     public GeneralSettingRowViewModel GeneralRow(GeneralSetting setting) => _generalRows[setting];
 
@@ -134,9 +146,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <param name="saved">[P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
+    /// <param name="autostart">[P4] Windows'un başlangıç kaydı — verildiyse Start with Windows kayıtlı tercihten DEĞİL
+    /// Windows'un gerçek durumundan (<see cref="AutostartService.State"/>) tohumlanır ve <see cref="CommitAsync"/> kaydı
+    /// anında yazar.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
-        bool stashOnBranchSwitch = false, UiState? saved = null)
+        bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null)
     {
         _repositoryRoot = repositoryRoot;
         GeneralGroups = BuildGeneralGroups();
@@ -144,6 +159,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         StashOnBranchSwitch = stashOnBranchSwitch;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
+        _autostart = autostart;
+        if (autostart is not null)
+            GeneralRow(GeneralSetting.StartWithWindows).IsOn = autostart.State == AutostartState.On;
+        _startWithWindowsOpenedOn = GeneralRow(GeneralSetting.StartWithWindows).IsOn;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -286,7 +305,21 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
-        var settingNotes = ShellSwitches.Commit(state, s => GeneralRow(s).IsOn);
+        // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
+        // ve tercih değişir. Dokunulmadıysa ikisi de olduğu gibi kalır (Save'in gösterilen "kapalı"yı sessizce tercihe
+        // yazması kullanıcının vermediği bir karar olurdu); kayıt yazılamadıysa tercih de değişmez.
+        var settingNotes = new List<string>();
+        bool startWithWindows = GeneralRow(GeneralSetting.StartWithWindows).IsOn;
+        bool turned = startWithWindows != _startWithWindowsOpenedOn;
+        if (turned && _autostart is not null && !_autostart.TryTurn(startWithWindows, out string? failure))
+        {
+            settingNotes.Add(StartWithWindowsNotChangedLine(failure));
+            turned = false;
+        }
+        // Notun "önce"si diyaloğun GÖSTERDİĞİ değerdir: kayıtlı tercih Windows'un gerçeğinden farklı olabilir.
+        if (turned) state.Autostart = _startWithWindowsOpenedOn;
+        settingNotes.AddRange(ShellSwitches.Commit(state, s => s == GeneralSetting.StartWithWindows && !turned
+            ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes);
     }

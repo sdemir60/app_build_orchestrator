@@ -6,6 +6,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Media;
 using BuildOrchestrator.App;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Model;
@@ -332,6 +333,20 @@ public class SettingsGeneralPageTests
         dialog.Open(run, store, () => null);
         dialog.UpdateLayout();
         Assert.Equal([true, true, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+    }
+
+    /// <summary>[P4] Uçtan uca: switch'e tıklayıp Save → diyaloğun servisi Windows'un başlangıç kaydını ANINDA yazar.</summary>
+    [StaFact]
+    public void Saving_start_with_windows_on_writes_the_windows_startup_entry()
+    {
+        var registry = new FakeAutostartRegistry();
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(autostart: registry.Service());
+        using var _scope = scope;
+        SwitchNamed(dialog, "Start with Windows").IsChecked = true;
+
+        Click(dialog.Save);
+
+        Assert.Equal(FakeAutostartRegistry.Command, registry.CommandFor(AutostartService.DefaultValueName));
     }
 
     // ---------------------------------------------------------------- External projects
