@@ -259,8 +259,10 @@ the running instance first — tray icon → Exit).
      one of those — except a project that already built successfully against a dependency that was failing,
      which waits until that dependency recovers instead of being retried every time.
    - *Rebuild* — all projects, cached state ignored.
-   - *Clean* — `msbuild /t:Clean` on every solution, caches untouched. No engine behind it yet; the item is
-     there and disabled, and says so.
+   - *Clean* — `msbuild /t:Clean` on every project, external projects and cycle members included; nothing is
+     compiled and the caches are untouched. Like Visual Studio's *Clean Solution*, it also removes the outputs a
+     project copied to a shared output folder. Each cleaned project reads *never built* until the next *Build*
+     compiles it (*Resolve cycles*, for a cycle member). No confirmation; *Stop* stops it.
 
    **Every operation opens the same way.** A short neutral moment, then the projects this operation will touch
    light amber one at a time in random order, then everything else fades back and the run begins. The run

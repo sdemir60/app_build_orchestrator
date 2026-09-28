@@ -356,8 +356,10 @@ rest is still cleaned. It never invokes MSBuild's `-t:Clean`. On the old-style p
 set that target removes — the paths recorded in `FileListAbsolute.txt` — is a subset of `bin` and `obj`;
 deleting `obj` takes that record with it, so the target could not run after the folders are gone, and running
 it first would only remove a part of what the folder deletion removes anyway; and where tracked outputs were
-copied to the shared `OutDir`, `-t:Clean` would delete from there too, which the "`OutDir` is never touched"
-invariant forbids. `packages`, the shared `OutDir`, the run logs, the evaluation cache and the UI state are
+copied to the shared `OutDir`, `-t:Clean` would delete from there too, and a reset of `bin` and `obj` must not
+reach the shared `OutDir`. That reason belongs to this reset alone: deleting tracked outputs wherever they were
+written is exactly what the `-t:Clean` runs of the row menu and the Build menu do, as Visual Studio's *Clean*
+does (§8.1, §9.4). `packages`, the shared `OutDir`, the run logs, the evaluation cache and the UI state are
 all left alone. Like `syncWorkspace`, it blocks the command
 loop until it finishes rather than running on a background task, and a `cleanWorkspace` that arrives while a
 run holds the slot is rejected with `error(cleanRejected)` (§5.4).
@@ -994,7 +996,7 @@ as input collection does.
 | `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use |
 | `Rebuild` | all projects; cached state ignored |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
-| `Clean` | the run's scope, with `-t:Clean` instead of a compile — Visual Studio's *Clean*. Sent only from a row today (§13.2) |
+| `Clean` | every project in the graph — external projects and cycle members included — with `-t:Clean` instead of a compile: Visual Studio's *Clean Solution*, from the Build menu (§13.2). From a row, that one project |
 
 `Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
 a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
@@ -1017,13 +1019,31 @@ runs `-t:Build`, *Rebuild* runs `-t:Rebuild` — MSBuild's own clean-then-build 
 one place the two words diverge from the action bar, where *Rebuild* means "ignore the cache" and still runs
 `-t:Build` per project; in a scope of one, ignoring the cache is what *Build* already does.
 
-**Clean is the third target, and it is Visual Studio's.** *Clean* in a row menu runs `-t:Clean` on that
-project alone: MSBuild deletes the outputs it knows about, nothing is compiled, and no cache — NuGet's, the
-evaluation cache, another project's `obj` — is touched. It is a run like any other, so it reports a result,
-writes a project log and can be stopped; the maintenance box's *Clean* is a different, wider surface — the
-workspace reset of §13.2, which runs no MSBuild target at all (§5.2). Two things follow from "the outputs are
-gone". The project's **build-state row is deleted**, not invalidated: the project did not fail, this tool
-simply no longer knows any output of it. The output evidence (§7.6) would notice the deleted output only for a
+**Clean is the third target, and it is Visual Studio's.** *Clean* runs `-t:Clean` instead of a compile: from
+a row menu on that project alone, from the Build menu on every project in the graph — Visual Studio's *Clean
+Solution*. MSBuild deletes the outputs it knows about, wherever the project wrote them (§9.4), nothing is
+compiled, and no cache — NuGet's, the evaluation cache, another project's `obj` — is touched. It is a run like
+any other, so it reports a result, writes a project log and can be stopped; it asks for no confirmation and
+chains no Sync. The maintenance box's *Clean* is a different, wider surface — the workspace reset of §13.2,
+which runs no MSBuild target at all (§5.2).
+
+**Clean has no dependency meaning.** Cleaning one project needs nothing from another, so a Clean run's plan
+(`CleanRunScope`, applied before a row's scope is cut) carries no edges and no cycle marks. Every project is
+ready at once and is cleaned in plan order up to the parallelism ceiling; a cycle member is cleaned like any
+other project — it is not pre-skipped as `in dependency cycle`, no rounds run, and with no circular edge left
+the run cannot lock up. The rules that belong to compiling stay out with the edges: a clean that fails gives
+its dependents no dependency issue, and a row's clean records no stale dependency. An external project is
+cleaned like any other, and its working copy is not updated first (§10.4). The run's preview marks every project
+as this run's work — the queue colour, the fixed progress denominator and the stream's opening line
+(`Clean started — N projects, parallelism P`) read it — while the reasons, which describe the disk, are kept
+until a project is actually cleaned. Like a `Cycles` run's preview, it does not write the rows' will-build flag
+(§7.4): each result writes it instead, with the answer the next Sync will give — to build again, except a cycle
+member, which a plain `Build` never compiles — and a row the run never reached, say after a Stop, keeps what the
+last Sync said.
+
+Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
+the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
+notice the deleted output only for a
 project whose output path it can derive — for an SDK-style project it cannot — so a row left behind would let
 the next `Build` skip such a project as up to date and report a green run over deleted outputs. With the row
 gone, a project whose output path is known is in time mode, and its deleted output reads output missing. And the
@@ -1663,7 +1683,9 @@ candidate, to learn which ones that build refreshed; and, in time mode, the time
 `HintPath` targets — other projects' outputs and their copies. Build output lands exactly where Visual Studio
 would put it: in
 the solution's own shared output folder, produced by the projects' own post-build copy events. The orchestrator
-copies nothing.
+copies nothing. The one run that removes output there is a `-t:Clean` (§8.1): MSBuild — not the tool —
+deletes the files each project recorded as its own, wherever it wrote them, a shared `OutDir` included, exactly
+as Visual Studio's *Clean* does. No output path is passed for it either.
 
 The intermediate directory is not redirected either. Every run builds the user's working tree, and every
 project keeps its default `obj` for Visual Studio parity — no output path of any kind is changed. That default
@@ -2262,10 +2284,11 @@ no repository or branch context — the branch already has a chip in the action 
 *which workspace is open*, sits next to it as a mono label whose tooltip is the repository root.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
-`DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is the `-t:Clean` run the
-row menu starts on one project, and `DEEP CLEAN` the maintenance box's workspace reset — two words because they
-are two different operations. It lights amber while a run or a Sync is in flight and goes neutral when they
-finish; the two maintenance jobs write their word at the click and leave the pill neutral, because neither
+`DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
+the Build menu's over every project or the row menu's on one — and `DEEP CLEAN` the maintenance box's workspace
+reset — two words because they are two different operations. It lights amber while a run or a Sync is in
+flight and goes neutral when they finish; the two maintenance jobs write their word at the click and leave the
+pill neutral, because neither
 opens a phase of its own — their live state is told by their own button in the maintenance box and by the
 console transcript. The `SYNC` a maintenance job chains overwrites `DEEP CLEAN` or `OPTIMIZE`. A branch
 switch from the branch chip writes `SWITCHING BRANCH` at the click; the Sync a successful checkout chains
@@ -2680,10 +2703,14 @@ than zero; the `Debug | Release` segment;
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
-and *Build* already covers both sets (§8.1). *Clean* here is `-t:Clean` over every solution with the caches
-untouched, and it is the one surface in the bar whose engine is not written: the item keeps its place, drawn
-disabled, and its tooltip names the job before saying it is not available yet. It is neither the row menu's
-project clean nor the box's *Clean*, a different operation described below. While a run is in flight the
+and *Build* already covers both sets (§8.1). *Clean* here is Visual Studio's *Clean Solution*: `-t:Clean` on
+every project in the graph — external projects and cycle members included — with the caches untouched (§8.1).
+It is drawn, hovered and gated exactly like its two siblings, its tooltip names the job
+(`Clean — msbuild /t:Clean on every project; caches are untouched` — *project*, not *solution*: the engine runs
+per project and the bar gives no solution-level impression), it asks for no confirmation and chains no Sync, and
+Stop stops it. The opening wave marks every row, and when it ends the rows read what the row menu's clean leaves
+behind: `never built`. It is neither the row menu's project clean nor the box's *Clean*, a different operation
+described below. While a run is in flight the
 primary button becomes *Stop*, and the
 branch chip and the configuration control lock; the perf chip stays live.
 
@@ -5017,6 +5044,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure) | `Core/Planning/CycleReadFiles.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
+| Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
