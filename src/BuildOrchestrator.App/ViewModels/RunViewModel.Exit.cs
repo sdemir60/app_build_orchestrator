@@ -86,4 +86,9 @@ public sealed partial class RunViewModel
 
     /// <summary>Sessizlik bekçisinin uyarısı değişti — motor sustuysa çıkış drain'i beklemez.</summary>
     partial void OnEngineOverdueMessageChanged(string? value) => EvaluateExit();
+
+    /// <summary>[kullanıcı bildirimi 2026-09-29] Bekleyiş açıldı: run komutlarının kapısı (<see cref="CanRequestRun"/>)
+    /// artık istek almaz — iş sürerken basılan bir koşu çıkışı ya bir tam derleme boyunca bekletir ya da asılı bırakırdı.
+    /// Kapıların yeniden sorulduğu liste TEKTİR (<see cref="NotifySyncGatedCommands"/>).</summary>
+    partial void OnExitPendingChanged(bool value) => NotifySyncGatedCommands();
 }
