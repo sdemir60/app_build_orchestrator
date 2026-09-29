@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -307,9 +306,11 @@ public class UpdateRestartScreenTests
     /// son değerini tutan bir animasyon kurar (<see cref="PopIn.PlayFadeIn"/>) — görünen 1'i yalnız o animasyon tutar.
     /// Çıkış o animasyonu silip hedefi 0 olan (başlangıcı olmayan) sönümü başlatınca opaklık o karede tabana, 0'a düşüyor
     /// ve sönüm 0 → 0 oynuyordu: ekran tek karede kayboluyor, 280ms boyunca görünmez ama Visible kalıyordu. Sönüş
-    /// başlarken opaklık hâlâ ~1'dir ve ekran <c>Duration.Slow</c> dolmadan kalkmaz (saat alt sınırı — yük yalnız
-    /// uzatır; <see cref="UpdateRestartScreen.FrameMs"/> kadarlık pay, sönümün saatinin ~60 Hz'lik bir kare önce
-    /// başlayabilmesidir).</para></summary>
+    /// başlarken opaklık hâlâ ~1'dir ve ekran görünür kaldığı sürece çizilen hiçbir karede saydam (0) değildir — 0'a
+    /// ancak <c>Duration.Slow</c>'luk sönüm bittiğinde, kalktığı karede varır. Kareler WPF'in kendi saatinden
+    /// (<see cref="CompositionTarget.Rendering"/>) okunur, duvar saati kullanılmaz: WPF sönümün saatini çağrıdan önce
+    /// başlamış sayabiliyor (ölçüldü: çağrıdan kalkışa duvar saatiyle 259ms &lt; 280ms), duvar saatli bir süre alt sınırı
+    /// yanlış kırmızı verirdi. Sürenin kendisi yukarıdaki token eşitliğiyle pinlidir.</para></summary>
     [StaFact]
     public void With_motion_on_it_fades_in_over_the_base_duration_and_out_over_the_slow_one()
     {
@@ -326,18 +327,27 @@ public class UpdateRestartScreenTests
         DispatcherPump.PumpUntil(() => screen.Opacity >= 1.0, TimeSpan.FromSeconds(3));
         Assert.Equal(1.0, screen.Opacity, precision: 3);
 
-        var fadeClock = Stopwatch.StartNew();
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-        Assert.True(screen.IsShowing, "sönüş beklenmeden kalktı");
-        Assert.False(screen.IsHitTestVisible);
-        Assert.True(screen.HasAnimatedProperties, "ekran sönerek çıkmadı");
-        Assert.True(screen.Opacity > 0.99, $"sönüş görünür ekrandan başlamadı: Opacity = {screen.Opacity}");
+        // Sönüş sürerken çizilen HER karede ekranın opaklığı (ekran görünürken) — duvar saati değil, WPF'in kareleri.
+        var opacityWhileShowing = new List<double>();
+        EventHandler onFrame = (_, _) => { if (screen.IsShowing) opacityWhileShowing.Add(screen.Opacity); };
+        CompositionTarget.Rendering += onFrame;
+        try
+        {
+            rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+            Assert.True(screen.IsShowing, "sönüş beklenmeden kalktı");
+            Assert.False(screen.IsHitTestVisible);
+            Assert.True(screen.HasAnimatedProperties, "ekran sönerek çıkmadı");
+            Assert.True(screen.Opacity > 0.99, $"sönüş görünür ekrandan başlamadı: Opacity = {screen.Opacity}");
 
-        DispatcherPump.PumpUntil(() => screen.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
-        var fadeLasted = fadeClock.Elapsed;
+            DispatcherPump.PumpUntil(() => screen.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            CompositionTarget.Rendering -= onFrame;
+        }
         Assert.Equal(Visibility.Collapsed, screen.Visibility);
-        var fadeFloor = UpdateRestartScreen.FadeOutDuration(screen) - TimeSpan.FromMilliseconds(UpdateRestartScreen.FrameMs);
-        Assert.True(fadeLasted >= fadeFloor, $"sönüş Duration.Slow dolmadan bitti: {fadeLasted.TotalMilliseconds:F0}ms");
+        Assert.True(opacityWhileShowing.All(opacity => opacity > 0.0),
+            $"ekran sönüş bitmeden saydamlaştı — görünürken çizilen karelerin opaklığı: [{string.Join(", ", opacityWhileShowing)}]");
         Assert.False(screen.HasAnimatedProperties);
         Assert.Equal(1.0, screen.Opacity);
         GC.KeepAlive(rig.Window);
