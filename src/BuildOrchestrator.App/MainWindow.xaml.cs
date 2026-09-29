@@ -513,12 +513,14 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible
         || NotesOverlay.Visibility == Visibility.Visible;
 
-    /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b>. Üçü
-    /// BİRLİKTE açık durabilir (What's new About'un, About da Settings'in üstüne biner — XAML'de en son
-    /// geldiği için z-sırası doğru); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.</summary>
+    /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
+    /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
+    /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
+    /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
     private void OnEscapePressed()
     {
-        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null))
+        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null,
+                    _vm.EscRunState))
         {
             case EscAction.CloseDialog:
                 if (NotesOverlay.Visibility == Visibility.Visible) NotesOverlay.CloseDialog();
@@ -527,6 +529,9 @@ public partial class MainWindow : Window
                 break;
             case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
+            case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
+            case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;
+            case EscAction.ExplainUnstoppable: _vm.NoteEscCannotStop(); break;
         }
     }
 

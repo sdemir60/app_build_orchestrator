@@ -9,6 +9,26 @@ public enum EscAction
     CloseDialog,
     ClosePopovers,
     ClearSelection,
+    /// <summary>[kullanıcı kararı 2026-09-29] Çalışan Build/Rebuild/Clean'i durdur (graceful).</summary>
+    StopRun,
+    /// <summary>Durdurma zaten sürüyor: ikinci stop GİTMEZ, şerit "duyuldu" der.</summary>
+    AcknowledgeStopping,
+    /// <summary>Durdurulamayan bir iş sürüyor: nedenini konsola bir kez yaz.</summary>
+    ExplainUnstoppable,
+}
+
+/// <summary>[kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanının girdisi — VM'in o anki durumu
+/// (<c>RunViewModel.EscRunState</c>).</summary>
+public enum EscRunState
+{
+    /// <summary>Durdurulacak ya da anlatılacak bir iş yok.</summary>
+    Idle,
+    /// <summary>Bir koşu uçuşta ya da işaretleniyor; Stop alınabilir.</summary>
+    Stoppable,
+    /// <summary>Stop zaten istendi; uçuştakiler bitiyor.</summary>
+    Stopping,
+    /// <summary>Kullanıcıya görünen, durdurulamayan bir workspace işi sürüyor (Sync, Deep Clean, Optimize, checkout, pull).</summary>
+    Unstoppable,
 }
 
 /// <summary>[E5/T46 · Fix Wave 1] Bir pencere-seviyesi tuş bağlamasının SEMANTİK NİYETİ — MainWindow bunları
@@ -65,12 +85,23 @@ public static class KeyboardShortcuts
     ];
 
     /// <summary>Esc zinciri: EN ÜST açık katmanı kapatır (dialog &gt; popover/menü &gt; seçim), diğerine sızmaz
-    /// (BuildApp.jsx:1311-1315). Filtre input'undaki Esc bu zincire ULAŞMAZ (yerel temizle+blur, handled).</summary>
-    public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection)
+    /// (BuildApp.jsx:1311-1315). Filtre input'undaki Esc bu zincire ULAŞMAZ (yerel temizle+blur, handled).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: açık katman yoksa Esc hiçbir şey
+    /// yapmazdı. Zincirin son halkası artık KOŞUDUR: çalışan Build/Rebuild/Clean durdurulur (graceful — biten
+    /// projeler kaydedilir, sonraki Build kaldığı yerden devam eder; çift basma gerekmez), durdurma zaten sürüyorsa
+    /// "duyuldu" denir, durdurulamayan bir iş sürüyorsa nedeni söylenir.</para></summary>
+    public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection, EscRunState run)
     {
         if (dialogOpen) return EscAction.CloseDialog;
         if (popoverOrMenuOpen) return EscAction.ClosePopovers;
         if (hasSelection) return EscAction.ClearSelection;
-        return EscAction.None;
+        return run switch
+        {
+            EscRunState.Stoppable => EscAction.StopRun,
+            EscRunState.Stopping => EscAction.AcknowledgeStopping,
+            EscRunState.Unstoppable => EscAction.ExplainUnstoppable,
+            _ => EscAction.None,
+        };
     }
 }

@@ -50,20 +50,51 @@ public class KeyboardShortcutTests
     [Fact]
     public void Esc_closes_the_dialog_first_even_when_lower_layers_are_open()
         => Assert.Equal(EscAction.CloseDialog,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
     [Fact]
     public void Esc_closes_popovers_before_clearing_selection()
         => Assert.Equal(EscAction.ClosePopovers,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: true, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
     [Fact]
     public void Esc_clears_selection_when_nothing_else_is_open()
         => Assert.Equal(EscAction.ClearSelection,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true, EscRunState.Idle));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Koşu katmanı zincirin EN ALTINDADIR: koşu sürerken bir proje seçiliyse
+    /// ilk Esc seçimi bırakır (koşunun anlatısına dönülür), durdurmaz.</summary>
+    [Fact]
+    public void Esc_clears_the_selection_before_it_touches_a_running_build()
+        => Assert.Equal(EscAction.ClearSelection,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true, EscRunState.Stoppable));
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: açık katman yoksa Esc hiçbir şey yapmazdı —
+    /// koşu sürerken de. Artık zincirin son halkası çalışan Build/Rebuild/Clean'dir: Esc onu DURDURUR (graceful;
+    /// biten projeler kaydedilir, sonraki Build kaldığı yerden devam eder, çift basma gerekmez).
+    /// </summary>
+    [Fact]
+    public void Esc_stops_a_running_build_when_no_layer_is_open()
+        => Assert.Equal(EscAction.StopRun,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stoppable));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Durdurma zaten sürüyorsa ikinci bir stop GİTMEZ — Esc yalnız "duyuldu"
+    /// der (şerit vurgusu).</summary>
+    [Fact]
+    public void Esc_acknowledges_a_stop_that_is_already_in_progress()
+        => Assert.Equal(EscAction.AcknowledgeStopping,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stopping));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, pull)
+    /// sürerken Esc sessiz kalmaz — neden durmadığını söyler.</summary>
+    [Fact]
+    public void Esc_explains_an_operation_that_cannot_be_stopped()
+        => Assert.Equal(EscAction.ExplainUnstoppable,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Unstoppable));
 
     [Fact]
-    public void Esc_does_nothing_when_no_layer_is_open()
+    public void Esc_does_nothing_when_no_layer_is_open_and_nothing_runs()
         => Assert.Equal(EscAction.None,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Idle));
 }
