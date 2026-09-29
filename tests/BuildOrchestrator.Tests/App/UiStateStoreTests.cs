@@ -7,7 +7,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [T35] <see cref="UiState"/>'in 2×2 yerleşim alanlarıyla genişlemesi JSON store round-trip'inden geçmeli;
-/// mevcut kabuk alanları (TrayBalloonShown/Hotkey) bozulmamalı (şema genişlemesi geriye dönük tolere edilir).
+/// mevcut kabuk alanları (TrayBalloonShown, global kısayollar) bozulmamalı (şema genişlemesi geriye dönük tolere edilir).
 /// </summary>
 public class UiStateStoreTests
 {
@@ -22,7 +22,42 @@ public class UiStateStoreTests
         var reloaded = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json")).Load();
         Assert.Equal(LayoutMode.Focus, reloaded.LayoutMode);
         Assert.Equal(61, reloaded.ColPct);
-        Assert.True(reloaded.TrayBalloonShown == false && reloaded.Hotkey == "Alt+B");  // mevcut alanlar bozulmadi
+        Assert.False(reloaded.TrayBalloonShown); // mevcut alanlar bozulmadı
+        Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture, reloaded.ShowHideHotkey);
+        Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture, reloaded.BuildHotkey);
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ ŞEMA: tek bir <c>Hotkey</c> alanı vardı, varsayılanı
+    /// <c>"Alt+B"</c>'ydi ve her Save onu diske yazıyordu — ayar ekranı hiç olmadığı için kullanıcının dosyasında
+    /// HEP <c>"Alt+B"</c> durur (ölçüldü: kullanıcının kendi <c>ui-state.json</c>'ı). Yalnız varsayılanı değiştirmek
+    /// o kaydı yaşatır ve eski kısayol geri gelirdi. İki yeni alan açıldı; eski alan okunurken yok sayılır ve bir
+    /// sonraki kayıtta yazılmaz.
+    /// </summary>
+    [Fact]
+    public void A_legacy_alt_b_entry_is_ignored_and_the_new_global_defaults_apply()
+    {
+        using var temp = new TempDir();
+        string path = Path.Combine(temp.Path, "ui-state.json");
+        File.WriteAllText(path, """{ "TrayBalloonShown": true, "Hotkey": "Alt+B" }""");
+        var store = new JsonUiStateStore(path);
+
+        var state = store.Load();
+        Assert.True(state.TrayBalloonShown); // dosya gerçekten okundu (varsayılana düşmedi)
+        Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture, state.ShowHideHotkey);
+        Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture, state.BuildHotkey);
+
+        store.Save(state);
+        Assert.DoesNotContain("\"Hotkey\"", File.ReadAllText(path));
+    }
+
+    /// <summary>Kabuk bir kısayolun jestini eyleminden sorar — iki alan ile iki eylem arasındaki TEK eşleme.</summary>
+    [Fact]
+    public void Each_global_action_reads_its_own_configured_gesture()
+    {
+        var state = new UiState { ShowHideHotkey = "Alt+Q", BuildHotkey = "Alt+Shift+Q" };
+        Assert.Equal("Alt+Q", state.HotkeyGesture(GlobalHotkeyAction.ShowHide));
+        Assert.Equal("Alt+Shift+Q", state.HotkeyGesture(GlobalHotkeyAction.Build));
     }
 
     [Fact]

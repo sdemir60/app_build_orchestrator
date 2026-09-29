@@ -18,8 +18,8 @@ public readonly record struct BuildMenuItem(string Kind, string Title, string De
 /// Menü HER fazda tam olarak üç maddedir:
 /// <list type="bullet">
 ///   <item><b>Build</b> — "Only stale projects" — F5.</item>
-///   <item><b>Rebuild</b> — "All {total} projects — cache ignored" — Ctrl+F5.</item>
-///   <item><b>Clean</b> — "Remove build outputs — next build is full" — kısayolsuz.</item>
+///   <item><b>Rebuild</b> — "All {total} projects — cache ignored" — F6.</item>
+///   <item><b>Clean</b> — "Remove build outputs — next build is full" — F7.</item>
 /// </list>
 /// <b>Kbd rozetleri DISPLAY-ONLY (v7 K6):</b> gerçek global tuş yakalama E5'in işidir — burada jest bağlanmaz.
 ///
@@ -82,13 +82,14 @@ public partial class BuildMenu : UserControl
     {
         // [About] Rozet metni ARTIK literal DEĞİL: ShortcutCatalog jesti bağlama tablosundan türetir, böylece
         // bir bağlama değişirse rozet de değişir (kopya YASAK — ShortcutCatalogTests kaynak guard'ı pinler).
-        // Menüde her madde TEK rozet gösterir → Gestures[0] (Rebuild'in ikinci jesti Shift+F5 burada çizilmez).
+        // Menüde her madde TEK rozet gösterir → Gestures[0].
         return
         [
             new("build", "Build", "Only stale projects", ShortcutCatalog.Get(ShortcutId.Build).Gestures[0]),
             new("rebuild", "Rebuild", Inv($"All {total} projects — cache ignored"),
                 ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0]),
-            new("clean", "Clean", "Remove build outputs — next build is full", null),
+            new("clean", "Clean", "Remove build outputs — next build is full",
+                ShortcutCatalog.Get(ShortcutId.Clean).Gestures[0]),
         ];
     }
 

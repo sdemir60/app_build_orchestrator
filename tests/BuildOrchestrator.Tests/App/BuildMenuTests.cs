@@ -1,6 +1,7 @@
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
@@ -44,7 +45,9 @@ public class BuildMenuTests
         Assert.Equal(["build", "rebuild", "clean"], items.Select(i => i.Kind));
         Assert.Equal("Clean", items[2].Title);
         Assert.Equal("Remove build outputs — next build is full", items[2].Desc);
-        Assert.Null(items[2].Kbd); // Clean'in kısayolu YOK (F5/Ctrl+F5 Build ve Rebuild'indir)
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] ESKİ İDDİA: Clean'in kısayolu yoktu (rozet null; F5/Ctrl+F5
+        // Build ve Rebuild'indi). Kullanıcının tablosunda F7 = Clean; rozet katalogdan okunur (literal değil).
+        Assert.Equal(ShortcutCatalog.Get(ShortcutId.Clean).Gestures[0], items[2].Kbd);
     }
 
     /// <summary>[§9-7] "İkon ailesi tek grid/stroke'ta: play · rotate-cw · brush." Rebuild ARTIK Sync'in

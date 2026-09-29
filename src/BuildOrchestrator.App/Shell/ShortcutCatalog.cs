@@ -8,36 +8,42 @@ public enum ShortcutId
 {
     Build,
     Rebuild,
+    /// <summary>[kullanıcı kararı 2026-09-29] F7 — Build menüsünün Clean'i (her projede <c>-t:Clean</c>).</summary>
+    Clean,
     FocusFilter,
     About,
-    /// <summary>[design v1.13.0 §2.1/§2.11] What's new — kendi dialogu, kendi title bar butonu (sparkle).</summary>
-    WhatsNew,
     Escape,
-    /// <summary>Global kısayol (tepsiden pencereyi getir) — <see cref="KeyboardShortcuts.WindowBindings"/>'te
-    /// DEĞİLDİR, <see cref="HotkeyBinding"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
-    RestoreFromTray,
+    /// <summary>[kullanıcı kararı 2026-09-29] Global: pencereyi getir / gizle — <see cref="KeyboardShortcuts.WindowBindings"/>'te
+    /// DEĞİLDİR, <see cref="GlobalHotkeys"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
+    ShowHideWindow,
+    /// <summary>[kullanıcı kararı 2026-09-29] Global: pencere gelmeden Build.</summary>
+    BuildInBackground,
 }
 
 /// <summary>[design v1.19.0 §2.10] About'un Shortcuts sekmesindeki caps grubu. Sıra ve başlık metni
 /// <see cref="ShortcutCatalog.GroupOrder"/>/<see cref="ShortcutCatalog.GroupTitle"/>'dadır.</summary>
 public enum ShortcutGroup
 {
-    /// <summary>Koşu komutları — Build, Rebuild.</summary>
+    /// <summary>Koşu komutları — Build, Rebuild, Clean.</summary>
     Build,
-    /// <summary>Uygulama geneli — filtre, dialoglar, katman kapatma, tepsi.</summary>
+    /// <summary>Uygulama geneli — filtre, About, katman kapatma.</summary>
     Application,
+    /// <summary>[kullanıcı kararı 2026-09-29] Pencere öndeyken de tepsideyken de çalışan iki kısayol.</summary>
+    Global,
 }
 
-/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama + ait olduğu grup.</summary>
+/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama + ait olduğu grup. Global bir
+/// kısayolsa <paramref name="Global"/> hangi eyleme ait olduğunu söyler — About kaydı düşen satırı buradan işaretler.</summary>
 public readonly record struct ShortcutEntry(
-    ShortcutId Id, IReadOnlyList<string> Gestures, string Description, ShortcutGroup Group);
+    ShortcutId Id, IReadOnlyList<string> Gestures, string Description, ShortcutGroup Group,
+    GlobalHotkeyAction? Global = null);
 
 /// <summary>
 /// [About] Kullanıcıya gösterilen kısayol metinlerinin TEK kaynağı — About diyaloğunun tablosu, Build
 /// menüsünün <c>Ds.Kbd</c> rozetleri ve ikon butonlarının tooltip'leri hep buradan okur.
 ///
 /// <para><b>Jestler ELLE YAZILMAZ:</b> <see cref="Format"/> onları <see cref="KeyboardShortcuts.WindowBindings"/>
-/// satırlarından türetir (global kısayol için <see cref="HotkeyBinding.DefaultGesture"/>). Böylece bir bağlama
+/// satırlarından türetir (global kısayollar için <see cref="GlobalHotkeys"/>). Böylece bir bağlama
 /// değişince gösterilen metin de kendiliğinden değişir. Önceki hâlde <c>"F5"</c>/<c>"Ctrl+F5"</c>
 /// <c>BuildMenu.ComposeItems</c>'ta bağımsız literallerdi — bağlama tablosuyla sessizce ayrışabilirlerdi
 /// (<c>ShortcutCatalogTests</c> kaynak guard'ı bunu bir daha mümkün kılmaz).</para>
@@ -59,42 +65,46 @@ public static class ShortcutCatalog
         return string.Join('+', parts);
     }
 
-    /// <summary>Bir niyete bağlı TÜM jestler, tablodaki sırayla (ör. Rebuild → Ctrl+F5, Shift+F5).</summary>
+    /// <summary>Bir niyete bağlı TÜM jestler, tablodaki sırayla.</summary>
     private static string[] GesturesFor(WindowIntent intent) =>
         [.. KeyboardShortcuts.WindowBindings.Where(b => b.Intent == intent).Select(b => Format(b.Key, b.Modifiers))];
 
-    /// <summary>Gösterim sırası: en sık kullanılandan en seyreğe (About tablosu bu sırayı olduğu gibi çizer).</summary>
+    /// <summary>Gösterim sırası: en sık kullanılandan en seyreğe (About tablosu bu sırayı olduğu gibi çizer).
+    /// [kullanıcı kararı 2026-09-29] What's new'in kısayolu (Ctrl+F1) kalktığı için katalogda satırı yoktur;
+    /// sparkle butonunun cümlesi <c>ReleaseNotes.WhatsNewTooltip</c>'tedir.</summary>
     public static IReadOnlyList<ShortcutEntry> All { get; } =
     [
-        new(ShortcutId.Build, GesturesFor(WindowIntent.F5StateBranch),
-            "Build — or Stop while a run is in flight", ShortcutGroup.Build),
+        // [kullanıcı kararı 2026-09-29] Jestler GlobalHotkeys tablosundan okunur (varsayılanlar) — başka yerde yazılmaz.
+        new(ShortcutId.ShowHideWindow, [GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],
+            "Show or hide the window", ShortcutGroup.Global, GlobalHotkeyAction.ShowHide),
+        new(ShortcutId.BuildInBackground, [GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture],
+            "Build without bringing the window up", ShortcutGroup.Global, GlobalHotkeyAction.Build),
+        new(ShortcutId.Build, GesturesFor(WindowIntent.Build),
+            "Build — only stale projects", ShortcutGroup.Build),
         new(ShortcutId.Rebuild, GesturesFor(WindowIntent.Rebuild),
             "Rebuild — all projects, cache ignored", ShortcutGroup.Build),
+        new(ShortcutId.Clean, GesturesFor(WindowIntent.Clean),
+            "Clean — remove build outputs", ShortcutGroup.Build),
         new(ShortcutId.FocusFilter, GesturesFor(WindowIntent.FocusFilter),
             "Focus the project filter", ShortcutGroup.Application),
         // Bu cümle AYNI ZAMANDA title bar'daki info butonunun tooltip'idir (MainWindow.xaml) — iki yerde
         // yazılmaz.
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
-        // [design v1.13.0/v1.13.1 §2.1/§2.11 · D4/T8] Bu cümle AYNI ZAMANDA sparkle butonunun (görülmemiş
-        // sürüm yokken) tooltip'idir — MainWindow kendi cümlesini kurmaz, buradan okur (About'un deseni
-        // birebir budur). Görülmemiş sürüm varken tooltip AYRI bir cümleye döner ("What's new in <sürüm>");
-        // o cümle sürüm numarası taşıdığı için burada TANIMLANMAZ (kopya YASAK'ın öbür ucu: sabit olmayan
-        // metin sabit bir katalog girdisinde YAŞAMAZ).
-        new(ShortcutId.WhatsNew, GesturesFor(WindowIntent.ShowNotes),
-            "What's new — release notes", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
-            "Close the topmost open layer: dialog → popover/menu → selection", ShortcutGroup.Application),
-        new(ShortcutId.RestoreFromTray, [HotkeyBinding.DefaultGesture],
-            "Global — bring the window back from the tray", ShortcutGroup.Application),
+            "Close the topmost layer: dialog → popover/menu → selection; otherwise stop the running build",
+            ShortcutGroup.Application),
     ];
 
-    /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası.</summary>
-    public static IReadOnlyList<ShortcutGroup> GroupOrder { get; } = [ShortcutGroup.Build, ShortcutGroup.Application];
+    /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası. [kullanıcı kararı 2026-09-29] GLOBAL ilk sıradadır —
+    /// kullanıcının "en önemlileri" dediği iki kısayol.</summary>
+    public static IReadOnlyList<ShortcutGroup> GroupOrder { get; } =
+        [ShortcutGroup.Global, ShortcutGroup.Build, ShortcutGroup.Application];
 
     /// <summary>[design v1.19.0 §2.10] Grubun başlığı — caps olarak çizilir (<c>TrackedTextBlock</c> büyütür).</summary>
     public static string GroupTitle(ShortcutGroup group) => group switch
     {
+        ShortcutGroup.Global => "Global",
         ShortcutGroup.Build => "Build",
         ShortcutGroup.Application => "Application",
         _ => throw new ArgumentOutOfRangeException(nameof(group), group, null),

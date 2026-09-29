@@ -74,6 +74,12 @@ public static class ReleaseNotes
     /// <summary>[§2.10] "Son 3 sürüm açık, gerisi katlı."</summary>
     public const int OpenByDefault = 3;
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Başlık çubuğundaki What's new butonunun, görülmemiş sürüm YOKKEN
+    /// tooltip'i — cümlenin TEK yeri.
+    /// Eskiden kısayol kataloğundaydı ve sonuna jest (<c>(Ctrl+F1)</c>) eklenirdi; What's new artık bir kısayol
+    /// olmadığı için cümle kataloğun dışına, sürüm notlarının yanına taşındı ve jest taşımaz.</summary>
+    public const string WhatsNewTooltip = "What's new — release notes";
+
     /// <summary>[design v1.13.1/v1.19.0 §2.10/§2.11] <c>What's new in {sürüm}</c> — cümlenin TEK yeri. İki tüketicisi
     /// vardır: görülmemiş sürüm varken sparkle butonunun tooltip'i (MainWindow) ve About sekmesinin What's new
     /// butonu (WhatsNewTests kaynak guard'ı pinler).</summary>

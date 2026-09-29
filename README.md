@@ -448,8 +448,9 @@ Drag the empty background to pan (the cursor turns into a hand) and the mouse wh
 clicking empty background with nothing selected returns the view to its default, and both a graph rebuilt by
 a Sync and a build that starts bring it back to that default view.
 
-You do not have to keep the window open to watch a build. With *Close to tray* on (the default), closing it with
-`X` drops the app to the tray, and if a build is running the product mark animates in the bottom-right corner of
+You do not have to keep the window open to watch a build — or to start one: `Ctrl+Shift+Space` builds from
+anywhere and `Shift+Space` shows or hides the window (see *Keyboard shortcuts*). With *Close to tray* on (the
+default), closing it with `X` drops the app to the tray, and if a build is running the product mark animates in the bottom-right corner of
 the screen — click it to bring the window back, or click straight through the empty space around it to whatever
 is underneath. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
@@ -474,24 +475,35 @@ brings a fresh engine up.
 
 ### Keyboard shortcuts
 
-| Key | Action |
-|---|---|
-| `F5` | Build — or Stop while a run is in flight |
-| `Ctrl+F5` / `Shift+F5` | Rebuild |
-| `Ctrl+F` | Focus the project filter |
-| `F1` | About — version, shortcuts and diagnostics |
-| `Ctrl+F1` | What's new — release notes (toggle) |
-| `Esc` | Close the topmost open layer: dialog → popover/menu → selection |
-| `Alt+B` | Global hotkey: bring the window back from the tray |
+| Key | Where | Action |
+|---|---|---|
+| `Shift+Space` | anywhere | Show or hide the window |
+| `Ctrl+Shift+Space` | anywhere | Build without bringing the window up |
+| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F6` | window | Rebuild |
+| `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
+| `Ctrl+F` | window | Focus the project filter |
+| `F1` | window | About — version, shortcuts and diagnostics |
+| `Esc` | window | Close the topmost open layer: dialog → popover/menu → selection; with none open, stop the running build |
 
-The global hotkey defaults to `Alt+B` and is read from `ui-state.json`; there is no UI for changing it
-(Settings has General, Workspace, External projects and Layers). If it cannot be registered — another application
-already owns that combination — it is silently disabled; the tray icon still restores the window, and the
-About screen marks that row *unavailable* so the loss is visible rather than mysterious.
+The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
+hides the window only when it is in front; from the tray, minimized or behind another window it brings it
+forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run, Sync or
+maintenance job is in flight — and with the window hidden the tray indicator and the result balloon report it.
+Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
+(Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
+If one cannot be registered — another application already owns that combination — it is silently disabled; the
+tray icon still restores the window, and the About screen marks that row *unavailable* so the loss is visible
+rather than mysterious.
+
+`Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
+carries on from there. Pressing it again while the stop drains sends nothing; the ribbon line dips once to say
+the key was heard. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped; `Esc` during one writes
+a single console line saying so.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
-`F1` and `Ctrl+F1` toggle their own screens and work even while another dialog is open: each opens on top, and
-Esc closes the topmost layer first, so a lower one (an unsaved Settings draft, say) survives underneath.
+`F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost
+layer first, so a lower one (an unsaved Settings draft, say) survives underneath.
 
 ### About
 
@@ -504,8 +516,8 @@ the tagline on the left; a *licensed to* block with the company logo on the righ
   `not started`) and the copyright, and a *What's new in {version}* button that opens the release notes.
 - **Environment** — two groups: *Runtime* (engine PID, .NET runtime, OS) and *Paths* (the resolved
   `MSBuild.exe` and its version, the repository root, and the state and log paths).
-- **Shortcuts** — the table above in two groups, *Build* and *Application*, rendered from the same source the
-  app binds its keys from, so a rebound key can never drift from what the screen claims.
+- **Shortcuts** — the table above in three groups, *Global*, *Build* and *Application*, rendered from the same
+  source the app binds its keys from, so a rebound key can never drift from what the screen claims.
 
 *Copy diagnostics* in the footer puts the product and version, the engine version and every Environment row on
 the clipboard as one aligned block, to paste into a support request.
@@ -516,7 +528,7 @@ Environment tab is opened rather than when the screen appears.
 ### What's new
 
 A dedicated 720 × 600 px dialog, opened from its own title-bar button — a four-point star between the gear and
-`i` — or with `Ctrl+F1` (a toggle: pressing it again closes the dialog). It carries no identity block and no
+`i` — or from About's *What's new in {version}* button; it has no keyboard shortcut. It carries no identity block and no
 tabs; the header shows the installed version in a small mono chip, and the body is release notes only, newest
 version first. Each version keeps its number, date and — on the running version — a neutral `INSTALLED` chip
 in a left column that stays in view while its notes scroll; the notes sit on the right, grouped into Added /
@@ -529,7 +541,7 @@ where nothing has been opened yet — a small amber dot sits on the star button 
 version. Opening the dialog clears the dot for good; it does not return until the next version ships. About's
 `i` button no longer takes part in this: its tooltip is fixed, and `F1` always opens on the About tab.
 
-Esc closes whichever dialog is on top first: What's new, then About, then Settings, so a lower one's state
+Esc closes whichever dialog is on top first — What's new, then About, then Settings — so a lower one's state
 survives a stray keypress.
 
 ### State on disk

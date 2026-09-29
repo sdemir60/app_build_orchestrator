@@ -95,19 +95,23 @@ public partial class AboutDialog : Controls.ModalDialog
     /// <summary>[test yüzeyi] Butonun o anki ön plan fırçası (başarıda başarı tonuna döner).</summary>
     internal Brush? CopyButtonForeground => CopyButton.Foreground;
 
+    /// <summary>[test yüzeyi] Shortcuts sekmesinin o anki satır modeli (grup → satırlar).</summary>
+    internal IReadOnlyList<ShortcutGroupRows> ShortcutRows =>
+        ShortcutGroups.ItemsSource as IReadOnlyList<ShortcutGroupRows> ?? [];
+
     /// <summary>
     /// Diyaloğu açar.
-    /// <paramref name="hotkeyRegistered"/> global kısayolun GERÇEKTEN kayıtlı olup olmadığıdır (çakışmada
-    /// sessiz devre dışı — bkz. <see cref="HotkeyRegistration"/>); <c>false</c> ise o satır "unavailable"
-    /// işaretlenir. <paramref name="resolveMsBuild"/> vswhere seam'idir (testler process başlatmaz).
+    /// <paramref name="hotkeyRegistered"/> bir global kısayolun GERÇEKTEN kayıtlı olup olmadığıdır, eylem başına
+    /// (çakışmada sessiz devre dışı — bkz. <see cref="HotkeyRegistration"/>); <c>false</c> dönen eylemin satırı
+    /// "unavailable" işaretlenir. <paramref name="resolveMsBuild"/> vswhere seam'idir (testler process başlatmaz).
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İMZA bir <c>openOnWhatsNew</c> parametresi
     /// taşıyordu: görülmemiş bir sürüm varsa diyalog DOĞRUDAN What's new sekmesinde açılırdı. What's new
     /// kendi diyaloguna (<see cref="NotesDialog"/>) taşındığı için bu yönlendirme kalktı (yönlendirme MainWindow'da
-    /// sparkle butonuna/Ctrl+F1'e gider). <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Her açılış ilk sekmede
+    /// sparkle butonuna gider). <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Her açılış ilk sekmede
     /// başlar — ilk sekme artık Shortcuts değil <b>About</b>'tur.</para>
     /// </summary>
-    public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild)
+    public void Open(RunViewModel run, Func<GlobalHotkeyAction, bool> hotkeyRegistered, Func<Task<string>> resolveMsBuild)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(resolveMsBuild);
@@ -121,14 +125,14 @@ public partial class AboutDialog : Controls.ModalDialog
             .Select(g => new ShortcutGroupRows(ShortcutCatalog.GroupTitle(g), ShortcutCatalog.All
                 .Where(e => e.Group == g)
                 .Select(e => new ShortcutRow(e.Description, e.Gestures,
-                    Unavailable: e.Id == ShortcutId.RestoreFromTray && !hotkeyRegistered))
+                    Unavailable: e.Global is { } action && !hotkeyRegistered(action)))
                 .ToList()))
             .ToList();
 
         RefreshDiagnostics();
 
         // [design v1.19.0 §2.10] ⓘ ve F1 her zaman About sekmesinde açar — What's new'e yönlendirme YOKTUR
-        // (o dialog kendi butonundan, Ctrl+F1'den ya da About sekmesindeki butondan açılır).
+        // (o dialog kendi butonundan ya da About sekmesindeki butondan açılır).
         AboutTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı, odak dialogun içine — ortak kabuk (ModalDialog).

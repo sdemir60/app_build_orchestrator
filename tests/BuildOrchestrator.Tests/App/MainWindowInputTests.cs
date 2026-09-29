@@ -62,24 +62,47 @@ public class MainWindowInputTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Aynı niyetin İKİ tuşu (Ctrl+F5 / Shift+F5) AYNI komut nesnesine — ve o nesne VM'in GERÇEK
-    /// <see cref="RunViewModel.RebuildCommand"/>'ıdır (<c>ReferenceEquals</c>). Yanlış bir sözlük arm'ı
-    /// (ör. Rebuild→BuildCommand) burada kırar.</summary>
+    /// <summary>
+    /// F5 / F6 / F7, VM'in GERÇEK <see cref="RunViewModel.BuildCommand"/> / <see cref="RunViewModel.RebuildCommand"/> /
+    /// <see cref="RunViewModel.CleanAllCommand"/>'ına bağlıdır (<c>ReferenceEquals</c>) — yanlış bir sözlük arm'ı
+    /// (ör. Rebuild→BuildCommand) burada kırar; kapıyı (CanExecute) komutun kendisi taşır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: Rebuild'in İKİ tuşu (Ctrl+F5 /
+    /// Shift+F5) aynı <c>RebuildCommand</c>'a bağlıydı ve çıplak F5 duruma-dallı bir kod-tarafı komuttu (Rebuild'le
+    /// karıştırılmaması ayrıca pinlenirdi). Tuşlar değişti: Rebuild F6'ya, Clean F7'ye geldi; F5 artık dallanmaz ve
+    /// doğrudan Build'e bağlıdır (gerekçe <see cref="KeyboardShortcutTests.F5_is_bound_to_build_only"/>'da).</para>
+    /// </summary>
     [StaFact]
-    public void Both_rebuild_gestures_are_bound_to_the_view_models_own_rebuild_command()
+    public void The_build_rebuild_and_clean_keys_are_bound_to_the_view_models_own_commands()
     {
         using var temp = new TempDir();
         var (window, vm) = NewMainWindow(temp);
         var bindings = KeyBindingsOf(window);
 
-        var ctrlF5 = bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.Control);
-        var shiftF5 = bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.Shift);
+        Assert.Same(vm.BuildCommand, bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None).Command);
+        Assert.Same(vm.RebuildCommand, bindings.Single(b => b.Key == Key.F6 && b.Modifiers == ModifierKeys.None).Command);
+        Assert.Same(vm.CleanAllCommand, bindings.Single(b => b.Key == Key.F7 && b.Modifiers == ModifierKeys.None).Command);
+        GC.KeepAlive(window);
+    }
 
-        Assert.Same(vm.RebuildCommand, ctrlF5.Command);
-        Assert.Same(vm.RebuildCommand, shiftF5.Command);
-        // Çıplak F5 duruma-dallı bir kod-tarafı komuttur — Rebuild ile KARIŞTIRILMAMALI.
-        var bareF5 = bindings.Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
-        Assert.NotSame(vm.RebuildCommand, bareF5.Command);
+    /// <summary>[kullanıcı kararı 2026-09-29] Build sürerken F5 HİÇBİR ŞEY yapmaz — durdurmaz, ikinci bir koşu da
+    /// başlatmaz. Pencerenin kendi F5 bağlaması (Build'in kapısı kapalı) kullanılır; eski kuralda burada Stop
+    /// gönderilir ve faz <see cref="AppPhase.Stopping"/>'e geçerdi.</summary>
+    [StaFact]
+    public void F5_while_a_build_runs_neither_stops_it_nor_starts_another()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewMainWindow(temp);
+        MainWindowHost.AcceptSends(vm);
+        MainWindowHost.StartBuild(vm);
+        var phase = vm.Phase;
+
+        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
+        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+
+        Assert.Equal(phase, vm.Phase);
+        Assert.NotEqual(AppPhase.Stopping, vm.Phase);
         GC.KeepAlive(window);
     }
 

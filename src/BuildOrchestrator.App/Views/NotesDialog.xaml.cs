@@ -9,7 +9,8 @@ namespace BuildOrchestrator.App.Views;
 /// <summary>
 /// [design v1.13.0/v1.19.0 §2.11 · D4/T9] What's new — sürüm notlarının kendi diyalogu. About'un dördüncü
 /// sekmesiydi (design v1.9.0); v1.13.0 bunu About'tan ÇIKARDI, kendi title bar butonu (title bar'daki notes
-/// butonu) ve kendi kısayolu (Ctrl+F1) verdi. Kabuk (scrim, Ds.Dialog, odak tuzağı, Esc/scrim ile kapanma,
+/// butonu) verdi (bir süre Ctrl+F1 kısayolu da vardı; kullanıcı kararı 2026-09-29 ile kalktı). Kabuk (scrim,
+/// Ds.Dialog, odak tuzağı, Esc/scrim ile kapanma,
 /// giriş) üç dialogun ORTAK kabuğudur: <see cref="ModalDialog"/>.
 ///
 /// <para><b>[v1.19.0] Sürüm bloğu 2 kolonlu grid'dir</b> (84px + 26px aralık + kalan): solda sürüm kimliği
