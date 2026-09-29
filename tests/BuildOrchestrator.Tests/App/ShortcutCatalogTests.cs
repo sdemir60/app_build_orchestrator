@@ -8,7 +8,7 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// Kısayol jestlerinin TEK doğruluk kaynağı. Metinler elle yazılmaz: <see cref="ShortcutCatalog.Format"/>
 /// bunları <see cref="KeyboardShortcuts.WindowBindings"/>'ten (global kısayol için
-/// <see cref="HotkeyBinding.DefaultGesture"/>'dan) türetir. Önceden "F5"/"Ctrl+F5"
+/// <see cref="GlobalHotkeys"/>'ten) türetir. Önceden "F5"/"Ctrl+F5"
 /// <c>BuildMenu.ComposeItems</c>'ta ELLE yazılıydı ve bağlama tablosuyla sessizce ayrışabilirdi.
 /// </summary>
 public class ShortcutCatalogTests
@@ -28,7 +28,7 @@ public class ShortcutCatalogTests
     {
         var bound = KeyboardShortcuts.WindowBindings
             .Select(b => ShortcutCatalog.Format(b.Key, b.Modifiers))
-            .Append(HotkeyBinding.DefaultGesture) // global kısayol WindowBindings'te DEĞİLDİR
+            .Concat(GlobalHotkeys.All.Select(h => h.DefaultGesture)) // global kısayollar WindowBindings'te DEĞİLDİR
             .ToHashSet(StringComparer.Ordinal);
         foreach (string gesture in ShortcutCatalog.All.SelectMany(e => e.Gestures))
             Assert.Contains(gesture, bound);
@@ -50,9 +50,26 @@ public class ShortcutCatalogTests
         => Assert.Equal("Ctrl+Shift+Alt+F5",
             ShortcutCatalog.Format(Key.F5, ModifierKeys.Control | ModifierKeys.Shift | ModifierKeys.Alt));
 
+    /// <summary>
+    /// Her global kısayolun About satırı jestini <see cref="GlobalHotkeys"/>'ten okur (literal değil) ve GLOBAL
+    /// grubundadır; satır hangi global eyleme ait olduğunu taşır (About'un <c>unavailable</c> işareti buna bakar).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: TEK bir global satır vardı
+    /// (<c>RestoreFromTray</c>, "Global — bring the window back from the tray") ve jestini
+    /// <c>HotkeyBinding.DefaultGesture</c>'dan (<c>Alt+B</c>) okurdu. Artık iki global kısayol var — getir/gizle ve
+    /// pencere gelmeden Build — ve ikisi kendi GLOBAL grubunda durur.</para>
+    /// </summary>
     [Fact]
-    public void The_global_hotkey_row_reads_its_gesture_from_the_hotkey_default()
-        => Assert.Equal([HotkeyBinding.DefaultGesture], ShortcutCatalog.Get(ShortcutId.RestoreFromTray).Gestures);
+    public void Each_global_row_reads_its_gesture_from_the_global_hotkey_table()
+    {
+        foreach (var hotkey in GlobalHotkeys.All)
+        {
+            var row = ShortcutCatalog.All.Single(e => e.Global == hotkey.Action);
+            Assert.Equal([hotkey.DefaultGesture], row.Gestures);
+            Assert.Equal(ShortcutGroup.Global, row.Group);
+        }
+        Assert.All(ShortcutCatalog.All.Where(e => e.Group != ShortcutGroup.Global), e => Assert.Null(e.Global));
+    }
 
     [Fact]
     public void Every_entry_has_a_description_and_at_least_one_gesture()
@@ -65,18 +82,24 @@ public class ShortcutCatalogTests
         }
     }
 
-    /// <summary>[design v1.19.0 §2.10] Kısayollar iki caps gruba ayrılır — grup bilgisi katalogda TEK yerde durur
-    /// (About onu yeniden kurmaz): <b>BUILD</b> (Build, Rebuild) · <b>APPLICATION</b> (Focus filter, About, What's
-    /// new, Escape, Restore from tray). Grup içi sıra kataloğun kendi sırasıdır.</summary>
+    /// <summary>[design v1.19.0 §2.10] Kısayollar caps gruplara ayrılır — grup bilgisi katalogda TEK yerde durur
+    /// (About onu yeniden kurmaz). Grup içi sıra kataloğun kendi sırasıdır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: iki grup — <b>BUILD</b> (Build, Rebuild)
+    /// · <b>APPLICATION</b> (Focus filter, About, What's new, Escape, Restore from tray). Artık üç grup ve ilk sırada
+    /// kullanıcının "en önemlileri" dediği <b>GLOBAL</b> (getir/gizle, pencere gelmeden Build) durur; Clean F7 ile
+    /// BUILD'e katıldı; What's new'in kısayolu (Ctrl+F1) kalktığı için katalogda satırı yok.</para></summary>
     [Fact]
-    public void Entries_are_grouped_into_build_and_application()
+    public void Entries_are_grouped_into_global_build_and_application()
     {
-        Assert.Equal([ShortcutGroup.Build, ShortcutGroup.Application], ShortcutCatalog.GroupOrder);
-        Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild],
+        Assert.Equal([ShortcutGroup.Global, ShortcutGroup.Build, ShortcutGroup.Application], ShortcutCatalog.GroupOrder);
+        Assert.Equal([ShortcutId.ShowHideWindow, ShortcutId.BuildInBackground],
+            ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Global).Select(e => e.Id));
+        Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild, ShortcutId.Clean],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Build).Select(e => e.Id));
-        Assert.Equal(
-            [ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.WhatsNew, ShortcutId.Escape, ShortcutId.RestoreFromTray],
+        Assert.Equal([ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Application).Select(e => e.Id));
+        Assert.Equal("Global", ShortcutCatalog.GroupTitle(ShortcutGroup.Global));
         Assert.Equal("Build", ShortcutCatalog.GroupTitle(ShortcutGroup.Build));
         Assert.Equal("Application", ShortcutCatalog.GroupTitle(ShortcutGroup.Application));
     }
@@ -94,6 +117,7 @@ public class ShortcutCatalogTests
         var items = BuildMenu.ComposeItems(total: 3);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Build).Gestures[0], items.Single(i => i.Kind == "build").Kbd);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0], items.Single(i => i.Kind == "rebuild").Kbd);
+        Assert.Equal(ShortcutCatalog.Get(ShortcutId.Clean).Gestures[0], items.Single(i => i.Kind == "clean").Kbd);
     }
 
     /// <summary>
@@ -106,15 +130,16 @@ public class ShortcutCatalogTests
     /// kaçınılmaz olarak o dosyada literaldir; guard'ın derdi o metinlerin BAŞKA bir dosyada ikinci kez
     /// belirmesidir.</para>
     ///
-    /// <para><c>"Alt+B"</c> listede YOK: onun tek kaynağı <see cref="HotkeyBinding.DefaultGesture"/>'dır ve
-    /// katalog oradan okur. Yorum satırlarındaki TIRNAKSIZ <c>Ctrl+F5</c> anlatımı taramaya girmez — aranan
-    /// şey tırnaklı literaldir.</para>
+    /// <para>Global jestler (<c>Shift+Space</c>, <c>Ctrl+Shift+Space</c>) listede YOK: tek kaynakları
+    /// <see cref="GlobalHotkeys"/>'tir ve katalog oradan okur (<see cref="Each_global_row_reads_its_gesture_from_the_global_hotkey_table"/>).
+    /// Yorum satırlarındaki TIRNAKSIZ jest anlatımı taramaya girmez — aranan şey tırnaklı literaldir.</para>
     /// </summary>
     [Fact]
     public void No_app_source_file_outside_the_catalog_writes_a_key_gesture_as_a_literal()
     {
-        string[] literals =
-            ["\"F5\"", "\"Ctrl+F5\"", "\"Shift+F5\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\"", "\"Ctrl+F1\""];
+        // [kullanıcı kararı 2026-09-29] Liste bugünkü pencere jestleridir; kalkan Ctrl+F5 / Shift+F5 / Ctrl+F1 artık
+        // bir jest değil, F6 / F7 eklendi.
+        string[] literals = ["\"F5\"", "\"F6\"", "\"F7\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\""];
         string singleSource = Path.Combine("Shell", "ShortcutCatalog.cs");
 
         var offenders = new List<string>();

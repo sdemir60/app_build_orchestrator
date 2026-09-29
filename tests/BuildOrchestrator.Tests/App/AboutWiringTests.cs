@@ -82,7 +82,7 @@ public class AboutWiringTests
     /// <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> ESKİ İDDİA (design v1.13.0): ⓘ ve F1 HER ZAMAN ilk sekme olan
     /// <b>Shortcuts</b>'ta açardı. v1.19.0 sekme sırasını mantıksal hâle getirdi (About → Environment → Shortcuts)
     /// ve F1 artık <b>About</b>'ta açar — okunmadı durumundan yine BAĞIMSIZ (yeni sürüme yönlendirme sparkle
-    /// butonunun/Ctrl+F1'in işi; About sekmesinde ayrıca bir What's new butonu vardır).
+    /// butonunun işi; About sekmesinde ayrıca bir What's new butonu vardır).
     /// </summary>
     [StaFact]
     public void About_always_opens_on_the_about_tab_even_with_unseen_notes()
@@ -139,9 +139,10 @@ public class AboutWiringTests
     // ---------------------------------------------------------------- F1
 
     /// <summary><b>[DEĞİŞEN KURAL — design v1.13.0 §2.11, D4/T8]</b> ESKİ İDDİA: F1 tabloda TEK satırdı
-    /// (<c>Single(b =&gt; b.Key == Key.F1)</c> yeterliydi). Ctrl+F1 eklenince (What's new) F1 ARTIK iki
-    /// satırda geçiyor — sorgu modifier'a göre de daraltılır (bkz. Ctrl+F1 için
-    /// <c>NotesDialogWiringTests.Ctrl_f1_is_bound_to_the_show_notes_intent</c>).</summary>
+    /// (<c>Single(b =&gt; b.Key == Key.F1)</c> yeterliydi). Ctrl+F1 eklenince (What's new) F1 iki satırda
+    /// geçiyordu ve sorgu modifier'a göre de daraltıldı. [kullanıcı kararı 2026-09-29] Ctrl+F1 yine kalktı
+    /// (<c>NotesDialogWiringTests.Whats_new_has_no_keyboard_shortcut</c>); modifier'lı sorgu kalır — yeni bir F1
+    /// varyantı eklenirse bu test yanlış satırı seçmez.</summary>
     [Fact]
     public void F1_is_bound_to_the_show_about_intent()
     {

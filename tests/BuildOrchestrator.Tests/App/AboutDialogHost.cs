@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Tests.Supervisor;
@@ -21,9 +22,10 @@ internal static class AboutDialogHost
 
     /// <param name="backgroundSibling">Verilirse diyalog, bu kontrolle AYNI kökün altında realize edilir —
     /// odak tuzağı testi "Tab arka plandaki bir kontrole kaçıyor mu" sorusunu ancak böyle sorabilir.</param>
+    /// <param name="hotkeyRegistered">Global kısayolun kaydı tuttu mu (eylem başına); verilmezse hepsi kayıtlı.</param>
     public static (AboutDialog dialog, RunViewModel run, IDisposable scope) OpenRealized(
         Action<RunViewModel>? configure = null,
-        bool hotkeyRegistered = true,
+        Func<GlobalHotkeyAction, bool>? hotkeyRegistered = null,
         Func<Task<string>>? resolveMsBuild = null,
         FrameworkElement? backgroundSibling = null)
     {
@@ -47,7 +49,7 @@ internal static class AboutDialogHost
         // ActualHeight içerik ne olursa olsun aynı doymuş değeri döner (bkz. DsResources.Realize gerekçesi).
         var window = DsResources.Realize(host, content, width: 800, height: 700);
 
-        dialog.Open(run, hotkeyRegistered, resolveMsBuild ?? (() => Task.FromResult(FakeMsBuild)));
+        dialog.Open(run, hotkeyRegistered ?? (_ => true), resolveMsBuild ?? (() => Task.FromResult(FakeMsBuild)));
         content.UpdateLayout(); // Visibility Collapsed→Visible sonrası GERÇEK arrange
 
         return (dialog, run, new Scope(engine, window));

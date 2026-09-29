@@ -4,91 +4,97 @@ using BuildOrchestrator.App.Shell;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [E5/T46 · K6 birebir] Klavye kısayol semantiğinin SAF karar kapısı (<see cref="KeyboardShortcuts"/>) —
-/// otorite design-v1 <c>BuildApp.jsx:1305-1315</c> + v7 K6. F5'in duruma göre dallanması (Rebuild/Stop/
-/// Build), Ctrl+F filtre odağı, Esc zincirinin KATMAN sırası ve NEGATİF-PIN'ler (çift-Shift YOK,
-/// Ctrl+P YOK) burada pinlenir. WPF gerekmez (enum'lar WindowsBase) → hızlı [Fact].
+/// [E5/T46 · kullanıcı kararı 2026-09-29] Pencere kısayollarının SAF tablosu (<see cref="KeyboardShortcuts"/>):
+/// F5'in yalnız Build'e bağlı olması, tablo dışında kalan jestlerin NEGATİF-PIN'leri (kalkan eski kısayollar,
+/// çift-Shift YOK, Ctrl+P YOK) ve Esc zincirinin KATMAN sırası burada pinlenir. WPF gerekmez (enum'lar
+/// WindowsBase) → hızlı [Fact].
 /// </summary>
 public class KeyboardShortcutTests
 {
-    // ------------------------------------------------------------------ F5 dallanması
-    [Fact]
-    public void Plain_f5_builds_when_idle()
-        => Assert.Equal(ShortcutAction.Build,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, midRun: false));
+    // ------------------------------------------------------------------ F5 yalnız Build
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA (v7 K6, <c>BuildApp.jsx:1305</c>): çıplak F5
+    /// duruma göre dallanırdı — boştayken Build, koşu sürerken STOP; Ctrl+F5 ve Shift+F5 Rebuild'di (koşarken bile,
+    /// CanExecute reddederdi). Bu dallanmayı saf <c>KeyboardShortcuts.Resolve</c> verirdi ve altı test onu pinlerdi
+    /// (idle/koşarken/stopped F5, Ctrl+F5, Shift+F5, koşarken Ctrl+F5); Ctrl+F ve çıplak F de aynı fonksiyondan
+    /// sınanırdı.
+    ///
+    /// <para><b>Neden değişti:</b> VS'te F5 koşan bir şeyi ASLA durdurmaz ve Shift+F5 Stop Debugging'dir — VS
+    /// alışkanlığıyla "durdur" diye basılan Shift+F5 burada Rebuild başlatıyordu (ölçüldü: kullanıcının VS'i Default
+    /// şemada). Build tam biterken "durdur" için basılan F5 de yeni bir build başlatıyordu. Artık F5 YALNIZ Build'e
+    /// bağlıdır — koşarken Build'in kapısı kapalıdır, yani hiçbir şey olmaz; Rebuild F6'da, Clean F7'de, durdurma
+    /// Esc'tedir. <c>Resolve</c> kalktı: karar tablonun kendisidir (Ctrl+F'in niyeti
+    /// <see cref="KeyboardWiringTests"/>'in tablo testinde, kalkan jestler aşağıdaki negatif-pin'de).</para>
+    /// </summary>
     [Fact]
-    public void Plain_f5_stops_while_running()
-        => Assert.Equal(ShortcutAction.Stop,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, midRun: true));
-
-    /// <summary>Eskiden stopped fazında F5 = Continue idi. Continue yüzeyi kaldırıldı (Stop'tan sonra Build
-    /// baştan koşar), dolayısıyla F5'in stopped dalı da kalktı — koşmuyorsa F5 HER ZAMAN Build'dir. Bu yüzden
-    /// <c>Resolve</c>'un <c>stopped</c> parametresi de yoktur: karar artık yalnız "koşuyor mu"ya bakar.</summary>
-    [Fact]
-    public void Plain_f5_builds_when_stopped_too()
-        => Assert.Equal(ShortcutAction.Build,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, midRun: false));
-
-    [Fact]
-    public void Ctrl_f5_rebuilds()
-        => Assert.Equal(ShortcutAction.Rebuild,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.Control, midRun: false));
-
-    [Fact]
-    public void Shift_f5_rebuilds()
-        => Assert.Equal(ShortcutAction.Rebuild,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.Shift, midRun: false));
-
-    [Fact]
-    public void Modifier_f5_rebuilds_even_while_running()
-        // Ctrl/Shift + F5 her zaman Rebuild'e dallanır (koşarken bile — CanExecute reddeder), BuildApp.jsx:1305.
-        => Assert.Equal(ShortcutAction.Rebuild,
-            KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.Control, midRun: true));
-
-    // ------------------------------------------------------------------ Ctrl+F
-    [Fact]
-    public void Ctrl_f_focuses_the_project_filter()
-        => Assert.Equal(ShortcutAction.FocusFilter,
-            KeyboardShortcuts.Resolve(Key.F, ModifierKeys.Control, midRun: false));
-
-    [Fact]
-    public void Plain_f_is_not_a_shortcut()
-        => Assert.Equal(ShortcutAction.None,
-            KeyboardShortcuts.Resolve(Key.F, ModifierKeys.None, midRun: false));
+    public void F5_is_bound_to_build_only()
+        => Assert.Equal(WindowIntent.Build, KeyboardShortcuts.WindowBindings.Single(b => b.Key == Key.F5).Intent);
 
     // ------------------------------------------------------------------ NEGATİF-PIN'ler
-    [Fact]
-    public void Ctrl_p_is_not_bound()
-        => Assert.Equal(ShortcutAction.None,
-            KeyboardShortcuts.Resolve(Key.P, ModifierKeys.Control, midRun: false));
 
+    /// <summary>Tablo DIŞINDAKİ jestler bağlı değildir: kalkan eski kısayollar (Ctrl+F5 / Shift+F5 — eski Rebuild;
+    /// Ctrl+F1 — eski What's new), çıplak F, Ctrl+P ve tek başına Shift ("çift-Shift" bir komut paleti açmaz).</summary>
     [Theory]
-    [InlineData(Key.LeftShift)]
-    [InlineData(Key.RightShift)]
-    public void A_bare_shift_press_is_not_bound(Key shift)
-        // "Çift-Shift" bir komut paleti açmaz — Shift tek başına HİÇBİR kısayola bağlı değil.
-        => Assert.Equal(ShortcutAction.None,
-            KeyboardShortcuts.Resolve(shift, ModifierKeys.Shift, midRun: false));
+    [InlineData(Key.F5, ModifierKeys.Control)]
+    [InlineData(Key.F5, ModifierKeys.Shift)]
+    [InlineData(Key.F1, ModifierKeys.Control)]
+    [InlineData(Key.F, ModifierKeys.None)]
+    [InlineData(Key.P, ModifierKeys.Control)]
+    [InlineData(Key.LeftShift, ModifierKeys.Shift)]
+    [InlineData(Key.RightShift, ModifierKeys.Shift)]
+    public void Gestures_outside_the_table_are_not_bound(Key key, ModifierKeys modifiers)
+        => Assert.DoesNotContain(KeyboardShortcuts.WindowBindings, b => b.Key == key && b.Modifiers == modifiers);
 
     // ------------------------------------------------------------------ Esc zinciri (katman sırası)
     [Fact]
     public void Esc_closes_the_dialog_first_even_when_lower_layers_are_open()
         => Assert.Equal(EscAction.CloseDialog,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: true, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
     [Fact]
     public void Esc_closes_popovers_before_clearing_selection()
         => Assert.Equal(EscAction.ClosePopovers,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: true, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: true, hasSelection: true, EscRunState.Stoppable));
 
     [Fact]
     public void Esc_clears_selection_when_nothing_else_is_open()
         => Assert.Equal(EscAction.ClearSelection,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true, EscRunState.Idle));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Koşu katmanı zincirin EN ALTINDADIR: koşu sürerken bir proje seçiliyse
+    /// ilk Esc seçimi bırakır (koşunun anlatısına dönülür), durdurmaz.</summary>
+    [Fact]
+    public void Esc_clears_the_selection_before_it_touches_a_running_build()
+        => Assert.Equal(EscAction.ClearSelection,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: true, EscRunState.Stoppable));
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: açık katman yoksa Esc hiçbir şey yapmazdı —
+    /// koşu sürerken de. Artık zincirin son halkası çalışan Build/Rebuild/Clean'dir: Esc onu DURDURUR (graceful;
+    /// biten projeler kaydedilir, sonraki Build kaldığı yerden devam eder, çift basma gerekmez).
+    /// </summary>
+    [Fact]
+    public void Esc_stops_a_running_build_when_no_layer_is_open()
+        => Assert.Equal(EscAction.StopRun,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stoppable));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Durdurma zaten sürüyorsa ikinci bir stop GİTMEZ — Esc yalnız "duyuldu"
+    /// der (şerit vurgusu).</summary>
+    [Fact]
+    public void Esc_acknowledges_a_stop_that_is_already_in_progress()
+        => Assert.Equal(EscAction.AcknowledgeStopping,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Stopping));
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, pull)
+    /// sürerken Esc sessiz kalmaz — neden durmadığını söyler.</summary>
+    [Fact]
+    public void Esc_explains_an_operation_that_cannot_be_stopped()
+        => Assert.Equal(EscAction.ExplainUnstoppable,
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Unstoppable));
 
     [Fact]
-    public void Esc_does_nothing_when_no_layer_is_open()
+    public void Esc_does_nothing_when_no_layer_is_open_and_nothing_runs()
         => Assert.Equal(EscAction.None,
-            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false));
+            KeyboardShortcuts.ResolveEsc(dialogOpen: false, popoverOrMenuOpen: false, hasSelection: false, EscRunState.Idle));
 }

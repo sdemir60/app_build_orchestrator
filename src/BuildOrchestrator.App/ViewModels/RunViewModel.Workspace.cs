@@ -553,9 +553,10 @@ public sealed partial class RunViewModel
     /// [final review O1] "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull
     /// bayraklarının her geçişi (<see cref="NotifySyncGatedCommands"/>), koşu kilidinin her geçişi
     /// (<see cref="PropagateRunLock"/>), koşunun bitişi (<c>OnRunCompleted</c>) ve yarıdaki git işleminin kalkışı
-    /// (<see cref="OnGitOperationChanged"/>) buraya iner. İki tüketicisi vardır ve biri ötekine BAĞLANMAZ: koordinatör
-    /// bekleyen kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince
-    /// hazır olur (<see cref="EvaluateExit"/>).
+    /// (<see cref="OnGitOperationChanged"/>) buraya iner. Tüketicileri birbirine BAĞLANMAZ: koordinatör bekleyen
+    /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur
+    /// (<see cref="EvaluateExit"/>); [kullanıcı kararı 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
+    /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>).
     /// <para>Ad bu yüzden nötrdür ve yeri <see cref="WorkspaceIdle"/>'ın yanıdır: çıkış beklerken koordinatör YOKTUR
     /// (<see cref="RequestExit"/> onu kapatır), yani buraya konacak bir "koordinatör yoksa dön" kısayolu bekleyen her
     /// çıkışı sessizce sonsuza dek bekletirdi.</para>
@@ -564,6 +565,7 @@ public sealed partial class RunViewModel
     {
         _autoSync?.OnWorkspaceIdle();
         EvaluateExit();
+        ResetEscNoteWhenIdle();
     }
 
     /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.

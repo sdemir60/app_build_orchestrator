@@ -16,8 +16,24 @@ public sealed class UiState
     /// <summary>[K5] "X kapatmaz, tepsiye küçültür" bilgilendirmesi bir kez gösterildi mi.</summary>
     public bool TrayBalloonShown { get; set; }
 
-    /// <summary>[v7Δ-5] Global kısayol jesti; ayrıştırılamazsa varsayılana düşülür.</summary>
-    public string Hotkey { get; set; } = HotkeyBinding.DefaultGesture;
+    /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle global kısayolunun jesti; ayrıştırılamazsa varsayılana düşülür.
+    /// <para><b>Şema göçü:</b> eskiden tek bir <c>Hotkey</c> alanı vardı; varsayılanı <c>"Alt+B"</c>'ydi ve her Save onu
+    /// diske yazardı (ayar ekranı hiç olmadı, yani kayıtlı değer hep eski varsayılandır). Alan bilerek YENİ adla
+    /// açıldı: eski <c>Hotkey</c> okunurken yok sayılır ve bir sonraki kayıtta yazılmaz — kayıtlı bir <c>"Alt+B"</c>
+    /// eski kısayolu geri getirmez.</para></summary>
+    public string ShowHideHotkey { get; set; } = GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture;
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Pencere gelmeden Build global kısayolunun jesti;
+    /// <see cref="ShowHideHotkey"/> ile aynı kurallar.</summary>
+    public string BuildHotkey { get; set; } = GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture;
+
+    /// <summary>Bir global eylemin kayıtlı jesti — iki alan ile iki eylem arasındaki TEK eşleme.</summary>
+    public string HotkeyGesture(GlobalHotkeyAction action) => action switch
+    {
+        GlobalHotkeyAction.ShowHide => ShowHideHotkey,
+        GlobalHotkeyAction.Build => BuildHotkey,
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, null),
+    };
 
     // ---- [T35] 2×2 yerleşim (design-v1 BuildApp.jsx:1143 varsayılanları) ----
     /// <summary>[T35] Son görünüm modu (quad/list/focus).</summary>

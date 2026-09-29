@@ -83,7 +83,7 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 | `src/BuildOrchestrator.Contracts` | `net10.0` | The App↔Supervisor contract: command and event records, domain DTOs, polymorphic JSON options, NDJSON framing. No logic. |
 | `src/BuildOrchestrator.Core` | `net10.0` | All decision-making, pure and testable: discovery, evaluation cache, dependency graph, layers, signature and incremental planning, scheduler, git service and the single git writer, HEAD watcher, MSBuild argument/invocation contract, job-object primitives, run logs, state persistence. |
 | `src/BuildOrchestrator.Supervisor` | `net10.0-windows` | The engine process. Owns the inner job object, runs the plan Core produced, shells out one `MSBuild.exe` per project, writes per-run logs, serves the IPC. Executes; does not plan. |
-| `src/BuildOrchestrator.App` | `net10.0-windows` (WPF) | The interface. MVVM, DI, window shell, tray, single instance, global hotkey, all rendering and motion. Owns the outer job object and spawns the Supervisor. |
+| `src/BuildOrchestrator.App` | `net10.0-windows` (WPF) | The interface. MVVM, DI, window shell, tray, single instance, global hotkeys, all rendering and motion. Owns the outer job object and spawns the Supervisor. |
 | `tests/BuildOrchestrator.Tests` | `net10.0-windows` (`UseWPF`) | One suite for everything: Core unit tests, process-control tests, IPC tests, WPF realization/STA tests, source guards, integration and acceptance tests. |
 
 ### 3.2 Reference rules
@@ -204,7 +204,7 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the Stop button and `F5` request, and what a full exit of the application requests
+**Graceful stop** is what the Stop button and `Esc` request, and what a full exit of the application requests
 for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
 *including their post-build copy events*. This is also why the
 shared-compilation flags stay off (§9.2): with a compiler server the emit happens in a long-lived process
@@ -2287,13 +2287,27 @@ the right one is narrow, but never zero — the band already contains the outerm
 
 The overlay always sits on the primary screen, because that is where the tray is; on a multi-monitor desk the
 user may be working elsewhere and the indicator still appears next to the tray, which is the intent. It is also
-phase-driven rather than window-driven, so if starting a build from the tray without opening the window is ever
-added, the indicator needs no further work.
+phase-driven rather than window-driven, which is what the background-build hotkey below relies on: a build
+started while the window is hidden gets the indicator and the result balloon with no further work.
 
-The global hotkey (`Alt+B` by default, read from `ui-state.json`) is registered with `RegisterHotKey`. A
-conflict disables it silently; the tray icon still restores the window. There is no UI for changing it yet,
-but the loss is no longer invisible: the About screen marks that shortcut row *unavailable* when the
-registration did not take.
+**Two global hotkeys** are registered with `RegisterHotKey`, and one table (`GlobalHotkeys`) names each action,
+its registration id and its default gesture. `Shift+Space` shows or hides the window: it hides only a window
+that is really in front — visible, not minimized and active — and brings forward one that is in the tray,
+minimized or behind another window (`WindowToggle`), because hiding a visible window the user is reaching for
+would lose it. Hiding goes straight to the tray, without the first-close balloon, which explains `X`.
+`Ctrl+Shift+Space` builds without bringing the window up; it is the view model's own `BuildCommand`, so it
+honours the same gate as the Build button and does nothing while a run, a Sync or a maintenance job is in
+flight. Each gesture is read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value
+falls back to the default. An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote
+it — is ignored and dropped on the next save, so a stored `Alt+B` does not bring the old shortcut back.
+
+The gestures follow the author's Turkish Q keyboard. AltGr reaches Windows as `Ctrl+Alt`, so a `Ctrl+Alt`
+global would fire when `{`, `[` or `@` is followed by a space before AltGr is released — and Visual Studio already
+binds `Ctrl+Alt` with every letter. `Shift+Space` can fire when a space follows a shifted character (`=`, `(`,
+`:`) before Shift is released; that cost was accepted. `Ctrl+Shift+Space` is Visual Studio's *Parameter Info*,
+which the hotkey takes over. A conflict disables a hotkey silently; the tray icon still restores the window.
+There is no UI for changing them yet, but the loss is not invisible: the About screen marks the affected
+shortcut row *unavailable*.
 
 **Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
 no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
@@ -2419,6 +2433,10 @@ count while a build drains, `▸ Stopping — wrapping up` otherwise — since a
 for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. A
 rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
+
+A second `Esc` while a stop drains sends nothing; instead the phase line dips once — opacity down to 0.4 and back,
+each half `Duration.Base` on `KeySpline.EaseStandard` — so the key reads as heard. The console gets no line for
+it, because each press would add one. Under reduced motion there is no dip: the line already says `Stopping`.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -3272,8 +3290,9 @@ inset 14 px top, 18 px sides and 20 px bottom.
 - **Environment** is two caps groups: **RUNTIME** — engine PID, .NET runtime, OS — and **PATHS** — the resolved
   `MSBuild.exe`, the repository root, the state file and the logs. The application and engine
   versions are not repeated here.
-- **Shortcuts** is two caps groups, **BUILD** and **APPLICATION**; each row is the catalog's description and its
-  key caps, and the global restore hotkey is marked `unavailable` when its registration failed.
+- **Shortcuts** is three caps groups, **GLOBAL**, **BUILD** and **APPLICATION**; each row is the catalog's
+  description and its key caps, and a global hotkey whose registration failed is marked `unavailable` — each
+  one on its own row, since they register separately.
 
 Everything the dialog shows is bound from somewhere else — identity from the assembly, the shortcut rows and
 their groups from the same catalog the window binds its keys from, and the About rows, both Environment groups
@@ -3340,13 +3359,14 @@ even on a fresh install with no recorded version at all. Opening the dialog clea
 version, so it does not come back until the next one ships. ⓘ's tooltip no longer varies with this state — the
 routing an earlier pass sent through About is gone along with the tab it pointed at.
 
-**All three modals can be open at once, and What's new is always the uppermost, with About above Settings.**
-Each is declared after the last, so z-order follows the markup. Both `F1` and `Ctrl+F1` toggle their own
-dialog and do so even while another is open: Esc closes the topmost layer first, which means the drafts
-underneath survive. An earlier rule deafened `F1` whenever any dialog was open — the key is a window-level
-`InputBinding` and fires regardless of the Settings focus trap, so the fear was that it would discard an
-unsaved draft. Layering answers that better than silence did. The gear still no-ops while anything is open,
-which costs nothing: under the scrim it cannot be clicked anyway.
+**The modals stack, and What's new is always the uppermost, with About above Settings.** Each is declared after
+the last, so z-order follows the markup. `F1` toggles About and does so even while another dialog is open: Esc
+closes the topmost layer first, which means the draft underneath survives. What's new has no key; it opens from
+its title-bar button or from About's *What's new in {version}* button, which closes About first — so over an open
+Settings the stack is Settings and What's new. An earlier rule deafened `F1` whenever any dialog was open — the
+key is a window-level `InputBinding` and fires regardless of the Settings focus trap, so the fear was that it would
+discard an unsaved draft. Layering answers that better than silence did. The gear still no-ops while anything is
+open, which costs nothing: under the scrim it cannot be clicked anyway.
 
 ### 13.4 Scroll infrastructure
 
@@ -4034,7 +4054,11 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 `Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
 selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection. Right-clicking a
+Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection → the running build.
+With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
+dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
+pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
+finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
@@ -4146,30 +4170,35 @@ active set appears as a removable chip in the panel header.
 
 ### 13.9 Keyboard
 
-| Key | Action |
-|---|---|
-| `F5` | Build — or Stop while a run is in flight |
-| `Ctrl+F5` / `Shift+F5` | Rebuild |
-| `Ctrl+F` | Focus the project filter |
-| `F1` | About — version, shortcuts and diagnostics |
-| `Ctrl+F1` | What's new — release notes (toggle) |
-| `Esc` | Close the topmost layer (see above) |
-| `Alt+B` | Global hotkey: restore the window from the tray |
+| Key | Where | Action |
+|---|---|---|
+| `Shift+Space` | anywhere | Show or hide the window (§12.3) |
+| `Ctrl+Shift+Space` | anywhere | Build without bringing the window up (§12.3) |
+| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F6` | window | Rebuild |
+| `F7` | window | Clean — the Build menu's `-t:Clean`, not the maintenance box's Deep Clean |
+| `Ctrl+F` | window | Focus the project filter |
+| `F1` | window | About — version, shortcuts and diagnostics (toggle) |
+| `Esc` | window | Close the topmost layer; with none open, stop the running build (§13.7) |
 
-The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s, and
-every dispatch honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` and
-`Ctrl+F1` are ungated: each toggles its own dialog and fires even while another modal is open, because
-layering the three answers the unsaved-draft worry better than deafening a key would (§13.3). Double-Shift
-and `Ctrl+P` are *negatively pinned*: a test asserts they are **not** bound, so they cannot reappear by
-accident.
+These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
+and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
+`Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
+start a Rebuild here. What's new has no key (§13.3).
+
+The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
+`F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
+honours the command's `CanExecute` — a shortcut never bypasses a disabled button. `F1` is ungated: it toggles
+About and fires even while another modal is open, because layering answers the unsaved-draft worry better than
+deafening a key would (§13.3). Double-Shift and `Ctrl+P` are *negatively pinned*, as are the retired `Ctrl+F5`,
+`Shift+F5` and `Ctrl+F1`: a test asserts they are **not** bound, so they cannot reappear by accident.
 
 The table above is not written twice. A **shortcut catalog** derives each gesture's display text from that
-same key → intent table — and the global hotkey's from the hotkey default — and pairs it with the one
+same key → intent table — and the global hotkeys' from the `GlobalHotkeys` table — and pairs it with the one
 sentence that describes it. The About screen's shortcut rows, the Build menu's `Ds.Kbd` badges and the info
-button's and the What's new button's tooltips all read from it, and a source guard forbids any production file
-from writing a gesture as a literal. The badges used to be hand-typed strings living next to a binding table
-that could change
-underneath them.
+button's tooltip all read from it, and a source guard forbids any production file from writing a gesture as a
+literal. The badges used to be hand-typed strings living next to a binding table that could change underneath
+them.
 
 ---
 
@@ -4795,7 +4824,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Publish layout | the single-file publish rejection and the supervisor-folder wiring stay in place |
 | Anti-slop | the prohibited visual patterns of §14.7 |
 | Design token scale | duplicated size tokens stay equal to their single authority |
-| Shortcut literals | no gesture text (`"F5"`, `"Ctrl+F5"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
+| Shortcut literals | no gesture text (`"F5"`, `"F6"`, …) is written outside the shortcut catalog, and the file the guard exempts still exists |
 | Product name literal | the product name never appears as a literal; it is read from the assembly |
 | Brand marks | the product mark's and the company wordmark's path data each live in exactly one source file |
 | Gradient prohibition | no XAML declares a gradient except the product mark — and that exemption still points at a file that really carries one |
@@ -4994,7 +5023,7 @@ do, and how the interface works around each — useful to know before attempting
   engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
   build step that prints nothing for that long while a stop drains, is then cut off by the application's
   shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
-- **The global hotkey has no settings UI** (§12.3).
+- **The global hotkeys have no settings UI** (§12.3).
 
 ---
 
@@ -5123,7 +5152,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
-| Single instance, tray icon, global hotkey, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
+| Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
@@ -5136,6 +5165,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
+| …Esc's run layer on the view model (stoppable state, the can't-be-stopped line, the heard signal) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |

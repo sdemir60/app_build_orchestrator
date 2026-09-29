@@ -199,7 +199,7 @@ public class DialogShellTests
         var (dialog, run, scope) = AboutDialogHost.OpenRealized();
         using (scope)
             AssertShellDismissal(dialog,
-                () => dialog.Open(run, true, () => Task.FromResult(AboutDialogHost.FakeMsBuild)));
+                () => dialog.Open(run, _ => true, () => Task.FromResult(AboutDialogHost.FakeMsBuild)));
     }
 
     [StaFact]

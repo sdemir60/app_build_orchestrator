@@ -71,14 +71,16 @@ public class TrayBalloonOnceTests
         try
         {
             Assert.False(new JsonUiStateStore(path).Load().TrayBalloonShown); // dosya hiç yok
-            Assert.Equal(HotkeyBinding.DefaultGesture, new JsonUiStateStore(path).Load().Hotkey);
+            Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture,
+                new JsonUiStateStore(path).Load().ShowHideHotkey);
 
             Directory.CreateDirectory(dir);
             File.WriteAllText(path, "{ bozuk json");
 
             var state = new JsonUiStateStore(path).Load();
             Assert.False(state.TrayBalloonShown);
-            Assert.Equal(HotkeyBinding.DefaultGesture, state.Hotkey);
+            Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture, state.ShowHideHotkey);
+            Assert.Equal(GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture, state.BuildHotkey);
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
     }
