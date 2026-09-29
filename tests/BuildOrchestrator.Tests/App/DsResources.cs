@@ -184,6 +184,16 @@ internal static class DsResources
 
     public static Color ColorOf(Brush? brush) => ((SolidColorBrush)brush!).Color;
 
+    /// <summary>[design v1.23/v1.24 review C13] Realize edilmiş bir öğenin kendi kutusunun, atası
+    /// <paramref name="root"/>'un koordinatlarındaki yeri. İki öğe arasındaki boşluğu ve hizayı ölçen testlerin TEK
+    /// tanımı — <c>UpdateCardTests</c> ve <c>UpdateRestartScreenTests</c> bunu birebir aynı gövdeyle ayrı ayrı
+    /// yazmıştı.</summary>
+    public static Rect BoundsIn(FrameworkElement element, Visual root)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        return element.TransformToAncestor(root).TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+    }
+
     /// <summary>[L1/It-5 perf] Bir kökün GERÇEKTEN kurduğu nesneler — görsel VE mantıksal ağacın birleşimi
     /// (tekilleştirilmiş). Yalnız görsel ağacı saymak perf metriği olarak yanıltıcıdır: Collapsed bir dalın
     /// şablonu genişlemez, bu yüzden <c>Button.Content</c> (Viewbox/Canvas/Path) ve <c>Popup.Child</c> alt-ağacı

@@ -32,13 +32,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdatePillTests
 {
-    private static (MainWindow window, RunViewModel vm) Realized(TempDir temp)
-    {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        return (window, vm);
-    }
-
     /// <summary>Sağ kümenin kendisi — gear'ın ebeveyni (AboutWiringTests ile aynı seçici).</summary>
     private static Panel RightCluster(MainWindow window) => (Panel)LogicalTreeHelper.GetParent(window.GearButton);
 
@@ -56,7 +49,7 @@ public class UpdatePillTests
     public void The_pill_and_its_separator_open_the_right_cluster()
     {
         using var temp = new TempDir();
-        var (window, _) = Realized(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
 
         var cluster = RightCluster(window);
         Assert.Same(window.UpdatePillSlot, cluster.Children[0]);
@@ -76,7 +69,7 @@ public class UpdatePillTests
     public void The_existing_title_bar_buttons_do_not_move_when_the_pill_appears()
     {
         using var temp = new TempDir();
-        var (window, _) = Realized(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         Assert.Equal(Visibility.Visible, window.UpdatePillSlot.Visibility); // ön-koşul: hap görünür
         var withPill = ExistingButtons(window).Select(b => RightInset(window, b)).ToList();
 
@@ -94,7 +87,7 @@ public class UpdatePillTests
     public void The_pill_separator_shares_the_one_title_bar_separator_style()
     {
         using var temp = new TempDir();
-        var (window, _) = Realized(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
 
         var style = (Style)window.FindResource("TitleBarSeparator");
         var separators = RightCluster(window).Children.OfType<Rectangle>().Append(window.UpdatePillSeparator).ToList();
@@ -115,7 +108,7 @@ public class UpdatePillTests
     public void The_pill_is_drawn_to_the_design_numbers()
     {
         using var temp = new TempDir();
-        var (window, vm) = Realized(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         var pill = window.UpdatePill;
 
         Assert.Equal(22.0, pill.ActualHeight, precision: 3);
@@ -161,7 +154,7 @@ public class UpdatePillTests
     public void The_open_pill_lifts_to_the_overlay_surface_and_hover_looks_the_same()
     {
         using var temp = new TempDir();
-        var (window, _) = Realized(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         var pill = window.UpdatePill;
 
         pill.IsChecked = true;
@@ -187,7 +180,7 @@ public class UpdatePillTests
     public void The_pill_is_named_update_to_the_version_and_reports_whether_its_card_is_expanded()
     {
         using var temp = new TempDir();
-        var (window, vm) = Realized(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         var pill = window.UpdatePill;
 
         var peer = UIElementAutomationPeer.CreatePeerForElement(pill);
@@ -211,7 +204,7 @@ public class UpdatePillTests
     {
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         using var temp = new TempDir();
-        var (window, _) = Realized(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         var slot = window.UpdatePillSlot;
 
         Assert.Equal(Visibility.Visible, slot.Visibility);
@@ -229,7 +222,7 @@ public class UpdatePillTests
     {
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         using var temp = new TempDir();
-        var (window, vm) = Realized(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         var slot = window.UpdatePillSlot;
 
         vm.AvailableUpdate = null;

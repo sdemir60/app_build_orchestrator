@@ -13,6 +13,7 @@ using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using static BuildOrchestrator.Tests.App.DsResources;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -51,9 +52,6 @@ public class UpdateCardTests
         card.UpdateLayout();
         return (card, window);
     }
-
-    private static Rect BoundsIn(FrameworkElement element, Visual root) =>
-        element.TransformToAncestor(root).TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
 
     private static Color Token(FrameworkElement host, string key) => DsResources.TokenColor(host, key);
 
@@ -279,13 +277,6 @@ public class UpdateCardTests
 
     // ================================================================ kabuk: yer ve kapanış
 
-    private static (MainWindow window, RunViewModel vm) Shell(TempDir temp)
-    {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-        return (window, vm);
-    }
-
     /// <summary>Kart hapın 9px altında, SOL kenarı hapın sol kenarında (§9 <c>top: calc(100% + 9px); left: 0</c>) ve
     /// 344px'lik <c>Ds.Popover</c> kabuğunda, dolgusuz durur; dışarı tık onu kapatır (<c>StaysOpen=False</c>). Kartın VM'i
     /// pencereninkidir (popup içeriği DataContext'i güvenilir miras almaz) ve açık/kapalı durumu hapın işaretini izler —
@@ -304,7 +295,7 @@ public class UpdateCardTests
     public void The_card_hangs_9px_below_the_pill_left_edge_on_the_pills_in_a_344px_popover_shell()
     {
         using var temp = new TempDir();
-        var (window, vm) = Shell(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         var popup = window.UpdatePopup;
 
         Assert.Same(window.UpdatePill, popup.PlacementTarget);
@@ -340,7 +331,7 @@ public class UpdateCardTests
     public void A_second_press_on_the_pill_closes_the_card()
     {
         using var temp = new TempDir();
-        var (window, _) = Shell(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
 
         Assert.True(PopoverToggle.IsBound(window.UpdatePill));
         GC.KeepAlive(window);
@@ -351,7 +342,7 @@ public class UpdateCardTests
     public void Later_closes_the_card_and_the_pill_stays()
     {
         using var temp = new TempDir();
-        var (window, _) = Shell(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         window.UpdatePill.IsChecked = true;
 
         CommandPress.Click(window.UpdateCardView.PART_Later);
@@ -371,7 +362,7 @@ public class UpdateCardTests
     public void The_window_escape_closes_the_card_before_the_selection()
     {
         using var temp = new TempDir();
-        var (window, vm) = Shell(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         vm.SelectProject(@"C:\p\a.csproj");
         window.UpdatePill.IsChecked = true;
 
@@ -394,7 +385,7 @@ public class UpdateCardTests
     public void Opening_a_dialog_closes_the_card(string dialog)
     {
         using var temp = new TempDir();
-        var (window, _) = Shell(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         window.SettingsOverlay.PickImportPath = () => null; // gerçek dosya seçici açılmasın
         window.SettingsOverlay.ImportHold = _ => Task.CompletedTask;
         window.UpdatePill.IsChecked = true;
@@ -420,7 +411,7 @@ public class UpdateCardTests
     public void Restart_to_update_closes_the_card()
     {
         using var temp = new TempDir();
-        var (window, vm) = Shell(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         window.UpdateRestartOverlay.Timer = new FakePollTimer();
         window.UpdatePill.IsChecked = true;
 
@@ -435,7 +426,7 @@ public class UpdateCardTests
     public void Withdrawing_the_offer_closes_the_card_and_hides_the_pill()
     {
         using var temp = new TempDir();
-        var (window, vm) = Shell(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         window.UpdatePill.IsChecked = true;
 
         vm.AvailableUpdate = null;
@@ -451,7 +442,7 @@ public class UpdateCardTests
     public void The_card_inside_the_window_resolves_its_tokens()
     {
         using var temp = new TempDir();
-        var (window, _) = Shell(temp);
+        var (window, _) = MainWindowHost.NewRealized(temp);
 
         Assert.Contains(window.UpdateCardView, DsResources.RealizedObjects((FrameworkElement)window.Content));
         Assert.Empty(DsResources.DynamicResourceTypeMismatches(window.UpdatePopup.Child));

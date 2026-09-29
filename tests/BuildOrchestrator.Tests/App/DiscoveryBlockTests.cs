@@ -29,8 +29,7 @@ public class DiscoveryBlockTests
     /// <summary>Kurulu, realize edilmiş ve bir workspace'i olan (henüz Sync'lenmemiş) kabuk; gönderimler "gider".</summary>
     private static (MainWindow window, RunViewModel vm) NewShellWithWorkspace(TempDir temp)
     {
-        var (window, vm) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         vm.RootPath = Root;
         MainWindowHost.AcceptSends(vm);
         return (window, vm);
@@ -185,8 +184,7 @@ public class DiscoveryBlockTests
     public void The_first_run_screen_is_unchanged()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         var graph = window.Shell.GraphHost;
 
         Assert.True(graph.IsEmptyStateVisible);

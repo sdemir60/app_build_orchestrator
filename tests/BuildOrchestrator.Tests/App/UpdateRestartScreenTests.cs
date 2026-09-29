@@ -10,6 +10,7 @@ using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
+using static BuildOrchestrator.Tests.App.DsResources;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -31,33 +32,40 @@ public class UpdateRestartScreenTests
     /// <summary>Oynatmanın başladığı an (sahte saat, ms).</summary>
     private const long StartMs = 10_000;
 
-    /// <summary>Sahte saat — ekranın <c>NowMs</c>'i bunu okur.</summary>
-    private sealed class Clock
+    /// <summary>[design v1.23/v1.24 review C13] Ekranın sahte zamanı — iki rig'in (tek başına ekran, kabuk) TEK zaman
+    /// dikişi: kurulurken ekrana takılır (zamanlayıcı + <c>NowMs</c>), <see cref="FrameAt"/> saati ilerletip bir kare
+    /// atar. Her rig bunu ayrı ayrı kuruyor ve kare atmayı ayrı ayrı yazıyordu.</summary>
+    private sealed class ScreenTime
     {
-        public long Now = StartMs;
-    }
+        public FakePollTimer Timer { get; } = new();
 
-    private sealed record Rig(UpdateRestartScreen Screen, FakePollTimer Timer, Clock Clock, Window Window)
-    {
+        /// <summary>Sahte saat — ekranın <c>NowMs</c>'i bunu okur.</summary>
+        public long Now = StartMs;
+
+        public ScreenTime(UpdateRestartScreen screen)
+        {
+            screen.Timer = Timer;
+            screen.NowMs = () => Now;
+        }
+
         /// <summary>Saati oynatmanın başından <paramref name="elapsedMs"/> sonrasına alır ve bir kare atar.</summary>
         public void FrameAt(double elapsedMs)
         {
-            Clock.Now = StartMs + (long)elapsedMs;
+            Now = StartMs + (long)elapsedMs;
             Timer.Tick();
         }
     }
+
+    private sealed record Rig(UpdateRestartScreen Screen, ScreenTime Time, Window Window);
 
     /// <summary>Ekranı ekran dışı gerçek bir pencerede, sahte zamanlayıcı ve saatle kurar (henüz oynamaz).</summary>
     private static Rig NewRig(double width = 800, double height = 600)
     {
         var host = DsResources.NewHost();
         var screen = new UpdateRestartScreen();
-        var timer = new FakePollTimer();
-        var clock = new Clock();
-        screen.Timer = timer;
-        screen.NowMs = () => clock.Now;
+        var time = new ScreenTime(screen);
         var window = DsResources.Realize(host, screen, width, height);
-        return new Rig(screen, timer, clock, window);
+        return new Rig(screen, time, window);
     }
 
     private static void Play(Rig rig, string incoming = "1.8.0")
@@ -65,9 +73,6 @@ public class UpdateRestartScreenTests
         rig.Screen.Play(AppIdentity.Version, incoming);
         rig.Screen.UpdateLayout();
     }
-
-    private static Rect BoundsIn(FrameworkElement element, Visual root) =>
-        element.TransformToAncestor(root).TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
 
     private static Color Token(FrameworkElement host, string key) => DsResources.TokenColor(host, key);
 
@@ -81,7 +86,7 @@ public class UpdateRestartScreenTests
 
         Assert.Equal(Visibility.Collapsed, rig.Screen.Visibility);
         Assert.False(rig.Screen.IsShowing);
-        Assert.False(rig.Timer.IsRunning);
+        Assert.False(rig.Time.Timer.IsRunning);
         GC.KeepAlive(rig.Window);
     }
 
@@ -193,7 +198,7 @@ public class UpdateRestartScreenTests
     {
         var rig = NewRig();
         Play(rig);
-        var (screen, timer) = (rig.Screen, rig.Timer);
+        var (screen, timer) = (rig.Screen, rig.Time.Timer);
 
         Assert.True(screen.IsShowing);
         Assert.Equal(Visibility.Visible, screen.Visibility);
@@ -201,17 +206,17 @@ public class UpdateRestartScreenTests
         Assert.Equal(TimeSpan.FromMilliseconds(UpdateRestartScreen.FrameMs), timer.Interval);
         AssertFrame(UpdateRestartStep.Closing, 0);
 
-        rig.FrameAt(400);
+        rig.Time.FrameAt(400);
         AssertFrame(UpdateRestartStep.Closing, 10);
-        rig.FrameAt(800);
+        rig.Time.FrameAt(800);
         AssertFrame(UpdateRestartStep.Installing, 20);
-        rig.FrameAt(1350);
+        rig.Time.FrameAt(1350);
         AssertFrame(UpdateRestartStep.Installing, 49);
-        rig.FrameAt(1900);
+        rig.Time.FrameAt(1900);
         AssertFrame(UpdateRestartStep.Starting, 78);
-        rig.FrameAt(2300);
+        rig.Time.FrameAt(2300);
         AssertFrame(UpdateRestartStep.Starting, 89);
-        rig.FrameAt(2700);
+        rig.Time.FrameAt(2700);
         AssertFrame(UpdateRestartStep.Starting, 100);
         GC.KeepAlive(rig.Window);
 
@@ -230,14 +235,14 @@ public class UpdateRestartScreenTests
         var rig = NewRig();
         Play(rig);
 
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs - 1);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs - 1);
         Assert.True(rig.Screen.IsShowing);
-        Assert.True(rig.Timer.IsRunning);
+        Assert.True(rig.Time.Timer.IsRunning);
 
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
         Assert.Equal(Visibility.Collapsed, rig.Screen.Visibility);
         Assert.False(rig.Screen.IsShowing);
-        Assert.False(rig.Timer.IsRunning);
+        Assert.False(rig.Time.Timer.IsRunning);
         GC.KeepAlive(rig.Window);
     }
 
@@ -247,11 +252,11 @@ public class UpdateRestartScreenTests
     {
         var rig = NewRig();
         Play(rig);
-        rig.FrameAt(1350);
+        rig.Time.FrameAt(1350);
 
-        rig.Clock.Now = StartMs + 1400;
+        rig.Time.Now = StartMs + 1400;
         rig.Screen.Play(AppIdentity.Version, "9.9.0");
-        rig.FrameAt(1350);
+        rig.Time.FrameAt(1350);
 
         Assert.Equal(49.0, rig.Screen.PART_Progress.Value, precision: 6);
         Assert.Equal("1.8.0", rig.Screen.PART_Incoming.Text);
@@ -264,10 +269,10 @@ public class UpdateRestartScreenTests
     {
         var rig = NewRig();
         Play(rig);
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
         Assert.False(rig.Screen.IsShowing); // ön-koşul
 
-        rig.Clock.Now = StartMs;
+        rig.Time.Now = StartMs;
         Play(rig, "2.0.0");
 
         Assert.True(rig.Screen.IsShowing);
@@ -291,7 +296,7 @@ public class UpdateRestartScreenTests
         Play(rig);
         Assert.Equal(1, rig.Screen.StepAnnouncements);
         foreach (double at in new[] { 100.0, 400, 799, 800, 1200, 1899, 1900, 2500, 2700, 2800 })
-            rig.FrameAt(at);
+            rig.Time.FrameAt(at);
 
         Assert.Equal(3, rig.Screen.StepAnnouncements);
         GC.KeepAlive(rig.Window);
@@ -333,7 +338,7 @@ public class UpdateRestartScreenTests
         CompositionTarget.Rendering += onFrame;
         try
         {
-            rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+            rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
             Assert.True(screen.IsShowing, "sönüş beklenmeden kalktı");
             Assert.False(screen.IsHitTestVisible);
             Assert.True(screen.HasAnimatedProperties, "ekran sönerek çıkmadı");
@@ -357,15 +362,9 @@ public class UpdateRestartScreenTests
 
     /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace; motora giden komutlar yakalanır, restart
     /// ekranının zamanı sahtedir.</summary>
-    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, FakePollTimer Timer, Clock Clock, List<IpcCommand> Sent)
+    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, ScreenTime Time, List<IpcCommand> Sent)
     {
         public UpdateRestartScreen Screen => Window.UpdateRestartOverlay;
-
-        public void FrameAt(double elapsedMs)
-        {
-            Clock.Now = StartMs + (long)elapsedMs;
-            Timer.Tick();
-        }
 
         /// <summary>Kartın <c>Restart to update</c>'ine kullanıcı gibi basar (kapıdan geçer).</summary>
         public void PressRestart() => Assert.True(CommandPress.Press(Vm.RestartToUpdateCommand));
@@ -379,11 +378,7 @@ public class UpdateRestartScreenTests
         MainWindowHost.AcceptSends(vm);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
-        var timer = new FakePollTimer();
-        var clock = new Clock();
-        window.UpdateRestartOverlay.Timer = timer;
-        window.UpdateRestartOverlay.NowMs = () => clock.Now;
-        return new ShellRig(window, vm, timer, clock, sent);
+        return new ShellRig(window, vm, new ScreenTime(window.UpdateRestartOverlay), sent);
     }
 
     /// <summary>Ekran pencerenin EN ÜST katmanıdır (modalların da üstünde, XAML'de son), iki satırı da örter (title bar
@@ -394,8 +389,7 @@ public class UpdateRestartScreenTests
     public void The_screen_is_the_topmost_layer_over_the_title_bar_and_starts_collapsed()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
+        var (window, _) = MainWindowHost.NewRealized(temp);
         var screen = window.UpdateRestartOverlay;
 
         var layers = (Grid)window.RootShell.Child;
@@ -439,8 +433,8 @@ public class UpdateRestartScreenTests
         int rows = rig.Vm.Projects.Count;
 
         rig.PressRestart();
-        rig.FrameAt(1000);
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Time.FrameAt(1000);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
 
         Assert.False(rig.Screen.IsShowing);
         Assert.Empty(rig.Sent);
@@ -513,7 +507,7 @@ public class UpdateRestartScreenTests
         Assert.False(rig.Vm.IsStarting);
         Assert.Equal(MainWindowHost.IdOf("A"), rig.Vm.SelectedProjectId);
 
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
         Assert.False(rig.Screen.IsShowing); // ön-koşul: ekran kalktı
         PressKey(rig.Window, source, Key.Escape);
         Assert.Null(rig.Vm.SelectedProjectId);
@@ -537,7 +531,7 @@ public class UpdateRestartScreenTests
         Assert.Empty(rig.Runs);
         Assert.False(rig.Vm.IsStarting);
 
-        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
         rig.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
         Assert.True(rig.Vm.IsStarting || rig.Runs.Any(), "ekran kalktıktan sonra kısayol derlemeyi başlatmadı");
         GC.KeepAlive(rig.Window);

@@ -57,6 +57,17 @@ internal static class MainWindowHost
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
     }
 
+    /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
+    /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
+    /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
+    /// <see cref="NewWithProjects"/> da buradan başlar.</summary>
+    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir)
+    {
+        var (window, vm) = New(uiStateDir);
+        Realize(window);
+        return (window, vm);
+    }
+
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan
     /// alır. Yol ikinci bir yerde yeniden kurulsaydı ve biri değişseydi, test pencerenin hiç okumadığı bir dosyayı
@@ -86,8 +97,7 @@ internal static class MainWindowHost
         TempDir uiStateDir, params (string Name, string? Layer)[] nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
-        var (window, vm) = New(uiStateDir);
-        Realize(window);
+        var (window, vm) = NewRealized(uiStateDir);
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
