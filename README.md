@@ -557,6 +557,18 @@ version. Opening the dialog clears the dot for good; it does not return until th
 Esc closes whichever dialog is on top first — What's new, then About, then Settings — so a lower one's state
 survives a stray keypress.
 
+### Update
+
+The title bar's command group starts with an *Update {version}* pill; the icons to its right never move for it.
+Clicking it opens a card: the installed and incoming versions with the package size, the highlights grouped like
+the release notes, and *Later* / *Restart to update*. While a build, a Sync or a maintenance task is running,
+*Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it` for a build; it
+comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere, Esc or opening a
+dialog closes the card; the pill stays.
+
+There is no update engine yet. The pill shows a sample offer — the next minor version with example highlights —
+so it is always visible, and *Restart to update* only closes the card.
+
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run

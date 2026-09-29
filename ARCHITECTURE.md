@@ -2392,9 +2392,14 @@ operation markers, so the branch chip's amber dot and the git locks are current 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
 hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
 and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
-bar below says it once, with the workspace name and the branch chip. The window's application
-commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
-toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
+bar below says it once, with the workspace name and the branch chip. The other end, ahead of the caption
+buttons, opens with the **update pill** and a hairline of its own (§13.3), then carries the window's application
+commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
+sparkle (What's new) and the `i` (About). Both hairlines are one style. The cluster is docked right, so the pill
+grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
+pill is there or not. There is no update engine yet — the pill shows a sample offer, the next minor of the
+installed version, and is therefore always visible; it is neutral (no amber, the title bar's rule), and it plays
+an entrance only when an offer arrives after startup (§14.5), never on the first frame.
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -2410,20 +2415,21 @@ Splitters have a 7 px grab area over a 1 px visible line that turns amber while 
 ### 13.1 MVVM
 
 `RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
-action bar, the event stream, the workspace, the automatic Sync, the git operation in progress and the safe
-exit. It owns the project rows, the counters, the phase, the selection, the filter and the command set. Rows are
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit
+and the update offer. It owns the project rows, the counters, the phase, the selection, the filter and the
+command set. Rows are
 `ProjectRowViewModel` — observable state only; every visual decision (colour, glyph, badge) is made in XAML from
 that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
-`RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
-`LayerGrouping`. A control that also decided its own wording would be a second source of truth.
+`RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `UpdateText`, `ProjectFilter`,
+`RunCounters`, `LayerGrouping`. A control that also decided its own wording would be a second source of truth.
 
 ### 13.2 Panels
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ TITLE BAR 40px — product mark · title · company mark   ⊞ ≡ ▣ ⚙ i — □ ×│
+│ TITLE BAR 40px — mark · title · logo   Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i  — □ ×│
 ├──────────────────────────────────────────────────────────────────────┤
 │ STICKY RIBBON 32px — operation pill · phase · building chips ·        │
 │                      failure chips        · global progress 2px      │
@@ -2439,7 +2445,8 @@ Text that the design specifies literally is produced by **pure, testable static 
 
 **Title bar.** The brand alone: the product mark, the product name, a hairline, the company mark. It carries
 no repository or branch context — the branch already has a chip in the action bar, and the one remaining fact,
-*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root.
+*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root. Its right end is
+the update pill and the application commands (§12.4).
 
 **No workspace.** Without a repository root — on first run, or after a Save closed the workspace (§13.3) — the
 window is the first-run screen: the project list carries the setup invitation (`Configure the workspace`, a
@@ -3174,8 +3181,8 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or 
 that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
 closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
-the control that opened it. One gate (`PopoverToggle`) closes that window for all four popovers — branch, the
-Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are 28 px. The branch popover is
+the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch, the
+Build chevron, the row menu, the Open-in-VS chooser and the update card. Rows inside them are 28 px. The branch popover is
 272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
 nothing, and the remote `origin/HEAD` pointer is not listed.
 
@@ -3192,6 +3199,29 @@ wholesale replacement implies is safe here, unlike in the projects list: there i
 selection to preserve. The branch the chip shows is not a choice the list has to keep: it is the inventory's
 active entry — HEAD — read afresh on every publish, and `syncCompleted` aligns it even earlier (§5.3). On a
 detached HEAD the last known name stays.
+
+**The update card** is the title bar's popover (`UpdateCard`, on the same base as the branch popover), opened by
+the update pill (§12.4). It hangs 9 px *below* the pill with its left edge on the pill's, in a 344 px `Ds.Popover`
+shell without padding, and it drops in instead of popping up (§14.5). The pill is a toggle whose screen-reader
+name is `Update to <version>` and which also reports whether the card is expanded. The card is three blocks
+separated by `border` hairlines. The **identity** block carries a caps *Update ready* with the package size on the
+right, then the version change in mono — installed in `text-dim`, an arrow, incoming larger and in
+`text-primary`. The **highlights** are drawn in What's new's category-block language at compact measures (blocks
+12 px apart, 6 px under the heading, items 5 px apart in 12 px `text-secondary` on an 18 px line): both surfaces
+draw their blocks through one helper (`ReleaseNoteBlocks`) with their own numbers, so they cannot drift, and the
+categories come in the same fixed order. The **decision** block is one line of text above a right-aligned *Later*
+and *Restart to update*. The line says what a restart does; while work is in flight *Restart to update* is
+disabled and the line names what it waits for, in a fixed order — a Clean, Optimize, Resolve, checkout or pull
+(`Available once the running task finishes.`), then any Sync, the silent one included
+(`Available once Sync finishes.`), then a build that is running, being marked or waiting for other work to end
+(`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
+read from the shortcut catalog). The reason is one computed property of the view model, re-evaluated at the single
+workspace-busy notification point and announced only when it changes, so the button comes back on its own when
+the work ends. *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's
+popover layer (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule
+exists because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
+*Restart to update* raises a request on the view model; there is no update engine yet, and the shell answers the
+request by closing the card. The card's content is the sample offer the pill shows.
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -3210,7 +3240,8 @@ focus navigation finds nothing and focus would stay on the dialog itself. Every 
 duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
 typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
 is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
-re-implements any of this; a source guard keeps it that way.
+re-implements any of this; a source guard keeps it that way. Because every opening passes through the shell, it
+is also the one place that announces it (`Opened`) — the window closes the update card there.
 
 The Settings dialog is a fixed 880 × 576 px, split into two panes under a head row that carries the title and a
 close button taking the same path as *Cancel*. Down the left runs a 196 px **section rail** on the `surface`
@@ -4200,7 +4231,8 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 `Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
 selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection → the running build.
+Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
+title bar's update card) → selection → the running build.
 With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
 dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
 pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
@@ -4298,14 +4330,17 @@ Three pieces of shared machinery keep the copies from multiplying:
   corner radius has no animation type at all, so it is *bound* to the animating inset and follows it frame by
   frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
   horizontally but not vertically, turning the ends into ellipses).
-- **`PopIn`** is the single 140 ms entrance animation, shared by both popovers and the Build menu. There is no
-  exit animation; overlays hide immediately.
+- **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
+  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance and the update card's drop-in
+  differ only in duration, direction, scale and scale origin (§14.5). There is no exit animation; overlays hide
+  immediately.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
 
-The branch popover derives from a common base that owns the open state, the refresh-then-animate-then-focus
-sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and
-outside click; only the branch search filter is its own. The width belongs to
+The branch popover and the update card derive from a common base that owns the open state, the
+refresh-then-animate-then-focus sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc
+chain does not reach it) and outside click; what each adds is its own — the branch search filter; the card's
+drop-in and its *Later*, which asks to close exactly the way Esc does. The width belongs to
 the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
 number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
 edge of the body.
@@ -4619,6 +4654,12 @@ control. The look is one shared style (`Ds.DiscoveryIcon` with its `.Path` twin)
 dictionary like every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
 selector's `Icon.LayList`.
 
+The update pill (§12.4) draws Lucide *circle-arrow-up* (`Icon.UpdateReady`) at 13 px in the pill's text colour and
+the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the design calls it the same circle as the
+`info` icon, but the derived `info` circle is r = 10 and the pill follows the design. The card's version change
+uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
+rotate-cw of the Build menu family, rather than a second copy of the same geometry.
+
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
 the product mark (title bar 19 px, About hero 30 px) and `Controls/BrandLogo.xaml` the company wordmark (title
@@ -4701,6 +4742,16 @@ Five contract rules, each enforced by a test:
    the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
+
+**Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
+Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
+scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its
+hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
+because it hangs from the pill. All ease out, all snap to their end state under reduced motion, and none has an
+exit. The pill's entrance is the one that is conditional: it plays once, when an offer arrives after startup — the
+sample offer the pill shows today is there from the first frame, so it never plays yet — and the pill does not
+move after that. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
+says 80 ms, but its own measurements and prototype use the standard one.
 
 **Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
 are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
@@ -5332,6 +5383,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
+| Update offer — version, size, highlights; the next-minor rule and the sample placeholder the app starts with (no update engine yet) | `App/Services/UpdateOffer.cs` |
+| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup, its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
+| Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
 
@@ -5523,10 +5578,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
-| Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
+| Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
-| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
+| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal, the `Opened` announcement) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
