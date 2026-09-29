@@ -436,18 +436,53 @@ public class SettingsPortabilityTests
         Assert.Equal("Clear settings — empty the form", dialog.Clear.ToolTip);
     }
 
-    /// <summary>[design v1.10.0 §2.4] First run kısayolu: diyalog açılır ve dosya seçici HEMEN tetiklenir.</summary>
+    /// <summary>[design v1.10.0 §2.4 · kullanıcı kararı 2026-09-29] First run kısayolu: önce diyalog açılır ve
+    /// ekrana yerleşir, dosya seçici ANCAK bekleme bitince gelir — giriş animasyonu (<c>Duration.Base</c>, 180 ms) +
+    /// bir nefes (<c>Duration.Slow</c>, 280 ms).
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ İDDİA (<c>Opening_for_import_triggers_the_file_picker_at_once</c>): seçici
+    /// diyalogla AYNI anda tetiklenirdi. Kullanıcı testi: ikisi "pat pat" birlikte açılıyordu — diyalog daha
+    /// yerleşmeden seçici üstüne biniyordu.</para></summary>
     [StaFact]
-    public void Opening_for_import_triggers_the_file_picker_at_once()
+    public void Opening_for_import_shows_the_dialog_first_and_the_file_picker_after_the_hold()
     {
         var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
+        dialog.CloseDialog();
         int picks = 0;
         dialog.PickImportPath = () => { picks++; return null; };
+        double? heldMs = null;
+        var release = new TaskCompletionSource();
+        dialog.ImportHold = ms => { heldMs = ms; return release.Task; };
 
-        dialog.OpenForImport(run, store, () => null);
+        _ = dialog.OpenForImportAsync(run, store, () => null);
 
-        Assert.Equal(1, picks);
         Assert.Equal(Visibility.Visible, dialog.Visibility);
+        Assert.Equal(0, picks);          // diyalog önce gelir — seçici henüz YOK
+        Assert.Equal(180 + 280, heldMs); // giriş + nefes, motion token'larından
+
+        release.SetResult();
+        DispatcherPump.PumpUntil(() => picks > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(1, picks);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Bekleme sürerken diyalog kapatılırsa (Esc, scrim, Cancel) dosya seçici
+    /// hiç açılmaz — kullanıcı vazgeçmiştir.</summary>
+    [StaFact]
+    public void Closing_the_dialog_during_the_hold_cancels_the_file_picker()
+    {
+        var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+        dialog.CloseDialog();
+        int picks = 0;
+        dialog.PickImportPath = () => { picks++; return null; };
+        var release = new TaskCompletionSource();
+        dialog.ImportHold = _ => release.Task;
+
+        _ = dialog.OpenForImportAsync(run, store, () => null);
+        dialog.CloseDialog();
+        release.SetResult();
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal(0, picks);
     }
 }

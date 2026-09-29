@@ -64,4 +64,87 @@ internal static class Win32
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
     public static extern int SetWindowLong(nint hWnd, int nIndex, int dwNewLong);
+
+    // --- sistem diyaloğunu sahibinin üzerinde ortalama (CenteredDialog)
+
+    public const int WH_CBT = 5;
+    public const int HCBT_ACTIVATE = 5;
+    public const uint GW_OWNER = 4;
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_SHOWWINDOW = 0x0040;
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+    public const int GWLP_WNDPROC = -4;
+    public const uint WM_WINDOWPOSCHANGING = 0x0046;
+    public const uint WM_WINDOWPOSCHANGED = 0x0047;
+    public const uint WM_NCDESTROY = 0x0082;
+
+    public delegate nint HookProc(int code, nint wParam, nint lParam);
+
+    public delegate nint WndProc(nint hWnd, uint msg, nint wParam, nint lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPOS
+    {
+        public nint hwnd;
+        public nint hwndInsertAfter;
+        public int x, y, cx, cy;
+        public uint flags;
+    }
+
+    /// <summary>Pencere yordamını değiştirir; 32 bit süreçte <c>SetWindowLongPtrW</c> dışa aktarılmaz.</summary>
+    public static nint SetWindowProc(nint hWnd, nint proc) =>
+        nint.Size == 8 ? SetWindowLongPtr64(hWnd, GWLP_WNDPROC, proc) : SetWindowLong(hWnd, GWLP_WNDPROC, (int)proc);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    private static extern nint SetWindowLongPtr64(nint hWnd, int nIndex, nint dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
+    public static extern nint CallWindowProc(nint lpPrevWndFunc, nint hWnd, uint msg, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(nint hWnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowsHookExW", SetLastError = true)]
+    public static extern nint SetWindowsHookEx(int idHook, HookProc lpfn, nint hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(nint hhk);
+
+    [DllImport("user32.dll")]
+    public static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern nint GetWindow(nint hWnd, uint uCmd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(nint hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
+
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(nint hMonitor, ref MONITORINFO lpmi);
 }
