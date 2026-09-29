@@ -286,13 +286,6 @@ public class UpdateCardTests
         return (window, vm);
     }
 
-    private static void PressEscape(MainWindow window)
-    {
-        var escape = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == Key.Escape && k.Modifiers == ModifierKeys.None);
-        if (escape.Command.CanExecute(null)) escape.Command.Execute(null);
-    }
-
     /// <summary>Kart hapın 9px altında, SOL kenarı hapın sol kenarında (§9 <c>top: calc(100% + 9px); left: 0</c>) ve
     /// 344px'lik <c>Ds.Popover</c> kabuğunda, dolgusuz durur; dışarı tık onu kapatır (<c>StaysOpen=False</c>). Kartın VM'i
     /// pencereninkidir (popup içeriği DataContext'i güvenilir miras almaz) ve açık/kapalı durumu hapın işaretini izler —
@@ -382,11 +375,11 @@ public class UpdateCardTests
         vm.SelectProject(@"C:\p\a.csproj");
         window.UpdatePill.IsChecked = true;
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         Assert.False(window.UpdatePill.IsChecked);
         Assert.NotNull(vm.SelectedProjectId);
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         Assert.Null(vm.SelectedProjectId);
         GC.KeepAlive(window);
     }

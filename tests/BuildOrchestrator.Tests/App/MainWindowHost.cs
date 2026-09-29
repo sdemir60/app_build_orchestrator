@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -101,6 +102,19 @@ internal static class MainWindowHost
 
     /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
     public static string IdOf(string name) => $@"C:\p\{name}.csproj";
+
+    /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar: pencere düzeyindeki Esc
+    /// bağlamasının komutu, üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa
+    /// hiçbir şey olmaz). WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir, bu yüzden tuş olayı değil
+    /// bağlamanın kendisi sürülür. Esc zincirini süren testlerin TEK basış yeri — <c>EscStopTests</c> ve
+    /// <c>UpdateCardTests</c> bunu birebir aynı gövdeyle ayrı ayrı yazmıştı.</summary>
+    public static void PressEscape(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        var escape = window.InputBindings.OfType<KeyBinding>()
+            .Single(k => k.Key == Key.Escape && k.Modifiers == ModifierKeys.None);
+        CommandPress.Press(escape.Command);
+    }
 
     /// <summary>[task 3] Gönderimler motor yerine başarıyla "gider" (<see cref="RunViewModel.DebugSendOverride"/>) —
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
