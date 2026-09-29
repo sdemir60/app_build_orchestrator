@@ -118,14 +118,13 @@ public class StashOnBranchSwitchTests
     public void The_shell_seeds_the_setting_and_persists_its_changes()
     {
         using var temp = new TempDir();
-        string path = Path.Combine(temp.Path, "ui-state.json");
-        new JsonUiStateStore(path).Save(new UiState { StashOnBranchSwitch = true });
+        UiStateStore(temp).Save(new UiState { StashOnBranchSwitch = true });
 
         var (window, vm) = New(temp);
 
         Assert.True(vm.StashOnBranchSwitch);
         vm.StashOnBranchSwitch = false;
-        Assert.False(new JsonUiStateStore(path).Load().StashOnBranchSwitch);
+        Assert.False(UiStateStore(temp).Load().StashOnBranchSwitch);
         GC.KeepAlive(window);
     }
 

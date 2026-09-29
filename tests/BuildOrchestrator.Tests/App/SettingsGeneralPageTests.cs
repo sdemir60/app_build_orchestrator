@@ -19,14 +19,14 @@ namespace BuildOrchestrator.Tests.App;
 /// gruplar ve tek <c>ToggleRow</c> şablonu; <c>Pull before build</c>'in buraya taşınması ve External projects sayfasının
 /// altındaki "nereye gitti" satırı.
 ///
-/// <para><b>Kullanıcı kararı 1:</b> <c>Close to tray</c> ve <c>Show notifications</c> YALNIZ taslakta yaşar —
-/// kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana döner. <c>Pull before build</c>
-/// (<see cref="PullBeforeBuildTests"/>), <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitchTests"/>),
-/// <c>Start with Windows</c> ve <c>Start minimized to tray</c> (<see cref="StartWithWindowsTests"/>) ise gerçektir.</para>
-/// <para><b>[DEĞİŞEN KURAL — P4, kullanıcı kararı 2026-09-29]</b> ESKİ: iki başlangıç anahtarı da yalnız taslaktaydı
-/// (dört anahtar birlikte). Artık kalıcıdır ve davranışa bağlıdır (Windows ile başlama, tepside açılış).</para>
-/// <para>TODO(close-to-tray merge): P3 branch'i Close to tray ve Show notifications'ı da kalıcı yaptı; merge'de
-/// "kaydedilmez" diyen iki test kalkar, P3'ün kalıcılık testleri yerini alır.</para>
+/// <para>Altı anahtarın hepsi gerçektir: <c>Pull before build</c> (<see cref="PullBeforeBuildTests"/>), <c>Stash and
+/// switch branches</c> (<see cref="StashOnBranchSwitchTests"/>), <c>Start with Windows</c> ve <c>Start minimized to
+/// tray</c> (<see cref="StartWithWindowsTests"/>), <c>Close to tray</c> ve <c>Show notifications</c>
+/// (<see cref="ShellSwitchesTests"/>; davranışları <see cref="CloseToTrayTests"/> ve tepsi balonu testleri).</para>
+/// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ (kullanıcı kararı 1): dört
+/// kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>, <c>Show
+/// notifications</c>) YALNIZ taslakta yaşardı — kaydedilmez, dosyaya yazılmaz, her açılışta varsayılana dönerdi. Artık
+/// dördü de kalıcıdır ve davranışa bağlıdır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class SettingsGeneralPageTests
@@ -145,22 +145,23 @@ public class SettingsGeneralPageTests
         Assert.True(draft.PullExternalsBeforeBuild);
     }
 
-    /// <summary>Close to tray ve Show notifications ayar dosyasına GİRMEZ (kullanıcı kararı 1): ikisi çevrilse de export
-    /// JSON'u varsayılanla aynıdır.
-    /// <para><b>[DEĞİŞEN KURAL — P4]</b> Eski iddia (<c>The_four_new_switches_are_not_written_to_the_settings_file</c>):
-    /// dört anahtarın dördü de dosyaya girmezdi. Start with Windows ve Start minimized to tray artık dosyaya yazılır
-    /// ve okunur (<see cref="StartWithWindowsTests.The_startup_switches_round_trip_through_the_settings_file"/>).</para>
-    /// <para>TODO(close-to-tray merge): P3 bu iki anahtarı da dosyaya yazar — bu test merge'de kalkar.</para></summary>
+    /// <summary>Dört kabuk anahtarı ayar dosyasında taşınır: dördü çevrilip dışa aktarılan dosya yeni bir taslağa
+    /// yüklenince dördü de çevrik gelir — tablonun (<see cref="ShellSwitches.All"/>) her satırı Export/Import'a bağlıdır.
+    /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ İDDİA
+    /// (<c>The_four_new_switches_are_not_written_to_the_settings_file</c>): dört anahtarın hiçbiri ayar dosyasına
+    /// girmezdi — çevrilseler de export JSON'u varsayılanla aynıydı. Artık dördü de kalıcıdır; tek tek round-trip
+    /// testleri <see cref="ShellSwitchesTests"/> ve <see cref="StartWithWindowsTests"/>'tedir.</para></summary>
     [Fact]
-    public void Close_to_tray_and_show_notifications_are_not_written_to_the_settings_file()
+    public void The_four_shell_switches_travel_in_the_settings_file()
     {
-        var untouched = new SettingsDraftViewModel(null, @"D:\repo");
         var flipped = new SettingsDraftViewModel(null, @"D:\repo");
-        foreach (var row in flipped.GeneralGroups.SelectMany(g => g.Rows)
-                     .Where(r => r.Definition.Setting is GeneralSetting.CloseToTray or GeneralSetting.ShowNotifications))
-            row.IsOn = !row.IsOn;
+        foreach (var s in ShellSwitches.All) flipped.GeneralRow(s.Setting).IsOn = !flipped.GeneralRow(s.Setting).IsOn;
 
-        Assert.Equal(untouched.ToFile().ToJson(), flipped.ToFile().ToJson());
+        var loaded = new SettingsDraftViewModel(null, @"D:\repo");
+        loaded.LoadFrom(SettingsFile.TryParse(flipped.ToFile().ToJson())!);
+
+        Assert.All(ShellSwitches.All, s =>
+            Assert.Equal(!GeneralSettingsCatalog.Definition(s.Setting).Default, loaded.GeneralRow(s.Setting).IsOn));
     }
 
     // ---------------------------------------------------------------- realize
@@ -288,32 +289,59 @@ public class SettingsGeneralPageTests
         Assert.Equal(height, row.ActualHeight);
     }
 
-    /// <summary>Close to tray ve Show notifications Save'de UiState'e GİRMEZ ve yeniden açılışta varsayılana döner.
-    /// <para><b>[DEĞİŞEN KURAL — P4]</b> Eski iddia (<c>The_four_new_switches_are_not_saved_and_reopen_on_their_defaults</c>):
-    /// dört anahtar da kaydedilmezdi. Start with Windows ve Start minimized to tray artık kaydedilir ve kayıtlı
-    /// değerle açılır (<see cref="The_startup_switches_are_saved_and_reopen_on_the_saved_value"/>).</para>
-    /// <para>TODO(close-to-tray merge): P3 bu iki anahtarı da kaydeder — bu test merge'de kalkar.</para></summary>
+    /// <summary>Dört kabuk anahtarı Save'de UiState'e yazılır ve diyalog yeniden açılınca KAYITLI değerle gelir — dördü
+    /// çevrilip kaydedilince yeniden açılış çevrik değerleri gösterir (pull ve stash canlı değerlerinde kalır).
+    /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ İDDİA
+    /// (<c>The_four_new_switches_are_not_saved_and_reopen_on_their_defaults</c>): dört anahtarın hiçbiri Save'de
+    /// UiState'e girmezdi ve yeniden açılışta varsayılana dönerdi. Artık dördü de kalıcıdır.</para></summary>
     [StaFact]
-    public void Close_to_tray_and_show_notifications_are_not_saved_and_reopen_on_their_defaults()
+    public void The_four_shell_switches_are_saved_and_reopen_on_the_saved_value()
     {
-        string SavedState(bool flip)
-        {
-            var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
-            using var _scope = scope;
-            if (flip)
-                foreach (var name in new[] { "Close to tray", "Show notifications" })
-                    SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
+        var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+        foreach (var name in new[] { "Start with Windows", "Start minimized to tray", "Close to tray", "Show notifications" })
+            SwitchNamed(dialog, name).IsChecked = !SwitchNamed(dialog, name).IsChecked;
 
-            Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
-            Assert.Equal(Visibility.Collapsed, dialog.Visibility);
+        Click(dialog.Save); // commit'in persist yarısı ilk await'ten ÖNCE, senkron yazılır
+        Assert.Equal(Visibility.Collapsed, dialog.Visibility);
 
-            dialog.Open(run, store, () => null);
-            dialog.UpdateLayout();
-            Assert.Equal([false, false, true, true, false, true], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
-            return JsonSerializer.Serialize(store.State);
-        }
+        dialog.Open(run, store, () => null);
+        dialog.UpdateLayout();
+        Assert.Equal([true, true, false, true, false, false], Rows(dialog).Select(r => SwitchOf(r).IsChecked == true));
+    }
 
-        Assert.Equal(SavedState(flip: false), SavedState(flip: true));
+    /// <summary>[P3] Close to tray ve Show notifications Save'de UiState'e yazılır ve yeniden açılışta KAYITLI değeri
+    /// gösterir (switch'e tıklamanın bağladığı gerçek yol).</summary>
+    [StaFact]
+    public void Close_to_tray_and_show_notifications_are_saved_and_reopen_on_the_saved_value()
+    {
+        var (dialog, run, store, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+        foreach (var name in new[] { "Close to tray", "Show notifications" })
+            SwitchNamed(dialog, name).IsChecked = false;
+
+        Click(dialog.Save);
+        Assert.Equal(Visibility.Collapsed, dialog.Visibility);
+        Assert.False(store.State.CloseToTray);
+        Assert.False(store.State.ShowNotifications);
+
+        dialog.Open(run, store, () => null);
+        dialog.UpdateLayout();
+
+        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
+        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
+    }
+
+    /// <summary>[Task 1] Diyalog kayıtlı KAPALI değerle açılır — Close to tray ve Show notifications switch'leri
+    /// kapalı realize olur (<see cref="ShellSwitchesTests.The_draft_opens_on_the_saved_values"/>'ın realize eşi).</summary>
+    [StaFact]
+    public void The_general_page_opens_on_the_saved_switch_values()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(saved: new UiState { CloseToTray = false, ShowNotifications = false });
+        using var _scope = scope;
+
+        Assert.False(SwitchNamed(dialog, "Close to tray").IsChecked);
+        Assert.False(SwitchNamed(dialog, "Show notifications").IsChecked);
     }
 
     /// <summary>[P4] İki başlangıç anahtarı Save'de UiState'e yazılır ve diyalog yeniden açılınca kayıtlı değerle

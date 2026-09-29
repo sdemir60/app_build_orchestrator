@@ -103,6 +103,19 @@ public sealed class UiState
     /// varsayılanı (kapalı: pencere açılır). Okuma yalnız <see cref="ShellSwitches.StartMinimizedToTray"/>
     /// üzerindendir.</summary>
     public bool? StartMinimizedToTray { get; set; }
+
+    /// <summary>[P3] Settings → General → STARTUP → <c>Close to tray</c>: pencere kapatılınca uygulama tepsiye küçülüp
+    /// arka planda mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="Autostart"/> ile AYNI gerekçeyle
+    /// NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız <see cref="ShellSwitches.CloseToTray"/> üzerindendir —
+    /// bu alan doğrudan okunmaz. Davranışı (pencere kapanışının kendisi) <c>MainWindow.OnClosing</c> bağlar
+    /// (<see cref="WindowCloseRule"/>).</summary>
+    public bool? CloseToTray { get; set; }
+
+    /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
+    /// mi — koşu bitişi, ilk-× bilgilendirmesi ve ikinci-instance uyarısı; kapalıyken hiçbiri gösterilmez.
+    /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
+    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı üç balon yolu verir.</summary>
+    public bool? ShowNotifications { get; set; }
 }
 
 /// <summary>
@@ -183,6 +196,8 @@ public sealed class JsonUiStateStore(string path) : IUiStateStore
 /// [T62/K5] "X pencereyi kapatmaz, tepsiye küçültür" bilgilendirmesi YALNIZ ilk kapatmada gösterilir
 /// (uygulama içi toast design §8'de yasak — OS tray balloon'u). Kapı: ilk çağrıda <c>true</c> döner ve bayrağı
 /// KALICI olarak işaretler, sonraki her çağrıda <c>false</c>.
+/// <para>[P3 · Task 4] Show notifications kapalıyken ilk kapatmada bile balon YOK — kapı bunu da sorar. Bu dalda
+/// bayrak KAYDEDİLMEZ: switch sonradan açılırsa kullanıcı bilgilendirmeyi yine bir kez görür.</para>
 /// </summary>
 public sealed class FirstCloseBalloonGate(IUiStateStore store)
 {
@@ -190,6 +205,7 @@ public sealed class FirstCloseBalloonGate(IUiStateStore store)
     {
         var state = store.Load();
         if (state.TrayBalloonShown) return false;
+        if (!ShellSwitches.ShowNotifications(state)) return false;
         state.TrayBalloonShown = true;
         store.Save(state);
         return true;

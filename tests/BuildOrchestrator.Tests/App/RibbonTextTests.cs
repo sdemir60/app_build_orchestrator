@@ -252,6 +252,38 @@ public class RibbonTextTests
         Assert.Equal("Brush.TextSecondary", line.BrushKey);
     }
 
+    /// <summary>[P3 · Task 2] Güvenli çıkış uçuştaki işi beklerken şerit HER fazda Stopping satırını okur — faz
+    /// Syncing (çıkış bir Sync'i bekliyor), Idle ya da Boot (Clean/checkout/pull faz değiştirmez) olsa da; derleme
+    /// drain'deyse (faz Stopping) uçuştaki sayıyla. Sync/run hatası satırı onu ezmez. Motor ölümü ve sessizliği yine
+    /// ÖNCE gelir: bekleyişi kesen onlardır ve kullanıcının göreceği asıl olgu odur.</summary>
+    [Fact]
+    public void An_exit_in_flight_reads_stopping_in_every_phase()
+    {
+        foreach (var phase in new[] { AppPhase.Syncing, AppPhase.Idle, AppPhase.Boot })
+        {
+            var line = RibbonText.Compose(phase, true, false, Counters(), 10, 3, 14, 0, null, null, 0, exitPending: true);
+            Assert.Equal("▸ Stopping — wrapping up", line.Text);
+            Assert.Equal("Brush.TextSecondary", line.BrushKey);
+            Assert.Null(line.Glyph);
+        }
+
+        var draining = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            exitPending: true);
+        Assert.Equal("▸ Stopping — 3/10 · finishing 2 in flight", draining.Text);
+
+        var overFailures = RibbonText.Compose(AppPhase.Idle, true, false, Counters(), 10, 3, 14, 0, null, null, 0,
+            syncError: "fetch failed", runError: "run blew up", exitPending: true);
+        Assert.Equal("▸ Stopping — wrapping up", overFailures.Text);
+
+        var silent = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineOverdue: RunViewModel.EngineSilentMessage, exitPending: true);
+        Assert.Equal(RunViewModel.EngineSilentMessage, silent.Text);
+
+        var dead = RibbonText.Compose(AppPhase.Stopping, true, false, Counters(building: 2), 10, 3, 14, 0, null, null, 0,
+            engineDiedMessage: "Engine stopped unexpectedly (exit 139)", exitPending: true);
+        Assert.Equal("Engine stopped unexpectedly (exit 139)", dead.Text);
+    }
+
     /// <summary>Eski metin <c>▸ Stopped — 3/10 · rest queued</c> idi. "queued" SÜRDÜRÜLEBİLİRLİK ima ediyordu
     /// (Continue butonu vardı); Continue kaldırıldığı için o söz artık karşılıksız — kalanlar bir sonraki
     /// Build'de baştan işlenir. Yeni metin yalnızca olguyu söyler.</summary>

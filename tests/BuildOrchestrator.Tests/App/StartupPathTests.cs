@@ -119,7 +119,7 @@ public class StartupPathTests
         // Yol ÜRETİMDEKİ yoldur: kalıcı duruma gerçek store ile yazılır, pencere gerçek ctor'undan geçer.
         // Pencere Show() EDİLMEZ — bu testte de, autostart yolunda da (tepsi/hotkey yan etkisi yok).
         using var temp = new TempDir();
-        var store = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json"));
+        var store = MainWindowHost.UiStateStore(temp);
         var saved = store.Load();
         saved.RepositoryRoot = @"C:\src\OSYS";
         store.Save(saved);

@@ -629,7 +629,8 @@ public sealed partial class RunViewModel : ObservableObject
         ElapsedMs, EtaMs, checkDurMs: ElapsedMs, warnings: 0,
         engineDiedMessage: EngineDiedMessage, syncError: SyncErrorMessage,
         runError: RunErrorMessage, engineOverdue: EngineOverdueMessage, syncFetches: _syncMode.Fetches(),
-        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap);
+        resolvingCycles: IsResolvingCycles, cycleRound: CycleRound, cycleRoundCap: CycleRoundCap,
+        exitPending: ExitPending);
 
     // [Fix wave 1, Finding 1] RelayCommand'ların CanExecuteChanged'ı YALNIZ NotifyCanExecuteChangedFor
     // (veya elle NotifyCanExecuteChanged()) ile ateşlenir — CommunityToolkit CommandManager.RequerySuggested'a
@@ -1237,10 +1238,17 @@ public sealed partial class RunViewModel : ObservableObject
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
     /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
     /// temizlikten sonra yazılan ilk satırlar.</param>
-    /// <returns>Sync komutu motora gitti mi — düşen gönderimde <c>false</c> (kendiliğinden Sync tetiği bekletir).</returns>
+    /// <returns>Sync komutu motora gitti mi — düşen gönderimde ve çıkış beklerken <c>false</c> (kendiliğinden Sync
+    /// tetiği bekletir).</returns>
     private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
         IReadOnlyList<string>? sectionLines = null)
     {
+        // [P3 · final review I2] Çıkış beklerken HİÇBİR Sync başlamaz — her yan etkiden (konsol temizliği, istek bayrağı,
+        // komut) ÖNCE. Bekleyiş yeni iş açmaz: Clean/Optimize/checkout/pull'un bitişine zincirlenen Sync yalnız kapanan
+        // bir ekranı tazelerdi ve bir sonraki açılış zaten Sync'ler (OnEngineReady). Zincir (SyncThenReleaseAsync) işin
+        // yüzeyini doğrudan bırakır ve çıkış o anda hazır olur — kendiliğinden Sync'in bekleyişte kapalı olmasıyla
+        // (DisableAutoSync) AYNI gerekçe.
+        if (ExitPending) return false;
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
         // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
@@ -1571,7 +1579,7 @@ public sealed partial class RunViewModel : ObservableObject
         bool locked = IsMidRunLocked;
         foreach (var row in Projects) row.IsRunLocked = locked;
         if (!locked) RunTargetId = null;
-        NotifyAutoSyncGate(); // [spec 2026-09-18 §6.1] koşu bitti → bekleyen kendiliğinden Sync tetiği
+        OnWorkspaceBusyChanged(); // [spec 2026-09-18 §6.1 · P3] kilit değişti → bekleyen Sync tetiği ve bekleyen çıkış
     }
 
     partial void OnRunTargetIdChanged(string? value)
@@ -2297,8 +2305,9 @@ public sealed partial class RunViewModel : ObservableObject
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde kümülatif özet
         RefreshRunSurface();
         // [T8 fix round 1 · I1] Koşunun kendiliğinden Sync için bitişi BURASIDIR (runStopped değil): faz ve akış
-        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz.
-        NotifyAutoSyncGate();
+        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz. Meşguliyet
+        // bildiriminin tek noktasıdır; bekleyen çıkış da buradan yeniden sorulur.
+        OnWorkspaceBusyChanged();
     }
 
     /// <summary>

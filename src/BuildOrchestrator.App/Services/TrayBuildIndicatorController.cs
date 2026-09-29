@@ -54,8 +54,14 @@ public interface ITrayRunNotifier
 /// <para><b>Balloon metni burada ÜRETİLMEZ</b> (K-5): şeridin o anki terminal SATIRI
 /// <see cref="SetTerminalLine"/> ile verilir ve aynen taşınır. Alan bir ÖNBELLEK değildir, bir teslim
 /// kutusudur: bildirim çıkış evresinin sonuna ertelendiği için satır o ana kadar tutulmak zorundadır.</para>
+///
+/// <para><b>[P3 · Task 4] Show notifications kapısı.</b> <paramref name="notificationsOn"/> ZORUNLUDUR (varsayılanı
+/// yok) ki üretim kablosu unutulamasın; balon TAM gösterileceği anda (<see cref="CompleteExitAsync"/> sonunda)
+/// TAZE okunur — kuruluş anında değil. Kapalıysa yalnız <see cref="ITrayRunNotifier.ShowRunFinished"/> ÇAĞRILMAZ;
+/// gösterge fiilleri (Show/BeginExit/HideNow) ve nefes AYNEN sürer — ayar bildirimi bastırır, göstergeyi değil.</para>
 /// </summary>
-public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, ITrayRunNotifier notifier)
+public sealed class TrayBuildIndicatorController(
+    ITrayBuildIndicatorView view, ITrayRunNotifier notifier, Func<bool> notificationsOn)
 {
     private bool _mainVisible = true;
     private AppPhase _phase = AppPhase.Empty;
@@ -174,6 +180,8 @@ public sealed class TrayBuildIndicatorController(ITrayBuildIndicatorView view, I
 
         if (_notified) return;
         _notified = true;
+        // [P3 · Task 4] TAZE okuma: ayar koşu SIRASINDA kapatılmış olabilir, ctor anındaki değer güvenilmez.
+        if (!notificationsOn()) return;
         notifier.ShowRunFinished(_terminal);
     }
 }

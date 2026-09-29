@@ -10,7 +10,7 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para><b>Koordinatörün sahibi VM'dir</b> (MainWindow değil): kararın okuduğu her şey (son Sync'in HEAD'i ve
 /// anı, meşguliyet, kök) VM'dedir; kök değişimi (<c>OnRootPathChanged</c>) ve meşguliyet bitişi
-/// (<see cref="NotifyAutoSyncGate"/>) VM'in içinden bildirilir — kabuk sahibi olsaydı bu iki olayı
+/// (<see cref="OnWorkspaceBusyChanged"/>) VM'in içinden bildirilir — kabuk sahibi olsaydı bu iki olayı
 /// PropertyChanged dinleyerek dolaylı yakalamak zorunda kalırdı. Kabuğun tek katkısı UI thread'ine taşıma
 /// temsilcisidir (<see cref="EnableAutoSync"/>): VM Dispatcher TÜRÜ taşımaz — motor olaylarının
 /// <c>Dispatcher.InvokeAsync</c> ile taşınmasıyla AYNI bölüşüm.</para>
@@ -36,7 +36,8 @@ public sealed partial class RunViewModel : IAutoSyncPort
         _autoSync.Attach(RootPath);
     }
 
-    /// <summary>Kabuk kapanıyor: izleyici bırakılır.</summary>
+    /// <summary>Kabuk kapanıyor ya da [P3 · Task 2] tam çıkış istendi (<see cref="RequestExit"/>): izleyici
+    /// bırakılır. İdempotent — ikinci çağrı no-op'tur.</summary>
     internal void DisableAutoSync()
     {
         _autoSync?.Dispose();
@@ -52,13 +53,6 @@ public sealed partial class RunViewModel : IAutoSyncPort
 
     /// <summary>Kök değişti: izleyici yeni köke taşınır (<c>OnRootPathChanged</c>).</summary>
     private void AttachAutoSync(string root) => _autoSync?.Attach(root);
-
-    /// <summary>
-    /// "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull bayraklarının her
-    /// geçişi (<see cref="NotifySyncGatedCommands"/>) ve koşu kilidinin her geçişi (<see cref="PropagateRunLock"/>)
-    /// buraya iner. Koordinatör bekleyen tetiği meşguliyet bitince yeniden değerlendirir.
-    /// </summary>
-    private void NotifyAutoSyncGate() => _autoSync?.OnWorkspaceIdle();
 
     /// <summary>[spec 2026-09-18 §6.2] Dışarıdan gelen branch değişimi: checkout'un cevabıyla AYNI yol
     /// (<see cref="SyncMode.BranchChange"/> + bölümün ilk satırı), kapı <see cref="SyncSilentlyAsync"/>'inkiyle aynı.</summary>

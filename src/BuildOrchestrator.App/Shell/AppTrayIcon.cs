@@ -110,12 +110,15 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>Tepsi ikonuna sol tık / çift tık / balloon tıkı — pencereyi geri getir.</summary>
     public event Action? RestoreRequested;
-    /// <summary>Tepsi menüsü → Exit (GERÇEK çıkış → kaskat kill).</summary>
+    /// <summary>Tepsi menüsü → Exit: güvenli tam çıkış — uçuştaki iş beklenir, sonra uygulama kapanır
+    /// (<c>MainWindow.ExitFromTray</c> → <c>RunViewModel.RequestExit</c>).</summary>
     public event Action? ExitRequested;
 
     /// <summary>
     /// [K5] YALNIZ ilk `X` kapatmasında: uygulamanın tepside çalışmaya devam ettiğini OS balloon'u ile bildirir.
     /// Uygulama İÇİ toast design §8'de yasaktır — bu bilinçli olarak işletim sisteminin bildirimidir.
+    /// <para>[P3 · Task 4] Kapı: <c>MainWindow.MinimizeToTray</c>, <c>FirstCloseBalloonGate.ClaimShow()</c> true
+    /// dönünce buraya gelir — o kapı hem "ilk mi" hem Show notifications açık mı'yı birlikte sorar.</para>
     /// </summary>
     public void ShowClosedToTrayNotification() => _icon.ShowNotification(
         title: AppIdentity.Product,
@@ -124,7 +127,10 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
 
     /// <summary>[E2/triaj-f] Genel OS tray balloon'u — ikinci instance mevcut pencereyi öne getiremediğinde
     /// (SESSİZ kalmamak için) tek-satırlık bilgilendirme gösterir. Uygulama-içi toast değil (design §8 yasağı) —
-    /// bilinçli olarak OS bildirimi.</summary>
+    /// bilinçli olarak OS bildirimi.
+    /// <para>[P3 · Task 4] Kapı: <c>App.OnStartup</c>, <c>SecondInstanceGate.Decide</c>'in <c>ShowBalloon</c>'u
+    /// true dönünce buraya gelir — ayrışan çıkış kodu (3) balloon bastırılsa bile korunur, yalnız bu çağrı
+    /// düşer.</para></summary>
     public void ShowNotification(string title, string message) =>
         _icon.ShowNotification(title: title, message: message, icon: NotificationIcon.Warning);
 
@@ -138,7 +144,9 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// <para>Neden <see cref="ShowNotification"/> yeniden kullanılmıyor: o Warning ikonuna SABİTLENMİŞTİR ve
     /// kendi çağıranı (ikinci instance uyarısı) vardır; onu parametreleştirmek mevcut davranışı değiştirirdi.
     /// Burada ikon HER sonuçta ürünün kendi (büyük) ikonudur — bir OS glyph'i sonucu zaten taşımaz, sonuç
-    /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para></summary>
+    /// başlıktaki sözcüktedir ("Completed" / "▸ Stopped" / "Run failed").</para>
+    /// <para>[P3 · Task 4] Kapı: <c>TrayBuildIndicatorController</c>, balonun TAM gösterileceği anda
+    /// <c>notificationsOn()</c>'ı TAZE okur ve yalnız açıksa buraya gelir.</para></summary>
     public void ShowRunFinished(RibbonLine line) => _icon.ShowNotification(
         title: RunFinishedTitle(line),
         message: RunFinishedBody(line),

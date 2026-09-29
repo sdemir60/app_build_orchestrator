@@ -35,10 +35,14 @@ internal static class MainWindowHost
     /// Pencerenin ctor'unda olan biteni (kalıcı durumdan repo/branch/perf seed'i — <c>MainWindow.xaml.cs:126</c>)
     /// gözlemek isteyen tek yol budur: <c>New</c> döndüğünde seed ÇOKTAN akmıştır, sonradan takılan bir prob onu
     /// göremez. Verilmezse davranış birebir eskisi gibidir.</param>
+    /// <param name="saved">[P3] Kalıcı durum dosyasını pencere kurulmadan ÖNCE tohumlar
+    /// (<c>SettingsDialogHost.OpenRealized</c>'ın <c>saved</c>'ıyla AYNI desen) — kayıtlı bir ayarla açılan kabuğu
+    /// sınayan testler içindir (ör. Close to tray kapalı). <c>null</c> ⇒ dosya yazılmaz, davranış birebir eskisi
+    /// gibidir.</param>
     /// <param name="autostart">[P4] Pencerenin Windows başlangıç kaydı servisi (üretimde DI verir). Verilmezse
     /// <c>null</c> — Windows yüzeyi yok; gerçek registry'ye giden bir servis testte ASLA kurulmaz.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
-        AutostartService? autostart = null)
+        UiState? saved = null, AutostartService? autostart = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -47,9 +51,25 @@ internal static class MainWindowHost
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
         beforeVm?.Invoke(vm);
-        var store = new JsonUiStateStore(Path.Combine(uiStateDir.Path, "ui-state.json"));
+        var store = UiStateStore(uiStateDir);
+        if (saved is not null) store.Save(saved);
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
     }
+
+    /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
+    /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan
+    /// alır. Yol ikinci bir yerde yeniden kurulsaydı ve biri değişseydi, test pencerenin hiç okumadığı bir dosyayı
+    /// tohumlar ve sessizce vakumda yeşil kalırdı.</summary>
+    public static string UiStatePath(TempDir uiStateDir)
+    {
+        ArgumentNullException.ThrowIfNull(uiStateDir);
+        return Path.Combine(uiStateDir.Path, "ui-state.json");
+    }
+
+    /// <summary>[P3 · final review O5] <see cref="UiStatePath"/>'teki dosyanın store'u — pencerenin kullandığıyla AYNI
+    /// dosya. <see cref="JsonUiStateStore"/> durum tutmaz (her çağrı diski okur/yazar), yani ayrı bir örnek pencerenin
+    /// gördüğünü görür ve pencere bunun yazdığını bir sonraki okumasında görür.</summary>
+    public static JsonUiStateStore UiStateStore(TempDir uiStateDir) => new(UiStatePath(uiStateDir));
 
     /// <summary>
     /// [T2 fix-1 · I-F] Realize edilmiş bir kabuk + topolojisi akmış bir VM — <b>üretim sırasıyla</b> (kabuk
@@ -85,6 +105,16 @@ internal static class MainWindowHost
     /// <summary>[task 3] Gönderimler motor yerine başarıyla "gider" (<see cref="RunViewModel.DebugSendOverride"/>) —
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
+
+    /// <summary>[P3 · final review O5] Motor bir derlemeye başladı (<c>runStarted</c>, <see cref="New"/>'ün koşu
+    /// kimliğiyle): koşu kilidi (<see cref="RunViewModel.IsMidRunLocked"/>) açık, Stop yapılabilir. Güvenli çıkışın VM
+    /// (<see cref="SafeExitTests"/>) ve kabuk (<see cref="CloseToTrayTests"/>) testlerinin ORTAK başlangıcı — iki
+    /// harness'ta ayrı ayrı yazılıyordu.</summary>
+    public static void StartBuild(RunViewModel vm)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+    }
 
     /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),
     /// dışarıdan branch değişimi (BranchChange), kendiliğinden Sync (Silent), motor hazır oldu (Appended).</summary>

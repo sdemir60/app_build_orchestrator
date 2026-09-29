@@ -31,6 +31,22 @@ public class TrayBalloonOnceTests
         Assert.Equal(1, store.Saves); // bayrak YALNIZ ilk seferde yazılır
     }
 
+    /// <summary>[P3 · Task 4] Show notifications kapalıyken ilk kapatma bile balon üretmez VE bayrağı harcamaz —
+    /// switch sonradan açılırsa kullanıcı bilgilendirmeyi yine bir kez görür (kapı "kaydetmeden false" döner).</summary>
+    [Fact]
+    public void With_notifications_off_the_first_close_shows_no_balloon_and_keeps_the_flag()
+    {
+        var store = new InMemoryStore { State = new UiState { ShowNotifications = false } };
+        var gate = new FirstCloseBalloonGate(store);
+
+        Assert.False(gate.ClaimShow());
+        Assert.False(store.State.TrayBalloonShown); // bayrak YAZILMADI
+        Assert.Equal(0, store.Saves);                // ve store'a hiç DOKUNULMADI
+
+        store.State.ShowNotifications = true; // kullanıcı switch'i sonradan açtı
+        Assert.True(gate.ClaimShow());         // ilk gerçek fırsat yine bir kez balon gösterir
+    }
+
     [Fact]
     public void Flag_survives_a_restart_through_the_json_store()
     {

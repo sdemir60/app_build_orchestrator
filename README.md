@@ -141,9 +141,9 @@ the running instance first — tray icon → Exit).
    opens the dialog with the file picker already up.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows* and *Start minimized to tray*
-   work; *Close to tray* and *Show notifications* are shown but not wired yet, are not saved, and reset whenever
-   the dialog opens.
+   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
+   to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are
+   on by default; what they change is described with the tray, further down.
 
    *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
    always shows what Windows will actually do. *Start minimized to tray* (available while *Start with Windows* is
@@ -448,17 +448,29 @@ Drag the empty background to pan (the cursor turns into a hand) and the mouse wh
 clicking empty background with nothing selected returns the view to its default, and both a graph rebuilt by
 a Sync and a build that starts bring it back to that default view.
 
-You do not have to keep the window open to watch a build. Closing it with `X` drops the app to the tray, and if
-a build is running the product mark animates in the bottom-right corner of the screen — click it to bring the
-window back, or click straight through the empty space around it to whatever is underneath. When the run
-finishes the mark plays out its last turn, fades, and Windows shows a notification with the result — click it
-to bring the window back too — and the same sentence is waiting in the ribbon when you open the window again.
-A run that finishes while the window is open shows no notification — the ribbon already says it.
+You do not have to keep the window open to watch a build. With *Close to tray* on (the default), closing it with
+`X` drops the app to the tray, and if a build is running the product mark animates in the bottom-right corner of
+the screen — click it to bring the window back, or click straight through the empty space around it to whatever
+is underneath. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
+with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
+you open the window again. A run that finishes while the window is open shows no notification — the ribbon
+already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
+result, not the one-time *still running in the tray* note, not the warning a second copy of the app gives when
+it cannot bring the window forward; the corner mark is not a notification and still appears.
 
-If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
-says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
-minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine
-and every `MSBuild.exe` under it, then brings a fresh engine up.
+To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
+Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
+stopped the way *Stop* stops it — its in-flight projects finish — and a Sync, Clean, Optimize, branch switch or
+pull is left to finish. Meanwhile the window stays on screen and comes forward (out of the tray, or restored if
+you closed it while minimized), the ribbon reads *▸ Stopping — …* and closing again changes nothing. Only an
+engine that stops answering, or dies, does not hold the exit up: the app then closes and takes the engine with
+it, even if a long branch switch, pull or build step was only quiet.
+
+If the engine ever stops answering — no event at all while a run start, a stop, a Sync, a Clean, an Optimize, a
+branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
+engine*. Nothing unlocks by itself, because a drain can legitimately take minutes; the action is there for the
+case where waiting is no longer the answer. Restarting kills the engine and every `MSBuild.exe` under it, then
+brings a fresh engine up.
 
 ### Keyboard shortcuts
 

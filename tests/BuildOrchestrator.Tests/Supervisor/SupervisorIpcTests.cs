@@ -38,6 +38,13 @@ public static class TestPaths
     /// bir EngineHost başlatır.</summary>
     public static readonly TimeSpan WideRunTimeout = TimeSpan.FromSeconds(60);
 
+    /// <summary>[§3/D8 kabul] "App ölür → ≤2s, orphan yok": tetikten (outer Job'un kapanışı ya da uygulamanın çıkışı)
+    /// sonra process ağacının TAMAMEN ölmesi için tanınan bütçe. Yukarıdaki iki geniş sınırın aksine bir hang-guard
+    /// DEĞİL, kabul ölçütünün kendisidir — gevşetilmez. Tek sahibi burası; ölçümü
+    /// <see cref="ProcessTree.AssertNoOrphansAsync"/> yapar. <c>AppShutdown.DisposalTimeout</c>'tan AYRIDIR: o,
+    /// OnExit'in disposal'ı bekleme tavanıdır; bu, o bekleyiş döndükten sonra ağacın ölme süresi.</summary>
+    public static readonly TimeSpan OrphanBudget = TimeSpan.FromSeconds(2);
+
     /// <summary>[final review M8] Eski worktree havuzunun TEST kökü: diskte OLMAYAN, süreç başına tek bir geçici yol.
     /// Motorun hazır oluşunu (<c>RunViewModel.OnEngineReady</c>) yaşayan her VM testi <c>LegacyWorktreePoolRoot</c>'u
     /// buna bağlar — aksi hâlde ipucu kararı kullanıcının GERÇEK <c>%LOCALAPPDATA%</c> klasörüne bakar ve test
@@ -249,7 +256,7 @@ public class SupervisorIpcTests
                 ?? throw new TimeoutException("IOCP: marker dogum bildirimi gelmedi");
             if (n.MessageId != NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS) continue;
             if (n.Pid == marker.Pid) break;
-            births.Add((n.Pid, NameOfProcess(n.Pid)));
+            births.Add((n.Pid, ProcessTree.NameOfProcess(n.Pid))); // doğum ANINDA — hiçbir şey öldürülmediği için okunabilir
         }
 
         // VAKUM KARŞITI: port GERÇEKTEN doğum taşıyor — Supervisor'ın kendi doğumu listede. Bu kontrol
@@ -259,7 +266,7 @@ public class SupervisorIpcTests
         // ASIL İDDİA — §6'nın ta kendisi: reddedilen komut `cmd.exe`/`powershell` DOĞURMADI.
         // İsim süzgeci (ham sayı değil) bilinçli: `CREATE_NO_WINDOW` ile başlatılan her console process'i
         // yanına bir console-host (conhost) doğurur ve o da job üyesi olur — ham doğum sayısı bu OS
-        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `KillMidBuildTests.IsMsBuildProcess`'te de var.
+        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `ProcessTree.IsMsBuildProcess`'te de var.
         string[] forbidden = ["cmd", "powershell", "pwsh"];
         var leaked = births.Where(b => forbidden.Contains(b.Name, StringComparer.OrdinalIgnoreCase)).ToList();
         Assert.True(leaked.Count == 0,
@@ -271,14 +278,6 @@ public class SupervisorIpcTests
     /// yolu) bir Supervisor başlatır. Kullanıcının gerçek dosyalarına dokunulmaz (brief kural 4).</summary>
     private static JobChildProcess LaunchIsolatedSupervisorIn(JobObject job, SupervisorSandbox sandbox) =>
         JobProcessLauncher.Launch(job, sandbox.CommandLine(), new LaunchOptions(RedirectStdio: true));
-
-    /// <summary>Doğum ANINDA okunan process adı (hiçbir şey öldürülmediği için okunabilir); pid çoktan
-    /// gitmişse ayırt edilebilir bir yer tutucu. <c>KillMidBuildTests.IsMsBuildProcess</c> ile aynı desen.</summary>
-    private static string NameOfProcess(int pid)
-    {
-        try { return Process.GetProcessById(pid).ProcessName; }
-        catch (ArgumentException) { return "(exited)"; }
-    }
 
     [Fact] // pozitif — kapı AÇIK: kanca testler için çalışmaya DEVAM ediyor
     public async Task DebugSpawnChildren_still_spawns_a_real_child_when_the_supervisor_starts_with_debug_hooks()

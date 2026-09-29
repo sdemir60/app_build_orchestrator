@@ -44,7 +44,7 @@ internal static class SettingsDialogHost
     /// istemci alanı (886) onu 838'e daraltırdı. 1000, tasarım genişliğini kelepçeye TAKILMADAN sığdırır.</param>
     /// <param name="windowHeight">Host penceresinin yüksekliği — AboutDialogHost/NotesDialogHost'un AYNI kararı
     /// (700 yükseklik): istemci alanı − 48, 576px'lik sabit yüksekliği kelepçeye takılmadan taşır.</param>
-    /// <param name="saved">[P4] <see cref="FakeStore"/>'u <see cref="SettingsDialog.Open"/>'dan ÖNCE tohumlar — kabuk
+    /// <param name="saved">[P3 · P4] <see cref="FakeStore"/>'u <see cref="SettingsDialog.Open"/>'dan ÖNCE tohumlar — kabuk
     /// anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı değerden açılışını realize eden testler içindir;
     /// <c>null</c> ⇒ store varsayılan (boş) <see cref="UiState"/> ile kalır.</param>
     /// <param name="autostart">[P4] Diyaloğun Windows başlangıç kaydı servisi — verilirse (ör.

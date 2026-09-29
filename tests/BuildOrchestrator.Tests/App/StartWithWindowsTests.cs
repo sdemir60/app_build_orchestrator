@@ -84,7 +84,7 @@ public class StartWithWindowsTests
     public void The_startup_switches_survive_the_json_store_and_a_null_token_reads_as_the_default()
     {
         using var temp = new TempDir();
-        string path = Path.Combine(temp.Path, "ui-state.json");
+        string path = UiStatePath(temp);
         new JsonUiStateStore(path).Save(new UiState { Autostart = true, StartMinimizedToTray = true, LayoutMode = LayoutMode.List });
 
         Assert.True(ShellSwitches.StartMinimizedToTray(new JsonUiStateStore(path).Load()));

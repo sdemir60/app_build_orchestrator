@@ -204,8 +204,9 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the Stop button and `F5` request. Nothing new is dispatched; the in-flight
-`MSBuild.exe` children finish, *including their post-build copy events*. This is also why the
+**Graceful stop** is what the Stop button and `F5` request, and what a full exit of the application requests
+for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
+*including their post-build copy events*. This is also why the
 shared-compilation flags stay off (§9.2): with a compiler server the emit happens in a long-lived process
 outside the job, where a stop could catch a DLL mid-write.
 
@@ -282,6 +283,8 @@ would let a second run start against an engine that is still compiling. The watc
 walking through it is the user's decision. Restarting does release the run state, and it has to: the host
 silences the old exit watcher *before* killing the child, so restarting a live-but-wedged engine raises no
 `EngineExited` — the path that used to unlock everything never ran in exactly the case the action exists for.
+The one wait the alarm ends by itself is an exit the user has already asked for: nothing is unlocked, the
+application simply closes, and its shutdown takes the silent engine with it (§12.3).
 
 ---
 
@@ -2198,12 +2201,41 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
 ### 12.3 Single instance, tray, hotkey, autostart
 
 Single instance is a session-local mutex plus a named pipe whose name includes the session id; a busy pipe backs
-off instead of spinning. A second instance calls `AllowSetForegroundWindow` before signalling, then exits
-silently. If it cannot bring the existing window forward it does **not** go silent: it shows a one-line tray
-balloon and exits with a distinct exit code.
+off instead of spinning. A second instance calls `AllowSetForegroundWindow` before signalling; when the existing
+window comes forward, it exits silently with code 0. When it cannot bring the window forward it shows a one-line
+tray balloon first and exits after a short linger — tearing the temporary tray icon down in the same turn would
+cancel the balloon before the shell drew it — with a distinct exit code, so the two outcomes stay apart for
+anything watching the process. With *Show notifications* off (below) there is no balloon and no linger: the
+distinct exit code is then all that sets this case apart from the silent one. The second instance reads the
+switch from `ui-state.json` itself, since it never builds a window or a view model.
 
-Closing the window with `X` minimizes to the tray. The first time this happens, an **OS tray balloon** explains
-it, once — in-app toasts are prohibited by the design.
+**What closing the window does is the user's setting** — *Close to tray* under Settings → General (§13.3), on
+by default. `X`, `Alt+F4` and the system menu's *Close* all arrive at the window's one `Closing` handler, and a
+pure rule (`WindowCloseRule`) decides; the window only applies the answer. With the switch on, the close is
+cancelled and the window hides to the tray; the first time this happens, an **OS tray balloon** explains it,
+once — in-app toasts are prohibited by the design. With the switch off, the close becomes a full exit. No shell
+switch is copied anywhere: whatever acts on one reads it from `ui-state.json` at the moment it acts — this one on
+every close — so a value saved in Settings applies to the very next close.
+
+**A full exit waits for the work in flight.** The tray menu's *Exit* always asks for one, whatever the switch
+says; `X` asks for one when the switch is off, and both take the same shell path. With nothing in flight the
+application closes at once — from the tray, without showing the window first. Otherwise the exit lets the work
+finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography with nothing sent, withdrawn
+(§14.5) — so its in-flight projects finish, post-build copy included. A Clean, Optimize, checkout or pull has no
+cancel and runs to its end, since cutting one off could leave the tree half-changed; a Sync has no cancel either,
+and a fetching one writes git refs, so it too is let finish. No Sync starts while the exit waits — neither the
+automatic one (§10.3) nor the one a Clean, Optimize, checkout or pull chains on completion: either would be new
+work started after the request, only to refresh a window that is closing, and the next start syncs anyway. The
+job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase
+(§13.2) and the console records `exit requested — the app closes when the work in flight finishes` once. The
+window stays and comes forward — out of the tray, or restored if it was closed while minimized — because an exit
+waiting behind a hidden window would look like nothing happening; a later `X` neither hides it nor asks again,
+and a second request sends no second stop and writes no second line. The wait is not endless — if the engine
+falls silent (§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and whatever it
+left through the outer job (§4.4); an engine that is only quiet — a long git write, a build step that prints
+nothing — is cut off the same way (§20). The view model decides only *when* (`RequestExit`, then `ExitReady`
+once); the shell does the closing, and from that moment every `Closing` really closes. A Windows session that
+ends closes the application at once, with neither the wait nor the tray — Windows does not wait either.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
@@ -2230,6 +2262,14 @@ ribbon. A line that carries no separator — today only the one an unexpected en
 failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
+
+**Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
+three the application can show: the first-close explanation, the run result and the second instance's warning.
+Each asks at the moment it would appear, like every shell switch (above) — the run result only after the
+overlay's exit and breath — so turning it off while a run is in flight silences that run's result. A
+first-close explanation held back by the switch is not counted as shown, so once the switch is back on it still
+appears, once. The overlay is not a notification and does not answer to the switch: it silences the balloons,
+not the indicator.
 
 The overlay sits closer to the right edge of the work area than to the taskbar: at rest the mark occupies the
 left of its band and the right is reserved for the chevron's exit path, so the edge margins are separate and
@@ -2293,10 +2333,11 @@ Splitters have a 7 px grab area over a 1 px visible line that turns amber while 
 
 ### 13.1 MVVM
 
-`RunViewModel` is the single run-facing view model, split across partial files by surface (core, action bar,
-event stream, workspace). It owns the project rows, the counters, the phase, the selection, the filter and the
-command set. Rows are `ProjectRowViewModel` — observable state only; every visual decision (colour, glyph,
-badge) is made in XAML from that state.
+`RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress and the safe
+exit. It owns the project rows, the counters, the phase, the selection, the filter and the command set. Rows are
+`ProjectRowViewModel` — observable state only; every visual decision (colour, glyph, badge) is made in XAML from
+that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
 `RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
@@ -2354,15 +2395,19 @@ radius 0, coloured by phase. It runs indeterminate whenever the engine is workin
 denominator — during Sync, and during `starting`, where there is no plan yet and a determinate bar would sit
 frozen at zero while the line above it says work is under way.
 
-Four texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
-engine that has gone silent, a failed Sync, then a failed run. The three failures are red, carry the reason,
-and persist until the user starts something new — a Sync clears the run failure, a run start clears both. Their
-order is the order of how much is unknown: with no engine nothing can be retried, and with no Sync the project
-states themselves are stale. The silence line sits below the death and above the failures because it is the
-only one describing the *present*: the others are facts about something that already finished, and all of them
-assume a working engine. It is amber rather than red and carries no glyph — a drain that is merely slow is not
-a failure — and it clears itself the moment the engine speaks or the wait ends. A rejected request is not a
-failure and does not take this path — declining a request leaves the `stopped` line
+Five texts can pre-empt the phase line, in this order: an engine death (with the *Restart engine* action), an
+engine that has gone silent, an exit waiting for the work in flight (§12.3), a failed Sync, then a failed run.
+The three failures are red, carry the reason, and persist until the user starts something new — a Sync clears
+the run failure, a run start clears both. Their order is the order of how much is unknown: with no engine
+nothing can be retried, and with no Sync the project states themselves are stale. The silence line sits below
+the death and above the failures because it describes the *present*: the failures are facts about something
+that already finished, and all of them assume a working engine. It is amber rather than red and carries no
+glyph — a drain that is merely slow is not a failure — and it clears itself the moment the engine speaks or the
+wait ends. The exit's line describes the present too, so it also sits above the failures, but under the death
+and the silence, because those two are what end the wait. It is the Stopping line in any phase — the in-flight
+count while a build drains, `▸ Stopping — wrapping up` otherwise — since a Sync, a Clean or a pull being waited
+for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. A
+rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
@@ -2875,7 +2920,8 @@ is gone, and a green status answers to nothing on disk; that is why the plan sur
 than waiting to be corrected. An Optimize chains the same Sync for a plainer reason: its click cleared the rows
 too, and the two maintenance buttons sit side by side in one box, so they answer a click with one flow. A failed
 job chains nothing: the reason is already in the console, and a second error line on top of it would only be
-noise.
+noise. Nor does a job that ends while a full exit waits — no Sync starts during that wait (§12.3), so the gate
+simply opens.
 
 **The gate is handed over, never dropped.** It stays shut from the click until the chained Sync has claimed it,
 which covers `cleanCompleted` or `optimizeCompleted`, the held step and the beat after it — one handover shared
@@ -3033,19 +3079,23 @@ to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
 no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
-switch's own disabled opacity and stops taking input while its parent is off, without moving anything.
-*Pull before build*, *Stash and switch branches*, *Start with Windows* and *Start minimized to tray* drive
-behaviour; *Close to tray* and *Show notifications* live in the draft alone (§20). *Stash and switch branches*
-follows the pull switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console
-note written only when its value actually changed.
+switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Every
+switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
+*Save*, carried to the engine on the next checkout, and a console note written only when its value actually
+changed.
 
-The two startup switches are **shell switches** — they drive the window and the start, not the engine. One table
-(`ShellSwitches`) says, for each, where it is saved in `ui-state.json`, which key carries it in the settings
-file and what its console note reads (`Start with Windows on — …`); the draft walks that table when it opens,
-exports, imports and saves, so a new shell switch is a row there. Behaviour reads the saved value through the
-same table. *Start with Windows* is the one exception to "the dialog opens on the saved value": it opens on the
-Windows startup entry and is applied only when changed (§12.3). A row's description can give way to a note
-about the row's current state — today only Task Manager's disabled mark (§12.3).
+*Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
+they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
+engine. One table (`ShellSwitches`) says, for each, how it is read from and written to `ui-state.json` and the
+settings file and what its console note reads; the draft walks that table when it opens, exports, imports and
+saves, so a new shell switch is a row there plus the `ui-state.json` field and the settings-file key it reads and
+writes. *Save* writes all four, and the dialog opens on the saved values — the catalog defaults (the startup
+pair off, *Close to tray* and *Show notifications* on) until a first save. A value that differs from the saved
+one prints one line on *Save*, such as `Close to tray off — closing the window quits the app`, whatever the
+engine or the workspace is doing; an unchanged one stays quiet. Behaviour reads the saved value through the same
+table, fresh each time (§12.3). *Start with Windows* is the one exception to "the dialog opens on the saved
+value": it opens on the Windows startup entry and is applied only when changed (§12.3). A row's description can
+give way to a note about the row's current state — today only Task Manager's disabled mark (§12.3).
 
 **Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
 required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
@@ -3135,14 +3185,13 @@ anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, layers[{ name, pattern }] }`,
-the external array sitting
-between the root and the layers (the field order the file is written in, not just a key that happens to be present) and holding only
-cards with a non-blank path; import reads one back **into the form**; clear empties the root, every layer and
-every external card, and returns every General switch to its default — *Pull before build* to on, *Stash and
-switch branches* and the two startup switches to off. Of General, those four travel in the file, so saving an
-imported file that has *Start with Windows* on turns it on for that machine — deliberately. All
-three touch the draft only: nothing is
+pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, closeToTray,
+showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
+field order the file is written in, not just a key that happens to be present) and holding only cards with a
+non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
+card, and returns every General switch to its catalog default — *Pull before build*, *Close to tray* and *Show
+notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has
+*Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
@@ -3155,9 +3204,9 @@ name` or `Check the highlighted pattern`, in that order of priority. The draft d
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits `pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows` or `startMinimizedToTray`
-leaves that switch where it is, the same rule the external list already follows: a file cannot silently reset a
-setting it does not carry.
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows`,
+`startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch where it is, the same rule the
+external list already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
@@ -4639,7 +4688,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray* (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
@@ -4738,7 +4787,9 @@ A category of tests that assert properties of the *source*, not of a run:
 ### 17.3 Determinism
 
 Process-control tests are deterministic by contract: they wait on handles and completion ports, never on
-elapsed time. The cascade-kill bound is measured, not assumed. Scheduler tests assert dispatch *sequences*, not
+elapsed time. The cascade-kill bound is measured, not assumed, and so is the full exit of §12.3: against a real
+engine and real `MSBuild.exe` children, an exit asked for mid-build lets the in-flight projects succeed and leaves
+no Supervisor or MSBuild process behind (`SafeExitProcessTests`). Scheduler tests assert dispatch *sequences*, not
 just outcomes.
 
 Responsiveness is a tested contract, not an aspiration. A set of budget tests drives the production surfaces at
@@ -4913,10 +4964,12 @@ do, and how the interface works around each — useful to know before attempting
   deliberately does not add one. The keyboard route to any project is the projects list, which is fully
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
+- **A full exit's wait ends on engine silence.** The exit waits for the work in flight (§12.3), but the silence
+  watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a wedged
+  engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
+  build step that prints nothing for that long while a stop drains, is then cut off by the application's
+  shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
 - **The global hotkey has no settings UI** (§12.3).
-- **Two General switches are not wired yet.** *Close to tray* and *Show notifications* live only in the
-  Settings draft: they are not saved, exported or imported, and change no behaviour — every time the dialog
-  opens they are back at their defaults.
 
 ---
 
@@ -5041,11 +5094,16 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
-| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
+| Second instance that could not bring the window forward: balloon or not, and the distinct exit code | `App/Shell/SecondInstanceGate.cs` |
+| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
+| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
+| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
+| …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
+| *Show notifications* on the three balloons (first close, run result, second instance) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs` |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
@@ -5215,7 +5273,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
-| General shell switches (*Start with Windows*, *Start minimized to tray*) — where each is saved, which file key carries it, its console note | `App/Shell/ShellSwitches.cs` |
+| General shell switches (*Start with Windows*, *Start minimized to tray*, *Close to tray*, *Show notifications*): how each is read from and written to `ui-state.json` and the settings file, its console note, the saved-or-default value every reader asks for, the Save that notes a change | `App/Shell/ShellSwitches.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 

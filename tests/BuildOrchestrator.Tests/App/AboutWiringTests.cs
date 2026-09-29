@@ -119,8 +119,7 @@ public class AboutWiringTests
         Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
         Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
-        Assert.Equal(AppIdentity.Version,
-            new JsonUiStateStore(System.IO.Path.Combine(temp.Path, "ui-state.json")).Load().SeenVersion);
+        Assert.Equal(AppIdentity.Version, MainWindowHost.UiStateStore(temp).Load().SeenVersion);
         GC.KeepAlive(window);
     }
 

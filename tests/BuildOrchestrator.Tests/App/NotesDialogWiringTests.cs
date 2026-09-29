@@ -72,7 +72,7 @@ public class NotesDialogWiringTests
     public void The_notes_button_reads_its_tooltip_from_the_shortcut_catalog_when_seen()
     {
         using var temp = new TempDir();
-        var store = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json"));
+        var store = MainWindowHost.UiStateStore(temp);
         var state = store.Load();
         state.SeenVersion = AppIdentity.Version; // görülmüş — nokta yok, cümle katalogdan
         store.Save(state);
@@ -242,7 +242,7 @@ public class NotesDialogWiringTests
     public void The_dot_hides_when_the_recorded_version_matches_the_running_version()
     {
         using var temp = new TempDir();
-        var store = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json"));
+        var store = MainWindowHost.UiStateStore(temp);
         var state = store.Load();
         state.SeenVersion = AppIdentity.Version;
         store.Save(state);
@@ -260,7 +260,7 @@ public class NotesDialogWiringTests
     public void The_dot_shows_when_the_recorded_version_differs_from_the_running_version()
     {
         using var temp = new TempDir();
-        var store = new JsonUiStateStore(Path.Combine(temp.Path, "ui-state.json"));
+        var store = MainWindowHost.UiStateStore(temp);
         var state = store.Load();
         state.SeenVersion = "0.0.0-not-the-running-version";
         store.Save(state);

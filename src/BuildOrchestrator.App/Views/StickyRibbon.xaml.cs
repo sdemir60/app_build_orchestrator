@@ -179,6 +179,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
             case nameof(RunViewModel.CurrentOperation):
             case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
+            case nameof(RunViewModel.ExitPending): // [P3 · Task 2] çıkış işi bekliyor: faz değişmese de satır Stopping olur
                 RefreshText();
                 RefreshProgress();
                 AnnouncePhaseIfChanged(); // [E5/T47] faz değişimini ekran okuyucuya duyur (live region)

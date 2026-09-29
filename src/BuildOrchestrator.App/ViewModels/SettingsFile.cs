@@ -9,7 +9,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// <summary>
 /// [design v1.10.0 §2.9 · K5] Settings'in <b>dışa/içe aktarılan</b> dosya biçimi:
 /// <c>{ app, version, repositoryRoot, externalProjects[{ path }], pullExternalBeforeBuild, stashOnBranchSwitch,
-/// startWithWindows, startMinimizedToTray, layers[{ name, pattern }] }</c> —
+/// startWithWindows, startMinimizedToTray, closeToTray, showNotifications, layers[{ name, pattern }] }</c> —
 /// <c>externalProjects</c> BİLEREK <c>repositoryRoot</c> ile <c>layers</c> ARASINDADIR (design v1.14.0/§9),
 /// hem burada hem sınıf içindeki alan bildirim sırasında (JSON çıktısını o sıra belirler). Dosyanın adı
 /// <see cref="FileName"/>'dir.
@@ -68,6 +68,16 @@ public sealed class SettingsFile
     /// AYNI gerekçeyle nullable; okuma/yazma <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/> tablosu
     /// üzerindendir.</summary>
     [JsonPropertyName("startMinimizedToTray")] public bool? StartMinimizedToTray { get; set; }
+
+    /// <summary>[P3] Settings → General → STARTUP: <c>Close to tray</c>. <see cref="StartWithWindows"/> ile AYNI
+    /// gerekçeyle nullable; okuma/yazma <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/> tablosu
+    /// üzerindendir.</summary>
+    [JsonPropertyName("closeToTray")] public bool? CloseToTray { get; set; }
+
+    /// <summary>[P3] Settings → General → NOTIFICATIONS: <c>Show notifications</c>. <see cref="StartWithWindows"/> ile
+    /// AYNI gerekçeyle nullable; okuma/yazma <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/> tablosu
+    /// üzerindendir.</summary>
+    [JsonPropertyName("showNotifications")] public bool? ShowNotifications { get; set; }
 
     [JsonPropertyName("layers")] public List<SettingsFileLayer> Layers { get; set; } = [];
 

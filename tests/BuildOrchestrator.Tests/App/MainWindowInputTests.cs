@@ -203,7 +203,7 @@ public class MainWindowInputTests
     public void A_layout_click_persists_through_the_injected_store_and_never_touches_the_users_real_file()
     {
         using var temp = new TempDir();
-        string path = Path.Combine(temp.Path, "ui-state.json");
+        string path = MainWindowHost.UiStatePath(temp);
         var before = Fingerprint(JsonUiStateStore.DefaultPath);
         var (window, _) = NewMainWindow(temp);
         Assert.False(File.Exists(path)); // ön-koşul: enjekte edilen store henüz yazılmadı

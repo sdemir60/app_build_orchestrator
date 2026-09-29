@@ -81,8 +81,11 @@ public partial class App : Application
             // sessizce kapan (mevcut davranış); GETİRİLEMEDİYSE (pipe cevapsız/hata) SESSİZ KALMA — kullanıcıya
             // tek-satırlık tray balloon göster ve AYRIŞAN bir çıkış koduyla kapan.
             // [E2/FIX1] Karar (balloon?/çıkış kodu) saf, WPF'siz dikişe (SecondInstanceGate) taşındı — iki dalı da
-            // test edilir. Öne getirildiyse: sessiz ve temiz kapan (kod 0).
-            var outcome = SecondInstanceGate.Decide(_singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3)));
+            // test edilir. Öne getirildiyse: sessiz ve temiz kapan (kod 0). [P3 · Task 4] Balloon isteği Show
+            // notifications'a tabidir; kalıcı durum burada okunur (bu süreç açılırken başka bir taslak/VM yoktur).
+            var outcome = SecondInstanceGate.Decide(
+                _singleInstance.ActivateExistingInstance(TimeSpan.FromSeconds(3)),
+                new JsonUiStateStore(JsonUiStateStore.DefaultPath));
             if (!outcome.ShowBalloon)
             {
                 Shutdown(outcome.ExitCode);

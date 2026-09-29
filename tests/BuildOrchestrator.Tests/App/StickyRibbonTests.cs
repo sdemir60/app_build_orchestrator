@@ -245,6 +245,23 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[P3 · Task 2] Güvenli çıkış uçuştaki bir Sync'i beklemeye başladığında şerit metni YENİLENİR: faz
+    /// değişmez (hâlâ Syncing), değişen tek şey <see cref="RunViewModel.ExitPending"/>'tir — şerit onu dinlemezse
+    /// bekleyiş boyunca eski "▸ Sync" satırında kalır ve kapatma tıklaması kaybolmuş görünür.</summary>
+    [StaFact]
+    public void The_ribbon_redraws_when_the_exit_starts_waiting()
+    {
+        var vm = NewVm();
+        var (ribbon, window) = Realize(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // çıkışın bekleyeceği iş
+        Assert.Equal(RibbonText.SyncingWithFetch, ribbon.PhaseText.Text); // ön-koşul
+
+        vm.RequestExit();
+
+        Assert.Equal("▸ Stopping — wrapping up", ribbon.PhaseText.Text);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Sync_phase_puts_the_progress_bar_into_indeterminate_mode()
     {

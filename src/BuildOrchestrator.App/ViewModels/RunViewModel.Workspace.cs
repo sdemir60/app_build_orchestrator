@@ -288,8 +288,9 @@ public sealed partial class RunViewModel
         OnPropertyChanged(nameof(SyncBusy));
         // [spec 2026-09-18 §6.3] Branch chip'inin kapısı da bu üç meşgul yüzeyi okur — aynı geçişte duyurulur.
         OnPropertyChanged(nameof(CanSwitchBranch));
-        // [spec 2026-09-18 §6.1] Meşgulken bekletilen kendiliğinden Sync tetiği aynı geçişte yeniden sorulur.
-        NotifyAutoSyncGate();
+        // [spec 2026-09-18 §6.1 · P3] Meşgulken bekletilen kendiliğinden Sync tetiği ve bekleyen çıkış aynı geçişte
+        // yeniden sorulur.
+        OnWorkspaceBusyChanged();
     }
 
     /// <summary>[clean guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. Faz
@@ -349,7 +350,8 @@ public sealed partial class RunViewModel
     /// bekleyen bir HEAD tetiği ikinci bir Sync başlatamaz (spec §6.1 "çift Sync yok"). Devralma SENKRONDUR:
     /// <see cref="SyncCoreAsync"/> ilk await'ine varmadan <c>_syncRequested</c>'ı kurar, yani Task'ı beklemeden başlatmak
     /// kapıyı kesintisiz tutar. Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve ardından gelen bırakma
-    /// doğru sonucu verir.
+    /// doğru sonucu verir. [P3 · final review I2] Çıkış beklerken Sync hiç başlamaz (<see cref="SyncCoreAsync"/>'in
+    /// kapısı): bırakma kapıyı açar ve bekleyen çıkış o anda hazır olur.
     /// </summary>
     /// <param name="release">Önceki işin yüzeyini bırakan adım.</param>
     private async Task SyncThenReleaseAsync(Action release, SyncMode mode,
@@ -541,6 +543,23 @@ public sealed partial class RunViewModel
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
     /// bunu motor erişilebilirliğiyle birlikte sorar (<see cref="WorkspaceGateOpen"/>).</summary>
     private bool WorkspaceIdle => !IsMidRunLocked && !WorkspaceBusy;
+
+    /// <summary>
+    /// [final review O1] "Workspace meşguliyeti değişti" bildiriminin TEK noktası — Sync/Clean/Optimize/checkout/pull
+    /// bayraklarının her geçişi (<see cref="NotifySyncGatedCommands"/>), koşu kilidinin her geçişi
+    /// (<see cref="PropagateRunLock"/>), koşunun bitişi (<c>OnRunCompleted</c>) ve yarıdaki git işleminin kalkışı
+    /// (<see cref="OnGitOperationChanged"/>) buraya iner. İki tüketicisi vardır ve biri ötekine BAĞLANMAZ: koordinatör
+    /// bekleyen kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince
+    /// hazır olur (<see cref="EvaluateExit"/>).
+    /// <para>Ad bu yüzden nötrdür ve yeri <see cref="WorkspaceIdle"/>'ın yanıdır: çıkış beklerken koordinatör YOKTUR
+    /// (<see cref="RequestExit"/> onu kapatır), yani buraya konacak bir "koordinatör yoksa dön" kısayolu bekleyen her
+    /// çıkışı sessizce sonsuza dek bekletirdi.</para>
+    /// </summary>
+    private void OnWorkspaceBusyChanged()
+    {
+        _autoSync?.OnWorkspaceIdle();
+        EvaluateExit();
+    }
 
     /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
     /// Sync/Clean/Optimize/Pull ve branch chip'i bunu okur (kendi ek koşullarıyla) — liste beş yerde ayrı yazılmaz.</summary>
