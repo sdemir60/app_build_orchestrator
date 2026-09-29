@@ -649,6 +649,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))] // [T12] branch/config kilidi bundan türetilir
+    [NotifyPropertyChangedFor(nameof(IsRunUnderway))] // koşunun görsel dili (graf fazı, pill) bundan türetilir
     [NotifyPropertyChangedFor(nameof(IsResolvingCycles))] // bakım kutusunun Resolve spinner'ı: koşu bitince iner
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isRunning;
@@ -671,6 +672,7 @@ public sealed partial class RunViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OptimizeCommand))]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     [NotifyPropertyChangedFor(nameof(IsMidRunLocked))]
+    [NotifyPropertyChangedFor(nameof(IsRunUnderway))]
     [NotifyPropertyChangedFor(nameof(CanSwitchBranch))] // [§6.3] chip kapısının TEK bildirim kaynağı (bkz. CanSwitchBranch)
     private bool _isStarting;
 
@@ -866,6 +868,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
 
+    /// <summary>[kullanıcı bildirimi 2026-09-29] Bir koşu GERÇEKTEN yolda mı: açılıyor (koreografi, planlama) ya da
+    /// koşuyor. <see cref="IsMidRunLocked"/>'tan tek farkı, bir workspace işinin bitmesini bekleyen istektir
+    /// (<see cref="QueueRun"/>): istek kilidi taşır — düğme Stop'tur, kontroller kilitlidir — ama koşunun GÖRSEL dilini
+    /// (grafın koşu fazı, işlem pill'inin canlılığı, koşu sırasındaki statü itişi) taşımaz; ekran o sırada süren işi
+    /// anlatır. Değişimi <see cref="IsRunning"/>, <see cref="IsStarting"/> ve <see cref="SetQueuedRun"/> duyurur.</summary>
+    public bool IsRunUnderway => IsRunning || IsStarting && _queuedRun is null;
+
     /// <summary>[C2] Sorgu + aktif filtre altında görünen satırlar (BuildApp.jsx:465-470).</summary>
     public IReadOnlyList<ProjectRowViewModel> VisibleProjects =>
         Projects.Where(r => ProjectFilter.Matches(r, ProjectQuery, ActiveFilters)).ToList();
@@ -905,16 +914,31 @@ public sealed partial class RunViewModel : ObservableObject
     /// karıştırır (bozuk "tam log"). runStarted'ı BEKLEMEDEN burada temizlenir: ProjectLogEvent marshal'sız
     /// işlendiğinden yeni run'ın ilk satırları, marshal'lı runStarted UI thread'ine düşmeden ÖNCE varabilir.</para>
     /// <para>[Fix wave 2, Finding 1] Gönderim SENKRON başarısız olursa (engine hiç başlamadı/öldü) IsStarting
-    /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para></summary>
+    /// geri açılır — aksi halde hiçbir engine event'i gelmeyeceğinden buton kalıcı kilitli kalırdı.</para>
+    /// <para>[kullanıcı bildirimi 2026-09-29] Bir workspace işi (Sync, Clean, Optimize, checkout, pull) sürüyorsa koşu
+    /// BAŞLAMAZ ama basış kaybolmaz: istek bekler (<see cref="QueueRun"/>) ve iş bitince buradaki başlatma yarısından
+    /// (<see cref="StartRunAsync"/>) aynen devam eder.</para></summary>
     /// <param name="scopeProjectId">[tek proje · design §3.8] Satırdan tetiklenen koşunun hedefi; <c>null</c> =
     /// tam koşu. Dolu iken kapsam yalnız o satırdır (koreografi de yalnız onu işaretler), komut
     /// <see cref="StartRunCommand.ScopeProjectId"/> taşır ve <see cref="RunTargetId"/> tıklama anında yazılır.
     /// Satırdan tetiklemek satıra tıklamak DEĞİLDİR: seçim tam koşudaki gibi düşer — graf odaktan fit
     /// görünüme, konsol ana loga döner; filtre korunur (kullanıcı kararı 2026-09-19); pill hedef adı taşımaz
     /// (v1.13.2).</param>
-    private async Task BeginRunAsync(RunMode mode, string? scopeProjectId = null)
+    private Task BeginRunAsync(RunMode mode, string? scopeProjectId = null)
     {
         string runId = _newRunId();
+        if (WorkspaceBusy)
+        {
+            QueueRun(new QueuedRun(runId, mode, scopeProjectId));
+            return Task.CompletedTask;
+        }
+        return StartRunAsync(runId, mode, scopeProjectId);
+    }
+
+    /// <summary><see cref="BeginRunAsync"/>'in başlatan yarısı — hemen başlayan koşu da iş bitince başlayan bekleyen
+    /// istek de (<see cref="StartQueuedRunWhenWorkEnds"/>) buradan geçer; açılış tek yerde durur.</summary>
+    private async Task StartRunAsync(string runId, RunMode mode, string? scopeProjectId)
+    {
         _currentRunId = runId;
         // [design v1.11.0 §9-4 `_beginOp`] Konsol VE event stream temizlenir — ekrandaki her şey artık
         // yürüyen işlemin hikâyesidir. Önceki koşunun tortusu HER koşuda, koşulsuz temizlenir — birbirinin eşi
@@ -967,14 +991,17 @@ public sealed partial class RunViewModel : ObservableObject
         // planlama koreografiden kısa sürdüğünde `runStarted` dalgayı ortasında kesiyordu, uzun sürdüğünde
         // kesmiyordu: aynı tıklama bazen animasyonlu bazen anında açılıyordu. Bir koreografi ya her zaman
         // oynar ya hiç. İşlem yine de İLK KAREDE başlar (pill, Stop, konsol satırı) — bekleyen yalnız komut.
+        // [kullanıcı bildirimi 2026-09-29] Kimlik koreografi olmasa da kurulur ve komuttan hemen önce HER yolda düşer:
+        // iş bitince başlayan bekleyen istek onu zaten taşır (QueueRun) ve gönderilmiş bir koşuda kalamaz — "komut
+        // henüz gitmedi" sorusunun (Stop, Sync hatasının atfı) tek cevabıdır.
+        _pendingRunId = runId;
         if (OperationChoreography is { } playChoreography)
         {
-            _pendingRunId = runId;
             await playChoreography(scope);
             // Koreografi sırasında Stop'a basıldıysa (ya da başka bir işlem devraldıysa) komut GİTMEZ.
             if (!string.Equals(_pendingRunId, runId, StringComparison.Ordinal)) return;
-            _pendingRunId = null;
         }
+        _pendingRunId = null;
         // [T20-b/K11] PerfMode de gider: paralellik (Parallelism) ve cap/priority (PerfMode) AYNI profil
         // satırının iki yarısıdır — Supervisor cap'i o addan çözer, worker sayısını YENİDEN türetmez.
         // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
@@ -1020,9 +1047,89 @@ public sealed partial class RunViewModel : ObservableObject
     private Task HoldAsync(double ms) =>
         ms > 0 && OperationHold is { } hold ? hold(ms) : Task.CompletedTask;
 
-    /// <summary>Koreografisi oynarken henüz GÖNDERİLMEMİŞ koşunun id'si; <c>null</c> = bekleyen koşu yok.
-    /// Stop bu pencerede komutu değil <b>isteği</b> iptal eder (bkz. <see cref="CancelPendingRun"/>).</summary>
+    /// <summary>Komutu henüz GÖNDERİLMEMİŞ koşunun id'si — koreografisi oynayan ya da bir workspace işinin bitmesini
+    /// bekleyen (<see cref="QueueRun"/>); <c>null</c> = bekleyen koşu yok. Stop bu pencerede komutu değil
+    /// <b>isteği</b> iptal eder (bkz. <see cref="CancelPendingRun"/>).</summary>
     private string? _pendingRunId;
+
+    /// <summary>[kullanıcı bildirimi 2026-09-29] Bir workspace işi sürerken basılmış, iş bitince başlayacak koşu.</summary>
+    private sealed record QueuedRun(string RunId, RunMode Mode, string? ScopeProjectId);
+
+    /// <summary>İş bitince başlayacak koşu; <c>null</c> = bekleyen istek yok. Kurar: <see cref="QueueRun"/>;
+    /// tüketir: <see cref="StartQueuedRunWhenWorkEnds"/>; geri alır: <see cref="CancelPendingRun"/> (Stop, Esc, tam
+    /// çıkış, branch kesmesi ve <see cref="TakeBackQueuedRun"/>). Tek yazıcısı <see cref="SetQueuedRun"/>'dır.</summary>
+    private QueuedRun? _queuedRun;
+
+    /// <summary><see cref="_queuedRun"/>'ın TEK yazıcısı: değişim <see cref="IsRunUnderway"/>'i de değiştirir ve
+    /// duyurulur — istek başlarken <see cref="IsStarting"/> zaten açıktır, yani koşunun görsel dili bu bildirimle gelir.</summary>
+    private void SetQueuedRun(QueuedRun? run)
+    {
+        _queuedRun = run;
+        OnPropertyChanged(nameof(IsRunUnderway));
+    }
+
+    /// <summary>
+    /// [kullanıcı bildirimi 2026-09-29] Beklenen iş İSTENENİ getirmeden bitti — Sync ya da bakım işi düştü, checkout
+    /// branch'i değiştirmedi, pull ağacı ilerletmedi — ya da motor gitti: bekleyen koşu varsa geri alınır. Başlasaydı
+    /// ya istenmeyen ağacı derlerdi ya da aynı planlamada düşerdi; üstelik açılışı işin hata/ret satırlarını silerdi.
+    /// İptal satırı o satırların ALTINA düşer, hepsi okunur kalır. Çağıranlar işin kendi başarısızlık yollarıdır.
+    /// </summary>
+    private void TakeBackQueuedRun()
+    {
+        if (_queuedRun is not null) CancelPendingRun();
+    }
+
+    /// <summary>
+    /// [kullanıcı bildirimi 2026-09-29] Bir workspace işi (Sync, Clean, Optimize, checkout, pull) sürerken basılan koşuyu
+    /// tutar. Tıklama ANINDA kabul görünür: düğme Stop olur (<see cref="IsStarting"/> — kilit, Stop ve Esc onunla
+    /// gelir), satırdan basıldıysa hedef satır da Stop'a döner ve konsola tek satır düşer. Başka HİÇBİR şeye
+    /// dokunulmaz: konsol, akış, satırlar, pill ve faz süren işindir; koşunun kendi açılışı (<see cref="StartRunAsync"/>)
+    /// onları iş bitince temizler ve komut da o zaman gider — motor o işler boyunca komut döngüsünü zaten bloklar.
+    /// <para>İstek, açılış koreografisinde bekleyen koşuyla AYNI kimliği taşır (<see cref="_pendingRunId"/>): Stop,
+    /// Esc, tam çıkış ve bir branch değişimi onu aynı yoldan geri alır (<see cref="CancelPendingRun"/>) — motora ne
+    /// koşu ne stop gider.</para>
+    /// </summary>
+    private void QueueRun(QueuedRun run)
+    {
+        SetQueuedRun(run);
+        _pendingRunId = run.RunId;
+        // Koşu kimliği de artık bu isteğindir: önceki koşunun geç gelen sonu (runStopped/runCompleted) bayat sayılır
+        // (IsStaleRunEnd) — isteği düşürmez, süren işin fazını ezmez.
+        _currentRunId = run.RunId;
+        RunTargetId = run.ScopeProjectId; // kilitten ÖNCE — StartRunAsync'in sırası (kilit düşerken PropagateRunLock bırakır)
+        IsStarting = true;
+        AppendRunLine(RunQueuedLine(run.Mode, run.ScopeProjectId is { } id ? FindRow(id)?.Name : null));
+    }
+
+    /// <summary>[kullanıcı bildirimi 2026-09-29] Bekleyen isteğin konsol satırı — tıklamanın kaydı ve neden henüz
+    /// başlamadığının cevabı. Başı <see cref="RunRequestedLine"/>'dır (kopya YASAK).</summary>
+    internal static string RunQueuedLine(RunMode mode, string? targetName = null) =>
+        RunRequestedLine(mode, targetName) + "; it starts when the work in flight finishes";
+
+    /// <summary>
+    /// [kullanıcı bildirimi 2026-09-29] Bekleyen koşuyu iş bitince başlatır. Tek çağıranı <see cref="OnEvent"/>'in
+    /// sonudur: bir isteğin beklediği işin bitişi bir motor olayıdır (Sync'in cevabı; Clean, Optimize, checkout ya da
+    /// pull sonucu — zincirlenen Sync kapıyı aynı olayın içinde devralır) ve olay TAMAMEN uygulandıktan sonra bakılır:
+    /// bitişin ortasında başlayan koşu olayın geri kalanını (Sync'in fazı, akış satırı) kendi açılışının üstüne yazdırırdı.
+    /// Olay dışında biten iki iş yolu isteği zaten taşımaz: motorun gidişi onu geri alır (<see cref="ReleaseAfterEngineLoss"/>)
+    /// ve tam çıkış beklerken — Clean/Optimize devri zincirlemeden biter — istek yapılamaz (<see cref="CanRequestRun"/>),
+    /// var olanı <see cref="RequestExit"/>'in Stop'u geri alır. Başarısız biten iş isteği kendi yolunda geri alır
+    /// (<see cref="TakeBackQueuedRun"/>).
+    /// <para>İş listesiz bittiyse (Sync boş topoloji getirdi) ya da satırdan istenen hedef yeni listede yoksa (branch
+    /// değişti, proje silindi) koşu başlatılamaz — run komutlarının topoloji kapısıyla aynı gerekçe; hedefsiz kapsamlı bir
+    /// koşuyu motor "not in plan" diye reddederdi — ve istek, konsola yazılarak geri alınır.</para>
+    /// </summary>
+    private void StartQueuedRunWhenWorkEnds()
+    {
+        if (_queuedRun is not { } run || WorkspaceBusy) return;
+        if (ExitPending || !HasTopology || run.ScopeProjectId is { } target && FindRow(target) is null)
+        {
+            CancelPendingRun();
+            return;
+        }
+        SetQueuedRun(null);
+        _ = StartRunAsync(run.RunId, run.Mode, run.ScopeProjectId);
+    }
 
     /// <summary>
     /// [design v1.11.0 §9-4 <c>_neutralize</c> · design v1.20.0 §2.3] <b>Önceki koşunun KOŞU alanlarını
@@ -1123,28 +1230,31 @@ public sealed partial class RunViewModel : ObservableObject
         _ => "run",
     };
 
-    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    [RelayCommand(CanExecute = nameof(CanRequestRun))]
     private Task RebuildAsync() => BeginRunAsync(RunMode.Rebuild); // seçim orada düşer (filtre korunur)
-    // [D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
-    // [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.
-    private bool CanStartRun() => HasTopology && !IsRunning && !IsStarting && !IsEngineUnavailable;
 
-    // [Fix wave 1, C2 review Finding 1] Sync uçuştayken (bkz. SyncBusy) hiçbir run başlatılamaz: mid-Sync
-    // BeginRunAsync _runText/_liveLines/_projectText'i (koşulsuz) temizler, ama SyncProgressEvent
-    // hâlâ _runText'e satır ekliyor olabilir (canlı Sync transkriptini bozar).
-    //
-    // [DEĞİŞEN KURAL] Build eskiden bu guard'ın DIŞINDAYDI — prototip doBuild'in kasıtlı asimetrisi
-    // (BuildApp.jsx:1194: doRebuild/doRetry'nin aksine phase==='syncing' erken-dönüşü yoktur). Ölçülen bedel:
-    // Supervisor Sync boyunca komut döngüsünü BLOKLAR (SupervisorHost.SyncWorkspaceAsync), yani mid-Sync
-    // basılan Build kuyruğa girmekle kalmıyor, başkasının transkriptinin ORTASINA düşüyordu — konsol anında
-    // temizlenip "build requested" yazılıyor, ardından Sync'in kalan satırları AYNI dokümana akıyordu.
-    // Üç run komutu artık aynı kapıdan geçer; kapı Sync bitince tek yerden (NotifySyncGatedCommands) açılır.
-    // [clean] Clean uçuştayken de hiçbir run başlatılamaz: silme, MSBuild'in yazdığı bin/obj ile yarışırdı.
-    private bool CanStartRunOnIdleWorkspace() => CanStartRun() && !WorkspaceBusy;
+    /// <summary>
+    /// Run komutlarının (Build, Rebuild, Build menüsünün Clean'i, Resolve cycles, satır komutları) TEK kapısı: koşu uçuşta
+    /// ya da başlıyor değil, motor erişilebilir ve bir proje listesi var — ya da onu getirecek bir workspace işi sürüyor.
+    /// <para>[D1 review · A3] Motor erişilemezken (hiç doğamadı) run başlatmak anlamsız — bkz. IsEngineUnavailable.
+    /// [topoloji kapısı] Sync'siz (topolojisiz) run da anlamsızdır: motor derler ama ekran boş kalır — bkz. HasTopology.</para>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski kapı (<c>CanStartRunOnIdleWorkspace</c>) bir
+    /// workspace işi (Sync, Clean, Optimize, checkout, pull) sürerken KAPALIYDI. Gerekçesi bugün de doğrudur: Supervisor
+    /// Sync boyunca komut döngüsünü bloklar ve mid-Sync BAŞLAYAN bir koşu konsolu temizleyip "build requested" yazar,
+    /// Sync'in kalan satırları da aynı dokümana akardı; bir silme de MSBuild'in yazdığı bin/obj ile yarışırdı. Ama
+    /// gerekçe BAŞLAMAYI yasaklıyordu, kapı ise BASMAYI yasakladı ve tıklama kayboldu. Ölçülen kusur: pencereye dönüşün
+    /// kendiliğinden başlattığı Sync, Clean/Optimize/Resolve'dan dönen kullanıcının Build'ini iki tık boyunca yuttu. Artık
+    /// iş sürerken basış bir İSTEKTİR (<see cref="QueueRun"/>): koşu hiçbir şeyi temizlemeden bekler ve iş bitince
+    /// başlar (<see cref="StartQueuedRunWhenWorkEnds"/>). Clean ve Optimize tıklamada listeyi boşaltır — onu getirecek
+    /// iş sürdükçe basış yine açıktır; iş listesiz biterse istek geri alınır.</para>
+    /// <para>Tam çıkış beklerken (<see cref="ExitPending"/>) istek yapılamaz: bekleyiş iş bitince kapanmak içindir — o
+    /// sırada basılan bir koşu ya çıkışı bir tam derleme boyunca bekletirdi ya da (çıkış beklerken zincirlenen Sync
+    /// başlamadığı için) hiç başlamayıp çıkışı asılı bırakırdı.</para>
+    /// </summary>
+    private bool CanRequestRun() =>
+        !IsRunning && !IsStarting && !IsEngineUnavailable && !ExitPending && (HasTopology || WorkspaceBusy);
 
-    // [DEĞİŞEN KURAL] Kapı CanStartRun DEĞİL CanStartRunOnIdleWorkspace'tir: Build de Sync penceresinde bekler
-    // (gerekçe CanStartRunOnIdleWorkspace'in yorumundadır).
-    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    [RelayCommand(CanExecute = nameof(CanRequestRun))]
     private Task BuildAsync() => BeginRunAsync(RunMode.Build); // seçim orada düşer (filtre korunur)
 
     /// <summary>[Clean] Build menüsünün <i>Clean</i> maddesi — Visual Studio'nun <i>Clean Solution</i>'ı: satır
@@ -1154,7 +1264,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<c>Core/Planning/CleanRunScope</c>). Onay sormaz (satır Clean'i ve Visual Studio da sormaz), bitince Sync
     /// zincirlemez; koşu sürerken Stop çalışır. Kapısı Build/Rebuild ile AYNIdır. Bakım kutusunun Clean'inden
     /// (<see cref="CleanCommand"/> — bin/obj silen, MSBuild çağırmayan workspace sıfırlaması) AYRI bir iştir.</summary>
-    [RelayCommand(CanExecute = nameof(CanStartRunOnIdleWorkspace))]
+    [RelayCommand(CanExecute = nameof(CanRequestRun))]
     private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
@@ -1166,9 +1276,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// istemediği ve göremediği bir işin arkasında bekliyordu. Ayrı düğme kararı kullanıcıya verir: ne zaman,
     /// ne kadar.</para>
     ///
-    /// <para><see cref="RebuildCommand"/> ile AYNI guard'a tabidir
-    /// (<see cref="CanStartRunOnIdleWorkspace"/>) — bu da tam bir run'dır ve mid-Sync başlatılması aynı transkript
-    /// bozulmasını üretirdi.</para></summary>
+    /// <para><see cref="RebuildCommand"/> ile AYNI kapıya tabidir (<see cref="CanRequestRun"/>) — bu da tam bir run'dır:
+    /// bir iş sürerken basılırsa bekler ve iş bitince başlar.</para></summary>
     [RelayCommand(CanExecute = nameof(CanBuildCycles))]
     private Task BuildCyclesAsync() => BeginRunAsync(RunMode.Cycles); // seçim orada düşer (filtre korunur)
 
@@ -1177,7 +1286,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// derlenir: tek projelik kapsamda incremental karar sorulmaz (<c>Core/Planning/ProjectRunScope</c>,
     /// <c>WillBuild = true</c>; ARCHITECTURE §8.1). <see cref="RebuildProjectCommand"/>'dan farkı MSBuild
     /// hedefidir (<c>-t:Build</c> / <c>-t:Rebuild</c>). Parametre satırın kimliğidir; kapı tam koşununkiyle AYNI
-    /// (<see cref="CanStartRunOnIdleWorkspace"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
+    /// (<see cref="CanRequestRun"/>) + bir hedef: uçuşta bir koşu varken hiçbir satırdan ikinci bir koşu
     /// başlatılamaz.</summary>
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task BuildProjectAsync(string? projectId) => BeginRunAsync(RunMode.Build, projectId);
@@ -1195,12 +1304,12 @@ public sealed partial class RunViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanRunProject))]
     private Task CleanProjectAsync(string? projectId) => BeginRunAsync(RunMode.Clean, projectId);
 
-    private bool CanRunProject(string? projectId) => projectId is not null && CanStartRunOnIdleWorkspace();
+    private bool CanRunProject(string? projectId) => projectId is not null && CanRequestRun();
 
     /// <summary>[cycles] Düğme YALNIZ elde döngü VARKEN etkindir (<see cref="HasCycles"/>): döngüsüz bir
     /// workspace'te bu koşunun kapsamı BOŞTUR (bkz. <c>CycleRunScope</c>) ve her projeyi atlar — pasif
     /// düğme kullanıcıya bunu tıklamadan ÖNCE söyler.</summary>
-    private bool CanBuildCycles() => CanStartRunOnIdleWorkspace() && HasCycles;
+    private bool CanBuildCycles() => CanRequestRun() && HasCycles;
 
     /// <summary>Action bar'daki <c>Sync</c> düğmesi — kullanıcının DOĞRUDAN tetiklediği, yeni bir konsol bölümü
     /// açan Sync (<see cref="SyncMode.Manual"/>). [spec 2026-09-18 §6.4] Yarıda bir git işlemi varken de koşar; bölümün
@@ -1278,8 +1387,11 @@ public sealed partial class RunViewModel : ObservableObject
         // [Sync guard] Kapı GÖNDERİMDEN ÖNCE kapanır — BeginRunAsync'in IsStarting deseninin simetriği.
         // Gönderim milisaniyeler içinde biter ama motor Sync'e ancak sırası gelince başlar; arada düğme
         // etkin kalırsa ikinci basış ikinci bir TAM analiz kuyruklatır (bkz. _syncRequested).
+        // [kullanıcı bildirimi 2026-09-29] Kapanış Sync'in kapattığı HER kontrole o anda duyurulur — tek liste
+        // (NotifySyncGatedCommands). Yalnız Sync düğmesi haber alıyordu: bakım kutusu, N behind ve branch chip'i motor
+        // cevap verene dek canlı görünüp tıklamayı yutuyordu (en çok pencereye dönüşün istediği sessiz Sync'te).
         _syncRequested = true;
-        SyncCommand.NotifyCanExecuteChanged();
+        NotifySyncGatedCommands();
         // Bekleyiş TAM BURADA başlar: sessizlik saati kurulmazsa, uzun süre boşta duran bir uygulamada
         // basılan ilk Sync anında "cevap vermiyor" derdi (saat son motor event'inden beri bayattır).
         // OnIsStartingChanged'in ve OnPhaseChanged'in aynı satırı.
@@ -1305,7 +1417,7 @@ public sealed partial class RunViewModel : ObservableObject
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
     // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
     // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
-    // Syncing → Idle → Syncing yapar. Rebuild/Cycles zaten AYNI predicate'e tabidir.
+    // Syncing → Idle → Syncing yapar. (Run komutları o sırada başlamaz, basışları bekler — CanRequestRun.)
     // [clean] Clean uçuştayken Sync de beklemelidir: Sync'in tam analizi tam o sırada silinen bin/obj'i okur.
     // [final review O1] Soru tek yerde: WorkspaceGateOpen.
     private bool CanSync() => WorkspaceGateOpen;
@@ -1425,7 +1537,12 @@ public sealed partial class RunViewModel : ObservableObject
     {
         _pendingRunId = null;
         IsStarting = false;
-        Phase = AppPhase.Idle;
+        // [kullanıcı bildirimi 2026-09-29] İş bitmesini bekleyen istek de aynı yoldan geri alınır. Kilit ÖNCE düşer: kayıt
+        // önce silinseydi, bir an için "istek yok ama başlıyor" okunur ve graf koşu fazına girip geri çıkardı.
+        SetQueuedRun(null);
+        // Faz yalnız koşunun kendi açılışı yazdıysa (koreografi — Starting) bırakılır: iş bitmesini bekleyen istek
+        // faza hiç dokunmadı, faz süren işindir (ör. görünür bir Sync'in Syncing'i).
+        if (Phase == AppPhase.Starting) Phase = AppPhase.Idle;
         AppendRunLine(RunCancelledLine);
     }
 
@@ -1845,6 +1962,10 @@ public sealed partial class RunViewModel : ObservableObject
         // SONRA türetilir (ad çözümü + done-glyph'in Counters.Failed'i doğru okunsun). Marshal-free ProjectLogEvent
         // hot-path'ine (Ek A13.2) DOKUNMAZ: yalnız zaten UI-thread'inde olan OnEvent dalından çağrılır.
         AppendStreamFor(ev);
+
+        // [kullanıcı bildirimi 2026-09-29] İş bittiyse bekleyen koşu şimdi başlar — olay TAMAMEN uygulandıktan sonra.
+        // Marshal'sız ProjectLogEvent dalı (UI thread'i dışında) buraya bakmaz; o olay bir işi bitirmez de.
+        if (ev is not ProjectLogEvent) StartQueuedRunWhenWorkEnds();
     }
 
     private void OnRunStarted(RunStartedEvent e)
@@ -2457,6 +2578,10 @@ public sealed partial class RunViewModel : ObservableObject
         // kırmızı metni gösterir; bu, o metin temizlendikten SONRA görülecek durumdur).
         else if (Phase == AppPhase.Starting) Phase = RestingPhase;
         _awaitingRunCompleted = false; // motor gitti — runCompleted gelmeyecek
+        // [kullanıcı bildirimi 2026-09-29] Bir workspace işinin bitmesini bekleyen koşu isteği de gider: onu başlatacak
+        // iş bu motordaydı. Bırakılmasaydı yeniden başlatılan motorun ilk Sync'i onu kimse istemeden başlatırdı; konsol da
+        // "…it starts when the work in flight finishes" diyerek kalırdı — geri alış satırını yazar.
+        TakeBackQueuedRun();
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;

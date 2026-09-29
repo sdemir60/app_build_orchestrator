@@ -176,11 +176,17 @@ public class OptimizeCommandTests
     }
 
     /// <summary>
-    /// Optimize uçuştayken TÜM run komutları ve Sync kapanır — istek penceresi (gönderimden önce kurulan
-    /// bayrak) DAHİL. Tamamlanma hepsini tek yerden geri açar.
+    /// Optimize uçuştayken Sync ve Resolve cycles kapanır — istek penceresi (gönderimden önce kurulan bayrak) DAHİL.
+    /// Tamamlanma hepsini tek yerden geri açar.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski ad ve iddia
+    /// (<c>Sync_build_rebuild_and_cycles_are_disabled_while_an_optimize_is_in_flight_and_reopen_on_completion</c>):
+    /// Optimize uçuştayken Build ve Rebuild de KAPALIDIR. Değişme gerekçesi (ölçüm): kapalı düğmeye basılan Build
+    /// kayboluyordu. Artık Optimize sürerken basılan koşu bekler ve Optimize'ın devrettiği Sync bitince başlar
+    /// (<see cref="RunRequestWaitsForWorkTests"/>); iki komut bu yüzden istek ve uçuş pencerelerinde basılabilir.
+    /// Resolve cycles kapalı kalır: tıklama planı boşalttı, boş planda döngü yoktur.</para>
     /// </summary>
     [Fact]
-    public async Task Sync_build_rebuild_and_cycles_are_disabled_while_an_optimize_is_in_flight_and_reopen_on_completion()
+    public async Task Sync_and_cycles_are_disabled_while_an_optimize_is_in_flight_build_waits_and_all_reopen_on_completion()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
@@ -194,8 +200,8 @@ public class OptimizeCommandTests
         {
             Assert.True(vm.OptimizeRequested);
             Assert.False(vm.SyncCommand.CanExecute(null));
-            Assert.False(vm.BuildCommand.CanExecute(null));
-            Assert.False(vm.RebuildCommand.CanExecute(null));
+            Assert.True(vm.BuildCommand.CanExecute(null));   // [DEĞİŞEN KURAL] basış bekler — gerekçe doc'ta
+            Assert.True(vm.RebuildCommand.CanExecute(null));
             Assert.False(vm.BuildCyclesCommand.CanExecute(null));
         };
         await vm.OptimizeCommand.ExecuteAsync(null);
@@ -205,7 +211,7 @@ public class OptimizeCommandTests
         vm.OnEvent(new OptimizeStartedEvent(@"D:\repo"));
         Assert.False(vm.OptimizeRequested); // nöbeti devretti
         Assert.False(vm.SyncCommand.CanExecute(null));
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.False(vm.OptimizeCommand.CanExecute(null)); // ikinci Optimize da anlamsız
 
         vm.OnEvent(Done());
@@ -459,9 +465,14 @@ public class OptimizeCommandTests
     }
 
     /// <summary>Kapı Optimize'ın tıklanmasından Sync'in devralmasına kadar BİR AN bile açılmaz — Clean'de ölçülüp
-    /// düzeltilmiş kırpışmanın Optimize'da yeniden doğmaması için.</summary>
+    /// düzeltilmiş kırpışmanın Optimize'da yeniden doğmaması için.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski ad ve iddia
+    /// (<c>Nothing_is_clickable_between_the_optimize_and_the_sync_that_follows_it</c>): boşlukta Build de KAPALIDIR.
+    /// Değişme gerekçesi (ölçüm): kapalı Build'e basılan tık kayboluyordu; Optimize sürerken basılan Build artık bekler
+    /// ve iş bitince başlar (<see cref="RunRequestWaitsForWorkTests"/>). Build tıklamadan devre kadar HEP basılabilir —
+    /// kırpışmaz; Sync, Clean ve Optimize boşlukta yine kapalıdır.</para></summary>
     [Fact]
-    public async Task Nothing_is_clickable_between_the_optimize_and_the_sync_that_follows_it()
+    public async Task Only_a_waiting_build_is_pressable_between_the_optimize_and_the_sync_that_follows_it()
     {
         long now = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -482,8 +493,8 @@ public class OptimizeCommandTests
 
         Assert.Equal(
         [
-            "hold 390: build=False sync=False clean=False optimize=False",
-            "hold 200: build=False sync=False clean=False optimize=False",
+            "hold 390: build=True sync=False clean=False optimize=False", // Build'e basış bekler
+            "hold 200: build=True sync=False clean=False optimize=False",
         ], gates);
     }
 

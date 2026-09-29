@@ -1830,9 +1830,12 @@ rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers nev
 *Visible as an operation* means the operation pill, the `Syncing` phase on the ribbon, the dropped selection
 and the clearing of the previous run's error text and overlay. A silent Sync does none of it: bad news on the
 screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. It is still
-a Sync, though: the engine takes one command at a time, so while it runs the workspace commands (Build, Sync,
-Clean, Optimize, pull, the branch chip, the configuration segment) stay locked and the Sync button shows its busy
-state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. Its one
+a Sync, though: the engine takes one command at a time, so while it runs the workspace commands (Sync, Clean,
+Optimize, pull, the branch chip, the configuration segment) stay locked and the Sync button shows its busy
+state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. A run is not
+refused: pressed while any Sync runs, it waits for it and starts when it ends (§13.2). For a silent Sync that is
+the only honest answer, because it usually starts with the very click that brings the window back — often a
+click on *Build*. Its one
 stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
@@ -2304,10 +2307,11 @@ that is really in front — visible, not minimized and active — and brings for
 minimized or behind another window (`WindowToggle`), because hiding a visible window the user is reaching for
 would lose it. Hiding goes straight to the tray, without the first-close balloon, which explains `X`.
 `Ctrl+Shift+Space` builds without bringing the window up; it is the view model's own `BuildCommand`, so it
-honours the same gate as the Build button and does nothing while a run, a Sync or a maintenance job is in
-flight. Each gesture is read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value
-falls back to the default. An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote
-it — is ignored and dropped on the next save, so a stored `Alt+B` does not bring the old shortcut back.
+honours the same gate as the Build button: it does nothing while a run is in flight or being planned, and pressed
+while a Sync or a maintenance job runs it waits for that work and builds when it ends (§13.2). Each gesture is
+read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value falls back to the default.
+An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote it — is ignored and dropped
+on the next save, so a stored `Alt+B` does not bring the old shortcut back.
 
 The gestures follow the author's Turkish Q keyboard. AltGr reaches Windows as `Ctrl+Alt`, so a `Ctrl+Alt`
 global would fire when `{`, `[` or `@` is followed by a space before AltGr is released — and Visual Studio already
@@ -2847,8 +2851,8 @@ It is drawn, hovered and gated exactly like its two siblings, its tooltip names 
 per project and the bar gives no solution-level impression), it asks for no confirmation and chains no Sync, and
 Stop stops it. The opening wave marks every row, and when it ends the rows read what the row menu's clean leaves
 behind: `never built`. It is neither the row menu's project clean nor the box's *Clean*, a different operation
-described below. While a run is in flight the
-primary button becomes *Stop*, and the
+described below. While a run is in flight — or waits for the work in flight to end (*Nothing starts while a Sync
+is in flight*, below) — the primary button becomes *Stop*, and the
 branch chip and the configuration control lock; the perf chip stays live.
 
 **The branch chip is a git command, and it is gated like one.** It is enabled only when a workspace is open,
@@ -2857,8 +2861,10 @@ flight, the engine is available and git is not mid-operation. The last case is t
 on its own: a 6 px amber dot sits on it and its tooltip names the operation (`Merge in progress — finish or
 abort it in git`); the same tooltip replaces the `N behind` chip's while the pull is locked for the same
 reason (§10.3). A checkout that is in flight holds every one of those gates for itself: until the engine
-answers, Build, Sync, the maintenance jobs and the pull are closed, because a run started on the new tree would
-have its console cleared by the checkout's section, and a pull would advance the wrong branch.
+answers, Sync, the maintenance jobs and the pull are closed, because a pull would advance the wrong branch, and no
+run starts, because one started on the new tree would have its console cleared by the checkout's section — a
+*Build* pressed then waits for the checkout and its Sync, and starts on the new tree; if the switch is refused or
+fails, the request is taken back under the refusal.
 
 **The configuration segment starts a Sync, and it is gated like one.** Switching between `Debug` and `Release`
 runs the Sync button's process with the new configuration — a ConfigurationChange Sync (§10.2): the console and
@@ -2953,15 +2959,16 @@ rows and decisions stay in the plan, only the screen starts over until its Sync'
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
 Sync; that is the accepted cost of acting on the click rather than on the engine's acceptance.
 
-This costs no extra waiting in practice. *Build*, *Rebuild* and *Resolve cycles* are already shut for the
-whole of a Sync, a Clean or an Optimize — and of a checkout or a pull, the same busy question (`WorkspaceBusy`)
-— and the plan arrives in
-the same batch that clears the
-in-flight flag, so both halves of their gate open together. What the emptying does change is the failure case:
-a Sync that never delivers a plan — the engine is gone, planning failed — leaves the surface empty and those
-three shut until a Sync succeeds, where before they stayed enabled against a list that no longer described
-anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build against a
-surface the user cannot see would compile a set nobody chose.
+This costs no extra waiting in practice. No run starts for the whole of a Sync, a Clean or an Optimize — or of a
+checkout or a pull, the same busy question (`WorkspaceBusy`) — and a run pressed in that stretch waits for it
+(*Nothing starts while a Sync is in flight*, below); the plan arrives in the same batch that ends the stretch, so
+the waiting run starts against the plan that has just come back. That is also why *Build* and *Rebuild* stay
+pressable while the list is empty after the click: the work that brings it back is still running. What the
+emptying does change is the failure case: a job or a Sync that never delivers a plan — the engine is gone,
+planning failed, a Clean failed and chained nothing — leaves the surface empty, a run waiting for it is taken back,
+and the run commands stay shut until a Sync succeeds, where before they stayed enabled against a list that no
+longer described anything. That is the same cost Clean already accepted, and it is the safer end of it: a Build
+against a surface the user cannot see would compile a set nobody chose.
 
 **The step always plays for the same length.** On a small workspace a maintenance job finishes in milliseconds,
 so the spinner would flash and the Sync's animations would land on top of it. Clean and Optimize therefore hold
@@ -3021,10 +3028,12 @@ event stream, and a pill reading `OPTIMIZE` until the Sync takes it over.
 **The two workspace jobs share one gate.** A workspace must be selected — a topology is not required, both
 services scan for themselves — the engine must be alive, and no run, Sync, Clean, Optimize, checkout or pull may
 be in flight.
-The exclusion is mutual and complete: while either of them runs, *Build*, *Rebuild*, *Resolve cycles*, the row
-actions, Sync, the `N behind` chip **and the other maintenance button** are all closed. Every pair of them is a
-race on the same workspace — deleting `bin` under a compiling MSBuild, a Sync (the automatic one after a pull
-included) reading folders that are disappearing, a restore writing into an `obj` a Clean is emptying.
+The exclusion is mutual and complete: while either of them runs, Sync, the `N behind` chip **and the other
+maintenance button** are closed, *Resolve cycles* has no cycle left to offer (the click emptied the plan), and no
+run starts — *Build*, *Rebuild* and the row actions stay pressable, and what they press waits for the job and the
+Sync it hands over to. Every pair of them is a race on the same workspace — deleting `bin` under a compiling
+MSBuild, a Sync (the automatic one after a pull included) reading folders that are disappearing, a restore writing
+into an `obj` a Clean is emptying.
 
 **A running job is amber wherever its button is.** *Sync* speaks the same language as the maintenance box: while
 a Sync is in flight its button takes the amber ground and its icon becomes a spinner of the same size, with the
@@ -3041,33 +3050,61 @@ it. That hover answers through the button's always-live wrapper, not the button 
 genuinely disabled in this window (its command's `CanExecute` is false), and WPF excludes a disabled control
 from hit-testing altogether, so its own `IsMouseOver` never becomes true no matter where the pointer sits.
 
-**No run without a topology.** *Build*, *Rebuild* and *Resolve cycles* stay disabled until a Sync has published a
-topology, and an empty one (a folder with no projects) keeps them disabled. The reason is that the full analysis
-runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started before
-the first Sync would compile for real while the list, the graph and the counters stayed empty — the user would
-be watching a run without being able to see what it is doing.
+**No run without a topology.** No run starts until a Sync has published a topology, and an empty one (a folder
+with no projects) keeps *Build*, *Rebuild* and *Resolve cycles* disabled. While the work that will publish it is
+running — the first Sync, or a Clean or Optimize and the Sync it hands over to — *Build* and *Rebuild* can be
+pressed and wait for it (below); with no such work in flight they are disabled. The reason is that the full
+analysis runs only in Sync (§6): a run publishes `buildPreview` but never `workspaceTopology`, so a build started
+before the first Sync would compile for real while the list, the graph and the counters stayed empty — the user
+would be watching a run without being able to see what it is doing.
 
 **Nothing starts while a Sync is in flight** — not a run, and not a second Sync. The engine's command loop
-blocks for the duration of a Sync (§5.2), so anything pressed in that window is not merely queued, it lands in
-the middle of someone else's transcript: a run clears the console buffers and writes its own request line while
-the Sync's remaining progress lines are still arriving, and the reader is left with two interleaved stories.
+blocks for the duration of a Sync (§5.2), so a run that began at the press would land in the middle of someone
+else's transcript: it clears the console buffers and writes its own request line while the Sync's remaining
+progress lines are still arriving, and the reader is left with two interleaved stories. A run pressed in that
+window is therefore held as a **request** — and the same holds for a Clean, an Optimize, a checkout and a pull,
+the same busy question (`WorkspaceBusy`). The click takes effect at once where it can without touching the
+work: the primary button becomes *Stop* (a row's play turns into *Stop* on its row), and one line —
+`build requested; it starts when the work in flight finishes` — goes under the work's own transcript. Nothing
+else moves; the console, the event stream, the rows, the pill and the phase belong to the work, and the graph
+stays out of its run phase — a waiting request holds the lock (`IsMidRunLocked`) but not the look of a run
+(`IsRunUnderway`), so the previous operation's pill does not come alive and the graph does not dim. When the work
+ends — the Sync's answer, or a job together with the Sync it hands over to — the run opens exactly as a click at
+that moment would: console cleared, opening choreography against the plan that has just arrived, command sent.
+The request is looked at only once the engine event that ends the work has been applied in full, so the run's
+opening never lands under the rest of that event (a Sync's phase, its stream line). *Stop* and `Esc` take it back
+as they take back a run whose opening choreography is still playing — nothing reaches the engine and the console
+reads `Cancelled — build not started`; a full exit and a branch change seen by the HEAD watcher take it back the
+same way, an engine death drops it with the same line, and while a full exit waits no request can be made at all.
+Work that does not deliver what the run needs takes it back too, the cancel line landing under the work's own
+failure lines so that the opening never erases them: a Sync or a job that fails (a `planFailed` that arrives
+while a request waits is the Sync's — the run's command has not been sent, so the engine has never heard of it), a
+checkout that does not switch, a pull that does not move the tree, a Sync that brings no plan (the topology gate
+above), and a row's request whose project is no longer in the plan. Refusing the press instead would lose it: the
+silent Sync (§10.2) usually starts with the very click that brings the window back, so a refused *Build* is a
+click that vanishes without a trace.
+
 A second Sync is worse value still — it re-runs the whole analysis, scan through incremental, and every press
 sends three commands, so the ribbon walks `Syncing → Idle → Syncing` while the console prints the same
 transcript twice.
 
 The gate opens at the **click**, not at `syncStarted`, for the same reason the run lock does: sending takes
 milliseconds and the engine may not reach the command for seconds, and a button that re-enables in between
-invites exactly the second press it is there to prevent. It closes again on every exit — the answer arrives,
-the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button permanently
-dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt itself. A
-Clean or an Optimize opens and closes the same gate under the same rules (see *The two workspace jobs share one
-gate* above).
+invites exactly the second press it is there to prevent. Every control the gate closes hears it at that moment
+— the maintenance box, the `N behind` chip and the branch chip as well as Sync — so none of them is left drawn
+live over a closed command while the engine has not answered yet. It closes again on every exit — the answer
+arrives, the send fails synchronously, the Sync fails, or the engine dies — so no path leaves a button
+permanently dark. Sync remains the way out of an empty topology; what it no longer is, is a way to interrupt
+itself. A Clean or an Optimize opens and closes the same gate under the same rules (see *The two workspace jobs
+share one gate* above).
 
 The lock — and the *Stop* button with it — begins at the **click**, not at `runStarted`. The phase moves to
 `starting` and a line goes into the run document before the command is even written, mirroring what a stop
-request does. Anything less leaves a gap the width of a planning window, during which the user has pressed a
-button and the screen still describes the world as it was; on a 177-project workspace that gap is seconds long
-and the console has just been cleared, so nothing on screen contradicts "my click did nothing". The phase
+request does. A run that waits for work in flight takes the lock and the *Stop* button at the click too, but
+leaves the phase to the work until it starts (above). Anything less leaves a gap the width of a planning window,
+during which the user has pressed a button and the screen still describes the world as it was; on a 177-project
+workspace that gap is seconds long and the console has just been cleared, so nothing on screen contradicts "my
+click did nothing". The phase
 leaves `starting` by every exit that can happen: `runStarted` moves it on, a run-ending error or a send that
 fails synchronously puts it back, and an engine death drops it to the resting phase rather than to `stopped` —
 nothing was built, and a "stopped" line describing a run that never began would be a fiction.
@@ -4109,7 +4146,9 @@ Esc is a chain and only ever closes the topmost layer: dialog → popover/menu �
 With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
 dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
 pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
-finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a
+finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. A run pressed
+during one of them and waiting for it (§13.2) is the running build here: Esc takes the request back and the work
+goes on. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
@@ -5436,6 +5475,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
+| The run commands' one gate; a run pressed while workspace work is in flight — the request, its start when the work ends, its take-back (Stop/Esc/exit/branch change, failed work, engine loss) | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `QueueRun`, `StartQueuedRunWhenWorkEnds`, `CancelPendingRun`, `TakeBackQueuedRun`) |
+| A waiting request holds the lock but not the look of a run (graph run phase, operation pill) | `App/ViewModels/RunViewModel.cs` (`IsRunUnderway`), `MainWindow.xaml.cs` (`PushGraphRunPhase`), `App/Views/StickyRibbon.xaml.cs` (`RefreshOpPill`) |
 | Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
 | Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |

@@ -141,6 +141,12 @@ public class CleanCommandTests
     /// TIKLAMASIDIR (<c>CleanAsync</c> → <c>ClearPlanSurface</c>). Test bu yüzden gerçek akışı oynar: tıklama
     /// (gönderim bu harness'te senkron düşer), ardından motorun <c>cleanStarted</c>/<c>cleanCompleted</c>'ı.
     /// Pinlenen şey aynıdır: bir gecikme değil, KAPININ KİMDE olduğu — planda.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia: Clean uçuştayken Build ve Rebuild de
+    /// KAPALIDIR. Değişme gerekçesi (ölçüm): kapalı düğmeye basılan Build kayboluyordu. Artık Clean sürerken basılan
+    /// koşu bekler ve Clean'in devrettiği Sync bitince başlar (<see cref="RunRequestWaitsForWorkTests"/>); iki komut bu
+    /// yüzden Clean boyunca basılabilir — liste o an boş olsa da, onu getirecek iş sürüyor. Resolve cycles kapalı
+    /// kalır: boşalan planda döngü yoktur.</para>
     /// </summary>
     [Fact]
     public async Task A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
@@ -156,8 +162,8 @@ public class CleanCommandTests
         vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
 
         Assert.False(vm.SyncCommand.CanExecute(null));
-        Assert.False(vm.BuildCommand.CanExecute(null));
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.BuildCommand.CanExecute(null));   // [DEĞİŞEN KURAL] basış bekler — gerekçe doc'ta
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.False(vm.BuildCyclesCommand.CanExecute(null));
         Assert.False(vm.CleanCommand.CanExecute(null)); // ikinci bir Clean de anlamsızdır
 
@@ -410,7 +416,7 @@ public class CleanCommandTests
     /// <para><b>[DEĞİŞEN KURAL]</b> Bu test boşluk sırasında <c>busy=False</c> bekliyordu, yani yüzey boşluktan
     /// ÖNCE bırakılıyordu. Ölçüldü ki o pencerede Sync/Clean tıklanabilir haldeydi ve düğmeler kırpışıyordu;
     /// kapı artık Sync devralana kadar KAPALI (bkz.
-    /// <see cref="Nothing_is_clickable_between_the_clean_and_the_sync_that_follows_it"/>), dolayısıyla spinner de
+    /// <see cref="Only_a_waiting_build_is_pressable_between_the_clean_and_the_sync_that_follows_it"/>), dolayısıyla spinner de
     /// devralmaya kadar döner.</para></summary>
     [Fact]
     public async Task A_fast_clean_still_shows_its_step_before_the_sync_takes_over()
@@ -449,9 +455,16 @@ public class CleanCommandTests
     /// Kullanıcı tarifi: "o ara bir şeye tıklanmamalı".</para>
     ///
     /// <para>Yüzey artık Sync kapıyı devraldıktan SONRA bırakılır; spinner de o ana kadar döner, ardından
-    /// anlatıyı şeridin <c>SYNC</c> pill'i sürdürür.</para></summary>
+    /// anlatıyı şeridin <c>SYNC</c> pill'i sürdürür.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski ad ve iddia
+    /// (<c>Nothing_is_clickable_between_the_clean_and_the_sync_that_follows_it</c>): boşlukta Build de KAPALIDIR
+    /// (<c>build=False</c>). Değişme gerekçesi (ölçüm): kapalı Build'e basılan tık kayboluyordu; kullanıcı Clean sürerken
+    /// basılan Build'in iş bitince başlamasını istedi (<see cref="RunRequestWaitsForWorkTests"/>). Build artık
+    /// tıklamadan devre kadar HEP basılabilir — basış yalnız bekler, hiçbir şey başlamaz — yani kırpışmaz; Sync ve Clean
+    /// boşlukta yine kapalıdır, kararın ("o ara bir şeye tıklanmamalı") koruduğu şey onlardır.</para></summary>
     [Fact]
-    public async Task Nothing_is_clickable_between_the_clean_and_the_sync_that_follows_it()
+    public async Task Only_a_waiting_build_is_pressable_between_the_clean_and_the_sync_that_follows_it()
     {
         long now = 0;
         var vm = NewVm(() => now);
@@ -471,8 +484,8 @@ public class CleanCommandTests
 
         Assert.Equal(
         [
-            "hold 390: build=False sync=False clean=False busy=True", // adım oynuyor
-            "hold 200: build=False sync=False clean=False busy=True", // boşluk — kapı HÂLÂ kapalı
+            "hold 390: build=True sync=False clean=False busy=True", // adım oynuyor — Build'e basış bekler
+            "hold 200: build=True sync=False clean=False busy=True", // boşluk — Sync ve Clean HÂLÂ kapalı
         ], gates);
     }
 
