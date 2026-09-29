@@ -757,11 +757,14 @@ public sealed partial class RunViewModel
         if (mode == SyncMode.Silent) _silentBaseline = DecisionKeys();
     }
 
-    /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.</summary>
+    /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.
+    /// [design v1.24.0] Sync'in her bitiş yolu buradan geçtiği için keşif bloğu da BURADA kapanır (tek yer): topoloji
+    /// getirmeden biten bir Sync bloğu asılı bırakmaz.</summary>
     private void EndSyncMode()
     {
         _syncMode = SyncMode.Manual;
         _silentBaseline = null;
+        EndDiscovery();
     }
 
     /// <summary>[spec 2026-09-18 §6.2] Sync transkripti satırı. Sessiz kipte yalnız sorun satırları (warn/error)
@@ -924,6 +927,9 @@ public sealed partial class RunViewModel
     /// </summary>
     private void OnWorkspaceTopology(WorkspaceTopologyEvent e)
     {
+        // [design v1.24.0] Proje kümesi artık biliniyor: keşif bloğu, yüzey yeniden kurulmadan ve reveal oynamadan
+        // ÖNCE kalkar — aksi hâlde reveal bloğun altındaki gizli yüzeye oynardı.
+        EndDiscovery();
         Topology = e.Nodes;
         Solutions = e.Solutions;
         // [cycle rounds/I2] SCC üyelik haritası topolojinin İKİNCİ yarısından (Cycles) kurulur — motorun grubu

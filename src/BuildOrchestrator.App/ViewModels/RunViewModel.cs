@@ -1390,6 +1390,9 @@ public sealed partial class RunViewModel : ObservableObject
         // [kullanıcı bildirimi 2026-09-29] Kapanış Sync'in kapattığı HER kontrole o anda duyurulur — tek liste
         // (NotifySyncGatedCommands). Yalnız Sync düğmesi haber alıyordu: bakım kutusu, N behind ve branch chip'i motor
         // cevap verene dek canlı görünüp tıklamayı yutuyordu (en çok pencereye dönüşün istediği sessiz Sync'te).
+        // [design v1.24.0 · K1] Ekrandaki liste boşsa keşif bloğu istek penceresiyle AYNI anda açılır — topoloji ya da
+        // Sync'in bitişi kapatır (RunViewModel.Discovery.cs).
+        if (OpensDiscovery(mode)) BeginDiscovery();
         _syncRequested = true;
         NotifySyncGatedCommands();
         // Bekleyiş TAM BURADA başlar: sessizlik saati kurulmazsa, uzun süre boşta duran bir uygulamada
@@ -1933,6 +1936,8 @@ public sealed partial class RunViewModel : ObservableObject
             // [A5/T69] Sync yüzeyi — handler'lar RunViewModel.Workspace.cs'te
             case SyncStartedEvent: OnSyncStarted(); break;
             case SyncProgressEvent e: OnSyncProgress(e); break; // [spec §6.2] sessiz kip transkripti gizler
+            // [design v1.24.0] Keşfin kümülatif proje sayacı — yalnız keşif bloğu açıkken sayılır (RunViewModel.Discovery.cs).
+            case SyncDiscoveryEvent e: OnSyncDiscovery(e); break;
             // [planlama görünürlüğü] Motorun planlama adımları. AppendRunLine DIŞINDA hiçbir şeye dokunmaz:
             // faz zaten Starting'tir (BeginRunAsync yazdı) ve bu satırlar Sync yüzeyine (_syncInFlight) AİT
             // DEĞİLDİR — oraya bağlanırsa Rebuild/Cycles planlama boyunca sessizce kilitlenirdi.
