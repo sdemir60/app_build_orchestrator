@@ -248,6 +248,21 @@
          o, layout seçicinin iki bölmeli dikdörtgenidir (viewBox 16). -->
     <PathGeometry x:Key="Icon.ListLines" Figures="M3 6h.01 M3 12h.01 M3 18h.01 M8 6h13 M8 12h13 M8 18h13" />
 
+    <!--
+      [design v1.23.0 §2.12] Güncelleme hapı ve kartı. KAYNAK: .claude/outputs/2026-09-19-08-05-design-v1.24.0/
+      prototype/app/BuildApp.jsx:104-105 (`I.update`, `I.arrowRight`). Kartın Restart düğmesinin rotate-cw'si
+      Icon.Rebuild'dir (aynı çizim, ikinci anahtar açılmaz).
+    -->
+    <!-- BuildApp.jsx:104 lucide circle-arrow-up — r=9 halka (tasarım "ⓘ ile aynı r=9" der; Icon.Info r=10'dur,
+         hap prototipi izler) + ok başı + gövde. -->
+    <GeometryGroup x:Key="Icon.UpdateReady">
+        <EllipseGeometry Center="12,12" RadiusX="9" RadiusY="9" />
+        <PathGeometry Figures="m15.5 11.5-3.5-3.5-3.5 3.5 M12 16V8" />
+    </GeometryGroup>
+    <!-- BuildApp.jsx:105 lucide arrow-right — kartın "kurulu → gelen" sürüm geçişi. Kaynakta iki ayrı <path>'tir;
+         tek Figures dizisinde ikinci figürün başı MUTLAK yazılır (göreli `m12 5` birincinin ucundan sayılırdı). -->
+    <PathGeometry x:Key="Icon.ArrowRight" Figures="M5 12h14 M12 5l7 7-7 7" />
+
     <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
     <!-- [T60] DS `StatusGlyph` çizimleri (_ds_bundle.js:1446-1524). Gövde ince bir HALKA + içine 1.5px'lik
          bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR. `building` AYRI BİR ÇİZİM DEĞİLDİR — aynı
@@ -372,6 +387,8 @@
     <sys:Double x:Key="Icon.Download.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Upload.StrokeThickness">1.8</sys:Double>
     <sys:Double x:Key="Icon.Brush.StrokeThickness">1.8</sys:Double>
+    <!-- [design v1.23.0 §2.12] BuildApp.jsx:105 arrow-right (kartın sürüm geçişi) -->
+    <sys:Double x:Key="Icon.ArrowRight.StrokeThickness">1.8</sys:Double>
 
     <!-- strokeWidth="1.9" (design-v1.11.0 BuildApp.jsx:81 rebuild — ailenin tek 1.9'u, kaynakta öyle) -->
     <sys:Double x:Key="Icon.Rebuild.StrokeThickness">1.9</sys:Double>
@@ -384,6 +401,8 @@
     <!-- [design v1.13.1 §2.1] BuildApp.jsx:79 (What's new ikonu) — title bar'da Gear/Info ile AYNI kalınlık
          (optik ağırlık eşleşmesi tasarımın kendi kararı). -->
     <sys:Double x:Key="Icon.WhatsNew.StrokeThickness">1.7</sys:Double>
+    <!-- [design v1.23.0 §2.12] BuildApp.jsx:104 güncelleme hapı — title bar ikonlarıyla AYNI 1.7. -->
+    <sys:Double x:Key="Icon.UpdateReady.StrokeThickness">1.7</sys:Double>
 
     <!-- strokeWidth="1.6" (_ds_bundle.js:1633 DependencyGraphNode paket ikonu) -->
     <sys:Double x:Key="Icon.Package.StrokeThickness">1.6</sys:Double>

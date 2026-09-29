@@ -50,6 +50,9 @@ public class IconGeometryTests
         // (design-v1.24.0 prototype/app/BuildApp.jsx:856-866). Liste ikonunun anahtarı Icon.LayList'le (layout
         // seçicinin iki bölmeli dikdörtgeni) karışmasın diye ListLines'tır.
         "Icon.Network", "Icon.ListLines",
+        // [design v1.23.0 §2.12] Güncelleme hapı ve kartı — hap: lucide circle-arrow-up, kartın sürüm geçişi: lucide
+        // arrow-right (design-v1.24.0 prototype/app/BuildApp.jsx:104-105). Kartın rotate-cw'si Icon.Rebuild'dir.
+        "Icon.UpdateReady", "Icon.ArrowRight",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
@@ -133,6 +136,32 @@ public class IconGeometryTests
 
         Assert.Equal(1.4, Assert.IsType<double>(icons["Icon.Network.StrokeThickness"]));
         Assert.Equal(1.4, Assert.IsType<double>(icons["Icon.ListLines.StrokeThickness"]));
+    }
+
+    /// <summary>[design v1.23.0 §2.12] Güncelleme ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:104-105,
+    /// viewBox 24): hap = lucide circle-arrow-up — <c>r=9</c> halka (tasarım "ⓘ ile aynı r=9" der; uygulamadaki
+    /// <c>Icon.Info</c> r=10'dur, hap prototipi izler) + ok başı ve gövde, 1.7 kalınlık; kartın geçiş oku = lucide
+    /// arrow-right — gövde + ok başı, 1.8 kalınlık. Sınırlar çizimi doğrular: halka 3..21, ok 5..19.</summary>
+    [StaFact]
+    public void The_update_icons_carry_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var update = Assert.IsType<GeometryGroup>(icons["Icon.UpdateReady"]);
+        var ring = Assert.Single(update.Children.OfType<EllipseGeometry>());
+        Assert.Equal((new Point(12, 12), 9.0, 9.0), (ring.Center, ring.RadiusX, ring.RadiusY));
+        Assert.Equal(2, Assert.Single(update.Children.OfType<PathGeometry>()).Figures.Count);
+        Assert.Equal(new Rect(3, 3, 18, 18), update.Bounds);
+
+        var arrow = Assert.IsType<PathGeometry>(icons["Icon.ArrowRight"]);
+        Assert.Equal(2, arrow.Figures.Count);
+        Assert.Equal(5, arrow.Bounds.Left, 2);
+        Assert.Equal(5, arrow.Bounds.Top, 2);
+        Assert.Equal(19, arrow.Bounds.Right, 2);
+        Assert.Equal(19, arrow.Bounds.Bottom, 2);
+
+        Assert.Equal(1.7, Assert.IsType<double>(icons["Icon.UpdateReady.StrokeThickness"]));
+        Assert.Equal(1.8, Assert.IsType<double>(icons["Icon.ArrowRight.StrokeThickness"]));
     }
 
     [StaFact]
