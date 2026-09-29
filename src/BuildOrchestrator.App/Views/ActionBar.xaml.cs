@@ -656,7 +656,6 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         bool hasWs = _vm?.HasWorkspace ?? false;
-        bool syncing = _vm?.Phase == AppPhase.Syncing;
 
         // repo yokken sayaç chip'leri de disabled (README §3.1 — prototip hatası düzeltilir).
         foreach (var chip in new[] { _sigmaChip, _buildingChip, _currentChip, _failedChip, _warnChip })
@@ -673,8 +672,11 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
-        // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar.
-        PART_Split.IsEnabled = hasWs && !syncing;
+        // Build split-button: yalnız repo; gerisini primary komutun kapısı söyler (chevron onu izler).
+        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eskiden Sync sürerken de sönerdi (hasWs && !syncing,
+        // BuildApp.jsx:1594). Artık bir iş sürerken basılan Build bekler ve iş bitince koşar — sönük düğme o
+        // basışı yutuyordu.
+        PART_Split.IsEnabled = hasWs;
     }
 
     private static string Inv(int n) => n.ToString(CultureInfo.InvariantCulture);

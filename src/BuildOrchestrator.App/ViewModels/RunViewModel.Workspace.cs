@@ -228,10 +228,10 @@ public sealed partial class RunViewModel
     private string? _lastTopologySignature;
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
-    /// <para>[Fix wave 1, C2 review Finding 1] <see cref="RunViewModel.RebuildCommand"/>
-    /// artık <c>_syncInFlight</c>'a da bakıyor (<see cref="RunViewModel.CanStartRunOnIdleWorkspace"/>) — bu geçişte CanExecuteChanged
-    /// elle tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı) bu iki
-    /// butonun gerçek pencerede Sync başlar başlamaz disabled görünmesini SAĞLAMAZ.</para>
+    /// <para>[Fix wave 1, C2 review Finding 1] Sync'in kapattığı komutlar (Sync, bakım işleri, pull; liste yokken run
+    /// komutları da — <see cref="RunViewModel.CanRequestRun"/>) <c>_syncInFlight</c>'a bakar — bu geçişte
+    /// CanExecuteChanged elle tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı)
+    /// gerçek pencerede düğmelerin kapısını tazelemez.</para>
     /// <para>[D2 review fix, Finding 1] Önizleme kümeleri BURADA temizlenir (<c>ClearPreviewSets</c>): küme ADD-ONLY
     /// olduğundan (yalnız <see cref="RunViewModel.OnBuildPreview"/> ekler) ve önceki Clear noktası yalnız
     /// <see cref="RunViewModel.OnRunStarted"/> olduğundan, ikinci (run'sız) bir Sync kendi <c>BuildPreviewEvent</c>'ini
@@ -861,7 +861,9 @@ public sealed partial class RunViewModel
     /// (3) run PLANLAMA penceresinde değil (<see cref="IsStarting"/> false). Run tarafında <c>planFailed</c>
     /// YALNIZCA o pencerede — <c>runStarted</c>'dan ÖNCE — üretilir (bkz. <c>RunCoordinator.ExecuteRunAsync</c>:
     /// planner çağrısı runStarted'dan öncedir), dolayısıyla pencere dışında gelen bir <c>planFailed</c>'ın
-    /// kaynağı yalnızca Sync olabilir.</para>
+    /// kaynağı yalnızca Sync olabilir. [kullanıcı bildirimi 2026-09-29] Pencere komutun GİTTİĞİ andan başlar:
+    /// <see cref="IsStarting"/> açık ama komut henüz gitmemişse (<see cref="_pendingRunId"/> dolu — bir workspace
+    /// işinin bitmesini bekleyen istek) hata yine Sync'indir; motor o koşuyu hiç duymadı.</para>
     ///
     /// <para><b>Pencereler çakışırsa</b> (aynı anda hem Sync hem yeni bir run başlatılmış) run tarafı seçilir:
     /// orada "yıkım" YALNIZ <see cref="IsStarting"/>'i geri açar (henüz KOŞAN bir run yoktur) ve bunu yapmamak
@@ -875,7 +877,7 @@ public sealed partial class RunViewModel
         // Faz her iki dalda da bırakılır: hata Sync'e aitse syncCompleted GELMEYECEK (asılı kalırdı); run'a
         // aitse uçuştaki Sync zaten kendi syncCompleted'ıyla fazı tazeleyecek.
         if (Phase == AppPhase.Syncing) Phase = RestingPhase;
-        if (IsStarting) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
+        if (IsStarting && _pendingRunId is null) return false; // çakışan pencere → run tarafı seçilir (yukarıdaki gerekçe)
         _syncInFlight = false;        // hata Sync'e ait: bu Sync bitti, run state'ine DOKUNULMAZ
         EndSyncMode();
         _syncRequested = false;       // [Sync guard] istek penceresinde düşen Sync de kapıyı geri açar
