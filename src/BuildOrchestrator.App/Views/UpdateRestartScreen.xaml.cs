@@ -116,14 +116,20 @@ public partial class UpdateRestartScreen : UserControl
     }
 
     /// <summary>Zamanlayıcıyı durdurur ve söner; sönüş bitince (azaltılmış harekette hemen) kalkar. Sönerken tıklamalar
-    /// arkadaki uygulamaya geçer, klavye ise ekran kalkana dek yok sayılmaya devam eder.</summary>
+    /// arkadaki uygulamaya geçer, klavye ise ekran kalkana dek yok sayılmaya devam eder.
+    /// <para><b>Sönüş görünen değerden başlar:</b> giriş (<see cref="PopIn.PlayFadeIn"/>) yerel tabanı 0 yazar ve görünen
+    /// 1'i yalnız son değerini tutan animasyonu taşır. O animasyon silinince opaklık tabana (0) düşer ve başlangıcı
+    /// olmayan sönüm 0 → 0 oynardı — ekran tek karede kaybolurdu (ölçüldü). Bu yüzden silmeden önce okunan görünür değer
+    /// taban olarak geri yazılır, sönüm oradan başlar.</para></summary>
     private void Leave()
     {
         Timer.Stop();
         IsHitTestVisible = false;
+        double visible = Opacity;
         BeginAnimation(OpacityProperty, null);
         if (!MotionGate.StaticAnimationsEnabled) { Close(); return; } // [W2 fix-1] statik sinyalin TEK kapısı
 
+        Opacity = visible;
         int generation = _generation;
         var fade = MotionTokens.SplineTo(0.0, FadeOutDuration(this), MotionTokens.ResolveEaseOut(this));
         fade.Completed += (_, _) =>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -301,7 +302,14 @@ public class UpdateRestartScreenTests
 
     /// <summary>Hareket açıkken ekran <c>Duration.Base</c>'te (180ms) belirir ve bitişte <c>Duration.Slow</c>'da (280ms)
     /// söner; sönerken tıklamaları geçirir (<c>pointer-events: none</c>), sönüş bitince kalkar ve opaklığı bir sonraki
-    /// oynatma için geri gelir.</summary>
+    /// oynatma için geri gelir.
+    /// <para><b>Sönüş GÖRÜNÜR ekrandan başlar ve sürer</b> (ölçülen kusur): giriş, yerel taban değeri 0 yazıp üstüne
+    /// son değerini tutan bir animasyon kurar (<see cref="PopIn.PlayFadeIn"/>) — görünen 1'i yalnız o animasyon tutar.
+    /// Çıkış o animasyonu silip hedefi 0 olan (başlangıcı olmayan) sönümü başlatınca opaklık o karede tabana, 0'a düşüyor
+    /// ve sönüm 0 → 0 oynuyordu: ekran tek karede kayboluyor, 280ms boyunca görünmez ama Visible kalıyordu. Sönüş
+    /// başlarken opaklık hâlâ ~1'dir ve ekran <c>Duration.Slow</c> dolmadan kalkmaz (saat alt sınırı — yük yalnız
+    /// uzatır; <see cref="UpdateRestartScreen.FrameMs"/> kadarlık pay, sönümün saatinin ~60 Hz'lik bir kare önce
+    /// başlayabilmesidir).</para></summary>
     [StaFact]
     public void With_motion_on_it_fades_in_over_the_base_duration_and_out_over_the_slow_one()
     {
@@ -318,13 +326,18 @@ public class UpdateRestartScreenTests
         DispatcherPump.PumpUntil(() => screen.Opacity >= 1.0, TimeSpan.FromSeconds(3));
         Assert.Equal(1.0, screen.Opacity, precision: 3);
 
+        var fadeClock = Stopwatch.StartNew();
         rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
         Assert.True(screen.IsShowing, "sönüş beklenmeden kalktı");
         Assert.False(screen.IsHitTestVisible);
         Assert.True(screen.HasAnimatedProperties, "ekran sönerek çıkmadı");
+        Assert.True(screen.Opacity > 0.99, $"sönüş görünür ekrandan başlamadı: Opacity = {screen.Opacity}");
 
         DispatcherPump.PumpUntil(() => screen.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
+        var fadeLasted = fadeClock.Elapsed;
         Assert.Equal(Visibility.Collapsed, screen.Visibility);
+        var fadeFloor = UpdateRestartScreen.FadeOutDuration(screen) - TimeSpan.FromMilliseconds(UpdateRestartScreen.FrameMs);
+        Assert.True(fadeLasted >= fadeFloor, $"sönüş Duration.Slow dolmadan bitti: {fadeLasted.TotalMilliseconds:F0}ms");
         Assert.False(screen.HasAnimatedProperties);
         Assert.Equal(1.0, screen.Opacity);
         GC.KeepAlive(rig.Window);
