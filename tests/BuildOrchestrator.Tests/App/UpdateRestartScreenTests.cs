@@ -1,12 +1,15 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Shapes;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -304,6 +307,196 @@ public class UpdateRestartScreenTests
         Assert.Equal(Visibility.Collapsed, screen.Visibility);
         Assert.False(screen.HasAnimatedProperties);
         Assert.Equal(1.0, screen.Opacity);
+        GC.KeepAlive(rig.Window);
+    }
+
+    // ================================================================ kabuk: katman, istek, uygulamaya dönüş
+
+    /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace; motora giden komutlar yakalanır, restart
+    /// ekranının zamanı sahtedir.</summary>
+    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, FakePollTimer Timer, Clock Clock, List<IpcCommand> Sent)
+    {
+        public UpdateRestartScreen Screen => Window.UpdateRestartOverlay;
+
+        public void FrameAt(double elapsedMs)
+        {
+            Clock.Now = StartMs + (long)elapsedMs;
+            Timer.Tick();
+        }
+
+        /// <summary>Kartın <c>Restart to update</c>'ine kullanıcı gibi basar (kapıdan geçer).</summary>
+        public void PressRestart() => Assert.True(CommandPress.Press(Vm.RestartToUpdateCommand));
+
+        public IEnumerable<StartRunCommand> Runs => Sent.OfType<StartRunCommand>();
+    }
+
+    private static ShellRig NewShell(TempDir temp)
+    {
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("A", null), ("B", null));
+        MainWindowHost.AcceptSends(vm);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        var timer = new FakePollTimer();
+        var clock = new Clock();
+        window.UpdateRestartOverlay.Timer = timer;
+        window.UpdateRestartOverlay.NowMs = () => clock.Now;
+        return new ShellRig(window, vm, timer, clock, sent);
+    }
+
+    /// <summary>Ekran pencerenin EN ÜST katmanıdır (modalların da üstünde, XAML'de son), iki satırı da örter (title bar
+    /// dahil) ve caption bandında da tıklamayı kendisi alır — sürükleme ve pencere düğmeleri altında kalır. Varsayılan
+    /// kapalıdır: kapalıyken şablonu açılmaz ve title bar'ın markası pencerede TEK kalır (<c>TitleBarContextTests</c>
+    /// markayı <c>.Single()</c> ile bulur).</summary>
+    [StaFact]
+    public void The_screen_is_the_topmost_layer_over_the_title_bar_and_starts_collapsed()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+        var screen = window.UpdateRestartOverlay;
+
+        var layers = (Grid)window.RootShell.Child;
+        Assert.Same(screen, layers.Children[^1]);
+        Assert.Equal((0, 2), (Grid.GetRow(screen), Grid.GetRowSpan(screen)));
+        Assert.True(System.Windows.Shell.WindowChrome.GetIsHitTestVisibleInChrome(screen));
+        Assert.Equal(Visibility.Collapsed, screen.Visibility);
+        Assert.Single(DsResources.Descendants(window.RootShell).OfType<AppMark>());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary><c>Restart to update</c> kartı kapatır ve ekranı oynatır: kurulu sürüm → teklifin sürümü.</summary>
+    [StaFact]
+    public void Restart_to_update_closes_the_card_and_plays_the_screen_into_the_offered_version()
+    {
+        using var temp = new TempDir();
+        var rig = NewShell(temp);
+        rig.Window.UpdatePill.IsChecked = true;
+
+        rig.PressRestart();
+
+        Assert.False(rig.Window.UpdatePill.IsChecked);
+        Assert.True(rig.Screen.IsShowing);
+        Assert.Equal(AppIdentity.Version, rig.Screen.PART_Installed.Text);
+        Assert.Equal(rig.Vm.AvailableUpdate!.Version, rig.Screen.PART_Incoming.Text);
+        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing, rig.Vm.AvailableUpdate.Version),
+            rig.Screen.PART_Step.Text);
+        GC.KeepAlive(rig.Window);
+    }
+
+    /// <summary>[plan U4] Ekran bitince uygulama AYNEN önceki gibidir: motora hiçbir komut gitmez (Sync yok), seçim,
+    /// faz ve satırlar yerinde, hap ve teklif duruyor.</summary>
+    [StaFact]
+    public void When_the_screen_leaves_the_app_is_exactly_as_it_was()
+    {
+        using var temp = new TempDir();
+        var rig = NewShell(temp);
+        rig.Vm.SelectProject(MainWindowHost.IdOf("B"));
+        var phase = rig.Vm.Phase;
+        var offer = rig.Vm.AvailableUpdate;
+        int rows = rig.Vm.Projects.Count;
+
+        rig.PressRestart();
+        rig.FrameAt(1000);
+        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+
+        Assert.False(rig.Screen.IsShowing);
+        Assert.Empty(rig.Sent);
+        Assert.Equal(MainWindowHost.IdOf("B"), rig.Vm.SelectedProjectId);
+        Assert.Equal(phase, rig.Vm.Phase);
+        Assert.Equal(rows, rig.Vm.Projects.Count);
+        Assert.Same(offer, rig.Vm.AvailableUpdate);
+        Assert.Equal(Visibility.Visible, rig.Window.UpdatePillSlot.Visibility);
+        GC.KeepAlive(rig.Window);
+    }
+
+    /// <summary>Kilitli bir Restart ekranı AÇMAZ — istek kapıdan geçmeden (doğrudan <c>Execute</c>) gelse bile: bir koşu
+    /// sürerken kurulum onu yarıda keserdi.</summary>
+    [StaFact]
+    public void A_locked_restart_never_plays_the_screen()
+    {
+        using var temp = new TempDir();
+        var rig = NewShell(temp);
+        MainWindowHost.StartBuild(rig.Vm);
+        Assert.NotNull(rig.Vm.UpdateRestartBlockedReason); // ön-koşul
+
+        rig.Vm.RestartToUpdateCommand.Execute(null);
+
+        Assert.False(rig.Screen.IsShowing);
+        GC.KeepAlive(rig.Window);
+    }
+
+    // ================================================================ kabuk: klavye
+
+    /// <summary>Tuş olayları için bir girdi kaynağı — <see cref="KeyEventArgs"/> bir <see cref="PresentationSource"/>
+    /// ister ve kabuk testlerinde pencere gösterilmez; ekran dışı küçük bir pencere yeter (olayın hedefi yine
+    /// ana penceredir).</summary>
+    private static (PresentationSource source, Window keepAlive) KeySource()
+    {
+        var anchor = new Border();
+        var window = DsResources.Realize(DsResources.NewHost(), anchor);
+        return (PresentationSource.FromVisual(anchor)!, window);
+    }
+
+    /// <summary>Bir tuşa WPF'in girdi yöneticisi gibi basar: önce tünelleyen <c>PreviewKeyDown</c>, sonra AYNI argümanla
+    /// kabarcıklanan <c>KeyDown</c> — pencerenin <see cref="KeyBinding"/>'leri ikincisinde, yalnız olay handled
+    /// değilse çalışır.</summary>
+    private static KeyEventArgs PressKey(MainWindow window, PresentationSource source, Key key)
+    {
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
+        window.RaiseEvent(args);
+        args.RoutedEvent = Keyboard.KeyDownEvent;
+        window.RaiseEvent(args);
+        return args;
+    }
+
+    /// <summary>Ekran görünürken pencere klavyeyi yok sayar (prototip: keydown'da erken dönüş): F5 derleme başlatmaz, Esc
+    /// seçimi temizlemez. Ekran kalkınca aynı tuşlar yeniden çalışır — kontrol, tuş yolunun gerçekten bağlama ulaştığını
+    /// kanıtlar.</summary>
+    [StaFact]
+    public void The_window_ignores_the_keyboard_while_the_screen_shows()
+    {
+        using var temp = new TempDir();
+        var rig = NewShell(temp);
+        var (source, keepAlive) = KeySource();
+        rig.Vm.SelectProject(MainWindowHost.IdOf("A"));
+
+        rig.PressRestart();
+        var f5 = PressKey(rig.Window, source, Key.F5);
+        var esc = PressKey(rig.Window, source, Key.Escape);
+
+        Assert.True(f5.Handled);
+        Assert.True(esc.Handled);
+        Assert.Empty(rig.Runs);
+        Assert.False(rig.Vm.IsStarting);
+        Assert.Equal(MainWindowHost.IdOf("A"), rig.Vm.SelectedProjectId);
+
+        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        Assert.False(rig.Screen.IsShowing); // ön-koşul: ekran kalktı
+        PressKey(rig.Window, source, Key.Escape);
+        Assert.Null(rig.Vm.SelectedProjectId);
+        PressKey(rig.Window, source, Key.F5);
+        Assert.True(rig.Vm.IsStarting || rig.Runs.Any(), "ekran kalktıktan sonra F5 derlemeyi başlatmadı");
+        GC.KeepAlive(rig.Window);
+        GC.KeepAlive(keepAlive);
+    }
+
+    /// <summary>Ekran görünürken global kısayollar da yok sayılır — Ctrl+Shift+Space arka planda derleme başlatmaz. Ekran
+    /// kalkınca aynı kısayol derlemeyi başlatır.</summary>
+    [StaFact]
+    public void Global_hotkeys_are_ignored_while_the_screen_shows()
+    {
+        using var temp = new TempDir();
+        var rig = NewShell(temp);
+
+        rig.PressRestart();
+        rig.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
+
+        Assert.Empty(rig.Runs);
+        Assert.False(rig.Vm.IsStarting);
+
+        rig.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
+        rig.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
+        Assert.True(rig.Vm.IsStarting || rig.Runs.Any(), "ekran kalktıktan sonra kısayol derlemeyi başlatmadı");
         GC.KeepAlive(rig.Window);
     }
 }

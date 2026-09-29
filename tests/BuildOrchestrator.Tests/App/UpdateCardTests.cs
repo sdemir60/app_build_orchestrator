@@ -409,13 +409,14 @@ public class UpdateCardTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Restart'a basmak kartı kapatır — restart ekranı bu isteğe bağlanacaktır (bkz.
-    /// <see cref="RunViewModel.RestartToUpdateRequested"/>).</summary>
+    /// <summary>Restart'a basmak kartı kapatır; aynı istek restart ekranını da oynatır (ekranın kendi testleri
+    /// <see cref="UpdateRestartScreenTests"/>'tedir — burada zamanlayıcısı sahtedir, gerçek bir saat kurulmaz).</summary>
     [StaFact]
     public void Restart_to_update_closes_the_card()
     {
         using var temp = new TempDir();
         var (window, vm) = Shell(temp);
+        window.UpdateRestartOverlay.Timer = new FakePollTimer();
         window.UpdatePill.IsChecked = true;
 
         Assert.True(CommandPress.Press(vm.RestartToUpdateCommand));

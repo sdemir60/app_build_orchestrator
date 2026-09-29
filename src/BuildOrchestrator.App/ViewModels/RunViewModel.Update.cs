@@ -38,12 +38,18 @@ public sealed partial class RunViewModel
     /// <summary>Son duyurulan neden — bildirim yalnız değişimde gider (meşguliyet noktası sık tetiklenir).</summary>
     private string? _announcedRestartBlockedReason;
 
-    /// <summary>[restart ekranı dikişi] Kullanıcı <c>Restart to update</c>'e bastı. Kabuk kartı kapatır; restart ekranı
-    /// bu isteğe bağlanır. VM başka hiçbir şey yapmaz — motor yok, komut gitmez.</summary>
+    /// <summary>Kullanıcı <c>Restart to update</c>'e bastı. Kabuk kartı kapatır ve restart ekranını oynatır. VM başka
+    /// hiçbir şey yapmaz — motor yok, komut gitmez.</summary>
     public event EventHandler? RestartToUpdateRequested;
 
+    /// <summary>İsteğin kapısı BURADADIR, tek yerde: kapıdan geçmeden gelen bir çağrı (doğrudan <c>Execute</c> —
+    /// komut kapısını yalnız düğme ve kısayol onurlandırır) da kilitliyken ya da teklif yokken istek yaymaz.</summary>
     [RelayCommand(CanExecute = nameof(CanRestartToUpdate))]
-    private void RestartToUpdate() => RestartToUpdateRequested?.Invoke(this, EventArgs.Empty);
+    private void RestartToUpdate()
+    {
+        if (!CanRestartToUpdate()) return;
+        RestartToUpdateRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <summary>Kurulacak bir teklif var ve hiçbir iş onu beklemiyor.</summary>
     private bool CanRestartToUpdate() => AvailableUpdate is not null && UpdateRestartBlockedReason is null;

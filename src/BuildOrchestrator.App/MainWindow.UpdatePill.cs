@@ -31,6 +31,7 @@ public partial class MainWindow
         UpdateCardView.CloseRequested += () => CloseUpdateCard(returnFocusToPill: true);
         foreach (var dialog in new ModalDialog[] { SettingsOverlay, AboutOverlay, NotesOverlay })
             dialog.Opened += (_, _) => CloseUpdateCard(returnFocusToPill: false);
+        // Restart isteği kartı kapatır ve restart ekranını oynatır (MainWindow.UpdateRestart.cs).
         _vm.RestartToUpdateRequested += (_, _) => OnRestartToUpdateRequested();
 
         ApplyUpdateOffer(entrance: false);
@@ -70,10 +71,4 @@ public partial class MainWindow
         UpdatePill.IsChecked = false;
         if (returnFocusToPill) UpdatePill.Focus();
     }
-
-    /// <summary>
-    /// [restart ekranı dikişi] Kullanıcı <c>Restart to update</c>'e bastı (<see cref="RunViewModel.RestartToUpdateRequested"/>).
-    /// Şimdilik yalnız kartı kapatır ve odağı hapa verir; restart ekranı (design v1.23.0 §2.12) buraya bağlanacaktır.
-    /// </summary>
-    private void OnRestartToUpdateRequested() => CloseUpdateCard(returnFocusToPill: true);
 }

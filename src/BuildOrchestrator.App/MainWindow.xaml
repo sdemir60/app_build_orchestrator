@@ -282,6 +282,13 @@
            MainWindow.OnEscapePressed). Varsayılan Collapsed. -->
       <views:NotesDialog x:Name="NotesOverlay" Grid.Row="0" Grid.RowSpan="2"
                          WindowChrome.IsHitTestVisibleInChrome="True" />
+
+      <!-- [design v1.23.0 §2.12 · plan U4] RESTART EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
+           dahil her şeyi örter (prototip zIndex 300) ve caption bandında da tıklamayı kendisi alır (sürükleme ve pencere
+           düğmeleri altında kalır). Varsayılan Collapsed; Restart to update onu oynatır, görünürken pencere klavyeyi ve
+           global kısayolları yok sayar (MainWindow.UpdateRestart.cs). Güncelleme motoru henüz yok — tasarım önizlemesi. -->
+      <views:UpdateRestartScreen x:Name="UpdateRestartOverlay" Grid.Row="0" Grid.RowSpan="2"
+                                 WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
   </Border>
 </Window>

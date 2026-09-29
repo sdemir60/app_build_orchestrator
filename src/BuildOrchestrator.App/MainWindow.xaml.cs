@@ -1294,9 +1294,12 @@ public partial class MainWindow : Window
 
     /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
     /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
-    /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).</summary>
-    private void OnGlobalHotkey(GlobalHotkeyAction action)
+    /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).
+    /// <para>[design v1.23.0 §2.12] Restart ekranı görünürken hiçbir global kısayol çalışmaz
+    /// (<see cref="InputSuspended"/>). internal: test yüzeyi — <c>WM_HOTKEY</c> gösterilmeyen pencerede üretilemez.</para></summary>
+    internal void OnGlobalHotkey(GlobalHotkeyAction action)
     {
+        if (InputSuspended) return;
         if (action == GlobalHotkeyAction.ShowHide)
         {
             bool minimized = WindowState == WindowState.Minimized;

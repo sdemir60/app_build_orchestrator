@@ -217,6 +217,27 @@ public class UpdateRestartLockTests
         Assert.Empty(sent);
     }
 
+    /// <summary>Kapı komutun KENDİSİNDEDİR: kapısı kapalıyken kapıdan geçmeden gelen bir çağrı da (doğrudan
+    /// <c>Execute</c>) istek yaymaz — kilit (bir koşu sürüyor) ya da kurulacak teklifin yokluğu restart ekranını hiçbir
+    /// yoldan açtırmaz; kabuk kararı ikinci kez yazmaz.</summary>
+    [Fact]
+    public void A_restart_invoked_past_its_closed_gate_raises_no_request()
+    {
+        var vm = NewVm();
+        int requests = 0;
+        vm.RestartToUpdateRequested += (_, _) => requests++;
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.False(vm.RestartToUpdateCommand.CanExecute(null)); // ön-koşul
+        vm.RestartToUpdateCommand.Execute(null);
+        Assert.Equal(0, requests);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1_000));
+        vm.AvailableUpdate = null;
+        vm.RestartToUpdateCommand.Execute(null);
+        Assert.Equal(0, requests);
+    }
+
     /// <summary>Uygulama örnek teklifle açılır (motor yok, hap her zaman görünür — plan U1).</summary>
     [Fact]
     public void The_app_starts_with_the_sample_offer()
