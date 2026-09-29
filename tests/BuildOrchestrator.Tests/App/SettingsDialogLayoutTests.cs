@@ -457,6 +457,25 @@ public class SettingsDialogLayoutTests
         Assert.Equal("Clear settings — empty the form", dialog.Clear.ToolTip);
     }
 
+    /// <summary>Ok, verinin gittiği yönü gösterir: Export dışarı çıkarır (upload — ok yukarı, tepsiden çıkar),
+    /// Import içeri alır (download — ok aşağı, tepsiye iner). Buton sırası (Export, sonra Import) değişmez.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ eşleme design v1.11.0 prototipinden birebir alınmıştı: Export =
+    /// download, Import = upload. Kullanıcı ikonların anlamca ters durduğunu bildirdi (Export "indir" gibi
+    /// görünüyordu); eşleme ters çevrildi.</para></summary>
+    [StaFact]
+    public void Export_shows_the_upload_arrow_and_import_the_download_arrow()
+    {
+        var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
+        using var _scope = scope;
+
+        var export = Assert.Single(DsResources.Descendants(dialog.Export).OfType<System.Windows.Shapes.Path>());
+        var import = Assert.Single(DsResources.Descendants(dialog.Import).OfType<System.Windows.Shapes.Path>());
+        Assert.Same(dialog.FindResource("Icon.Upload"), export.Data);
+        Assert.Same(dialog.FindResource("Icon.Download"), import.Data);
+        Assert.Equal((double)dialog.FindResource("Icon.Upload.StrokeThickness"), export.StrokeThickness);
+        Assert.Equal((double)dialog.FindResource("Icon.Download.StrokeThickness"), import.StrokeThickness);
+    }
+
     /// <summary>Save kapalıyken ve geri bildirim YOKKEN footer tek satır neden gösterir (12px text-faint, kırpılır);
     /// geri bildirim belirince neden gizlenir, Save açılınca neden kalmaz. Hangi sayfada olunduğu fark etmez.</summary>
     [StaFact]
