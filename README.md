@@ -172,7 +172,8 @@ the running instance first — tray icon → Exit).
    once the graph has a cycle) stay pressable: a press made then waits for the Sync — the button turns into *Stop*
    at once (pressing it takes the request back) — and the run starts the moment the Sync finishes. *Build*
    pressed during a Clean, an Optimize, a branch switch or a pull waits the same way, so a click on *Build* is
-   never lost — not even the one that brings the window back.
+   never lost — not even the one that brings the window back. If the work it waits for fails — a Sync or a job
+   errors, a branch switch or a pull is refused — the request is taken back and the console keeps the reason.
 
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or

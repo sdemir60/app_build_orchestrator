@@ -2863,7 +2863,8 @@ abort it in git`); the same tooltip replaces the `N behind` chip's while the pul
 reason (§10.3). A checkout that is in flight holds every one of those gates for itself: until the engine
 answers, Sync, the maintenance jobs and the pull are closed, because a pull would advance the wrong branch, and no
 run starts, because one started on the new tree would have its console cleared by the checkout's section — a
-*Build* pressed then waits for the checkout and its Sync, and starts on the new tree.
+*Build* pressed then waits for the checkout and its Sync, and starts on the new tree; if the switch is refused or
+fails, the request is taken back under the refusal.
 
 **The configuration segment starts a Sync, and it is gated like one.** Switching between `Debug` and `Release`
 runs the Sync button's process with the new configuration — a ConfigurationChange Sync (§10.2): the console and
@@ -3065,18 +3066,23 @@ window is therefore held as a **request** — and the same holds for a Clean, an
 the same busy question (`WorkspaceBusy`). The click takes effect at once where it can without touching the
 work: the primary button becomes *Stop* (a row's play turns into *Stop* on its row), and one line —
 `build requested; it starts when the work in flight finishes` — goes under the work's own transcript. Nothing
-else moves; the console, the event stream, the rows, the pill and the phase belong to the work. When the work
-ends — the Sync's answer or its failure, or a job together with the Sync it hands over to — the run opens
-exactly as a click at that moment would: console cleared, opening choreography against the plan that has just
-arrived, command sent. The request is looked at only once the engine event that ends the work has been applied
-in full, so the run's opening never lands under the rest of that event (a Sync's phase, its stream line). *Stop*
-and `Esc` take it back as they take back a run whose opening choreography is still playing — nothing reaches the
-engine and the console reads `Cancelled — build not started`; a full exit and a branch change seen by the HEAD
-watcher take it back the same way, and an engine death drops it. If the work ends without a plan, the request is
-taken back too: the topology gate above still holds. A `planFailed` that arrives while a request waits is the
-Sync's — the run's command has not been sent, so the engine has never heard of it. Refusing the press instead
-would lose it: the silent Sync (§10.2) usually starts with the very click that brings the window back, so a
-refused *Build* is a click that vanishes without a trace.
+else moves; the console, the event stream, the rows, the pill and the phase belong to the work, and the graph
+stays out of its run phase — a waiting request holds the lock (`IsMidRunLocked`) but not the look of a run
+(`IsRunUnderway`), so the previous operation's pill does not come alive and the graph does not dim. When the work
+ends — the Sync's answer, or a job together with the Sync it hands over to — the run opens exactly as a click at
+that moment would: console cleared, opening choreography against the plan that has just arrived, command sent.
+The request is looked at only once the engine event that ends the work has been applied in full, so the run's
+opening never lands under the rest of that event (a Sync's phase, its stream line). *Stop* and `Esc` take it back
+as they take back a run whose opening choreography is still playing — nothing reaches the engine and the console
+reads `Cancelled — build not started`; a full exit and a branch change seen by the HEAD watcher take it back the
+same way, an engine death drops it with the same line, and while a full exit waits no request can be made at all.
+Work that does not deliver what the run needs takes it back too, the cancel line landing under the work's own
+failure lines so that the opening never erases them: a Sync or a job that fails (a `planFailed` that arrives
+while a request waits is the Sync's — the run's command has not been sent, so the engine has never heard of it), a
+checkout that does not switch, a pull that does not move the tree, a Sync that brings no plan (the topology gate
+above), and a row's request whose project is no longer in the plan. Refusing the press instead would lose it: the
+silent Sync (§10.2) usually starts with the very click that brings the window back, so a refused *Build* is a
+click that vanishes without a trace.
 
 A second Sync is worse value still — it re-runs the whole analysis, scan through incremental, and every press
 sends three commands, so the ribbon walks `Syncing → Idle → Syncing` while the console prints the same
@@ -5453,7 +5459,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
-| The run commands' one gate; a run pressed while workspace work is in flight — the request, its start when the work ends, its take-back | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `QueueRun`, `StartQueuedRunWhenWorkEnds`, `CancelPendingRun`) |
+| The run commands' one gate; a run pressed while workspace work is in flight — the request, its start when the work ends, its take-back (Stop/Esc/exit/branch change, failed work, engine loss) | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `QueueRun`, `StartQueuedRunWhenWorkEnds`, `CancelPendingRun`, `TakeBackQueuedRun`) |
+| A waiting request holds the lock but not the look of a run (graph run phase, operation pill) | `App/ViewModels/RunViewModel.cs` (`IsRunUnderway`), `MainWindow.xaml.cs` (`PushGraphRunPhase`), `App/Views/StickyRibbon.xaml.cs` (`RefreshOpPill`) |
 | Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
 | Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |
