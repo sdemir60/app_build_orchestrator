@@ -13,9 +13,11 @@ public enum ShortcutId
     FocusFilter,
     About,
     Escape,
-    /// <summary>Global kısayol (tepsiden pencereyi getir) — <see cref="KeyboardShortcuts.WindowBindings"/>'te
-    /// DEĞİLDİR, <see cref="HotkeyBinding"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
-    RestoreFromTray,
+    /// <summary>[kullanıcı kararı 2026-09-29] Global: pencereyi getir / gizle — <see cref="KeyboardShortcuts.WindowBindings"/>'te
+    /// DEĞİLDİR, <see cref="GlobalHotkeys"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
+    ShowHideWindow,
+    /// <summary>[kullanıcı kararı 2026-09-29] Global: pencere gelmeden Build.</summary>
+    BuildInBackground,
 }
 
 /// <summary>[design v1.19.0 §2.10] About'un Shortcuts sekmesindeki caps grubu. Sıra ve başlık metni
@@ -24,20 +26,24 @@ public enum ShortcutGroup
 {
     /// <summary>Koşu komutları — Build, Rebuild, Clean.</summary>
     Build,
-    /// <summary>Uygulama geneli — filtre, dialoglar, katman kapatma, tepsi.</summary>
+    /// <summary>Uygulama geneli — filtre, About, katman kapatma.</summary>
     Application,
+    /// <summary>[kullanıcı kararı 2026-09-29] Pencere öndeyken de tepsideyken de çalışan iki kısayol.</summary>
+    Global,
 }
 
-/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama + ait olduğu grup.</summary>
+/// <summary>[About] Bir kısayol satırı: jest metin(ler)i + tek cümlelik açıklama + ait olduğu grup. Global bir
+/// kısayolsa <paramref name="Global"/> hangi eyleme ait olduğunu söyler — About kaydı düşen satırı buradan işaretler.</summary>
 public readonly record struct ShortcutEntry(
-    ShortcutId Id, IReadOnlyList<string> Gestures, string Description, ShortcutGroup Group);
+    ShortcutId Id, IReadOnlyList<string> Gestures, string Description, ShortcutGroup Group,
+    GlobalHotkeyAction? Global = null);
 
 /// <summary>
 /// [About] Kullanıcıya gösterilen kısayol metinlerinin TEK kaynağı — About diyaloğunun tablosu, Build
 /// menüsünün <c>Ds.Kbd</c> rozetleri ve ikon butonlarının tooltip'leri hep buradan okur.
 ///
 /// <para><b>Jestler ELLE YAZILMAZ:</b> <see cref="Format"/> onları <see cref="KeyboardShortcuts.WindowBindings"/>
-/// satırlarından türetir (global kısayol için <see cref="HotkeyBinding.DefaultGesture"/>). Böylece bir bağlama
+/// satırlarından türetir (global kısayollar için <see cref="GlobalHotkeys"/>). Böylece bir bağlama
 /// değişince gösterilen metin de kendiliğinden değişir. Önceki hâlde <c>"F5"</c>/<c>"Ctrl+F5"</c>
 /// <c>BuildMenu.ComposeItems</c>'ta bağımsız literallerdi — bağlama tablosuyla sessizce ayrışabilirlerdi
 /// (<c>ShortcutCatalogTests</c> kaynak guard'ı bunu bir daha mümkün kılmaz).</para>
@@ -68,6 +74,11 @@ public static class ShortcutCatalog
     /// sparkle butonunun cümlesi <c>ReleaseNotes.WhatsNewTooltip</c>'tedir.</summary>
     public static IReadOnlyList<ShortcutEntry> All { get; } =
     [
+        // [kullanıcı kararı 2026-09-29] Jestler GlobalHotkeys tablosundan okunur (varsayılanlar) — başka yerde yazılmaz.
+        new(ShortcutId.ShowHideWindow, [GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],
+            "Show or hide the window", ShortcutGroup.Global, GlobalHotkeyAction.ShowHide),
+        new(ShortcutId.BuildInBackground, [GlobalHotkeys.Get(GlobalHotkeyAction.Build).DefaultGesture],
+            "Build without bringing the window up", ShortcutGroup.Global, GlobalHotkeyAction.Build),
         new(ShortcutId.Build, GesturesFor(WindowIntent.Build),
             "Build — only stale projects", ShortcutGroup.Build),
         new(ShortcutId.Rebuild, GesturesFor(WindowIntent.Rebuild),
@@ -81,17 +92,19 @@ public static class ShortcutCatalog
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
-            "Close the topmost open layer: dialog → popover/menu → selection", ShortcutGroup.Application),
-        new(ShortcutId.RestoreFromTray, [GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],
-            "Global — bring the window back from the tray", ShortcutGroup.Application),
+            "Close the topmost layer: dialog → popover/menu → selection; otherwise stop the running build",
+            ShortcutGroup.Application),
     ];
 
-    /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası.</summary>
-    public static IReadOnlyList<ShortcutGroup> GroupOrder { get; } = [ShortcutGroup.Build, ShortcutGroup.Application];
+    /// <summary>[design v1.19.0 §2.10] Grupların gösterim sırası. [kullanıcı kararı 2026-09-29] GLOBAL ilk sıradadır —
+    /// kullanıcının "en önemlileri" dediği iki kısayol.</summary>
+    public static IReadOnlyList<ShortcutGroup> GroupOrder { get; } =
+        [ShortcutGroup.Global, ShortcutGroup.Build, ShortcutGroup.Application];
 
     /// <summary>[design v1.19.0 §2.10] Grubun başlığı — caps olarak çizilir (<c>TrackedTextBlock</c> büyütür).</summary>
     public static string GroupTitle(ShortcutGroup group) => group switch
     {
+        ShortcutGroup.Global => "Global",
         ShortcutGroup.Build => "Build",
         ShortcutGroup.Application => "Application",
         _ => throw new ArgumentOutOfRangeException(nameof(group), group, null),

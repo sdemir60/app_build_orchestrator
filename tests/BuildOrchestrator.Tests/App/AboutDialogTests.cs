@@ -266,7 +266,7 @@ public class AboutDialogTests
 
             Select(dialog, ShortcutsTab);
             dialog.CloseDialog();
-            dialog.Open(run, true, () => Task.FromResult(AboutDialogHost.FakeMsBuild));
+            dialog.Open(run, _ => true, () => Task.FromResult(AboutDialogHost.FakeMsBuild));
             Assert.True(Tabs(dialog)[AboutTab].IsChecked);
         }
     }
@@ -605,13 +605,15 @@ public class AboutDialogTests
     // ---------------------------------------------------------------- Shortcuts sekmesi
 
     /// <summary>
-    /// [design v1.19.0 §2.10] İki caps grup — <b>BUILD</b> ve <b>APPLICATION</b>; grup bilgisi ve açıklama
-    /// metinleri <see cref="ShortcutCatalog"/>'dan (birebir), her satırın jestleri <c>Ds.Kbd</c> rozeti.
+    /// [design v1.19.0 §2.10] Caps gruplar katalogun sırasıyla; grup bilgisi ve açıklama metinleri
+    /// <see cref="ShortcutCatalog"/>'dan (birebir), her satırın jestleri <c>Ds.Kbd</c> rozeti.
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.19.0]</b> ESKİ İDDİA: sekme gruplanmamış tek bir listeydi ve
-    /// dialogun İLK sekmesiydi (açılışta görünürdü). Artık üçüncü sekmedir ve iki gruba ayrılır.</para></summary>
+    /// dialogun İLK sekmesiydi (açılışta görünürdü). Artık üçüncü sekmedir ve gruplara ayrılır.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> İki grup (BUILD → APPLICATION) üçe çıktı: GLOBAL →
+    /// BUILD → APPLICATION; sıra iddiası ardışık her grup çiftine genişledi.</para></summary>
     [StaFact]
-    public void The_shortcuts_tab_groups_catalog_entries_under_build_and_application()
+    public void The_shortcuts_tab_groups_catalog_entries_in_catalog_order()
     {
         var (dialog, _, scope) = AboutDialogHost.OpenRealized();
         using (scope)
@@ -622,7 +624,9 @@ public class AboutDialogTests
                 .Where(c => c.IsVisible).Select(c => c.Content as string).Where(c => c is not null).ToList();
             var groupTops = ShortcutCatalog.GroupOrder
                 .Select(g => TopIn(VisibleText(dialog, ShortcutCatalog.GroupTitle(g)), dialog)).ToList();
-            Assert.True(groupTops[0] < groupTops[1], "BUILD grubu APPLICATION'dan önce değil");
+            for (int i = 1; i < groupTops.Count; i++)
+                Assert.True(groupTops[i - 1] < groupTops[i],
+                    $"{ShortcutCatalog.GroupOrder[i - 1]} grubu {ShortcutCatalog.GroupOrder[i]}'den önce değil");
 
             foreach (var entry in ShortcutCatalog.All)
             {
@@ -637,22 +641,29 @@ public class AboutDialogTests
     }
 
     /// <summary>Global kısayol kaydı çakışma yüzünden düştüğünde bu GÖRÜNÜR olur — README'nin "sessizce devre
-    /// dışı" davranışını kullanıcının anlamasının başka bir yolu yok.</summary>
+    /// dışı" davranışını kullanıcının anlamasının başka bir yolu yok.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: tek bir global satır vardı ve tek bir
+    /// "kayıtlı mı" bayrağı onu işaretlerdi. İki global kısayol var ve her biri AYRI kaydedilir — işaret yalnız
+    /// kaydı düşen satıra konur, öbürü temiz kalır.</para></summary>
     [StaFact]
-    public void An_unregistered_global_hotkey_is_marked_unavailable()
+    public void Only_the_global_hotkey_whose_registration_failed_is_marked_unavailable()
     {
-        var (registered, _, scope1) = AboutDialogHost.OpenRealized(hotkeyRegistered: true);
+        var (registered, _, scope1) = AboutDialogHost.OpenRealized(hotkeyRegistered: _ => true);
         using (scope1)
         {
             Select(registered, ShortcutsTab);
             Assert.DoesNotContain(VisibleTexts(registered), t => t.Contains("unavailable", StringComparison.Ordinal));
         }
 
-        var (disabled, _, scope2) = AboutDialogHost.OpenRealized(hotkeyRegistered: false);
+        var (oneFailed, _, scope2) = AboutDialogHost.OpenRealized(
+            hotkeyRegistered: action => action != GlobalHotkeyAction.Build);
         using (scope2)
         {
-            Select(disabled, ShortcutsTab);
-            Assert.Contains(VisibleTexts(disabled), t => t.Contains("unavailable", StringComparison.Ordinal));
+            Select(oneFailed, ShortcutsTab);
+            Assert.Single(VisibleTexts(oneFailed), t => t.Contains("unavailable", StringComparison.Ordinal));
+            var marked = oneFailed.ShortcutRows.SelectMany(g => g.Rows).Where(r => r.Unavailable).Select(r => r.Description);
+            Assert.Equal([ShortcutCatalog.Get(ShortcutId.BuildInBackground).Description], marked);
         }
     }
 

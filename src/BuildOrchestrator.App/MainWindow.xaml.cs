@@ -997,7 +997,7 @@ public partial class MainWindow : Window
     private void OnAboutRequested()
     {
         if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
-        AboutOverlay.Open(_vm, IsHotkeyRegistered(GlobalHotkeyAction.ShowHide), ResolveMsBuildAsync);
+        AboutOverlay.Open(_vm, IsHotkeyRegistered, ResolveMsBuildAsync);
     }
 
     /// <summary>[design v1.13.0 §2.11] What's new butonu → What's new modali.</summary>
