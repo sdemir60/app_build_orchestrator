@@ -52,7 +52,7 @@ public class EventStreamIdlePromptTests
         var (view, window) = Realize(vm);
 
         // Bir koşu: aktif satır canlı (amber), sonra biter.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         Assert.Equal(Visibility.Visible, view.ActiveLine.Visibility);       // ön-koşul
         // [DEĞİŞEN KURAL — v1.12.1] Ön-koşul artık "canlıyken amber" DEĞİL: motion açıkken imlecin rengini
@@ -89,7 +89,7 @@ public class EventStreamIdlePromptTests
     {
         var vm = NewVm();
         var (view, window) = Realize(vm, motion: false);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
 
@@ -114,7 +114,7 @@ public class EventStreamIdlePromptTests
         var (view, window) = Realize(vm, motion: false); // [v1.12.1] ton yalnız tur dönmezken görünür
         Assert.Equal(Token(view, "Brush.AmberText"), CursorColour(view)); // hiç olay yok
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 0, 100));
@@ -144,7 +144,7 @@ public class EventStreamIdlePromptTests
     {
         var vm = NewVm();
         var (view, window) = Realize(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         Assert.Equal("A building…", view.ActiveText.Text); // ön-koşul
 

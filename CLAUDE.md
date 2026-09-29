@@ -8,6 +8,7 @@
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
 | [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
+| [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
 davranış hangi dosyada), §13-§14 UI ve design system'i — renk, ölçü, tipografi, motion ve bileşen davranışları
@@ -117,6 +118,24 @@ kadarki tüm değişiklikler dokümanlara işlenir.
 - **Her iddia kodda doğrulanır.** Doğru ifadeye dokunma; emin olamadığını sor.
 - **Rakam gömme:** bayatlayacak sayı (test sayısı, sha) yazma; dayanıklı dil kullan.
 - `.claude/outputs/` ve `.claude/summaries/` **tarihseldir** — geriye dönük düzeltilmez.
+
+## Sürüm çıkarma
+
+Sürüm notları ve sürüm numarası **yalnız** kullanıcı "sürüm çıkar", "yeni versiyon", "versiyon no oluştur" gibi
+bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory.Build.props` → `Version`'a dokunulmaz.
+
+1. **Kaynak:** son tag'den bu yana main'e girenler — `git log --first-parent v<son>..main` merge mesajları +
+   ilgili `.claude/outputs/` sonuç raporları. Ayrı bir ayrıntılı log dosyası tutulmaz; merge mesajı zaten odur.
+2. **Numara:** yalnız düzeltme → patch · yeni özellik → minor · büyük dönüm noktası → major (kullanıcıya sor).
+3. **Not:** `CHANGELOG.md`'nin en üstüne `## [x.y.z] - yyyy-MM-dd` (sürüm günü). Kategoriler Added · Changed ·
+   Fixed · Performance · Removed sırasıyla, boşu yazılmaz. Maddeler İngilizce ve düz metin (markdown işareti
+   yok); kısa, genel, kullanıcının gördüğü özellik — iç terim, dosya/sınıf adı ve "şuraya şunu ekledik" yok;
+   küçük işler tek genel satırda toplanır. Her madde o anki koda göre doğrulanır.
+4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
+5. **Yayın:** tam süit yeşil → commit → `main`'e merge → merge commit'ine annotated tag `vX.Y.Z` → `git push` +
+   `git push origin vX.Y.Z`.
+
+Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
 ## Çıktı, özet ve aşama dosyaları
 

@@ -100,15 +100,25 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 ### 3.3 Shared build properties
 
 `Directory.Build.props` holds `Nullable`, `ImplicitUsings`, `LangVersion` and the distribution identity
-(`Version`, `InformationalVersion`, `Product`, `Company`, `Copyright`). The informational version carries a
-delivery tag so that the value observed at runtime proves the property file is actually wired: the Supervisor
-reads it from its own assembly and reports it in `engineReady`, and the App prints it in the console boot line.
+(`Version`, `Product`, `Company`, `Copyright`). The informational version is not written separately: the SDK
+derives it from `Version`, and the source-revision suffix is switched off, so every surface shows a plain
+`major.minor.patch`. The Supervisor reads it from its own assembly and reports it in `engineReady`, and the App
+prints it in the console boot line. A test proves the property file is actually wired: both assemblies carry
+exactly the declared version, and that version is not the SDK's default `1.0.0`.
+
+`Version` moves only when a version is released, and together with the release notes: the newest version in
+`CHANGELOG.md` must equal it (§13.3, What's new), and the release is tagged `v` + that value in git.
 
 That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
 version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
 the tray balloons and the About dialog all draw from it — a guard forbids the product name appearing as a literal
 in any App source file. The copyright is read as one string rather than composed from a year and a company,
 because a copyright year is not a runtime value.
+
+Windows reads the same name off the executable: the App's `.csproj` sets `AssemblyTitle` to `$(Product)`, so the
+file description — the name Task Manager shows for the process and for the startup entry of §12.3 — is the
+product name rather than the SDK default, the assembly name. The Supervisor keeps its own name, so the two
+processes stay distinguishable.
 
 The supervisor folder name is declared **once**, as the `SupervisorFolderName` MSBuild property in the App's
 `.csproj`, and travels to runtime as an `AssemblyMetadata` attribute that `Services/SupervisorLayout` reads
@@ -211,7 +221,8 @@ turned red. Draining costs the remaining time of the slowest in-flight project a
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
 pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
 
-`runStopped` and `runCompleted` each fire exactly once, and the elapsed clock is preserved.
+`runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
+`runCompleted` (the next Build counts from zero).
 
 Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
@@ -402,8 +413,8 @@ Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `proj
 `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
 
-`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of a fresh
-segment (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
+`planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
+(§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
 transcript, and a run's planning window is not a Sync.
 
 `cleanProgress` shares its shape with `syncProgress` — a line and a level — but is a channel of its own for
@@ -1288,8 +1299,7 @@ line, and a strange line stitch in MSBuild output cannot desynchronize the chunk
 
 ### 8.6 Planning pipeline
 
-Planning is entirely Core's work; the Supervisor's composition root only wires it. For a fresh run
-(`Build`/`Rebuild`) the sequence is:
+Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the sequence is:
 
 ```
 update external working copies (§10.4)            ← before everything: a fast-forward can bring new
@@ -1297,13 +1307,14 @@ update external working copies (§10.4)            ← before everything: a fast
   → scan (once, main root + every external root)
   → evaluate (cached) → producer map
   → edges → solution map → topological order → BuildPlan
-  → (Build only) incremental pass: per-project signature + willBuild
+  → incremental pass (every mode): per-project signature + willBuild
   → RunPlan { plan, solutionRefs, incremental }
 ```
 
-The update step is skipped when the user has turned it off and by a `Cycles` run, which is a repair pass over
-existing strongly connected components and has no business updating anyone's working copy. The *scan* still
-covers the external roots in every mode, so the graph a Cycles run repairs is the same graph a Build sees.
+The update step is skipped when the user has turned it off and by a `Cycles` or `Clean` run: one is a repair
+pass over existing strongly connected components, the other only deletes output, and neither has any business
+updating anyone's working copy (§10.4). The *scan* still covers the external roots in every mode, so the graph
+either run works against is the same graph a Build sees.
 
 **One tree, one identity.** A run always builds the working tree at the repository root — whatever branch is
 checked out there — so a project's id, its full csproj path, is also where it is compiled. Everything flows by
@@ -1493,7 +1504,7 @@ there, because a member compiled in the first round may have bound to a method t
 identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
-idempotent against what is on disk and the next `Build` picks up where this one left off. Restore is not
+idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
 repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
 between rounds can change `packages.config` — only a member that failed carries the restore prologue again
 (§9.3), because the failure may have been the restore's own.
@@ -1560,9 +1571,10 @@ when the budget ran out.
 Reaching any real verdict clears the memory, at the same place that writes it — convergence and the ceiling
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
-being load-bearing. Within a `Cycles` run no member can reach
-that state — a dependency issue needs a *failed* dependency (§8.3) and nothing outside the group is built —
-but the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
+being load-bearing. A converged member can carry a dependency issue too — its transitive upstream compiles in
+the same `Cycles` run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
+with a note and its roots (§8.3), so the memory is lost the same way, as a side effect of that same fresh build
+state; the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
 Which member's signature stands for the group is decided in one place for both the writing and the reading
 side, since the two hold the component in different orders. In the mode the App actually sends every member
@@ -2132,11 +2144,16 @@ floor (§4.5).
 ### 12.1 Startup routes and composition
 
 Argument parsing has one owner and three routes, in priority order: `--font-ab` (a developer shell for the font
-comparison — no DI, no engine, deliberately outside the single-instance gate), `--autostart` (start hidden in
-the tray), normal. An unrecognized argument is swallowed.
+comparison — no DI, no engine, deliberately outside the single-instance gate), start hidden in the tray, and
+normal. `--autostart` is only the marker the Windows startup entry (§12.3) passes to say *Windows started me*:
+whether such a start stays hidden in the tray or shows the window is decided by the saved *Start minimized to
+tray* switch, which the App reads from `ui-state.json` before it picks the route. One source of truth — changing
+the switch never rewrites the startup entry. With the switch off, a Windows start opens the window like any
+other; a start by hand always shows the window. An unrecognized argument is swallowed.
 
 The composition root registers the `EngineHost` (resolving the Supervisor path from the assembly metadata of
-§3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service and the view models. Two application-wide
+§3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service, the
+autostart service (the one owner of the Windows startup entry, §12.3) and the view models. Two application-wide
 singletons are exposed statically because their owners have no constructor seam: the reduced-motion settings and
 the hero-motion coordinator.
 
@@ -2262,7 +2279,26 @@ conflict disables it silently; the tray icon still restores the window. There is
 but the loss is no longer invisible: the About screen marks that shortcut row *unavailable* when the
 registration did not take.
 
-Autostart writes to `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. No admin rights, no HKLM, no service.
+**Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
+no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
+by `--autostart` (§12.1). The saved switch is the app's wish, and every start reconciles the value with it: an
+executable that has moved is re-pointed on its next launch, and a registry that refuses the write — a policy,
+security software — is skipped rather than taking the start down. A Windows start that meets a running instance
+follows the second-instance rule above, and either kind of start runs the startup Sync of §12.1.
+
+The switch shows what Windows will actually do, not the saved wish: no value reads off, a value reads on —
+unless the user turned the app off in Task Manager's *Startup apps* (or Settings → Apps → Startup). Windows
+keeps that decision beside the value, under `...\Explorer\StartupApproved\Run`, as a binary value whose first
+byte is odd when the entry is disabled (Task Manager writes `03` and the time it was turned off, `02` when it is
+turned back on; no value counts as enabled). Then the switch reads off and its description says it was turned
+off in Task Manager.
+
+*Save* touches the entry only when the switch was changed in the dialog. Turning it on writes the value and
+removes Task Manager's mark, because the latest explicit decision wins; turning it off deletes the value. A save
+that leaves the switch alone changes neither the entry nor the saved wish, so a decision taken in Task Manager is
+never overridden in passing — and the per-start reconciliation never touches the mark at all. If Windows refuses
+the write, the console says so in one line and the saved wish stays as it was. Task Manager lists the entry
+under the product name (§3.3).
 
 Coming back to the window — from the tray, the overlay, a notification or any other window — raises the window's
 activation, and activation is a trigger for the automatic Sync: when more than five seconds have passed since
@@ -2364,8 +2400,8 @@ wait ends. The exit's line describes the present too, so it also sits above the 
 and the silence, because those two are what end the wait. It is the Stopping line in any phase — the in-flight
 count while a build drains, `▸ Stopping — wrapping up` otherwise — since a Sync, a Clean or a pull being waited
 for never moves the phase to `stopping`, and a close that left the ribbon unchanged would read as unheard. A
-rejected request is not a failure and does not take this path — declining a request with nothing to resume
-leaves the `stopped` line standing, because that line is still true.
+rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
+standing, because that line is still true.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -3035,22 +3071,23 @@ to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
 no layout work. A row that depends on another (*Start minimized to tray* on *Start with Windows*) fades to the
-switch's own disabled opacity and stops taking input while its parent is off, without moving anything. *Pull
-before build*, *Stash and switch branches*, *Close to tray* and *Show notifications* drive behaviour; *Start
-with Windows* and *Start minimized to tray* live in the draft alone (§20). *Stash and switch branches* follows
-the pull switch's rules: saved with *Save*, carried to the engine on the next checkout, and a console note
-written only when its value actually changed.
+switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Every
+switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
+*Save*, carried to the engine on the next checkout, and a console note written only when its value actually
+changed.
 
-*Close to tray* and *Show notifications* are **shell switches**: they decide how the window closes and whether
-the tray speaks (§12.3), not how anything builds, so they never travel to the engine. One table
-(`ShellSwitches`) holds, for each, its field in `ui-state.json`, its key in the settings file and the two halves
-of its console note; the draft's opening values, Export, Import and *Save* all walk that table — a new shell
-switch is a new row. *Save* writes both, and the dialog opens on the saved values — the catalog defaults, both
-on, until a first save. A value that differs from the saved one prints one line on *Save*, such as `Close to
-tray off — closing the window quits the app` or `Show notifications on — tray notifications are shown`, whatever
-the engine or the workspace is doing; an unchanged one stays quiet. Nothing holds a copy: whatever acts on a
-shell switch reads it from `ui-state.json` at the moment it acts, so a saved change applies from the next close
-or the next balloon.
+*Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
+they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
+engine. One table (`ShellSwitches`) says, for each, how it is read from and written to `ui-state.json` and the
+settings file and what its console note reads; the draft walks that table when it opens, exports, imports and
+saves, so a new shell switch is a row there plus the `ui-state.json` field and the settings-file key it reads and
+writes. *Save* writes all four, and the dialog opens on the saved values — the catalog defaults (the startup
+pair off, *Close to tray* and *Show notifications* on) until a first save. A value that differs from the saved
+one prints one line on *Save*, such as `Close to tray off — closing the window quits the app`, whatever the
+engine or the workspace is doing; an unchanged one stays quiet. Behaviour reads the saved value through the same
+table, fresh each time (§12.3). *Start with Windows* is the one exception to "the dialog opens on the saved
+value": it opens on the Windows startup entry and is applied only when changed (§12.3). A row's description can
+give way to a note about the row's current state — today only Task Manager's disabled mark (§12.3).
 
 **Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
 required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
@@ -3133,18 +3170,20 @@ that state. The root is still applied because it is local state that persists, a
 engine returns carries it.
 
 A root that changes *later* announces itself in the console — `Repository root → D:\src\osys — Sync
-required` — and nothing is reset: the user syncs when ready. The first setup stays silent, because a Sync
-starts there anyway and the note would be noise.
+required` — and the old repository's state goes with it: the rows fall back to hollow, the plan surface empties
+(§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
+branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
+anyway and the note would be noise.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, closeToTray, showNotifications, layers[{ name, pattern }] }`, the
-external array sitting between the root and the layers (the field order the file is written in, not just a key
-that happens to be present) and holding only cards with a non-blank path; import reads one back **into the
-form**; clear empties the root, every layer and every external card, and returns every General switch to its
-catalog default — *Pull before build*, *Close to tray* and *Show notifications* on, the rest off. Of General, the
-four switches that drive behaviour travel in the file; *Start with Windows* and *Start minimized to tray* do not.
-All three touch the draft only: nothing is
+pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, closeToTray,
+showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
+field order the file is written in, not just a key that happens to be present) and holding only cards with a
+non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
+card, and returns every General switch to its catalog default — *Pull before build*, *Close to tray* and *Show
+notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has
+*Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
@@ -3157,9 +3196,9 @@ name` or `Check the highlighted pattern`, in that order of priority. The draft d
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits `pullExternalBeforeBuild`, `stashOnBranchSwitch`, `closeToTray` or `showNotifications` leaves
-that switch where it is, the same rule the external list already follows: a file cannot silently reset a setting
-it does not carry.
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows`,
+`startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch where it is, the same rule the
+external list already follows: a file cannot silently reset a setting it does not carry.
 
 Import is tolerant on the way in: an `externalProjects` entry can be the object above or a bare path string,
 the two forms the design package's own prototype accepts. Any other key on an entry is ignored — the `vcs` an
@@ -3252,6 +3291,17 @@ button with a down chevron, placed in the notes column of the same two-column gr
 aligned flush with the note text (its own left padding cancelled by a negative margin); the fold returns on
 the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
 diagnostics live.
+
+**The notes come from `CHANGELOG.md` at the repository root**, the single source — no list is kept in code.
+The App embeds the file as a resource and `ReleaseNotes` parses it on first use: a `## [x.y.z] - yyyy-MM-dd`
+heading opens a version, a `### Added` … `### Removed` heading opens a category (only the five kinds above),
+and each `- ` line is one plain-text note, with indented lines continuing it. Anything else — an unknown
+category, a note outside a category, prose inside a version, a version without notes — is rejected with its
+line number rather than silently dropped. The guards pin that the embedded text is the file on disk, that
+versions run newest first with real dates, that categories appear once each in drawing order, that notes carry
+no markup, and that the newest version is the running one — so `Version` cannot move without its notes. The
+file is written only when a version is released: a few short, general lines per version, summarizing the
+merges since the previous version's tag.
 
 This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
 dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
@@ -4630,9 +4680,10 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), whether closing the window hides to the tray and whether tray notifications are shown (§12.3), hotkey, autostart, tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
+| `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
-Autostart additionally writes one `HKCU\...\Run` value.
+*Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
+disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
 
 The three ledgers are **shared by every workspace**, so neither maintenance operation deletes a file; both work
 by key.
@@ -4719,6 +4770,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | App icon background | every ICO frame's corners are transparent — the tile has not come back |
 | Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
 | "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
+| Release notes (`ChangelogTests`) | the App embeds the repository's `CHANGELOG.md` itself; its versions run newest first with real dates, categories appear once each in drawing order, notes are plain text, and the newest version is the running one (§13.3) |
 | Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
@@ -4905,9 +4957,6 @@ do, and how the interface works around each — useful to know before attempting
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
 - **The global hotkey has no settings UI** (§12.3).
-- **Two General switches are not wired yet.** *Start with Windows* and *Start minimized to tray* live only in
-  the Settings draft: they are not saved, exported or imported, and change no behaviour — every time the dialog
-  opens they are back at their defaults.
 
 ---
 
@@ -5032,10 +5081,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
-| Argument parsing (`--font-ab`, `--autostart`) | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
+| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
-| Single instance, tray icon, global hotkey, autostart, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Services/AutostartService.cs`, `App/Shell/AppShutdown.cs` |
+| Single instance, tray icon, global hotkey, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
+| Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs` |
 | …its shell side: tray *Exit*, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`ExitFromTray`, `ExitNow`) |
@@ -5051,7 +5101,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
-| Release notes (What's new data, categories, fold rule) | `App/Services/ReleaseNotes.cs` |
+| Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
 
 **Engine and IPC**
 
@@ -5105,7 +5155,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
@@ -5116,7 +5166,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
-| Run snapshot and elapsed clock across segments | `Core/Scheduling/RunSnapshot.cs`, `RunClock.cs` |
+| Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
@@ -5209,7 +5259,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
-| General shell switches (*Close to tray*, *Show notifications*): their `ui-state.json` field, settings-file key and console note in one table, the saved-or-default value every reader asks for, the Save that notes a change | `App/Shell/ShellSwitches.cs` |
+| General shell switches (*Start with Windows*, *Start minimized to tray*, *Close to tray*, *Show notifications*): how each is read from and written to `ui-state.json` and the settings file, its console note, the saved-or-default value every reader asks for, the Save that notes a change | `App/Shell/ShellSwitches.cs` |
 | Settings export/import file format | `App/ViewModels/SettingsFile.cs` |
 | Inventory publishing (one notification per publish, none when unchanged) | `App/ViewModels/SnapshotCollection.cs` |
 

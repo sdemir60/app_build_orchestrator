@@ -156,10 +156,9 @@
              [design v1.19.0 §2.9] Gruplar ve satırlar GeneralSettingsCatalog'dan (taslak: GeneralGroups) doğar; her
              satır TEK şablonla çizilir (Ds.Settings.ToggleRow) — yeni ayar = kataloğa bir satır, burada düzen işi yok.
              Grup: caps başlık (Ds.Settings.GroupHeading) → 5px → satırlar; gruplar arası 22px. Pull before build,
-             Stash and switch branches, Close to tray ve Show notifications bağlıdır (son ikisi Task 1'den beri
-             kalıcı — ShellSwitches; Close to tray pencere kapanışını, Show notifications üç tray-balloon yolunu
-             sürer — Task 4); yalnız Start with Windows ve Start minimized to tray henüz taslaktır
-             (SettingsDraftViewModel.GeneralGroups). -->
+             Stash and switch branches ve dört kabuk anahtarı (Start with Windows, Start minimized to tray, Close to
+             tray, Show notifications) davranışa bağlıdır; kabuk anahtarları ShellSwitches üzerinden kalıcıdır. -->
+
         <StackPanel x:Name="GeneralPage"
                     Visibility="{Binding IsChecked, ElementName=GeneralRailItem, Converter={StaticResource PageVisibility}}">
           <TextBlock Text="General" Style="{DynamicResource Ds.Settings.PaneTitle}" />

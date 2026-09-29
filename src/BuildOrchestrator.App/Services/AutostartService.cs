@@ -1,3 +1,6 @@
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Security;
 using Microsoft.Win32;
 
 namespace BuildOrchestrator.App.Services;
@@ -14,6 +17,24 @@ public interface IAutostartRegistry
     void Remove(string name);
     /// <summary>Autostart değeri var mı.</summary>
     bool Exists(string name);
+    /// <summary>[P4] Kullanıcı bu değeri Görev Yöneticisi → Başlangıç uygulamaları'nda (ya da Ayarlar → Uygulamalar →
+    /// Başlangıç'ta) devre dışı bırakmış mı — <see cref="StartupApproval"/>.</summary>
+    bool IsStartupDisabled(string name);
+    /// <summary>[P4] Görev Yöneticisi'nin "devre dışı" işaretini kaldırır (yoksa no-op) — Windows işaretsiz değeri
+    /// etkin sayar.</summary>
+    void ClearStartupDisabled(string name);
+}
+
+/// <summary>[P4] Görev Yöneticisi → Başlangıç uygulamaları'nın (ve Ayarlar → Uygulamalar → Başlangıç'ın) kararı
+/// <c>Run</c> değerinin YANINDA, <see cref="KeyPath"/> altında AYNI adlı ikili bir değerde durur: Windows kapatınca
+/// <c>03 00 00 00</c> + kapatıldığı anı (FILETIME), açınca <c>02 00 00 00</c> + sıfırları yazar. Değer yoksa Windows
+/// kaydı etkin sayar.</summary>
+internal static class StartupApproval
+{
+    public const string KeyPath = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+    /// <summary>İlk bayt TEK ise devre dışı (03/07), çift ise etkin (02/06); değer yoksa ya da boşsa etkin.</summary>
+    public static bool IsDisabled(byte[]? data) => data is { Length: > 0 } && (data[0] & 1) == 1;
 }
 
 /// <summary>
@@ -42,6 +63,18 @@ public sealed class RegistryAutostartRegistry : IAutostartRegistry
         using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
         return key?.GetValue(name) is not null;
     }
+
+    public bool IsStartupDisabled(string name)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StartupApproval.KeyPath, writable: false);
+        return StartupApproval.IsDisabled(key?.GetValue(name) as byte[]);
+    }
+
+    public void ClearStartupDisabled(string name)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(StartupApproval.KeyPath, writable: true);
+        key?.DeleteValue(name, throwOnMissingValue: false);
+    }
 }
 
 /// <summary>
@@ -49,16 +82,79 @@ public sealed class RegistryAutostartRegistry : IAutostartRegistry
 /// yazılır, <c>false</c> iken silinir. <see cref="Apply"/> IDEMPOTENT'tir — her açılışta güvenle çağrılabilir
 /// (tercih ile registry'yi hizalar). Değer adı ve komut (exe yolu + autostart argümanı) çağırandan enjekte edilir
 /// (App.xaml.cs) — servis konum/komut bilmez, yalnız seam'i sürer.
+/// <para>[P4] Uygulamada TEK örnektir (DI): Settings'in Start with Windows anahtarı da onu kullanır — gerçek durumu
+/// <see cref="State"/>'ten gösterir, Save'de <see cref="TryTurn"/> ile kaydı anında yazar.</para>
 /// </summary>
 public sealed class AutostartService(IAutostartRegistry registry, string valueName, string command)
 {
     /// <summary>Registry değer adı (HKCU\...\Run altındaki değerin adı).</summary>
     public const string DefaultValueName = "BuildOrchestrator";
 
-    /// <summary>Tercihe göre autostart değerini yazar (enabled) ya da kaldırır (disabled).</summary>
-    public void Apply(bool autostartEnabled)
+    /// <summary>Açılışın uzlaştırması: tercihe göre autostart değerini yazar (enabled) ya da kaldırır (disabled).
+    /// [P4] Windows kaydı yazamazsa (bir politika ya da güvenlik yazılımı <c>HKCU\...\Run</c>'ı kilitlemiş) SESSİZCE
+    /// geçer — uygulamanın açılışı bir tercih yüzünden düşmez; bir sonraki açılış yeniden dener.</summary>
+    public void Apply(bool autostartEnabled) => TryWrite(() => WriteRunValue(autostartEnabled), out _);
+
+    /// <summary>[P4] Windows'un GERÇEK durumu — Settings'in Start with Windows anahtarı bundan açılır (kayıtlı
+    /// tercihten değil): Run değeri yoksa <see cref="AutostartState.Off"/>; varsa ve Görev Yöneticisi'nde devre dışı
+    /// bırakılmışsa <see cref="AutostartState.DisabledInStartupApps"/>; aksi hâlde <see cref="AutostartState.On"/>.
+    /// Okunamazsa <see cref="AutostartState.Off"/>.</summary>
+    public AutostartState State
     {
-        if (autostartEnabled) registry.Set(valueName, command);
+        get
+        {
+            try
+            {
+                if (!registry.Exists(valueName)) return AutostartState.Off;
+                return registry.IsStartupDisabled(valueName) ? AutostartState.DisabledInStartupApps : AutostartState.On;
+            }
+            catch (Exception ex) when (IsRegistryRefusal(ex)) { return AutostartState.Off; }
+        }
+    }
+
+    /// <summary>[P4] Save'in yolu: kullanıcı Start with Windows'u değiştirdiğinde kayıt ANINDA yazılır (açık) ya da
+    /// silinir (kapalı) — yeniden başlatma beklenmez. Açarken Görev Yöneticisi'nin "devre dışı" işareti de kaldırılır
+    /// (kullanıcı kararı, seçenek 1: en son ve açıkça verilen karar "aç"tır); <see cref="Apply"/> bunu YAPMAZ.
+    /// Yazılamazsa <c>false</c> ve Windows'un nedeni (<paramref name="failure"/>); fırlatmaz.</summary>
+    public bool TryTurn(bool on, [NotNullWhen(false)] out string? failure) => TryWrite(() =>
+    {
+        WriteRunValue(on);
+        if (on && registry.IsStartupDisabled(valueName)) registry.ClearStartupDisabled(valueName);
+    }, out failure);
+
+    private void WriteRunValue(bool on)
+    {
+        if (on) registry.Set(valueName, command);
         else registry.Remove(valueName);
     }
+
+    private static bool TryWrite(Action write, [NotNullWhen(false)] out string? failure)
+    {
+        try
+        {
+            write();
+            failure = null;
+            return true;
+        }
+        catch (Exception ex) when (IsRegistryRefusal(ex))
+        {
+            failure = ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>Registry'nin "yazamazsın/okuyamazsın" dediği üç istisna — başka bir istisna bir HATADIR ve yutulmaz.</summary>
+    private static bool IsRegistryRefusal(Exception ex) =>
+        ex is UnauthorizedAccessException or SecurityException or IOException;
+}
+
+/// <summary>[P4] Windows'un başlangıç kaydının gerçek durumu (<see cref="AutostartService.State"/>).</summary>
+public enum AutostartState
+{
+    /// <summary>Kayıt yok — Windows oturumu açılınca uygulama başlamaz.</summary>
+    Off,
+    /// <summary>Kayıt var — Windows oturumu açılınca uygulama başlar.</summary>
+    On,
+    /// <summary>Kayıt var ama kullanıcı Görev Yöneticisi'nde devre dışı bırakmış — Windows uygulamayı başlatmaz.</summary>
+    DisabledInStartupApps,
 }

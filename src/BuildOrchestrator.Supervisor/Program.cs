@@ -63,9 +63,9 @@ public static class Program
             interruptedProjects);
         return await host.RunAsync();
 
-        // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan → (fresh modda)
-        // incremental willBuild + imza. Planlayıcı yalnız fresh (Rebuild/Build) modda çağrılır (Continue/RetryFailed
-        // mevcut plan'dan devam eder — bkz. RunCoordinator).
+        // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan →
+        // incremental willBuild + imza. Planlayıcı (ComputeIncremental) dört modun HEPSİNDE çağrılır — mod
+        // kapısı yok; yalnız Cycles modu Bind'a bileşik imza bayrağını geçirir.
         // [planlama görünürlüğü] `progress` satırları PlanProgressEvent olarak, runStarted'tan ÖNCE App'e gider
         // (bkz. RunCoordinator'ın planner parametresi). Metinler Core'daki PlanProgressLines'tan gelir — Sync'in
         // yazdıklarıyla AYNI kaynak: iki akış aynı işi anlatır ve tek yerden güncellenir (CLAUDE.md kopya yasağı).
@@ -159,7 +159,7 @@ public static class Program
     }
 
     /// <summary>
-    /// [Task 19] Fresh (Rebuild/Build) run için incremental karar: her düğüm için <c>WillBuild</c> + byte-stable
+    /// [Task 19] Her koşu için incremental karar: her düğüm için <c>WillBuild</c> + byte-stable
     /// <see cref="BuildOrchestrator.Core.Incremental.BuildSignature"/> imzası hesaplanır.
     /// <b>SALT-OKUR git (K1):</b> HEAD/branch yalnız OKUNUR — checkout/pull/fetch/reset ASLA. Herhangi bir
     /// discovery/hash hatası → plan AYNEN döner (WillBuild=null) ve <c>Incremental=null</c>: Build o durumda

@@ -59,7 +59,7 @@ public class EventStreamHoverTests
     public void Hovering_a_non_clickable_row_opens_a_quiet_surface_band_and_keeps_the_arrow_cursor()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 1200, "error CS0103"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 1, 0, 0, 100)); // hatalı → Done UYGUN DEĞİL (parıltı yok)
@@ -93,7 +93,7 @@ public class EventStreamHoverTests
     {
         const string id = @"C:\p\a.csproj";
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 1200)); // → "A built (1.2s)" ok satırı, tıklanabilir
 
@@ -123,7 +123,7 @@ public class EventStreamHoverTests
     {
         const string id = @"C:\p\a.csproj";
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", id, "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", id, 1200));
 
@@ -155,7 +155,7 @@ public class EventStreamHoverTests
     public void Hover_that_begins_mid_glow_waits_for_the_glow_to_finish_before_taking_the_ground()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));
@@ -207,7 +207,7 @@ public class EventStreamHoverTests
     public void Hover_that_begins_before_the_glow_starts_still_waits_and_settles_on_the_hover_ground_once_it_ends()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));

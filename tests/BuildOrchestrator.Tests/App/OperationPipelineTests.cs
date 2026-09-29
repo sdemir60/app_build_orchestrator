@@ -42,7 +42,7 @@ public class OperationPipelineTests
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node("a", "A", 0), Node("b", "B", 1), Node("c", "C", 2)], [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent(
         [
             new BuildPreviewItem("a", "A", true),
@@ -214,7 +214,7 @@ public class OperationPipelineTests
         vm.OnEvent(new WorkspaceTopologyEvent(
             [Node("a", "A", 0, inCycle: true), Node("b", "B", 1)], [["a"]], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 2, 1));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem("a", "A", false),
             new BuildPreviewItem("b", "B", true),
@@ -348,7 +348,7 @@ public class OperationPipelineTests
     {
         var vm = NewVm();
         vm.OnEvent(new WorkspaceTopologyEvent([Node("a", "A", 0)], [], [], []));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem("a", "A", true)]));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 1, 0, 10));
 
@@ -365,7 +365,7 @@ public class OperationPipelineTests
 
         // Motor cevap verdi — statü kanalı devralır: GERÇEK olay sırası (runStarted + bu koşunun KENDİ
         // önizlemesi), IsRunning'i doğrudan atamak DEĞİL (bkz. yukarıdaki Task 1 notu).
-        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem("a", "A", true)]));
         Assert.Equal(GraphStatus.Queued, row.Status);
         Assert.Equal(VisualStatus.Queued, row.VisualStatus);
@@ -388,7 +388,7 @@ public class OperationPipelineTests
         var vm = AfterOneCompletedRun();
         var before = vm.Projects.ToArray();
 
-        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 3, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Rebuild, 3, 1, "Debug"));
 
         Assert.Equal(3, vm.Projects.Count);
         Assert.Equal(before, vm.Projects); // AYNI satır nesneleri — remount yok

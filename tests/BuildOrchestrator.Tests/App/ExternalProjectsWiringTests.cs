@@ -126,7 +126,7 @@ public class ExternalProjectsWiringTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var run = NewVm(engine);
-        run.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0, null));
+        run.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", null));
         Assert.True(run.IsMidRunLocked);
         var sent = new List<IpcCommand>();
         run.DebugOnCommandSent = sent.Add;

@@ -182,7 +182,7 @@ public class ReducedMotionCoverageTests
         var view = new EventStreamView { AnimationsEnabledProvider = () => false, DataContext = vm };
         var window = DsResources.Realize(host, view);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B")); // aktif satır "B building…"
 
@@ -212,7 +212,7 @@ public class ReducedMotionCoverageTests
         };
         var window = DsResources.Realize(host, view);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A")); // aktif satır → imleç blink'i başlar
         Assert.True(view.ActiveCursorGlyph.HasAnimatedProperties);        // non-vacuous: saat GERÇEKTEN dönüyor
 

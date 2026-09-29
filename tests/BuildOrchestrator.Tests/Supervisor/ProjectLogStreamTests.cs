@@ -222,7 +222,7 @@ public class ProjectLogStreamTests
 
         await h.SendAsync(Start());
         IpcEvent ev;
-        do { ev = await h.ReadEventAsync(); } while (ev is not RunCompletedEvent); // run TAMAMEN bitti (resumable değil)
+        do { ev = await h.ReadEventAsync(); } while (ev is not RunCompletedEvent); // run TAMAMEN bitti
         Assert.Equal(RunOutcome.Completed, Assert.IsType<RunCompletedEvent>(ev).Outcome);
 
         // [T28] Run bitti: RunCoordinator._logs artık null (RunLogWriter Dispose edildi) — bu istek en son run

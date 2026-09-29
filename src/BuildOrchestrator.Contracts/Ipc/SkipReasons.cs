@@ -1,7 +1,7 @@
 namespace BuildOrchestrator.Contracts.Ipc;
 
 /// <summary>
-/// <see cref="ProjectSkippedEvent.Reason"/>'ın taşıyabileceği dört yalın gerekçe — TEK doğruluk kaynağı.
+/// <see cref="ProjectSkippedEvent.Reason"/>'ın taşıyabileceği beş yalın gerekçe — TEK doğruluk kaynağı.
 /// Contracts'ta yaşar çünkü hem Supervisor (<c>RunCoordinator</c>) hem Core (<c>ReadySetScheduler</c> —
 /// Core zaten Contracts'a referans verir) YAZAR, App
 /// (<c>StreamText</c>/<c>RunViewModel.Stream</c>) OKUR — üç katmanda da aynı literal iki kez tanımlanırsa
@@ -21,7 +21,9 @@ public static class SkipReasons
     /// <summary>Build/Rebuild modunda bir SCC üyesi — turlar yalnız Cycles modunda koşar.</summary>
     public const string InDependencyCycle = "in dependency cycle";
 
-    /// <summary>[cycle rounds/Task 8] SCC daha önce aynı bileşik imzada yakınsamadı, bir daha tur harcamadan pre-skip edildi.</summary>
+    /// <summary>[cycle rounds/Task 8] Eskiden: SCC daha önce aynı bileşik imzada yakınsamadığı için tur harcanmadan
+    /// pre-skip edildi. O pre-skip kalktı (yakınsamama hafızası artık yalnız RAPORLAR — bkz. <c>RunCoordinator</c>'ın
+    /// Cycles tohumu); motor bu gerekçeyi bugün yaymaz, App onu hâlâ okur (<c>ConsoleEmptyState</c>).</summary>
     public const string CycleNonConvergent = "cycle did not converge at this signature";
 
     /// <summary>Koşullu proje (dep-issue notlu, imzası değişmemiş): kayıtlı kök bağımlılıklarının hepsi hâlâ hatalı —

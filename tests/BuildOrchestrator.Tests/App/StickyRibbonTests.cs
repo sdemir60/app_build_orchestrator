@@ -37,7 +37,7 @@ public class StickyRibbonTests
 
     private static void StartRun(RunViewModel vm, params (string id, string name)[] projects)
     {
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, projects.Length, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, projects.Length, 4, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([.. projects.Select(p => new BuildPreviewItem(p.id, p.name, true))]));
     }
 
@@ -236,7 +236,7 @@ public class StickyRibbonTests
         Assert.Equal(0.0, ribbon.PhaseText.Margin.Left); // Boot: glyph yok
 
         vm.OnEvent(new WorkspaceTopologyEvent([], [], [], []));
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 0, 0, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 0, 0, "Debug"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 0, 0, 0, 100));
 
         Assert.Equal(AppPhase.Done, vm.Phase);
@@ -303,7 +303,7 @@ public class StickyRibbonTests
         Assert.True(ribbon.IsIndeterminate);
 
         // runStarted geldi: artık plan VAR (willBuild biliniyor) → determinate ilerlemeye geçilir.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.False(ribbon.IsIndeterminate);
         GC.KeepAlive(window);
     }

@@ -238,7 +238,7 @@ public class GraphFilterRunSuspendTests
 
         MainWindowHost.AcceptSends(vm);
         await vm.BuildCommand.ExecuteAsync(null);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("Beta"), "Beta"));
 
         Assert.Equal(new[] { "Alpha" }, VisibleNames(vm));                                 // liste filtreli
@@ -313,7 +313,7 @@ public class GraphFilterRunSuspendTests
         vm.ProjectQuery = "Alpha";
         MainWindowHost.AcceptSends(vm);
         await vm.BuildCommand.ExecuteAsync(null);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("Beta"), "Beta"));
         Assert.Equal(GraphNodeOpacity.Full, VisualOf(window, "Beta").OpacityTarget, 6); // ön-koşul: askıda
 

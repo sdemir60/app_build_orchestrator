@@ -4,31 +4,31 @@ using CommunityToolkit.Mvvm.ComponentModel;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>[design v1.19.0 §2.9] Settings → General sayfasının anahtarları.
-/// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <see cref="StartWithWindows"/> ve
-/// <see cref="StartMinimizedToTray"/> yalnız diyalog taslağında yaşar — kaydedilmez, ayar dosyasına
-/// yazılmaz/okunmaz, konsola not düşmez ve hiçbir davranışı (autostart, tray) sürmez; her açılışta varsayılana
-/// döner. <see cref="PullBeforeBuild"/> (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve
-/// <see cref="StashOnBranchSwitch"/> (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) gerçektir.</para>
-/// <para><b>[DEĞİŞEN KURAL — P3, kullanıcı kararı 2026-09-28]</b> ESKİ: <see cref="CloseToTray"/> ve
-/// <see cref="ShowNotifications"/> de yukarıdaki iki anahtar gibi yalnız taslakta yaşardı. Artık
-/// <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: Save'de yazılır, diyalog kayıtlı değeri gösterir,
-/// Export/Import taşır, değişince konsola not düşer. Close to tray pencere kapanışını da sürer
-/// (<c>MainWindow.OnClosing</c> <see cref="ShellSwitches.CloseToTray"/>'ı okur); [Task 4] Show notifications'ın
-/// davranışı (üç tray-balloon yolu) da artık <see cref="ShellSwitches.ShowNotifications"/> üzerinden
-/// bağlıdır.</para></summary>
+/// <para>Altı anahtarın hepsi gerçektir. <see cref="PullBeforeBuild"/>
+/// (<see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>) ve <see cref="StashOnBranchSwitch"/>
+/// (<see cref="SettingsDraftViewModel.StashOnBranchSwitch"/>) motora giden iş akışı tercihleridir; kalan dördü kabuk
+/// anahtarıdır ve <see cref="ShellSwitches"/> tablosu üzerinden kalıcıdır: Save'de yazılır, diyalog kayıtlı değeri
+/// gösterir, Export/Import taşır, değişince konsola not düşer.</para>
+/// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
+/// (<see cref="StartWithWindows"/>, <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/>,
+/// <see cref="ShowNotifications"/>) yalnız diyalog taslağında yaşardı — kaydedilmez, dosyaya yazılmaz, hiçbir davranışı
+/// sürmezdi. Artık Windows ile başlama, Windows ile açılışta tepside başlama, pencere kapanışı
+/// (<c>MainWindow.OnClosing</c>) ve üç tray-balloon yolu bu değerleri okur.</para></summary>
 public enum GeneralSetting
 {
-    /// <summary>Henüz bağlı değil — yalnız taslak.</summary>
+    /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartWithWindows"/>) — Windows'un başlangıç
+    /// kaydını Save anında yazar/siler.</summary>
     StartWithWindows,
-    /// <summary>Henüz bağlı değil — yalnız taslak. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
+    /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartMinimizedToTray"/>) — Windows ile açılışta
+    /// pencere mi tepside mi. <see cref="StartWithWindows"/> kapalıyken etkisizdir.</summary>
     StartMinimizedToTray,
-    /// <summary>[Task 1] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.CloseToTray"/>) — [Task 3] pencere
-    /// kapanışını sürer: açık ⇒ × tepsiye gizler, kapalı ⇒ güvenli tam çıkış.</summary>
+    /// <summary>[P3] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.CloseToTray"/>) — pencere kapanışını sürer:
+    /// açık ⇒ × tepsiye gizler, kapalı ⇒ güvenli tam çıkış.</summary>
     CloseToTray,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.PullExternalsBeforeBuild"/>.</summary>
     PullBeforeBuild,
-    /// <summary>[Task 1 · Task 4] Kalıcı kabuk anahtarı (bkz. <see cref="ShellSwitches.ShowNotifications"/>) —
-    /// davranışı (üç tray-balloon yolu) bağlıdır.</summary>
+    /// <summary>[P3] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.ShowNotifications"/>) — kapalıyken tepsi hiçbir
+    /// OS balonu göstermez.</summary>
     ShowNotifications,
     /// <summary>Gerçek bayrak: <see cref="SettingsDraftViewModel.StashOnBranchSwitch"/> — branch chip'inden
     /// checkout'ta kirli ağaç stash'lenip geçilsin mi (spec 2026-09-18 §6.3).</summary>
@@ -85,8 +85,8 @@ public static class GeneralSettingsCatalog
         ]),
     ];
 
-    /// <summary>[P3 · Task 1] Kataloğun TEK satırı — <see cref="ShellSwitch.Note"/>'un etiketi (kopya YASAK) buradan
-    /// okur, bir literal olarak tekrarlamaz.</summary>
+    /// <summary>Kataloğun TEK satırı — <see cref="ShellSwitch.Note"/>'un etiketi (kopya YASAK) buradan okur, bir
+    /// literal olarak tekrarlamaz.</summary>
     public static GeneralSettingDefinition Definition(GeneralSetting setting) =>
         Groups.SelectMany(g => g.Rows).Single(r => r.Setting == setting);
 }
@@ -103,8 +103,17 @@ public sealed partial class GeneralSettingRowViewModel : ObservableObject
 
     public GeneralSettingDefinition Definition { get; }
     public string Label => Definition.Label;
-    public string Description => Definition.Description;
+
+    /// <summary>Satırın açıklaması: kataloğun metni; [P4] bir <see cref="Note"/> varsa onun yerine not.</summary>
+    public string Description => Note ?? Definition.Description;
+
     public string SwitchName => Definition.SwitchName;
+
+    /// <summary>[P4] Satırın o anki durumunu anlatan, açıklamanın YERİNE geçen not — ör. Görev Yöneticisi'nde devre
+    /// dışı bırakılmış Start with Windows. <c>null</c> ⇒ kataloğun açıklaması.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Description))]
+    private string? _note;
 
     /// <summary>Grubun ilk satırı üstte hairline taşımaz.</summary>
     public bool IsFirstInGroup { get; }

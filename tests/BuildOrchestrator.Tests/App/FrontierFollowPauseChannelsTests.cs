@@ -130,7 +130,7 @@ public class FrontierFollowPauseChannelsTests(ITestOutputHelper output)
         long[] clock = [0];
         list.NowMs = () => clock[0]; // boşta-geri-açılma penceresi deterministik (D8)
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[30].Id, nodes[30].Name));
         DispatcherPump.PumpUntil(() => list.Scroll.VerticalOffset > 1, TimeSpan.FromSeconds(3));
 

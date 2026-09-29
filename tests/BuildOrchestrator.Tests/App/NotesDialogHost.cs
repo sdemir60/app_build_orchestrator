@@ -14,8 +14,8 @@ internal static class NotesDialogHost
 {
     /// <summary>Çok sürümlü sentetik liste — en yenisi KURULU sürümdür (<c>AppIdentity.Version</c>), her sürümde
     /// iki kategori ve kategori başına birden çok, sarılacak kadar uzun madde vardır. Sürümler arası ayraç,
-    /// katlı kısım ve sticky kayma ancak birden çok sürümle ölçülebilir; gerçek <c>ReleaseNotes.All</c> tek
-    /// sürüm taşıyabilir.</summary>
+    /// katlı kısım ve sticky kayma ancak birden çok sürümle ölçülebilir; gerçek <c>ReleaseNotes.All</c>
+    /// (<c>CHANGELOG.md</c>) her sürümde değişir, sayısı bilinen bir liste ölçümü ondan bağımsız kılar.</summary>
     public static IReadOnlyList<BuildOrchestrator.App.Services.ReleaseEntry> SyntheticReleases(int count) =>
     [
         .. Enumerable.Range(0, count).Select(i => new BuildOrchestrator.App.Services.ReleaseEntry(

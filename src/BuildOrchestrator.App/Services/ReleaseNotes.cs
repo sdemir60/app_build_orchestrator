@@ -1,7 +1,12 @@
+using System.Globalization;
+using System.IO;
+using System.Text.RegularExpressions;
+
 namespace BuildOrchestrator.App.Services;
 
 /// <summary>[design v1.9.0 §2.10] Bir sürüm notu maddesinin türü — <b>blok başlığı</b> olarak çizilir
-/// (Keep a Changelog mantığı): satır başına ikon/sigil YOKTUR.</summary>
+/// (Keep a Changelog mantığı): satır başına ikon/sigil YOKTUR. <c>CHANGELOG.md</c>'deki <c>### </c> başlıkları
+/// bu adların kendisidir.</summary>
 public enum NoteKind
 {
     /// <summary>Yeni özellik — amber.</summary>
@@ -23,15 +28,20 @@ public readonly record struct ReleaseNote(NoteKind Kind, string Text);
 public sealed record ReleaseEntry(string Version, string Date, IReadOnlyList<ReleaseNote> Notes);
 
 /// <summary>
-/// [design v1.9.0 §2.10 "What's new"] <b>Sürüm notlarının TEK kaynağı.</b> About penceresinin dördüncü
-/// sekmesi buradan beslenir — ayrı bir pencere ya da açılış pop-up'ı YOKTUR (§8: "sürüm notları için açılış
-/// pop-up'ı yok").
+/// [design v1.13.0/v1.19.0 §2.10/§2.11 "What's new"] What's new diyaloğunun (<c>Views/NotesDialog</c>) veri ve
+/// kural yüzeyi. Açılışta pop-up YOKTUR; kullanıcıyı title bar'daki sparkle butonunun görülmemiş-sürüm noktası
+/// çağırır.
 ///
-/// <para>Veri statik ve küçüktür; en yeni sürüm ÜSTTEDİR. Kategoriler sabit sırayla çizilir
-/// (<see cref="KindOrder"/>) ve boş kategori başlığı hiç görünmez.</para>
+/// <para><b>Notların TEK kaynağı repo kökündeki <c>CHANGELOG.md</c>'dir.</b> Dosya App'e gömülü kaynak olarak
+/// girer (App csproj, <see cref="ChangelogResourceName"/>) ve ilk erişimde <see cref="Parse"/> ile okunur; burada
+/// elle yazılmış bir liste YOKTUR. Dosya yalnız bir sürüm çıkarılırken yazılır (CLAUDE.md "Sürüm çıkarma");
+/// biçimini ve en üst sürümün çalışan sürümle eşleştiğini <c>ChangelogTests</c>/<c>WhatsNewTests</c> pinler.</para>
+///
+/// <para>En yeni sürüm ÜSTTEDİR. Kategoriler sabit sırayla çizilir (<see cref="KindOrder"/>) ve boş kategori
+/// başlığı hiç görünmez.</para>
 ///
 /// <para><b>Sürüm numarası burada TEKRARLANMAZ:</b> "şu an hangi sürümdeyiz" sorusunun tek cevabı
-/// <see cref="AppIdentity.Version"/>'dır (<c>Directory.Build.props</c>'tan akar) ve <c>CURRENT</c> etiketi
+/// <see cref="AppIdentity.Version"/>'dır (<c>Directory.Build.props</c>'tan akar) ve <c>INSTALLED</c> çipi
 /// onunla eşleşen girdiye konur.</para>
 /// </summary>
 public static class ReleaseNotes
@@ -68,78 +78,136 @@ public static class ReleaseNotes
     /// vardır: görülmemiş sürüm varken sparkle butonunun tooltip'i (MainWindow) ve About sekmesinin What's new
     /// butonu (WhatsNewTests kaynak guard'ı pinler).</summary>
     public static string WhatsNewInLabel(string version) =>
-        string.Format(System.Globalization.CultureInfo.InvariantCulture, "What's new in {0}", version);
+        string.Format(CultureInfo.InvariantCulture, "What's new in {0}", version);
 
     /// <summary>Katlı kısmın ghost butonunun etiketi.</summary>
     public static string EarlierVersionsLabel(int count) =>
-        string.Format(System.Globalization.CultureInfo.InvariantCulture, "Earlier versions ({0})", count);
+        string.Format(CultureInfo.InvariantCulture, "Earlier versions ({0})", count);
 
-    /// <summary>Şu an çalışan sürümün notları (varsa) — <c>CURRENT</c> etiketi buna konur.</summary>
+    /// <summary><c>CHANGELOG.md</c>'nin App assembly'sindeki gömülü kaynak adı — App csproj'daki
+    /// <c>LogicalName</c> ile aynıdır; repo kökündeki dosyanın adı da budur.</summary>
+    public const string ChangelogResourceName = "CHANGELOG.md";
+
+    /// <summary>Şu an çalışan sürümün notları (varsa) — <c>INSTALLED</c> çipi buna konur.</summary>
     public static ReleaseEntry? Current =>
         All.FirstOrDefault(e => string.Equals(e.Version, AppIdentity.Version, StringComparison.Ordinal));
 
     /// <summary>
-    /// Sürümler, <b>en yeni üstte</b>.
+    /// Sürümler, <b>en yeni üstte</b> — gömülü <c>CHANGELOG.md</c>'den, ilk erişimde bir kez okunur.
     ///
-    /// <para>İçerik uygulamanın KENDİ sürüm geçmişidir — tasarım paketinin sürüm geçmişi (handoff README §9)
-    /// DEĞİL. Sürüm anahtarı <see cref="AppIdentity.Version"/> ile birebir eşleşir; eşleşmezse hiçbir girdi
-    /// <c>CURRENT</c> etiketi almaz (yanlış bir sürümü "güncel" göstermektense hiçbirini göstermemek doğrudur).</para>
+    /// <para>Okuma TEMBELDİR: sınıfın diğer üyeleri (kategori rengi, <see cref="WhatsNewInLabel"/>) açılışta
+    /// title bar tooltip'i için okunur ve dosyaya dokunmaz. Sürüm anahtarı <see cref="AppIdentity.Version"/> ile
+    /// birebir eşleşir; eşleşmezse hiçbir girdi <c>INSTALLED</c> çipi almaz (yanlış bir sürümü "kurulu"
+    /// göstermektense hiçbirini göstermemek doğrudur).</para>
     /// </summary>
-    public static IReadOnlyList<ReleaseEntry> All { get; } =
-    [
-        new(AppIdentity.Version, "2026-09-09",
-        [
-            new(NoteKind.Added, "What's new has its own window — the sparkle button in the title bar, or Ctrl+F1."),
-            new(NoteKind.Added, "First run opens Settings: the repository root moved into it, on its Workspace page."),
-            new(NoteKind.Added, "Settings is split into sections down a left rail — General, Workspace, External projects and Layers — each page opening with its own title and a one-line description; switching sections never resizes the dialog."),
-            new(NoteKind.Added, "Settings has a General page for how the tool behaves around a build; Pull before build lives there. Switches for start-up, tray and notifications are laid out on it too — they take effect in a later version."),
-            new(NoteKind.Added, "Settings can be exported to and imported from a file, or cleared in place."),
-            new(NoteKind.Added, "Every operation opens with the same choreography: the scope lights up in a wave, then the rest fades out."),
-            new(NoteKind.Added, "A run ends with the neon finale in the graph — only what was built lights up."),
-            new(NoteKind.Added, "Row actions: build a single project, or right-click for Build · Rebuild · Clean."),
-            new(NoteKind.Added, "The Build menu offers Clean — msbuild /t:Clean on every solution."),
-            new(NoteKind.Added, "Projects caught in a dependency cycle show an amber cube inside a grey node — the graph now says “not built, in a cycle” while you inspect a finished run."),
-            new(NoteKind.Added, "Settings has an External projects section: git working copies outside the repository root; card order sets the order they are updated, and their dependencies decide the build order among them."),
-            new(NoteKind.Added, "External projects are scanned into the same graph as the repository's own and build first, in their own External group at the top of the list."),
-            new(NoteKind.Added, "Pull before build, under Settings → General: every build refreshes each external working copy first — turn it off to build them exactly as they are on disk. The External projects page says whether it is on and takes you there."),
-            new(NoteKind.Added, "Each row says what will happen to it and why: modified, affected, never built, failed · retry, up to date with the age of its last successful build, or — waiting on a dependency that has to recover first — affected · up to date with that age."),
-            new(NoteKind.Added, "A behind chip next to the branch shows how far the repository has fallen behind its remote; clicking it fast-forwards — never a merge commit, never a rebase, never on a dirty tree."),
-            new(NoteKind.Added, "The console reports where an external working copy landed after an update, and the Sync line says how many commits you are behind."),
-            new(NoteKind.Added, "A layer heading in the project list is a shortcut too: hover lifts it, and clicking (mouse only) scrolls that group's first row up to sit just under the stacked headings above it. It only moves the scroll position — selection, the filter and the console are untouched."),
-            new(NoteKind.Added, "Drop to the tray while a build is running and the product mark animates in the bottom-right corner of the screen — click it to bring the window back. When the run ends, Windows shows a notification with the result; click the mark or the notification to bring the window back. A run that ends with the window open shows none."),
-            new(NoteKind.Changed, "Whether a project changed is now read from the source files on disk — a committed .xaml or .resx change, or a file version control never saw, is no longer missed. Version control takes no part in the decision, so it also works offline and for folders under no version control at all."),
-            new(NoteKind.Changed, "Rows no longer show a commit pair: the right half was a remote commit you had not pulled, and the left half described the repository rather than the project. The revision stayed where it is evidence — the project log's last successful build."),
-            new(NoteKind.Performance, "Source hashes are cached by size and modification time, so a normal Sync only stats the input set; the first run after this upgrade reads them once, in parallel, and says so on the console."),
-            new(NoteKind.Changed, "The console cursor changes colour on every blink, stepping through the console’s own line palette — command, info, success, warning, error, dim."),
-            new(NoteKind.Changed, "The initial state after Sync draws a plain strip and a four-arc ring instead of dashed lines, at full opacity — same sizes, no jagged edges; graph nodes keep their dashed border."),
-            new(NoteKind.Changed, "Sync empties the screen the moment you press it — console, event stream, project list and graph together — and fills it back in when the analysis lands, the same way Clean does."),
-            new(NoteKind.Changed, "The opening choreography ends with a sequential handover: marked projects dim to running brightness in the order they lit up, and the run starts while the last ones are still dimming — no flash back to full brightness in between."),
-            new(NoteKind.Changed, "When a run ends the graph lets go of the selected project's focus and plays the finale in full view; the selection itself stays."),
-            new(NoteKind.Changed, "Settings, About and What's new share one modal shell — the same scrim, frame, entrance, Esc and focus trap — at fixed design sizes: Settings 880 × 576, What's new 720 × 600, About 620 wide around a fixed-height body."),
-            new(NoteKind.Changed, "What's new keeps each version's number, date and — on the running version — an INSTALLED chip in a left column that stays in view while its notes scroll; the head shows the installed version in a chip."),
-            new(NoteKind.Changed, "About is simpler: three tabs — About, Environment, Shortcuts — with Environment and Shortcuts in named groups, the version in a chip beside the product name, and a button on the About tab that opens What's new."),
-            new(NoteKind.Changed, "Add layer appends a blank row whose inputs show product-neutral example names and patterns as placeholders, never as values."),
-            new(NoteKind.Changed, "While Save is disabled, the Settings footer says why — a missing repository root, an external project without a path, a layer without a name, or a pattern that does not parse."),
-            new(NoteKind.Changed, "Long paths in About's Environment tab scroll sideways under the mouse wheel instead of being cut short."),
-            new(NoteKind.Changed, "Colour tells one story: the stripe, the dot, the glyph and the graph node all carry the same status."),
-            new(NoteKind.Changed, "Sync colours nothing — every project waits in the dashed start mode until an operation begins."),
-            new(NoteKind.Changed, "Status chips filter together: pick several and the list shows their union."),
-            new(NoteKind.Changed, "The ribbon carries a persistent operation pill — what you last asked for stays readable."),
-            new(NoteKind.Changed, "The title bar carries the brand alone; the workspace name moved next to the branch chip."),
-            new(NoteKind.Changed, "The whole status bar now speaks one hover language: every neutral control steps to the same ground and whitens, a control that is already open or checked steps to its own amber tone instead, and in Debug | Release only the unselected option answers hover at all."),
-            new(NoteKind.Changed, "The console header's Back is a ghost button with an arrow icon now, and only the project name shortens when the panel narrows — Back and the line count never do. Its status glyph is drawn and updates live, down to a spinner while building, Copy log is an icon button, and a dependency issue or a dependency cycle shows its own amber warning with a tooltip."),
-            new(NoteKind.Changed, "The console body's cursor is a plain arrow — a hand is kept only for links — and the line underneath it gets a full-width highlight band."),
-            new(NoteKind.Changed, "Every row in the event stream answers hover now, not only the clickable ones, one step apart; a run's closing success glow still plays out in full before hover takes over a row."),
-            new(NoteKind.Changed, "The graph's building dots are a tick thicker and spaced wider, turning at a steady pace the eye can follow, and their orbit stays clamped to each node's own cell so neighbouring builds never touch, even in a dense graph."),
-            new(NoteKind.Removed, "The orange cycle colour — a dependency cycle now shows as one amber warning triangle."),
-            new(NoteKind.Removed, "The separate will-build dot — the commit pair already says what is stale."),
-            new(NoteKind.Removed, "Load sample layers, and the product-specific layers Settings filled in when none were saved — the Layers page now starts empty."),
-            new(NoteKind.Removed, "About's Third-party tab — the Geist fonts' licence still ships next to the executable."),
-            new(NoteKind.Fixed, "Building a single project from its row no longer flickers the rest of the list amber: only the target project queues, and every other row stays neutral grey for the whole run."),
-            new(NoteKind.Fixed, "Resolve cycles now queues only the cycle's own members in amber. Their dependencies wait grey and turn amber only while actually building, and projects outside the cycle are left untouched — never counted or listed as skipped, though their own project page still explains why they were not built."),
-            new(NoteKind.Fixed, "A project that succeeded against a failing dependency is no longer rebuilt on every Build. It waits until that dependency is healthy again — built successfully in this run, or already successful on record — and then rebuilds in the same run."),
-            new(NoteKind.Changed, "A row waiting on a failed dependency reads “affected · up to date · 2h” in a faint tone, with a tooltip naming which dependency has to be healthy again — built successfully, or already successful on record; the decision slot widened to fit the longer label."),
-            new(NoteKind.Changed, "The run's progress, the ribbon's counts and Sync's “N to build” line now count only projects that will definitely be built, not ones merely waiting on a dependency."),
-        ]),
-    ];
+    public static IReadOnlyList<ReleaseEntry> All => Loaded.Value;
+
+    private static readonly Lazy<IReadOnlyList<ReleaseEntry>> Loaded = new(() => Parse(ReadChangelog()));
+
+    /// <summary>Gömülü <c>CHANGELOG.md</c>'nin metni. Kaynak yoksa bu bir build hatasıdır (csproj kablosu
+    /// kopmuş) — sessizce boş liste dönülmez.</summary>
+    internal static string ReadChangelog()
+    {
+        using var stream = typeof(ReleaseNotes).Assembly.GetManifestResourceStream(ChangelogResourceName)
+            ?? throw new InvalidOperationException(
+                $"The embedded resource '{ChangelogResourceName}' is missing from the application assembly.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    // "## [1.7.0] - 2026-09-29" — Keep a Changelog sürüm başlığı; sürüm yalın major.minor.patch.
+    private static readonly Regex VersionHeading =
+        new(@"^## \[(?<version>\d+\.\d+\.\d+)\] - (?<date>\d{4}-\d{2}-\d{2})$", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// <c>CHANGELOG.md</c> metnini sürümlere çevirir. Biçim Keep a Changelog'un bu uygulamanın kullandığı
+    /// alt kümesidir:
+    /// <list type="bullet">
+    /// <item><c>## [x.y.z] - yyyy-MM-dd</c> bir sürüm açar; ilk sürümden önceki her şey (başlık, giriş metni)
+    /// veri değildir.</item>
+    /// <item><c>### Added</c> … <c>### Removed</c> kategori açar — yalnız <see cref="NoteKind"/> adları.</item>
+    /// <item><c>- metin</c> bir maddedir; hemen altındaki girintili satırlar aynı maddenin devamıdır ve tek
+    /// boşlukla birleşir.</item>
+    /// </list>
+    /// Bunun dışındaki her satır, kategorisiz madde ve maddesi olmayan sürüm <see cref="FormatException"/> ile
+    /// SATIR NUMARASIYLA reddedilir: ekranda görünmeyecek ya da yanlış görünecek bir satır sessizce atlanmaz.
+    /// </summary>
+    public static IReadOnlyList<ReleaseEntry> Parse(string markdown)
+    {
+        var entries = new List<ReleaseEntry>();
+        string? version = null, date = null;
+        int versionLine = 0;
+        var notes = new List<ReleaseNote>();
+        NoteKind? kind = null;
+        bool continuable = false; // son satır bir madde (ya da devamı) mı — girintili satır ancak ona eklenir
+
+        void CloseVersion()
+        {
+            if (version is null) return;
+            if (notes.Count == 0) throw Malformed(versionLine, $"version {version} has no notes");
+            entries.Add(new ReleaseEntry(version, date!, [.. notes]));
+            notes.Clear();
+        }
+
+        string[] lines = markdown.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            int lineNo = i + 1;
+            string line = lines[i].TrimEnd('\r', ' ', '\t');
+            if (line.Length == 0)
+            {
+                continuable = false;
+                continue;
+            }
+
+            if (line.StartsWith("## ", StringComparison.Ordinal))
+            {
+                CloseVersion();
+                var match = VersionHeading.Match(line);
+                if (!match.Success || !DateOnly.TryParseExact(match.Groups["date"].Value, "yyyy-MM-dd",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                    throw Malformed(lineNo, "a version heading reads '## [major.minor.patch] - yyyy-MM-dd'");
+                version = match.Groups["version"].Value;
+                date = match.Groups["date"].Value;
+                versionLine = lineNo;
+                kind = null;
+                continuable = false;
+                continue;
+            }
+
+            if (version is null) continue; // başlık ve giriş metni
+
+            if (line.StartsWith("### ", StringComparison.Ordinal))
+            {
+                string name = line[4..].Trim();
+                kind = Enum.GetValues<NoteKind>().Cast<NoteKind?>().FirstOrDefault(k => k.ToString() == name)
+                    ?? throw Malformed(lineNo, $"unknown category '{name}' (use {string.Join(", ", KindOrder)})");
+                continuable = false;
+                continue;
+            }
+
+            if (line.StartsWith("- ", StringComparison.Ordinal))
+            {
+                if (kind is null) throw Malformed(lineNo, "a note must sit under a category heading");
+                notes.Add(new ReleaseNote(kind.Value, line[2..].Trim()));
+                continuable = true;
+                continue;
+            }
+
+            if (continuable && char.IsWhiteSpace(line[0]))
+            {
+                var last = notes[^1];
+                notes[^1] = last with { Text = last.Text + " " + line.Trim() };
+                continue;
+            }
+
+            throw Malformed(lineNo, "unexpected text; only headings and '- ' notes are allowed inside a version");
+        }
+
+        CloseVersion();
+        return entries;
+    }
+
+    private static FormatException Malformed(int lineNo, string reason) =>
+        new($"{ChangelogResourceName} line {lineNo}: {reason}.");
 }

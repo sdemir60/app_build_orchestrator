@@ -94,7 +94,7 @@ public class CleanCommandTests
         var vm = NewVm();
         SeedTopology(vm);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.False(vm.CleanCommand.CanExecute(null));
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
@@ -276,14 +276,14 @@ public class CleanCommandTests
     }
 
     /// <summary>[design v1.13.2 §9] "Konsol + event stream HER işlemde temizlenir" — Clean de bir işlemdir ve
-    /// <c>SyncCoreAsync(clearBuffers:true)</c> ile AYNI iki metodu tıklama anında çağırır
+    /// <c>SyncCoreAsync(SyncMode.Manual)</c> ile AYNI iki metodu tıklama anında çağırır
     /// (<see cref="RunViewModelStateTests.Sync_clears_the_console_and_stream_left_over_from_the_previous_operation"/>'ın
     /// Clean ikizi). Planın ilk hâli stream'i "mevcut sözleşme" diye koruyordu; o sözleşme v1.13.2 ile değişti.</summary>
     [Fact]
     public async Task Clean_clears_the_stream_left_over_from_the_previous_operation()
     {
         var vm = NewVm();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 100));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 100));
         Assert.True(vm.StreamEventCount > 0, "ön-koşul: event stream'de ÖNCEKİ işlemden iz yok — vakum");
@@ -328,7 +328,7 @@ public class CleanCommandTests
     {
         var vm = NewVm();
         SeedTopology(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1234));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 1234));
@@ -393,7 +393,7 @@ public class CleanCommandTests
 
         Assert.Equal(@"D:\repo", Assert.Single(sent.OfType<SyncWorkspaceCommand>()).RootPath);
         // Konsol KORUNUR: kullanıcı kendi tetiklediği Clean'in transkriptini Sync satırlarının üstünde görmeye
-        // devam eder (pull'un clearBuffers:false gerekçesi).
+        // devam eder (pull'un SyncMode.Appended gerekçesi).
         Assert.Contains("build state reset", vm.GetRunDocumentText(), StringComparison.Ordinal);
     }
 

@@ -29,7 +29,7 @@ public sealed class UiState
     /// <summary>[T35] Sağ kolon satır split'i (konsol/stream).</summary>
     public double RightPct { get; set; } = 50;
 
-    // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar; Autostart'ı yazan UI henüz yok) ----
+    // ---- İş akışı tercihleri — Settings ve action bar yazar (SeenVersion'ı What's new yazar) ----
     public string? RepositoryRoot { get; set; }
     public string? Configuration { get; set; }
 
@@ -90,23 +90,32 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
-    /// <summary>[P3 · Task 1] Settings → General → STARTUP: pencere kapatılınca uygulama tepsiye küçülüp arka planda
-    /// mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="UpdateExternals"/> ile AYNI gerekçeyle
-    /// NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı. Okuma yalnız
-    /// <see cref="BuildOrchestrator.App.Shell.ShellSwitches.CloseToTray"/> üzerindendir — bu alan doğrudan okunmaz.
-    /// <para>Davranışı (pencere kapanışının kendisi) <c>MainWindow.OnClosing</c> bağlar
-    /// (<see cref="BuildOrchestrator.App.Shell.WindowCloseRule"/>) — bu tip yalnız KALICILIĞI taşır.</para></summary>
+    /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
+    /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
+    /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI
+    /// gerekçeyle NULLABLE (bayat bir <c>null</c> token'ı yerleşimi sıfırlamasın); yok ⇒ katalog varsayılanı (kapalı).
+    /// Okuma yalnız <see cref="ShellSwitches.StartWithWindows"/> üzerindendir — bu alan doğrudan okunmaz.
+    /// <para><b>Şema göçü:</b> alan eskiden <c>bool</c>'du; diskteki <c>true</c>/<c>false</c> aynen okunur.</para></summary>
+    public bool? Autostart { get; set; }
+
+    /// <summary>[P4] Settings → General → STARTUP → <c>Start minimized to tray</c>: Windows ile açılışta pencere
+    /// gösterilmeden tepside mi başlansın. <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog
+    /// varsayılanı (kapalı: pencere açılır). Okuma yalnız <see cref="ShellSwitches.StartMinimizedToTray"/>
+    /// üzerindendir.</summary>
+    public bool? StartMinimizedToTray { get; set; }
+
+    /// <summary>[P3] Settings → General → STARTUP → <c>Close to tray</c>: pencere kapatılınca uygulama tepsiye küçülüp
+    /// arka planda mı kalsın (açık) yoksa tamamen mi kapansın (kapalı). <see cref="Autostart"/> ile AYNI gerekçeyle
+    /// NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız <see cref="ShellSwitches.CloseToTray"/> üzerindendir —
+    /// bu alan doğrudan okunmaz. Davranışı (pencere kapanışının kendisi) <c>MainWindow.OnClosing</c> bağlar
+    /// (<see cref="WindowCloseRule"/>).</summary>
     public bool? CloseToTray { get; set; }
 
-    /// <summary>[P3 · Task 1] Settings → General → NOTIFICATIONS: bir build bittiğinde (başarılı ya da başarısız) tray
-    /// bildirimi gösterilsin mi. <see cref="CloseToTray"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı.
-    /// Okuma yalnız <see cref="BuildOrchestrator.App.Shell.ShellSwitches.ShowNotifications"/> üzerindendir.
-    /// <para>[P3 · Task 4] Davranışı (üç tray-balloon yolu — ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance
-    /// uyarısı) artık <see cref="BuildOrchestrator.App.Shell.ShellSwitches.ShowNotifications"/> üzerinden bağlıdır;
-    /// bu tip yalnız KALICILIĞI taşır, kararı okuyucular verir.</para></summary>
+    /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
+    /// mi — koşu bitişi, ilk-× bilgilendirmesi ve ikinci-instance uyarısı; kapalıyken hiçbiri gösterilmez.
+    /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
+    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı üç balon yolu verir.</summary>
     public bool? ShowNotifications { get; set; }
-
-    public bool Autostart { get; set; }
 }
 
 /// <summary>

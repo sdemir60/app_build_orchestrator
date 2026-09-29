@@ -217,8 +217,9 @@ public sealed partial class RunViewModel
     /// ikisi de yalnız App içi durumdur, koşan bir build'i etkilemez).</param>
     /// <param name="pullExternalsBeforeBuild">[design v1.15.0] Bölümün "Pull before build" switch'i.</param>
     /// <param name="stashOnBranchSwitch">[spec 2026-09-18 §6.3] General'ın "Stash and switch branches" switch'i.</param>
-    /// <param name="settingNotes">[Task 1] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
-    /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Close to tray, Show notifications) konsol notları —
+    /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
+    /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
+    /// notifications) konsol notları —
     /// <see cref="ApplyStashOnBranchSwitch"/>'ten HEMEN SONRA, idle kapısından ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
@@ -268,9 +269,10 @@ public sealed partial class RunViewModel
     private bool ApplyRepositoryRoot(string? path)
     {
         if (!IsRepositoryChange(path)) return false;
-        // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer: durum SIFIRLANMAZ,
-        // kullanıcı Sync'ler. (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada zaten otomatik bir
-        // Sync akışı başlar ve not gürültü olurdu.)
+        // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer; eski reponun durumu da gider:
+        // satırlar hollow'a döner, son Sync HEAD'i unutulur ve Save'in TEK Sync'i yeni kökte başlar (plan
+        // yüzeyini SyncAfterRootChangeAsync boşaltır). (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada
+        // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu.)
         if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
         RootPath = path;
         ResetRowsToHollow();

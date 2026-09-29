@@ -3,8 +3,8 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
-/// [P3 · Task 1] Bir General→KABUK anahtarının satırı: <see cref="UiState"/> ve <see cref="SettingsFile"/> alanına
-/// nasıl okunup yazılacağı, ve konsol notunun iki yarısı — tek yerde (kopya YASAK, CLAUDE.md).
+/// [P3 · P4] Bir General→KABUK anahtarının satırı: <see cref="UiState"/> ve <see cref="SettingsFile"/> alanına nasıl
+/// okunup yazılacağı, ve konsol notunun iki yarısı — tek yerde (kopya YASAK, CLAUDE.md).
 /// </summary>
 /// <param name="Setting">Kataloğun hangi satırı — <see cref="Note"/>'un etiketi <see cref="GeneralSettingsCatalog.Definition"/>
 /// üzerinden buradan gelir.</param>
@@ -21,29 +21,46 @@ internal sealed record ShellSwitch(
     Func<SettingsFile, bool?> ReadFile, Action<SettingsFile, bool> WriteFile,
     string OnClause, string OffClause)
 {
-    /// <summary>Konsol notu — etiket KATALOGDAN gelir (kopya YASAK): "Close to tray"/"Show notifications" burada
-    /// literal olarak yazılmaz.</summary>
+    /// <summary>Konsol notu — etiket KATALOGDAN gelir (kopya YASAK): anahtarın adı burada literal olarak
+    /// yazılmaz.</summary>
     public string Note(bool on) =>
         $"{GeneralSettingsCatalog.Definition(Setting).Label} {(on ? "on" : "off")} — {(on ? OnClause : OffClause)}";
 }
 
 /// <summary>
-/// [P3 · Task 1] Settings → General'ın KABUK anahtarlarının TEK tablosu — bugün <see cref="GeneralSetting.CloseToTray"/>
-/// ve <see cref="GeneralSetting.ShowNotifications"/>; bir sonraki görev <c>Start with Windows</c>/<c>Start minimized
-/// to tray</c>'i buraya ekleyecektir. <see cref="SettingsDraftViewModel"/> bu tabloyu <see cref="All"/> üzerinden
-/// gezerek <see cref="SettingsDraftViewModel.ToFile"/>/<see cref="SettingsDraftViewModel.LoadFrom"/>/
-/// <see cref="SettingsDraftViewModel.CommitAsync"/>'i sürer — yeni bir kabuk anahtarı = buraya bir satır.
+/// [P3 · P4] Settings → General'ın KABUK anahtarlarının TEK tablosu — pencere/tepsi/başlangıç davranışını süren
+/// anahtarlar: <see cref="GeneralSetting.StartWithWindows"/>, <see cref="GeneralSetting.StartMinimizedToTray"/>,
+/// <see cref="GeneralSetting.CloseToTray"/> ve <see cref="GeneralSetting.ShowNotifications"/>.
+/// <see cref="SettingsDraftViewModel"/> bu tabloyu <see cref="All"/> üzerinden gezerek
+/// <see cref="SettingsDraftViewModel.ToFile"/>/<see cref="SettingsDraftViewModel.LoadFrom"/>/
+/// <see cref="SettingsDraftViewModel.CommitAsync"/>'i sürer — yeni bir kabuk anahtarı = buraya bir satır (artı
+/// okuduğu/yazdığı <see cref="UiState"/> ve <see cref="SettingsFile"/> özellikleri).
 ///
-/// <para><b>Yalnız KALICILIK.</b> Bu tip anahtarların DEĞERİNİ taşır, davranışı kendisi BAĞLAMAZ — okuyucular değeri
-/// her soruda TAZE okur: <see cref="CloseToTray"/>'ı pencere kapanışı okur (<c>MainWindow.OnClosing</c> →
-/// <see cref="WindowCloseRule"/>); <see cref="ShowNotifications"/>'ı [P3 · Task 4] üç tray-balloon yolu
-/// (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>) okur.</para>
+/// <para>Pull before build ve Stash and switch branches bu tabloda DEĞİLDİR: onlar motora giden iş akışı
+/// tercihleridir ve <see cref="RunViewModel"/>'de yaşar.</para>
+///
+/// <para><b>Tablo yalnız DEĞERİ taşır</b>, davranışı kendisi BAĞLAMAZ — okuyucular değeri her soruda kalıcı durumdan
+/// TAZE okur (<see cref="IsOn"/>), arada kopya yok: <see cref="StartWithWindows"/>'u açılışın Windows kaydı hizalaması,
+/// <see cref="StartMinimizedToTray"/>'ı açılış yolu kararı, <see cref="CloseToTray"/>'ı pencere kapanışı
+/// (<c>MainWindow.OnClosing</c> → <see cref="WindowCloseRule"/>), <see cref="ShowNotifications"/>'ı üç tray-balloon
+/// yolu (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>) okur.</para>
 /// </summary>
 internal static class ShellSwitches
 {
-    /// <summary>Katalog sırası: STARTUP grubundaki Close to tray, NOTIFICATIONS grubundaki Show notifications.</summary>
+    /// <summary>Katalog sırası: STARTUP grubundaki Start with Windows, Start minimized to tray ve Close to tray;
+    /// NOTIFICATIONS grubundaki Show notifications.</summary>
     public static IReadOnlyList<ShellSwitch> All { get; } =
     [
+        new ShellSwitch(GeneralSetting.StartWithWindows,
+            state => state.Autostart, (state, on) => state.Autostart = on,
+            file => file.StartWithWindows, (file, on) => file.StartWithWindows = on,
+            OnClause: "the app starts when you sign in to Windows",
+            OffClause: "signing in to Windows no longer starts the app"),
+        new ShellSwitch(GeneralSetting.StartMinimizedToTray,
+            state => state.StartMinimizedToTray, (state, on) => state.StartMinimizedToTray = on,
+            file => file.StartMinimizedToTray, (file, on) => file.StartMinimizedToTray = on,
+            OnClause: "signing in to Windows starts the app in the tray, without a window",
+            OffClause: "signing in to Windows opens the window"),
         new ShellSwitch(GeneralSetting.CloseToTray,
             state => state.CloseToTray, (state, on) => state.CloseToTray = on,
             file => file.CloseToTray, (file, on) => file.CloseToTray = on,
@@ -57,18 +74,25 @@ internal static class ShellSwitches
     ];
 
     /// <summary>Anahtarın GEÇERLİ değeri: kayıtlı ?? katalog varsayılanı. Davranış okuyucularının TEK kapısı
-    /// (<see cref="CloseToTray"/>, <see cref="ShowNotifications"/> bunun birer kısaltmasıdır).</summary>
+    /// (aşağıdaki dört kısaltma bunun birer kısaltmasıdır).</summary>
     public static bool IsOn(UiState state, GeneralSetting setting) =>
         Find(setting).Read(state) ?? GeneralSettingsCatalog.Definition(setting).Default;
 
-    /// <summary>[P3 · Task 3] Pencere kapanış yolunun kapısı: <c>MainWindow.OnClosing</c> her × / Alt+F4 / sistem
-    /// menüsü Kapat'ta TAZE okur ve <see cref="WindowCloseRule"/>'a verir — açık ⇒ pencere tepsiye gizlenir, kapalı ⇒
-    /// güvenli tam çıkış.</summary>
+    /// <summary>[P4] Uygulamanın tercihi: Windows oturumu açılınca başlasın mı. Açılış bunu Windows kaydıyla hizalar
+    /// (<see cref="Services.AutostartService.Apply"/>).</summary>
+    public static bool StartWithWindows(UiState state) => IsOn(state, GeneralSetting.StartWithWindows);
+
+    /// <summary>[P4] Windows ile açılışta pencere gösterilmeden tepside mi başlansın — açılış yolunun kararı
+    /// (<see cref="StartupArgs.Decide"/>) bunu okur.</summary>
+    public static bool StartMinimizedToTray(UiState state) => IsOn(state, GeneralSetting.StartMinimizedToTray);
+
+    /// <summary>[P3] Pencere kapanış yolunun kapısı: <c>MainWindow.OnClosing</c> her × / Alt+F4 / sistem menüsü
+    /// Kapat'ta TAZE okur ve <see cref="WindowCloseRule"/>'a verir — açık ⇒ pencere tepsiye gizlenir, kapalı ⇒ güvenli
+    /// tam çıkış.</summary>
     public static bool CloseToTray(UiState state) => IsOn(state, GeneralSetting.CloseToTray);
 
-    /// <summary>[P3 · Task 4] Üç tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı)
-    /// TEK kapısı — burada davranışa BAĞLANMAZ (yalnız kalıcı değeri verir), üçü de bunu balonun TAM gösterileceği
-    /// anda TAZE okur.</summary>
+    /// <summary>[P3] Üç tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı) TEK kapısı;
+    /// üçü de bunu balonun TAM gösterileceği anda TAZE okur.</summary>
     public static bool ShowNotifications(UiState state) => IsOn(state, GeneralSetting.ShowNotifications);
 
     /// <summary>Save: <see cref="All"/>'daki HER anahtarı <paramref name="state"/>'e yazar (değişmemiş olsa bile) ve

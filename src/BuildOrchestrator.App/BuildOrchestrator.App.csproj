@@ -27,6 +27,10 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- [T64] .exe'nin Explorer/taskbar ikonu — çok boyutlu ICO (16/24/32/48/256), üreteci Assets/generate-app-icons.ps1. -->
     <ApplicationIcon>Assets\app-icon.ico</ApplicationIcon>
+    <!-- [P4] Exe'nin dosya açıklaması (FileDescription): Görev Yöneticisi Başlangıç uygulamaları'nda (ve İşlemler'de)
+         uygulamayı bu adla gösterir. SDK varsayılanı derleme adıdır ("BuildOrchestrator.App"); ürün adı TEK kaynaktan
+         (Directory.Build.props → Product) gelir. Yalnız App'te: Supervisor kendi adıyla ayırt edilebilir kalır. -->
+    <AssemblyTitle>$(Product)</AssemblyTitle>
   </PropertyGroup>
 
   <PropertyGroup>
@@ -141,6 +145,10 @@
          için geçerlidir; SDK varsayılanına bırakılmaz. -->
     <Content Include="Assets\GEIST-LICENSE.txt" CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <!-- [sürüm notları] What's new'in TEK veri kaynağı repo kökündeki CHANGELOG.md'dir; kopyası tutulmaz, exe'ye
+         gömülür ve Services/ReleaseNotes okur. LogicalName = ReleaseNotes.ChangelogResourceName (ChangelogTests
+         gömülen metnin diskteki dosya olduğunu pinler). -->
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="CHANGELOG.md" Link="CHANGELOG.md" />
   </ItemGroup>
 
 </Project>

@@ -19,10 +19,11 @@ files as raw XML (MSBuild is never evaluated for this), builds the dependency gr
 source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
 N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
-stopped (in-flight projects are allowed to finish their post-build copy) or retried for just the failed
-projects and their dependents. There is one tree: every build compiles your working tree as it is, on whatever
-branch is checked out. Picking another branch on the branch chip checks it out for real; the tool never writes
-to git on its own, and changes you make in git outside the tool are picked up automatically.
+stopped (in-flight projects are allowed to finish their post-build copy); after a stop or a failure, *Build*
+picks up what is left, skipping everything that already finished green. There is one tree: every build
+compiles your working tree as it is, on whatever branch is checked out. Picking another branch on the branch
+chip checks it out for real; the tool never writes to git on its own, and changes you make in git outside the
+tool are picked up automatically.
 
 ## Architecture
 
@@ -140,10 +141,17 @@ the running instance first — tray icon → Exit).
    opens the dialog with the file picker already up.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4), *Stash and switch branches* (see step 3), *Close to tray* and *Show notifications* (both on by
-   default; what they change is described with the tray, further down) are the ones that work today, and *Save*
-   keeps them; *Start with Windows* and *Start minimized to tray* are shown but not wired yet, are not saved, and
-   reset whenever the dialog opens.
+   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
+   to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are
+   on by default; what they change is described with the tray, further down.
+
+   *Start with Windows* starts the app when you sign in to Windows. *Save* applies it at once, and the switch
+   always shows what Windows will actually do. *Start minimized to tray* (available while *Start with Windows* is
+   on) decides how that start looks: on, the app starts hidden in the tray; off, the window opens. Starting the
+   app yourself always opens the window. If you turn the app off in Task Manager's *Startup apps*, the switch
+   reads off and says so; switching it back on and saving turns it back on there too. Both switches travel in an
+   exported settings file, so saving an imported file that has *Start with Windows* on turns it on for that
+   machine.
 
    **External projects** are extra roots outside the repository — each card is a path (a folder, a solution
    or a project file). Everything found under a card joins the same project list and
@@ -511,7 +519,8 @@ tabs; the header shows the installed version in a small mono chip, and the body 
 version first. Each version keeps its number, date and — on the running version — a neutral `INSTALLED` chip
 in a left column that stays in view while its notes scroll; the notes sit on the right, grouped into Added /
 Changed / Fixed / Performance / Removed. The three newest versions are open and the rest fold under an
-*Earlier versions* button. There is no pop-up on launch.
+*Earlier versions* button. There is no pop-up on launch. The notes are [CHANGELOG.md](CHANGELOG.md), built into
+the app.
 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new
@@ -528,8 +537,9 @@ and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is
-never taken for a finished one. Autostart, when enabled, writes to
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service.
+never taken for a finished one. *Start with Windows*, when on, writes one value to
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service — and turning it on
+also clears Task Manager's *disabled* mark for that value, if it has one.
 
 Older versions kept a pool of git worktrees under `worktrees\`. Nothing uses it any more; if the folder is
 still there, the console says so once per session. Delete it to reclaim the space, then run

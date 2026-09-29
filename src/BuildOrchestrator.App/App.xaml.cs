@@ -56,9 +56,13 @@ public partial class App : Application
         Motion = motion;
         HeroMotion = new MotionCoordinator();
 
+        // [P4] Kalıcı durum argüman kararından ÖNCE okunur: Windows ile açılışta (--autostart) pencere mi tepsi mi
+        // kararını Start minimized to tray verir. Dosya yoksa/bozuksa varsayılanlar — açılış bir tercih yüzünden düşmez.
+        var uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath).Load();
+
         // [A13/T6 · t2] Argüman ayrıştırmasının TEK sahibi: saf, test edilebilir dikiş (SecondInstanceGate deseni).
         // Yolların önceliği (font-ab > autostart > normal) ve tanınmayan argümanın YUTULMASI orada pinlidir.
-        var route = StartupArgs.Decide(e.Args);
+        var route = StartupArgs.Decide(e.Args, ShellSwitches.StartMinimizedToTray(uiState));
 
         if (route == StartupRoute.FontAbSpike)
         {
@@ -114,22 +118,25 @@ public partial class App : Application
         sc.AddSingleton(sp => new RunViewModel(
             sp.GetRequiredService<EngineHost>(), sp.GetRequiredService<ConsoleBatcher>(), () => Guid.NewGuid().ToString(),
             osActions: new OsActions(new ProcessLauncher(), new ProcessRunner())));
+        // [P4] Windows'un başlangıç kaydının TEK servisi — açılışın uzlaştırması (aşağıda) ve Settings'in Start with
+        // Windows anahtarı (MainWindow ctor'u → SettingsDialog) aynı örneği kullanır. Gerçek registry yazıcısı YALNIZ
+        // burada kurulur; MainWindow'un varsayılanı "Windows yüzeyi yok"tur (testler gerçek kayda ulaşamaz).
+        sc.AddSingleton(_ => new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand()));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
 
         // [E2/T16] Autostart tercihini (UiState.Autostart) registry ile HİZALA (idempotent — her açılışta güvenli):
         // true → HKCU\...\Run altına "<exe> --autostart" yazılır, false → silinir. Registry erişimi seam arkasında.
-        var uiState = new JsonUiStateStore(JsonUiStateStore.DefaultPath).Load();
-        new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand())
-            .Apply(uiState.Autostart);
+        // Exe taşındıysa değer burada yeni yola hizalanır; yazılamazsa açılış düşmez (AutostartService.Apply).
+        Services.GetRequiredService<AutostartService>().Apply(ShellSwitches.StartWithWindows(uiState));
 
         var window = Services.GetRequiredService<MainWindow>();
         // İkinci instance'ın sinyali arka plan thread'inden gelir — UI thread'ine burada marshal edilir.
         _singleInstance.StartListening(() => Dispatcher.Invoke(window.ShowFromTray));
 
-        // [E2/T16] Autostart argümanıyla açıldıysa pencere GÖSTERİLMEDEN tepside başlar; aksi halde bugünkü davranış
-        // (normal göster). İki yolda da açılışın Sync'i motor hazır olunca koşar (RunViewModel.OnEngineReady).
-        // Karar yukarıdaki TEK dikişten gelir.
+        // [E2/T16 · P4] Windows ile açıldıysa (--autostart) ve Start minimized to tray açıksa pencere GÖSTERİLMEDEN
+        // tepside başlar; aksi halde pencere gösterilir (elle açılış her zaman). İki yolda da açılışın Sync'i motor
+        // hazır olunca koşar (RunViewModel.OnEngineReady). Karar yukarıdaki TEK dikişten gelir.
         if (route == StartupRoute.StartInTray) window.StartInTray();
         else window.Show();
     }
@@ -152,11 +159,12 @@ public partial class App : Application
     }
 
     /// <summary>[E2/T16] Registry autostart değerine yazılacak komut: mevcut exe'nin tam yolu + <see cref="AutostartArg"/>.</summary>
-    private static string AutostartCommand()
-    {
-        string exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.App.exe");
-        return $"\"{exe}\" {AutostartArg}";
-    }
+    private static string AutostartCommand() =>
+        AutostartCommandFor(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "BuildOrchestrator.App.exe"));
+
+    /// <summary>[P4] Komutun biçiminin TEK yeri (saf — test edilebilsin diye ayrıldı): exe yolu TIRNAKLI (boşluklu
+    /// bir kurulum klasörü komutu bölmesin), ardından "Windows ile açıldım" işareti <see cref="AutostartArg"/>.</summary>
+    internal static string AutostartCommandFor(string exePath) => $"\"{exePath}\" {AutostartArg}";
 
     protected override void OnExit(ExitEventArgs e)
     {

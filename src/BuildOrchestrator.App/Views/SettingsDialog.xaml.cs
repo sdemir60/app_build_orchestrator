@@ -5,6 +5,7 @@ using System.Windows.Shapes;
 using ShapePath = System.Windows.Shapes.Path;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 
@@ -66,6 +67,11 @@ public partial class SettingsDialog : ModalDialog
     public Func<string?>? PickExportPath { get; set; }
     public Func<string?>? PickImportPath { get; set; }
 
+    /// <summary>[P4] Windows'un başlangıç kaydı servisi — MainWindow, DI'dan aldığı TEK örneği verir. Start with Windows
+    /// onun gerçek durumundan açılır ve Save kaydı ona ANINDA yazar; <c>null</c> ⇒ Windows yüzeyi yok (yalnız
+    /// kalıcılık).</summary>
+    public AutostartService? Autostart { get; set; }
+
     /// <summary>[test yüzeyi] Dosya okuma/yazma seam'i — varsayılan gerçek diski kullanır.</summary>
     internal Func<string, string> ReadFile { get; set; } = File.ReadAllText;
     internal Action<string, string> WriteFile { get; set; } = File.WriteAllText;
@@ -122,8 +128,9 @@ public partial class SettingsDialog : ModalDialog
     /// <summary>[D7] Diyaloğu açar: canlı pattern'lerin bir TASLAK kopyasını kurar (SettingsDraftViewModel),
     /// repo yolunu gösterir ve görünür kılar. <paramref name="pickFolder"/> klasör seçici seam'idir (testler
     /// gerçek diyalog açmaz — E1'deki IOsActions.PickFolder gelene dek OpenFolderDialog doğrudan çağrılır).
-    /// <para>[Task 1] Taslak <c>store.Load()</c> ile kurulur: kabuk anahtarları (Close to tray, Show notifications)
-    /// yalnız <see cref="UiState"/>'te yaşar — <see cref="RunViewModel"/>'in kendi bir yüzü YOKTUR (pull/stash'in
+    /// <para>[P3 · P4] Taslak <c>store.Load()</c> ile kurulur: dört kabuk anahtarı (Start with Windows, Start minimized
+    /// to tray, Close to tray, Show notifications) yalnız <see cref="UiState"/>'te yaşar — <see cref="RunViewModel"/>'in
+    /// kendi bir yüzü YOKTUR (pull/stash'in
     /// aksine), bu yüzden taslağın <c>saved</c> tohumu <paramref name="run"/>'dan değil <paramref name="store"/>'dan
     /// gelir.</para></summary>
     public void Open(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
@@ -133,7 +140,7 @@ public partial class SettingsDialog : ModalDialog
         _pickFolder = pickFolder;
         _draft = new SettingsDraftViewModel(
             run.LayerPatterns, run.RootPath, run.ExternalProjects, run.UpdateExternals, run.StashOnBranchSwitch,
-            store.Load());
+            store.Load(), Autostart);
         DataContext = _draft;
         ResetFeedback();
         RefreshSaveLabel();

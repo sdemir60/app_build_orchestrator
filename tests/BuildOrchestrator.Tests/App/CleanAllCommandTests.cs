@@ -35,7 +35,7 @@ public class CleanAllCommandTests
         Note("topology");
         vm.IsStarting = true;
         Note("planning");
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Note("running");
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 10));
         Note("idle");

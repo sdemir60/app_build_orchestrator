@@ -149,7 +149,7 @@ public class SuccessFlourishTests
         var vm = NewVm();
         var (view, window) = Realize(vm, animations: true);
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectFailedEvent("r1", @"C:\p\a.csproj", 1200, "error CS0103"));
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 0, 1, 0, 0, 100)); // Failed=1 → done KIRMIZI
@@ -404,7 +404,7 @@ public class SuccessFlourishTests
     /// <summary>Hatasız bir koşu: iki proje derlenir ve <c>Completed …</c> ile biter (done satırı UYGUN).</summary>
     private static void DriveCleanRun(RunViewModel vm)
     {
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug", 0));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
         vm.OnEvent(new ProjectSucceededEvent("r1", @"C:\p\a.csproj", 1200));
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\b.csproj", "B"));

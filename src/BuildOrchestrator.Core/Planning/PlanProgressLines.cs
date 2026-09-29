@@ -8,7 +8,7 @@ namespace BuildOrchestrator.Core.Planning;
 ///
 /// <para><b>İki tüketici, tek metin:</b> aynı planlama pipeline'ı (tarama → csproj değerlendirme → graf →
 /// topo → incremental) iki yerden koşar: <c>SyncWorkspaceService</c> (Sync komutu) ve Supervisor'ın
-/// <c>BuildRunPlan</c>'ı (bir run'ın taze segmenti). Satırlar Core'da toplanır çünkü CLAUDE.md aynı metnin
+/// <c>BuildRunPlan</c>'ı (her koşunun başında). Satırlar Core'da toplanır çünkü CLAUDE.md aynı metnin
 /// iki yerde tanımlanmasını yasaklar — biri güncellenip diğeri unutulursa kullanıcı AYNI işin iki farklı
 /// adını görürdü.</para>
 ///

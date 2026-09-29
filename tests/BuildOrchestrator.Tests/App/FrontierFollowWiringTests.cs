@@ -46,7 +46,7 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
         double before = list.Scroll.VerticalOffset;
 
         // Run başlar ve AŞAĞIDAKİ bir proje derlenmeye başlar → follow onu görünür kılmalı.
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", null));
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[FrontierIndex].Id, nodes[FrontierIndex].Name));
 
         // Üretim tetiği DispatcherTimer'dır — pompalanmadan hiç ateşlenmez (test bu yüzden gerçek zincirdir).
@@ -78,7 +78,7 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
         vm.OnEvent(new WorkspaceTopologyEvent(nodes, [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha12345", false, nodes.Count, 0));
         content.UpdateLayout();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, nodes.Count, 4, "Debug", null));
 
         var list = window.Shell.ProjectsList;
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[20].Id, nodes[20].Name));
@@ -131,7 +131,7 @@ public class FrontierFollowWiringTests(ITestOutputHelper output)
         vm.OnEvent(new WorkspaceTopologyEvent(nodes, [[.. members.Select(i => nodes[i].Id)]], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha12345", false, nodes.Count, 0));
         content.UpdateLayout();
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, nodes.Count, 4, "Debug", 0, null));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, nodes.Count, 4, "Debug", null));
 
         var list = window.Shell.ProjectsList;
         vm.OnEvent(new ProjectStartedEvent("r1", nodes[20].Id, nodes[20].Name)); // sıra ilk üyede

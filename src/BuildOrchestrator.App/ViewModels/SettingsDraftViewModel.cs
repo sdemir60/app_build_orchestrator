@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
@@ -81,21 +82,34 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     /// <summary>[design v1.19.0 §2.9] General sayfasının grupları ve satırları — <see cref="GeneralSettingsCatalog"/>'tan
     /// doğar (sıra/metin burada yeniden yazılmaz).
-    /// <para><b>Henüz davranışa bağlı DEĞİL (kullanıcı kararı 1):</b> <c>Start with Windows</c> ve <c>Start minimized
-    /// to tray</c> yalnız bu taslakta yaşar — <see cref="CommitAsync"/> onları yazmaz, <see cref="ToFile"/>/
-    /// <see cref="LoadFrom"/> taşımaz, konsola not düşmez; diyalog her açılışta yeni bir taslak kurduğu için
-    /// varsayılana dönerler. <see cref="ClearAll"/> onları da varsayılanına döndürür (prototip parity). <c>Pull
-    /// before build</c> (<see cref="PullExternalsBeforeBuild"/>) ve <c>Stash and switch branches</c>
-    /// (<see cref="StashOnBranchSwitch"/>) gerçektir.</para>
-    /// <para><b>[DEĞİŞEN KURAL — P3, kullanıcı kararı 2026-09-28]</b> ESKİ: <c>Close to tray</c> ve <c>Show
-    /// notifications</c> de yukarıdaki iki anahtar gibi yalnız taslaktaydı. Artık <see cref="ShellSwitches"/>
-    /// tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi onları tohumlar, <see cref="CommitAsync"/>
-    /// yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer konsola not düşer. Close to tray pencere
-    /// kapanışını da sürer (<c>MainWindow.OnClosing</c>); [Task 4] Show notifications'ın davranışı (üç
-    /// tray-balloon yolu) da artık bağlıdır.</para></summary>
+    /// <para>Altı anahtarın hepsi gerçektir. <c>Pull before build</c> (<see cref="PullExternalsBeforeBuild"/>) ve
+    /// <c>Stash and switch branches</c> (<see cref="StashOnBranchSwitch"/>) canlı VM değerinin taslak kopyasıdır; dört
+    /// kabuk anahtarı (<c>Start with Windows</c>, <c>Start minimized to tray</c>, <c>Close to tray</c>, <c>Show
+    /// notifications</c>) <see cref="ShellSwitches"/> tablosu üzerinden KALICIDIR: ctor'un <c>saved</c> parametresi
+    /// onları tohumlar, <see cref="CommitAsync"/> yazar, <see cref="ToFile"/>/<see cref="LoadFrom"/> taşır, değişen değer
+    /// konsola not düşer. <see cref="ClearAll"/> hepsini varsayılanına döndürür (prototip parity).</para>
+    /// <para><b>[DEĞİŞEN KURAL — P3 2026-09-28 · P4 2026-09-29, kullanıcı kararları]</b> ESKİ: dört kabuk anahtarı
+    /// yalnız bu taslakta yaşardı — kaydedilmez, dosyaya yazılmaz, konsola not düşmez, her açılışta varsayılana
+    /// dönerdi.</para></summary>
     public IReadOnlyList<GeneralSettingGroupViewModel> GeneralGroups { get; }
 
     private readonly Dictionary<GeneralSetting, GeneralSettingRowViewModel> _generalRows = [];
+
+    /// <summary>[P4] Windows'un başlangıç kaydı — verildiyse Start with Windows onun gerçek durumundan açılır ve Save
+    /// kaydı ANINDA yazar; <c>null</c> ⇒ Windows yüzeyi yok (yalnız kalıcılık — testler ve tasarım).</summary>
+    private readonly AutostartService? _autostart;
+
+    /// <summary>[P4] Start with Windows'un diyalog AÇILIRKEN gösterdiği değer — Save yalnız bundan farklıysa Windows
+    /// kaydına ve tercihe dokunur.</summary>
+    private readonly bool _startWithWindowsOpenedOn;
+
+    /// <summary>[P4] Görev Yöneticisi'nde devre dışı bırakılmış kayıtta Start with Windows satırının açıklaması —
+    /// anahtar kapalı görünür ve açmak işareti kaldırır (kullanıcı kararı, seçenek 1).</summary>
+    public const string StartWithWindowsDisabledInStartupAppsNote =
+        "Turned off in Task Manager's Startup apps — switch it on to start with Windows again.";
+
+    /// <summary>[P4] Windows kaydı yazılamadığında konsolun tek satırı — nedeni Windows'un kendi cümlesidir.</summary>
+    internal static string StartWithWindowsNotChangedLine(string reason) => $"Start with Windows not changed — {reason}";
 
     /// <summary>Bir General anahtarının taslak satırı.</summary>
     public GeneralSettingRowViewModel GeneralRow(GeneralSetting setting) => _generalRows[setting];
@@ -131,12 +145,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// taslak da boş kalır.</summary>
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
-    /// <param name="saved">[Task 1] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu —
-    /// verildiyse <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır;
-    /// <c>null</c> ⇒ satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
+    /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
+    /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
+    /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
+    /// <param name="autostart">[P4] Windows'un başlangıç kaydı — verildiyse Start with Windows kayıtlı tercihten DEĞİL
+    /// Windows'un gerçek durumundan (<see cref="AutostartService.State"/>) tohumlanır ve <see cref="CommitAsync"/> kaydı
+    /// anında yazar.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
-        bool stashOnBranchSwitch = false, UiState? saved = null)
+        bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null)
     {
         _repositoryRoot = repositoryRoot;
         GeneralGroups = BuildGeneralGroups();
@@ -144,6 +161,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         StashOnBranchSwitch = stashOnBranchSwitch;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
+        _autostart = autostart;
+        if (autostart is not null)
+        {
+            var windows = autostart.State;
+            var row = GeneralRow(GeneralSetting.StartWithWindows);
+            row.IsOn = windows == AutostartState.On;
+            if (windows == AutostartState.DisabledInStartupApps) row.Note = StartWithWindowsDisabledInStartupAppsNote;
+        }
+        _startWithWindowsOpenedOn = GeneralRow(GeneralSetting.StartWithWindows).IsOn;
         Layers.CollectionChanged += OnLayersChanged;
         Externals.CollectionChanged += OnExternalsChanged;
         if (initial is { Count: > 0 })
@@ -191,7 +217,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
 
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 
-    /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar. [Task 1] Kabuk anahtarları
+    /// <summary>Taslağın o anki hâlini dosya biçimine çevirir — diyalog onu diske yazar. [P3 · P4] Kabuk anahtarları
     /// (<see cref="ShellSwitches"/>) <see cref="SettingsFile.From"/>'un parametresi DEĞİLDİR — tablo satır satır
     /// <see cref="ShellSwitch.WriteFile"/> ile AYRICA yazılır (yeni bir anahtar <see cref="SettingsFile.From"/>'un
     /// imzasını büyütmez).</summary>
@@ -228,7 +254,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
-        // [Task 1] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
+        // [P3 · P4] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
         // dokunulmaz kalır — pull/stash'in deseninin tablo üzerinden tekrarı.
         foreach (var s in ShellSwitches.All)
             if (s.ReadFile(file) is { } v) GeneralRow(s.Setting).IsOn = v;
@@ -273,10 +299,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// (K5) AYNI commit'te persist eder ve TEK yoldan uygular — <see cref="RunViewModel.ApplySettingsAsync"/>
     /// katmanları, harici projeleri, bekleyen repo kökünü ve TEK Sync'i birlikte sürer. Cancel bu metodu
     /// ÇAĞIRMAZ → taslak (kopya) atılır, canlı duruma dokunulmaz.
-    /// <para>[Task 1] <see cref="ShellSwitches.Commit"/> kabuk anahtarlarını (Close to tray, Show notifications)
-    /// AYNI <paramref name="store"/>'a yazar ve değişenlerin konsol notunu döner — <c>store.Save</c>'DEN ÖNCE
-    /// çağrılır (notlar değişimden ÖNCEKİ kayıtlı değere göre hesaplanır), notlar ise <see cref="RunViewModel.ApplySettingsAsync"/>'e
-    /// <c>settingNotes</c> olarak geçer.</para></summary>
+    /// <para>[P3 · P4] <see cref="ShellSwitches.Commit"/> dört kabuk anahtarını (Start with Windows, Start minimized to
+    /// tray, Close to tray, Show notifications) AYNI <paramref name="store"/>'a yazar ve değişenlerin konsol notunu
+    /// döner — <c>store.Save</c>'DEN ÖNCE çağrılır (notlar değişimden ÖNCEKİ kayıtlı değere göre hesaplanır; Start with
+    /// Windows'unki diyaloğun GÖSTERDİĞİ değere göre), notlar ise <see cref="RunViewModel.ApplySettingsAsync"/>'e
+    /// <c>settingNotes</c> olarak geçer. Start with Windows YALNIZ değiştirildiyse Windows kaydına ve tercihe dokunur
+    /// (metin içindeki yorum).</para></summary>
     public async Task CommitAsync(RunViewModel run, IUiStateStore store)
     {
         var patterns = BuildPatterns();
@@ -286,7 +314,21 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
-        var settingNotes = ShellSwitches.Commit(state, s => GeneralRow(s).IsOn);
+        // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
+        // ve tercih değişir. Dokunulmadıysa ikisi de olduğu gibi kalır (Save'in gösterilen "kapalı"yı sessizce tercihe
+        // yazması kullanıcının vermediği bir karar olurdu); kayıt yazılamadıysa tercih de değişmez.
+        var settingNotes = new List<string>();
+        bool startWithWindows = GeneralRow(GeneralSetting.StartWithWindows).IsOn;
+        bool turned = startWithWindows != _startWithWindowsOpenedOn;
+        if (turned && _autostart is not null && !_autostart.TryTurn(startWithWindows, out string? failure))
+        {
+            settingNotes.Add(StartWithWindowsNotChangedLine(failure));
+            turned = false;
+        }
+        // Notun "önce"si diyaloğun GÖSTERDİĞİ değerdir: kayıtlı tercih Windows'un gerçeğinden farklı olabilir.
+        if (turned) state.Autostart = _startWithWindowsOpenedOn;
+        settingNotes.AddRange(ShellSwitches.Commit(state, s => s == GeneralSetting.StartWithWindows && !turned
+            ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
         await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes);
     }
