@@ -183,8 +183,8 @@ public partial class ShellRoot : UserControl
 
     /// <summary>[design v1.24.0 §9] Keşif sayacını yazar: toplam ayrı bir run'da (text-dim), geri kalanı text-faint —
     /// metin <see cref="ViewModels.InteractionText.DiscoveryCounter"/>'dan (tek kaynak). Sayaç sakin bir canlı
-    /// bölgedir: keşif açıkken metin DEĞİŞTİYSE ekran okuyucuya <c>LiveRegionChanged</c> yükselir — aynı değerin
-    /// yeniden yazılması duyurulmaz (<c>StickyRibbon.AnnouncePhaseIfChanged</c> deseni).
+    /// bölgedir: keşif açıkken metin DEĞİŞTİYSE ekran okuyucuya duyurulur (<see cref="LiveRegion.Announce"/>) — aynı
+    /// değerin yeniden yazılması duyurulmaz.
     /// <para><b>UIA adı AÇIKÇA yazılır</b> (ölçüldü): run metni sonradan yazılınca <c>TextBlock.Text</c> boş döner ve
     /// adı ondan türeyen peer ekran okuyucuya boş bir bölge duyururdu.</para></summary>
     public void SetDiscoveryCount(int repository, int external, bool breakdown)
@@ -196,9 +196,7 @@ public partial class ShellRoot : UserControl
         AutomationProperties.SetName(PART_DiscoveryCount, total + tail);
         if (!_discovering) return;
         DiscoveryAnnouncements++;
-        var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(PART_DiscoveryCount)
-                   ?? System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(PART_DiscoveryCount);
-        peer?.RaiseAutomationEvent(System.Windows.Automation.Peers.AutomationEvents.LiveRegionChanged);
+        LiveRegion.Announce(PART_DiscoveryCount);
     }
 
     /// <summary>[test yüzeyi] Sayacın canlı bölge duyurusu kaç kez yükseldi — peer'in olayı dinleyicisiz

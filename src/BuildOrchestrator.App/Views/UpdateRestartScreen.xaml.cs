@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
@@ -102,7 +101,7 @@ public partial class UpdateRestartScreen : UserControl
     }
 
     /// <summary>Çubuğu her karede, etiketi yalnız adım değişince yazar; yeni adım ekran okuyucuya BİR KEZ duyurulur
-    /// (<c>StickyRibbon.AnnouncePhaseIfChanged</c> deseni).</summary>
+    /// (<see cref="LiveRegion.Announce"/>).</summary>
     private void Render(double elapsedMs)
     {
         var frame = UpdateRestartTimeline.At(elapsedMs);
@@ -111,8 +110,7 @@ public partial class UpdateRestartScreen : UserControl
         _shownStep = frame.Step;
         PART_Step.Text = UpdateText.RestartStepLabel(frame.Step, _incoming);
         StepAnnouncements++;
-        var peer = UIElementAutomationPeer.FromElement(PART_Step) ?? UIElementAutomationPeer.CreatePeerForElement(PART_Step);
-        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        LiveRegion.Announce(PART_Step);
     }
 
     /// <summary>Zamanlayıcıyı durdurur ve söner; sönüş bitince (azaltılmış harekette hemen) kalkar. Sönerken tıklamalar

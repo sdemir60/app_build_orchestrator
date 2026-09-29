@@ -5677,6 +5677,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |
+| Live-region announcement — the one place a region's peer is found or created and `LiveRegionChanged` raised; each region decides when | `App/Controls/LiveRegion.cs` |
 
 **Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*
 and its *WPF wiring*, the decision lives in a pure, testable class and the control only applies it. Ribbon
