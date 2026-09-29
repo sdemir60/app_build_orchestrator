@@ -381,8 +381,8 @@ run holds the slot is rejected with `error(cleanRejected)` (§5.4).
 `optimizeWorkspace` carries the same two things and nothing more — the workspace root and the registered
 external cards. No configuration rides with it, because not one of its steps looks at one. Where
 `cleanWorkspace` removes build output, this one puts back what is missing and removes only what breaks a
-build: it restores the projects whose NuGet packages are missing from disk (§9.3), names the references a
-restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
+build: it restores the projects whose NuGet packages are missing from disk and every SDK-style project (§9.3),
+names the references a restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
 the three ledgers of entries whose file is gone, sweeping the temp files their atomic writes left behind
 (§16). Everything else is left alone — the global NuGet caches, `NuGet.config`, `bin` and the shared `OutDir`,
 the run logs, the UI state, and git, since Optimize runs no version-control command at all.
@@ -1679,13 +1679,20 @@ always a build's prologue: Optimize repairs what a build would otherwise have fa
 same invoker core — inner-job assignment, line pumping, the per-project timeout and the kill on timeout or
 cancel — so a restore child is governed exactly like a build child.
 
-Optimize restores only what a restore can actually fix: a project that carries a `packages.config` beside its
-`.csproj` — the **old-style** family this tool targets, which takes its packages that way rather than through
-`PackageReference` — and at least one of whose NuGet `packages` `HintPath` targets is missing from disk. The
+Optimize restores only what a restore can actually fix, in two families. The **old-style** family this tool
+targets — a project that carries a `packages.config` beside its `.csproj`, taking its packages that way rather
+than through `PackageReference` — is restored when at least one of its NuGet `packages` `HintPath` targets is
+missing from disk. The
 `packages.config` itself is never parsed: NuGet's `repositoryPath` can move the store anywhere, so the
 `HintPath` is the only trustworthy witness of where the packages are expected. A `HintPath` still carrying an
 unexpanded MSBuild property is counted in nothing at all, because this service does no MSBuild evaluation and
-staying silent beats a wrong diagnosis. A non-zero exit is **not an error**: the project is named on the
+staying silent beats a wrong diagnosis. Every **SDK-style** project is restored on every Optimize. Its build
+reads `obj\project.assets.json`, which only a restore writes, and the build path's prologue is keyed to
+`packages.config`, so it never restores one: a fresh clone, or a workspace Clean that took `obj` away (§13.2),
+leaves such a project failing with `NETSDK1004` until something restores it. Whether the file is already there
+is not consulted — the package list may have changed since it was written, and a restore with nothing to do
+takes about a second. The argument list is the same one; `RestorePackagesConfig` is inert there. A non-zero
+exit is **not an error**: the project is named on the
 console and the sweep moves to the next one, which is how an offline machine behaves. The restore child's own
 output is **collected, not streamed**. Even a restore with nothing to fetch prints a banner, certificate-chain
 notes and a timing footer, and a failed one repeats every error in a closing summary; across a workspace of
@@ -1726,9 +1733,10 @@ NuGet-generated leftovers — `project.assets.json`, `*.nuget.g.props`, `*.nuget
 The `obj` folder itself, everything else inside it, `bin` and `OutDir` are untouched, and a locked file is
 reported by name instead of retried: the lock's owner is a running IDE or application, and "close it and run
 Optimize again" is the honest answer. The removal is confined to **old-style** projects, and that limit cannot
-be relaxed: in an SDK-style project `project.assets.json` is legitimate, and nothing would bring it back — such
-a project has no `packages.config`, so Optimize's restore step (§9.3) never reaches it and the next build would
-fail on a missing assets file. Deleting without a restore behind it breaks the build.
+be relaxed: in an SDK-style project `project.assets.json` is legitimate — it is that project's own restore
+output — and nothing would bring a deleted one back. Optimize's restore step (§9.3) has already run by the time
+this one does, and the build path never restores such a project, so the next build would fail on a missing
+assets file. Deleting without a restore behind it breaks the build.
 
 The symmetric half of this rule is §7.1 and §7.6: "did it change?" is answered from source, and an output's
 time is consulted only to tell whose output it is and, for one built elsewhere, whether any input is newer — it
@@ -2907,7 +2915,9 @@ in use, a warning for a card that resolved to nothing — and the event stream g
 projects, folders, bytes freed and, when there were any, files in use. A file held by a running application is
 skipped and counted rather than treated as a failure, the flow never stops for it, and the closing warning says
 to close the application and press *Clean* again. Because it removes `obj` outright, it also removes the cause
-of the stale-`obj` warning a run start can raise, rather than suppressing it.
+of the stale-`obj` warning a run start can raise, rather than suppressing it. The same deletion takes an
+SDK-style project's `project.assets.json`, which no build restores: such a project needs an Optimize (§9.3)
+before it builds again.
 
 **What may be deleted is decided by the resolved project set, not by a path prefix.** A folder goes only if it
 sits directly inside the folder of a csproj this workspace resolved and is named `bin` or `obj`. Anchoring the
@@ -2978,7 +2988,8 @@ the ordinary disabled dim is suppressed so a running job never reads as a switch
 one rule, so the box always says which of its jobs is in flight while the other two sit in the dim.
 
 **Optimize is the workspace doctor.** The gauge repairs what would stop a build before it starts and names
-what it cannot repair. It restores the NuGet packages missing from disk, then reports project by project the
+what it cannot repair. It restores the NuGet packages missing from disk and the package assets every SDK-style
+project builds from, then reports project by project the
 references a restore cannot fix — a `packages` path at a version nobody produces, a `bin` reference whose
 producing solution has not been built — so a run does not die on a cryptic compile error over something that
 was knowable at the click; after that it clears the build-breaking residue and the dead ledger entries behind
@@ -4979,6 +4990,9 @@ do, and how the interface works around each — useful to know before attempting
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
 - **The shared-compilation flags cost ~2.9×** and stay off for correctness (§9.2).
+- **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
+  `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
+  workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
 - **Filling a viewport of rows costs what it costs.** Virtualization bounds the work to the visible window,
   but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
   milliseconds on the reference machine. That price is paid again whenever the entry list is replaced — a

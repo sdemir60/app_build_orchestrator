@@ -347,10 +347,11 @@ everything from scratch. It starts on the click, with no confirmation dialog: th
 empty out, the button turns amber with a spinner, and when the deletion is done a *Sync* runs by itself and
 fills them in again. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
 not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running application are skipped and
-reported rather than failing the Clean.
+reported rather than failing the Clean. An SDK-style project loses its restored package assets with `obj`, and
+a build does not restore them: run *Optimize* before building it again.
 
-*Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages,
-names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
+*Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages
+and every SDK-style project's package assets, names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
 cache entries, over the same projects a build sees, external roots included. It changes no build decision —
 nothing it does makes a project stale. Its flow is the same as *Clean*'s: the project list and the graph empty at
 the click, its button turns amber with a spinner, and when it finishes a *Sync* runs on its own to put the plan
