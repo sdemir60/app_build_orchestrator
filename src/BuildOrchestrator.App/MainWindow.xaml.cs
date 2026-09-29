@@ -231,8 +231,10 @@ public partial class MainWindow : Window
         Shell.ImportSettingsButton.Click += OnImportSettings;
         _vm.PropertyChanged += (_, e) =>
         {
+            // [kullanıcı kararı 2026-09-29] Katmanlar kök olmadan da kaydedilir — kurulum kartının Layers satırı
+            // katman tanımı değişince de tazelenir.
             if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
-                or nameof(RunViewModel.RootPath)) RefreshListInvite();
+                or nameof(RunViewModel.RootPath) or nameof(RunViewModel.LayerPatterns)) RefreshListInvite();
         };
         _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
         RefreshListInvite();

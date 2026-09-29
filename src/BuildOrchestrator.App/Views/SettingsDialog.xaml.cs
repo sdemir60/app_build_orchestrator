@@ -113,8 +113,8 @@ public partial class SettingsDialog : ModalDialog
     /// tıklaması ya da <see cref="ShowSection"/>) yeni sayfa en üstten başlar, önceki sayfanın kaydırma payı taşınmaz.</summary>
     private void OnSectionChecked(object sender, RoutedEventArgs e) => Body.ScrollToTop();
 
-    /// <summary>[design v1.8.0 §2.9] First run: henüz workspace yok. Kaydetmek aynı zamanda kurulumdur (düğme
-    /// <c>Save and sync</c> der) ve diyalog Workspace sayfasında açılır.</summary>
+    /// <summary>[design v1.8.0 §2.9] First run: henüz workspace yok — diyalog Workspace sayfasında açılır. (Save'in
+    /// etiketi taslaktan gelir: <see cref="SettingsDraftViewModel.SaveButtonLabel"/>.)</summary>
     private bool IsFirstRun => _run?.HasWorkspace != true;
 
     /// <summary>[design v1.19.0 §2.9] Açılış bölümü: first run'da Workspace (başlamak için gereken tek zorunlu ayar
@@ -143,7 +143,6 @@ public partial class SettingsDialog : ModalDialog
             store.Load(), Autostart);
         DataContext = _draft;
         ResetFeedback();
-        RefreshSaveLabel();
         // [design v1.19.0 §2.9] Açılış bölümü her açılışta yeniden seçilir (OpeningSection).
         ShowSection(OpeningSection);
         // [D7 re-review][Fix1 → design v1.19.0 ortak kabuk] Görünür kılma, giriş ve odağı diyaloğun İÇİNE taşıma
@@ -166,11 +165,6 @@ public partial class SettingsDialog : ModalDialog
     /// <summary>Her kapanış yolu (Cancel, Save, scrim, Esc, MainWindow'un Esc güvenlik ağı) geri bildirimi ve
     /// Clear'ın kurulu durumunu sıfırlar — taslak zaten bir kopyadır ve atılır.</summary>
     protected override void OnDialogClosing() => ResetFeedback();
-
-    /// <summary>[design v1.8.0 §2.9] First run'da kaydetmek AYNI ZAMANDA kurulumdur — düğme bunu söyler:
-    /// <c>Save and sync</c>. Sonrasında yalnız <c>Save</c>.</summary>
-    private void RefreshSaveLabel() =>
-        SaveButton.Content = IsFirstRun ? "Save and sync" : "Save";
 
     // ---- Layers ----
 

@@ -222,10 +222,13 @@ public class SettingsPortabilityTests
         Assert.Equal(["Yankee"], draft.Layers.Select(l => l.Name));
     }
 
-    /// <summary>[§2.9 · K5] Clear kökü, TÜM katmanları VE TÜM harici projeleri boşaltır — ve Save'i bloklar
-    /// (root zorunludur).</summary>
+    /// <summary>[§2.9 · K5] Clear kökü, TÜM katmanları VE TÜM harici projeleri boşaltır — ve boş form KAYDEDİLEBİLİR:
+    /// Save açık kalır, footer'da neden yazmaz.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: Clear Save'i bloklardı (root
+    /// zorunluydu). Ölçülen sonuç: footer "Cleared — save to apply" derken düğme kapalıydı — ayarları silmenin
+    /// Settings'ten bir yolu yoktu.</para></summary>
     [Fact]
-    public void Clearing_empties_the_root_every_layer_and_every_external_project()
+    public void Clearing_empties_the_root_every_layer_and_every_external_project_and_leaves_save_on()
     {
         var draft = new SettingsDraftViewModel(
             [new LayerPattern(0, "^A", "Alpha")], @"D:\src\osys", [new ExternalProject(@"C:\a")]);
@@ -235,7 +238,8 @@ public class SettingsPortabilityTests
         Assert.Null(draft.RepositoryRoot);
         Assert.Empty(draft.Layers);
         Assert.Empty(draft.Externals);
-        Assert.False(draft.CanSave);
+        Assert.True(draft.CanSave);
+        Assert.Null(draft.SaveBlockedReason);
     }
 
     // ---------------------------------------------------------------- diyalog (görünüm + kablaj)
