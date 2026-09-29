@@ -11,8 +11,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// checkout/pull); ikinci bir tanım yazılmaz. Derleme graceful durdurulur — Stop'un kendisi: yeni proje başlamaz,
 /// uçuştaki <c>MSBuild.exe</c>'ler post-build copy dahil biter, ortak çıktı dizininde yarım DLL kalmaz. Açılış
 /// koreografisindeki henüz gönderilmemiş koşu Stop'un marking kuralıyla geri alınır. Workspace işlerinin iptali
-/// yoktur ve yarıda kesilmeleri ağacı bozar: beklenirler — bitişlerinde zincirlenen Sync dahil (devir kapıyı
-/// bırakmadan olur, bkz. <see cref="SyncThenReleaseAsync"/>).</para>
+/// yoktur, beklenirler: Clean/Optimize/checkout/pull yarıda kesilse ağacı yarım bırakırdı; Sync'in fetch'i git
+/// ref'lerini yazar. Bitişlerine zincirlenen Sync ise bekleyişte BAŞLAMAZ (<see cref="SyncCoreAsync"/>'in kapısı):
+/// zincir işin yüzeyini doğrudan bırakır (<see cref="SyncThenReleaseAsync"/>) ve çıkış o anda hazırdır.</para>
 ///
 /// <para><b>Bekleyiş sonsuz değildir:</b> motor susarsa sessizlik bekçisinin uyarısı (<see cref="EngineOverdueMessage"/>)
 /// çıkışı serbest bırakır — bekçi çıkışın bulunabileceği her pencerede (Starting, Stopping, Syncing, workspace işi)
@@ -21,8 +22,9 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="OnWorkspaceBusyChanged"/> —
 /// her iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).
-/// Bekleyiş boyunca kendiliğinden Sync başlamaz (<see cref="DisableAutoSync"/>): başlasaydı drain'in hemen ardından
-/// yeni bir iş açılır ve çıkış onu da beklerdi.</para>
+/// Bekleyiş boyunca hiçbir Sync başlamaz — kendiliğinden Sync kapanır (<see cref="DisableAutoSync"/>), zincirlenen
+/// ve diğer her Sync'i <see cref="SyncCoreAsync"/>'in kapısı keser: başlasaydı iş biter bitmez yeni bir iş açılır ve
+/// çıkış onu da beklerdi.</para>
 ///
 /// <para><b>Abone sözleşmesi:</b> <see cref="ExitReady"/> bir durum geçişinin ORTASINDA (ör. <c>IsRunning</c>
 /// düşerken) senkron atılabilir; VM abonenin ne yaptığına dayanmaz — kabuk kapanışı kendi kuyruğuna erteler.</para>

@@ -10,7 +10,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [P3 · Task 2] Güvenli tam çıkış (<see cref="RunViewModel.RequestExit"/>) arkada yarım iş BIRAKMAZ: uçuşta iş yoksa
 /// çıkış HEMEN hazırdır; bir derleme koşuyorsa graceful durdurulur (yeni proje başlamaz, uçuştakiler post-build copy
-/// dahil biter) ve çıkış drain'i bekler; Sync/Clean/Optimize/checkout/pull (ve bitişlerinde zincirlenen Sync) beklenir.
+/// dahil biter) ve çıkış drain'i bekler; Sync/Clean/Optimize/checkout/pull beklenir, bitişlerine zincirlenen Sync ise
+/// bekleyişte başlamaz.
 /// Bekleyiş sonsuz DEĞİLDİR: motor susarsa (sessizlik bekçisi) ya da ölürse çıkış serbest kalır. İkinci istek ikinci
 /// bir durdurma ya da satır üretmez; bekleyişte kendiliğinden Sync başlamaz.
 ///
@@ -148,25 +149,30 @@ public sealed class SafeExitTests
 
     private static readonly SyncCompletedEvent SyncDone = new("main", "sha1234", false, 1, 0);
 
-    /// <summary>Motorun işi bitirişi ve — bitişte bir Sync zincirlenen işlerde — o Sync'in cevabı, sırasıyla.</summary>
-    private static IpcEvent[] EndWithItsChain(WorkspaceJob job)
+    /// <summary>Motorun işi bitirişi. Bekleyişte bitişe zincirlenen bir Sync başlamadığı için başka cevap yoktur.</summary>
+    private static IpcEvent EndOf(WorkspaceJob job) => job switch
     {
-        IpcEvent[] chainedSync = [new SyncStartedEvent(Root, "main"), SyncDone];
-        return job switch
-        {
-            WorkspaceJob.Sync => [SyncDone],
-            WorkspaceJob.Clean => [new CleanCompletedEvent(1, 2, 1024, 0, 1), .. chainedSync],
-            WorkspaceJob.Optimize => [new OptimizeCompletedEvent(ProjectCount: 1), .. chainedSync],
-            WorkspaceJob.Checkout => [new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
-                "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null), .. chainedSync],
-            WorkspaceJob.Pull => [new PullCompletedEvent(Succeeded: true), .. chainedSync],
-            _ => throw new ArgumentOutOfRangeException(nameof(job), job, null),
-        };
-    }
+        WorkspaceJob.Sync => SyncDone,
+        WorkspaceJob.Clean => new CleanCompletedEvent(1, 2, 1024, 0, 1),
+        WorkspaceJob.Optimize => new OptimizeCompletedEvent(ProjectCount: 1),
+        WorkspaceJob.Checkout => new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x",
+            "b7e91d4a0c1f2e3d4c5b6a7980716253443526a1", 0, null, null),
+        WorkspaceJob.Pull => new PullCompletedEvent(Succeeded: true),
+        _ => throw new ArgumentOutOfRangeException(nameof(job), job, null),
+    };
 
-    /// <summary>Workspace işi durdurulmaz (iptali yoktur; yarım bırakılan bir checkout/pull/Clean ağacı bozar) — çıkış
-    /// onu ve bitişinde zincirlenen Sync'i BEKLER: iş ve zinciri sürerken <c>ExitReady</c> yoktur, zincir bitince bir
-    /// kez gelir. Motora durdurma gitmez; zincirin kendi Sync'i dışında Sync de gitmez.</summary>
+    /// <summary>
+    /// Workspace işi durdurulmaz (iptali yoktur) — çıkış onu BEKLER: iş sürerken <c>ExitReady</c> yoktur, iş bitince
+    /// bir kez gelir. Motora durdurma gitmez; işin kendisi bir Sync değilse hiç Sync de gitmez ve konsol temizlenmez
+    /// (bekleyişin satırı yerinde kalır).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review I2, kontrolcü kararı]</b> Eski iddia: Clean/Optimize/checkout/pull'un
+    /// bitişine zincirlenen Sync de beklenirdi — <c>ExitReady</c> zincirin <c>syncCompleted</c>'ında gelirdi ve tek
+    /// <c>SyncWorkspaceCommand</c> zincirin kendisiydi. Değişme gerekçesi: bekleyiş yeni iş BAŞLATMAMALIDIR. Zincirlenen
+    /// Sync çıkış isteğinden SONRA açılan yeni bir işti ve yalnız kapanmakta olan bir ekranı tazeliyordu; bir sonraki
+    /// açılış zaten Sync'ler — kendiliğinden Sync'in bekleyişte kapalı olmasıyla AYNI gerekçe. Artık bekleyişte hiçbir
+    /// Sync başlamaz (<c>SyncCoreAsync</c>'in kapısı) ve zincir işin yüzeyini doğrudan bırakır.</para>
+    /// </summary>
     [Theory]
     [InlineData(WorkspaceJob.Sync)]
     [InlineData(WorkspaceJob.Clean)]
@@ -181,14 +187,14 @@ public sealed class SafeExitTests
         h.Vm.RequestExit();
 
         Assert.True(h.Vm.ExitPending);
-        foreach (var e in EndWithItsChain(job))
-        {
-            Assert.Equal(0, h.Ready); // iş (ya da zinciri) hâlâ uçuşta
-            h.Vm.OnEvent(e);
-        }
+        Assert.Equal(0, h.Ready); // iş hâlâ uçuşta
+
+        h.Vm.OnEvent(EndOf(job));
+
         Assert.Equal(1, h.Ready);
         Assert.Empty(h.Sent.OfType<StopRunCommand>());
-        Assert.Single(h.Sent.OfType<SyncWorkspaceCommand>()); // işin kendi Sync'i ya da zinciri — başkası yok
+        Assert.Equal(job == WorkspaceJob.Sync ? 1 : 0, h.Sent.OfType<SyncWorkspaceCommand>().Count()); // yalnız işin kendisi
+        Assert.Equal(1, h.ExitLines); // zincirin konsol temizliği de yok
     }
 
     // ---------------------------------------------------------------- bekleyiş sonsuz değil

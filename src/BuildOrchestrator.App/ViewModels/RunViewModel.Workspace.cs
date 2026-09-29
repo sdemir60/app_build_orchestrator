@@ -350,7 +350,8 @@ public sealed partial class RunViewModel
     /// bekleyen bir HEAD tetiği ikinci bir Sync başlatamaz (spec §6.1 "çift Sync yok"). Devralma SENKRONDUR:
     /// <see cref="SyncCoreAsync"/> ilk await'ine varmadan <c>_syncRequested</c>'ı kurar, yani Task'ı beklemeden başlatmak
     /// kapıyı kesintisiz tutar. Gönderim senkron düşerse Sync kendi kapısını zaten bırakır ve ardından gelen bırakma
-    /// doğru sonucu verir.
+    /// doğru sonucu verir. [P3 · final review I2] Çıkış beklerken Sync hiç başlamaz (<see cref="SyncCoreAsync"/>'in
+    /// kapısı): bırakma kapıyı açar ve bekleyen çıkış o anda hazır olur.
     /// </summary>
     /// <param name="release">Önceki işin yüzeyini bırakan adım.</param>
     private async Task SyncThenReleaseAsync(Action release, SyncMode mode,

@@ -1238,10 +1238,17 @@ public sealed partial class RunViewModel : ObservableObject
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
     /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
     /// temizlikten sonra yazılan ilk satırlar.</param>
-    /// <returns>Sync komutu motora gitti mi — düşen gönderimde <c>false</c> (kendiliğinden Sync tetiği bekletir).</returns>
+    /// <returns>Sync komutu motora gitti mi — düşen gönderimde ve çıkış beklerken <c>false</c> (kendiliğinden Sync
+    /// tetiği bekletir).</returns>
     private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
         IReadOnlyList<string>? sectionLines = null)
     {
+        // [P3 · final review I2] Çıkış beklerken HİÇBİR Sync başlamaz — her yan etkiden (konsol temizliği, istek bayrağı,
+        // komut) ÖNCE. Bekleyiş yeni iş açmaz: Clean/Optimize/checkout/pull'un bitişine zincirlenen Sync yalnız kapanan
+        // bir ekranı tazelerdi ve bir sonraki açılış zaten Sync'ler (OnEngineReady). Zincir (SyncThenReleaseAsync) işin
+        // yüzeyini doğrudan bırakır ve çıkış o anda hazır olur — kendiliğinden Sync'in bekleyişte kapalı olmasıyla
+        // (DisableAutoSync) AYNI gerekçe.
+        if (ExitPending) return false;
         // Sıra ÖNEMLİ: temizlik SEÇİMDEN ÖNCE gelir. Seçim düşünce kabuk anlatı belgesini yeniden kurar
         // (ShowRunConsole → SeedRunDocument); temizlik sonra gelseydi o kurulum bir önceki işlemin metnini
         // tilt'le getirir, temizlik onu hemen silerdi (görünür bir kırpışma). Aşağıdaki `_syncRequested`/
