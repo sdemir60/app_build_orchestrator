@@ -1,10 +1,11 @@
+using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Güncelleme hapının ve kartının metinlerinin TEK
-/// kaynağı — XAML (<c>x:Static</c>), kabuk ve testler aynı sabiti okur. Güncelleme motoru henüz yoktur; metinler
+/// [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Güncelleme hapının, kartının ve restart ekranının
+/// metinlerinin TEK kaynağı — XAML (<c>x:Static</c>), kabuk ve testler aynı sabiti okur. Güncelleme motoru henüz yoktur; metinler
 /// tasarımın kendisidir. Tüm metin İngilizce.
 /// </summary>
 public static class UpdateText
@@ -44,4 +45,16 @@ public static class UpdateText
         : syncRunning ? WaitForSync
         : buildRunning ? WaitForBuild
         : null;
+
+    /// <summary>[design v1.23.0 §2.12] Restart ekranının başlığı (13px/600). Ürün adı YAZILMAZ, kimlikten okunur
+    /// (<see cref="AppIdentity.Product"/>).</summary>
+    public static string RestartHeading { get; } = "Updating " + AppIdentity.Product;
+
+    /// <summary>Restart ekranının adım etiketi — sürerken yazıldığı için sonunda üç nokta (U+2026) taşır.</summary>
+    public static string RestartStepLabel(UpdateRestartStep step, string incoming) => step switch
+    {
+        UpdateRestartStep.Closing => "Closing " + AppIdentity.Product,
+        UpdateRestartStep.Installing => "Installing " + incoming,
+        _ => "Starting " + incoming,
+    } + "…";
 }
