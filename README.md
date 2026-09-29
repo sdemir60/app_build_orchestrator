@@ -19,10 +19,11 @@ files as raw XML (MSBuild is never evaluated for this), builds the dependency gr
 source signature against the stored build state to mark each project as "will build" or "up to date". **Build**
 then runs the plan: each project is shelled out to a separate `MSBuild.exe` child process, ordered by the graph,
 N at a time. Progress streams back to a live project list, a dependency graph view and a console. A run can be
-stopped (in-flight projects are allowed to finish their post-build copy) or retried for just the failed
-projects and their dependents. There is one tree: every build compiles your working tree as it is, on whatever
-branch is checked out. Picking another branch on the branch chip checks it out for real; the tool never writes
-to git on its own, and changes you make in git outside the tool are picked up automatically.
+stopped (in-flight projects are allowed to finish their post-build copy); after a stop or a failure, *Build*
+picks up what is left, skipping everything that already finished green. There is one tree: every build
+compiles your working tree as it is, on whatever branch is checked out. Picking another branch on the branch
+chip checks it out for real; the tool never writes to git on its own, and changes you make in git outside the
+tool are picked up automatically.
 
 ## Architecture
 
