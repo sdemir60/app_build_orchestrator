@@ -286,12 +286,13 @@ public partial class MainWindow : Window
         {
             if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
         };
-        // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken konsolun prompt satırı "Waiting for a
-        // workspace" der — ilk açılışta da, kök boş kaydedilip workspace kapandığında da.
-        Shell.ConsoleViewControl.SetHasWorkspace(_vm.HasWorkspace);
+        // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken paneller boş durumdadır: başlıklar sayaç ve
+        // liste araçları taşımaz, konsolun prompt satırı "Waiting for a workspace" der — ilk açılışta da, kök boş
+        // kaydedilip workspace kapandığında da.
+        Shell.SetHasWorkspace(_vm.HasWorkspace);
         _vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.ConsoleViewControl.SetHasWorkspace(_vm.HasWorkspace);
+            if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
 
         // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve

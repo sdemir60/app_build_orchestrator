@@ -153,6 +153,21 @@ public partial class ShellRoot : UserControl
         _filterChip.IsChecked = true;
     }
 
+    /// <summary>[design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace var mı — panellerin boş durum görünümünün
+    /// TEK girişi: workspace yokken graf, konsol ve akış başlıkları sayaç taşımaz, PROJECTS başlığında liste araçları
+    /// (<c>build-order</c> etiketi + filtre chip'i, filtre kutusu) yoktur ve konsolun prompt satırı workspace bekler.
+    /// MainWindow bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (ilk açılış ve kapanış aynı yol).</summary>
+    public void SetHasWorkspace(bool hasWorkspace)
+    {
+        var tools = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+        ((UIElement)PART_ProjectsHeader.LeftContent!).Visibility = tools;
+        _projectFilter.Visibility = tools;
+        PART_Graph.SetHasWorkspace(hasWorkspace);
+        PART_ConsoleHeader.SetHasWorkspace(hasWorkspace);
+        PART_ConsoleView.SetHasWorkspace(hasWorkspace);
+        PART_EventStream.SetHasWorkspace(hasWorkspace);
+    }
+
     // ---- [design v1.8.0 §2.4] Proje listesi boş-durum davetleri (görünürlük + kablaj MainWindow'da) ----
     /// <summary>[design v1.8.0 §2.4] Kurulum daveti (başlık + açıklama + kurulum listesi + iki düğme) —
     /// repo seçilmemişken.</summary>

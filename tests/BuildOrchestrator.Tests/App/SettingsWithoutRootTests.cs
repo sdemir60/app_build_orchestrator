@@ -165,6 +165,33 @@ public class SettingsWithoutRootTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.8.0 §3.1 · prototip panel başlıkları] Workspace yokken panel başlıkları sayaç taşımaz (graf
+    /// <c>N projects · M dependencies</c>, konsol <c>N lines</c>, akış <c>N events</c>) ve PROJECTS başlığında liste
+    /// araçları (<c>build-order</c> etiketi, filtre kutusu) yoktur — sayılacak ya da süzülecek bir şey yoktur. Açık
+    /// workspace'te hepsi durur; kapanınca gider.</summary>
+    [StaFact]
+    public async Task Without_a_workspace_the_panel_headers_hide_their_counts_and_the_list_tools()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("Alpha", null));
+        AssertPanelHeaders(window.Shell, Visibility.Visible); // ön-koşul: workspace açık
+
+        await vm.ApplySettingsAsync([], null, []);
+
+        AssertPanelHeaders(window.Shell, Visibility.Collapsed);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Panel başlıklarının workspace'e bağlı beş öğesi — TEK yerde sayılır.</summary>
+    private static void AssertPanelHeaders(BuildOrchestrator.App.ShellRoot shell, Visibility expected)
+    {
+        Assert.Equal(expected, shell.GraphHost.CountsText.Visibility);
+        Assert.Equal(expected, shell.ConsoleHeaderControl.LinesText.Visibility);
+        Assert.Equal(expected, shell.EventStreamControl.Counter.Visibility);
+        Assert.Equal(expected, ((UIElement)shell.PART_ProjectsHeader.LeftContent!).Visibility); // build-order + filtre chip'i
+        Assert.Equal(expected, shell.ProjectFilterBox.Visibility);
+    }
+
     /// <summary>[design v1.8.0 §3.1] Kapanıştan sonra konsolun prompt satırı ilk açılıştaki gibi workspace bekler.</summary>
     [StaFact]
     public async Task Closing_the_workspace_puts_the_console_prompt_back_to_waiting_for_one()
@@ -193,6 +220,19 @@ public class SettingsWithoutRootTests
         Assert.Equal("Waiting for a workspace", window.Shell.ConsoleViewControl.ActiveLineText.Text);
         GC.KeepAlive(window);
     }
+
+    /// <summary>[design v1.8.0 §3.1] İlk açılışta panel başlıkları sayaç ve liste araçları taşımaz.</summary>
+    [StaFact]
+    public void The_first_run_panel_headers_hide_their_counts_and_the_list_tools()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        AssertPanelHeaders(window.Shell, Visibility.Collapsed);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>İlk açılışta kök girmeden katman kaydetmek geçerli bir Save'dir: davet kalır ve kartın <c>Layers</c>
     /// satırı kaydedilen sayıyı gösterir (<c>N defined</c>) — kök hâlâ <c>Not set</c>.</summary>
     [StaFact]

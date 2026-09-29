@@ -1874,6 +1874,11 @@ public partial class GraphView : UserControl
         _cameraTranslate.Y = camera.Ty;
     }
 
+    /// <summary>[design v1.8.0 §3.1 · prototip panel başlığı] Workspace yokken başlık sayaç taşımaz — sayılacak bir şey
+    /// yoktur. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>).</summary>
+    public void SetHasWorkspace(bool hasWorkspace) =>
+        CountsText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+
     private void ShowEmptyState(bool visible)
     {
         EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
