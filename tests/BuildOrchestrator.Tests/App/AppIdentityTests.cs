@@ -95,6 +95,8 @@ public class AppIdentityTests
     [
         Path.Combine("ViewModels", "UpdateText.cs"),
         Path.Combine("ViewModels", "UpdateRestartTimeline.cs"),
+        Path.Combine("Views", "UpdateRestartScreen.xaml"),
+        Path.Combine("Views", "UpdateRestartScreen.xaml.cs"),
     ];
 
     /// <summary>

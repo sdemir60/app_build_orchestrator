@@ -311,6 +311,30 @@ public class ReducedMotionCoverageTests
         Assert.True(el.RenderTransform.Value.IsIdentity);
     }
 
+    /// <summary>[design v1.23.0 §2.12] Restart ekranının iki sönümü de (180ms giriş, 280ms çıkış) aynı kapıdan geçer:
+    /// hareket kapalıyken ekran anında belirir ve bitişte anında kalkar — hiçbir saat kurulmaz. İlerleme çubuğu bir
+    /// süs değil bilgidir; o hareketten bağımsız olarak çizelgeyi izler.</summary>
+    [StaFact]
+    public void The_update_restart_screen_fades_snap_with_no_clock_when_off()
+    {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
+        var timer = new FakePollTimer();
+        long now = 0;
+        var screen = new UpdateRestartScreen { Timer = timer, NowMs = () => now, Opacity = 0.5 };
+        var window = DsResources.Realize(DsResources.NewHost(), screen);
+
+        screen.Play(AppIdentity.Version, "1.8.0");
+        Assert.Equal(Visibility.Visible, screen.Visibility);
+        Assert.Equal(1.0, screen.Opacity);
+        Assert.False(screen.HasAnimatedProperties);
+
+        now = (long)UpdateRestartTimeline.FadeOutAtMs;
+        timer.Tick();
+        Assert.Equal(Visibility.Collapsed, screen.Visibility);
+        Assert.False(screen.HasAnimatedProperties);
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void The_scroll_animator_snaps_instead_of_animating_when_off()
     {
