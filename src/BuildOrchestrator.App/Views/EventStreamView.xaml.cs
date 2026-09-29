@@ -111,6 +111,11 @@ public partial class EventStreamView : UserControl
         };
     }
 
+    /// <summary>[design v1.8.0 §3.1 · prototip panel başlığı] Workspace yokken <c>N events</c> sayacı gizlidir — sayılacak
+    /// bir olay yoktur. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>).</summary>
+    public void SetHasWorkspace(bool hasWorkspace) =>
+        _counter.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+
     // ---------------------------------------------------------------- test yüzeyi
     internal TextBlock Counter => _counter;
     internal Panel RowsPanel => PART_Rows;

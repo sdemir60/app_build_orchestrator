@@ -32,6 +32,10 @@ public static class ConsoleEmptyState
     /// <summary>Anlatı modunda boşta/boot tek satırı: <c>▮ ready</c>'nin metin kısmı (dim).</summary>
     public const string Idle = "ready";
 
+    /// <summary>[design v1.8.0 §3.1] Workspace yokken prompt satırının metni (dim) — graf ve liste panelinin bekleme
+    /// metinleriyle aynı dil (prototip <c>BuildApp.jsx</c> ConsolePanel, <c>!workspace</c> dalı).</summary>
+    public const string NoWorkspace = "Waiting for a workspace";
+
     /// <summary>Kanıt satırının "hiç" hâli — proje bu araçla bir kez bile başarıyla derlenmedi.</summary>
     public const string NeverBuilt = "Never built by this tool";
 

@@ -826,9 +826,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>[C2] Proje listesi durum sayaçları — satır değişimlerinde yeniden hesaplanır.</summary>
     [ObservableProperty] private RunCounters _counters;
 
-    /// <summary>[C2] Katman ataması pattern'leri (StartRunCommand/SyncWorkspaceCommand'a geçer). Store (D6/D7)
-    /// tarafından seed edilecek — C2 yalnız GÖNDERİR; ObservableProperty gerekmez (UI'dan iki-yönlü bağlanmaz).</summary>
-    public IReadOnlyList<LayerPattern>? LayerPatterns { get; set; }
+    /// <summary>[C2] Katman ataması pattern'leri (StartRunCommand/SyncWorkspaceCommand'a geçer). Store (D6/D7) seed
+    /// eder, Settings Save yeniden yazar.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> Eskiden düz bir özellikti ("ObservableProperty
+    /// gerekmez — UI'dan iki-yönlü bağlanmaz"). Ayarlar artık kök olmadan da kaydedilir ve ilk açılışın kurulum daveti
+    /// katman sayısını gösterir (<c>Layers → N defined</c>, design v1.8.0 §2.4); bildirim olmadan davet eski sayıda
+    /// kalıyordu.</para></summary>
+    [ObservableProperty] private IReadOnlyList<LayerPattern>? _layerPatterns;
 
     /// <summary>[design v1.14.0 §9 · externals] Harici proje listesi (yalnız yol) — Store tarafından seed edilir,
     /// Settings Save'de yeniden yazılır (<see cref="RunViewModel.ApplySettingsAsync"/>) ve HER Sync/Build
@@ -871,9 +875,11 @@ public sealed partial class RunViewModel : ObservableObject
     internal bool SyncInFlight => _syncInFlight;
 
     // [C2] Boot geçişi: repo seçilir seçilmez (RootPath dolunca) Empty → Boot. Sonraki fazları engine event'leri sürer.
+    // [kullanıcı kararı 2026-09-29] Ters yön: kök boşalınca (workspace kapandı — CloseWorkspace) faz Empty'ye döner.
     partial void OnRootPathChanged(string value)
     {
-        if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
+        if (string.IsNullOrEmpty(value)) Phase = AppPhase.Empty;
+        else if (Phase == AppPhase.Empty) Phase = AppPhase.Boot;
         AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
         RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
     }

@@ -91,7 +91,10 @@
       </Button>
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
         <Button Content="Cancel" Click="OnCancel" Style="{DynamicResource Ds.Button.Secondary.Md}" />
-        <Button x:Name="SaveButton" Content="Save" Click="OnSave" Margin="8,0,0,0"
+        <!-- Etiket taslaktan (SaveButtonLabel); taslak yokken (diyalog hiç açılmadı) FallbackValue aynı sabittir —
+             düğme ekran okuyucuya her zaman adını söyler (AccessibilityTests). -->
+        <Button x:Name="SaveButton" Click="OnSave" Margin="8,0,0,0"
+                Content="{Binding SaveButtonLabel, FallbackValue={x:Static vm:SettingsDraftViewModel.SaveLabel}}"
                 IsEnabled="{Binding CanSave}" Style="{DynamicResource Ds.Button.Primary.Md}" />
       </StackPanel>
       <!-- Geri bildirim ve neden AYNI yuvayı paylaşır: neden yalnız geri bildirim satırı boşken görünür. Neden metni
@@ -185,7 +188,8 @@
         </StackPanel>
 
         <!-- ============================ WORKSPACE ============================
-             Repository root, uygulamanın çalışması için zorunlu TEK ayardır: boşken Save kapalıdır (SaveBlockedReason).
+             Repository root, keşfin başladığı klasördür. Boş kök "workspace yok" demektir ve Save'i kapatmaz
+             (kullanıcı kararı 2026-09-29): boş kökle kaydetmek uygulamayı ilk açılış görünümüne döndürür.
              Kök, bir klasör seçiciye değil buraya sorulur — başlamak için gereken ayar sayısı birden fazladır. -->
         <StackPanel x:Name="WorkspacePage"
                     Visibility="{Binding IsChecked, ElementName=WorkspaceRailItem, Converter={StaticResource PageVisibility}}">
@@ -223,7 +227,7 @@
               </StackPanel>
             </Button>
           </Grid>
-          <TextBlock Text="Required — nothing is discovered without it." Margin="0,9,0,0"
+          <TextBlock Text="Nothing is discovered without it." Margin="0,9,0,0"
                      FontSize="{DynamicResource FontSize.2xs}" Foreground="{DynamicResource Brush.TextFaint}" />
         </StackPanel>
 

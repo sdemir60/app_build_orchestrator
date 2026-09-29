@@ -296,9 +296,12 @@ public class SettingsDialogLayoutTests
         block.Inlines.Count == 0 ? block.Text : string.Concat(block.Inlines.OfType<Run>().Select(r => r.Text));
 
     /// <summary>Workspace: caps <c>REPOSITORY ROOT</c> (altı 7), mono input (watermark <c>D:\src\myapp</c> — ürüne özel
-    /// değil) + 8px arayla secondary <c>Browse…</c>, 9px altında 11px text-faint zorunluluk notu.</summary>
+    /// değil) + 8px arayla secondary <c>Browse…</c>, 9px altında 11px text-faint keşif notu.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ not <c>Required — nothing is discovered without
+    /// it.</c> idi. Kök artık Save'in koşulu değildir (boş kök = workspace yok); "Required" kaydetmeyi engelleyen bir
+    /// kural vaat ediyordu. Not yalnız sonucunu söyler.</para></summary>
     [StaFact]
-    public void The_workspace_page_has_the_caps_label_a_product_neutral_watermark_and_the_required_note()
+    public void The_workspace_page_has_the_caps_label_a_product_neutral_watermark_and_the_discovery_note()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized();
         using var _scope = scope;
@@ -314,7 +317,7 @@ public class SettingsDialogLayoutTests
         Assert.Equal(@"D:\src\myapp", DsChrome.GetWatermark(dialog.RootInput));
         Assert.Equal(AppFonts.Mono, dialog.RootInput.FontFamily);
 
-        var note = blocks.Single(b => b.Text == "Required — nothing is discovered without it.");
+        var note = Assert.Single(blocks, b => b.Text == "Nothing is discovered without it.");
         Assert.Equal(11.0, note.FontSize);
         Assert.Equal(DsResources.TokenColor(dialog, "Brush.TextFaint"), DsResources.ColorOf(note.Foreground));
         Assert.Equal(new Thickness(0, 9, 0, 0), note.Margin);
@@ -477,7 +480,10 @@ public class SettingsDialogLayoutTests
     }
 
     /// <summary>Save kapalıyken ve geri bildirim YOKKEN footer tek satır neden gösterir (12px text-faint, kırpılır);
-    /// geri bildirim belirince neden gizlenir, Save açılınca neden kalmaz. Hangi sayfada olunduğu fark etmez.</summary>
+    /// geri bildirim belirince neden gizlenir, Save açılınca neden kalmaz. Hangi sayfada olunduğu fark etmez.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: neden, kökü boş first run'la
+    /// tetiklenirdi (<c>Repository root is required</c>). Kök artık Save'i kapatmaz — first run'da boş kökte satır
+    /// hiç görünmez ve Save açıktır; neden bu yüzden boş path'li bir harici kartla tetiklenir.</para></summary>
     [StaFact]
     public void The_footer_shows_the_blocked_reason_only_while_save_is_off_and_there_is_no_feedback()
     {
@@ -485,7 +491,14 @@ public class SettingsDialogLayoutTests
         using var _scope = scope;
         var reason = dialog.BlockedReason;
 
-        Assert.Equal("Repository root is required", reason.Text);
+        // Boş kök bir neden DEĞİLDİR: satır yok, Save açık.
+        Assert.True(dialog.Save.IsEnabled);
+        Assert.Equal(Visibility.Collapsed, reason.Visibility);
+
+        dialog.Draft!.AddExternal(); // boş path → Save kapanır
+        dialog.UpdateLayout();
+        Assert.False(dialog.Save.IsEnabled);
+        Assert.Equal("Every external project needs a path", reason.Text);
         Assert.Equal(Visibility.Visible, reason.Visibility);
         Assert.Equal(12.0, reason.FontSize);
         Assert.Equal(DsResources.TokenColor(dialog, "Brush.TextFaint"), DsResources.ColorOf(reason.Foreground));
@@ -505,11 +518,11 @@ public class SettingsDialogLayoutTests
         dialog.UpdateLayout();
         Assert.Equal(Visibility.Visible, reason.Visibility);
 
-        dialog.Draft!.RepositoryRoot = @"D:\repo";
+        dialog.Draft.Externals[0].Path = @"C:\shared\Lib.csproj";
         dialog.UpdateLayout();
         Assert.True(dialog.Save.IsEnabled);
         // Save açıkken neden YOKTUR: boş metinli ama "Visible" bir satır değil, düpedüz Collapsed.
-        Assert.Null(dialog.Draft!.SaveBlockedReason);
+        Assert.Null(dialog.Draft.SaveBlockedReason);
         Assert.Equal(Visibility.Collapsed, reason.Visibility);
     }
 

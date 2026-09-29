@@ -134,11 +134,10 @@ the running instance first — tray icon → Exit).
 1. **Configure the workspace** — on first run the project list invites you into Settings rather than opening
    a folder picker: starting takes more than one setting now. Settings is split into sections down a left
    rail — **General**, **Workspace**, **External projects**, **Layers** — and on first run it opens on
-   Workspace, where the repository root lives (the one thing the tool cannot run without — *Save* stays
-   disabled while it is empty, and the footer says why); afterwards it opens on General. External projects and
-   layers are optional. *Browse…* only stages the folder in the dialog; *Save* is what applies it, and on first
-   run it reads *Save and sync*. If you already have a settings file, *Import settings…* on the invitation
-   opens the dialog with the file picker already up.
+   Workspace, where the repository root lives (nothing is discovered without it); afterwards it opens on
+   General. External projects and layers are optional. *Browse…* only stages the folder in the dialog; *Save*
+   is what applies it, and on first run, once a root is entered, it reads *Save and sync*. If you already have a
+   settings file, *Import settings…* on the invitation opens the dialog with the file picker already up.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
    (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
@@ -163,7 +162,9 @@ the running instance first — tray icon → Exit).
    placeholders, never as values.
 
    Settings can also be exported, imported and cleared from the dialog's footer. All three only change the
-   form — nothing is applied until you press *Save*.
+   form — nothing is applied until you press *Save*. Saving with the repository root empty — after *Clear*, or
+   with the root deleted — closes the workspace: the app returns to the first-run screen, with the invitation
+   in the project list.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
    first Sync runs by itself when the application starts. Until it has run, *Build*, *Rebuild* and *Resolve
    cycles* are disabled: a run before the first Sync would compile for

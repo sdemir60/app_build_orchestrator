@@ -187,7 +187,11 @@ public class SettingsDialogTests
     }
 
     /// <summary>[design v1.19.0 §2.9] Save kapalıyken footer'ın tek satırlık NEDENİ — CanSave'in AYNI koşullarından,
-    /// öncelik sırasıyla: kök → harici path → katman adı → desen. Save açıkken neden YOKTUR.</summary>
+    /// öncelik sırasıyla: harici path → katman adı → desen. Save açıkken neden YOKTUR.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: sıra kökle başlardı
+    /// (<c>Repository root is required</c>). Kök artık Save'in koşulu değildir (bkz.
+    /// <see cref="SettingsDialogViewTests.Save_is_allowed_while_the_repository_root_is_empty"/>); bu yüzden kök test
+    /// boyunca BOŞ kalır ve sıra yine sonuna kadar yürür — boş kök hiçbir adımda neden olarak araya girmez.</para></summary>
     [Fact]
     public void The_save_blocked_reason_follows_the_design_priority_and_clears_when_save_is_allowed()
     {
@@ -198,11 +202,8 @@ public class SettingsDialogTests
             if (e.PropertyName == nameof(SettingsDraftViewModel.SaveBlockedReason)) reasons.Add(draft.SaveBlockedReason);
         };
 
-        Assert.Equal("Repository root is required", draft.SaveBlockedReason);
-        Assert.False(draft.CanSave);
-
-        draft.RepositoryRoot = @"D:\repo";
         Assert.Equal("Every external project needs a path", draft.SaveBlockedReason);
+        Assert.False(draft.CanSave);
 
         draft.Externals[0].Path = @"C:\a";
         Assert.Equal("Every layer needs a name", draft.SaveBlockedReason);
@@ -213,10 +214,11 @@ public class SettingsDialogTests
         draft.Layers[0].Regex = "^A";
         Assert.Null(draft.SaveBlockedReason);
         Assert.True(draft.CanSave);
+        Assert.Null(draft.RepositoryRoot); // kök hiç girilmedi — Save yine açık
 
         // Her geçiş bildirildi — footer satırı canlı güncellenir.
         Assert.Equal(
-            ["Every external project needs a path", "Every layer needs a name", "Check the highlighted pattern", null],
+            ["Every layer needs a name", "Check the highlighted pattern", null],
             reasons.Distinct());
     }
 
@@ -805,30 +807,43 @@ public class SettingsDialogViewTests
         Assert.Empty(sent);                                       // Sync YOK
     }
 
-    /// <summary>[design v1.8.0 §2.9] First run'da (henüz workspace yok) kaydetmek AYNI ZAMANDA kurulumdur ve
-    /// düğme bunu söyler: <c>Save and sync</c>. Workspace açıldıktan sonra yalnız <c>Save</c>.</summary>
+    /// <summary>[design v1.8.0 §2.9 · kullanıcı kararı 2026-09-29] First run'da (henüz workspace yok) kaydetmek ancak
+    /// bir kök girilmişse kurulumdur ve düğme bunu söyler: <c>Save and sync</c>. Kök boşken kaydetmek yalnız
+    /// ayarları yazar, düğme <c>Save</c>'dir — etiket kök girdisini CANLI izler. Workspace açıkken hep <c>Save</c>.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ İDDİA (<c>The_first_run_save_button_says_save_and_sync</c>): first run'da
+    /// düğme açılışta bir kez <c>Save and sync</c> yazılırdı. O zaman kök boşken Save zaten kapalıydı; artık açık
+    /// olduğundan, kök yokken "and sync" demek hiç gelmeyecek bir Sync'i vaat ederdi.</para></summary>
     [StaFact]
-    public void The_first_run_save_button_says_save_and_sync()
+    public void The_first_run_save_button_says_save_and_sync_only_while_a_root_is_set()
     {
         var (dialog, _, _, scope) = SettingsDialogHost.OpenRealized(run => run.RootPath = "");
         using var _scope = scope;
 
+        Assert.Equal("Save", dialog.Save.Content);
+
+        dialog.Draft!.RepositoryRoot = @"D:\src\myapp";
         Assert.Equal("Save and sync", dialog.Save.Content);
+
+        dialog.Draft.RepositoryRoot = "  "; // yalnız boşluk da boş köktür
+        Assert.Equal("Save", dialog.Save.Content);
     }
 
-    /// <summary>[design v1.8.0 §2.9] "Root boşken Save disabled — uygulamanın çalışması için zorunlu tek ayar
-    /// budur."</summary>
+    /// <summary>[kullanıcı kararı 2026-09-29] Repository root Save'in koşulu DEĞİLDİR: kök boşken (ya da yalnız
+    /// boşluksa) Save açıktır ve footer'da neden yazmaz — kökü boş kaydetmek "workspace yok" demektir.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ İDDİA (<c>Save_is_blocked_while_the_repository_root_is_empty</c>, design
+    /// v1.8.0 §2.9): "Root boşken Save disabled — uygulamanın çalışması için zorunlu tek ayar budur." Ölçülen sonuç:
+    /// Clear kökü de boşalttığı için Clear'dan sonra Save'e hiç basılamıyordu — footer "Cleared — save to apply"
+    /// derken düğme kapalıydı ve ayarsız duruma dönmenin Settings'ten bir yolu yoktu.</para></summary>
     [Fact]
-    public void Save_is_blocked_while_the_repository_root_is_empty()
+    public void Save_is_allowed_while_the_repository_root_is_empty()
     {
         var editor = new SettingsDraftViewModel(null, null);
-        Assert.False(editor.CanSave);
-
-        editor.RepositoryRoot = @"D:\src\osys";
         Assert.True(editor.CanSave);
+        Assert.Null(editor.SaveBlockedReason);
 
-        editor.RepositoryRoot = "   ";   // yalnız boşluk da BOŞtur
-        Assert.False(editor.CanSave);
+        editor.RepositoryRoot = "   ";   // yalnız boşluk da boş köktür — yine bloklamaz
+        Assert.True(editor.CanSave);
+        Assert.Null(editor.SaveBlockedReason);
     }
 
     // ================================================================ [K5 · design v1.14.0 §9] EXTERNAL PROJECTS

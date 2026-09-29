@@ -141,6 +141,11 @@ public partial class ConsoleHeader : UserControl
         CycleTooltip.Content = row.InCycle ? RowWarning.InCycle : null;
     }
 
+    /// <summary>[design v1.8.0 §3.1 · prototip panel başlığı] Workspace yokken <c>N lines</c> sayacı gizlidir — konsol
+    /// yalnız workspace bekler. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>).</summary>
+    public void SetHasWorkspace(bool hasWorkspace) =>
+        LinesText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]
     /// Proje-log modunda copy-log görünürlüğü de burada (satır sayısıyla birlikte) yeniden değerlendirilir:
     /// seçim anında boş olan bir log akış başlayınca (~200ms sayaç tazelemesi) copy butonu görünür olur — yalnız

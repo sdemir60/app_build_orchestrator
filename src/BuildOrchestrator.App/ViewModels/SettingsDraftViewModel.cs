@@ -156,6 +156,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null)
     {
         _repositoryRoot = repositoryRoot;
+        _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         StashOnBranchSwitch = stashOnBranchSwitch;
@@ -181,25 +182,25 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
                 AddExternalRow(new ExternalRowViewModel(e.Path));
     }
 
-    /// <summary>[design v1.8.0 §2.9 · K5] Save ÜÇ koşulda bloklanır: (a) bir katmanın adı BOŞ (trim sonrası) ya
-    /// da regex'i DERLENEMEZ — boş regex GEÇERLİdir; (b) <b>repository root BOŞ</b> — v1.8.0'ın kuralıdır:
-    /// <i>"Root boşken Save disabled — uygulamanın çalışması için zorunlu tek ayar budur."</i>; (c) [K5, design
-    /// v1.14.0/§9] bir harici projenin path'i BOŞ (trim sonrası) — katman adı kuralıyla AYNI sertlik.
-    /// Regex compile-check LayerEngine'in EKLEDİĞİ sınırlı-matchTimeout ctor'uyla AYNI
-    /// (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).</summary>
+    /// <summary>[design v1.8.0 §2.9 · K5] Save İKİ koşulda bloklanır: (a) bir katmanın adı BOŞ (trim sonrası) ya
+    /// da regex'i DERLENEMEZ — boş regex GEÇERLİdir; (b) [K5, design v1.14.0/§9] bir harici projenin path'i BOŞ
+    /// (trim sonrası) — katman adı kuralıyla AYNI sertlik. Regex compile-check LayerEngine'in EKLEDİĞİ
+    /// sınırlı-matchTimeout ctor'uyla AYNI (bkz. <see cref="LayerRowViewModel.RegexInvalid"/>).
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> Repository root artık bir koşul DEĞİLDİR. Eskiden
+    /// (v1.8.0) boş kök Save'i kapatırdı; Clear kökü de boşalttığı için Clear'dan sonra Save'e hiç basılamıyordu.
+    /// Boş kök "workspace yok" demektir: Save onu uygular ve uygulama ilk açılış görünümüne döner
+    /// (<see cref="RunViewModel.ApplySettingsAsync"/>).</para></summary>
     public bool CanSave => SaveBlockedReason is null;
 
     /// <summary>[design v1.19.0 §2.9] Save kapalıyken footer'ın okuduğu TEK satırlık neden; Save açıkken <c>null</c>.
     /// <see cref="CanSave"/> bundan türer — iki özellik aynı koşulları iki kez yazmaz. Öncelik tasarımın sırasıdır:
-    /// kök → harici path → katman adı → desen (kullanıcı hangi sayfada olursa olsun ilk engeli okur).</summary>
+    /// harici path → katman adı → desen (kullanıcı hangi sayfada olursa olsun ilk engeli okur).</summary>
     public string? SaveBlockedReason =>
-        string.IsNullOrWhiteSpace(RepositoryRoot) ? RootRequiredReason
-        : Externals.Any(x => x.Path.Trim().Length == 0) ? ExternalPathRequiredReason
+        Externals.Any(x => x.Path.Trim().Length == 0) ? ExternalPathRequiredReason
         : Layers.Any(r => r.Name.Trim().Length == 0) ? LayerNameRequiredReason
         : Layers.Any(r => r.RegexInvalid) ? InvalidPatternReason
         : null;
 
-    private const string RootRequiredReason = "Repository root is required";
     private const string ExternalPathRequiredReason = "Every external project needs a path";
     private const string LayerNameRequiredReason = "Every layer needs a name";
     private const string InvalidPatternReason = "Check the highlighted pattern";
@@ -212,8 +213,24 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSave));
     }
 
-    // Root, Save kapısının ilk koşuludur — değiştiğinde düğmenin de haberi olmalı.
-    partial void OnRepositoryRootChanged(string? value) => NotifySaveGate();
+    /// <summary>[design v1.8.0 §2.9] Diyalog açılırken workspace YOK muydu (first run) — canlı kök boştu. Save'in
+    /// etiketini yalnız bu ve taslağın kökü belirler (<see cref="SaveButtonLabel"/>).</summary>
+    private readonly bool _openedWithoutWorkspace;
+
+    /// <summary>[design v1.8.0 §2.9 · kullanıcı kararı 2026-09-29] Save düğmesinin etiketi — kök girdisini CANLI
+    /// izler. First run'da bir kök girilmişse kaydetmek AYNI ZAMANDA kurulumdur ve Sync başlar:
+    /// <c>Save and sync</c>. Kök boşken (ya da workspace zaten açıkken) yalnız <c>Save</c> — kök yokken "and sync"
+    /// hiç gelmeyecek bir Sync'i vaat ederdi.</summary>
+    public string SaveButtonLabel =>
+        _openedWithoutWorkspace && !string.IsNullOrWhiteSpace(RepositoryRoot) ? SaveAndSyncLabel : SaveLabel;
+
+    /// <summary>Save düğmesinin iki etiketi — TEK kaynak. <see cref="SaveLabel"/> XAML'deki bağlamanın
+    /// <c>FallbackValue</c>'sudur da: hiç açılmamış diyaloğun (taslak yok) düğmesi de ekran okuyucuya adını söyler.</summary>
+    public const string SaveLabel = "Save";
+    public const string SaveAndSyncLabel = "Save and sync";
+
+    // Kök, Save düğmesinin etiketini sürer — değiştiğinde düğmenin haberi olmalı.
+    partial void OnRepositoryRootChanged(string? value) => OnPropertyChanged(nameof(SaveButtonLabel));
 
     // ---------------------------------------------------------------- [design v1.10.0 §2.9] Export / Import / Clear
 

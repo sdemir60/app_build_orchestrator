@@ -703,6 +703,19 @@ public sealed partial class RunViewModel
         LastSyncCompletedAtMs = null;
     }
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Kapanan workspace'in git yüzeyini unutur (<c>CloseWorkspace</c>): branch
+    /// envanteri, checkout edilmiş branch, <c>N behind</c> mesafesi ve son Sync'in hedef commit'i. İlk açılışta hiçbiri
+    /// yoktur; yeni kökün ilk Sync'i hepsini yeniden yazar.</summary>
+    private void ForgetGitSurface()
+    {
+        Branches.ReplaceAll([]);
+        OnPropertyChanged(nameof(ActiveBranchName)); // türetilmiş değerin kendi bildirimi yok (OnBranchList deseni)
+        Branch = "";
+        Behind = null;
+        TargetSha = null;
+        FetchDegraded = false;
+    }
+
     /// <summary>Son Sync'e ait en yeni an — başlangıç ya da tamamlanma, hangisi yeniyse; hiç Sync yoksa <c>null</c>.</summary>
     internal long? LastSyncAtMs =>
         LastSyncStartedAtMs is { } started && LastSyncCompletedAtMs is { } completed

@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
@@ -216,6 +215,13 @@ public sealed partial class RunViewModel
     /// ESKİ değerine bakılsaydı) yeni kullanıcının manşet yolculuğu — kökü seç, Save — Sync'siz kalır ve
     /// açıklamasız Boot'ta takılırdı.</para>
     ///
+    /// <para><b>[kullanıcı kararı 2026-09-29] Boş kök = workspace yok.</b> Açık bir workspace'te kök boş kaydedilirse
+    /// (Clear + Save ya da girdinin silinmesi) workspace KAPANIR (<see cref="CloseWorkspace"/>) ve uygulama ilk açılış
+    /// görünümüne döner. Kapanış notlardan ÖNCE gelir: eski workspace'in konsolu ve akışı gider, bu Save'in kendi
+    /// notları (katman, harici liste, General anahtarları) yeni sayfaya yazılır — kaybolmaz. Kapı (a) kapanışı da
+    /// kapsar: koşu ya da workspace işi uçuştayken silme de diğer kök değişimleri gibi ertelenir. Yalnız boşluktan
+    /// oluşan kök boştur (<see cref="RootOf"/>).</para>
+    ///
     /// <para>(c) <b>Motor erişilemez</b> (<see cref="IsEngineUnavailable"/>): Sync GİTMEZ. Gerekçe orada
     /// yazılıdır — gönderim zaten hataya düşer ve şeritteki KALICI mesajla çelişen ikinci bir hata satırı
     /// üretirdi; Sync/Build/Rebuild düğmelerinin o durumda devre dışı kalmasıyla AYNI mantık.
@@ -239,6 +245,8 @@ public sealed partial class RunViewModel
         IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
         IReadOnlyList<string>? settingNotes = null)
     {
+        string root = RootOf(repositoryRoot);
+        if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
         ApplyLayerPatterns(patterns);
         // SIRA: bayrağın notu listeyi TANIMLI görmeli — "harici proje varsa yaz" kuralı yeni listeye bakar.
         ApplyExternalProjects(externals);
@@ -248,10 +256,10 @@ public sealed partial class RunViewModel
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)
         {
-            if (IsRepositoryChange(repositoryRoot)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
+            if (IsRepositoryChange(root)) AppendRunLine(RepositoryChangeDeferredLine(runInFlight: IsMidRunLocked));
             return;
         }
-        bool rootChanged = ApplyRepositoryRoot(repositoryRoot);
+        bool rootChanged = ApplyRepositoryRoot(root);
         if (RootPath.Length == 0) return;
         if (IsEngineUnavailable) return;
         // [D3/T5 · design v1.13.2] Appended — ApplyLayerPatterns/ApplyRepositoryRoot bu Sync'ten HEMEN ÖNCE
@@ -272,33 +280,68 @@ public sealed partial class RunViewModel
         return SyncCoreAsync(SyncMode.Appended);
     }
 
-    /// <summary>[Settings · K10] Repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
+    /// <summary>[Settings · K10] YENİ bir repo kökünü UYGULAR: kök değişir (<see cref="OnRootPathChanged"/> Empty→Boot
     /// geçişini sürer), satırlar hollow'a sıfırlanır, willBuild kümesi temizlenir ve run yüzeyi tazelenir.
     /// Sync GÖNDERMEZ — Sync'i çağıran (<see cref="ApplySettingsAsync"/>) Save'in TEK Sync'i içinde gönderir.
-    /// <para>Boş yol ya da AYNI kökün yeniden seçilmesi NO-OP'tur ve <c>false</c> döner — aksi halde her satır
-    /// boşuna hollow'a sıfırlanır ve gereksiz bir Sync gönderilirdi. Kararı <see cref="IsRepositoryChange"/>
-    /// verir.</para></summary>
-    private bool ApplyRepositoryRoot(string? path)
+    /// <para>Boş kök ya da AYNI kökün yeniden seçilmesi NO-OP'tur ve <c>false</c> döner — aksi halde her satır
+    /// boşuna hollow'a sıfırlanır ve gereksiz bir Sync gönderilirdi. Boş kökün kendi yolu vardır: açık bir
+    /// workspace'i <see cref="CloseWorkspace"/> kapatır, notlardan ÖNCE.</para></summary>
+    private bool ApplyRepositoryRoot(string root)
     {
-        if (!IsRepositoryChange(path)) return false;
+        if (root.Length == 0 || !IsRepositoryChange(root)) return false;
         // [design v1.8.0 §2.9] Kök SONRADAN değiştiğinde konsola dim bir not düşer; eski reponun durumu da gider:
         // satırlar hollow'a döner, son Sync HEAD'i unutulur ve Save'in TEK Sync'i yeni kökte başlar (plan
         // yüzeyini SyncAfterRootChangeAsync boşaltır). (İlk kurulumda — Empty'den çıkarken — not YAZILMAZ: orada
-        // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu.)
-        if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(path));
-        RootPath = path;
+        // zaten otomatik bir Sync akışı başlar ve not gürültü olurdu. Kapanmış bir workspace'ten sonra girilen kök
+        // de ilk kurulumdur.)
+        if (RootPath.Length > 0) AppendRunLine(RepositoryRootChangedLine(root));
+        RootPath = root;
         ResetRowsToHollow();
         ForgetLastSync(); // [spec 2026-09-18 §6.1] eski kökün HEAD'i yeni kökte kıyas tabanı olamaz
         return true;
     }
 
-    /// <summary>[Settings · K10] Verilen yol GERÇEKTEN bir kök değişimi mi: boş yol DEĞİLDİR, AYNI kökün
-    /// yeniden seçilmesi de DEĞİLDİR (Windows yolları case-insensitive). <see cref="ApplyRepositoryRoot"/>'un
-    /// kapısı ile mid-run erteleme notunun koşulu (<see cref="ApplySettingsAsync"/>) AYNI soruyu sorar; soru
-    /// TEK yerde durur (kopya YASAK) — aksi halde iki karşılaştırma zamanla ayrışır ve UI, motorun yaptığından
-    /// başka bir şey anlatırdı.</summary>
-    private bool IsRepositoryChange([NotNullWhen(true)] string? path) =>
-        !string.IsNullOrEmpty(path) && !string.Equals(path, RootPath, StringComparison.OrdinalIgnoreCase);
+    /// <summary>[Settings · K10] Verilen kök (<see cref="RootOf"/> ile normalize) GERÇEKTEN bir kök değişimi mi: AYNI
+    /// kökün yeniden seçilmesi DEĞİLDİR (Windows yolları case-insensitive). [kullanıcı kararı 2026-09-29] Açık bir
+    /// workspace'te boş kök bir değişimdir (workspace'i kapatır); workspace yokken boş kök değişim değildir.
+    /// <see cref="ApplyRepositoryRoot"/>'un kapısı ile mid-run erteleme notunun koşulu (<see cref="ApplySettingsAsync"/>)
+    /// AYNI soruyu sorar; soru TEK yerde durur (kopya YASAK) — aksi halde iki karşılaştırma zamanla ayrışır ve UI,
+    /// motorun yaptığından başka bir şey anlatırdı.</summary>
+    private bool IsRepositoryChange(string root) =>
+        !string.Equals(root, RootPath, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Settings'ten gelen kökün normal biçimi: boş ya da yalnız boşluk → boş kök
+    /// ("workspace yok"), aksi hâlde olduğu gibi. Save'in kök kararlarının (kapanış, değişim, erteleme notu) TEK girdisi —
+    /// yalnız boşluktan oluşan bir kök eskiden Save kapısında durduğu için buraya hiç ulaşmazdı.</summary>
+    private static string RootOf(string? path) => string.IsNullOrWhiteSpace(path) ? "" : path;
+
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-29] Workspace'i KAPATIR — Settings'te kök boş kaydedildi. Uygulama ilk açılış
+    /// görünümüne döner: kök boşalır (faz <see cref="AppPhase.Empty"/>, HEAD izleyicisi bırakılır, boş kök kalıcı
+    /// duruma yazılır), plan yüzeyi (satırlar, topoloji → graf) boşalır, git yüzeyi (branch, <c>N behind</c>) ve son
+    /// Sync unutulur, seçim ve filtre düşer; konsol ve akış yeni bir sayfa açar. Motora hiçbir şey gitmez — çağıran
+    /// <see cref="WorkspaceIdle"/> kapısının içindedir, kapanacak bir koşu ya da iş yoktur.
+    /// <para>SIRA <see cref="BeginRunAsync"/>'inkiyle aynıdır: seçim konsol temizliğinden SONRA düşer — seçim düşünce
+    /// kabuk anlatı belgesini yeniden kurar; temizlik ondan sonra gelseydi eski metin bir an geri gelirdi. Kök plan
+    /// yüzeyinden ÖNCE boşalır: <see cref="ClearPlanSurface"/> fazı yalnız workspace varken Boot'a alır.</para>
+    /// </summary>
+    private void CloseWorkspace()
+    {
+        ActiveProjectId = null;
+        ClearConsoleForNewOperation();
+        ClearStreamForNewOperation();
+        SelectedProjectId = null;
+        HoveredProjectId = null;
+        ActiveFilters = ProjectFilter.None;
+        ProjectQuery = "";
+        CurrentOperation = null;
+        SyncErrorMessage = null;
+        RunErrorMessage = null;
+        RootPath = "";
+        ClearPlanSurface();
+        ForgetLastSync();
+        ForgetGitSurface();
+    }
 
     /// <summary>[final review M3] Save'in ertelediği kök değişiminin konsol notu — TEK yer. Koşu uçuştayken
     /// <c>run in flight</c>, bir workspace işi (Sync, Clean, Optimize, checkout, pull) uçuştayken
@@ -354,7 +397,8 @@ public sealed partial class RunViewModel
     /// <para><b>Faz <see cref="AppPhase.Boot"/>'a alınır</b> ve bu kozmetik değildir: davet kararı
     /// (<c>ListInvite.Resolve</c>) boş listeyi <c>Idle</c> fazında "klasörde proje yok" diye okur ve bu YANLIŞ
     /// olurdu. Boot, "henüz bilinmiyor" demenin mevcut yoludur. Ardından gelen Sync fazı zaten
-    /// <c>Syncing</c>'e taşır.</para>
+    /// <c>Syncing</c>'e taşır. [kullanıcı kararı 2026-09-29] Workspace yokken (<see cref="CloseWorkspace"/> kökü
+    /// önce boşaltır) faz <see cref="AppPhase.Empty"/>'de kalır — onu <see cref="OnRootPathChanged"/> kurar.</para>
     ///
     /// <para><see cref="TopologyChanged"/> AÇIKÇA ateşlenir: grafı kuran tek sinyal odur, yoksa liste boşalırken
     /// düğümler ekranda kalırdı.</para>
@@ -368,7 +412,7 @@ public sealed partial class RunViewModel
         _cycleMemberCount = 0;
         OnPropertyChanged(nameof(HasCycles));
         OnPropertyChanged(nameof(HasTopology));
-        Phase = AppPhase.Boot;
+        if (HasWorkspace) Phase = AppPhase.Boot;
         ClearPreviewSets();
         // [spec 2026-09-18 §6.2] İmza da unutulur: boşalan liste, zincirlenen Sync AYNI yapıyı getirse de
         // reveal'le dolmalıdır (OnWorkspaceTopology yalnız imza değişince ateşler).

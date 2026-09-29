@@ -231,8 +231,10 @@ public partial class MainWindow : Window
         Shell.ImportSettingsButton.Click += OnImportSettings;
         _vm.PropertyChanged += (_, e) =>
         {
+            // [kullanıcı kararı 2026-09-29] Katmanlar kök olmadan da kaydedilir — kurulum kartının Layers satırı
+            // katman tanımı değişince de tazelenir.
             if (e.PropertyName is nameof(RunViewModel.Phase) or nameof(RunViewModel.HasWorkspace)
-                or nameof(RunViewModel.RootPath)) RefreshListInvite();
+                or nameof(RunViewModel.RootPath) or nameof(RunViewModel.LayerPatterns)) RefreshListInvite();
         };
         _vm.Projects.CollectionChanged += (_, _) => RefreshListInvite();
         RefreshListInvite();
@@ -283,6 +285,14 @@ public partial class MainWindow : Window
         _vm.ConsoleCleared += (_, _) =>
         {
             if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
+        };
+        // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken paneller boş durumdadır: başlıklar sayaç ve
+        // liste araçları taşımaz, konsolun prompt satırı "Waiting for a workspace" der — ilk açılışta da, kök boş
+        // kaydedilip workspace kapandığında da.
+        Shell.SetHasWorkspace(_vm.HasWorkspace);
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
 
         // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve
