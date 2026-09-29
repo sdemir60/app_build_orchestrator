@@ -165,7 +165,34 @@ public class SettingsWithoutRootTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[design v1.8.0 §3.1] Kapanıştan sonra konsolun prompt satırı ilk açılıştaki gibi workspace bekler.</summary>
+    [StaFact]
+    public async Task Closing_the_workspace_puts_the_console_prompt_back_to_waiting_for_one()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("Alpha", null));
+        Assert.NotEqual("Waiting for a workspace", window.Shell.ConsoleViewControl.ActiveLineText.Text); // ön-koşul
+
+        await vm.ApplySettingsAsync([], null, []);
+
+        Assert.Equal("Waiting for a workspace", window.Shell.ConsoleViewControl.ActiveLineText.Text);
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- first run
+
+    /// <summary>[design v1.8.0 §3.1] İlk açılışta (kök yok) konsolun prompt satırı workspace bekler — graf ve liste
+    /// panelinin bekleme metinleriyle aynı dili konuşur.</summary>
+    [StaFact]
+    public void The_first_run_console_prompt_waits_for_a_workspace()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        MainWindowHost.Realize(window);
+
+        Assert.Equal("Waiting for a workspace", window.Shell.ConsoleViewControl.ActiveLineText.Text);
+        GC.KeepAlive(window);
+    }
     /// <summary>İlk açılışta kök girmeden katman kaydetmek geçerli bir Save'dir: davet kalır ve kartın <c>Layers</c>
     /// satırı kaydedilen sayıyı gösterir (<c>N defined</c>) — kök hâlâ <c>Not set</c>.</summary>
     [StaFact]

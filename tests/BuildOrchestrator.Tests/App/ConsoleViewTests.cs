@@ -487,6 +487,31 @@ public class ConsoleViewTests
     }
 
     /// <summary>
+    /// [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken prompt satırı imleç + <c>Waiting for a
+    /// workspace</c> (dim, <c>ready</c> ile aynı renk) taşır ve gelen içerik onu SİLMEZ — ilk açılışta motor hemen
+    /// kendi satırını yazar, <c>ready</c> gibi silinseydi bekleme metni hiç görünmezdi. Workspace gelince metin
+    /// kalkar (içerik zaten var — <c>ready</c> geri gelmez).
+    /// </summary>
+    [StaFact]
+    public void Without_a_workspace_the_prompt_waits_for_one_and_content_does_not_clear_it()
+    {
+        var view = new ConsoleView();
+        view.ShowReady();
+        var readyTone = view.ActiveLineText.Foreground;
+
+        view.SetHasWorkspace(false);
+        Assert.Equal("Waiting for a workspace", view.ActiveLineText.Text);
+        Assert.Same(readyTone, view.ActiveLineText.Foreground);
+
+        view.AppendNarrativeBatch("Engine ready — v1.0.0\n");
+        Assert.Equal("Waiting for a workspace", view.ActiveLineText.Text);
+        Assert.Equal(Visibility.Visible, view.ActiveLineOverlay.Visibility);
+
+        view.SetHasWorkspace(true);
+        Assert.Equal("", view.ActiveLineText.Text);
+    }
+
+    /// <summary>
     /// Prompt satırı BELGENİN SONUNDADIR: her yeni satır imleci bir satır aşağı iter, yazı hep onun üstüne
     /// birikir.
     ///

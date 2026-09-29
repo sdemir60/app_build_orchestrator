@@ -63,6 +63,8 @@ public partial class ConsoleView : UserControl
 
     // [D4/T56-UI] Boşta (idle/boot) "ready" (dim) satırı overlay'de gösteriliyor mu — doküman satırı DEĞİL.
     private bool _idleReady;
+    // [design v1.8.0 §3.1] Workspace YOK mu — prompt satırı "Waiting for a workspace" der (SetHasWorkspace).
+    private bool _noWorkspace;
     private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
     // [Task 6] Satır hover bandının YEREL (donmamış) fırçası — MotionTokens.TransitionColor bunu animate eder.
@@ -461,18 +463,42 @@ public partial class ConsoleView : UserControl
     {
         EnsureColorizer();
         _idleReady = true;
-        ActiveLineText.Foreground = _palette?.Dim ?? EditorControl.Foreground;
-        ActiveLineText.Text = ConsoleEmptyState.Idle; // "ready"
+        ApplyPromptText();
         RefreshPrompt();
     }
 
+    /// <summary>[design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace var mı: yoksa prompt satırı imleç +
+    /// <c>Waiting for a workspace</c> (dim) taşır — ilk açılışta da, kök boş kaydedilip workspace kapandığında da.
+    /// Bekleme metni gelen içerikle SİLİNMEZ (<see cref="ClearReadyText"/>): ilk açılışta motor hemen kendi satırını
+    /// yazar ve metin <c>ready</c> gibi silinseydi hiç görünmezdi. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten
+    /// sürer.</summary>
+    public void SetHasWorkspace(bool hasWorkspace)
+    {
+        EnsureColorizer();
+        _noWorkspace = !hasWorkspace;
+        ApplyPromptText();
+        RefreshPrompt();
+    }
+
+    /// <summary>Prompt satırının metnini durumdan yazar — TEK yazıcı: workspace yoksa bekleme metni, boştaysa
+    /// <c>ready</c>, aksi hâlde boş (yalnız imleç). İki metin de dim tondadır.</summary>
+    private void ApplyPromptText()
+    {
+        string text = _noWorkspace ? ConsoleEmptyState.NoWorkspace
+            : _idleReady ? ConsoleEmptyState.Idle
+            : "";
+        if (text.Length > 0) ActiveLineText.Foreground = _palette?.Dim ?? EditorControl.Foreground;
+        ActiveLineText.Text = text;
+    }
+
     /// <summary>İçerik geldi: prompt satırının yalnız METNİ boşalır — imleç durur (§2.5, prototip
-    /// <c>BuildApp.jsx:766-771</c>: satır koşulsuz render edilir, idle/boot değilken içi boşalır).</summary>
+    /// <c>BuildApp.jsx:766-771</c>: satır koşulsuz render edilir, idle/boot değilken içi boşalır). Workspace
+    /// bekleme metni kalır (<see cref="SetHasWorkspace"/>).</summary>
     private void ClearReadyText()
     {
         if (!_idleReady) return;
         _idleReady = false;
-        ActiveLineText.Text = "";
+        ApplyPromptText();
         RefreshPrompt();
     }
 
@@ -651,7 +677,7 @@ public partial class ConsoleView : UserControl
         _projectMode = true;
         RefreshPrompt();                 // proje-log modunda prompt imleci yoktur
         _idleReady = false;
-        ActiveLineText.Text = "";
+        ApplyPromptText();
         _armedForChunk = false;            // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlogLines = [.. allLines];     // kopya: backlog canlı satırlarla BÜYÜR, çağıranın listesi değişmez
 
