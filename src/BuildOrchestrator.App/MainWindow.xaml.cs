@@ -953,13 +953,14 @@ public partial class MainWindow : Window
         SettingsOverlay.Open(_vm, _uiState, PickFolder);
     }
 
-    /// <summary>[design v1.10.0 §2.4] First run davetindeki <c>Import settings…</c>: Settings'i açar ve dosya
-    /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
+    /// <summary>[design v1.10.0 §2.4 · kullanıcı kararı 2026-09-29] First run davetindeki <c>Import settings…</c>:
+    /// Settings'i açar, diyalog ekrana yerleşince dosya seçiciyi tetikler — hazır bir ayar dosyası olan developer tek
+    /// adımda başlar (bekleme: <see cref="SettingsDialog.OpenForImportAsync"/>).</summary>
     private void OnImportSettings(object sender, RoutedEventArgs e)
     {
         if (AnyDialogOpen) return;
         WireSettingsPickers();
-        SettingsOverlay.OpenForImport(_vm, _uiState, PickFolder);
+        _ = SettingsOverlay.OpenForImportAsync(_vm, _uiState, PickFolder);
     }
 
     /// <summary>[design v1.10.0 §2.9] Export/Import dosya seçicileri — diyalogun seam'lerine gerçek Win32
@@ -983,8 +984,14 @@ public partial class MainWindow : Window
                 Filter = ViewModels.SettingsFile.FileFilter,
                 CheckFileExists = true,
             };
-            return dialog.ShowDialog(this) == true ? dialog.FileName : null;
+            // [kullanıcı kararı 2026-09-29] Seçici pencerenin — dolayısıyla Settings diyaloğunun — üzerinde ortalanır.
+            using (CenteredDialog.Over(this))
+                return dialog.ShowDialog(this) == true ? dialog.FileName : null;
         };
+        // [kullanıcı kararı 2026-09-29] Import kısayolunda seçiciden önceki bekleme — adımlar arası beklemeyle AYNI
+        // saat (azaltılmış harekette sıfır). Davet yalnız workspace yokken görünür; o sırada bekleyen bir bakım
+        // adımı olamaz, yani saat paylaşımı birbirini kesmez.
+        SettingsOverlay.ImportHold ??= _stepHold.HoldAsync;
     }
 
     /// <summary>[About] Info butonu → About modali.</summary>

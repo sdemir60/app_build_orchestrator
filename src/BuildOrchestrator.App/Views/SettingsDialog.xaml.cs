@@ -154,13 +154,30 @@ public partial class SettingsDialog : ModalDialog
         ShowDialog();
     }
 
-    /// <summary>[design v1.10.0 §2.4] First run'daki <c>Import settings…</c> kısayolu: diyaloğu açar ve dosya
-    /// seçiciyi HEMEN tetikler — hazır bir ayar dosyası olan developer tek adımda başlar.</summary>
-    public void OpenForImport(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
+    /// <summary>[design v1.10.0 §2.4 · kullanıcı kararı 2026-09-29] First run'daki <c>Import settings…</c> kısayolu:
+    /// diyaloğu açar, ekrana yerleşmesini bekler (<see cref="ImportPickerDelayMs"/>) ve SONRA dosya seçiciyi tetikler —
+    /// hazır bir ayar dosyası olan developer tek adımda başlar. Bekleme sırasında diyalog kapatıldıysa ya da yeniden
+    /// açıldıysa seçici gelmez.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Seçici eskiden diyalogla AYNI anda tetiklenirdi; ikisi "pat pat" birlikte açılıyor,
+    /// seçici giriş animasyonunun ortasında diyaloğun üstüne biniyordu (kullanıcı testi).</para></summary>
+    public async Task OpenForImportAsync(RunViewModel run, IUiStateStore store, Func<string?> pickFolder)
     {
         Open(run, store, pickFolder);
+        var draft = _draft;
+        if (ImportHold is { } hold) await hold(ImportPickerDelayMs);
+        if (Visibility != Visibility.Visible || !ReferenceEquals(draft, _draft)) return; // vazgeçildi
         OnImport(this, new RoutedEventArgs());
     }
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Import kısayolunda diyalog ile dosya seçici arasındaki bekleme — kabuk
+    /// verir (MainWindow: <see cref="Services.StepHold"/>; azaltılmış harekette sıfır). <c>null</c> ⇒ beklenmez.</summary>
+    public Func<double, Task>? ImportHold { get; set; }
+
+    /// <summary>Bekleme süresi: diyaloğun giriş animasyonu (<c>Duration.Base</c>) biter, ardından bir nefes
+    /// (<c>Duration.Slow</c>) — ikisi de motion token'larından taze çözülür (ms literali yazılmaz).</summary>
+    internal double ImportPickerDelayMs =>
+        MotionTokens.ResolveDuration(this, "Duration.Base", PopIn.DialogDurationMs).TimeSpan.TotalMilliseconds
+        + MotionTokens.ResolveSlow(this).TimeSpan.TotalMilliseconds;
 
     /// <summary>Her kapanış yolu (Cancel, Save, scrim, Esc, MainWindow'un Esc güvenlik ağı) geri bildirimi ve
     /// Clear'ın kurulu durumunu sıfırlar — taslak zaten bir kopyadır ve atılır.</summary>
