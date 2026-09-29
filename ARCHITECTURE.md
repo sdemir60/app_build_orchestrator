@@ -2397,6 +2397,15 @@ Text that the design specifies literally is produced by **pure, testable static 
 no repository or branch context — the branch already has a chip in the action bar, and the one remaining fact,
 *which workspace is open*, sits next to it as a mono label whose tooltip is the repository root.
 
+**No workspace.** Without a repository root — on first run, or after a Save closed the workspace (§13.3) — the
+window is the first-run screen: the project list carries the setup invitation (`Configure the workspace`, a
+checklist of the root and the layer count, *Open settings* and *Import settings…*), the graph its dashed
+*Graph appears after Sync* box, the console's prompt line `Waiting for a workspace` (§13.5), the ribbon
+`Not configured — repository root not set`. The panel headers carry no counts — no `N projects · N
+dependencies`, `N lines` or `N events` — and the PROJECTS header neither the `build-order` label nor the filter
+box: there is nothing to count or filter. Sync, Build, the maintenance box and the action bar's chips are
+disabled. One switch drives the panel side of this from `HasWorkspace` (`ShellRoot.SetHasWorkspace`).
+
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
 `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
 the Build menu's over every project or the row menu's on one — and `DEEP CLEAN` the maintenance box's workspace
@@ -2721,7 +2730,8 @@ is not the operation's kind but whether it opens a section — Sync from the rib
 since nothing precedes it, and so does a branch change, whose section starts with the switch line; a Sync that
 Settings' Save sends does not, because Save already wrote the console's first line (the new layer count, or
 the new root, §13.3) an instant earlier, and that line belongs to the run about to start rather than to the one
-before it. An automatic Sync clears nothing and adds at most one line of its own (`synced after commit`,
+before it. A Save that closes the workspace clears both: it ends that workspace's story, and its own notes open
+the new page (§13.3). An automatic Sync clears nothing and adds at most one line of its own (`synced after commit`,
 `synced · N projects changed`), as do the branch-change interrupt (`interrupted by branch change`) and the wait
 for a git operation (`waiting for git — …`). A git refusal adds one short `warn` line — a branch switch refused
 on a dirty tree, a pull refused (§10.3, §10.5): no glyph (the amber `▸`, like `sync` and `info`), text in the
@@ -3149,8 +3159,12 @@ table, fresh each time (§12.3). *Start with Windows* is the one exception to "t
 value": it opens on the Windows startup entry and is applied only when changed (§12.3). A row's description can
 give way to a note about the row's current state — today only Task Manager's disabled mark (§12.3).
 
-**Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath saying it is
-required. The root is the one setting the tool cannot run without, so *Save* stays disabled while it is empty.
+**Workspace** is a mono repository-root input with *Browse…* beside it and a note underneath: nothing is
+discovered without it. The root does not gate *Save* — an empty root means *no workspace*, which is a state the
+user can save: on first run the rest of the form is kept and the invitation stays, now counting the saved layers;
+over an open workspace — after *Clear*, or with the input emptied — it closes that workspace (below). A root
+made only of spaces is empty. *Save* reads *Save and sync* only on first run and only while a root is entered —
+that is the one Save that starts a workspace; otherwise it reads *Save*.
 
 **External projects** come before Layers in the rail on purpose: they build *before* everything the repository
 root discovers. A card is a path — a folder, a solution or a project file — in a full-width mono input, and the
@@ -3221,9 +3235,9 @@ no Sync is sent, since pulling the root out from under a running build or operat
 Sync behind the operation's own would be a double Sync; because the dialog's label has already confirmed the
 picked folder, a root change this gate drops is announced in the console as `Repository change deferred — run
 in flight` (or `— operation in flight`), while a Save that carries no root change stays silent.
-If no repository has ever been selected, there is nothing to Sync — that gate sits *after* the root is
-applied, since the headline journey (a new user opens Settings, picks the root, saves) fills the root right
-there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers,
+If there is no repository — none selected yet, or the Save closed it — there is nothing to Sync; that gate sits
+*after* the root is applied, since the headline journey (a new user opens Settings, picks the root, saves)
+fills the root right there. And when the engine is unavailable — the supervisor was never found, or would not launch — the layers,
 the external projects and the root are all applied but nothing is sent: each send would fail and print an error
 line contradicting the permanent ribbon message, the same reason Sync, Build and Rebuild are disabled in
 that state. The root is still applied because it is local state that persists, and the first Sync after the
@@ -3234,6 +3248,16 @@ required` — and the old repository's state goes with it: the rows fall back to
 (§13.2) and the last Sync's HEAD is forgotten, so the first trigger on the new root is not compared with the old
 branch. Save's one Sync then runs on the new root. The first setup stays silent, because a Sync starts there
 anyway and the note would be noise.
+
+**An empty root closes the workspace.** Saved over an open workspace, an empty root takes the window back to the
+first-run screen (§13.2, *No workspace*): the root is cleared — and written to `ui-state.json` as such, so the
+next start opens there too — the phase drops to `Empty`, the plan surface empties (rows, topology, graph), the
+branch, its inventory, the `N behind` distance and the last Sync are forgotten, the selection and the filter
+drop, and the console and the event stream start a new page. Nothing is sent to the engine. The closing comes
+*before* the Save's own notes, so the layer, external-project and General lines of that Save are the first
+lines of the new page instead of being wiped with the old one. The first gate holds for it as for any root
+change — while a run or a workspace operation is in flight the root stays and the console says `Repository
+change deferred — …`. A root entered afterwards is a first setup again: silent, with its one Sync.
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
@@ -3251,8 +3275,8 @@ file is not an error but a result: the user picked the wrong file, and the line 
 while the form stays untouched.
 
 While no feedback is showing and *Save* is disabled, that same footer line says why, faint and on one line,
-whichever page is open: `Repository root is required`, `Every external project needs a path`, `Every layer needs a
-name` or `Check the highlighted pattern`, in that order of priority. The draft derives the reason from the very
+whichever page is open: `Every external project needs a path`, `Every layer needs a name` or `Check the
+highlighted pattern`, in that order of priority. The draft derives the reason from the very
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
@@ -3549,7 +3573,9 @@ lines.
   ribbon's elapsed counter.
 - **Nothing is typed.** Live lines print immediately. The only live thing in the console is the prompt line at
   the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), stepping through the console's own
-  line palette as it blinks (§14.3), with `ready` beside it while idle. The line is unconditional — output empties its text, not the line —
+  line palette as it blinks (§14.3), with `ready` beside it while idle and `Waiting for a workspace` while there
+  is no workspace (§13.2). Output empties `ready`, never the waiting text — on first run the engine prints its
+  own line at once, and a waiting text that output emptied would never be seen. The line is unconditional — output empties its text, not the line —
   so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
   measured from the text view's own line height, so the caret sits below the last line instead of on top of
   it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
@@ -5368,7 +5394,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
 | Maintenance-box Optimize command, the shared workspace-job gate (mutually exclusive with Clean), its request/in-flight guard and its error codes — the plan surface cleared at the click and the Sync chained on completion, through the handover it shares with Clean | `App/ViewModels/RunViewModel.cs` (`OptimizeCommand`), `RunViewModel.Workspace.cs` |
 | Hollow reset of rows and the will-build surface (repository change, the start of a configuration switch's Sync) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
-| Emptying rows, graph and the will-build surface at a Clean or Optimize click and on a real repository change | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
+| Emptying rows, graph and the will-build surface at a Clean or Optimize click, on a real repository change and when a Save closes the workspace | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
+| Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
+| No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
