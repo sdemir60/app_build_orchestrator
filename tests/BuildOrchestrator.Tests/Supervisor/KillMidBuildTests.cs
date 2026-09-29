@@ -153,9 +153,12 @@ public class KillMidBuildTests
     // MsBuildResolver'ın (bir kez, run'ın en başında) çalıştırdığı vswhere.exe de job-DIŞI bir helper olsa dahi
     // otomatik job üyesi olur ve genelde saniyeler önce çoktan ölmüştür — isim süzgeci onu "gerçek MSBuild.exe
     // çocuğu" eşiğinden ayıklar (bkz. MsBuildInvokerTests'teki "powershell" isim süzgeci ile aynı desen).
-    private static bool IsMsBuildProcess(int pid)
+    // [P3 · Task 5] İsim süzgecinin TEK yeri (kopya YASAK): SafeExitProcessTests de job üyelerinden MSBuild.exe'leri
+    // bununla ayırır. Çıkmış bir process'in adı okunamaz — GetProcessById (ArgumentException) ya da ad sorgusu
+    // (InvalidOperationException) fırlatır; ikisi de "canlı bir MSBuild.exe değil" demektir.
+    internal static bool IsMsBuildProcess(int pid)
     {
         try { return string.Equals(Process.GetProcessById(pid).ProcessName, "MSBuild", StringComparison.OrdinalIgnoreCase); }
-        catch (ArgumentException) { return false; } // zaten çıkmış kısa ömürlü job üyesi
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return false; } // zaten çıkmış kısa ömürlü job üyesi
     }
 }

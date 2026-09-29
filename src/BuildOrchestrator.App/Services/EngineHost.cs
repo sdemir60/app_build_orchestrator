@@ -67,6 +67,11 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// <summary>Uçuştaki stderr drain'i (test yüzeyi) — motor yaşadığı sürece tamamlanmaz.</summary>
     internal Task? StderrDrain { get; private set; }
 
+    /// <summary>[P3 · Task 5] Outer Job (test yüzeyi): gerçek motorla koşan testler ağacı — Supervisor ve onun
+    /// <c>MSBuild.exe</c>'leri — bu job'un IOCP'si üzerinden izler (<c>SafeExitProcessTests</c>). Üretim job'a
+    /// buradan dokunmaz; sahibi ve tek kapatanı <see cref="DisposeAsync"/>'tir.</summary>
+    internal JobObject OuterJob => _outerJob;
+
     /// <summary>
     /// Motorun stderr'ini EOF'a kadar okur ve ATAR. Yönlendirilmiş üç pipe'ın (stdin/stdout/stderr) her biri
     /// tüketilmek ZORUNDADIR: okunmayan bir pipe'ın tamponu dolduğunda yazan taraf — yani motor —
