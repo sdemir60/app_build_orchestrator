@@ -202,7 +202,7 @@ public sealed class SafeExitProcessTests
     /// o arada başka bir process'e — ör. paralel koşan bir testin motoruna — geçmiş olabilir. O yabancı
     /// sabitlenseydi (3) onu orphan sayardı; <c>IsProcessInJob</c> yalnız bu job'un (iç içe job'ları dahil)
     /// üyelerini geçirir. <c>MSBuild.exe</c>'ler ayrıca işaretlenir
-    /// (<see cref="KillMidBuildTests.IsMsBuildProcess"/> — isim süzgecinin tek yeri).</para>
+    /// (<see cref="ProcessTree.IsMsBuildProcess"/> — isim süzgecinin tek yeri).</para>
     ///
     /// <para><b>[Task 5 fix round 1 · M3] İzleme sessizce ölemez:</b> döngü yalnız <see cref="Dispose"/> portu
     /// kapattığında kendiliğinden biter; başka her istisna (ör. <see cref="Pin"/>'den kaçan beklenmedik bir hata)
@@ -291,7 +291,7 @@ public sealed class SafeExitProcessTests
                 return; // çoktan çıkmış kısa ömürlü üye — geride kalamaz
             }
             bool member = IsProcessInJob(process.SafeHandle, _job, out bool inJob) && inJob;
-            bool msBuild = member && KillMidBuildTests.IsMsBuildProcess(pid);
+            bool msBuild = member && ProcessTree.IsMsBuildProcess(pid);
             lock (_gate)
             {
                 if (member && !_frozen)

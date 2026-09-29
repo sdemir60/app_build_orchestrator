@@ -266,7 +266,7 @@ public class SupervisorIpcTests
         // ASIL İDDİA — §6'nın ta kendisi: reddedilen komut `cmd.exe`/`powershell` DOĞURMADI.
         // İsim süzgeci (ham sayı değil) bilinçli: `CREATE_NO_WINDOW` ile başlatılan her console process'i
         // yanına bir console-host (conhost) doğurur ve o da job üyesi olur — ham doğum sayısı bu OS
-        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `KillMidBuildTests.IsMsBuildProcess`'te de var.
+        // artefaktı yüzünden anlamsızdır. Aynı gerekçe `ProcessTree.IsMsBuildProcess`'te de var.
         string[] forbidden = ["cmd", "powershell", "pwsh"];
         var leaked = births.Where(b => forbidden.Contains(b.Name, StringComparer.OrdinalIgnoreCase)).ToList();
         Assert.True(leaked.Count == 0,

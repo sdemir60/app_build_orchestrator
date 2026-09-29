@@ -35,12 +35,21 @@ internal static class ProcessTree
             $"the tree took {elapsedMs} ms to die after {trigger} (budget {budget.TotalMilliseconds} ms)");
     }
 
-    /// <summary>Process'in adı — tanı mesajları için. Canlıyken okunur; çıkmışsa ayırt edilebilir bir yer tutucu döner
-    /// (<c>GetProcessById</c> <see cref="ArgumentException"/>, ad sorgusu <see cref="InvalidOperationException"/>
-    /// atar). <c>KillMidBuildTests.IsMsBuildProcess</c> ile aynı desen.</summary>
+    /// <summary>Process'in adı — tanı mesajları ve <see cref="IsMsBuildProcess"/> için. Canlıyken okunur; çıkmışsa
+    /// ayırt edilebilir bir yer tutucu döner (<c>GetProcessById</c> <see cref="ArgumentException"/>, ad sorgusu
+    /// <see cref="InvalidOperationException"/> atar).</summary>
     public static string NameOfProcess(int pid)
     {
         try { return Process.GetProcessById(pid).ProcessName; }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return "(exited)"; }
     }
+
+    /// <summary>[final review O3] Job üyelerinden gerçek <c>MSBuild.exe</c>'leri ayıran isim süzgecinin TEK yeri —
+    /// <see cref="KillMidBuildTests"/> (kill anındaki canlı derleyici eşiği) ve <c>SafeExitProcessTests</c> (koşuda
+    /// görülen MSBuild'ler) bunu kullanır. <c>MsBuildResolver</c>'ın çalıştırdığı <c>vswhere.exe</c> job-DIŞI bir
+    /// yardımcıyla başlatılsa da job üyesinin soyundan geldiği için otomatik üye olur ve genelde saniyeler önce çoktan
+    /// ölmüştür; süzgeç onu (ve conhost gibi OS artefaktlarını) ayıklar. Çıkmış bir process'in adı okunamaz — o da
+    /// "canlı bir MSBuild.exe değil" demektir (<see cref="NameOfProcess"/>'in yer tutucusu hiçbir adla eşleşmez).</summary>
+    public static bool IsMsBuildProcess(int pid) =>
+        string.Equals(NameOfProcess(pid), "MSBuild", StringComparison.OrdinalIgnoreCase);
 }

@@ -95,7 +95,7 @@ public class KillMidBuildTests
                     if (n.MessageId == NativeMethods.JOB_OBJECT_MSG_NEW_PROCESS)
                     {
                         livePids.Add(n.Pid);
-                        if (IsMsBuildProcess(n.Pid)) liveMsBuildPids.Add(n.Pid);
+                        if (ProcessTree.IsMsBuildProcess(n.Pid)) liveMsBuildPids.Add(n.Pid);
                     }
                     if (n.MessageId is NativeMethods.JOB_OBJECT_MSG_EXIT_PROCESS
                                     or NativeMethods.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS)
@@ -145,16 +145,4 @@ public class KillMidBuildTests
     // ile IOCP bekleyişiyle ARALIKSIZ birlikte sürüyor (bkz. yukarıdaki birleşik döngü yorumu).
     private static async Task<IpcEvent?> ReadIpcAsync(NdjsonReader reader) =>
         await reader.ReadAsync<IpcEvent>().WaitAsync(TimeSpan.FromSeconds(60));
-
-    // MsBuildResolver'ın (bir kez, run'ın en başında) çalıştırdığı vswhere.exe de job-DIŞI bir helper olsa dahi
-    // otomatik job üyesi olur ve genelde saniyeler önce çoktan ölmüştür — isim süzgeci onu "gerçek MSBuild.exe
-    // çocuğu" eşiğinden ayıklar (bkz. MsBuildInvokerTests'teki "powershell" isim süzgeci ile aynı desen).
-    // [P3 · Task 5] İsim süzgecinin TEK yeri (kopya YASAK): SafeExitProcessTests de job üyelerinden MSBuild.exe'leri
-    // bununla ayırır. Çıkmış bir process'in adı okunamaz — GetProcessById (ArgumentException) ya da ad sorgusu
-    // (InvalidOperationException) fırlatır; ikisi de "canlı bir MSBuild.exe değil" demektir.
-    internal static bool IsMsBuildProcess(int pid)
-    {
-        try { return string.Equals(Process.GetProcessById(pid).ProcessName, "MSBuild", StringComparison.OrdinalIgnoreCase); }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { return false; } // zaten çıkmış kısa ömürlü job üyesi
-    }
 }
