@@ -3274,6 +3274,20 @@ empties the form. Feedback for all three sits on the same footer line for 2.4 s,
 file is not an error but a result: the user picked the wrong file, and the line says `Invalid settings file`
 while the form stays untouched.
 
+**The import file picker comes after the dialog, centred over the window.** *Import settings…* on the first-run
+invitation opens the dialog first and raises the file picker only once the dialog has landed — its entrance
+(`Duration.Base`) and then a beat (`Duration.Slow`), both read from the motion tokens and counted by the same
+`StepHold` the maintenance steps use, so they are zero under reduced motion. Raised together, the picker covered
+a dialog that was still fading in. If the dialog is closed during the wait, the picker never opens. The picker
+itself — from the invitation and from the footer alike — opens centred over the window, and so over the dialog:
+left alone, Windows places it at the owner's top-left and restores its own last size. The picker is activated
+hidden at a first, smaller size and writes its final size and position itself just before it is shown, so a move
+at activation is overwritten; `CenteredDialog` instead borrows the picker's window procedure from activation until
+it is visible and rewrites the position of every placement in between from the final size, then gives the
+procedure back — the picker is drawn centred the first time and the user can move it freely afterwards. The
+arithmetic is `DialogPlacement.CenterOver`: centred over the owner, clamped into the owner's monitor work area,
+top-left at the work area's origin when the picker is the larger.
+
 While no feedback is showing and *Save* is disabled, that same footer line says why, faint and on one line,
 whichever page is open: `Every external project needs a path`, `Every layer needs a name` or `Check the
 highlighted pattern`, in that order of priority. The draft derives the reason from the very
@@ -4915,11 +4929,12 @@ dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filte
 ```
 
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
-assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, UI latency and
-memory under each perf profile, and the content-decision timings. The filter above does **not** exclude them
-(`!=` admits every other category value). The tray and perf probes open real windows, show balloons or
-saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`, `BO_MEASURE_OVERLAY`,
-`BO_MEASURE_PERF` — and reports itself as skipped unless it is set. The content-decision measurements are gated
+assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
+file picker lands, UI latency and memory under each perf profile, and the content-decision timings. The filter
+above does **not** exclude them (`!=` admits every other category value). The tray, file-picker and perf probes
+open real windows and dialogs, show balloons or saturate every core, so each is gated on an environment variable —
+`BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_PERF` — and reports itself as skipped
+unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
 root exists they run with the normal suite.
@@ -5397,6 +5412,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Emptying rows, graph and the will-build surface at a Clean or Optimize click, on a real repository change and when a Save closes the workspace | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
+| Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |

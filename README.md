@@ -137,7 +137,8 @@ the running instance first — tray icon → Exit).
    Workspace, where the repository root lives (nothing is discovered without it); afterwards it opens on
    General. External projects and layers are optional. *Browse…* only stages the folder in the dialog; *Save*
    is what applies it, and on first run, once a root is entered, it reads *Save and sync*. If you already have a
-   settings file, *Import settings…* on the invitation opens the dialog with the file picker already up.
+   settings file, *Import settings…* on the invitation opens the dialog and, once it has settled, the file
+   picker, centred over the window.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
    (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
