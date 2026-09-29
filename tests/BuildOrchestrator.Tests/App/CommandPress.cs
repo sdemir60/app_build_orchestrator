@@ -1,3 +1,6 @@
+using System.Windows.Automation.Peers;
+using System.Windows.Automation.Provider;
+using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace BuildOrchestrator.Tests.App;
@@ -17,4 +20,11 @@ internal static class CommandPress
         command.Execute(parameter);
         return true;
     }
+
+    /// <summary>Realize edilmiş bir düğmeye kullanıcı gibi basar: UI Automation Invoke dispatcher'a <c>Input</c>
+    /// önceliğiyle post edilir ve <c>ButtonBase.OnClick</c>'e iner — komutu yalnız <c>CanExecute</c> true iken
+    /// çalıştıran üretim yolu. Pasif bir düğmede Invoke fırlatır (sönük düğmeye basılamaz); çağıran dispatcher'ı
+    /// pompalar (<see cref="DispatcherPump"/>).</summary>
+    public static void Invoke(Button button) =>
+        ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
 }

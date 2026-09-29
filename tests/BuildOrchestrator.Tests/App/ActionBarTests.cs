@@ -1,7 +1,5 @@
 using System.Windows;
 using System.Windows.Automation;
-using System.Windows.Automation.Peers;
-using System.Windows.Automation.Provider;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
@@ -367,7 +365,7 @@ public partial class ActionBarTests
         now += 60_000;
         vm.OnWindowActivated();                              // tıklama pencereyi etkinleştirdi…
         Assert.Single(sent.OfType<SyncWorkspaceCommand>());  // …kendiliğinden Sync istendi (ön-koşul)
-        Invoke(bar.Split.PrimaryHalf!);                      // …ve aynı tıklama Build'e iner
+        CommandPress.Invoke((Button)bar.Split.PrimaryHalf!); // …ve aynı tıklama Build'e iner
         DispatcherPump.PumpUntil(() => vm.IsStarting, TimeSpan.FromSeconds(2));
 
         Assert.True(vm.IsStarting);                          // tık tutuldu
@@ -410,12 +408,6 @@ public partial class ActionBarTests
         var bar = new ActionBar { DataContext = vm };
         return (bar, DsResources.Realize(host, bar));
     }
-
-    /// <summary>Düğmeye kullanıcı gibi basar: UI Automation Invoke dispatcher'a <c>Input</c> önceliğiyle post edilir ve
-    /// <c>ButtonBase.OnClick</c>'e iner — komutu yalnız <c>CanExecute</c> true iken çalıştıran üretim yolu. Pasif bir
-    /// düğmede Invoke fırlatır (sönük düğmeye basılamaz).</summary>
-    private static void Invoke(ButtonBase button) =>
-        ((IInvokeProvider)new ButtonAutomationPeer((Button)button).GetPattern(PatternInterface.Invoke)!).Invoke();
 
     private static (BuildMenu menu, Window window) RealizeMenu(RunViewModel vm)
     {

@@ -17,6 +17,11 @@ namespace BuildOrchestrator.Tests.App;
 /// biterken basılan Build'de, dışarıda branch değiştirilip dönülünce ve Clean/Optimize'ın zincirlediği Sync'te de
 /// oluyordu (sonuncusunda düğme en azından sönüktü).</para>
 ///
+/// <para>İstek geri alınır: Stop/Esc, tam çıkış, branch değişimi, motor kaybı; ayrıca beklenen iş istenen şeyi
+/// getirmeden biterse (Sync ya da bakım işi düştü, checkout branch'i değiştirmedi, pull ağacı ilerletmedi, liste ya da
+/// satırın hedefi gelmedi) — iptal satırı işin kendi hata satırlarının ALTINA düşer. Tam çıkış beklerken istek
+/// yapılamaz.</para>
+///
 /// <para>Harness: gönderimler sahte ama CANLI bir motora gider (<see cref="RunViewModel.DebugSendOverride"/>) —
 /// başlatılmamış bir motorda her gönderim senkron düşer ve iş hiç sürmezdi. Tıklama WPF'in yaptığı gibi yapılır:
 /// kapısı kapalı komut çalıştırılmaz (<see cref="CommandPress"/>). HEAD ve izleyici sahtedir, saat enjekte edilir.</para>
@@ -272,7 +277,8 @@ public class RunRequestWaitsForWorkTests
         Assert.Equal(AppPhase.Syncing, rig.Vm.Phase);
     }
 
-    /// <summary>Motor beklerken giderse istek de gider — yeniden başlatılan motorun Sync'i onu başlatmaz.</summary>
+    /// <summary>Motor beklerken giderse istek de gider — yeniden başlatılan motorun Sync'i onu başlatmaz. Konsol
+    /// isteğin neden olmadığını söyler: son satır "…it starts when the work in flight finishes" olarak kalamaz.</summary>
     [Fact]
     public void Losing_the_engine_while_a_build_waits_drops_the_request()
     {
@@ -283,8 +289,107 @@ public class RunRequestWaitsForWorkTests
         rig.Vm.OnEngineExited(1);
 
         Assert.False(rig.Vm.IsStarting);
+        Assert.Equal(RunViewModel.RunCancelledLine, LastConsoleLine(rig.Vm));
         AnswerSync(rig.Vm);
         Assert.Empty(rig.Runs);
+    }
+
+    /// <summary>Satırın isteği beklerken o proje listeden çıktıysa (başka branch'e geçildi, proje silindi) koşu
+    /// başlatılamaz: hedefi olmayan kapsamlı koşuyu motor "not in plan" diye reddederdi, açılış koreografisi ise
+    /// hedef yerine bütün Build kapsamını işaretlerdi. İstek geri alınır.</summary>
+    [Fact]
+    public void A_row_run_whose_project_is_gone_when_the_work_ends_is_taken_back()
+    {
+        var rig = NewRig();
+        ReturnToTheWindow(rig);
+        Assert.True(CommandPress.Press(rig.Vm.BuildProjectCommand, A));
+
+        rig.Vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        VmTopology.Seed(rig.Vm, @"C:\p\b.csproj"); // Sync'in listesinde A artık yok
+        rig.Vm.OnEvent(Synced());
+
+        Assert.Empty(rig.Runs);
+        Assert.False(rig.Vm.IsStarting);
+        Assert.Equal(RunViewModel.RunCancelledLine, LastConsoleLine(rig.Vm));
+    }
+
+    /// <summary>Önceki koşunun geç gelen sonu (burada host'un geç onayladığı bir stop) bekleyen isteğe ait değildir:
+    /// isteği düşürmez, Stop düğmesini Build'e çevirmez ve süren Sync'in fazını ezmez. İstek kendi kimliğiyle bekler.</summary>
+    [Fact]
+    public void A_late_end_of_the_previous_run_leaves_a_waiting_build_alone()
+    {
+        var rig = NewRig();
+        rig.Vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 1, 4, "Debug"));
+        rig.Vm.OnEvent(new RunCompletedEvent("r0", RunOutcome.Completed, 1, 0, 0, 0, 1_000));
+        rig.Vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.True(CommandPress.Press(rig.Vm.BuildCommand));
+
+        rig.Vm.OnEvent(new RunStoppedEvent("r0", WasHard: false));
+
+        Assert.True(rig.Vm.IsStarting);
+        Assert.Equal(AppPhase.Syncing, rig.Vm.Phase);
+        AnswerSync(rig.Vm);
+        Assert.Single(rig.Runs);
+    }
+
+    /// <summary>
+    /// Tam çıkış beklerken (Close to tray kapalı, ×) yeni bir koşu istenemez: bekleyiş iş bitince kapanmak içindir, o
+    /// sırada basılan bir Build ya çıkışı bir tam derleme boyunca bekletir ya da hiç başlamayıp çıkışı asılı bırakırdı.
+    /// Ölçülen yol üretimdekidir: Clean'in Sync'e devri <see cref="RunViewModel.OperationHold"/>'un zamanlayıcısından döner,
+    /// yani iş bir motor olayının DIŞINDA biter; çıkış beklerken Sync başlamaz ve kapı orada açılır.
+    /// </summary>
+    [Fact]
+    public void Nothing_can_be_queued_behind_a_pending_exit_and_the_exit_closes_when_the_work_ends()
+    {
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(null); // bekleyişin devamı, zamanlayıcı gibi tamamlayanda koşar
+        try
+        {
+            var rig = NewRig();
+            var holds = new Queue<TaskCompletionSource>();
+            rig.Vm.OperationHold = _ =>
+            {
+                var hold = new TaskCompletionSource();
+                holds.Enqueue(hold);
+                return hold.Task;
+            };
+            Assert.True(CommandPress.Press(rig.Vm.CleanCommand));
+            rig.Vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
+            bool ready = false;
+            rig.Vm.ExitReady += (_, _) => ready = true;
+            rig.Vm.RequestExit(); // Clean sürerken tam çıkış — iş bitince kapanır
+
+            Assert.False(CommandPress.Press(rig.Vm.BuildCommand));
+
+            rig.Vm.OnEvent(new CleanCompletedEvent(1, 2, 1_024, 0, 1));
+            while (holds.TryDequeue(out var hold)) hold.SetResult(); // adım ve boşluk — devir olayın dışında biter
+            Assert.True(ready);
+            Assert.Empty(rig.Runs);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+    }
+
+    /// <summary><c>N behind</c> chip'inin pull'u reddedilirse (kirli ağaç, ayrışmış branch) istenen ağaç gelmedi: bekleyen
+    /// koşu çekilmemiş ağacı derlemez, geri alınır. Reddin gerekçesi konsolda kalır, iptal satırı ALTINA düşer — koşunun
+    /// açılışı onu silmez.</summary>
+    [Fact]
+    public void A_build_waiting_on_a_refused_pull_is_taken_back_and_the_refusal_stays_readable()
+    {
+        var rig = NewRig();
+        rig.Vm.OnEvent(Synced() with { Behind = 2 });
+        Assert.True(CommandPress.Press(rig.Vm.PullRepositoryCommand));
+        Assert.True(CommandPress.Press(rig.Vm.BuildCommand));
+
+        rig.Vm.OnEvent(new SyncProgressEvent("warning: pull refused — the working tree has local changes", "warn"));
+        rig.Vm.OnEvent(new PullCompletedEvent(Succeeded: false, RefusalReason: PullRefusalReason.Dirty));
+
+        Assert.False(rig.Vm.IsStarting);
+        Assert.Empty(rig.Runs);
+        Assert.Contains("warning: pull refused", rig.Vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal(RunViewModel.RunCancelledLine, LastConsoleLine(rig.Vm));
     }
 
     /// <summary>İş bittiğinde ortada proje listesi yoksa (Clean düştü, listeyi getirecek Sync zincirlenmedi) istek
@@ -342,11 +447,12 @@ public class RunRequestWaitsForWorkTests
 
     // ---------------------------------------------------------------- beklerken gelen Sync hatası
 
-    /// <summary>Beklerken gelen <c>planFailed</c> Sync'indir — koşunun komutu henüz gitmedi. Sync kapıyı bırakır, hata
-    /// şeride Sync'in hatası olarak yazılır ve bekleyen koşu elde duran listeyle başlar. Eski ayrım (<c>IsStarting</c>
-    /// açıksa hata koşunundur) burada Sync'i sonsuza dek "uçuşta" bırakırdı.</summary>
+    /// <summary>Beklerken gelen <c>planFailed</c> Sync'indir — koşunun komutu henüz gitmedi. Sync kapıyı bırakır ve hata
+    /// şeride Sync'in hatası olarak yazılır; eski ayrım (<c>IsStarting</c> açıksa hata koşunundur) burada Sync'i sonsuza
+    /// dek "uçuşta" bırakırdı. Beklenen iş düştüğü için istek de geri alınır: aynı planlama koşunun kendisinde de düşerdi
+    /// ve açılışı hatanın satırını silerdi — hata konsolda kalır, iptal satırı altına düşer.</summary>
     [Fact]
-    public void A_sync_failure_while_a_build_waits_is_the_syncs_and_the_build_still_starts()
+    public void A_sync_failure_while_a_build_waits_is_the_syncs_and_takes_the_build_back()
     {
         var rig = NewRig();
         ReturnToTheWindow(rig);
@@ -357,7 +463,10 @@ public class RunRequestWaitsForWorkTests
 
         Assert.Equal("a project file could not be read", rig.Vm.SyncErrorMessage);
         Assert.False(rig.Vm.SyncBusy);
-        Assert.Equal(RunMode.Build, Assert.Single(rig.Runs).Mode);
+        Assert.False(rig.Vm.IsStarting);
+        Assert.Empty(rig.Runs);
+        Assert.Contains("[error] planFailed", rig.Vm.GetRunDocumentText(), StringComparison.Ordinal);
+        Assert.Equal(RunViewModel.RunCancelledLine, LastConsoleLine(rig.Vm));
     }
 
     // ---------------------------------------------------------------- Sync isteği kapıları o anda kapatır

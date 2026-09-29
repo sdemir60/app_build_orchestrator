@@ -182,6 +182,35 @@ public class BranchCheckoutTests
         Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
     }
 
+    /// <summary>Checkout branch'i DEĞİŞTİRMEDEN biterse (kirli ağaç reddi ya da checkout hatası) bekleyen Build eski
+    /// ağacı derlemez: istek geri alınır. Reddin/hatanın satırı konsolda kalır ve iptal satırı ALTINA düşer — koşunun
+    /// açılışı o açıklamayı silmez.</summary>
+    [Theory]
+    [InlineData("refused")]
+    [InlineData("failed")]
+    public async Task A_build_waiting_on_a_checkout_that_does_not_switch_is_taken_back_and_the_reason_stays(string outcome)
+    {
+        var vm = NewVm();
+        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: checkout gerçekten uçuşta kalır
+        VmTopology.Seed(vm);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        await vm.SelectBranch(FeatureX);
+        Assert.True(CommandPress.Press(vm.BuildCommand));
+
+        if (outcome == "refused")
+            vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "feature/x", null, 3, null, null));
+        else
+            vm.OnEvent(new ErrorEvent("checkoutFailed", "index.lock exists"));
+
+        Assert.False(vm.IsStarting);
+        Assert.Empty(sent.OfType<StartRunCommand>());
+        string console = vm.GetRunDocumentText();
+        Assert.Contains(outcome == "refused" ? PlanProgressLines.SwitchRefusedDirty(3) : "[error] checkoutFailed",
+            console, StringComparison.Ordinal);
+        Assert.Equal(RunViewModel.RunCancelledLine, Lines(vm)[^1]);
+    }
+
     [Fact]
     public async Task Sync_is_locked_while_a_checkout_is_in_flight()
         => Assert.False((await GatesDuringCheckoutAsync())["sync"]);
