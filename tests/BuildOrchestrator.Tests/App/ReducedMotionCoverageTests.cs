@@ -297,6 +297,20 @@ public class ReducedMotionCoverageTests
         Assert.True(el.RenderTransform.Value.IsIdentity);
     }
 
+    /// <summary>[design v1.23.0 §2.12] Güncelleme kartının drop-in'i (<c>bo-drop-in</c>) de aynı kapıdan geçer.</summary>
+    [StaFact]
+    public void The_update_card_drop_in_snaps_with_no_clock_when_off()
+    {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
+        var el = new Border { Opacity = 0.5 };
+
+        PopIn.PlayDropIn(el); // headless App.Motion null → snap
+
+        Assert.Equal(1.0, el.Opacity);
+        Assert.False(el.HasAnimatedProperties);
+        Assert.True(el.RenderTransform.Value.IsIdentity);
+    }
+
     [StaFact]
     public void The_scroll_animator_snaps_instead_of_animating_when_off()
     {

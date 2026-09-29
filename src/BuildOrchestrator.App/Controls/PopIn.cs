@@ -9,8 +9,9 @@ namespace BuildOrchestrator.App.Controls;
 /// menüsü ORTAK kullanır (kopya YASAK, CLAUDE.md): <c>opacity 0→1</c> + <c>translateY(4px)→0</c> + <c>scale(.985)→1</c>,
 /// 140ms, <c>ease-out</c>. KAPANIŞ animasyonu YOKtur (popover anında gizlenir).
 ///
-/// <para>Aynı gövde diğer girişleri de taşır (kopya YASAK): modal diyalog (<see cref="PlayDialog"/>) ve güncelleme
-/// hapı (<see cref="PlayEntrance"/>) — fark yalnız süre, yön, ölçek ve ölçek merkezidir.</para>
+/// <para>Aynı gövde diğer girişleri de taşır (kopya YASAK): modal diyalog (<see cref="PlayDialog"/>), güncelleme
+/// hapı (<see cref="PlayEntrance"/>) ve güncelleme kartı (<see cref="PlayDropIn"/>) — fark yalnız süre, yön, ölçek
+/// ve ölçek merkezidir.</para>
 ///
 /// <para><b>Motion sözleşmesi:</b> <c>AnimationsEnabled</c> BAŞLATMA ANINDA taze okunur (reduced-motion'da hiç
 /// animasyon kurulmaz — öğe son duruma SNAP eder); eğri <c>KeySpline.EaseOut</c> token'ından taze çözülür.
@@ -31,8 +32,8 @@ internal static class PopIn
     internal const double DialogDurationMs = 180.0;
     internal const double DialogRiseFromPx = 6.0;
 
-    /// <summary>[design v1.23.0 §9] Güncelleme hapının girişi (<c>bo-upd-in</c>, BuildApp.jsx:46): 4px YUKARIDAN
-    /// iner — popover'ın pop-in'i ise aşağıdan yükselir, işaret bu yüzden ters.</summary>
+    /// <summary>[design v1.23.0 §9] Güncelleme hapının ve kartının girişi (<c>bo-upd-in</c> / <c>bo-drop-in</c>,
+    /// BuildApp.jsx:46-47): 4px YUKARIDAN iner — popover'ın pop-in'i ise aşağıdan yükselir, işaret bu yüzden ters.</summary>
     private const double EntranceRiseFromPx = -4.0;
 
     /// <summary>CSS <c>transform-origin</c> varsayılanı — popover, Build menüsü ve diyalog girişleri.</summary>
@@ -48,6 +49,18 @@ internal static class PopIn
     {
         ArgumentNullException.ThrowIfNull(element);
         Play(element, EntranceDuration(element), EntranceRiseFromPx, scaleFrom: 1.0, CenterOrigin);
+    }
+
+    /// <summary>[design v1.23.0 §2.12] Güncelleme kartının ölçek merkezi: kart hapın altından SARKAR, sol üst köşesi
+    /// hapla hizalıdır (CSS <c>transformOrigin: '0 0'</c>).</summary>
+    private static readonly Point TopLeftOrigin = new(0, 0);
+
+    /// <summary>[design v1.23.0 §2.12 · §9] Güncelleme kartının girişi (<c>bo-drop-in</c>, BuildApp.jsx:47): pop-in'in
+    /// 140ms'i ve .985 ölçeği, ama 4px YUKARIDAN iner ve sol üst köşeden büyür.</summary>
+    public static void PlayDropIn(FrameworkElement element)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        Play(element, TimeSpan.FromMilliseconds(DurationMs), EntranceRiseFromPx, ScaleFrom, TopLeftOrigin);
     }
 
     /// <summary>Popover / Build menüsü girişi (140ms, 4px, .985).</summary>

@@ -111,24 +111,38 @@
                  Güncelleme motoru henüz yok — örnek teklifle hap şimdilik her zaman görünür. Amber YOK. -->
             <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
                         Visibility="Collapsed">
-              <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
-                                          VerticalAlignment="Center">
-                <StackPanel Orientation="Horizontal">
-                  <!-- Lucide circle-arrow-up 13px; kontur hapın Foreground'u (text-primary). -->
-                  <Viewbox Width="13" Height="13" VerticalAlignment="Center">
-                    <Canvas Width="24" Height="24">
-                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.UpdateReady}"
-                            StrokeThickness="{DynamicResource Icon.UpdateReady.StrokeThickness}" />
-                    </Canvas>
-                  </Viewbox>
-                  <TextBlock Text="{x:Static vm:UpdateText.PillLabel}" Margin="6,0,0,0" VerticalAlignment="Center" />
-                  <!-- Mono tabular sürüm — rengi hapın ikinci kanalından (nötr text-dim, hover/açık text-secondary). -->
-                  <TextBlock x:Name="UpdatePillVersion" Margin="6,0,0,0" VerticalAlignment="Center"
-                             FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
-                             FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
-                             Foreground="{Binding Path=(controls:DsChrome.IconForeground), RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
-                </StackPanel>
-              </controls:PopupToggleButton>
+              <Grid VerticalAlignment="Center">
+                <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
+                                            VerticalAlignment="Center">
+                  <StackPanel Orientation="Horizontal">
+                    <!-- Lucide circle-arrow-up 13px; kontur hapın Foreground'u (text-primary). -->
+                    <Viewbox Width="13" Height="13" VerticalAlignment="Center">
+                      <Canvas Width="24" Height="24">
+                        <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.UpdateReady}"
+                              StrokeThickness="{DynamicResource Icon.UpdateReady.StrokeThickness}" />
+                      </Canvas>
+                    </Viewbox>
+                    <TextBlock Text="{x:Static vm:UpdateText.PillLabel}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                    <!-- Mono tabular sürüm — rengi hapın ikinci kanalından (nötr text-dim, hover/açık text-secondary). -->
+                    <TextBlock x:Name="UpdatePillVersion" Margin="6,0,0,0" VerticalAlignment="Center"
+                               FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                               FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
+                               Foreground="{Binding Path=(controls:DsChrome.IconForeground), RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+                  </StackPanel>
+                </controls:PopupToggleButton>
+                <!-- [design v1.23.0 §2.12 · plan U2] Kart = mevcut popover altyapısı: hapın 9px ALTINDA, sol kenarı hapla
+                     hizalı (Placement=Bottom), 344px Ds.Popover kabuğu, dolgu 0 (blokların kendi dolguları var). Dışarı
+                     tık kapatır (StaysOpen=False); hapa ikinci basış PopoverToggle ile kapatır; bir dialog açılınca
+                     kabuk kapatır (Popup ayrı HWND'dir, dialogun altında kalamaz). -->
+                <Popup x:Name="UpdatePopup" Placement="Bottom" PlacementTarget="{Binding ElementName=UpdatePill}"
+                       VerticalOffset="9" StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
+                       IsOpen="{Binding IsChecked, ElementName=UpdatePill, Mode=TwoWay}">
+                  <Border Style="{DynamicResource Ds.Popover}" Width="344" Padding="0">
+                    <views:UpdateCard x:Name="UpdateCardView"
+                                      IsOpen="{Binding IsOpen, ElementName=UpdatePopup, Mode=OneWay}" />
+                  </Border>
+                </Popup>
+              </Grid>
               <Rectangle x:Name="UpdatePillSeparator" Style="{StaticResource TitleBarSeparator}" />
             </StackPanel>
             <ToggleButton x:Name="LayQuadButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutQuad"

@@ -119,6 +119,7 @@ public class ModalDialog : UserControl
     protected void ShowDialog()
     {
         Visibility = Visibility.Visible;
+        Opened?.Invoke(this, EventArgs.Empty);
         ApplyTemplate();
         UpdateLayout();
         if (_frame is not null) PopIn.PlayDialog(_frame);
@@ -131,6 +132,12 @@ public class ModalDialog : UserControl
             return;
         _scrim?.MoveFocus(new TraversalRequest(FocusNavigationDirection.First));
     }
+
+    /// <summary>[design v1.23.0 §2.12 · plan U2] Dialog AÇILDI — üç dialogun (ve Import kısayolunun) açılışı
+    /// <see cref="ShowDialog"/>'dan geçtiği için TEK noktadır. Kabuk buna title bar'daki güncelleme kartını kapatarak
+    /// cevap verir: kart ayrı bir HWND'de (Popup) durduğundan dialogun altında kalamaz, üstünde asılı kalırdı.
+    /// Odak dialoga taşınmadan ÖNCE ateşlenir.</summary>
+    public event EventHandler? Opened;
 
     /// <summary>Açılışta odağın aranacağı alt ağaç (ör. Settings'in açılan sayfası); <c>null</c> (varsayılan) = scrim'in
     /// ilk odaklanabilir kontrolü. <see cref="ShowDialog"/> yerleşimden SONRA okur.</summary>

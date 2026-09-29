@@ -27,8 +27,9 @@ public class UpdateRestartLockTests
 {
     private static readonly BranchRef FeatureX = new("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false);
 
-    /// <summary>Sync'lenmiş, geride kalmış (pull yapılabilir), iki branch'li boşta bir workspace.</summary>
-    private static RunViewModel NewVm()
+    /// <summary>Sync'lenmiş, geride kalmış (pull yapılabilir), iki branch'li boşta bir workspace — kartın testleri de
+    /// (<see cref="UpdateCardTests"/>) aynı VM'i kullanır.</summary>
+    internal static RunViewModel NewVm()
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         {

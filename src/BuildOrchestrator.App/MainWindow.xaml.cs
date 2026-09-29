@@ -533,13 +533,25 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible
         || NotesOverlay.Visibility == Visibility.Visible;
 
+    /// <summary>[E5/T46 · design v1.23.0 §2.12] Esc zincirinin POPOVER katmanı: alt bardaki popover/menüler
+    /// (<see cref="ShellRoot.AnyPopoverOpen"/>) ve title bar'daki güncelleme kartı (prototip: <c>branchPop || buildMenu
+    /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
+    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen;
+
+    /// <summary>Popover katmanını kapatır — dördünü birden (prototipte olduğu gibi); odak açık olanın tetikleyicisine döner.</summary>
+    private void CloseAllPopovers()
+    {
+        Shell.CloseAllPopovers();
+        CloseUpdateCard(returnFocusToPill: true);
+    }
+
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
     /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
     private void OnEscapePressed()
     {
-        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null,
+        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
                     _vm.EscRunState))
         {
             case EscAction.CloseDialog:
@@ -547,7 +559,7 @@ public partial class MainWindow : Window
                 else if (AboutOverlay.Visibility == Visibility.Visible) AboutOverlay.CloseDialog();
                 else SettingsOverlay.CloseDialog();
                 break;
-            case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
+            case EscAction.ClosePopovers: CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
             case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
             case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;

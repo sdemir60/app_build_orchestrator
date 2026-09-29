@@ -140,6 +140,7 @@ public class PopoverTests
     /// </summary>
     [StaTheory]
     [InlineData(typeof(BranchPopover))]
+    [InlineData(typeof(UpdateCard))] // [design v1.23.0 §2.12] güncelleme kartı aynı iskeleti paylaşır
     public void Opening_a_popover_plays_the_pop_in_and_moves_focus_inside(Type popoverType)
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // reduced yolu: pop-in SNAP eder (vacuous PASS koruması)
@@ -161,6 +162,7 @@ public class PopoverTests
     /// Esc zinciri buraya ulaşmaz; popover kendisi yakalamalı).</summary>
     [StaTheory]
     [InlineData(typeof(BranchPopover))]
+    [InlineData(typeof(UpdateCard))] // [design v1.23.0 §2.12] güncelleme kartı aynı iskeleti paylaşır
     public void Escape_inside_a_popover_requests_close_and_is_handled(Type popoverType)
     {
         var host = DsResources.NewHost();
@@ -242,20 +244,13 @@ public class PopoverTests
 
     private static void SetIsOpen(UserControl popover, bool value)
     {
-        switch (popover)
-        {
-            case BranchPopover b: b.IsOpen = value; break;
-            default: throw new ArgumentOutOfRangeException(nameof(popover));
-        }
+        // PopoverBase'in ORTAK iskeleti sürülür — her popover türü için ayrı bir dal gerekmez.
+        ((PopoverBase)popover).IsOpen = value;
     }
 
     private static void AddCloseHandler(UserControl popover, Action handler)
     {
-        switch (popover)
-        {
-            case BranchPopover b: b.CloseRequested += handler; break;
-            default: throw new ArgumentOutOfRangeException(nameof(popover));
-        }
+        ((PopoverBase)popover).CloseRequested += handler;
     }
 
     // ---------------------------------------------------------------- [A13/T4 · m3] pop-in: 140ms · 4px · .985

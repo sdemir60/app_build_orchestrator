@@ -20,7 +20,7 @@ internal readonly record struct ReleaseNoteBlockMetrics(
 
 /// <summary>
 /// [design v1.19.0 §2.11 · v1.23.0 §2.12] Sürüm notu maddelerinin kategori bloklarını çizen TEK yer: What's new
-/// diyaloğu (<see cref="NotesDialog"/>) ve güncelleme kartı (<c>UpdateCard</c>) aynı blok dilini konuşur —
+/// diyaloğu (<see cref="NotesDialog"/>) ve güncelleme kartı (<see cref="UpdateCard"/>) aynı blok dilini konuşur —
 /// 6px renkli kare (köşe 1) + 7px + caps <c>text-dim</c> etiket, altında 13px içeriden işaretsiz maddeler
 /// (<c>text-secondary</c>). Kategoriler <see cref="ReleaseNotes.KindOrder"/> sırasıyla çizilir, boş kategori hiç
 /// çizilmez; renk ve etiket <see cref="ReleaseNotes"/>'ten gelir (ikinci bir kategori tablosu yoktur). Yüzeye özgü
