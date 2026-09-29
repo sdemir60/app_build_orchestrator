@@ -153,8 +153,8 @@
                   <StackPanel Orientation="Horizontal">
                     <Viewbox Width="13" Height="13" Margin="0,0,6,0">
                       <Canvas Width="24" Height="24">
-                        <Path Data="{DynamicResource Icon.Upload}"
-                              StrokeThickness="{DynamicResource Icon.Upload.StrokeThickness}"
+                        <Path Data="{DynamicResource Icon.Download}"
+                              StrokeThickness="{DynamicResource Icon.Download.StrokeThickness}"
                               Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                       </Canvas>
