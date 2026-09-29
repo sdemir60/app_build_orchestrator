@@ -583,6 +583,7 @@ public class IpcMessagesTests
                 new BranchRef("main", "abc123", true, false),
                 new BranchRef("origin/main", "abc123", false, true),
             ]),
+            new SyncDiscoveryEvent(RepositoryProjects: 29, ExternalProjects: 2),
         ];
         foreach (var ev in events)
         {
@@ -602,6 +603,23 @@ public class IpcMessagesTests
         Assert.Contains("\"type\":\"syncProgress\"", JsonSerializer.Serialize(events[1], IpcJson.Options));
         Assert.Contains("\"type\":\"syncCompleted\"", JsonSerializer.Serialize(events[2], IpcJson.Options));
         Assert.Contains("\"type\":\"branchList\"", JsonSerializer.Serialize(events[3], IpcJson.Options));
+        Assert.Contains("\"type\":\"syncDiscovery\"", JsonSerializer.Serialize(events[4], IpcJson.Options));
+    }
+
+    /// <summary>[design v1.24.0] Sync keşfinin bulunan proje sayacı kendi discriminator'ıyla taşınır.
+    /// <c>syncProgress</c> YENİDEN KULLANILMAZ: o, konsola düşen bir METİN satırıdır; sayacı oradan geri
+    /// ayrıştırmak aynı sayıyı ikinci bir biçimde (metin kalıbı) tanımlamak olurdu (kopya yasağı). Alanlar
+    /// kümülatiftir (o ana kadar bulunanlar, delta değil) ve payda ya da kaynak adı TAŞIMAZ — tasarım ikisini de
+    /// reddetti; toplam App'te türetilir.</summary>
+    [Fact]
+    public void SyncDiscoveryEvent_roundtrips_with_its_own_discriminator()
+    {
+        IpcEvent ev = new SyncDiscoveryEvent(RepositoryProjects: 29, ExternalProjects: 2);
+        string json = JsonSerializer.Serialize(ev, IpcJson.Options);
+        Assert.Contains("\"type\":\"syncDiscovery\"", json);
+        Assert.Contains("\"repositoryProjects\":29", json);
+        Assert.Contains("\"externalProjects\":2", json);
+        Assert.Equal(ev, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
     }
 
     /// <summary>[planlama görünürlüğü] Run planlaması (Build'e basıldığında koşan tarama/graf/incremental
