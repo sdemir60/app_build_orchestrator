@@ -264,6 +264,22 @@ public class CleanWorkspaceServiceTests : IDisposable
         Assert.Empty(store.Load());
     }
 
+    /// <summary>[design v1.24.0] Keşif sayacı (<see cref="SyncDiscoveryEvent"/>) Sync'e aittir: Clean aynı
+    /// çözümlemeyle (ana tarama + harici kartlar) kendi kümesini kurar ama sayaç GÖNDERMEZ — App Clean'in
+    /// penceresinde keşif durumu göstermez, Clean'in proje sayısı bitişte <see cref="CleanCompletedEvent"/> ile
+    /// gelir.</summary>
+    [Fact]
+    public void Clean_never_reports_the_sync_discovery_counter()
+    {
+        SeedProject("Main");
+        SeedExternalProject("Shared");
+
+        var events = RunWithExternals(NewService(), _root, _externalRoot);
+
+        Assert.Equal(2, Completed(events).ProjectCount);
+        Assert.Empty(events.OfType<SyncDiscoveryEvent>());
+    }
+
     /// <summary>[güvenlik] Kart listesinde OLMAYAN bir kök HİÇ TARANMAZ, dolayısıyla çıktıları da durur. Silme
     /// izninin tek kaynağı bu çalışma alanının çözdüğü proje kümesidir; o kümeye girmenin tek yolu ana kökün
     /// altında olmak ya da kartla kaydedilmiş olmaktır.</summary>

@@ -382,10 +382,16 @@ public class SupervisorIpcTests
         await writer.WriteAsync(new SyncWorkspaceCommand(repo.RootPath, branch));
         var events = await ReadUntilAsync(reader, ev => ev is SyncCompletedEvent);
 
-        // Diskriminatör SIRASI: syncStarted … workspaceTopology … syncCompleted
+        // Diskriminatör SIRASI: syncStarted … syncDiscovery … workspaceTopology … syncCompleted
         Assert.IsType<SyncStartedEvent>(events[0]);
         int topologyAt = events.FindIndex(e => e is WorkspaceTopologyEvent);
         Assert.True(topologyAt > 0 && topologyAt < events.Count - 1);
+        // [design v1.24.0] Keşif sayacı Core'dan emit edildiği anda tele gider — Supervisor'da ayrı bir yol yok.
+        int discoveryAt = events.FindIndex(e => e is SyncDiscoveryEvent);
+        Assert.True(discoveryAt > 0 && discoveryAt < topologyAt,
+            $"syncDiscovery syncStarted ile workspaceTopology arasında bekleniyor; gelen sıra: "
+            + string.Join(", ", events.Select(e => e.GetType().Name)));
+        Assert.Equal(new SyncDiscoveryEvent(RepositoryProjects: 1, ExternalProjects: 0), events[discoveryAt]);
         Assert.IsType<SyncCompletedEvent>(events[^1]);
         Assert.Contains(events, e => e is BuildPreviewEvent);
         Assert.Contains(events, e => e is SyncProgressEvent sp && sp.Line == $"git fetch origin {branch}");

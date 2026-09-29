@@ -232,6 +232,37 @@ public class SyncWorkspaceServiceTests
             + string.Join(" | ", lines));
     }
 
+    /// <summary>
+    /// [design v1.24.0] Sync keşfinin bulunan proje sayacı (<see cref="SyncDiscoveryEvent"/>) ana tarama biter
+    /// bitmez gelir: <c>syncStarted</c>'tan ve fetch satırından SONRA (motor taramayı yeniden sıralamaz — tarama
+    /// satırları fetch'ten sonra kalır), <c>workspaceTopology</c>'den ÖNCE — App proje kümesini ancak topolojide
+    /// öğrenir, sayaç o boşluğu doldurur. Harici tanım yoksa TEK rapor gelir ve harici sayısı 0'dır.
+    /// </summary>
+    [Fact]
+    public async Task Sync_reports_the_discovered_projects_after_the_fetch_and_before_the_topology()
+    {
+        using var origin = new GitTestRepo();
+        WriteWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, NewCacheRoot())
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var discovery = Assert.Single(events.OfType<SyncDiscoveryEvent>());
+        Assert.Equal(new SyncDiscoveryEvent(RepositoryProjects: 2, ExternalProjects: 0), discovery);
+
+        int startedAt = events.FindIndex(e => e is SyncStartedEvent);
+        int fetchAt = events.IndexOf(LineStartingWith(events, "git fetch origin "));
+        int discoveryAt = events.IndexOf(discovery);
+        int topologyAt = events.FindIndex(e => e is WorkspaceTopologyEvent);
+        Assert.True(startedAt == 0 && fetchAt > startedAt && discoveryAt > fetchAt && topologyAt > discoveryAt,
+            $"sıra bekleniyor: syncStarted < fetch < syncDiscovery < workspaceTopology; gelen: started={startedAt}, "
+            + $"fetch={fetchAt}, discovery={discoveryAt}, topology={topologyAt}");
+    }
+
     // [Fix wave 1 — Finding 5] Tamamen temiz workspace, design-v1'in AYRI satırını basar
     // (prototype/app/build-data.js:278) — "0 changed projects, 0 to build" + "0 projects up to date (will skip)"
     // DEĞİL: o, en sık görülen kararlı durum için yanlış okunur. Sayı (36) PLACEHOLDER'dır, gerçek veriden gelir.
