@@ -91,7 +91,10 @@
       </Button>
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
         <Button Content="Cancel" Click="OnCancel" Style="{DynamicResource Ds.Button.Secondary.Md}" />
-        <Button x:Name="SaveButton" Content="{Binding SaveButtonLabel}" Click="OnSave" Margin="8,0,0,0"
+        <!-- Etiket taslaktan (SaveButtonLabel); taslak yokken (diyalog hiç açılmadı) FallbackValue aynı sabittir —
+             düğme ekran okuyucuya her zaman adını söyler (AccessibilityTests). -->
+        <Button x:Name="SaveButton" Click="OnSave" Margin="8,0,0,0"
+                Content="{Binding SaveButtonLabel, FallbackValue={x:Static vm:SettingsDraftViewModel.SaveLabel}}"
                 IsEnabled="{Binding CanSave}" Style="{DynamicResource Ds.Button.Primary.Md}" />
       </StackPanel>
       <!-- Geri bildirim ve neden AYNI yuvayı paylaşır: neden yalnız geri bildirim satırı boşken görünür. Neden metni

@@ -222,7 +222,12 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// <c>Save and sync</c>. Kök boşken (ya da workspace zaten açıkken) yalnız <c>Save</c> — kök yokken "and sync"
     /// hiç gelmeyecek bir Sync'i vaat ederdi.</summary>
     public string SaveButtonLabel =>
-        _openedWithoutWorkspace && !string.IsNullOrWhiteSpace(RepositoryRoot) ? "Save and sync" : "Save";
+        _openedWithoutWorkspace && !string.IsNullOrWhiteSpace(RepositoryRoot) ? SaveAndSyncLabel : SaveLabel;
+
+    /// <summary>Save düğmesinin iki etiketi — TEK kaynak. <see cref="SaveLabel"/> XAML'deki bağlamanın
+    /// <c>FallbackValue</c>'sudur da: hiç açılmamış diyaloğun (taslak yok) düğmesi de ekran okuyucuya adını söyler.</summary>
+    public const string SaveLabel = "Save";
+    public const string SaveAndSyncLabel = "Save and sync";
 
     // Kök, Save düğmesinin etiketini sürer — değiştiğinde düğmenin haberi olmalı.
     partial void OnRepositoryRootChanged(string? value) => OnPropertyChanged(nameof(SaveButtonLabel));
