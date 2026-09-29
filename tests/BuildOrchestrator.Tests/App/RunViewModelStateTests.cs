@@ -12,7 +12,8 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [T12/T43/C2] <see cref="RunViewModel"/>'in C2 omurgası: faz yürüyüşü, seçim/deselect, Sync ile Build/Rebuild'in
 /// seçim-filtre kuralı, Build'in workspace argümanlı gönderimi, koşarken kilit (branch/
-/// configuration) + canlı perf, T43 configuration uyarısı, ve A5-review fold'u (engine ölümü Sync fazını bırakır).
+/// configuration) + canlı perf, T43 configuration geçişinin Sync'i ve kilidi, ve A5-review fold'u (engine ölümü
+/// Sync fazını bırakır).
 /// Kardeş sınıf <see cref="RunViewModelTests"/> ile aynı harness (başlatılmamış EngineHost — <c>OnEvent</c> engine'e
 /// dokunmaz; komut gönderimi engine hazır değilken SENKRON fırlar ve VM içinde yutulur). D8: sleep/poll yok.
 /// </summary>
@@ -537,6 +538,10 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- T12 kilit / T43 configuration
 
+    /// <summary>[T12] Koşarken branch ve configuration kilitli, perf canlı.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> Kilidin kanıtı eskiden konsolda
+    /// "all projects will rebuild" satırının OLMAMASIYDI; o satır artık hiç yazılmıyor (geçiş kendi Sync'ini başlatır),
+    /// yani iddia vakumda kalırdı. Kanıt artık davranıştır: kilitliyken geçiş Sync başlatmaz.</para></summary>
     [Fact]
     public async Task Branch_and_configuration_are_locked_while_running_but_perf_stays_live()
     {
@@ -550,10 +555,12 @@ public class RunViewModelStateTests
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(vm.IsRunning);
         Assert.True(vm.IsMidRunLocked); // branch/configuration kontrolleri KİLİTLİ
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
 
         vm.SetConfiguration("Release"); // koşarken kilitli → no-op
         Assert.Equal("Debug", vm.Configuration);
-        Assert.DoesNotContain("all projects will rebuild", vm.GetRunDocumentText());
+        Assert.Empty(sent.OfType<SyncWorkspaceCommand>());
 
         await vm.CyclePerfAsync(); // perf CANLI kalır ve koşarken K11 notunu yazar
         Assert.Equal("Light", vm.PerfMode);
