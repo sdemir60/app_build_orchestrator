@@ -141,6 +141,12 @@ public class CleanCommandTests
     /// TIKLAMASIDIR (<c>CleanAsync</c> → <c>ClearPlanSurface</c>). Test bu yüzden gerçek akışı oynar: tıklama
     /// (gönderim bu harness'te senkron düşer), ardından motorun <c>cleanStarted</c>/<c>cleanCompleted</c>'ı.
     /// Pinlenen şey aynıdır: bir gecikme değil, KAPININ KİMDE olduğu — planda.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia: Clean uçuştayken Build ve Rebuild de
+    /// KAPALIDIR. Değişme gerekçesi (ölçüm): kapalı düğmeye basılan Build kayboluyordu. Artık Clean sürerken basılan
+    /// koşu bekler ve Clean'in devrettiği Sync bitince başlar (<see cref="RunRequestWaitsForWorkTests"/>); iki komut bu
+    /// yüzden Clean boyunca basılabilir — liste o an boş olsa da, onu getirecek iş sürüyor. Resolve cycles kapalı
+    /// kalır: boşalan planda döngü yoktur.</para>
     /// </summary>
     [Fact]
     public async Task A_clean_closes_the_other_gates_and_completion_reopens_them_as_their_own_preconditions_allow()
@@ -156,8 +162,8 @@ public class CleanCommandTests
         vm.OnEvent(new CleanStartedEvent(@"D:\repo"));
 
         Assert.False(vm.SyncCommand.CanExecute(null));
-        Assert.False(vm.BuildCommand.CanExecute(null));
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.BuildCommand.CanExecute(null));   // [DEĞİŞEN KURAL] basış bekler — gerekçe doc'ta
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.False(vm.BuildCyclesCommand.CanExecute(null));
         Assert.False(vm.CleanCommand.CanExecute(null)); // ikinci bir Clean de anlamsızdır
 

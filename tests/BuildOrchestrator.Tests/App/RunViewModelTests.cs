@@ -2494,10 +2494,11 @@ public class RunViewModelTests
 
         Assert.False(vm.IsStarting);
         // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
-        // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir; RebuildCommand artık
-        // buna da bakıyor (CanStartRunOnIdleWorkspace) — mid-Sync başlayan bir run'ın tampon temizliğinin
-        // (BeginRunAsync, koşulsuz) canlı transkripti bozma riskiyle TUTARLI biçimde burada da engelli kalır.
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir.
+        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Rebuild bu yüzden KAPALI kalır (mid-Sync başlayan
+        // bir koşu konsolu temizleyip canlı transkripti bozardı). Artık Sync sürerken basılan koşu bekler ve Sync bitince
+        // başlar — transkript bozulmaz, kapı açıktır (RunRequestWaitsForWorkTests).
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
     }
 
@@ -2515,10 +2516,10 @@ public class RunViewModelTests
         vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
 
         Assert.False(vm.IsRunning);
-        // [Fix wave 1, C2 review Finding 1] Sync HÂLÂ GERÇEKTEN uçuşta (Phase == Syncing, aşağıda doğrulanır) —
-        // RebuildCommand artık _syncInFlight'a da baktığından (CanStartRunOnIdleWorkspace) burada BİLEREK engelli kalır:
-        // run bitmiş olsa da canlı Sync transkripti hâlâ SyncProgressEvent ile büyüyor olabilir.
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Sync HÂLÂ uçuşta olduğu için Rebuild BİLEREK
+        // kapalı kalır — canlı Sync transkripti hâlâ büyüyor olabilir. Artık Sync sürerken basılan koşu bekler ve Sync
+        // bitince başlar (transkripte dokunmaz); kapı açıktır (RunRequestWaitsForWorkTests).
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
     }
 
