@@ -110,4 +110,21 @@ public class FirstRunInviteLayoutTests
         Assert.Equal(292d, card.Width);
         GC.KeepAlive(shell);
     }
+
+    /// <summary><c>Import settings…</c> içeri alır: ok aşağı, tepsiye iner (Icon.Download) — Settings footer'ının
+    /// Import butonuyla AYNI ikon.
+    /// <para><b>[DEĞİŞEN KURAL]</b> ESKİ ikon Icon.Upload idi (prototipin Import eşlemesi). Kullanıcı Settings
+    /// footer'ında ikonların anlamca ters durduğunu bildirdi; footer düzeltilince bu buton da aynı eşlemeye çekildi,
+    /// iki Import butonu farklı ok göstermesin.</para></summary>
+    [StaFact]
+    public void Import_settings_button_shows_the_download_arrow()
+    {
+        using var temp = new TempDir();
+        var shell = NewInviteShell(temp);
+
+        var glyph = Assert.Single(DsResources.Descendants(shell.ImportSettingsButton).OfType<System.Windows.Shapes.Path>());
+        Assert.Same(shell.FindResource("Icon.Download"), glyph.Data);
+        Assert.Equal((double)shell.FindResource("Icon.Download.StrokeThickness"), glyph.StrokeThickness);
+        GC.KeepAlive(shell);
+    }
 }
