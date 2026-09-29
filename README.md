@@ -190,8 +190,12 @@ the running instance first — tray icon → Exit).
    added or removed — otherwise the rows simply change colour in place, the graph keeps its zoom, and rows the
    last build finished are re-decided too, so a project that changed in the background turns grey again.
    Pressing *Sync* yourself, changing branch or switching *Debug*/*Release* starts the screen over instead: the
-   list and the graph empty together with the console and the event stream, then come back with their opening
-   animation and the graph fitted to the panel. If that Sync fails, the previous list and graph come back. A
+   console and the event stream empty, and while the Sync finds the projects the list reads *Discovering
+   projects* with a running count (`31 found`, or `31 found · 29 repository · 2 external` when external roots are
+   registered) and the graph says it appears once they are found; then both come back with their opening
+   animation and the graph fitted to the panel. If that Sync fails, the previous list and graph come back. The
+   Sync that runs at start-up, after a *Clean* or an *Optimize* and after a repository change shows the same
+   count while the list is empty. A
    *Debug*/*Release* switch runs that Sync in the new configuration, and its rows stay uncoloured until the
    answer arrives; like the branch chip, the switch is locked while a build, a Sync or another action is running.
 
@@ -350,7 +354,7 @@ then *Build* takes care of everything else, including whatever depends on them.
 project it finds, external roots included, along with their build state, so the next *Build* compiles
 everything from scratch. It starts on the click, with no confirmation dialog: the project list and the graph
 empty out, the button turns amber with a spinner, and when the deletion is done a *Sync* runs by itself and
-fills them in again. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
+fills them in again — counting the projects it finds in the meantime. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
 not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running application are skipped and
 reported rather than failing the Clean. An SDK-style project loses its restored package assets with `obj`, and
 a build does not restore them: run *Optimize* before building it again.
