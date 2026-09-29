@@ -232,6 +232,22 @@
     <PathGeometry x:Key="Icon.Package"
                   Figures="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z M3.3 7 12 12l8.7-5 M12 22V12" />
 
+    <!--
+      [design v1.24.0 §2.3 · §2.4] Sync keşfi sürerken iki panelin ikonları (28px, soluk, hareketsiz — keşif blokları).
+      KAYNAK: .claude/outputs/2026-09-19-08-05-design-v1.24.0/prototype/app/BuildApp.jsx:856-866 (`I_NETWORK`, `I_LIST`).
+    -->
+    <!-- BuildApp.jsx:856-861 lucide network — 3x <rect width="6" height="6" rx="1"/> + iki path -->
+    <GeometryGroup x:Key="Icon.Network">
+        <RectangleGeometry Rect="16,16,6,6" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="2,16,6,6" RadiusX="1" RadiusY="1" />
+        <RectangleGeometry Rect="9,2,6,6" RadiusX="1" RadiusY="1" />
+        <PathGeometry Figures="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3 M12 12V8" />
+    </GeometryGroup>
+
+    <!-- BuildApp.jsx:862-866 lucide list — üç nokta (h.01 + yuvarlak uç) ve üç çizgi. Anahtar Icon.LayList DEĞİL:
+         o, layout seçicinin iki bölmeli dikdörtgenidir (viewBox 16). -->
+    <PathGeometry x:Key="Icon.ListLines" Figures="M3 6h.01 M3 12h.01 M3 18h.01 M8 6h13 M8 12h13 M8 18h13" />
+
     <!-- ================= statü glyph'leri + spinner (viewBox 0 0 16 16) ================= -->
     <!-- [T60] DS `StatusGlyph` çizimleri (_ds_bundle.js:1446-1524). Gövde ince bir HALKA + içine 1.5px'lik
          bir glyph'tir; `discovered` aynı halkanın KESİKLİSİDİR. `building` AYRI BİR ÇİZİM DEĞİLDİR — aynı
@@ -380,6 +396,10 @@
     <sys:Double x:Key="Icon.StatusDash.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.StatusClock.StrokeThickness">1.5</sys:Double>
     <sys:Double x:Key="Icon.Spinner.StrokeThickness">1.5</sys:Double>
+
+    <!-- strokeWidth="1.4" (design-v1.24.0 BuildApp.jsx:857, :863 — keşif bloklarının iki ikonu) -->
+    <sys:Double x:Key="Icon.Network.StrokeThickness">1.4</sys:Double>
+    <sys:Double x:Key="Icon.ListLines.StrokeThickness">1.4</sys:Double>
 
     <!-- strokeWidth="1.1" (BuildApp.jsx:70, :71, :72) -->
     <sys:Double x:Key="Icon.LayQuad.StrokeThickness">1.1</sys:Double>

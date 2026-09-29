@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -45,6 +46,10 @@ public class IconGeometryTests
         "Icon.WhatsNew",
         // [design v1.19.0 §2.9] Settings başlık satırının kapat (X) butonu — lucide x.
         "Icon.Close",
+        // [design v1.24.0 §2.3 · §2.4] Keşif bloklarının ikonları — graf: lucide network, liste: lucide list
+        // (design-v1.24.0 prototype/app/BuildApp.jsx:856-866). Liste ikonunun anahtarı Icon.LayList'le (layout
+        // seçicinin iki bölmeli dikdörtgeni) karışmasın diye ListLines'tır.
+        "Icon.Network", "Icon.ListLines",
     ];
 
     /// <summary>[T60] Tasarımda <c>fill="currentColor" stroke="none"</c> ile verilen (DOLU) ikonlar —
@@ -100,6 +105,34 @@ public class IconGeometryTests
 
         var missing = RequiredKeys.Where(k => !icons.Contains(k)).ToList();
         Assert.Empty(missing);
+    }
+
+    /// <summary>[design v1.24.0] Keşif ikonları prototipin geometrisini BİREBİR taşır (BuildApp.jsx:856-866, viewBox
+    /// 24): network = üç 6×6 <c>rx=1</c> kare (16,16 · 2,16 · 9,2) + iki path (köprü ve gövde); list = altı path (üç
+    /// nokta, üç çizgi). İkisi de 1.4 kalınlıkta konturludur. Sınırlar çizimin kendisini doğrular: network 2..22,
+    /// list x 3..21 / y 6..18.</summary>
+    [StaFact]
+    public void The_discovery_icons_carry_the_prototype_geometry()
+    {
+        var icons = IconResources.Load();
+
+        var network = Assert.IsType<GeometryGroup>(icons["Icon.Network"]);
+        var squares = network.Children.OfType<RectangleGeometry>().ToList();
+        Assert.Equal(new[] { new Rect(16, 16, 6, 6), new Rect(2, 16, 6, 6), new Rect(9, 2, 6, 6) },
+            squares.Select(r => r.Rect));
+        Assert.All(squares, r => Assert.Equal((1.0, 1.0), (r.RadiusX, r.RadiusY)));
+        Assert.Equal(2, Assert.Single(network.Children.OfType<PathGeometry>()).Figures.Count);
+        Assert.Equal(new Rect(2, 2, 20, 20), network.Bounds);
+
+        var list = Assert.IsType<PathGeometry>(icons["Icon.ListLines"]);
+        Assert.Equal(6, list.Figures.Count);
+        Assert.Equal(3, list.Bounds.Left, 2);
+        Assert.Equal(6, list.Bounds.Top, 2);
+        Assert.Equal(21, list.Bounds.Right, 2);
+        Assert.Equal(18, list.Bounds.Bottom, 2);
+
+        Assert.Equal(1.4, Assert.IsType<double>(icons["Icon.Network.StrokeThickness"]));
+        Assert.Equal(1.4, Assert.IsType<double>(icons["Icon.ListLines.StrokeThickness"]));
     }
 
     [StaFact]
