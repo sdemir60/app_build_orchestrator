@@ -12,9 +12,10 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [design v1.13.0/v1.13.1 §2.1/§2.11 · D4/T8] What's new'in kabuğa bağlanması: title bar butonu (sparkle,
-/// dişli ile ⓘ arasında), Ctrl+F1 (toggle), Esc katman zinciri (What's new en üstte) ve okunmadı noktası.
+/// dişli ile ⓘ arasında), Esc katman zinciri (What's new en üstte) ve okunmadı noktası.
 /// <see cref="AboutWiringTests"/>'in AYNI deseniyle yazılmıştır — kopya değil, AYRI bir kablaj yüzeyi
-/// (sparkle butonu About'un info butonundan bağımsız bir kontroldür).
+/// (sparkle butonu About'un info butonundan bağımsız bir kontroldür). [kullanıcı kararı 2026-09-29] What's new'in
+/// klavye kısayolu (Ctrl+F1) YOKTUR — gerekçe <see cref="Whats_new_has_no_keyboard_shortcut"/>'ta.
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class NotesDialogWiringTests
@@ -65,30 +66,33 @@ public class NotesDialogWiringTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Butonun tooltip'i metni ELLE yazmaz — kısayol kataloğundan gelir (kopya YASAK); "About'un
-    /// deseni birebir budur" (brief) — <see cref="MainWindow"/>'daki <c>SetupAboutButtonTooltip</c> ile
-    /// AYNI kalıp.</summary>
+    /// <summary>Butonun tooltip'i metni ELLE yazmaz — cümlenin tek yeri <see cref="ReleaseNotes.WhatsNewTooltip"/>'tır
+    /// (kopya YASAK).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: cümle kısayol kataloğundan gelirdi ve
+    /// sonuna jest eklenirdi — <c>"What's new — release notes (Ctrl+F1)"</c>. Ctrl+F1 kalktı; What's new artık bir
+    /// kısayol DEĞİLDİR, katalogda satırı yoktur ve tooltip jest taşımaz.</para></summary>
     [StaFact]
-    public void The_notes_button_reads_its_tooltip_from_the_shortcut_catalog_when_seen()
+    public void The_notes_button_tooltip_carries_no_gesture_when_seen()
     {
         using var temp = new TempDir();
         var store = MainWindowHost.UiStateStore(temp);
         var state = store.Load();
-        state.SeenVersion = AppIdentity.Version; // görülmüş — nokta yok, cümle katalogdan
+        state.SeenVersion = AppIdentity.Version; // görülmüş — nokta yok, sabit cümle
         store.Save(state);
 
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
         var tooltip = (ToolTip)window.NotesButton.ToolTip;
-        var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
-        Assert.Equal($"{notes.Description} ({notes.Gestures[0]})", tooltip.Content);
+        Assert.Equal(ReleaseNotes.WhatsNewTooltip, tooltip.Content);
         Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
         GC.KeepAlive(window);
     }
 
     /// <summary>[design v1.13.1 §2.11] Görülmemiş sürümde cümle DEĞİŞİR: "What's new in &lt;sürüm&gt;". Taze
-    /// bir TempDir'de (SeenVersion yazılmamış) durum TAM OLARAK budur.</summary>
+    /// bir TempDir'de (SeenVersion yazılmamış) durum TAM OLARAK budur. [kullanıcı kararı 2026-09-29] Eskiden
+    /// sonuna <c>(Ctrl+F1)</c> eklenirdi; kısayol kalktığı için jest yoktur.</summary>
     [StaFact]
     public void The_notes_button_tooltip_names_the_version_when_unseen()
     {
@@ -97,8 +101,7 @@ public class NotesDialogWiringTests
         MainWindowHost.Realize(window);
 
         var tooltip = (ToolTip)window.NotesButton.ToolTip;
-        var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
-        Assert.Equal($"What's new in {AppIdentity.Version} ({notes.Gestures[0]})", tooltip.Content);
+        Assert.Equal(ReleaseNotes.WhatsNewInLabel(AppIdentity.Version), tooltip.Content);
         Assert.Equal(Visibility.Visible, window.UnseenNotesDot.Visibility);
         GC.KeepAlive(window);
     }
@@ -116,42 +119,23 @@ public class NotesDialogWiringTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- Ctrl+F1
+    // ---------------------------------------------------------------- klavye kısayolu YOK
 
-    [Fact]
-    public void Ctrl_f1_is_bound_to_the_show_notes_intent()
-    {
-        var binding = KeyboardShortcuts.WindowBindings.Single(b => b.Key == Key.F1 && b.Modifiers == ModifierKeys.Control);
-        Assert.Equal(WindowIntent.ShowNotes, binding.Intent);
-    }
-
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA (design v1.13.0 §2.11): Ctrl+F1 What's new'i
+    /// açan bir TOGGLE'dı ve üç test onu pinlerdi — tabloda ShowNotes niyetine bağlı olması, hiçbir şey açık değilken
+    /// açması ve tekrar basınca kapatması. Kullanıcı kısayolları kendi onayladığı tabloyla sınırladı ve Ctrl+F1 o
+    /// tabloda yok: What's new artık yalnız sparkle butonundan ve About'un "What's new in …" butonundan açılır.
+    /// Bu test, pencerenin GERÇEK bağlamalarında Ctrl+F1'in bulunmadığını pinler.
+    /// </summary>
     [StaFact]
-    public void Ctrl_f1_opens_the_notes_dialog_when_nothing_else_is_open()
+    public void Whats_new_has_no_keyboard_shortcut()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
 
-        Invoke(window, Key.F1, ModifierKeys.Control);
-
-        Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>[design v1.13.0 §2.11] Ctrl+F1 bir TOGGLE'dır — açıkken tekrar basmak kapatır (About'un
-    /// F1'inden FARKI budur: About toggle'ı zaten vardı, What's new de AYNI deseni alır).</summary>
-    [StaFact]
-    public void Ctrl_f1_toggles_the_notes_dialog()
-    {
-        using var temp = new TempDir();
-        var (window, _) = MainWindowHost.New(temp);
-        MainWindowHost.Realize(window);
-
-        Invoke(window, Key.F1, ModifierKeys.Control);
-        Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
-
-        Invoke(window, Key.F1, ModifierKeys.Control);
-        Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
+        Assert.DoesNotContain(window.InputBindings.OfType<KeyBinding>(),
+            k => k.Key == Key.F1 && k.Modifiers == ModifierKeys.Control);
         GC.KeepAlive(window);
     }
 
@@ -181,7 +165,7 @@ public class NotesDialogWiringTests
         var (window, _) = MainWindowHost.New(temp);
         MainWindowHost.Realize(window);
 
-        Invoke(window, Key.F1, ModifierKeys.Control);
+        Click(window.NotesButton);
         Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
         Invoke(window, Key.Escape, ModifierKeys.None);
@@ -191,11 +175,16 @@ public class NotesDialogWiringTests
 
     /// <summary>
     /// [design v1.13.0 §2.11] Esc sırası: <b>What's new → About → Settings</b> — What's new en üst katmandır
-    /// (prototipte zIndex 101, About 100). Üçü birlikte açık durabilir (yığılır); Esc her zaman EN ÜST
-    /// katmanı indirir. About'un kendi Esc-önceliği testiyle AYNI desen, bir katman daha üsttedir.
+    /// (prototipte zIndex 101, About 100); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: üç diyalog BİRLİKTE açık
+    /// durabilirdi (Settings → F1 → Ctrl+F1) ve üç Esc onları sırayla indirirdi. Üçlü yığına yalnız Ctrl+F1
+    /// ulaşıyordu; o kısayol kalktı. Bugünkü yol Settings'in üstüne F1 ile About, About'un "What's new in …"
+    /// butonuyla What's new'dir — About kendini kapattığı için yığın Settings + What's new'dir. Zincir aynı:
+    /// Esc önce What's new'i, sonra Settings'i indirir.</para>
     /// </summary>
     [StaFact]
-    public void Escape_closes_notes_before_about_and_about_before_settings_when_all_three_are_open()
+    public void Escape_closes_notes_before_settings_when_whats_new_is_opened_from_about_over_settings()
     {
         using var temp = new TempDir();
         var (window, _) = MainWindowHost.New(temp);
@@ -203,20 +192,16 @@ public class NotesDialogWiringTests
 
         Click(window.GearButton);
         Invoke(window, Key.F1, ModifierKeys.None);
-        Invoke(window, Key.F1, ModifierKeys.Control);
+        window.AboutOverlay.UpdateLayout();
+        Click(window.AboutOverlay.WhatsNewButton);
 
         Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
-        Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);
-        Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility); // üçü BİRLİKTE açık
+        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
+        Assert.Equal(Visibility.Visible, window.NotesOverlay.Visibility);
 
         Invoke(window, Key.Escape, ModifierKeys.None);
         Assert.Equal(Visibility.Collapsed, window.NotesOverlay.Visibility);
-        Assert.Equal(Visibility.Visible, window.AboutOverlay.Visibility);   // ALT katmanlar DURUYOR
-        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
-
-        Invoke(window, Key.Escape, ModifierKeys.None);
-        Assert.Equal(Visibility.Collapsed, window.AboutOverlay.Visibility);
-        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility);
+        Assert.Equal(Visibility.Visible, window.SettingsOverlay.Visibility); // ALT katman DURUYOR
 
         Invoke(window, Key.Escape, ModifierKeys.None);
         Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
@@ -272,8 +257,8 @@ public class NotesDialogWiringTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[design v1.13.0/v1.13.1 §2.11] Diyalog GÖRÜLÜNCE (açıldığı anda) nokta söner, tooltip katalog
-    /// cümlesine döner ve karar kalıcı duruma yazılır (uygulama yeniden açılınca nokta geri gelmez) — About'un
+    /// <summary>[design v1.13.0/v1.13.1 §2.11] Diyalog GÖRÜLÜNCE (açıldığı anda) nokta söner, tooltip sabit
+    /// cümleye döner ve karar kalıcı duruma yazılır (uygulama yeniden açılınca nokta geri gelmez) — About'un
     /// eski <c>Seeing_the_whats_new_tab_clears_the_unseen_mark_for_good</c> testiyle AYNI kural, artık bir
     /// SEKME değil DİYALOĞUN AÇILIŞI tetikleyici.</summary>
     [StaFact]
@@ -287,8 +272,7 @@ public class NotesDialogWiringTests
         Click(window.NotesButton);
 
         Assert.Equal(Visibility.Collapsed, window.UnseenNotesDot.Visibility);
-        var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
-        Assert.Equal($"{notes.Description} ({notes.Gestures[0]})", ((ToolTip)window.NotesButton.ToolTip).Content);
+        Assert.Equal(ReleaseNotes.WhatsNewTooltip, ((ToolTip)window.NotesButton.ToolTip).Content);
 
         // ...ve karar KALICI: aynı state dizinini okuyan yeni bir pencerede nokta hiç doğmaz.
         var (again, _) = MainWindowHost.New(temp);

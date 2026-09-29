@@ -4,8 +4,8 @@
                       xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
                       xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
                       DialogWidth="720" DialogHeight="600">
-  <!-- [design v1.13.0/v1.19.0 §2.11 · D4/T9] What's new — kendi diyalogu (title bar'daki kendi butonu ve
-       Ctrl+F1). Kabuk üç dialogun ORTAK kabuğudur (Controls/ModalDialog + Ds.ModalDialog şablonu); burada
+  <!-- [design v1.13.0/v1.19.0 §2.11 · D4/T9] What's new — kendi diyalogu (title bar'daki kendi butonu; klavye
+       kısayolu yok). Kabuk üç dialogun ORTAK kabuğudur (Controls/ModalDialog + Ds.ModalDialog şablonu); burada
        yalnız içerik ve ölçü durur. [v1.19.0] 720×600 SABİT: gövde başlık ile footer arasındaki alanı doldurur
        ve kendi içinde kayar, Earlier versions açılınca dialog uzamaz.
 

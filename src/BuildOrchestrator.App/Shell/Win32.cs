@@ -25,7 +25,7 @@ internal static class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool AllowSetForegroundWindow(int dwProcessId);
 
-    /// <summary>Global kısayol (Alt+B). Başarısızlık = çakışma → SESSİZ devre dışı (bkz.
+    /// <summary>Global kısayollar (<see cref="GlobalHotkeys"/>). Başarısızlık = çakışma → SESSİZ devre dışı (bkz.
     /// <see cref="HotkeyRegistration"/>).</summary>
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

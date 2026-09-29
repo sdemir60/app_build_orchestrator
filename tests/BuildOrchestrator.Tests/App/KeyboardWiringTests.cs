@@ -8,13 +8,16 @@ using BuildOrchestrator.Tests.Supervisor;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [E5/T46 · Fix Wave 1] Kısayol KABLAJININ (pure gate'in ALTINDAKİ katman) regresyon guard'ı. Saf
-/// <see cref="KeyboardShortcuts.Resolve"/>/<see cref="KeyboardShortcuts.ResolveEsc"/> zaten 15 testle pinli
-/// (<see cref="KeyboardShortcutTests"/>); AMA o enum kararlarını GERÇEK tuş bağlamalarına ve VM komutlarına
-/// bağlayan katman (MainWindow.SetupKeyboardShortcuts / DispatchShortcut) test edilmiyordu — takas edilmiş bir
-/// switch arm'ı ya da yanlış modifier HİÇBİR testi kırmadan uygulamayı bozardı (F5-koşarken Build gibi). Bu
-/// sınıf o kablajı SAF seam'ler üzerinden pinler: <see cref="KeyboardShortcuts.CommandFor"/> (aksiyon→VM komutu)
-/// ve <see cref="KeyboardShortcuts.WindowBindings"/> (tuş+modifier→niyet).
+/// [E5/T46 · Fix Wave 1] Kısayol KABLAJININ regresyon guard'ı: <see cref="KeyboardShortcuts.WindowBindings"/>
+/// (tuş+modifier→niyet) ve global kısayolun VM komutu (<see cref="GlobalHotkeys.CommandFor"/>). Niyetlerin GERÇEK
+/// VM komutlarına bağlandığı katman <see cref="MainWindowInputTests"/>'tedir (pencerenin kendi KeyBinding'leri).
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: burada bir de
+/// <c>Command_for_each_shortcut_action_maps_to_the_matching_vm_command</c> vardı — F5'in duruma-dallı kararı
+/// (<c>ShortcutAction</c> Build/Rebuild/Stop) kod-tarafında <c>KeyboardShortcuts.CommandFor</c> ile VM komutuna
+/// çevrilirdi ve test o eşlemeyi pinlerdi. F5 artık dallanmadığı için o ara katman kalktı: F5/F6/F7 KeyBinding'leri
+/// DOĞRUDAN VM komutlarına bağlanır; aynı takas-yakalama iddiası (<c>ReferenceEquals</c>)
+/// <see cref="MainWindowInputTests"/>'in F5/F6/F7 testine taşındı.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // NewVm EngineHost/VM kurar — diğer WPF StaFact'larla seri (kaynak çekişmesi deseni)
 public class KeyboardWiringTests
@@ -23,21 +26,6 @@ public class KeyboardWiringTests
 
     private static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-
-    // ------------------------------------------------------------------ aksiyon → VM komutu (DispatchShortcut kablajı)
-    [StaFact]
-    public void Command_for_each_shortcut_action_maps_to_the_matching_vm_command()
-    {
-        var vm = NewVm();
-        // Referans-eşitlik: takas edilmiş bir arm (ör. Stop→BuildCommand) burada YAKALANIR — VM komut property'leri
-        // aynı örneği (lazy backing field) döndürdüğünden ReferenceEquals kesin ayrıştırır.
-        Assert.Same(vm.BuildCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Build, vm));
-        Assert.Same(vm.RebuildCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Rebuild, vm));
-        Assert.Same(vm.StopCommand, KeyboardShortcuts.CommandFor(ShortcutAction.Stop, vm));
-        // FocusFilter bir VM komutu DEĞİL (MainWindow ayrı ele alır); None de bağlı değil.
-        Assert.Null(KeyboardShortcuts.CommandFor(ShortcutAction.FocusFilter, vm));
-        Assert.Null(KeyboardShortcuts.CommandFor(ShortcutAction.None, vm));
-    }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Global Build, pencere içindeki Build düğmesiyle AYNI komuttur
     /// (<c>ReferenceEquals</c>) — kapısı (topoloji, uçuşta koşu, workspace işi) ikinci kez yazılmaz. Getir/gizle bir VM
@@ -62,6 +50,11 @@ public class KeyboardWiringTests
     /// çıkıp kendi kısayolunu (Ctrl+F1) kazandı: satır sayısı 6'dan <b>7</b>'ye çıktı ve tablo artık
     /// <see cref="WindowIntent.ShowNotes"/>'u da taşıyor. Negatif-pin'in NİYETİ yine korunuyor — sayı tablodan
     /// türetilmiyor, açıkça yazılıyor ki fazladan ya da kayıp bir bağlama yine kırsın.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> Kısayollar YALNIZ kullanıcının onayladığı
+    /// tablodakilerdir: F5 Build (duruma dallanmaz), F6 Rebuild, F7 Clean, Ctrl+F, F1, Esc — <b>6</b> satır.
+    /// Ctrl+F5 / Shift+F5 (Rebuild) ve Ctrl+F1 (What's new) KALKTI; gerekçe
+    /// <see cref="KeyboardShortcutTests.F5_is_bound_to_build_only"/>'da.</para>
     /// </summary>
     [Fact]
     public void The_window_binding_table_maps_each_key_gesture_to_the_correct_intent()
@@ -70,15 +63,14 @@ public class KeyboardWiringTests
         WindowIntent Intent(Key key, ModifierKeys mods) =>
             KeyboardShortcuts.WindowBindings.Single(b => b.Key == key && b.Modifiers == mods).Intent;
 
-        Assert.Equal(WindowIntent.Rebuild, Intent(Key.F5, ModifierKeys.Control));     // Ctrl+F5  → Rebuild
-        Assert.Equal(WindowIntent.Rebuild, Intent(Key.F5, ModifierKeys.Shift));       // Shift+F5 → Rebuild
-        Assert.Equal(WindowIntent.F5StateBranch, Intent(Key.F5, ModifierKeys.None));  // çıplak F5 → duruma-dallı
-        Assert.Equal(WindowIntent.FocusFilter, Intent(Key.F, ModifierKeys.Control));  // Ctrl+F   → filtre odağı
-        Assert.Equal(WindowIntent.ShowAbout, Intent(Key.F1, ModifierKeys.None));      // F1       → About
-        Assert.Equal(WindowIntent.ShowNotes, Intent(Key.F1, ModifierKeys.Control));   // Ctrl+F1  → What's new
-        Assert.Equal(WindowIntent.Escape, Intent(Key.Escape, ModifierKeys.None));     // Esc      → katman zinciri
+        Assert.Equal(WindowIntent.Build, Intent(Key.F5, ModifierKeys.None));          // F5     → Build
+        Assert.Equal(WindowIntent.Rebuild, Intent(Key.F6, ModifierKeys.None));        // F6     → Rebuild
+        Assert.Equal(WindowIntent.Clean, Intent(Key.F7, ModifierKeys.None));          // F7     → Clean
+        Assert.Equal(WindowIntent.FocusFilter, Intent(Key.F, ModifierKeys.Control));  // Ctrl+F → filtre odağı
+        Assert.Equal(WindowIntent.ShowAbout, Intent(Key.F1, ModifierKeys.None));      // F1     → About
+        Assert.Equal(WindowIntent.Escape, Intent(Key.Escape, ModifierKeys.None));     // Esc    → katman zinciri
 
-        // Negatif-pin: tabloda TAM 7 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
-        Assert.Equal(7, KeyboardShortcuts.WindowBindings.Count);
+        // Negatif-pin: tabloda TAM 6 satır — fazladan/kayıp bir bağlama (ör. yanlışlıkla eklenen Ctrl+P) kırar.
+        Assert.Equal(6, KeyboardShortcuts.WindowBindings.Count);
     }
 }

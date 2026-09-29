@@ -402,45 +402,27 @@ public partial class MainWindow : Window
 
     // ==================================== [E5/T46] Klavye kısayolları (K6) ====================================
 
-    /// <summary>[E5/T46 · K6 birebir] Pencere geneli InputBinding'leri kurar. Ctrl/Shift+F5 doğrudan
-    /// <see cref="RunViewModel.RebuildCommand"/>'a bağlanır (KeyBinding CanExecute'i ONURLANDIRIR); çıplak F5 durum-
-    /// dallı (<see cref="OnF5Pressed"/>); Ctrl+F filtreyi odaklar; Esc zinciri (<see cref="OnEscapePressed"/>) EN
-    /// ÜST açık katmanı kapatır. Otorite: <see cref="KeyboardShortcuts"/> (SAF karar) + BuildApp.jsx:1302-1319.</summary>
+    /// <summary>[E5/T46 · kullanıcı kararı 2026-09-29] Pencere geneli InputBinding'leri kurar. F5 / F6 / F7 doğrudan
+    /// VM'in Build / Rebuild / CleanAll komutlarına bağlanır (KeyBinding CanExecute'i ONURLANDIRIR — koşarken F5 hiçbir
+    /// şey yapmaz); Ctrl+F filtreyi odaklar; F1 About'u açar/kapatır; Esc zinciri (<see cref="OnEscapePressed"/>) EN
+    /// ÜST açık katmanı kapatır. Otorite: <see cref="KeyboardShortcuts"/> (SAF tablo).</summary>
     private void SetupKeyboardShortcuts()
     {
-        // NİYET → ICommand: Rebuild doğrudan VM komutu (CanExecute onurlanır); diğerleri kod-tarafı aksiyonlar.
-        // TUŞ→NİYET eşlemesi SAF <see cref="KeyboardShortcuts.WindowBindings"/>'te (test pinler) — burada yalnız
-        // niyetleri komutlara bağlar ve tabloyu iterasyonla KeyBinding'lere çeviririz (kablaj tek yerde).
+        // NİYET → ICommand. TUŞ→NİYET eşlemesi SAF <see cref="KeyboardShortcuts.WindowBindings"/>'te (test pinler) —
+        // burada yalnız niyetleri komutlara bağlar ve tabloyu iterasyonla KeyBinding'lere çeviririz (kablaj tek yerde).
         var commandForIntent = new Dictionary<WindowIntent, ICommand>
         {
-            [WindowIntent.Rebuild] = _vm.RebuildCommand,                    // Ctrl/Shift+F5 → doğrudan
-            [WindowIntent.F5StateBranch] = new RelayCommand(OnF5Pressed),   // çıplak F5 → Stop/Build (duruma göre)
+            [WindowIntent.Build] = _vm.BuildCommand,          // F5
+            [WindowIntent.Rebuild] = _vm.RebuildCommand,      // F6
+            [WindowIntent.Clean] = _vm.CleanAllCommand,       // F7 — Build menüsünün Clean'i
             [WindowIntent.FocusFilter] = new RelayCommand(() => Shell.FocusProjectFilter()),
-            [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (her zaman Shortcuts'ta)
-            [WindowIntent.ShowNotes] = new RelayCommand(OnNotesRequested),   // Ctrl+F1 → What's new (toggle)
+            [WindowIntent.ShowAbout] = new RelayCommand(OnAboutRequested),   // F1 → About (About sekmesinde)
             [WindowIntent.Escape] = new RelayCommand(OnEscapePressed),
         };
         foreach (var b in KeyboardShortcuts.WindowBindings)
             InputBindings.Add(new KeyBinding(commandForIntent[b.Intent], b.Key, b.Modifiers));
     }
 
-    /// <summary>Çıplak F5: koşarken → Stop, koşmayan her durumda → Build (v7 K6). Karar SAF
-    /// <see cref="KeyboardShortcuts.Resolve"/>'te; burada yalnız uygulanır (CanExecute reddederse no-op).</summary>
-    private void OnF5Pressed() =>
-        DispatchShortcut(KeyboardShortcuts.Resolve(Key.F5, ModifierKeys.None, _vm.IsMidRunLocked));
-
-    private void DispatchShortcut(ShortcutAction action)
-    {
-        // ShortcutAction→ICommand eşlemesi SAF <see cref="KeyboardShortcuts.CommandFor"/>'da (test pinler); burada
-        // yalnız uygulanır (CanExecute reddederse no-op).
-        var command = KeyboardShortcuts.CommandFor(action, _vm);
-        if (command is not null && command.CanExecute(null)) command.Execute(null); // CanExecute'i onurlandır
-    }
-
-    /// <summary>Esc zinciri: EN ÜST açık katmanı kapatır (dialog &gt; popover/menü &gt; seçim), alta sızmaz.
-    /// Dialog KATMANI çoğu zaman SettingsDialog'un KENDİ Esc'iyle (odak-tuzağı içinde, handled) kapanır; bu
-    /// pencere-seviyesi güvenlik ağı odak dialog dışındayken de doğru katmanı seçer. Filtre input'undaki Esc
-    /// buraya HİÇ ULAŞMAZ (ShellRoot.OnFilterKeyDown handled eder).</summary>
     /// <summary>[About] Info butonunun tooltip'i — metin ELLE yazılmaz, <see cref="ShortcutCatalog"/>'dan gelir
     /// (About sekmesindeki F1 satırıyla AYNI cümle; kopya YASAK). XAML'de bir <c>x:Static</c> sarmalayıcı
     /// gerekmesin diye kod-tarafı kurulur — diğer title bar tooltip'leriyle aynı <c>AppTooltip.Side</c>
@@ -467,17 +449,18 @@ public partial class MainWindow : Window
 
     /// <summary>[design v1.13.0/v1.13.1 §2.1/§2.11] What's new butonunun tooltip'i — About'un eski
     /// (design v1.9.0) koşullu deseninin TAŞINMIŞ hâli: nokta VARKEN cümle sürüm adlı olur ("What's new in
-    /// {sürüm}"), yokken katalogdan gelen sabit cümleye döner. Jest kısmı ("(Ctrl+F1)") ELLE yazılmaz —
-    /// <see cref="ShortcutCatalog"/>'dan okunur.</summary>
+    /// {sürüm}"), yokken sabit cümleye döner. İki cümle de <see cref="ReleaseNotes"/>'tedir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: sabit cümle kısayol kataloğundan gelir
+    /// ve sonuna jest eklenirdi ("… (Ctrl+F1)"). Ctrl+F1 kalktı; tooltip jest taşımaz.</para></summary>
     private void SetupNotesButtonTooltip()
     {
-        var notes = ShortcutCatalog.Get(ShortcutId.WhatsNew);
         string sentence = HasUnseenNotes
             ? ReleaseNotes.WhatsNewInLabel(AppIdentity.Version)
-            : notes.Description;
+            : ReleaseNotes.WhatsNewTooltip;
         var tooltip = new System.Windows.Controls.ToolTip
         {
-            Content = $"{sentence} ({notes.Gestures[0]})",
+            Content = sentence,
         };
         AppTooltip.SetSide(tooltip, AppTooltip.GetSide((System.Windows.Controls.ToolTip)GearButton.ToolTip));
         NotesButton.ToolTip = tooltip;
@@ -490,7 +473,7 @@ public partial class MainWindow : Window
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0]</b> ESKİ İDDİA: bu karar AYRICA About'un hangi sekmede
     /// açılacağını da belirlerdi ("What's new sekmesinde mi, Shortcuts'ta mı"). What's new kendi diyaloguna
-    /// taşındığı için About artık bu karardan TAMAMEN bağımsızdır — her zaman Shortcuts'ta açar.</para></summary>
+    /// taşındığı için About artık bu karardan TAMAMEN bağımsızdır — her zaman About sekmesinde açar.</para></summary>
     private bool HasUnseenNotes =>
         !string.Equals(_uiState.Load().SeenVersion, AppIdentity.Version, StringComparison.Ordinal);
 
@@ -520,7 +503,7 @@ public partial class MainWindow : Window
     /// <summary>[About] Bir modal AÇIK MI — üç tüketici bu TEK karardan beslenir (her biri kendi listesini
     /// saysaydı biri güncellenip diğerleri unutulurdu): Esc zinciri (<see cref="OnEscapePressed"/>), gear
     /// kapısı (<see cref="OnSettings"/>) ve first-run davetindeki <c>Import settings…</c>
-    /// (<see cref="OnImportSettings"/>). <b>F1/Ctrl+F1 buraya BAKMAZ</b> — About ve What's new kendi
+    /// (<see cref="OnImportSettings"/>). <b>F1 ve What's new açıcıları buraya BAKMAZ</b> — About ve What's new kendi
     /// diyaloglarını toggle eder ve üste binerler (bkz. <see cref="OnAboutRequested"/>).
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.11]</b> ESKİ İDDİA: yalnız Settings ve About'a bakardı.
@@ -1004,7 +987,7 @@ public partial class MainWindow : Window
     ///
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İDDİA (design v1.9.0): görülmemiş bir sürüm
     /// varsa About DOĞRUDAN What's new sekmesinde açılırdı. What's new kendi diyaloguna taşındığı için bu
-    /// yönlendirme KALKTI — About her zaman Shortcuts'ta açar (<c>Open</c> artık bir <c>openOnWhatsNew</c>
+    /// yönlendirme KALKTI — About her zaman About sekmesinde açar (<c>Open</c> artık bir <c>openOnWhatsNew</c>
     /// parametresi almaz).</para></summary>
     private void OnAboutRequested()
     {
@@ -1015,10 +998,10 @@ public partial class MainWindow : Window
     /// <summary>[design v1.13.0 §2.11] What's new butonu → What's new modali.</summary>
     private void OnNotes(object sender, RoutedEventArgs e) => OnNotesRequested();
 
-    /// <summary>[design v1.13.0 §2.11] What's new'i AÇAR ya da KAPATIR — Ctrl+F1 bir TOGGLE'dır (About'un
-    /// F1'iyle AYNI desen). Herhangi bir modal açıkken de çalışır: What's new EN ÜST katmandır, Settings/About
-    /// üzerine biner (XAML'de en son geldiği için z-sırası doğru) ve taslakları YOK ETMEZ — Esc önce What's
-    /// new'i kapatır (bkz. <see cref="OnEscapePressed"/>).</summary>
+    /// <summary>[design v1.13.0 §2.11] What's new'i AÇAR ya da KAPATIR — sparkle butonu ve About'un "What's new in …"
+    /// butonu çağırır (klavye kısayolu YOKTUR, kullanıcı kararı 2026-09-29). Bir modal açıkken de çalışır: What's new
+    /// EN ÜST katmandır, Settings'in üzerine biner (XAML'de en son geldiği için z-sırası doğru) ve taslağı YOK ETMEZ —
+    /// Esc önce What's new'i kapatır (bkz. <see cref="OnEscapePressed"/>).</summary>
     private void OnNotesRequested()
     {
         if (NotesOverlay.Visibility == Visibility.Visible) { NotesOverlay.CloseDialog(); return; }
@@ -1280,7 +1263,7 @@ public partial class MainWindow : Window
     /// GÖSTERİLMEDEN tepside (gizli) başlar (kararı <see cref="StartupArgs.Decide"/> verir). HWND'i erkenden
     /// oluşturmak (<see cref="System.Windows.Interop.WindowInteropHelper.EnsureHandle"/>) <see cref="OnSourceInitialized"/>'ı
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
-    /// (ya da Alt+B) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
+    /// (ya da getir/gizle global kısayolu) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
     /// olunca koşar (<c>RunViewModel.OnEngineReady</c>); RepositoryRoot'un seed'i ([D7 M3]) kendisi komut göndermez.</summary>
     public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
 

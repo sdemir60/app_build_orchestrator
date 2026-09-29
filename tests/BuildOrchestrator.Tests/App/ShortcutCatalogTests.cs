@@ -66,17 +66,20 @@ public class ShortcutCatalogTests
         }
     }
 
-    /// <summary>[design v1.19.0 §2.10] Kısayollar iki caps gruba ayrılır — grup bilgisi katalogda TEK yerde durur
-    /// (About onu yeniden kurmaz): <b>BUILD</b> (Build, Rebuild) · <b>APPLICATION</b> (Focus filter, About, What's
-    /// new, Escape, Restore from tray). Grup içi sıra kataloğun kendi sırasıdır.</summary>
+    /// <summary>[design v1.19.0 §2.10] Kısayollar caps gruplara ayrılır — grup bilgisi katalogda TEK yerde durur
+    /// (About onu yeniden kurmaz). Grup içi sıra kataloğun kendi sırasıdır.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29]</b> ESKİ İDDİA: <b>BUILD</b> (Build, Rebuild) ·
+    /// <b>APPLICATION</b> (Focus filter, About, What's new, Escape, Restore from tray). Clean F7 ile BUILD'e katıldı;
+    /// What's new'in kısayolu (Ctrl+F1) kalktığı için katalogda satırı yok.</para></summary>
     [Fact]
     public void Entries_are_grouped_into_build_and_application()
     {
         Assert.Equal([ShortcutGroup.Build, ShortcutGroup.Application], ShortcutCatalog.GroupOrder);
-        Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild],
+        Assert.Equal([ShortcutId.Build, ShortcutId.Rebuild, ShortcutId.Clean],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Build).Select(e => e.Id));
         Assert.Equal(
-            [ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.WhatsNew, ShortcutId.Escape, ShortcutId.RestoreFromTray],
+            [ShortcutId.FocusFilter, ShortcutId.About, ShortcutId.Escape, ShortcutId.RestoreFromTray],
             ShortcutCatalog.All.Where(e => e.Group == ShortcutGroup.Application).Select(e => e.Id));
         Assert.Equal("Build", ShortcutCatalog.GroupTitle(ShortcutGroup.Build));
         Assert.Equal("Application", ShortcutCatalog.GroupTitle(ShortcutGroup.Application));
@@ -95,6 +98,7 @@ public class ShortcutCatalogTests
         var items = BuildMenu.ComposeItems(total: 3);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Build).Gestures[0], items.Single(i => i.Kind == "build").Kbd);
         Assert.Equal(ShortcutCatalog.Get(ShortcutId.Rebuild).Gestures[0], items.Single(i => i.Kind == "rebuild").Kbd);
+        Assert.Equal(ShortcutCatalog.Get(ShortcutId.Clean).Gestures[0], items.Single(i => i.Kind == "clean").Kbd);
     }
 
     /// <summary>
@@ -114,8 +118,9 @@ public class ShortcutCatalogTests
     [Fact]
     public void No_app_source_file_outside_the_catalog_writes_a_key_gesture_as_a_literal()
     {
-        string[] literals =
-            ["\"F5\"", "\"Ctrl+F5\"", "\"Shift+F5\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\"", "\"Ctrl+F1\""];
+        // [kullanıcı kararı 2026-09-29] Liste bugünkü pencere jestleridir; kalkan Ctrl+F5 / Shift+F5 / Ctrl+F1 artık
+        // bir jest değil, F6 / F7 eklendi.
+        string[] literals = ["\"F5\"", "\"F6\"", "\"F7\"", "\"Ctrl+F\"", "\"Esc\"", "\"F1\""];
         string singleSource = Path.Combine("Shell", "ShortcutCatalog.cs");
 
         var offenders = new List<string>();

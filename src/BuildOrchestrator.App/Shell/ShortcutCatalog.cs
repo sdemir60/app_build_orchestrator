@@ -8,10 +8,10 @@ public enum ShortcutId
 {
     Build,
     Rebuild,
+    /// <summary>[kullanıcı kararı 2026-09-29] F7 — Build menüsünün Clean'i (her projede <c>-t:Clean</c>).</summary>
+    Clean,
     FocusFilter,
     About,
-    /// <summary>[design v1.13.0 §2.1/§2.11] What's new — kendi dialogu, kendi title bar butonu (sparkle).</summary>
-    WhatsNew,
     Escape,
     /// <summary>Global kısayol (tepsiden pencereyi getir) — <see cref="KeyboardShortcuts.WindowBindings"/>'te
     /// DEĞİLDİR, <see cref="HotkeyBinding"/> üzerinden RegisterHotKey ile kaydedilir.</summary>
@@ -22,7 +22,7 @@ public enum ShortcutId
 /// <see cref="ShortcutCatalog.GroupOrder"/>/<see cref="ShortcutCatalog.GroupTitle"/>'dadır.</summary>
 public enum ShortcutGroup
 {
-    /// <summary>Koşu komutları — Build, Rebuild.</summary>
+    /// <summary>Koşu komutları — Build, Rebuild, Clean.</summary>
     Build,
     /// <summary>Uygulama geneli — filtre, dialoglar, katman kapatma, tepsi.</summary>
     Application,
@@ -59,30 +59,27 @@ public static class ShortcutCatalog
         return string.Join('+', parts);
     }
 
-    /// <summary>Bir niyete bağlı TÜM jestler, tablodaki sırayla (ör. Rebuild → Ctrl+F5, Shift+F5).</summary>
+    /// <summary>Bir niyete bağlı TÜM jestler, tablodaki sırayla.</summary>
     private static string[] GesturesFor(WindowIntent intent) =>
         [.. KeyboardShortcuts.WindowBindings.Where(b => b.Intent == intent).Select(b => Format(b.Key, b.Modifiers))];
 
-    /// <summary>Gösterim sırası: en sık kullanılandan en seyreğe (About tablosu bu sırayı olduğu gibi çizer).</summary>
+    /// <summary>Gösterim sırası: en sık kullanılandan en seyreğe (About tablosu bu sırayı olduğu gibi çizer).
+    /// [kullanıcı kararı 2026-09-29] What's new'in kısayolu (Ctrl+F1) kalktığı için katalogda satırı yoktur;
+    /// sparkle butonunun cümlesi <c>ReleaseNotes.WhatsNewTooltip</c>'tedir.</summary>
     public static IReadOnlyList<ShortcutEntry> All { get; } =
     [
-        new(ShortcutId.Build, GesturesFor(WindowIntent.F5StateBranch),
-            "Build — or Stop while a run is in flight", ShortcutGroup.Build),
+        new(ShortcutId.Build, GesturesFor(WindowIntent.Build),
+            "Build — only stale projects", ShortcutGroup.Build),
         new(ShortcutId.Rebuild, GesturesFor(WindowIntent.Rebuild),
             "Rebuild — all projects, cache ignored", ShortcutGroup.Build),
+        new(ShortcutId.Clean, GesturesFor(WindowIntent.Clean),
+            "Clean — remove build outputs", ShortcutGroup.Build),
         new(ShortcutId.FocusFilter, GesturesFor(WindowIntent.FocusFilter),
             "Focus the project filter", ShortcutGroup.Application),
         // Bu cümle AYNI ZAMANDA title bar'daki info butonunun tooltip'idir (MainWindow.xaml) — iki yerde
         // yazılmaz.
         new(ShortcutId.About, GesturesFor(WindowIntent.ShowAbout),
             "About — version, shortcuts and diagnostics", ShortcutGroup.Application),
-        // [design v1.13.0/v1.13.1 §2.1/§2.11 · D4/T8] Bu cümle AYNI ZAMANDA sparkle butonunun (görülmemiş
-        // sürüm yokken) tooltip'idir — MainWindow kendi cümlesini kurmaz, buradan okur (About'un deseni
-        // birebir budur). Görülmemiş sürüm varken tooltip AYRI bir cümleye döner ("What's new in <sürüm>");
-        // o cümle sürüm numarası taşıdığı için burada TANIMLANMAZ (kopya YASAK'ın öbür ucu: sabit olmayan
-        // metin sabit bir katalog girdisinde YAŞAMAZ).
-        new(ShortcutId.WhatsNew, GesturesFor(WindowIntent.ShowNotes),
-            "What's new — release notes", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
             "Close the topmost open layer: dialog → popover/menu → selection", ShortcutGroup.Application),
         new(ShortcutId.RestoreFromTray, [GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],

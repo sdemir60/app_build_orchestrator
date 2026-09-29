@@ -104,7 +104,7 @@ public partial class AboutDialog : Controls.ModalDialog
     /// <para><b>[DEĞİŞEN KURAL — design v1.13.0 §2.10]</b> ESKİ İMZA bir <c>openOnWhatsNew</c> parametresi
     /// taşıyordu: görülmemiş bir sürüm varsa diyalog DOĞRUDAN What's new sekmesinde açılırdı. What's new
     /// kendi diyaloguna (<see cref="NotesDialog"/>) taşındığı için bu yönlendirme kalktı (yönlendirme MainWindow'da
-    /// sparkle butonuna/Ctrl+F1'e gider). <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Her açılış ilk sekmede
+    /// sparkle butonuna gider). <b>[DEĞİŞEN KURAL — design v1.19.0 §2.10]</b> Her açılış ilk sekmede
     /// başlar — ilk sekme artık Shortcuts değil <b>About</b>'tur.</para>
     /// </summary>
     public void Open(RunViewModel run, bool hotkeyRegistered, Func<Task<string>> resolveMsBuild)
@@ -128,7 +128,7 @@ public partial class AboutDialog : Controls.ModalDialog
         RefreshDiagnostics();
 
         // [design v1.19.0 §2.10] ⓘ ve F1 her zaman About sekmesinde açar — What's new'e yönlendirme YOKTUR
-        // (o dialog kendi butonundan, Ctrl+F1'den ya da About sekmesindeki butondan açılır).
+        // (o dialog kendi butonundan ya da About sekmesindeki butondan açılır).
         AboutTab.IsChecked = true; // her açılış ilk sekmeden başlar
         ResetCopyVisual();
         // [design-v1.2.1 §2.10] 180ms fade + 6px yukarı, odak dialogun içine — ortak kabuk (ModalDialog).
