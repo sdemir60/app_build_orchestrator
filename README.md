@@ -166,11 +166,13 @@ the running instance first — tray icon → Exit).
    with the root deleted — closes the workspace: the app returns to the first-run screen, with the invitation
    in the project list.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
-   first Sync runs by itself when the application starts. Until it has run, *Build*, *Rebuild* and *Resolve
-   cycles* are disabled: a run before the first Sync would compile for
-   real while the list and the graph stayed empty. While a Sync is *running*, those three and *Sync* itself are
-   disabled too — the engine handles one at a time, and anything started in that window would land in the
-   middle of the Sync's console output. It takes seconds; they re-enable the moment it finishes.
+   first Sync runs by itself when the application starts. No build starts before it has run: a run before the
+   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running*, *Sync*
+   itself is disabled — the engine handles one thing at a time — but *Build* and *Rebuild* (and *Resolve cycles*,
+   once the graph has a cycle) stay pressable: a press made then waits for the Sync — the button turns into *Stop*
+   at once (pressing it takes the request back) — and the run starts the moment the Sync finishes. *Build*
+   pressed during a Clean, an Optimize, a branch switch or a pull waits the same way, so a click on *Build* is
+   never lost — not even the one that brings the window back.
 
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
@@ -492,8 +494,9 @@ brings a fresh engine up.
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
-forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run, Sync or
-maintenance job is in flight — and with the window hidden the tray indicator and the result balloon report it.
+forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight, and
+pressed during a Sync or a maintenance job it waits for that work and builds when it ends — and with the window
+hidden the tray indicator and the result balloon report it.
 Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
 (Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
 If one cannot be registered — another application already owns that combination — it is silently disabled; the
