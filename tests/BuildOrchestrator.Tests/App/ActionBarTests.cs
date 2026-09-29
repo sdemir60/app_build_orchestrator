@@ -969,6 +969,24 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Debug|Release segment'i VM'in kapısını okur
+    /// (<see cref="RunViewModel.CanSwitchConfiguration"/>): uçuştaki bir Sync onu da kilitler — geçiş kendi Sync'ini
+    /// başlatır ve uçuştaki Sync'in eski configuration'lı cevabı yeni configuration'ın satırlarını boyamamalı.</summary>
+    [StaFact]
+    public void The_configuration_segment_is_locked_while_a_sync_is_in_flight()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        Assert.True(bar.Segment.IsEnabled);
+
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(bar.Segment.IsEnabled);
+
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
+        Assert.True(bar.Segment.IsEnabled);
+        GC.KeepAlive(window);
+    }
+
     // [Task 6 · TAŞINDI] Döngü sayılarının tooltip'e yansıması artık bakım kutusunun işidir; iddia
     // MaintenanceBoxTests'te YENİ metinle yaşıyor (etiketli Cycles düğmesi kaldırıldı, design v1.7.0 §2.7-2).
 

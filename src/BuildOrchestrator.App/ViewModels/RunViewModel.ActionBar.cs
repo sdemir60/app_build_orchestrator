@@ -85,6 +85,9 @@ public sealed partial class RunViewModel
     /// </summary>
     public bool CanSwitchBranch => HasWorkspace && WorkspaceGateOpen && GitWritesAllowed;
 
+    /// <summary>Debug|Release segment'inin kapısı.</summary>
+    public bool CanSwitchConfiguration => HasWorkspace && !IsMidRunLocked;
+
     /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
     /// brief 7-hane pinler.</summary>
     internal static string Short7(string sha) => sha.Length > 7 ? sha[..7] : sha;
