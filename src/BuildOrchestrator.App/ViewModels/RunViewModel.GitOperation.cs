@@ -98,12 +98,12 @@ public sealed partial class RunViewModel
     }
 
     /// <summary>İşaret kalktı: bekleme satırı hakkı yenilenir ve bekleyen kendiliğinden Sync tetiği meşguliyet
-    /// bildiriminin TEK noktasından (<see cref="NotifyAutoSyncGate"/>) yeniden sorulur — normal yol.</summary>
+    /// bildiriminin TEK noktasından (<see cref="OnWorkspaceBusyChanged"/>) yeniden sorulur — normal yol.</summary>
     partial void OnGitOperationChanged(GitOperation value)
     {
         if (value != GitOperation.None) return;
         _gitWaitAnnounced = false;
-        NotifyAutoSyncGate();
+        OnWorkspaceBusyChanged();
     }
 
     /// <summary><c>index.lock</c> <see cref="GitOperationText.StuckLockSeconds"/> kesintisiz durdu mu — durduysa konsola

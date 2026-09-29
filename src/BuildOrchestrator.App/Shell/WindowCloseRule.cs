@@ -28,6 +28,9 @@ internal enum CloseAction
 /// ardından gelen Shutdown'ın kendi kapanışı da bu kapıdan geçer ve iptal edilmemelidir. (2) Bekleyen çıkış pencereyi
 /// yerinde tutar, Close to tray açık olsa bile: kullanıcı kapatmayı istedi ve bekleyişi izliyor; ikinci × ikinci bir
 /// çıkış istemez. (3) İkisi de yoksa anahtar söz alır: açık → tepsiye (K5), kapalı → güvenli tam çıkış.</para>
+///
+/// <para>[final review F7] Tam çıkış istendikten sonra pencerenin öne gelip gelmeyeceği de burada sorulur
+/// (<see cref="ShouldBringForward"/>): aynı öncelik iki soruda iki ayrı yerde yazılmasın diye.</para>
 /// </summary>
 internal static class WindowCloseRule
 {
@@ -36,4 +39,11 @@ internal static class WindowCloseRule
         : exitPending ? CloseAction.Stay
         : closeToTray ? CloseAction.HideToTray
         : CloseAction.RequestExit;
+
+    /// <summary>[final review F7] Tam çıkış istendikten sonra (tepsi → Exit ya da ×) pencere öne gelsin mi: yalnız çıkış
+    /// uçuştaki işi BEKLİYORSA ve gerçek kapanış henüz başlamadıysa — <see cref="Decide"/> ile AYNI öncelik (gerçek
+    /// kapanış > bekleyen çıkış). Bekleyiş istekle AYNI çağrıda da bitebilir: açılış koreografisindeyken Stop bekleyen
+    /// koşuyu senkron geri alır ve <c>ExitReady</c> <c>RequestExit</c>'in içinden gelir. <c>exitPending</c> geri
+    /// dönmediği için yalnız ona bakmak kapanmakta olan pencereyi bir kare öne getirirdi.</summary>
+    public static bool ShouldBringForward(bool exiting, bool exitPending) => exitPending && !exiting;
 }

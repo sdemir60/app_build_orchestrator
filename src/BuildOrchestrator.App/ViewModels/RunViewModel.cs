@@ -1572,7 +1572,7 @@ public sealed partial class RunViewModel : ObservableObject
         bool locked = IsMidRunLocked;
         foreach (var row in Projects) row.IsRunLocked = locked;
         if (!locked) RunTargetId = null;
-        NotifyAutoSyncGate(); // [spec 2026-09-18 §6.1] koşu bitti → bekleyen kendiliğinden Sync tetiği
+        OnWorkspaceBusyChanged(); // [spec 2026-09-18 §6.1 · P3] kilit değişti → bekleyen Sync tetiği ve bekleyen çıkış
     }
 
     partial void OnRunTargetIdChanged(string? value)
@@ -2298,8 +2298,9 @@ public sealed partial class RunViewModel : ObservableObject
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde kümülatif özet
         RefreshRunSurface();
         // [T8 fix round 1 · I1] Koşunun kendiliğinden Sync için bitişi BURASIDIR (runStopped değil): faz ve akış
-        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz.
-        NotifyAutoSyncGate();
+        // yazıldıktan SONRA bildirilir — bekleyen tetiğin açacağı yeni bölüm bu koşunun satırlarını taşımaz. Meşguliyet
+        // bildiriminin tek noktasıdır; bekleyen çıkış da buradan yeniden sorulur.
+        OnWorkspaceBusyChanged();
     }
 
     /// <summary>

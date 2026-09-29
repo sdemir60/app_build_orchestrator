@@ -19,8 +19,8 @@ namespace BuildOrchestrator.App.ViewModels;
 /// zaten kuruludur. Motor ölürse <see cref="ReleaseAfterEngineLoss"/> her pencereyi bırakır ve koşul kendiliğinden
 /// doğrulanır.</para>
 ///
-/// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="NotifyAutoSyncGate"/> — her
-/// iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).
+/// <para><b>Değerlendirme noktaları:</b> meşguliyet bildiriminin tek noktası (<see cref="OnWorkspaceBusyChanged"/> —
+/// her iş bayrağı ve koşu kilidi geçişi oraya iner) ve bekçinin uyarısı (<see cref="OnEngineOverdueMessageChanged"/>).
 /// Bekleyiş boyunca kendiliğinden Sync başlamaz (<see cref="DisableAutoSync"/>): başlasaydı drain'in hemen ardından
 /// yeni bir iş açılır ve çıkış onu da beklerdi.</para>
 ///

@@ -16,15 +16,17 @@ namespace BuildOrchestrator.Tests.App;
 /// <list type="bullet">
 /// <item>Close to tray açık (varsayılan) → × pencereyi tepsiye gizler, uygulama sürer.</item>
 /// <item>Kapalı → × güvenli tam çıkıştır: uçuşta iş yoksa uygulama hemen kapanır; varsa derleme graceful durur,
-/// pencere görünür kalır ve iş bitince kapanır. Bekleyişteki ikinci × ikinci bir durdurma üretmez.</item>
-/// <item>Tepsi → Exit anahtardan bağımsız olarak HER ZAMAN güvenli çıkıştır; beklerken pencere öne gelir.</item>
+/// pencere öne gelir ve görünür kalır, iş bitince kapanır. Bekleyişteki ikinci × ikinci bir durdurma üretmez.</item>
+/// <item>Tepsi → Exit anahtardan bağımsız olarak HER ZAMAN güvenli çıkıştır — × ile AYNI kabuk yolu; beklerken
+/// pencere öne gelir.</item>
 /// </list>
 ///
 /// <para>Harness: pencere GÖSTERİLMEZ (<see cref="MainWindowHost"/> — motor doğmaz, tepsi kurulmaz). Hiç gösterilmemiş
 /// bir pencerede <c>Close()</c> WPF'in HWND'siz yolundan <c>OnClosing</c>'i doğrudan çağırır; iptal edilen kapanış
 /// pencereyi yerinde bırakır. Uygulamayı kapatan ve pencereyi öne getiren çağrılar kabuğun iki dikişidir
 /// (<see cref="MainWindow.ShutdownApplication"/>, <see cref="MainWindow.BringForward"/>) — her tetikten ÖNCE sayaçlı
-/// sahtelerle değiştirilir, yani ne uygulama kapanır ne pencere görünür. Gönderim
+/// sahtelerle değiştirilir, yani ne uygulama kapanır ne pencere görünür. Sahteler SENKRONDUR: üretim değerlerinin
+/// dispatcher'a ertelemesi burada gözlenmez (öne getirmeninki kaynakta pinlidir). Gönderim
 /// <see cref="MainWindowHost.AcceptSends"/> ile kabul edilir, motorun cevabı <c>vm.OnEvent(...)</c> ile verilir.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
@@ -59,7 +61,9 @@ public sealed class CloseToTrayTests
             return new Harness(window, vm);
         }
 
-        /// <summary>Uygulamanın kapanışını bekle — üretimde kapanış dispatcher kuyruğuna ertelenir.</summary>
+        /// <summary>Kapanış çağrısının kaydını bekle. Sahte SENKRONDUR: sayaç tetiğin kendi çağrısı içinde artar ve
+        /// üretimdeki erteleme (<c>Dispatcher.BeginInvoke</c>) burada hiç yoktur — bu testler onu gözlemez. Pompa
+        /// yalnız VM'in <c>ExitReady</c>'yi sonraki bir dispatcher turuna bırakacağı bir değişikliğe karşı bekler.</summary>
         public void PumpUntilShutdown() => DispatcherPump.PumpUntil(() => Shutdowns > 0, TimeSpan.FromSeconds(2));
     }
 
@@ -102,6 +106,24 @@ public sealed class CloseToTrayTests
         Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
         Assert.False(h.Vm.ExitPending);
         Assert.Empty(h.Sent);
+        Assert.Equal(0, h.BroughtForward); // bekleyiş yok — öne getirilecek bir şey de yok
+    }
+
+    /// <summary>[final review · F7] Close to tray kapalı ve bir derleme koşuyor: × çıkışı ister ve bekleyiş sürerken
+    /// pencere ÖNE gelir (bir kez) — tepsi → Exit ile AYNI kabuk yolu. Görev çubuğundan küçültülmüş hâlde kapatılan
+    /// bir pencere aksi hâlde bekleyiş boyunca küçük kalırdı ve bekleyen çıkış "hiçbir şey olmuyor" gibi görünürdü.</summary>
+    [StaFact]
+    public void With_close_to_tray_off_the_close_button_brings_the_waiting_window_forward()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp, CloseToTrayOff());
+        MainWindowHost.StartBuild(h.Vm);
+
+        h.Window.Close();
+
+        Assert.True(h.Vm.ExitPending); // ön-koşul: çıkış derlemeyi bekliyor
+        Assert.Equal(1, h.BroughtForward);
+        Assert.Equal(0, h.Shutdowns);
     }
 
     /// <summary>Close to tray kapalı ve bir derleme koşuyor: × derlemeyi graceful durdurur (TEK <c>stopRun</c>) ve
@@ -286,5 +308,22 @@ public sealed class CloseToTrayTests
         Assert.Single(SourceGuard.ScanText(relative, source,
             new Regex(@"_tray\.ExitRequested\s*\+=\s*ExitFromTray\s*;"), skipCommentLines: true));
         Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\.Shutdown\("), skipCommentLines: true));
+    }
+
+    /// <summary>[kaynak · final review F7] Pencereyi öne getiren çağrının (<see cref="MainWindow.BringForward"/>) TEK
+    /// üretim değeri gösterimi kendi dispatcher turuna ERTELER: × yolunda çağrı <c>OnClosing</c>'in içinden gelir ve
+    /// WPF, kapanış sürerken <c>Show</c>'u InvalidOperationException ile reddeder — senkron bir <c>ShowFromTray</c>
+    /// derleme beklerken basılan her ×'ı çökertirdi. Headless süit bunu göremez (dikiş sayaçlı bir sahteyle
+    /// değiştirilir, pencere gösterilmez); kural bu yüzden kaynakta pinlenir —
+    /// <see cref="MainWindow_wires_the_tray_exit_item_to_the_safe_exit"/> ile AYNI desen.</summary>
+    [Fact]
+    public void MainWindow_defers_bringing_the_window_forward_out_of_the_closing_handler()
+    {
+        const string relative = "MainWindow.xaml.cs";
+        string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, relative));
+
+        Assert.Single(SourceGuard.ScanText(relative, source, new Regex(@"\bBringForward\s*=(?!=)"), skipCommentLines: true));
+        Assert.Single(SourceGuard.ScanText(relative, source,
+            new Regex(@"\bBringForward\s*=\s*\(\)\s*=>\s*Dispatcher\.BeginInvoke\("), skipCommentLines: true));
     }
 }
