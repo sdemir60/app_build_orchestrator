@@ -293,22 +293,34 @@ public class UpdateCardTests
         if (escape.Command.CanExecute(null)) escape.Command.Execute(null);
     }
 
-    /// <summary>Kart hapın 9px altında, sol kenarı hapla hizalı (<c>Placement=Bottom</c>) ve 344px'lik <c>Ds.Popover</c>
-    /// kabuğunda, dolgusuz durur; dışarı tık onu kapatır (<c>StaysOpen=False</c>). Kartın VM'i pencereninkidir (popup
-    /// içeriği DataContext'i güvenilir miras almaz) ve açık/kapalı durumu hapın işaretini izler — bağlar yapısal
-    /// sorulur: gösterilmeyen bir pencerede <see cref="Popup.IsOpen"/> yüklenmeye dek false'a zorlanır (ölçüldü), kartın
-    /// açıkken davranışı yukarıda gerçek bir pencerede sürülür.</summary>
+    /// <summary>Kart hapın 9px altında, SOL kenarı hapın sol kenarında (§9 <c>top: calc(100% + 9px); left: 0</c>) ve
+    /// 344px'lik <c>Ds.Popover</c> kabuğunda, dolgusuz durur; dışarı tık onu kapatır (<c>StaysOpen=False</c>). Kartın VM'i
+    /// pencereninkidir (popup içeriği DataContext'i güvenilir miras almaz) ve açık/kapalı durumu hapın işaretini izler —
+    /// bağlar yapısal sorulur: gösterilmeyen bir pencerede <see cref="Popup.IsOpen"/> yüklenmeye dek false'a zorlanır
+    /// (ölçüldü), kartın açıkken davranışı yukarıda gerçek bir pencerede sürülür.
+    /// <para><b>Yer, yerleşimin KENDİSİYLE sorulur</b> (<c>RowMenuPlacementTests</c> gerekçesi: süitin pencereleri ekran
+    /// dışındadır ve WPF popup'ı görünür alana geri kelepçeler — mutlak konum kararı değil kelepçeyi ölçerdi): WPF'in
+    /// çağıracağı geri çağrı, hapın gerçek ölçüsüyle çağrılır.</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: yerleşim <c>Placement=Bottom</c> + <c>VerticalOffset=9</c>'dur. WPF'in
+    /// <see cref="PlacementMode.Bottom"/>'u yatay hizayı <see cref="SystemParameters.MenuDropAlignment"/>'a bırakır;
+    /// Windows'un el tercihi "sağ el" olan makinede bu değer <c>true</c>'dur (ölçüldü: geliştirme makinesinde True) ve
+    /// kartın SAĞ kenarı hapın sağ kenarına hizalanıyor, 344px'lik kart hapın SOLUNA sarkıyordu. Kural artık yerleşimi
+    /// makinenin ayarından bağımsız pinler: <see cref="PlacementMode.Custom"/>, sol üst köşe (0, hap yüksekliği + 9);
+    /// boşluk tek yerden (geri çağrıdan) gelir, popup'ın offset'leri sıfırdır.</para></summary>
     [StaFact]
-    public void The_card_hangs_9px_below_the_pill_in_a_344px_popover_shell()
+    public void The_card_hangs_9px_below_the_pill_left_edge_on_the_pills_in_a_344px_popover_shell()
     {
         using var temp = new TempDir();
         var (window, vm) = Shell(temp);
         var popup = window.UpdatePopup;
 
         Assert.Same(window.UpdatePill, popup.PlacementTarget);
-        Assert.Equal(PlacementMode.Bottom, popup.Placement);
-        Assert.Equal(9.0, popup.VerticalOffset);
-        Assert.Equal(0.0, popup.HorizontalOffset);
+        Assert.Equal(PlacementMode.Custom, popup.Placement);
+        Assert.Equal((0.0, 0.0), (popup.HorizontalOffset, popup.VerticalOffset));
+        var pill = new Size(window.UpdatePill.ActualWidth, window.UpdatePill.ActualHeight);
+        Assert.True(pill.Width > 0 && pill.Height > 0, "ön-koşul: hap ölçülmedi");
+        var placement = Assert.Single(popup.CustomPopupPlacementCallback(new Size(CardWidth, 350), pill, default));
+        Assert.Equal(new Point(0, pill.Height + 9), placement.Point);
         Assert.False(popup.StaysOpen);
         Assert.True(popup.AllowsTransparency);
         Assert.Equal(PopupAnimation.None, popup.PopupAnimation);

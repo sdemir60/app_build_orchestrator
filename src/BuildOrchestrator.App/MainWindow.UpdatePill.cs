@@ -21,11 +21,17 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public partial class MainWindow
 {
+    /// <summary>[design v1.23.0 §9] Kartın üst kenarı ile hapın alt kenarı arasındaki boşluk (<c>top: calc(100% + 9px)</c>)
+    /// — tek yer; kart bunun kadar aşağıda, sol kenarı hapın sol kenarında durur (<see cref="PopoverPlacement"/>).</summary>
+    internal const double UpdateCardGap = 9;
+
     /// <summary>Ctor'dan bir kez: kartı bağlar, ilk durumu animasyonsuz uygular, sonraki teklif değişimlerini dinler.</summary>
     private void SetupUpdatePill()
     {
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla (ActionBar deseni).
         UpdateCardView.DataContext = _vm;
+        // Kart hapın altında, sol kenarı hapla hizalı — her makinede (Placement=Custom; Bottom el tercihine uyar).
+        UpdatePopup.CustomPopupPlacementCallback = PopoverPlacement.BelowLeftEdgeCallback(UpdateCardGap);
         // Açık kartın hapına basmak onu KAPATIR (prototip: setUpdPop(v => !v)); kapı tek yerde.
         PopoverToggle.Bind(UpdatePill, UpdatePopup);
         UpdateCardView.CloseRequested += () => CloseUpdateCard(returnFocusToPill: true);

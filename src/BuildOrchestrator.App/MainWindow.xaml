@@ -131,11 +131,13 @@
                   </StackPanel>
                 </controls:PopupToggleButton>
                 <!-- [design v1.23.0 §2.12 · plan U2] Kart = mevcut popover altyapısı: hapın 9px ALTINDA, sol kenarı hapla
-                     hizalı (Placement=Bottom), 344px Ds.Popover kabuğu, dolgu 0 (blokların kendi dolguları var). Dışarı
-                     tık kapatır (StaysOpen=False); hapa ikinci basış PopoverToggle ile kapatır; bir dialog açılınca
-                     kabuk kapatır (Popup ayrı HWND'dir, dialogun altında kalamaz). -->
-                <Popup x:Name="UpdatePopup" Placement="Bottom" PlacementTarget="{Binding ElementName=UpdatePill}"
-                       VerticalOffset="9" StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
+                     hizalı, 344px Ds.Popover kabuğu, dolgu 0 (blokların kendi dolguları var). Yerleşim Custom: geri
+                     çağrı ve boşluk MainWindow.UpdatePill.cs'te (Bottom yatay hizayı Windows'un el tercihine bırakır —
+                     sağ el ayarında kart hapın soluna sarkardı). Dışarı tık kapatır (StaysOpen=False); hapa ikinci basış
+                     PopoverToggle ile kapatır; bir dialog açılınca kabuk kapatır (Popup ayrı HWND'dir, dialogun altında
+                     kalamaz). -->
+                <Popup x:Name="UpdatePopup" Placement="Custom" PlacementTarget="{Binding ElementName=UpdatePill}"
+                       StaysOpen="False" AllowsTransparency="True" PopupAnimation="None"
                        IsOpen="{Binding IsChecked, ElementName=UpdatePill, Mode=TwoWay}">
                   <Border Style="{DynamicResource Ds.Popover}" Width="344" Padding="0">
                     <views:UpdateCard x:Name="UpdateCardView"
