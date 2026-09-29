@@ -191,7 +191,7 @@
                  bölgedir (aria-live="polite"): sayı değişince duyurulur (ShellRoot.SetDiscoveryCount). -->
             <Border x:Name="PART_Discovering" Visibility="Collapsed" Padding="24,0"
                     Background="{DynamicResource Brush.SurfaceBase}">
-              <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+              <StackPanel Style="{DynamicResource Ds.DiscoveryBlock}">
                 <Viewbox Style="{DynamicResource Ds.DiscoveryIcon}" Margin="0,0,0,2">
                   <Canvas Width="24" Height="24">
                     <Path Style="{DynamicResource Ds.DiscoveryIcon.Path}" Data="{DynamicResource Icon.ListLines}"

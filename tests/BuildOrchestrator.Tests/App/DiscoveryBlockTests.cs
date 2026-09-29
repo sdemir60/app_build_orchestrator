@@ -156,6 +156,29 @@ public class DiscoveryBlockTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[§9 v1.24.0 · §14.2] İki bloğun metni arayüz yazı tipiyle (<c>Geist</c>, <see cref="AppFonts.Ui"/>)
+    /// çizilir: <c>Discovering projects</c> 13px/500 ve <c>Graph appears once projects are discovered</c> 12px — sayaç
+    /// makine çıktısıdır, <see cref="AppFonts.Mono"/>'da kalır.
+    /// <para><b>Ölçülen kusur:</b> iki metin de yazı tipi taşımıyordu ve hiçbir atası arayüz yazı tipini vermiyordu
+    /// (pencerenin yazı tipi sistem varsayılanıdır) — ikisi de Segoe UI çiziliyordu; 13px/500 başlık Segoe UI'da Medium
+    /// yüzü olmadığı için Semibold'a düşüyordu.</para></summary>
+    [StaFact]
+    public async Task Both_blocks_draw_their_text_in_the_ui_font_and_the_counter_in_mono()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewShellWithWorkspace(temp);
+        await MainWindowHost.StartSync(vm, SyncMode.Appended);
+        window.Shell.UpdateLayout();
+        var graph = window.Shell.GraphHost;
+        Assert.True(IsShown(window.Shell.PART_Discovering, window)); // ön-koşul
+        Assert.True(graph.IsDiscoveryStateVisible);                   // ön-koşul
+
+        Assert.Equal(AppFonts.Ui, TextIn(window.Shell.PART_Discovering, InteractionText.DiscoveringProjects).FontFamily);
+        Assert.Equal(AppFonts.Ui, TextIn(graph.DiscoveryState, InteractionText.GraphDiscovering).FontFamily);
+        Assert.Equal(AppFonts.Mono, window.Shell.PART_DiscoveryCount.FontFamily);
+        GC.KeepAlive(window);
+    }
+
     /// <summary>[§9 v1.24.0] First run (workspace yok) DEĞİŞMEDİ: listede kurulum daveti, grafta kesikli
     /// <c>Graph appears after Sync</c> kutusu — keşif blokları çıkmaz.</summary>
     [StaFact]

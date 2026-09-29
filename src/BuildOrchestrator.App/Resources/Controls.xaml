@@ -1190,6 +1190,15 @@
     <Setter Property="StrokeEndLineCap" Value="Round" />
     <Setter Property="StrokeLineJoin" Value="Round" />
   </Style>
+  <!-- [design v1.24.0 §9 · §14.2] İki keşif bloğunun ortalı kolonu (ikon · metin · sayaç) ve yazı tipi: metinler
+       Geist'tir (graf etiketi 12px, liste başlığı 13px/500). Pencere arayüz yazı tipini VERMEZ (sistem varsayılanı —
+       Segoe UI; ölçüldü), bu yüzden kolon onu kendi taşır ve iki bloğun metinleri mirasla alır. Sayaç makine
+       çıktısıdır, kendi AppFonts.Mono'sunu açıkça taşır. -->
+  <Style x:Key="Ds.DiscoveryBlock" TargetType="StackPanel">
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
+  </Style>
 
   <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık
        açıklama (Ds.Text.Description, en çok 520px), altı 18px. Açıklama bir TextBlock'tur — Layers'ınki mono bir Run

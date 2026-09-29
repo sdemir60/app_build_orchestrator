@@ -63,7 +63,7 @@
            Açıkken kesikli kutu, düğüm yüzeyi ve başlık sayacı gizlidir (GraphView.ApplyBodyState). First run'ın
            kutusundan (EmptyState) AYRIDIR — workspace yokken bu blok hiç görünmez. -->
       <Grid x:Name="DiscoveryState" Visibility="Collapsed" Background="{DynamicResource Brush.SurfaceBase}">
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel Style="{DynamicResource Ds.DiscoveryBlock}">
           <Viewbox Style="{DynamicResource Ds.DiscoveryIcon}">
             <Canvas Width="24" Height="24">
               <Path Style="{DynamicResource Ds.DiscoveryIcon.Path}" Data="{DynamicResource Icon.Network}"

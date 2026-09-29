@@ -163,6 +163,26 @@ public class UpdateRestartScreenTests
         GC.KeepAlive(rig.Window);
     }
 
+    /// <summary>[§2.12 · §14.2] Başlık ve adım etiketi arayüz yazı tipiyle (<c>Geist</c>, <see cref="AppFonts.Ui"/>)
+    /// çizilir — prototipte ekranın kökü <c>font-sans</c>'tır; sürüm geçişi makine çıktısıdır, <see cref="AppFonts.Mono"/>'da
+    /// kalır.
+    /// <para><b>Ölçülen kusur:</b> kök yazı tipi vermiyordu ve ekranın hiçbir atası arayüz yazı tipini taşımıyordu
+    /// (pencerenin yazı tipi sistem varsayılanıdır) — <c>Updating &lt;ürün&gt;</c> ve adım etiketi Segoe UI
+    /// çiziliyordu.</para></summary>
+    [StaFact]
+    public void The_heading_and_the_step_label_are_drawn_in_the_ui_font()
+    {
+        var rig = NewRig();
+        Play(rig);
+        var screen = rig.Screen;
+
+        Assert.Equal(AppFonts.Ui, screen.PART_Heading.FontFamily);
+        Assert.Equal(AppFonts.Ui, screen.PART_Step.FontFamily);
+        Assert.Equal(AppFonts.Mono, screen.PART_Installed.FontFamily);
+        Assert.Equal(AppFonts.Mono, screen.PART_Incoming.FontFamily);
+        GC.KeepAlive(rig.Window);
+    }
+
     // ================================================================ zaman çizelgesi (sahte zamanlayıcı)
 
     /// <summary>Oynatma tek bir kare zamanlayıcısıyla sürülür (aralığı <see cref="UpdateRestartScreen.FrameMs"/>); her
