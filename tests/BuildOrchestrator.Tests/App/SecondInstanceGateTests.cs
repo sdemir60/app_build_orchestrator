@@ -65,13 +65,12 @@ public class SecondInstanceGateTests
     public void The_second_instance_reads_the_setting_from_the_state_file()
     {
         using var temp = new TempDir();
-        string path = Path.Combine(temp.Path, "ui-state.json");
 
-        var whenMissing = SecondInstanceGate.Decide(activated: false, new JsonUiStateStore(path));
+        var whenMissing = SecondInstanceGate.Decide(activated: false, MainWindowHost.UiStateStore(temp));
         Assert.True(whenMissing.ShowBalloon); // dosya yok → katalog varsayılanı (açık)
 
-        new JsonUiStateStore(path).Save(new UiState { ShowNotifications = false });
-        var whenOff = SecondInstanceGate.Decide(activated: false, new JsonUiStateStore(path));
+        MainWindowHost.UiStateStore(temp).Save(new UiState { ShowNotifications = false });
+        var whenOff = SecondInstanceGate.Decide(activated: false, MainWindowHost.UiStateStore(temp));
         Assert.False(whenOff.ShowBalloon);
     }
 

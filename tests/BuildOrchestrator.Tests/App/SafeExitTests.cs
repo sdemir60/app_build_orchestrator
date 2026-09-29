@@ -40,9 +40,6 @@ public sealed class SafeExitTests
 
         /// <summary>Konsolda <see cref="RunViewModel.ExitPendingLine"/> kaç kez yazıldı.</summary>
         public int ExitLines => Vm.GetRunDocumentText().Split('\n').Count(l => l == RunViewModel.ExitPendingLine);
-
-        /// <summary>Motor bir derlemeye başladı: koşu kilidi (<see cref="RunViewModel.IsMidRunLocked"/>) açık.</summary>
-        public void StartBuild() => Vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug", 0));
     }
 
     // ---------------------------------------------------------------- uçuşta iş yok
@@ -74,7 +71,7 @@ public sealed class SafeExitTests
     public void An_exit_during_a_build_stops_it_gracefully_and_waits_for_the_drain()
     {
         var h = new Harness();
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
         h.Vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
 
         h.Vm.RequestExit();
@@ -101,7 +98,7 @@ public sealed class SafeExitTests
     public void A_second_exit_request_sends_no_second_stop_and_no_second_line()
     {
         var h = new Harness();
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
 
         h.Vm.RequestExit();
         h.Vm.RequestExit();
@@ -204,7 +201,7 @@ public sealed class SafeExitTests
     {
         long now = 1_000;
         var h = new Harness(nowMs: () => now);
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
         h.Vm.RequestExit();
         Assert.Equal(AppPhase.Stopping, h.Vm.Phase); // ön-koşul: drain bekleniyor — bekçinin penceresi
 
@@ -219,12 +216,60 @@ public sealed class SafeExitTests
         Assert.True(h.Vm.IsRunning);
     }
 
+    /// <summary>[final review · F1] Motor çıkış İSTENMEDEN ÖNCE sustuysa — kullanıcının Stop'u drain'i bekliyor ve
+    /// bekçinin uyarısı çoktan şeritte — çıkış onu da beklemez: <see cref="RunViewModel.RequestExit"/> koşulu isteğin
+    /// İÇİNDE yeniden değerlendirir ve <c>ExitReady</c> hemen gelir. Uyarı zaten açık olduğu için bekçi bir daha
+    /// değişmez; o değerlendirme olmasaydı çıkış, susmuş bir motorun asla göndermeyeceği cevabı sonsuza dek beklerdi.
+    /// Stop zaten istendiği için ikinci bir <c>stopRun</c> gitmez.</summary>
+    [Fact]
+    public async Task An_engine_already_silent_while_stopping_does_not_hold_the_exit()
+    {
+        long now = 1_000;
+        var h = new Harness(nowMs: () => now);
+        MainWindowHost.StartBuild(h.Vm);
+        await h.Vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(AppPhase.Stopping, h.Vm.Phase); // ön-koşul: kullanıcının Stop'u drain'i bekliyor
+
+        now += RunViewModel.EngineSilenceThresholdMs;
+        h.Vm.TickElapsed();
+        Assert.NotNull(h.Vm.EngineOverdueMessage); // ön-koşul: motor çıkıştan ÖNCE sustu — uyarı şeritte
+
+        h.Vm.RequestExit();
+
+        Assert.Equal(1, h.Ready);
+        Assert.Single(h.Sent.OfType<StopRunCommand>()); // yalnız kullanıcının Stop'u — çıkış ikincisini göndermez
+    }
+
+    /// <summary>[final review · F1] Koşu istendi ama <c>runStarted</c> hiç gelmedi (Starting) ve motor bu arada sustu.
+    /// Çıkışın kendi Stop'u fazı Stopping'e çeker ve bu, bekçinin saatini YENİDEN kurar: bir sonraki tık amber satırı
+    /// kaldırır ve çıkış bir eşik süresi daha beklerdi. Serbest bırakan, isteğin içindeki değerlendirmedir —
+    /// <c>ExitReady</c> AYNI çağrıda gelir, araya hiçbir tık giremeden.</summary>
+    [Fact]
+    public async Task An_engine_silent_before_the_run_started_does_not_hold_the_exit()
+    {
+        long now = 1_000;
+        var h = new Harness(nowMs: () => now);
+        VmTopology.Seed(h.Vm); // [topoloji kapısı] Build'in ön-koşulu
+        await h.Vm.BuildCommand.ExecuteAsync(null);
+        Assert.True(h.Vm.IsStarting); // ön-koşul: startRun gitti, runStarted gelmedi
+
+        now += RunViewModel.EngineSilenceThresholdMs;
+        h.Vm.TickElapsed();
+        Assert.NotNull(h.Vm.EngineOverdueMessage); // ön-koşul: motor çıkıştan ÖNCE sustu
+
+        h.Vm.RequestExit();
+
+        Assert.Equal(AppPhase.Stopping, h.Vm.Phase); // çıkışın Stop'u gitti — bekçinin saati yeniden kuruldu
+        Assert.Equal(1, h.Ready);                    // yine de AYNI çağrıda
+        Assert.Single(h.Sent.OfType<StopRunCommand>());
+    }
+
     /// <summary>Bekleyiş sırasında motor ölürse beklenecek bir cevap kalmaz: çıkış serbest kalır.</summary>
     [Fact]
     public void An_engine_that_dies_during_the_wait_releases_the_exit()
     {
         var h = new Harness();
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
         h.Vm.RequestExit();
         Assert.Equal(0, h.Ready); // ön-koşul: drain bekleniyor
 
@@ -276,7 +321,7 @@ public sealed class SafeExitTests
         h.Vm.EnableAutoSync(post => post(), _ => new HeadState("main", "2222222222222222222222222222222222222222"),
             () => watcher);
         Assert.NotNull(watcher.OnSettled); // ön-koşul: izleyici bu köke bağlandı
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
 
         h.Vm.RequestExit();
         h.Vm.OnWindowActivated();

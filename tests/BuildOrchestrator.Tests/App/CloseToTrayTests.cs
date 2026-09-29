@@ -59,9 +59,6 @@ public sealed class CloseToTrayTests
             return new Harness(window, vm);
         }
 
-        /// <summary>Motor bir derlemeye başladı: koşu kilidi açık, Stop yapılabilir.</summary>
-        public void StartBuild() => Vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
-
         /// <summary>Uygulamanın kapanışını bekle — üretimde kapanış dispatcher kuyruğuna ertelenir.</summary>
         public void PumpUntilShutdown() => DispatcherPump.PumpUntil(() => Shutdowns > 0, TimeSpan.FromSeconds(2));
     }
@@ -115,7 +112,7 @@ public sealed class CloseToTrayTests
     {
         using var temp = new TempDir();
         var h = Harness.New(temp, CloseToTrayOff());
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
 
         h.Window.Close();
 
@@ -138,6 +135,26 @@ public sealed class CloseToTrayTests
         Assert.Equal(1, h.Shutdowns);
     }
 
+    /// <summary>[final review · F3] Close to tray her kapatmada TAZE okunur: pencere varsayılanla (açık) kurulduktan
+    /// SONRA pencerenin kullandığı AYNI dosyaya kapalı kaydedilir (Settings'in Save'i gibi) ve bir sonraki × artık
+    /// tepsiye gizlemez, uygulamayı kapatır. Değer kurulumda bir kopyaya alınsaydı × hâlâ tepsiye inerdi.</summary>
+    [StaFact]
+    public void A_close_to_tray_value_saved_after_the_window_opened_applies_to_the_next_close()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        var store = MainWindowHost.UiStateStore(temp);
+        var state = store.Load();
+        state.CloseToTray = false;
+        store.Save(state);
+
+        h.Window.Close();
+        h.PumpUntilShutdown();
+
+        Assert.Equal(1, h.Shutdowns);
+        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
+    }
+
     // ---------------------------------------------------------------- tepsi → Exit
 
     /// <summary>Tepsi → Exit HER ZAMAN güvenli çıkıştır — Close to tray açıkken de (varsayılan). Bir derleme koşuyorsa
@@ -148,7 +165,7 @@ public sealed class CloseToTrayTests
     {
         using var temp = new TempDir();
         var h = Harness.New(temp);
-        h.StartBuild();
+        MainWindowHost.StartBuild(h.Vm);
 
         h.Window.ExitFromTray();
 
@@ -161,6 +178,48 @@ public sealed class CloseToTrayTests
 
         Assert.Equal(1, h.Shutdowns);
         Assert.Equal(1, h.BroughtForward);
+    }
+
+    /// <summary>[final review · F2] Close to tray AÇIKKEN (varsayılan) tepsi → Exit bir derlemeyi bekliyor ve kullanıcı
+    /// × basıyor: pencere tepsiye İNMEZ ve kapanmaz — bekleyen çıkış anahtarı geçer (<see cref="WindowCloseRule"/>'un
+    /// Stay dalı). Kabuk karara VM'in <c>ExitPending</c>'ini gerçekten verir; vermeseydi anahtar söz alır ve kapanmakta
+    /// olan uygulama görünmeden tepside sürerdi. İkinci bir durdurma gitmez, uygulama kapanmaz.</summary>
+    [StaFact]
+    public void With_close_to_tray_on_the_close_button_keeps_the_window_while_a_tray_exit_waits()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        MainWindowHost.StartBuild(h.Vm);
+        h.Window.ExitFromTray();
+        Assert.True(h.Vm.ExitPending); // ön-koşul: çıkış derlemeyi bekliyor
+
+        h.Window.Close();
+
+        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
+        Assert.False(h.Closed);
+        Assert.Single(h.Sent.OfType<StopRunCommand>());
+        Assert.Equal(0, h.Shutdowns);
+    }
+
+    /// <summary>[final review · F4] Çıkış başladıktan sonra (uçuşta iş yok → tepsi → Exit, kapanış kuyrukta) gelen
+    /// <c>Closing</c> — Shutdown'ın pencereyi kapatışı — pencereyi GERÇEKTEN kapatır: Close to tray açık olsa da
+    /// tepsiye gizlemez ve ilk-kapatma balonunu harcamaz. Gerçek kapanışın işareti kurulmasaydı anahtar söz alırdı:
+    /// pencere gizlenir ve kapanış sırasında "tepsiye küçüldü" bilgilendirmesi yanmış sayılırdı. Burada kapanışı
+    /// Shutdown'ın yerine düz bir <c>Close()</c> tetikler (kabuk testleri uygulamayı kapatmaz).</summary>
+    [StaFact]
+    public void Once_the_exit_has_started_the_shutdowns_own_close_really_closes_the_window()
+    {
+        using var temp = new TempDir();
+        var h = Harness.New(temp);
+        h.Window.ExitFromTray();
+        h.PumpUntilShutdown();
+        Assert.Equal(1, h.Shutdowns); // ön-koşul: çıkış başladı, kapanış kuyrukta
+
+        h.Window.Close();
+
+        Assert.True(h.Closed);
+        Assert.NotEqual(Visibility.Hidden, h.Window.Visibility);
+        Assert.False(MainWindowHost.UiStateStore(temp).Load().TrayBalloonShown);
     }
 
     /// <summary>Uçuşta iş yokken tepsi → Exit uygulamayı hemen kapatır — pencere GÖSTERİLMEDEN.</summary>
