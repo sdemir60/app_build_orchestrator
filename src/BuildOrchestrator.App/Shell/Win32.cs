@@ -96,8 +96,15 @@ internal static class Win32
     public static nint SetWindowProc(nint hWnd, nint proc) =>
         nint.Size == 8 ? SetWindowLongPtr64(hWnd, GWLP_WNDPROC, proc) : SetWindowLong(hWnd, GWLP_WNDPROC, (int)proc);
 
+    /// <summary>Pencerenin o anki yordamı — <see cref="SetWindowProc"/>'un okuma eşi.</summary>
+    public static nint GetWindowProc(nint hWnd) =>
+        nint.Size == 8 ? GetWindowLongPtr64(hWnd, GWLP_WNDPROC) : GetWindowLong(hWnd, GWLP_WNDPROC);
+
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
     private static extern nint SetWindowLongPtr64(nint hWnd, int nIndex, nint dwNewLong);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    private static extern nint GetWindowLongPtr64(nint hWnd, int nIndex);
 
     [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
     public static extern nint CallWindowProc(nint lpPrevWndFunc, nint hWnd, uint msg, nint wParam, nint lParam);

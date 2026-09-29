@@ -19,21 +19,33 @@ namespace BuildOrchestrator.App.Shell;
 ///
 /// <para>Konum kararı SAF <see cref="DialogPlacement.CenterOver"/>'dadır; burada yalnız Win32 okuma/yazması vardır
 /// (<see cref="Win32"/> deseni). Kanca ve devir, kapsam kapanınca (seçici hiç açılmadıysa bile) bırakılır.</para>
+///
+/// <para><b>Devri bırakmak güvenli olmalı:</b> seçici (comctl32) bizden SONRA kendi alt sınıflamasını kurduysa pencere
+/// yordamı artık bizim değildir; eski yordamı körlemesine geri koymak onun zincirini koparır ve zincir sonradan bizim
+/// yordamımıza döndüğünde toplanmış bir delegeye atlardı. Bu yüzden yordam yalnız hâlâ bizimse geri konur; değilse
+/// kapsam zincirde GEÇİRGEN kalır (hiçbir şeye dokunmadan iletir) ve delegesi pencere yok olana kadar
+/// <see cref="Alive"/>'da tutulur.</para>
 /// </summary>
 internal sealed class CenteredDialog : IDisposable
 {
+    /// <summary>Geçirgen kalan kapsamlar — pencereleri yok olana kadar (<c>WM_NCDESTROY</c>) delegeleri GC'den korunur.</summary>
+    private static readonly HashSet<CenteredDialog> Alive = [];
+
     private readonly nint _owner;
     private readonly Win32.HookProc _hookProc;    // kanca yaşadıkça delege GC'den korunmalı
     private readonly Win32.WndProc _dialogProc;   // devir sürdükçe delege GC'den korunmalı
+    private readonly nint _dialogProcPointer;
     private nint _hook;
     private nint _dialog;
     private nint _previousProc;
+    private bool _passThrough;
 
     private CenteredDialog(nint owner)
     {
         _owner = owner;
         _hookProc = OnCbt;
         _dialogProc = OnDialogMessage;
+        _dialogProcPointer = Marshal.GetFunctionPointerForDelegate(_dialogProc);
         if (owner != 0) _hook = Win32.SetWindowsHookEx(Win32.WH_CBT, _hookProc, 0, Win32.GetCurrentThreadId());
     }
 
@@ -51,7 +63,7 @@ internal sealed class CenteredDialog : IDisposable
             && Win32.GetWindow(wParam, Win32.GW_OWNER) == _owner && !Win32.IsWindowVisible(wParam))
         {
             _dialog = wParam;
-            _previousProc = Win32.SetWindowProc(wParam, Marshal.GetFunctionPointerForDelegate(_dialogProc));
+            _previousProc = Win32.SetWindowProc(wParam, _dialogProcPointer);
             Unhook(); // kapsam TEK diyalog içindir
         }
         return Win32.CallNextHookEx(0, code, wParam, lParam);
@@ -60,9 +72,10 @@ internal sealed class CenteredDialog : IDisposable
     private nint OnDialogMessage(nint hwnd, uint msg, nint wParam, nint lParam)
     {
         nint previous = _previousProc;
-        if (msg == Win32.WM_WINDOWPOSCHANGING && !Win32.IsWindowVisible(hwnd)) Centre(hwnd, lParam);
+        if (!_passThrough && msg == Win32.WM_WINDOWPOSCHANGING && !Win32.IsWindowVisible(hwnd)) Centre(hwnd, lParam);
         nint result = Win32.CallWindowProc(previous, hwnd, msg, wParam, lParam);
-        if ((msg == Win32.WM_WINDOWPOSCHANGED && Win32.IsWindowVisible(hwnd)) || msg == Win32.WM_NCDESTROY) Release();
+        if (msg == Win32.WM_NCDESTROY) { Release(); Alive.Remove(this); }
+        else if (!_passThrough && msg == Win32.WM_WINDOWPOSCHANGED && Win32.IsWindowVisible(hwnd)) Release();
         return result;
     }
 
@@ -91,11 +104,13 @@ internal sealed class CenteredDialog : IDisposable
         _hook = 0;
     }
 
-    /// <summary>Devri bırakır: diyaloğun kendi pencere yordamı geri konur.</summary>
+    /// <summary>Devri bırakır: yordam hâlâ bizimse diyaloğun kendi yordamı geri konur; değilse (üstümüze başka bir alt
+    /// sınıflama kuruldu) kapsam geçirgen kalır ve pencere yok olana kadar canlı tutulur.</summary>
     private void Release()
     {
         if (_dialog == 0) return;
-        Win32.SetWindowProc(_dialog, _previousProc);
+        if (Win32.GetWindowProc(_dialog) == _dialogProcPointer) Win32.SetWindowProc(_dialog, _previousProc);
+        else if (!_passThrough) { _passThrough = true; Alive.Add(this); }
         _dialog = 0;
     }
 
