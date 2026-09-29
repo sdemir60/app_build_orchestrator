@@ -28,6 +28,8 @@ public static class MsBuildArguments
     ];
 
     /// [SPIKE S2 şart-1] packages.config restore sln bağlamı İSTER; [S1] nuget.exe YOK.
+    /// Optimize SDK-style projeleri de BU listeyle restore eder; orada <c>RestorePackagesConfig</c> etkisizdir.
+    /// Ölçüm: dört OSYS PRM projesi bu listeyle restore edildi, ardından NETSDK1004 adımı geçti.
     public static IReadOnlyList<string> RestorePackagesConfig(string projectPath, string solutionDir) =>
     [
         projectPath, "-t:restore", "-p:RestorePackagesConfig=true",

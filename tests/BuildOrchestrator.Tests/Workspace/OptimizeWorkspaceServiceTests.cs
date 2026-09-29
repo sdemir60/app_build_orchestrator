@@ -205,8 +205,15 @@ public class OptimizeWorkspaceServiceTests : IDisposable
         Assert.Contains(Lines(events), l => l.Contains("nothing to fix", StringComparison.Ordinal));
     }
 
-    [Fact] // needy tanımı: packages.config YOKSA proje restore edilmez — eksikler yalnız teşhise gider
-    public async Task A_project_without_packages_config_is_never_restored_even_with_missing_hintpaths()
+    /// <summary>
+    /// Needy tanımı (eski stil): <c>packages.config</c> YOKSA proje restore edilmez — eksikler yalnız teşhise gider.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: "packages.config YOKSA proje restore edilmez", HER proje için.
+    /// SDK-style projeler artık her Optimize'da restore edilir (NETSDK1004 ölçümü, bkz.
+    /// <see cref="Every_sdk_style_project_is_restored_whether_or_not_its_assets_file_exists"/>); kural yalnız eski
+    /// stil projeler için geçerli kaldı.</para>
+    /// </summary>
+    [Fact]
+    public async Task An_old_style_project_without_packages_config_is_never_restored_even_with_missing_hintpaths()
     {
         WriteLegacyProject("NoConfig",
             hintPaths: ["..\\packages\\Gone.1.0.0\\lib\\net46\\Gone.dll"], packagesConfig: false);
@@ -218,6 +225,33 @@ public class OptimizeWorkspaceServiceTests : IDisposable
         var done = Completed(events);
         Assert.Equal(0, done.RestoredProjects);
         Assert.Equal(1, done.UnresolvedReferences);
+    }
+
+    /// <summary>
+    /// SDK-style bir projenin build'i <c>obj\project.assets.json</c>'ı okur ve o dosyayı yalnız restore yazar; build
+    /// yolu SDK-style projeye restore koşmaz (prolog <c>packages.config</c>'e bağlıdır). Ölçülen kusur: yeniden
+    /// klonlanan OSYS'te dört SDK-style PRM projesi her build'de NETSDK1004 ("assets file not found") ile düştü ve
+    /// Optimize onları hiç restore etmiyordu. Kural: her Optimize her SDK-style projeyi restore eder — dosya varken
+    /// de (paket listesi değişmiş olabilir; yapacak işi olmayan bir restore yaklaşık bir saniye sürer).
+    /// </summary>
+    [Theory]
+    [InlineData(false)] // OSYS vakası: dosya hiç yok
+    [InlineData(true)]  // dosya var: restore yine koşar
+    public async Task Every_sdk_style_project_is_restored_whether_or_not_its_assets_file_exists(bool assetsPresent)
+    {
+        string csproj = WriteSdkProject("Modern");
+        if (assetsPresent)
+        {
+            string objDir = Path.Combine(Path.GetDirectoryName(csproj)!, "obj");
+            Directory.CreateDirectory(objDir);
+            File.WriteAllText(Path.Combine(objDir, "project.assets.json"), "{\"targets\":{\"net10.0\":{}}}");
+        }
+
+        var invoker = new FakeRestoreInvoker((_, _, _) => Task.FromResult(Exit(0)));
+        var events = await RunAsync(ServiceWith(invoker: invoker));
+
+        Assert.Equal(Path.GetFullPath(csproj), Path.GetFullPath(Assert.Single(invoker.Requests).ProjectId));
+        Assert.Equal(1, Completed(events).RestoredProjects);
     }
 
     [Fact]

@@ -19,7 +19,7 @@ namespace BuildOrchestrator.Core.Workspace;
 /// <para><b>Adımlar</b> (her biri kendi sayacını taşır; yeni bir sorun sınıfı = yeni bir private adım + yeni
 /// bir sayaç, akış düz kalır):</para>
 /// <list type="number">
-/// <item>eksik NuGet paketleri → per-proje <c>-t:restore</c>;</item>
+/// <item>eksik NuGet paketleri ve her SDK-style proje → per-proje <c>-t:restore</c>;</item>
 /// <item>restore SONRASI hâlâ eksik HintPath hedefleri → isimli warn (teşhis);</item>
 /// <item>LEGACY projelerdeki stale <c>obj</c> NuGet artıkları → silinir;</item>
 /// <item>dosyası kaybolmuş defter girdileri → üç defterde de budanır;</item>
@@ -144,10 +144,18 @@ public sealed class OptimizeWorkspaceService(
     // ---------------------------------------------------------------- adım 1: eksik NuGet paketleri
 
     /// <summary>
-    /// [K-1] Needy tanımı: csproj'un YANINDA <c>packages.config</c> VAR <b>ve</b> en az bir NuGet
-    /// <c>packages</c> HintPath'inin hedefi diskte YOK. <c>packages.config</c>'in İÇERİĞİ parse EDİLMEZ —
-    /// NuGet <c>repositoryPath</c> override'ı yüzünden "sln yanındaki packages" varsayımı güvenilmezdir;
-    /// paketlerin gerçek yerini HintPath'in kendisi söyler. Aynı mekanizma restore SONRASI teşhisi de besler.
+    /// [K-1] Needy tanımı iki ailelidir:
+    /// <list type="bullet">
+    /// <item><b>SDK-style</b> proje HER ZAMAN needy'dir: build'i <c>obj\project.assets.json</c>'ı okur, o dosyayı
+    /// yalnız restore yazar ve build yolu SDK-style projeye restore koşmaz (prolog <c>packages.config</c>'e
+    /// bağlıdır). Dosyanın varlığına bakılmaz — paket listesi değişmiş olabilir; yapacak işi olmayan bir restore
+    /// yaklaşık bir saniye sürer. Ölçülen kusur: yeniden klonlanan OSYS'te dört PRM projesi NETSDK1004 ile
+    /// düşüyordu.</item>
+    /// <item><b>Eski stil</b> proje: csproj'un YANINDA <c>packages.config</c> VAR <b>ve</b> en az bir NuGet
+    /// <c>packages</c> HintPath'inin hedefi diskte YOK. <c>packages.config</c>'in İÇERİĞİ parse EDİLMEZ — NuGet
+    /// <c>repositoryPath</c> override'ı yüzünden "sln yanındaki packages" varsayımı güvenilmezdir; paketlerin
+    /// gerçek yerini HintPath'in kendisi söyler. Aynı mekanizma restore SONRASI teşhisi de besler.</item>
+    /// </list>
     /// </summary>
     private async Task RestoreMissingPackagesAsync(
         IReadOnlyList<EvaluatedProject> projects, IReadOnlyDictionary<string, IReadOnlyList<Contracts.Model.SolutionRef>> solutionRefs,
@@ -201,6 +209,7 @@ public sealed class OptimizeWorkspaceService(
 
     private static bool IsNeedy(EvaluatedProject project)
     {
+        if (project.IsSdkStyle) return true;
         string dir = Path.GetDirectoryName(project.Path)!;
         if (!File.Exists(Path.Combine(dir, "packages.config"))) return false;
         return project.HintPaths.Any(h => IsNuGetPackagesHint(h) && !TargetExists(dir, h));
@@ -311,8 +320,9 @@ public sealed class OptimizeWorkspaceService(
 
     /// <summary>
     /// [K-7] YALNIZ legacy (<c>IsSdkStyle == false</c>) projelerde. SDK-style bir projede
-    /// <c>project.assets.json</c> MEŞRUDUR ve silinirse motor onu restore ETMEZ (packages.config yoktur) →
-    /// build "assets file not found" ile kırılır. Bu, gevşetilemez bir kuraldır.
+    /// <c>project.assets.json</c> MEŞRUDUR — projenin kendi restore çıktısıdır. Restore adımı bu adımdan ÖNCE
+    /// koşar ve build yolu SDK-style projeye restore koşmaz: silinen dosyayı geri getirecek bir şey kalmaz →
+    /// build "assets file not found" (NETSDK1004) ile kırılır. Bu, gevşetilemez bir kuraldır.
     /// <para>Koşu başındaki tespit (<c>StaleObjRunStartWarner</c>) salt-teşhis KALIR; silme yalnız
     /// kullanıcı-tetikli Optimize'dadır.</para>
     /// </summary>
