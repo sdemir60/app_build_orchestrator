@@ -566,8 +566,13 @@ the release notes, and *Later* / *Restart to update*. While a build, a Sync or a
 comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere, Esc or opening a
 dialog closes the card; the pill stays.
 
+*Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:
+the product mark, `Updating Build Orchestrator`, the version change and a progress bar that walks through
+closing, installing and starting in about three seconds. While it shows, keys and the global hotkeys do nothing.
+
 There is no update engine yet. The pill shows a sample offer — the next minor version with example highlights —
-so it is always visible, and *Restart to update* only closes the card.
+so it is always visible, and the restart screen is a preview of the design: when it fades out, the app is exactly
+as it was.
 
 ### State on disk
 

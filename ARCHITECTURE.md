@@ -3220,8 +3220,24 @@ workspace-busy notification point and announced only when it changes, so the but
 the work ends. *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's
 popover layer (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule
 exists because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
-*Restart to update* raises a request on the view model; there is no update engine yet, and the shell answers the
-request by closing the card. The card's content is the sample offer the pill shows.
+The card's content is the sample offer the pill shows.
+
+*Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
+the button's `CanExecute` still raises nothing while the restart is locked or there is no offer. The shell answers
+by closing the card and playing **the restart screen** (`UpdateRestartScreen`), the window's topmost layer — above
+the modals and over the title bar, taking clicks in the caption band too, so neither dragging nor the window
+buttons reach through it. On `surface-base` it centres a 232 px column: the product mark at 30 px,
+`Updating <product>` at 13 px/600, the version change in 11 px mono (installed in `text-dim`, an 11 px arrow,
+incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. Three steps —
+`Closing <product>…` for 800 ms up to 20 %, `Installing <version>…` for 1100 ms up to 78 %, `Starting <version>…`
+for 800 ms up to 100 % — each advance the bar linearly. The numbers live in a pure core (`UpdateRestartTimeline`);
+the screen reads it on every tick of one frame timer against an injected clock, so tests step through it frame by
+frame without waiting. The step line is a polite live region, announced once per step rather than per frame.
+120 ms after the last step the screen fades out and goes away (§14.5). There is no update engine yet, so the
+screen is a preview of the design: when it leaves, the application is exactly as it was — no Sync, no reset, the
+selection and the pill in place. While it shows, its fade-out included, the window ignores the keyboard — every
+key is consumed at the window's tunnelling key event, before any shortcut binding sees it — and the global
+hotkeys do nothing (§13.9).
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -4331,9 +4347,10 @@ Three pieces of shared machinery keep the copies from multiplying:
   frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
   horizontally but not vertically, turning the ends into ellipses).
 - **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
-  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance and the update card's drop-in
-  differ only in duration, direction, scale and scale origin (§14.5). There is no exit animation; overlays hide
-  immediately.
+  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update card's drop-in and
+  the update restart screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has no
+  exit animation; overlays hide immediately, and the one surface that leaves with a fade — the restart screen —
+  owns that exit itself.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
 
@@ -4367,7 +4384,8 @@ active set appears as a removable chip in the panel header.
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
 and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
 `Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
-start a Rebuild here. What's new has no key (§13.3).
+start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3), none of these
+keys — window or global — does anything; one shell property answers that question for both paths.
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
 `F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
@@ -4747,8 +4765,12 @@ Five contract rules, each enforced by a test:
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
 scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its
 hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
-because it hangs from the pill. All ease out, all snap to their end state under reduced motion, and none has an
-exit. The pill's entrance is the one that is conditional: it plays once, when an offer arrives after startup — the
+because it hangs from the pill; the update restart screen only fades in, over `Duration.Base` — it covers the
+whole window and has no edge to travel, so no transform is set up at all. All ease out and all snap to their end
+state under reduced motion. Only the restart screen has an exit: it fades out over `Duration.Slow` with the same
+ease-out, lets clicks through while it fades, and leaves when the fade ends — at once under reduced motion. Its
+progress bar is information rather than decoration and advances whatever the motion setting. The pill's entrance
+is the one that is conditional: it plays once, when an offer arrives after startup — the
 sample offer the pill shows today is there from the first frame, so it never plays yet — and the pill does not
 move after that. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
 says 80 ms, but its own measurements and prototype use the standard one.
@@ -5384,8 +5406,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
 | Update offer — version, size, highlights; the next-minor rule and the sample placeholder the app starts with (no update engine yet) | `App/Services/UpdateOffer.cs` |
-| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup, its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
+| Restart request → the update restart screen as the topmost layer; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
@@ -5580,6 +5603,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
+| Update restart screen — the 232 px column, the frame timer and clock, the fade in and out, the once-per-step announcement; its steps, durations and percentages | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
 | Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
