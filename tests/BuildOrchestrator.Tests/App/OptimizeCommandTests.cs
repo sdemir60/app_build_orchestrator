@@ -465,9 +465,14 @@ public class OptimizeCommandTests
     }
 
     /// <summary>Kapı Optimize'ın tıklanmasından Sync'in devralmasına kadar BİR AN bile açılmaz — Clean'de ölçülüp
-    /// düzeltilmiş kırpışmanın Optimize'da yeniden doğmaması için.</summary>
+    /// düzeltilmiş kırpışmanın Optimize'da yeniden doğmaması için.
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski ad ve iddia
+    /// (<c>Nothing_is_clickable_between_the_optimize_and_the_sync_that_follows_it</c>): boşlukta Build de KAPALIDIR.
+    /// Değişme gerekçesi (ölçüm): kapalı Build'e basılan tık kayboluyordu; Optimize sürerken basılan Build artık bekler
+    /// ve iş bitince başlar (<see cref="RunRequestWaitsForWorkTests"/>). Build tıklamadan devre kadar HEP basılabilir —
+    /// kırpışmaz; Sync, Clean ve Optimize boşlukta yine kapalıdır.</para></summary>
     [Fact]
-    public async Task Nothing_is_clickable_between_the_optimize_and_the_sync_that_follows_it()
+    public async Task Only_a_waiting_build_is_pressable_between_the_optimize_and_the_sync_that_follows_it()
     {
         long now = 0;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -488,8 +493,8 @@ public class OptimizeCommandTests
 
         Assert.Equal(
         [
-            "hold 390: build=False sync=False clean=False optimize=False",
-            "hold 200: build=False sync=False clean=False optimize=False",
+            "hold 390: build=True sync=False clean=False optimize=False", // Build'e basış bekler
+            "hold 200: build=True sync=False clean=False optimize=False",
         ], gates);
     }
 
