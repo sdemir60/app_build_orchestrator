@@ -20,8 +20,11 @@ namespace BuildOrchestrator.App.Views;
 ///
 /// <para><b>Enable kuralları:</b> repo yokken (<see cref="RunViewModel.HasWorkspace"/>=false) Sync/Build + TÜM chip'ler
 /// disabled (README §3.1; prototipin canlı sayaç chip'leri gözden kaçmadır). Koşarken (<see cref="RunViewModel.IsMidRunLocked"/>)
-/// branch/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Build split-button ayrıca
-/// Syncing'de disabled (BuildApp.jsx:1594).</para>
+/// branch/Debug|Release görünür şekilde disabled; <b>perf CANLI kalır</b> (T12). Branch chip'i ve Debug|Release
+/// segment'i ayrıca her workspace işinde (Sync, Clean, Optimize, checkout, pull) ve motor erişilemezken de kilitlidir
+/// — ikisi de VM'in kendi kapısını okur (<see cref="RunViewModel.CanSwitchBranch"/>,
+/// <see cref="RunViewModel.CanSwitchConfiguration"/>). Build split-button ayrıca Syncing'de disabled
+/// (BuildApp.jsx:1594).</para>
 ///
 /// <para><b>Motion:</b> popover/menü pop-in'i <see cref="PopIn"/> (kod-tarafı, AnimationsEnabled taze). Chip renk
 /// geçişleri DS (Ds.Chip → DsTransition). Hardcoded hex/ms/px YOK.</para>
@@ -146,6 +149,7 @@ public partial class ActionBar : UserControl
         {
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.PullRepositoryCommand.CanExecuteChanged -= OnPullGateChanged;
+            _vm.SyncCommand.CanExecuteChanged -= OnSyncGateChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
@@ -156,11 +160,23 @@ public partial class ActionBar : UserControl
             _vm.PropertyChanged += OnVmPropertyChanged;
             // [T9 fix round 1 · M4] Behind chip'inin kapısı pull komutunun kapısıdır — her geçişi buradan gelir.
             _vm.PullRepositoryCommand.CanExecuteChanged += OnPullGateChanged;
+            // [kullanıcı kararı 2026-09-29] Debug|Release segment'inin kapısı Sync komutunun kapısıdır (geçiş bir Sync
+            // başlatır) — her geçişi buradan gelir; workspace'in varlığını RefreshEnabled ayrıca izler.
+            _vm.SyncCommand.CanExecuteChanged += OnSyncGateChanged;
         }
         RefreshAll();
     }
 
     private void OnPullGateChanged(object? sender, EventArgs e) => RefreshBehindGate();
+
+    private void OnSyncGateChanged(object? sender, EventArgs e) => RefreshConfigGate();
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Segment'in tıklanabilirliği = <see cref="RunViewModel.CanSwitchConfiguration"/>
+    /// (workspace + Sync'in kapısı: koşu, Sync, Clean, Optimize, checkout, pull, motor) — bar kapıyı yeniden türetmez.</summary>
+    private void RefreshConfigGate()
+    {
+        if (_built) PART_Segment.IsEnabled = _vm?.CanSwitchConfiguration ?? false;
+    }
 
     /// <summary>[T9 fix round 1 · M4] Behind chip'inin tıklanabilirliği = pull komutunun kapısı (CanPullRepository:
     /// koşu, workspace işi, motor, git kilidi) — bar kapıyı yeniden türetmez.</summary>
@@ -640,7 +656,6 @@ public partial class ActionBar : UserControl
     {
         if (!_built) return;
         bool hasWs = _vm?.HasWorkspace ?? false;
-        bool midRun = _vm?.IsMidRunLocked ?? false;
         bool syncing = _vm?.Phase == AppPhase.Syncing;
 
         // repo yokken sayaç chip'leri de disabled (README §3.1 — prototip hatası düzeltilir).
@@ -650,7 +665,7 @@ public partial class ActionBar : UserControl
         // T12: koşarken branch/Debug|Release görünür şekilde disabled; perf CANLI. [spec 2026-09-18 §6.3] Branch
         // chip'i artık checkout eder: kapısı VM'in TEK predicate'idir (koşu + Sync/Clean/Optimize + motor + uçuştaki checkout).
         PART_BranchChip.IsEnabled = _vm?.CanSwitchBranch ?? false;
-        PART_Segment.IsEnabled = hasWs && !midRun;
+        RefreshConfigGate(); // [kullanıcı kararı 2026-09-29] segment de VM'in TEK predicate'ini okur (Sync'in kapısı)
         PART_PerfChip.IsEnabled = hasWs; // mid-run'da da canlı
         // [design v1.16.0 §2.7-6a] Chip koşu/bakım görevi sürerken diğer bar kontrolleriyle AYNI kilitte.
         RefreshBehindGate(); // [T9 fix round 1 · M4] komutun kapısı; geçişleri CanExecuteChanged aboneliği de duyurur

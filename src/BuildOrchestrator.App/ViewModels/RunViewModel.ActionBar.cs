@@ -85,8 +85,17 @@ public sealed partial class RunViewModel
     /// </summary>
     public bool CanSwitchBranch => HasWorkspace && WorkspaceGateOpen && GitWritesAllowed;
 
-    /// <summary>Debug|Release segment'inin kapısı.</summary>
-    public bool CanSwitchConfiguration => HasWorkspace && !IsMidRunLocked;
+    /// <summary>
+    /// [kullanıcı kararı 2026-09-29] Debug|Release segment'inin TEK kapısı — segment'in <c>IsEnabled</c>'ı ve
+    /// <see cref="SetConfiguration"/> bunu okur. Geçiş kendi Sync'ini başlatır, bu yüzden kapı Sync düğmesininkidir
+    /// (<see cref="CanSync"/>) + bir workspace: koşu ya da planlaması, bir Sync (pencereye dönüşün sessiz Sync'i dahil —
+    /// İSTEK anından itibaren), Clean, Optimize, checkout, pull uçuştayken ve motor erişilemezken kapalıdır. Uçuştaki
+    /// bir Sync başladığı configuration'ı taşır; o sırada kabul edilen bir geçişte eski configuration'ın cevabı yeni
+    /// configuration'ın satırlarını boyardı. Yarıdaki bir git işlemi kapatmaz: Sync düğmesi gibi o durumda da koşar.
+    /// <para>Bildirimi Sync komutununkidir (<c>SyncCommand.CanExecuteChanged</c>) — bar kapıyı yeniden türetmez.</para>
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden segment yalnız koşu sırasında kilitliydi (<see cref="IsMidRunLocked"/>).</para>
+    /// </summary>
+    public bool CanSwitchConfiguration => HasWorkspace && CanSync();
 
     /// <summary>Branch popover'daki mono SHA için 7-haneli kısaltma (uzunsa kırp, zaten kısaysa olduğu gibi) —
     /// brief 7-hane pinler.</summary>
@@ -309,15 +318,18 @@ public sealed partial class RunViewModel
     /// tetikleyen olayların hiçbiri topolojiyi geçersizleştirmez; koleksiyon gerçekten boşalsa panel
     /// "<c>No projects found under this folder.</c>" derdi ve bu YANLIŞ olurdu.</para>
     ///
-    /// <para>Tek çağıranı repo değişimidir (<see cref="ApplyRepositoryRoot"/>): elimizdeki kararlar yeni kök
-    /// için geçerli değildir. <b>Clean bundan DAHA İLERİ gider</b> — <see cref="ClearPlanSurface"/>: orada
-    /// satırlar da düğümler de kalkar.</para></summary>
+    /// <para>İki çağıranı vardır ve ikisinde de elimizdeki kararlar artık geçerli değildir: repo değişimi
+    /// (<see cref="ApplyRepositoryRoot"/> — kararlar eski köke aittir) ve configuration geçişinin Sync'inin başlangıcı
+    /// (<see cref="OnSyncStarted"/>, <see cref="SyncModeRules.DropsDecisions"/> — kararlar eski configuration'a aittir).
+    /// <b>Clean bundan DAHA İLERİ gider</b> — <see cref="ClearPlanSurface"/>: orada satırlar da düğümler de
+    /// kalkar.</para></summary>
     private void ResetRowsToHollow()
     {
         foreach (var row in Projects)
         {
             row.State = ProjectRowState.Pending;
             row.WillBuild = null;
+            row.Conditional = false; // plan bayrağının çifti (WillBuild'le birlikte): bilinmeyen satır koşullu söz vermez
             // [spec 2026-09-18 §1-15] Karar düşünce defter notu da düşer: üçgen artık gerekçeden de okunur
             // (ProjectRowViewModel.WarningRoots) ve bilinmiyor modundaki bir satır bekleyen bir bağımlılık
             // iddia edemez. Gerekçe + kökler kararla birlikte gider.

@@ -987,6 +987,26 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Segment Sync'in İSTEK anında kilitlenir, motorun cevabını
+    /// (<c>syncStarted</c>) beklemez. Gerçek sıra: arkadaki pencerede segment'e tıklamak önce pencereyi etkinleştirir
+    /// ve pencereye dönüşün sessiz Sync'i o anda yola çıkar; tıklama ondan SONRA işlenir. Kilit istek anında inmezse
+    /// tıklama radyo düğmesini çevirir ama VM geçişi reddeder — segment "Release" gösterirken configuration Debug
+    /// kalırdı. Sessiz Sync fazı değiştirmediği için kilidi yalnız Sync komutunun kapı bildirimi taşır.</summary>
+    [StaFact]
+    public async Task The_configuration_segment_locks_the_moment_a_sync_is_requested()
+    {
+        var vm = NewVm();
+        var (bar, window) = Realize(vm);
+        MainWindowHost.AcceptSends(vm);
+        bool? enabledAtRequest = null;
+        vm.DebugOnCommandSent = c => { if (c is SyncWorkspaceCommand) enabledAtRequest = bar.Segment.IsEnabled; };
+
+        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh));
+
+        Assert.False(enabledAtRequest);
+        GC.KeepAlive(window);
+    }
+
     // [Task 6 · TAŞINDI] Döngü sayılarının tooltip'e yansıması artık bakım kutusunun işidir; iddia
     // MaintenanceBoxTests'te YENİ metinle yaşıyor (etiketli Cycles düğmesi kaldırıldı, design v1.7.0 §2.7-2).
 

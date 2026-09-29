@@ -333,10 +333,12 @@ public class ProjectListFilterTests
     /// tıklama anında konsol ve akışla BİRLİKTE liste ve graf da boşalır. Ekran yalnız boş/sakin durur: liste
     /// daveti ("No projects found…") ve grafın Sync-öncesi etiketi ("Graph appears after Sync") görünmez, faz
     /// Boot'a düşmez (Clean'in <c>ClearPlanSurface</c>'inden farkı budur).
+    /// <para>[kullanıcı kararı 2026-09-29] Debug|Release geçişi de aynı süreci işletir ("tıklar tıklamaz temizlensin").</para>
     /// </summary>
     [StaTheory]
     [InlineData(SyncMode.Manual)]
     [InlineData(SyncMode.BranchChange)]
+    [InlineData(SyncMode.ConfigurationChange)]
     public async Task A_restarting_sync_empties_the_list_and_the_graph_at_the_click(SyncMode mode)
     {
         using var temp = new TempDir();
@@ -369,6 +371,7 @@ public class ProjectListFilterTests
     [StaTheory]
     [InlineData(SyncMode.Manual)]
     [InlineData(SyncMode.BranchChange)]
+    [InlineData(SyncMode.ConfigurationChange)]
     public async Task A_restarting_sync_replays_the_reveal_and_fits_the_graph_even_with_the_same_structure(SyncMode mode)
     {
         using var temp = new TempDir();
@@ -407,6 +410,7 @@ public class ProjectListFilterTests
     [StaTheory]
     [InlineData(SyncMode.Manual, "sendFails")]
     [InlineData(SyncMode.BranchChange, "sendFails")]
+    [InlineData(SyncMode.ConfigurationChange, "planFailed")]
     [InlineData(SyncMode.Manual, "planFailed")]
     [InlineData(SyncMode.Manual, "engineExited")]
     [InlineData(SyncMode.Manual, "completedWithoutTopology")]

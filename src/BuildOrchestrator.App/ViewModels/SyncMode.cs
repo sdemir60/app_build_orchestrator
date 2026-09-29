@@ -12,6 +12,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// değişimi: temizlik YOK (önceki işlemin ya da çağıranın notu kalır), fetch, transkript altına eklenir.</description></item>
 /// <item><term><see cref="BranchChange"/></term><description>Konsol + akış + liste + graf temizlenir, yeni bölümün ilk satırları
 /// çağıranın verdiği satırlardır (yeni branch), ardından transkript; fetch YOK.</description></item>
+/// <item><term><see cref="ConfigurationChange"/></term><description>Debug|Release geçişi: Sync düğmesinin süreci —
+/// konsol + akış + liste + graf temizlenir, bölümün ilk satırı yeni configuration'dır; fetch YOK (uzakta değişen bir
+/// şey yok). Sync başlarken satırlar kararlarını bırakır: elde duranlar eski configuration'ındır.</description></item>
 /// <item><term><see cref="Silent"/></term><description>Kendiliğinden Sync (commit, pencereye dönüş, HEAD'in branch
 /// değişimi dışındaki hareketi): temizlik yok, fetch yok, pill yok, seçim korunur; transkript gizlenir ama
 /// warn/error satırları yine yazılır; akışa tek satır (<see cref="SilentSyncReason"/>).</description></item>
@@ -22,6 +25,7 @@ public enum SyncMode
     Manual,
     Appended,
     BranchChange,
+    ConfigurationChange,
     Silent,
 }
 
@@ -29,16 +33,26 @@ public enum SyncMode
 /// karşılaştırmaz, bu soruları sorar (kopya YASAK).</summary>
 public static class SyncModeRules
 {
-    /// <summary>Konsol + olay akışı istek anında temizlenir mi (yeni bölüm): Manual ve BranchChange.</summary>
-    public static bool ClearsConsole(this SyncMode mode) => mode is SyncMode.Manual or SyncMode.BranchChange;
+    /// <summary>Konsol + olay akışı istek anında temizlenir mi (yeni bölüm): Manual, BranchChange ve
+    /// ConfigurationChange.</summary>
+    public static bool ClearsConsole(this SyncMode mode) =>
+        mode is SyncMode.Manual or SyncMode.BranchChange or SyncMode.ConfigurationChange;
 
     /// <summary>[kullanıcı kararı 2026-09-19] Plan yüzeyi (liste + graf) baştan başlar mı: istek anında ekranda
     /// boşalır, Sync'in topolojisi gelince yapı aynı olsa da standart açılışla (reveal, graf fit) geri gelir —
-    /// Manual ve BranchChange. Appended ve Silent yerinde tazeler, kamerayı oynatmaz.</summary>
-    public static bool RestartsPlanSurface(this SyncMode mode) => mode is SyncMode.Manual or SyncMode.BranchChange;
+    /// Manual, BranchChange ve ConfigurationChange. Appended ve Silent yerinde tazeler, kamerayı oynatmaz.</summary>
+    public static bool RestartsPlanSurface(this SyncMode mode) =>
+        mode is SyncMode.Manual or SyncMode.BranchChange or SyncMode.ConfigurationChange;
 
-    /// <summary>Motor ağa çıkıp fetch eder mi: Manual ve Appended. BranchChange ve Silent son bilinen uzak uca bakar.</summary>
+    /// <summary>Motor ağa çıkıp fetch eder mi: Manual ve Appended. BranchChange, ConfigurationChange ve Silent son
+    /// bilinen uzak uca bakar.</summary>
     public static bool Fetches(this SyncMode mode) => mode is SyncMode.Manual or SyncMode.Appended;
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Sync başlarken (<c>syncStarted</c>) satırlar kararlarını bırakıp
+    /// başlangıç moduna (renksiz) iner mi: yalnız ConfigurationChange. Configuration imzaya girer, yani elde duran
+    /// kararlar eski configuration'ındır; yeni configuration'ın önizlemesi gelene kadar satır hiçbir şey iddia etmez.
+    /// Diğer kiplerde satır kendi kararında kalır ve önizleme onu tazeler.</summary>
+    public static bool DropsDecisions(this SyncMode mode) => mode is SyncMode.ConfigurationChange;
 
     /// <summary>Transkriptin dim/info/cmd satırları konsola yazılır mı (warn/error her kipte yazılır).</summary>
     public static bool ShowsTranscript(this SyncMode mode) => mode != SyncMode.Silent;

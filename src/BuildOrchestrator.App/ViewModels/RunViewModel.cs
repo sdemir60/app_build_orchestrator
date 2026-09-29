@@ -1205,7 +1205,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>
     /// Sync'in ortak gövdesi. Kipi (<see cref="SyncMode"/>) çağıran seçer: Sync düğmesi <see cref="SyncMode.Manual"/>;
     /// açılış (<see cref="OnEngineReady"/>), pull, Clean/Optimize devri ve Settings Save (kök değişimi dahil)
-    /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; kendiliğinden Sync
+    /// <see cref="SyncMode.Appended"/>; checkout <see cref="SyncMode.BranchChange"/>; Debug/Release geçişi
+    /// <see cref="SyncMode.ConfigurationChange"/> (<see cref="SetConfiguration"/>); kendiliğinden Sync
     /// <see cref="SyncMode.Silent"/> (<see cref="SyncSilentlyAsync"/>). Kiplerin tablosu <see cref="SyncMode"/>'un
     /// özetindedir (spec 2026-09-18 §6.2).
     ///
@@ -1236,8 +1237,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     /// <param name="mode">Konsol ilişkisi, fetch ve pill kararı.</param>
     /// <param name="silentReason">Yalnız <see cref="SyncMode.Silent"/>: bitişteki akış satırını seçer.</param>
-    /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>):
-    /// temizlikten sonra yazılan ilk satırlar.</param>
+    /// <param name="sectionLines">Konsolu temizleyen kiplerde (<see cref="SyncMode.BranchChange"/>, <see cref="SyncMode.Manual"/>,
+    /// <see cref="SyncMode.ConfigurationChange"/>): temizlikten sonra yazılan ilk satırlar.</param>
     /// <returns>Sync komutu motora gitti mi — düşen gönderimde ve çıkış beklerken <c>false</c> (kendiliğinden Sync
     /// tetiği bekletir).</returns>
     private async Task<bool> SyncCoreAsync(SyncMode mode, SilentSyncReason silentReason = SilentSyncReason.Refresh,
@@ -1595,44 +1596,32 @@ public sealed partial class RunViewModel : ObservableObject
     public IReadOnlyList<LayerGrouping.Group> BuildLayerGroups() =>
         LayerGrouping.Build(VisibleProjects, Topology);
 
-    /// <summary>[T43] Debug/Release değiştir (BuildApp.jsx:1355-1363). Koşarken KİLİTLİ (no-op) ve aynı değere
-    /// no-op. Workspace varsa ve faz Boot/Empty değilse: her proje dirty işaretlenir ve uyarı satırı yazılır.
-    /// <para>[T4 review ledger (a) · design v1.20.0 §2.3] Satırın ÇIKTI DURUMU da düşer, yalnız planı değil:
-    /// configuration imzaya girer (<c>BuildSignature</c>), yani motorun bir sonraki önizlemesi kaydı olan her
-    /// projeye <see cref="WillBuildReason.SignatureChanged"/> diyecektir — satır aynı cevabı şimdiden verir
-    /// (gri). Hiç başarısı olmayan <see cref="WillBuildReason.NeverBuilt"/> olur/kalır, kararı olmayan satır
-    /// kararsız kalır (bilinmiyor). Defter notu (bekleyen bağımlılık) imza değişince karar terimi olmaktan
-    /// çıkar: satır artık kesin derlenir (<c>Conditional=false</c>) ve üçgen düşer. Eskiden yalnız
-    /// <c>WillBuild=true</c> yazılıyordu — güncel satır yeşil kalırken konsol "all projects will rebuild" diyordu.</para>
-    /// <para>[R-Config] Koşu alanları da silinir (<see cref="NeutralizeRows"/> — aynı metot): az önce başarıyla
-    /// biten satır koşunun yeşilinde kalmaz, herkes gibi yeni bayat durumuna iner. Bitmiş ya da durdurulmuş
-    /// koşunun özeti de artık bir şey anlatmaz (sayaçları silindi; durdurulan koşunun planı ESKİ configuration'a
-    /// aittir, yeni configuration altında sürdürülemez), bu yüzden <c>Done</c> ve <c>Stopped</c> fazları
-    /// <c>Idle</c>'a döner ve şerit yeni planı ("N to build") okur; önizleme kümeleri satırların yeni kararından
-    /// yeniden kurulur.</para></summary>
+    /// <summary>[T43 · kullanıcı kararı 2026-09-29] Debug/Release değiştir: Sync düğmesinin süreci yeni configuration'la
+    /// işler (<see cref="SyncMode.ConfigurationChange"/>) — konsol ve akış temizlenir, liste ve graf ekranda baştan
+    /// başlar, bölümün ilk satırı yeni configuration'ı adlandırır (<see cref="ConfigurationChangedLine"/>; ağaç yarım
+    /// bir git işlemindeyse Sync düğmesinin uyarısı ardından gelir), fetch yapılmaz. Sync başlarken satırlar
+    /// kararlarını bırakır (<see cref="SyncModeRules.DropsDecisions"/>); rengi yeni configuration'ın önizlemesi verir.
+    /// Bitmiş ya da durdurulmuş koşunun hikâyesini de bu Sync kapatır (faz <c>Syncing</c> → <c>Idle</c>). Kapı
+    /// <see cref="CanSwitchConfiguration"/>; aynı değere no-op.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden geçiş Sync GÖNDERMEZDİ: satırları tahminle bayat griye indirir
+    /// (<c>NextPreview.AfterConfigurationChange</c>: başarı izi varsa <c>SignatureChanged</c>, yoksa
+    /// <c>NeverBuilt</c>), her satırı <c>WillBuild=true</c> işaretler, fazı <c>Idle</c>'a alır ve konsola
+    /// "Configuration → X — all projects will rebuild" yazardı. Değişme gerekçesi (ölçüm): defter proje başına TEK
+    /// imza tutar, o da projenin en son derlendiği configuration'ınkidir — Debug → Release → Debug dönüşünde motor her
+    /// satırı güncel bulurken tahmin hepsini "derlenecek" diyordu; tahmin döngü üyelerini (düz Build onları derlemez)
+    /// ve kararı olmayan satırları da sayıyordu; OSYS'te <c>bin\Release</c> çıktısı yokken motor "never built",
+    /// tahmin "affected" diyordu. Doğru cevabı yalnız yeni configuration'ın Sync'i verir.</para></summary>
     public void SetConfiguration(string value)
     {
-        if (IsMidRunLocked || value == Configuration) return;
+        if (!CanSwitchConfiguration || value == Configuration) return;
         Configuration = value;
-        if (RootPath.Length == 0 || Phase is AppPhase.Boot or AppPhase.Empty) return;
-        NeutralizeRows();
-        ClearPreviewSets();
-        foreach (var row in Projects)
-        {
-            row.WillBuild = true; // her şey dirty
-            if (row.WillBuildReason is { } reason && reason != WillBuildReason.NeverBuilt)
-            {
-                row.WillBuildReason = NextPreview.AfterConfigurationChange(reason, row.CurrentSha);
-                row.Conditional = false;
-                row.DependencyRoots = null;
-            }
-            NotePreviewDecision(row.Id, row.WillBuild, row.Conditional);
-        }
-        if (Phase is AppPhase.Done or AppPhase.Stopped) Phase = AppPhase.Idle; // koşunun hikâyesi kapandı
-        RefreshRunSurface();        // sayaçlar/şerit nötrlenmiş listeden ve yeni plandan yeniden türer
-        RaiseRowDecisionsChanged(); // graf da aynı anda griye iner
-        AppendRunLine($"Configuration → {value} — all projects will rebuild");
+        _ = SyncCoreAsync(SyncMode.ConfigurationChange,
+            sectionLines: [ConfigurationChangedLine(value), .. MidOperationSyncLines()]);
     }
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Configuration geçişinin açtığı bölümün ilk satırı — BİREBİR metin, TEK yer.</summary>
+    internal static string ConfigurationChangedLine(string configuration) =>
+        string.Format(CultureInfo.InvariantCulture, "Configuration → {0}", configuration);
 
     /// <summary>
     /// [T20-b/K11] Perf profilini App tarafında TÜRETMENİN tek kapısı — üç tüketicisi de buradan geçer:

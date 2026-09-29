@@ -68,27 +68,9 @@ public static class NextPreview
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterClean(bool inCycle) =>
         (!WillBuildEvaluator.OutOfScope(inCycle, buildCycles: false), WillBuildReason.NeverBuilt, false);
 
-    /// <summary>
-    /// Configuration değişti: configuration imzaya girer, yani imza her kayıtta değişir. Kaydında bir başarı olan
-    /// (<c>BuiltSignature</c> dolu) her proje <see cref="WillBuildReason.SignatureChanged"/>; hiç başarısı olmayan
-    /// <see cref="WillBuildReason.NeverBuilt"/>. App <c>BuiltSignature</c>'ı görmez — yalnız
-    /// <see cref="WillBuildReason.LastFailed"/> satırı iki tarafa da düşebilir ve orada başarı izi olarak
-    /// önizlemenin <c>BuiltCommit</c>'i okunur (<paramref name="builtCommit"/>; defterde onu yalnız başarı yazar).
-    /// <c>LastBuiltAt</c> ayırıcı DEĞİLDİR: son koşu başarısızsa her LastFailed satırında null'dır
-    /// (<c>BuildStateStore.LastBuiltAtOf</c>).
-    /// <para><b>Bilinen ve KABUL EDİLEN boşluk (kullanıcı kararı):</b> commit'i kaydedilmemiş bir başarının
-    /// (git dışı bir kök ya da revizyonu okunamayan harici proje) ardından patlayan proje burada
-    /// <c>never built</c> okunur, motor ise <c>SignatureChanged</c> diyecektir; ikisi de gridir, yalnız etiket
-    /// farklıdır ve bir sonraki Sync düzeltir. Kesin ayırıcı (<c>BuiltSignature</c> var mı) önizlemede
-    /// taşınmıyor; onu taşımak için sözleşme değişikliği bilerek yapılmadı.</para>
-    /// </summary>
-    /// <para><b>[Faz 3 — spec 2026-09-18 §5, Task 7]</b> <see cref="WillBuildReason.OutputMissing"/> de
-    /// <c>NeverBuilt</c> gibi okunur: motor zaten "bu projeye ait derleme kanıtı yok" diyor, configuration
-    /// değişimini <c>SignatureChanged</c> okumak "bir şey değişti, yeniden derlenecek" der ki bu YANLIŞTIR —
-    /// proje hiç derlenmemiş gibi kalmalı. Diğer üç yeni gerekçe (<c>BuiltOutside</c>, <c>OutputStale</c>,
-    /// <c>OutputReplaced</c>) bugünkü düşüşü izler: <c>SignatureChanged</c>.</para>
-    public static WillBuildReason AfterConfigurationChange(WillBuildReason reason, string? builtCommit) =>
-        reason == WillBuildReason.LastFailed && builtCommit is null ? WillBuildReason.NeverBuilt
-        : reason is WillBuildReason.NeverBuilt or WillBuildReason.OutputMissing ? WillBuildReason.NeverBuilt
-        : WillBuildReason.SignatureChanged;
+    // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] Configuration değişiminin eşlemesi (AfterConfigurationChange)
+    // burada DEĞİLDİR: o bir motor olgusu değil, bir tahmindi — "configuration imzaya girer, yani imza her kayıtta
+    // değişir". Defter proje başına TEK imza tutar (projenin en son derlendiği configuration'ınkini) ve motor ona karşı
+    // karar verir; Debug → Release → Debug dönüşünde motor UpToDate derken tahmin SignatureChanged diyordu. Geçiş
+    // artık kendi Sync'ini başlatır ve satır o Sync'in cevabına kadar kararsızdır (RunViewModel.SetConfiguration).
 }
