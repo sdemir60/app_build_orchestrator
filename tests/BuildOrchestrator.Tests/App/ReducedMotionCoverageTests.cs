@@ -282,6 +282,21 @@ public class ReducedMotionCoverageTests
         Assert.False(el.HasAnimatedProperties);
     }
 
+    /// <summary>[design v1.23.0 §2.12] Güncelleme hapının girişi (<c>bo-upd-in</c>) aynı kapıdan geçer: kapalıyken
+    /// saat kurulmaz, öğe düz durur (tasarım: "Reduced-motion: anında").</summary>
+    [StaFact]
+    public void The_update_pill_entrance_snaps_with_no_clock_when_off()
+    {
+        Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
+        var el = new Border { Opacity = 0.5 };
+
+        PopIn.PlayEntrance(el); // headless App.Motion null → snap
+
+        Assert.Equal(1.0, el.Opacity);
+        Assert.False(el.HasAnimatedProperties);
+        Assert.True(el.RenderTransform.Value.IsIdentity);
+    }
+
     [StaFact]
     public void The_scroll_animator_snaps_instead_of_animating_when_off()
     {

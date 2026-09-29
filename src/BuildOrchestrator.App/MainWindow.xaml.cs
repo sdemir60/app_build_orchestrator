@@ -416,6 +416,7 @@ public partial class MainWindow : Window
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
+        SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
         _ = RunConsolePumpAsync();
     }
 

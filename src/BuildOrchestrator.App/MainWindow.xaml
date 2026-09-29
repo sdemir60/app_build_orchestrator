@@ -5,6 +5,7 @@
         xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
         xmlns:views="clr-namespace:BuildOrchestrator.App.Views"
         xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
+        xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
         Title="{x:Static services:AppIdentity.Product}" Width="1400" Height="800" WindowState="Maximized"
         MinWidth="{DynamicResource Size.WindowMinWidth}" MinHeight="{DynamicResource Size.WindowMinHeight}"
         WindowStyle="SingleBorderWindow"
@@ -57,6 +58,16 @@
       <Setter Property="StrokeEndLineCap" Value="Round" />
       <Setter Property="StrokeLineJoin" Value="Round" />
     </Style>
+    <!-- [design v1.23.0 §2.12] Title bar'ın sağ kümesindeki 1×14 dikey ayraç (border, yatay 5px) — TEK tanım: layout
+         ikonlarını dişliden ayıran ayraç ve güncelleme hapının arkasındaki ayraç aynı stildir (tasarım: "mevcut
+         ayraçla aynı"). -->
+    <Style x:Key="TitleBarSeparator" TargetType="Rectangle">
+      <Setter Property="Width" Value="1" />
+      <Setter Property="Height" Value="14" />
+      <Setter Property="Margin" Value="5,0" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Fill" Value="{DynamicResource Brush.Border}" />
+    </Style>
   </Window.Resources>
   <Border x:Name="RootShell">
     <Grid>
@@ -90,9 +101,36 @@
             </Button>
           </StackPanel>
 
-          <!-- Layout seçici (quad/list/focus) + 1px ayraç + gear -->
+          <!-- [design v1.23.0 §2.1] Sağ küme: güncelleme hapı + ayraç · layout seçici (quad/list/focus) + ayraç · gear,
+               What's new, About. Küme sağa dock'ludur: başa eklenen öğe SOLA doğru büyür, sağdaki ikonlar kaymaz. -->
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"
                       WindowChrome.IsHitTestVisibleInChrome="True" Margin="0,0,8,0">
+            <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
+                 BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
+                 yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
+                 Güncelleme motoru henüz yok — örnek teklifle hap şimdilik her zaman görünür. Amber YOK. -->
+            <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
+                        Visibility="Collapsed">
+              <controls:PopupToggleButton x:Name="UpdatePill" Style="{DynamicResource Ds.UpdatePill}"
+                                          VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal">
+                  <!-- Lucide circle-arrow-up 13px; kontur hapın Foreground'u (text-primary). -->
+                  <Viewbox Width="13" Height="13" VerticalAlignment="Center">
+                    <Canvas Width="24" Height="24">
+                      <Path Style="{StaticResource TitleBarIcon}" Data="{DynamicResource Icon.UpdateReady}"
+                            StrokeThickness="{DynamicResource Icon.UpdateReady.StrokeThickness}" />
+                    </Canvas>
+                  </Viewbox>
+                  <TextBlock Text="{x:Static vm:UpdateText.PillLabel}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                  <!-- Mono tabular sürüm — rengi hapın ikinci kanalından (nötr text-dim, hover/açık text-secondary). -->
+                  <TextBlock x:Name="UpdatePillVersion" Margin="6,0,0,0" VerticalAlignment="Center"
+                             FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                             FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
+                             Foreground="{Binding Path=(controls:DsChrome.IconForeground), RelativeSource={RelativeSource AncestorType=ToggleButton}}" />
+                </StackPanel>
+              </controls:PopupToggleButton>
+              <Rectangle x:Name="UpdatePillSeparator" Style="{StaticResource TitleBarSeparator}" />
+            </StackPanel>
             <ToggleButton x:Name="LayQuadButton" Style="{DynamicResource Ds.IconButton.Toggle}" Click="OnLayoutQuad"
                           AutomationProperties.Name="Default layout — graph + list · console + stream (splits reset)">
               <ToggleButton.ToolTip>
@@ -129,7 +167,7 @@
                 </Canvas>
               </Viewbox>
             </ToggleButton>
-            <Rectangle Width="1" Height="14" Fill="{DynamicResource Brush.Border}" Margin="5,0" VerticalAlignment="Center" />
+            <Rectangle Style="{StaticResource TitleBarSeparator}" />
             <Button x:Name="GearButton" Style="{DynamicResource Ds.IconButton}" Click="OnSettings"
                     AutomationProperties.Name="Settings">
               <Button.ToolTip>
