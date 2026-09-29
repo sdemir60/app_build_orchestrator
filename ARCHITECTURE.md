@@ -405,13 +405,22 @@ restore step drops out. The repair degrades; it does not stop.
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
-Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted` · `pullCompleted` ·
-`checkoutCompleted`.
+Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `workspaceTopology` · `buildPreview` · `syncCompleted` ·
+`pullCompleted` · `checkoutCompleted`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
 `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
+
+`syncDiscovery` is the one count a Sync reports while it discovers the project set: how many projects it has
+found so far, as repository projects and external projects, cumulative rather than a delta, so a report
+arriving late never takes a number back. The engine sends one when the main repository scan is done and one
+after every external root that resolved to projects (§10.2). It is its own discriminator rather than a
+`syncProgress` line because the numbers are what matters, and parsing them back out of console text would define
+the same count a second time. It carries no denominator and no source name; the total is the sum of the two
+fields and is not put on the wire. Only Sync sends it — Clean, Optimize and a run's planning resolve the same
+workspace without it.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
 (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
@@ -1790,7 +1799,8 @@ Sync runs the whole analysis, in Core:
 
 ```
 git fetch origin <branch> --no-tags   (ref-only; skipped when the Sync does not fetch)
-  → scan → evaluate (cached) → producer map → edges → SCC/topo → layers
+  → scan (syncDiscovery after the main walk and after each external root)
+  → evaluate (cached) → producer map → edges → SCC/topo → layers
   → will-build pass
   → workspaceTopology + buildPreview + syncCompleted
 ```
@@ -1813,6 +1823,19 @@ back to the local HEAD, and the flow continues. The degraded path does **not** s
 pass — offline still produces a complete, usable Sync. A Sync that does not fetch never goes to the network: it
 reads the last known remote tip (`refs/remotes/origin/<branch>`) and measures against that; with no remote ref
 the target is the local HEAD and the distance is unknown, which is not a degraded fetch.
+
+**Discovery counts.** The App learns the project set only from `workspaceTopology`, and the evaluation and the
+will-build pass sit between the scan and that event. Sync therefore reports the discovery itself as it goes
+(`syncDiscovery`, §5.3): one report when the main repository walk is done, with no external project yet, and
+one after every external root (§10.4) that resolved to projects. Each carries the distinct counts found so far —
+repository projects that are not external, and external project ids — so two cards that overlap (a folder and a
+`.sln` inside it) never count a project twice. A card that resolves to nothing only warns: it sends no report
+and adds nothing. The counting rule lives once, in the resolver that merges the roots
+(`ExternalWorkspaceResolver`), with the same comparer the merged scan is made distinct with, so the last report
+is exactly the grouping the topology then carries (`IsExternal`). The total never drops; the repository share
+alone can, when a card points above the repository root and brings the repository's own projects in as
+external. The scan is not reordered for the counter: it still runs after the fetch, the main walk before the
+external roots, and the scan lines keep their place.
 
 **Who starts a Sync, and what it does to the screen.** The console tells one *section* at a time. A new
 section is opened by an operation the user started, or by the world under the list changing — the branch.
@@ -5375,7 +5398,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Configuration switch: the segment's gate, the Sync it starts and its section line, the decisions dropped when that Sync starts | `App/ViewModels/RunViewModel.cs` (`SetConfiguration`, `ConfigurationChangedLine`), `RunViewModel.ActionBar.cs` (`CanSwitchConfiguration`), `RunViewModel.Workspace.cs` (`OnSyncStarted`), `App/Views/ActionBar.xaml.cs` (`RefreshConfigGate`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
-| Sync flow (fetch or last known remote → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+| Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
@@ -5393,6 +5416,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
+| Discovery counting rule — repository vs. external, distinct, cumulative, one report per resolved source | `Core/Externals/ExternalWorkspaceResolver.cs` (`DiscoveryProgress`, `Reporter`) |
 | Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
 | Working-copy root discovery (`.git` file or directory) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
