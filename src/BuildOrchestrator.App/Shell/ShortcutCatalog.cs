@@ -85,7 +85,7 @@ public static class ShortcutCatalog
             "What's new — release notes", ShortcutGroup.Application),
         new(ShortcutId.Escape, GesturesFor(WindowIntent.Escape),
             "Close the topmost open layer: dialog → popover/menu → selection", ShortcutGroup.Application),
-        new(ShortcutId.RestoreFromTray, [HotkeyBinding.DefaultGesture],
+        new(ShortcutId.RestoreFromTray, [GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],
             "Global — bring the window back from the tray", ShortcutGroup.Application),
     ];
 

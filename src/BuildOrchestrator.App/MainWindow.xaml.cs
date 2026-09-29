@@ -23,9 +23,6 @@ namespace BuildOrchestrator.App;
 
 public partial class MainWindow : Window
 {
-    /// <summary>Bu pencerenin global kısayol kaydının id'si (WM_HOTKEY wParam'ı) — tek hotkey, sabit id.</summary>
-    private const int GlobalHotkeyId = 0xB0;
-
     private readonly EngineHost _engine;
     private readonly RunViewModel _vm;
     private readonly ConsoleBatcher _console;
@@ -38,13 +35,15 @@ public partial class MainWindow : Window
     /// glyph sonsuza dek dönerdi ve dep-issue/cycle rozetleri bayatlardı.</summary>
     private ProjectRowViewModel? _headerTrackedRow;
 
-    // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + Alt+B (v7Δ-5).
+    // [T62] Pencere kabuğu: tepsi + ilk-X balloon (K5) + Snap Layouts hook + global kısayollar (GlobalHotkeys).
     // [A13/T1 fix-1 · C1] Store ARTIK ctor'dan gelir (varsayılan üretim yolu birebir aynı: JsonUiStateStore
     // + DefaultPath). Gerekçe <see cref="MainWindow(EngineHost, RunViewModel, ConsoleBatcher, ResourceDictionary, IUiStateStore)"/>'da.
     private readonly IUiStateStore _uiState;
     private readonly FirstCloseBalloonGate _closeBalloon;
     private AppTrayIcon? _tray;
-    private HotkeyRegistration? _hotkey;
+    /// <summary>Global kısayol kayıtları, eylem başına bir tane (<see cref="GlobalHotkeys"/>). Pencere hiç kaynak
+    /// kurmadıysa (headless test) boştur.</summary>
+    private readonly Dictionary<GlobalHotkeyAction, HotkeyRegistration> _hotkeys = [];
 
     // [tray indicator] Tepsideyken koşan derlemenin göstergesi. Overlay penceresi LAZY yaratılır: kullanıcı
     // uygulamayı hiç tepsiye indirmeden kullanabilir ve o zaman bir HWND'e hiç ödeme yapılmaz.
@@ -1010,7 +1009,7 @@ public partial class MainWindow : Window
     private void OnAboutRequested()
     {
         if (AboutOverlay.Visibility == Visibility.Visible) { AboutOverlay.CloseDialog(); return; }
-        AboutOverlay.Open(_vm, _hotkey?.IsRegistered ?? false, ResolveMsBuildAsync);
+        AboutOverlay.Open(_vm, IsHotkeyRegistered(GlobalHotkeyAction.ShowHide), ResolveMsBuildAsync);
     }
 
     /// <summary>[design v1.13.0 §2.11] What's new butonu → What's new modali.</summary>
@@ -1146,11 +1145,20 @@ public partial class MainWindow : Window
 
         HwndSource.FromHwnd(hwnd)!.AddHook(HotkeyWndProc);
 
-        // [v7Δ-5] Alt+B (ayarlanabilir) — çakışmada SESSİZ devre dışı.
-        if (!HotkeyBinding.TryParse(_uiState.Load().Hotkey, out var binding))
-            HotkeyBinding.TryParse(HotkeyBinding.DefaultGesture, out binding);
-        _hotkey = HotkeyRegistration.Register(hwnd, GlobalHotkeyId, binding);
+        // Global kısayollar (ayarlanabilir; tablo GlobalHotkeys) — çakışan SESSİZ devre dışı kalır, About gösterir.
+        var state = _uiState.Load();
+        foreach (var hotkey in GlobalHotkeys.All)
+        {
+            if (!HotkeyBinding.TryParse(state.HotkeyGesture(hotkey.Action), out var binding))
+                HotkeyBinding.TryParse(hotkey.DefaultGesture, out binding);
+            _hotkeys[hotkey.Action] = HotkeyRegistration.Register(hwnd, hotkey.Id, binding);
+        }
     }
+
+    /// <summary>Bir global kısayol GERÇEKTEN kayıtlı mı — çakışmada kayıt sessizce düşer ve kullanıcının bunu
+    /// görebileceği tek yer About'tur. Pencere hiç kaynak kurmadıysa (headless test) hiçbiri kayıtlı değildir.</summary>
+    private bool IsHotkeyRegistered(GlobalHotkeyAction action) =>
+        _hotkeys.TryGetValue(action, out var registration) && registration.IsRegistered;
 
     // ==================================== Tepsi build göstergesi ====================================
 
@@ -1222,12 +1230,17 @@ public partial class MainWindow : Window
         public void HideNow() => owner._trayOverlay?.HideNow();
     }
 
-    /// <summary>Global kısayol (Alt+B) → pencereyi tepsiden/arka plandan getir.</summary>
+    /// <summary>Global kısayol → eylemi (<see cref="GlobalHotkeys"/>'teki id'den bulunur).</summary>
     private nint HotkeyWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
-        if (msg != Win32.WM_HOTKEY || (int)wParam != GlobalHotkeyId) return 0;
-        handled = true;
-        ShowFromTray();
+        if (msg != Win32.WM_HOTKEY) return 0;
+        foreach (var hotkey in GlobalHotkeys.All)
+        {
+            if (hotkey.Id != (int)wParam) continue;
+            handled = true;
+            if (hotkey.Action == GlobalHotkeyAction.ShowHide) ShowFromTray();
+            break;
+        }
         return 0;
     }
 
@@ -1337,7 +1350,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         if (Application.Current is { } app) app.SessionEnding -= OnSessionEnding; // [M-3 fix wave] (bkz. ctor: Application yoksa abonelik de yoktur)
-        _hotkey?.Dispose();
+        foreach (var registration in _hotkeys.Values) registration.Dispose();
         _tray?.Dispose();
         _vm.DisableAutoSync(); // HEAD izleyicisi bırakılır
         _vm.GitOperationPollTimer?.Stop(); // git işlemi yoklaması kapanan pencereyi tıklatmasın

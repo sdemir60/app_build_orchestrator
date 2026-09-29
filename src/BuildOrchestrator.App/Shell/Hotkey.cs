@@ -3,8 +3,8 @@ using System.Globalization;
 namespace BuildOrchestrator.App.Shell;
 
 /// <summary>
-/// [T62 / v7Δ-5] Global kısayolun (varsayılan <b>Alt+B</b>, ayarlanabilir) <c>RegisterHotKey</c> karşılığı —
-/// SAF çeviri, P/Invoke yok.
+/// [T62 / v7Δ-5] Bir global kısayol jestinin (ayarlanabilir; varsayılanlar <see cref="GlobalHotkeys"/>'te)
+/// <c>RegisterHotKey</c> karşılığı — SAF çeviri, P/Invoke yok.
 /// </summary>
 public readonly record struct HotkeyBinding(uint Modifiers, uint VirtualKey)
 {
@@ -12,14 +12,11 @@ public readonly record struct HotkeyBinding(uint Modifiers, uint VirtualKey)
     public const uint MOD_CONTROL = 0x0002;
     public const uint MOD_SHIFT = 0x0004;
     public const uint MOD_WIN = 0x0008;
-    /// <summary>Tuş basılı tutulurken tekrar tekrar WM_HOTKEY üretilmesini engeller (pencereyi bir kez getir).</summary>
+    /// <summary>Tuş basılı tutulurken tekrar tekrar WM_HOTKEY üretilmesini engeller (eylem bir kez koşar).</summary>
     public const uint MOD_NOREPEAT = 0x4000;
 
-    /// <summary>[v7Δ-5] Kısayol şemasının global kısayolu.</summary>
-    public const string DefaultGesture = "Alt+B";
-
     /// <summary>
-    /// "Alt+B", "ctrl+shift+f5", "Win + Alt + 7" — büyük/küçük harf ve boşluk duyarsız. En az BİR modifier
+    /// "Shift+Space", "ctrl+shift+f5", "Win + Alt + 7" — büyük/küçük harf ve boşluk duyarsız. En az BİR modifier
     /// zorunludur (modifier'sız global hotkey tüm sistemde o tuşu çalar). Tanınmayan her şey <c>false</c> döner;
     /// çağıran varsayılana düşer (bkz. <see cref="HotkeyRegistration"/> — sessiz devre dışı kuralı).
     /// </summary>
@@ -57,6 +54,7 @@ public readonly record struct HotkeyBinding(uint Modifiers, uint VirtualKey)
     private static bool TryParseKey(string token, out uint vk)
     {
         vk = 0;
+        if (token.Equals("space", StringComparison.OrdinalIgnoreCase)) { vk = 0x20; return true; } // VK_SPACE
         if (token.Length == 1)
         {
             char c = char.ToUpperInvariant(token[0]);
@@ -73,6 +71,43 @@ public readonly record struct HotkeyBinding(uint Modifiers, uint VirtualKey)
         }
         return false;
     }
+}
+
+/// <summary>[kullanıcı kararı 2026-09-29] Pencere öndeyken de, tepsideyken de çalışan iki iş.</summary>
+public enum GlobalHotkeyAction
+{
+    /// <summary>Pencereyi getir / gizle — karar <see cref="WindowToggle"/>'da.</summary>
+    ShowHide,
+    /// <summary>Pencere gelmeden Build — VM'in <c>BuildCommand</c>'ı, CanExecute onurlanır.</summary>
+    Build,
+}
+
+/// <summary>Bir global kısayol satırı: eylem + <c>RegisterHotKey</c> id'si (<c>WM_HOTKEY</c>'in <c>wParam</c>'ı) +
+/// varsayılan jest.</summary>
+public readonly record struct GlobalHotkey(GlobalHotkeyAction Action, int Id, string DefaultGesture);
+
+/// <summary>
+/// Global kısayolların TEK tablosu. Kayıt (<c>MainWindow</c>), kalıcı varsayılanlar (<see cref="UiState"/>),
+/// About'un GLOBAL satırları ve ikinci-instance balonu buradan okur — varsayılan jest başka hiçbir yerde yazılmaz.
+/// Sıra About'un çizdiği sıradır.
+///
+/// <para><b>Neden Shift+Space / Ctrl+Shift+Space (kullanıcı kararı 2026-09-29):</b> Türkçe Q'da AltGr, Windows'a
+/// Ctrl+Alt olarak gider; <c>Ctrl+Alt+Space</c> gibi bir global kısayol <c>{</c> (AltGr+7) yazıp AltGr'yi bırakmadan
+/// Space'e basıldığında tetiklenirdi, ve VS'te 26 harfin hepsi <c>Ctrl+Alt</c> ile doludur. <c>Shift+Space</c>'in
+/// bilinen bedeli, Shift'le yazılan bir karakterden (<c>=</c>, <c>(</c>, <c>:</c>…) hemen sonra Space'e Shift
+/// bırakılmadan basılınca tetiklenmesidir; kullanıcı bunu bilerek kabul etti. <c>Ctrl+Shift+Space</c> VS'in
+/// Parameter Info tuşudur — o da bilerek bırakıldı.</para>
+/// </summary>
+public static class GlobalHotkeys
+{
+    public static IReadOnlyList<GlobalHotkey> All { get; } =
+    [
+        new(GlobalHotkeyAction.ShowHide, 0xB0, "Shift+Space"),
+        new(GlobalHotkeyAction.Build, 0xB1, "Ctrl+Shift+Space"),
+    ];
+
+    /// <summary>Tek satır. Eksik ya da ikiz bir eylem burada fırlatır (sessizce yanlış satır üretmez).</summary>
+    public static GlobalHotkey Get(GlobalHotkeyAction action) => All.Single(h => h.Action == action);
 }
 
 /// <summary>

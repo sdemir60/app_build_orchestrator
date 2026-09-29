@@ -97,12 +97,12 @@ public partial class App : Application
             // Bu geçici tray'in arkasında hiç RunViewModel/engine yoktur (bu dal DI kurulmadan return eder) —
             // yani durdurulacak bir run hiçbir zaman olamaz. Stop bu yüzden hep kapalı bir komutla kurulur.
             _secondInstanceTray = new AppTrayIcon(AppTrayIcon.NoRunToStop);
-            // [About] Ürün adı ve global kısayol jesti tek kaynaktan (kopya YASAK): AppIdentity.Product ve
-            // HotkeyBinding.DefaultGesture. Kısayol ayarlanabilir olduğundan metne gömülü "Alt+B" bayatlardı.
+            // [About] Ürün adı ve getir/gizle kısayolunun jesti tek kaynaktan (kopya YASAK): AppIdentity.Product ve
+            // GlobalHotkeys. Kısayol ayarlanabilir olduğundan metne gömülü bir jest bayatlardı.
             _secondInstanceTray.ShowNotification(
                 AppIdentity.Product,
                 "Already running — could not bring the existing window forward. Use the tray icon or "
-                + HotkeyBinding.DefaultGesture + ".");
+                + GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture + ".");
             ScheduleSecondInstanceShutdown(outcome.ExitCode);
             return;
         }

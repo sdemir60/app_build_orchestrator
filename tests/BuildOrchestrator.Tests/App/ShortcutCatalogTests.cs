@@ -28,7 +28,7 @@ public class ShortcutCatalogTests
     {
         var bound = KeyboardShortcuts.WindowBindings
             .Select(b => ShortcutCatalog.Format(b.Key, b.Modifiers))
-            .Append(HotkeyBinding.DefaultGesture) // global kısayol WindowBindings'te DEĞİLDİR
+            .Append(GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture) // global kısayol WindowBindings'te DEĞİLDİR
             .ToHashSet(StringComparer.Ordinal);
         foreach (string gesture in ShortcutCatalog.All.SelectMany(e => e.Gestures))
             Assert.Contains(gesture, bound);
@@ -52,7 +52,8 @@ public class ShortcutCatalogTests
 
     [Fact]
     public void The_global_hotkey_row_reads_its_gesture_from_the_hotkey_default()
-        => Assert.Equal([HotkeyBinding.DefaultGesture], ShortcutCatalog.Get(ShortcutId.RestoreFromTray).Gestures);
+        => Assert.Equal([GlobalHotkeys.Get(GlobalHotkeyAction.ShowHide).DefaultGesture],
+            ShortcutCatalog.Get(ShortcutId.RestoreFromTray).Gestures);
 
     [Fact]
     public void Every_entry_has_a_description_and_at_least_one_gesture()
