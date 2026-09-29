@@ -47,7 +47,9 @@
        [design v1.10.0 → v1.19.0 §2.9] Solda Export / Import / Clear ikon butonları. Üçü de yalnız FORMU değiştirir —
        Save'e kadar hiçbir şey uygulanmaz, onay dialogu da yoktur. Geri bildirim AYNI satırda 2.4 saniye durur
        (yeşil/kırmızı); geri bildirim yokken ve Save kapalıyken yerini tek satırlık NEDEN alır.
-       [DEĞİŞEN KURAL — design v1.19.0] Soldaki ghost `Load sample layers` düğmesi ve ayracı KALKTI (ön-dolum yok). -->
+       [DEĞİŞEN KURAL — design v1.19.0] Soldaki ghost `Load sample layers` düğmesi ve ayracı KALKTI (ön-dolum yok).
+       [DEĞİŞEN KURAL] Ok verinin yönünü gösterir: Export = Icon.Upload (dışarı), Import = Icon.Download (içeri).
+       Prototip tersini veriyordu; sıra (Export, Import, Clear) aynı kaldı. -->
   <controls:ModalDialog.Footer>
     <DockPanel>
       <Button x:Name="ExportButton" DockPanel.Dock="Left" Style="{DynamicResource Ds.IconButton}"
@@ -55,8 +57,8 @@
               AutomationProperties.Name="{x:Static app:AccessibilityNames.ExportSettings}">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">
-            <Path Data="{DynamicResource Icon.Download}"
-                  StrokeThickness="{DynamicResource Icon.Download.StrokeThickness}"
+            <Path Data="{DynamicResource Icon.Upload}"
+                  StrokeThickness="{DynamicResource Icon.Upload.StrokeThickness}"
                   Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
           </Canvas>
@@ -68,8 +70,8 @@
               AutomationProperties.Name="{x:Static app:AccessibilityNames.ImportSettings}">
         <Viewbox Width="13" Height="13">
           <Canvas Width="24" Height="24">
-            <Path Data="{DynamicResource Icon.Upload}"
-                  StrokeThickness="{DynamicResource Icon.Upload.StrokeThickness}"
+            <Path Data="{DynamicResource Icon.Download}"
+                  StrokeThickness="{DynamicResource Icon.Download.StrokeThickness}"
                   Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
           </Canvas>
