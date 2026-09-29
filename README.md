@@ -184,9 +184,11 @@ the running instance first — tray icon → Exit).
    button fetches. The list and the graph are only rebuilt with their opening animation when a project was
    added or removed — otherwise the rows simply change colour in place, the graph keeps its zoom, and rows the
    last build finished are re-decided too, so a project that changed in the background turns grey again.
-   Pressing *Sync* yourself, or changing branch, starts the screen over instead: the list and the graph empty
-   together with the console and the event stream, then come back with their opening animation and the graph
-   fitted to the panel. If that Sync fails, the previous list and graph come back.
+   Pressing *Sync* yourself, changing branch or switching *Debug*/*Release* starts the screen over instead: the
+   list and the graph empty together with the console and the event stream, then come back with their opening
+   animation and the graph fitted to the panel. If that Sync fails, the previous list and graph come back. A
+   *Debug*/*Release* switch runs that Sync in the new configuration, and its rows stay uncoloured until the
+   answer arrives; like the branch chip, the switch is locked while a build, a Sync or another action is running.
 
    **Sync colours every row with the state of its output:** green when it is up to date, plain grey when it
    will be built, red when its last build failed with a compiler error. A project you built in Visual Studio is

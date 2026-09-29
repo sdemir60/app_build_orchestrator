@@ -96,30 +96,13 @@ public class NextPreviewTests
         Assert.False(conditional);
     }
 
-    // ---------------------------------------------------------------- AfterConfigurationChange [R-Config · M6]
-
-    [Theory]
-    [InlineData(WillBuildReason.UpToDate, "abc", WillBuildReason.SignatureChanged)]
-    [InlineData(WillBuildReason.WaitingForDependency, null, WillBuildReason.SignatureChanged)]
-    [InlineData(WillBuildReason.SignatureChanged, "abc", WillBuildReason.SignatureChanged)]
-    [InlineData(WillBuildReason.LastFailed, "abc", WillBuildReason.SignatureChanged)] // başarı izi var
-    [InlineData(WillBuildReason.LastFailed, null, WillBuildReason.NeverBuilt)]        // hiç başarı yok
-    [InlineData(WillBuildReason.NeverBuilt, "abc", WillBuildReason.NeverBuilt)]
-    // [Task 7 — Faz 3] Diğer üç yeni gerekçe bugünkü düşüşü izler: SignatureChanged. OutputMissing kendi
-    // satırında ayrı test edilir (dedicated Fact, aşağıda) — motor zaten "çıktı yok" diyor, "signature changed"
-    // onu YANLIŞ ANLATIR.
-    [InlineData(WillBuildReason.BuiltOutside, "abc", WillBuildReason.SignatureChanged)]
-    [InlineData(WillBuildReason.OutputStale, "abc", WillBuildReason.SignatureChanged)]
-    [InlineData(WillBuildReason.OutputReplaced, "abc", WillBuildReason.SignatureChanged)]
-    public void a_configuration_change_reads_signature_changed_unless_nothing_ever_succeeded(
-        WillBuildReason before, string? builtCommit, WillBuildReason expected)
-        => Assert.Equal(expected, NextPreview.AfterConfigurationChange(before, builtCommit));
-
-    /// <summary>[Task 7 — Faz 3] OutputMissing configuration değişiminden SONRA da <c>never built</c> okunmalı:
-    /// motor zaten çıktı kanıtı olmadığını söylüyor, <c>SignatureChanged</c> "bir şey değişti" der ki bu proje
-    /// için yanlıştır — hiç derlenmemiş gibi okunmalı.</summary>
-    [Fact]
-    public void A_missing_output_stays_never_built_after_a_configuration_change()
-        => Assert.Equal(WillBuildReason.NeverBuilt,
-            NextPreview.AfterConfigurationChange(WillBuildReason.OutputMissing, "abc"));
+    // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] AfterConfigurationChange eşlemesi ve iki testi
+    // (a_configuration_change_reads_signature_changed_unless_nothing_ever_succeeded,
+    // A_missing_output_stays_never_built_after_a_configuration_change) KALDIRILDI. Eski iddia: configuration değişince
+    // her kayıtta imza değişir, satır motorun bir sonraki önizlemesinin diyeceğini şimdiden der (başarı izi varsa
+    // SignatureChanged, yoksa/çıktı yoksa NeverBuilt). Ölçülen yanılgı: defter proje başına TEK imza tutar — o da
+    // projenin en son derlendiği configuration'ınkidir — ve motor ona karşı karar verir; Debug → Release → Debug
+    // dönüşünde motor UpToDate derken eşleme SignatureChanged diyordu. Geçiş artık hiçbir şey tahmin etmez, kendi
+    // Sync'ini başlatır; yeni kural RunViewModelStateTests'te pinlidir
+    // (Switching_configuration_drops_every_decision_until_its_sync_answers ve komşuları).
 }

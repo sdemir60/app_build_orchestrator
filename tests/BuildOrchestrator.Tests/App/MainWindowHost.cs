@@ -117,7 +117,8 @@ internal static class MainWindowHost
     }
 
     /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),
-    /// dışarıdan branch değişimi (BranchChange), kendiliğinden Sync (Silent), motor hazır oldu (Appended).</summary>
+    /// dışarıdan branch değişimi (BranchChange), Debug|Release geçişi (ConfigurationChange — öteki configuration'a),
+    /// kendiliğinden Sync (Silent), motor hazır oldu (Appended).</summary>
     public static Task StartSync(RunViewModel vm, SyncMode mode)
     {
         ArgumentNullException.ThrowIfNull(vm);
@@ -125,6 +126,9 @@ internal static class MainWindowHost
         {
             case SyncMode.Manual: return vm.SyncCommand.ExecuteAsync(null);
             case SyncMode.BranchChange: return vm.SyncAfterExternalBranchChangeAsync("Switched to feature");
+            case SyncMode.ConfigurationChange:
+                vm.SetConfiguration(vm.Configuration == "Release" ? "Debug" : "Release");
+                return Task.CompletedTask;
             case SyncMode.Silent: return vm.SyncSilentlyAsync(SilentSyncReason.Refresh);
             case SyncMode.Appended: vm.OnEngineReady("1.0.0", 1); return Task.CompletedTask;
             default: throw new ArgumentOutOfRangeException(nameof(mode), mode, null);

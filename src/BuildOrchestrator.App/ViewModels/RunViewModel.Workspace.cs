@@ -253,6 +253,11 @@ public sealed partial class RunViewModel
             Phase = AppPhase.Syncing;
         }
         ClearPreviewSets(); // [D2 review fix] her Sync başında taze — hemen ardından gelen BuildPreviewEvent yeniden doldurur
+        // [kullanıcı kararı 2026-09-29] Configuration geçişinin Sync'i: elde duran kararlar ESKİ configuration'ındır —
+        // satırlar yeni configuration'ın önizlemesine kadar başlangıç modunda (renksiz) bekler. İstek anında değil
+        // BURADA düşer: istek penceresinde faz henüz Syncing değildir ve boşalan kümeler şeride sahte bir
+        // "everything looks up to date" yazdırırdı (liste ve graf o pencerede zaten ekranda boştur).
+        if (_syncMode.DropsDecisions()) ResetRowsToHollow();
         // [Sync guard] Motor cevap verdi: nöbet istek bayrağından uçuş bayrağına GEÇER. İkisi birden açık
         // bırakılsaydı kapıyı kapatan iki ayrı bayrak olurdu ve biri sızdığında ötekinin temizlenmesi
         // yetmezdi (SyncBusy tek predicate, ama bayrakların ömrü ayrık olmalı).

@@ -262,10 +262,12 @@ public class StickyRevealTriggerTests
     }
 
     /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Sync düğmesi ve branch değişimi ekranı baştan başlatır:
-    /// yapı aynı olsa da reveal yeniden oynar ve (seçim düştüğü için) liste başa döner — standart açılış.</summary>
+    /// yapı aynı olsa da reveal yeniden oynar ve (seçim düştüğü için) liste başa döner — standart açılış.
+    /// [kullanıcı kararı 2026-09-29] Debug|Release geçişi de aynı süreci işletir.</summary>
     [StaTheory]
     [InlineData(SyncMode.Manual)]
     [InlineData(SyncMode.BranchChange)]
+    [InlineData(SyncMode.ConfigurationChange)]
     public async Task A_restarting_sync_with_the_same_structure_returns_the_list_to_the_top(SyncMode mode)
     {
         using var dir = new TempDir();

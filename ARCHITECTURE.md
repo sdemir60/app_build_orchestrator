@@ -771,11 +771,14 @@ already embedded the then-stored signature of upstream *Y*; so recomputing *X* w
 its stored signature exactly unless *X*'s own inputs changed.
 
 Configuration is *not* an upstream term — it enters every node's own signature — so Fast's upstream suppression
-cannot mask a `Debug ↔ Release` switch. Changing configuration makes every project dirty in both modes. This is
-a direct consequence of §9.4: output is config-agnostic in a single shared folder, so the previous
-configuration's binaries are simply gone. The output evidence is the one qualifier (§7.6): when the new
-configuration's output was built elsewhere after the tool's last run of the project, that project is in time
-mode and can read up to date without compiling.
+cannot mask a `Debug ↔ Release` switch. Asking for a configuration other than the one a project was last built
+in makes it dirty in both modes. This is a direct consequence of §9.4: output is config-agnostic in a single
+shared folder, so the previous configuration's binaries are simply gone. The comparison is always against the
+ledger, which keeps one signature per project — its last successful build's — and never against the
+configuration selected before: switching to Release and back to Debug without building in Release in between
+changes nothing, and every project that was up to date still is. The output evidence is the one qualifier
+(§7.6): when the new configuration's output was built elsewhere after the tool's last run of the project, that
+project is in time mode and can read up to date without compiling.
 
 ### 7.3 Cycles in the signature
 
@@ -1805,7 +1808,7 @@ the target is the local HEAD and the distance is unknown, which is not a degrade
 
 **Who starts a Sync, and what it does to the screen.** The console tells one *section* at a time. A new
 section is opened by an operation the user started, or by the world under the list changing — the branch.
-Refreshes that happen on their own in the same world open nothing. Every Sync is one of four kinds, and the
+Refreshes that happen on their own in the same world open nothing. Every Sync is one of five kinds, and the
 rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers never compare kinds themselves:
 
 | Kind | Started by | Console and event stream | Fetch | Visible as an operation |
@@ -1813,23 +1816,30 @@ rules of each kind live in one place (`SyncMode` / `SyncModeRules`); callers nev
 | Manual | the Sync button | cleared at the click; full transcript | yes | yes |
 | Appended | application start and an engine restart, a successful pull, the hand-over after Clean/Optimize, Settings Save and a repository change | kept; transcript appended below the note or transcript that is already there | yes | yes |
 | BranchChange | a checkout from the branch chip, or a branch change seen by the HEAD watcher | cleared; the new section's first lines are the caller's (the stash and switch lines), then the transcript | no | yes |
+| ConfigurationChange | the Debug/Release segment | cleared at the click; the new section's first line is `Configuration → <new>` (followed by the Sync button's warning when git is mid-operation), then the transcript | no | yes |
 | Silent | a commit, a return to the window, any other HEAD movement on the same branch | untouched; the transcript is hidden, but `warn` and `error` lines are still written; one line in the event stream at the end | no | no |
 
 *Visible as an operation* means the operation pill, the `Syncing` phase on the ribbon, the dropped selection
 and the clearing of the previous run's error text and overlay. A silent Sync does none of it: bad news on the
 screen is not erased by a refresh nobody asked for, and the phase a finished run left behind stays. It is still
 a Sync, though: the engine takes one command at a time, so while it runs the workspace commands (Build, Sync,
-Clean, Optimize, pull, the branch chip) stay locked and the Sync button shows its busy state, exactly as for any
-other Sync — no pill, no ribbon change and no console clear come with it. Its one
+Clean, Optimize, pull, the branch chip, the configuration segment) stay locked and the Sync button shows its busy
+state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. Its one
 stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
 
-**The Sync button and a branch change start the screen over; the other kinds refresh it in place.** A Manual or
-BranchChange Sync (`SyncModeRules.RestartsPlanSurface`) blanks the project list and the graph at the request, in
-the same moment as the console and the event stream. Only the screen is blanked: the rows, their decisions and
-the topology stay in the view model, so the phase does not drop to `Boot`, the list shows no invite and the graph
-no *appears after Sync* label, and its header stays empty rather than counting zero projects. When the Sync's
+**The Sync button, a branch change and a configuration switch start the screen over; the other kinds refresh it
+in place.** A Manual, BranchChange or ConfigurationChange Sync (`SyncModeRules.RestartsPlanSurface`) blanks the
+project list and the graph at the request, in the same moment as the console and the event stream. Only the
+screen is blanked: the rows, their decisions and the topology stay in the view model, so the phase does not drop
+to `Boot`, the list shows no invite and the graph no *appears after Sync* label, and its header stays empty
+rather than counting zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
+too (`SyncModeRules.DropsDecisions`): the configuration is part of every signature, so the decisions in hand
+belong to the configuration selected before, and when the engine starts that Sync every row returns to the start
+mode (§14.3) until the new configuration's preview colours it. It happens then and not at the click, because the
+phase moves to `Syncing` then; emptied decisions under a resting phase would have the ribbon read "everything
+looks up to date" for the moment in between. When the Sync's
 topology arrives the list and the graph come back with the reveal and the graph fitted to the panel, even when
 the structure is the same as before. A Sync that brings no topology — the send failed, planning failed, the
 engine was lost, or it completed without one — puts the previous surface back. An Appended or Silent Sync
@@ -2831,6 +2841,19 @@ abort it in git`); the same tooltip replaces the `N behind` chip's while the pul
 reason (§10.3). A checkout that is in flight holds every one of those gates for itself: until the engine
 answers, Build, Sync, the maintenance jobs and the pull are closed, because a run started on the new tree would
 have its console cleared by the checkout's section, and a pull would advance the wrong branch.
+
+**The configuration segment starts a Sync, and it is gated like one.** Switching between `Debug` and `Release`
+runs the Sync button's process with the new configuration — a ConfigurationChange Sync (§10.2): the console and
+the event stream clear, the list and the graph start over, the new section's first line is
+`Configuration → Release`, and nothing goes to the network. The segment is therefore enabled exactly when a Sync
+could start (`CanSwitchConfiguration`): a workspace is open, no run is in flight or being planned, no workspace
+operation (Sync, Clean, Optimize, a checkout, a pull) is in flight and the engine is available. It follows the
+Sync command's own gate, so it locks the moment a Sync is requested, not when the engine answers — which is what
+a return to the window needs: clicking the segment of a window in the background activates the window first, the
+activation can request a silent Sync (§10.3), and only then is the click processed; the segment is locked by
+that time, so that click is swallowed and the next one switches. A switch accepted while a Sync was in flight
+would let that Sync's answer, computed for the old configuration, colour the rows of the new one. A git
+operation left half-way does not lock it, exactly as it does not lock the Sync button.
 
 **The maintenance box.** Three icon buttons in one chip-weight box — *Clean* (eraser), *Optimize* (gauge) and
 *Resolve cycles* (unlink) — 24px tall, `surface-raised`, one hairline border, `radius-xs`, clipped, with a
@@ -4296,16 +4319,17 @@ story of the last operation alone. The next preview that arrives outside a run �
 return to the window starts included — decides every row afresh, a row the last run finished included, so an
 output that went stale in the background after the run does not stay green; only while a run is still in flight
 does a preview leave a finished row's decision alone, since a preview arriving mid-run describes the run's plan
-from before that row's result. Switching the configuration moves the standing
-ahead of the next preview as well: the configuration is part of every signature, so every decided row drops to
-`stale` at once, with the reason the next preview will give — `SignatureChanged` when the project has ever built
-successfully, `never built` when it has not or when its output was missing (for a row that last failed, the
-built commit the preview carries is the trace of a past success); the next Sync reads the new configuration's
-own output evidence — while a row with no decision stays unknown. The change also neutralises the
-previous run's fields, so a row that just succeeded does not keep the run's green, and it closes the previous
-run's story: a finished run's summary and a stopped run's `Stopped — n/m · k not built` both give way to the new
-plan (`Ready — N to build`). A stopped run's plan belongs to the old configuration, so there is nothing under
-the new one it could be resumed as; the next *Build* starts from the new plan. `queued` is amber, not grey:
+from before that row's result. Switching the configuration predicts nothing: it
+starts its own Sync (§10.2), and when that Sync starts every row lets go of its decision and returns to the
+start mode until the new configuration's preview colours it. The standing cannot be moved ahead of that preview,
+because the answer depends on something the App does not see: the ledger keeps one signature per project, the
+one its last successful build was made in (§7.2), so switching to a configuration a project was not last built
+in makes it stale — unless that configuration's output was built elsewhere since (§7.6) — while switching back
+without building in between leaves every row that was up to date up to date. That Sync also closes the previous run's story the way every visible Sync does: the run's fields are
+neutralised, so a row that just succeeded does not keep the run's green, and a finished run's summary or a
+stopped run's `Stopped — n/m · k not built` gives way, through `Syncing`, to the new plan (`Ready — N to build`).
+A stopped run's plan belongs to the old configuration, so there is nothing under the new one it could be resumed
+as; the next *Build* starts from the new plan. `queued` is amber, not grey:
 being in the queue is not a result, it is the scope of the operation that is running, and the amber the marking
 wave lit must not go out when the run begins. The mapping lives in one place (`VisualStatuses.For`) and every
 surface reads it; the run-story surfaces map the engine's status on their own through `VisualStatuses.OfRun`,
@@ -4337,8 +4361,9 @@ every other row, because the triangle already says it. This is not the orange ch
 the warning's own amber.
 
 **The start mode** is the `unknown` standing: a row that has no decision yet — the application has started but
-no Sync has run, or the repository root has just changed and the decisions the rows carried no longer describe
-what will be built; the list and the graph drop back together. A branch change does not drop them: the rows
+no Sync has run, or the decisions the rows carried no longer describe what will be built because the repository
+root has just changed or a configuration switch's Sync has just started; the list and the graph drop back
+together. A branch change does not drop them: the rows
 keep their decisions while the screen starts over (§10.2), and its Sync's preview recolours them with the new
 branch's decisions. Nothing is known, so nothing is
 coloured: the row draws a plain grey stripe at full opacity and a **four-arc ring** in place of the filled dot,
@@ -5209,7 +5234,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
-| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · configuration change) | `Core/Planning/NextPreview.cs` |
+| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
@@ -5250,9 +5275,10 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Automatic Sync decision: triggers (HEAD watcher, window activation, end of run), the one pending trigger, the double-Sync check, the interrupt request | `App/Services/AutoSyncCoordinator.cs` |
 | The view model's side of it: the port, the interrupted run's summary | `App/ViewModels/RunViewModel.AutoSync.cs` |
 | Git-operation gate: the chip's dot and tooltip, the checkout and pull locks, the 2 s poll, the stuck-lock line | `App/ViewModels/RunViewModel.GitOperation.cs`, `App/Services/IPollTimer.cs` |
-| Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface) | `App/ViewModels/SyncMode.cs` |
-| Plan-surface restart on the Sync button and a branch change: the flag, blanking the list and the graph, the replay on topology, the restore when no topology comes, cutting a playing finale | `App/ViewModels/RunViewModel.cs` (`SyncCoreAsync` — the trigger), `RunViewModel.ActionBar.cs` (`PlanSurfaceRestarting`), `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`), `MainWindow.xaml.cs` (`BlankPlanSurface`), `App/Graph/GraphView.xaml.cs` (`CancelEndFinale`) |
+| Sync kinds and their rules (clearing, fetch, transcript, visibility, restarting the plan surface, dropping the decisions) | `App/ViewModels/SyncMode.cs` |
+| Plan-surface restart on the Sync button, a branch change and a configuration switch: the flag, blanking the list and the graph, the replay on topology, the restore when no topology comes, cutting a playing finale | `App/ViewModels/RunViewModel.cs` (`SyncCoreAsync` — the trigger), `RunViewModel.ActionBar.cs` (`PlanSurfaceRestarting`), `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`), `MainWindow.xaml.cs` (`BlankPlanSurface`), `App/Graph/GraphView.xaml.cs` (`CancelEndFinale`) |
 | Branch chip checkout, its gate, the stash setting; the checkout's answer and the pull, with their stream `warn` lines | `App/ViewModels/RunViewModel.ActionBar.cs` (`SelectBranch`, `CanSwitchBranch`), `RunViewModel.Workspace.cs` (`OnCheckoutCompletedAsync`, `OnPullCompletedAsync`, `PullRepositoryAsync`) |
+| Configuration switch: the segment's gate, the Sync it starts and its section line, the decisions dropped when that Sync starts | `App/ViewModels/RunViewModel.cs` (`SetConfiguration`, `ConfigurationChangedLine`), `RunViewModel.ActionBar.cs` (`CanSwitchConfiguration`), `RunViewModel.Workspace.cs` (`OnSyncStarted`), `App/Views/ActionBar.xaml.cs` (`RefreshConfigGate`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Sync flow (fetch or last known remote → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
@@ -5327,7 +5353,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Amber-plus-spinner on a running Sync (same treatment, action bar) | `App/Views/ActionBar.xaml.cs` (`RefreshSyncBusy`) |
 | Maintenance-box Clean command, its gate, the request/in-flight guard, the Clean error codes and the Sync chained on completion | `App/ViewModels/RunViewModel.cs` (`CleanCommand`), `RunViewModel.Workspace.cs` |
 | Maintenance-box Optimize command, the shared workspace-job gate (mutually exclusive with Clean), its request/in-flight guard and its error codes — the plan surface cleared at the click and the Sync chained on completion, through the handover it shares with Clean | `App/ViewModels/RunViewModel.cs` (`OptimizeCommand`), `RunViewModel.Workspace.cs` |
-| Hollow reset of rows and the will-build surface (repository change) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
+| Hollow reset of rows and the will-build surface (repository change, the start of a configuration switch's Sync) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
 | Emptying rows, graph and the will-build surface at a Clean or Optimize click and on a real repository change | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
