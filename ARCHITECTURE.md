@@ -2415,11 +2415,10 @@ Splitters have a 7 px grab area over a 1 px visible line that turns amber while 
 ### 13.1 MVVM
 
 `RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
-action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit
-and the update offer. It owns the project rows, the counters, the phase, the selection, the filter and the
-command set. Rows are
-`ProjectRowViewModel` — observable state only; every visual decision (colour, glyph, badge) is made in XAML from
-that state.
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit,
+Esc's run layer, the discovery state and the update offer. It owns the project rows, the counters, the phase, the
+selection, the filter and the command set. Rows are `ProjectRowViewModel` — observable state only; every visual
+decision (colour, glyph, badge) is made in XAML from that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
 `RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `UpdateText`, `ProjectFilter`,
@@ -3215,11 +3214,14 @@ disabled and the line names what it waits for, in a fixed order — a Clean, Opt
 (`Available once the running task finishes.`), then any Sync, the silent one included
 (`Available once Sync finishes.`), then a build that is running, being marked or waiting for other work to end
 (`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
-read from the shortcut catalog). The reason is one computed property of the view model, re-evaluated at the single
-workspace-busy notification point and announced only when it changes, so the button comes back on its own when
-the work ends. *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's
-popover layer (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule
-exists because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
+read from the shortcut catalog). The reason is one computed property of the view model; its task bucket takes the
+workspace work other than Sync from the same list the workspace-busy question reads, so the two cannot drift. It is
+re-evaluated at the workspace-busy notification — which every change of the Sync, Clean, Optimize, checkout and
+pull flags and of the run lock reaches, and so does the end of a run — and when a run starts, since a Resolve
+reads as a task; it is announced only when it changes, so the button comes back on its own when the work ends.
+*Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's popover layer
+(§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule exists
+because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
 The card's content is the sample offer the pill shows.
 
 *Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
@@ -4946,11 +4948,13 @@ opposite of that and are encouraged. Toasts and in-app popups do not exist.
 
 Rows are focusable with a tab index; Enter toggles selection; arrow keys navigate. The focus ring is 2 px amber
 at 50 % with a 1 px offset. Dialogs trap focus; popovers manage it explicitly. `AutomationProperties.Name` is
-set from one central name table so the same element cannot be named two ways. Two regions are live: the ribbon's
-phase text, assertive and announced when the phase changes, and the discovery counter (§13.2), polite and
-announced once when the count changes — its automation name is written with the text, because a block built from
-two runs reports an empty `Text` once the runs are rewritten. Contrast is asserted by test for every text token,
-including the dim ones.
+set from one central name table so the same element cannot be named two ways. The live regions are the ribbon's
+phase text, assertive and announced when the phase changes; the discovery counter (§13.2), polite and announced
+once when the count changes — its automation name is written with the text, because a block built from two runs
+reports an empty `Text` once the runs are rewritten; and the update restart screen's step line (§13.3), polite
+and announced once per step rather than per frame. Each region decides when it speaks; how it speaks is one
+helper (`LiveRegion`), which finds or creates the element's automation peer and raises the live-region event, so
+no region raises it on its own. Contrast is asserted by test for every text token, including the dim ones.
 
 Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
 in the automation tree, named with the project and its status from the same central table and refreshed by the
@@ -5406,7 +5410,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
 | Update offer — version, size, highlights; the next-minor rule and the sample placeholder the app starts with (no update engine yet) | `App/Services/UpdateOffer.cs` |
-| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
 | Restart request → the update restart screen as the topmost layer; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
