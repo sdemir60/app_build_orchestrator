@@ -15,8 +15,8 @@ public static class AppIdentity
     public static string Product { get; } =
         Self.GetCustomAttribute<AssemblyProductAttribute>()?.Product ?? Self.GetName().Name ?? "";
 
-    /// <summary><c>Directory.Build.props</c> → <c>&lt;InformationalVersion&gt;</c> (teslim etiketi dahil,
-    /// ör. <c>1.0.0+it5</c>).</summary>
+    /// <summary><c>Directory.Build.props</c> → <c>&lt;Version&gt;</c>, InformationalVersion üzerinden (ek yok,
+    /// ör. <c>1.7.0</c>). What's new'in <c>INSTALLED</c> çipi ve görülmemiş-sürüm noktası bununla karşılaştırır.</summary>
     public static string Version { get; } =
         Self.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? Self.GetName().Version?.ToString(3) ?? "";

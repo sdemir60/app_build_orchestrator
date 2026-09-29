@@ -145,6 +145,10 @@
          için geçerlidir; SDK varsayılanına bırakılmaz. -->
     <Content Include="Assets\GEIST-LICENSE.txt" CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <!-- [sürüm notları] What's new'in TEK veri kaynağı repo kökündeki CHANGELOG.md'dir; kopyası tutulmaz, exe'ye
+         gömülür ve Services/ReleaseNotes okur. LogicalName = ReleaseNotes.ChangelogResourceName (ChangelogTests
+         gömülen metnin diskteki dosya olduğunu pinler). -->
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="CHANGELOG.md" Link="CHANGELOG.md" />
   </ItemGroup>
 
 </Project>
