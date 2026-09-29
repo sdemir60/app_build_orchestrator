@@ -100,9 +100,14 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 ### 3.3 Shared build properties
 
 `Directory.Build.props` holds `Nullable`, `ImplicitUsings`, `LangVersion` and the distribution identity
-(`Version`, `InformationalVersion`, `Product`, `Company`, `Copyright`). The informational version carries a
-delivery tag so that the value observed at runtime proves the property file is actually wired: the Supervisor
-reads it from its own assembly and reports it in `engineReady`, and the App prints it in the console boot line.
+(`Version`, `Product`, `Company`, `Copyright`). The informational version is not written separately: the SDK
+derives it from `Version`, and the source-revision suffix is switched off, so every surface shows a plain
+`major.minor.patch`. The Supervisor reads it from its own assembly and reports it in `engineReady`, and the App
+prints it in the console boot line. A test proves the property file is actually wired: both assemblies carry
+exactly the declared version, and that version is not the SDK's default `1.0.0`.
+
+`Version` moves only when a version is released, and together with the release notes: the newest version in
+`CHANGELOG.md` must equal it (§13.3, What's new), and the release is tagged `v` + that value in git.
 
 That identity is also what the UI displays. `Services/AppIdentity` reads the product name, informational
 version and copyright back off the App assembly, and the window title, the title bar caption, the tray tooltip,
@@ -3246,6 +3251,17 @@ aligned flush with the note text (its own left padding cancelled by a negative m
 the next open. The footer carries only *Close* — *Copy diagnostics* stays on About, where the rest of the
 diagnostics live.
 
+**The notes come from `CHANGELOG.md` at the repository root**, the single source — no list is kept in code.
+The App embeds the file as a resource and `ReleaseNotes` parses it on first use: a `## [x.y.z] - yyyy-MM-dd`
+heading opens a version, a `### Added` … `### Removed` heading opens a category (only the five kinds above),
+and each `- ` line is one plain-text note, with indented lines continuing it. Anything else — an unknown
+category, a note outside a category, prose inside a version, a version without notes — is rejected with its
+line number rather than silently dropped. The guards pin that the embedded text is the file on disk, that
+versions run newest first with real dates, that categories appear once each in drawing order, that notes carry
+no markup, and that the newest version is the running one — so `Version` cannot move without its notes. The
+file is written only when a version is released: a few short, general lines per version, summarizing the
+merges since the previous version's tag.
+
 This is also where the user is *sent*. When the version last read differs from the running one, a 5 px amber
 dot sits on the title bar's sparkle button, its tooltip becomes `What's new in {version}`, and it stays there
 even on a fresh install with no recorded version at all. Opening the dialog clears the dot and records the
@@ -4713,6 +4729,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | App icon background | every ICO frame's corners are transparent — the tile has not come back |
 | Modal shell | no dialog file (Settings, About, What's new) carries its own copy of the shared shell's behaviour — scrim and in-dialog clicks, Esc, focus trap, entrance, focus move, the `Ds.Dialog` frame |
 | "What's new in" sentence | the versioned What's new sentence is composed only by `ReleaseNotes` — the title-bar tooltip and About's button both read it |
+| Release notes (`ChangelogTests`) | the App embeds the repository's `CHANGELOG.md` itself; its versions run newest first with real dates, categories appear once each in drawing order, notes are plain text, and the newest version is the running one (§13.3) |
 | Git mutation surface (`NoGitMutationOutsideTheWriterTests`) | a mutating git verb (`merge`, `checkout`, `switch`, `pull`, `rebase`, `cherry-pick`, `stash`, `clean`, `reset`, `commit`, `push`) at the head of an argument list appears only in `Core/Git/RepositoryWriter.cs` (§10.1) |
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
@@ -5040,7 +5057,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
-| Release notes (What's new data, categories, fold rule) | `App/Services/ReleaseNotes.cs` |
+| Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
 
 **Engine and IPC**
 

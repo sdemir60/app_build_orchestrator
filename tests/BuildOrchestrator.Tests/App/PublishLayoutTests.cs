@@ -179,24 +179,28 @@ public sealed class PublishLayoutTests
     }
 
     /// <summary>
-    /// [D1 review · B2] Sürüm kablosunun GERÇEKTEN kurulu olduğunu AYIRT EDEN test. Yalın <c>1.0.0</c>,
-    /// <c>Directory.Build.props</c> hiç devreye girmese bile .NET SDK'nın varsayılanıdır — onu doğrulamak
-    /// "yeşil ama boş" bir testtir. Bu yüzden props ayırt edici bir <c>InformationalVersion</c> (teslim etiketi)
-    /// tanımlar ve hem App hem Supervisor assembly'sinde AYNEN gözlenir. Supervisor bu değeri
-    /// <c>engineReady.engineVersion</c> ile bildirir; App onu konsolun boot satırında gösterir.
+    /// [D1 review · B2] Sürüm kablosunun GERÇEKTEN kurulu olduğunu AYIRT EDEN test: hem App hem Supervisor
+    /// assembly'sinin <c>InformationalVersion</c>'ı <c>Directory.Build.props</c>'taki <c>Version</c>'ın KENDİSİdir
+    /// (ek yok) ve bu değer .NET SDK'nın varsayılanı <c>1.0.0</c> değildir — props hiç devreye girmeseydi
+    /// gözlenecek değerden ayırt edilebilir. Supervisor bu değeri <c>engineReady.engineVersion</c> ile bildirir;
+    /// App onu konsolun boot satırında, What's new'de ve About'ta gösterir.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — sürüm notları]</b> ESKİ İDDİA: props, <c>Version</c>'dan FARKLI bir
+    /// <c>InformationalVersion</c> (<c>$(Version)+it5</c> teslim etiketi) tanımlar; ayırt edicilik o ekten gelirdi,
+    /// çünkü <c>Version</c> SDK varsayılanıyla aynı <c>1.0.0</c>'dı. Değişme gerekçesi: sürüm artık gerçekten
+    /// artıyor (her sürümün notu <c>CHANGELOG.md</c>'de, en üst sürüm bu değere eşit olmak zorunda) ve kullanıcıya
+    /// görünen sürüm temiz bir <c>major.minor.patch</c> olmalı — <c>1.7.0+it5</c> değil. Ayırt edicilik
+    /// artık <c>Version</c>'ın kendisinden gelir: sürüm yalnız ileri gider, <c>1.0.0</c>'a dönmez.</para>
     /// </summary>
     [Fact]
-    public void The_informational_version_proves_directory_build_props_is_really_applied()
+    public void The_informational_version_is_the_plain_version_from_directory_build_props()
     {
-        var props = Load(DirectoryBuildPropsPath);
-        string version = props.Descendants(None + "Version").Single().Value;
-        string declared = props.Descendants(None + "InformationalVersion").Single().Value
-            .Replace("$(Version)", version, StringComparison.Ordinal);
+        string version = Load(DirectoryBuildPropsPath).Descendants(None + "Version").Single().Value;
 
-        Assert.NotEqual(version, declared); // SDK varsayılanından AYIRT EDİLEBİLİR olmalı
+        Assert.NotEqual("1.0.0", version); // SDK varsayılanından AYIRT EDİLEBİLİR olmalı
 
         foreach (var assembly in new[] { typeof(SupervisorLayout).Assembly, typeof(BuildOrchestrator.Supervisor.SupervisorHost).Assembly })
-            Assert.Equal(declared,
+            Assert.Equal(version,
                 assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion);
     }
 }

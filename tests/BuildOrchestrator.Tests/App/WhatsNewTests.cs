@@ -38,8 +38,9 @@ public class WhatsNewTests
         Assert.Equal("Brush.StatusFail", ReleaseNotes.SwatchBrushKey(NoteKind.Removed));
     }
 
-    /// <summary>Liste en yeni SÜRÜM ÜSTTE olacak şekilde durur ve çalışan sürümün girdisi vardır — <c>CURRENT</c>
-    /// etiketi ona konur.</summary>
+    /// <summary>Liste en yeni SÜRÜM ÜSTTE olacak şekilde durur ve çalışan sürümün girdisi vardır — <c>INSTALLED</c>
+    /// çipi ona konur. Gömülü <c>CHANGELOG.md</c>'nin en üst sürümü <c>Directory.Build.props</c>'taki sürümdür:
+    /// sürüm numarası notu yazılmadan artırılamaz.</summary>
     [Fact]
     public void The_running_version_has_an_entry_so_it_can_be_marked_current()
     {
@@ -47,6 +48,79 @@ public class WhatsNewTests
         Assert.NotNull(ReleaseNotes.Current);
         Assert.Equal(AppIdentity.Version, ReleaseNotes.All[0].Version);
         Assert.All(ReleaseNotes.All, e => Assert.NotEmpty(e.Notes));
+    }
+
+    // ---------------------------------------------------------------- CHANGELOG.md okuyucusu (saf)
+
+    /// <summary>[sürüm notları] Okuyucu sürümleri dosyadaki sırayla, numara ve tarihiyle verir; maddeler
+    /// dosyadaki sırayla ve bulundukları kategoriyle gelir. Başlık ve ilk sürümden önceki giriş metni veri
+    /// değildir.</summary>
+    [Fact]
+    public void The_changelog_reader_returns_versions_and_their_notes_in_file_order()
+    {
+        const string markdown =
+            "# Changelog\r\n" +
+            "\r\n" +
+            "Intro text that is not a note.\r\n" +
+            "\r\n" +
+            "## [1.1.0] - 2026-02-03\r\n" +
+            "\r\n" +
+            "### Added\r\n" +
+            "\r\n" +
+            "- First added.\r\n" +
+            "- Second added.\r\n" +
+            "\r\n" +
+            "### Fixed\r\n" +
+            "\r\n" +
+            "- One fix.\r\n" +
+            "\r\n" +
+            "## [1.0.0] - 2026-01-02\r\n" +
+            "\r\n" +
+            "### Removed\r\n" +
+            "\r\n" +
+            "- Something old.\r\n";
+
+        var entries = ReleaseNotes.Parse(markdown);
+
+        Assert.Equal(["1.1.0", "1.0.0"], entries.Select(e => e.Version));
+        Assert.Equal(["2026-02-03", "2026-01-02"], entries.Select(e => e.Date));
+        Assert.Equal(
+            [new ReleaseNote(NoteKind.Added, "First added."), new ReleaseNote(NoteKind.Added, "Second added."),
+             new ReleaseNote(NoteKind.Fixed, "One fix.")],
+            entries[0].Notes);
+        Assert.Equal([new ReleaseNote(NoteKind.Removed, "Something old.")], entries[1].Notes);
+    }
+
+    /// <summary>Uzun bir madde dosyada girintili devam satırlarıyla sarılabilir — ekranda tek madde olarak,
+    /// satırlar tek boşlukla birleşmiş okunur.</summary>
+    [Fact]
+    public void A_wrapped_note_is_joined_into_one_line()
+    {
+        const string markdown =
+            "## [1.0.0] - 2026-01-02\n" +
+            "### Changed\n" +
+            "- A long note that\n" +
+            "  continues here.\n";
+
+        var note = Assert.Single(ReleaseNotes.Parse(markdown)[0].Notes);
+        Assert.Equal("A long note that continues here.", note.Text);
+    }
+
+    /// <summary>Ekranda görünmeyecek ya da yanlış görünecek her biçim hatası sessizce atlanmaz, satır
+    /// numarasıyla reddedilir: bilinmeyen kategori, kategorisiz madde, bozuk sürüm başlığı, sürümün içinde
+    /// serbest metin ve maddesi olmayan sürüm.</summary>
+    [Theory]
+    [InlineData("## [1.0.0] - 2026-01-02\n### Security\n- x\n", 2)]
+    [InlineData("## [1.0.0] - 2026-01-02\n- x\n", 2)]
+    [InlineData("## 1.0.0 - 2026-01-02\n### Added\n- x\n", 1)]
+    [InlineData("## [1.0] - 2026-01-02\n### Added\n- x\n", 1)]
+    [InlineData("## [1.0.0] - 2026-1-2\n### Added\n- x\n", 1)]
+    [InlineData("## [1.0.0] - 2026-01-02\n### Added\n- x\nstray prose\n", 4)]
+    [InlineData("## [1.1.0] - 2026-01-03\n### Added\n\n## [1.0.0] - 2026-01-02\n### Added\n- x\n", 1)]
+    public void A_malformed_changelog_is_rejected_with_its_line_number(string markdown, int line)
+    {
+        var error = Assert.Throws<FormatException>(() => ReleaseNotes.Parse(markdown));
+        Assert.Contains($"line {line}:", error.Message, StringComparison.Ordinal);
     }
 
     /// <summary>Katlı kısmın etiketi kaç sürümün gizlendiğini söyler.</summary>

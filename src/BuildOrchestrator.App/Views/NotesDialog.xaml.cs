@@ -54,9 +54,9 @@ public partial class NotesDialog : ModalDialog
     /// <summary>[test yüzeyi] Katlı kısmın bloğu (ayraç + buton) — görünürlük butona değil BUNA yazılır.</summary>
     internal FrameworkElement EarlierVersionsFold => EarlierVersionsBlock;
 
-    /// <summary>[test seam] Çizilecek sürüm listesi — üretimde HER ZAMAN <see cref="ReleaseNotes.All"/>. Testler
-    /// sürümler arası ayracı, katlı kısmı ve sticky kaymayı ölçmek için çok sürümlü sentetik bir liste verir
-    /// (gerçek listede tek sürüm olabilir; o durumda bu yüzeylerin hiçbiri çizilmez).</summary>
+    /// <summary>[test seam] Çizilecek sürüm listesi — üretimde HER ZAMAN <see cref="ReleaseNotes.All"/> (gömülü
+    /// <c>CHANGELOG.md</c>). Testler sürümler arası ayracı, katlı kısmı ve sticky kaymayı gerçek dosyanın
+    /// içeriğinden bağımsız ölçmek için sayısı bilinen sentetik bir liste verir.</summary>
     internal IReadOnlyList<ReleaseEntry> Releases { get; set; } = ReleaseNotes.All;
 
     /// <summary>Diyaloğu açar: listeyi <c>showAll:false</c> ile kurar (katlama HER açılışta 3'e döner — geri

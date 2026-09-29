@@ -508,7 +508,8 @@ tabs; the header shows the installed version in a small mono chip, and the body 
 version first. Each version keeps its number, date and — on the running version — a neutral `INSTALLED` chip
 in a left column that stays in view while its notes scroll; the notes sit on the right, grouped into Added /
 Changed / Fixed / Performance / Removed. The three newest versions are open and the rest fold under an
-*Earlier versions* button. There is no pop-up on launch.
+*Earlier versions* button. There is no pop-up on launch. The notes are [CHANGELOG.md](CHANGELOG.md), built into
+the app.
 
 When the version you last opened this dialog on differs from the running one — including on a fresh install,
 where nothing has been opened yet — a small amber dot sits on the star button and its tooltip names the new

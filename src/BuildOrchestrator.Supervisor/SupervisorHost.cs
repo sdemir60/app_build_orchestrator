@@ -83,9 +83,8 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
 
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
-        // [D1 review · B2] TEK sürüm kimliği: Directory.Build.props → InformationalVersion (teslim etiketiyle,
-        // ör. "1.0.0+it5"). Yalın assembly Version'ı SDK varsayılanından (1.0.0) ayrılamazdı; App bu değeri
-        // konsolun boot satırında gösterir. Attribute yoksa assembly sürümüne düşülür.
+        // [D1 review · B2] TEK sürüm kimliği: Directory.Build.props → Version → InformationalVersion (ek yok,
+        // ör. "1.7.0"). App bu değeri konsolun boot satırında gösterir. Attribute yoksa assembly sürümüne düşülür.
         string version =
             typeof(SupervisorHost).Assembly
                 .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
