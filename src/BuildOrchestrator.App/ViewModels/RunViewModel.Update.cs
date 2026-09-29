@@ -29,9 +29,10 @@ public sealed partial class RunViewModel
     /// checkout / pull → görev, (2) herhangi bir Sync (sessizi dahil: kurulum onu da yarıda keserdi) → Sync, (3) koşu
     /// kilidi (<see cref="IsMidRunLocked"/> — koşu, işaretleme koreografisi, bekleyen Build isteği) → koşu. Resolve bir
     /// koşudur ama görev gibi okunur, bu yüzden koşu kilidinden ÖNCE sorulur. Metin ve sıra <see cref="UpdateText"/>'tedir.
+    /// Görev kovasının workspace üyeliği <see cref="NonSyncWorkspaceBusy"/>'dir (<see cref="WorkspaceBusy"/> ile tek liste).
     /// </summary>
     public string? UpdateRestartBlockedReason => UpdateText.RestartBlockedReason(
-        taskRunning: CleanBusy || OptimizeBusy || IsResolvingCycles || CheckoutBusy || PullBusy,
+        taskRunning: NonSyncWorkspaceBusy || IsResolvingCycles,
         syncRunning: SyncBusy,
         buildRunning: IsMidRunLocked);
 

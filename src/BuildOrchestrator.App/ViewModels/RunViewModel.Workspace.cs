@@ -549,7 +549,13 @@ public sealed partial class RunViewModel
     /// o sırada BAŞLAYAN bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
     /// Pull ise yanlış branch'i ilerletir. [kullanıcı bildirimi 2026-09-29] Bu yüzden o sırada basılan Build başlamaz,
     /// bekler (<see cref="QueueRun"/>) ve checkout'un Sync'i bitince yeni ağaçta açılır.</para></summary>
-    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
+    private bool WorkspaceBusy => SyncBusy || NonSyncWorkspaceBusy;
+
+    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout ya da pull. <see cref="WorkspaceBusy"/>'nin
+    /// üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada ("görev")
+    /// okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
+    /// görür.</summary>
+    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
