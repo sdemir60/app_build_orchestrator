@@ -875,9 +875,11 @@ public sealed partial class RunViewModel : ObservableObject
     internal bool SyncInFlight => _syncInFlight;
 
     // [C2] Boot geçişi: repo seçilir seçilmez (RootPath dolunca) Empty → Boot. Sonraki fazları engine event'leri sürer.
+    // [kullanıcı kararı 2026-09-29] Ters yön: kök boşalınca (workspace kapandı — CloseWorkspace) faz Empty'ye döner.
     partial void OnRootPathChanged(string value)
     {
-        if (Phase == AppPhase.Empty && !string.IsNullOrEmpty(value)) Phase = AppPhase.Boot;
+        if (string.IsNullOrEmpty(value)) Phase = AppPhase.Empty;
+        else if (Phase == AppPhase.Empty) Phase = AppPhase.Boot;
         AttachAutoSync(value); // [spec 2026-09-18 §6.1] HEAD izleyicisi kökü izler
         RefreshGitOperation(); // [spec 2026-09-18 §6.4] eski kökün git işlemi yeni kökte anlamsız
     }
