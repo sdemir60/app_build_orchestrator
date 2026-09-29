@@ -50,7 +50,7 @@ public class KillMidBuildTests
             var reader = new NdjsonReader(supervisor.StandardOutput!);
             // [B1/F2 · fix-1] CascadeKillTests ile aynı kök: taze .NET Supervisor process'inin BOOT'unu bekleyen
             // sabit 5 sn, yük altında ölçülmüş kırılma noktası (task-B1-report.md İŞ 4). Tek sahibi:
-            // TestPaths.WideStartupTimeout. Aşağıdaki kill→ölüm iddiası (≤2000 ms) BU DEĞİŞİKLİKTEN ETKİLENMEZ —
+            // TestPaths.WideStartupTimeout. Aşağıdaki kill→ölüm iddiası (≤ TestPaths.OrphanBudget) BU DEĞİŞİKLİKTEN ETKİLENMEZ —
             // o, testin asıl spec'i olan §3 kabul ölçütüdür ve dokunulmadı.
             Assert.IsType<EngineReadyEvent>(await reader.ReadAsync<IpcEvent>().WaitAsync(TestPaths.WideStartupTimeout));
 
@@ -67,7 +67,7 @@ public class KillMidBuildTests
             // sleep YOK, gerçek bir olaya bağlı) ve ≥2 hâlâ canlı gerçek MSBuild.exe (Finding 1: kill anında GERÇEK
             // derleyici/kopya işi uçuşta olduğunun kanıtı — KM2-4 compile'ı bitirmiş, ortak-bin kopyasını henüz
             // YAPMAMIŞ olarak Exec'te bloke haldedir). Cold build yavaş olabilir → cömert timeout'lar (IPC 60s,
-            // IOCP 30s); asıl kill→ölüm iddiası aşağıda AYRI ve dar (≤2000ms) tutulur.
+            // IOCP 30s); asıl kill→ölüm iddiası aşağıda AYRI ve dar (≤ TestPaths.OrphanBudget) tutulur.
             int startedCount = 0;
             Task<IpcEvent?> ipcTask = ReadIpcAsync(reader);
             Task<JobNotification?> iocpTask = Task.Run(() => iocp.WaitNext(TimeSpan.FromSeconds(30)));
@@ -118,12 +118,8 @@ public class KillMidBuildTests
 
         var sw = Stopwatch.StartNew();
         outer.Dispose(); // App'in en sert ölümü: son job handle kapanışı → KILL_ON_JOB_CLOSE kaskadı
-        foreach (var p in handles)
-            await p.WaitForExitAsync(new CancellationTokenSource(2000).Token); // aşım → OCE → FAIL
-        sw.Stop();
-        Assert.True(sw.ElapsedMilliseconds <= 2000, $"kaskat {sw.ElapsedMilliseconds}ms");
-        foreach (var p in handles) // 0 orphan
-            Assert.Throws<ArgumentException>(() => Process.GetProcessById(p.Id));
+        // ≤ TestPaths.OrphanBudget, 0 orphan — bekleyiş ve iddia ortak yardımcıda
+        await ProcessTree.AssertNoOrphansAsync(handles, TestPaths.OrphanBudget, sw, "the outer job closed");
 
         // Fix wave 1 / Finding 1: succeededBeforeKill artık GARANTİLİ ≥1 (bkz. yukarıdaki birleşik döngünün çıkış
         // koşulu — KM1 gecikmesiz olduğu için bu, opsiyonel/tesadüfi bir doğrulama DEĞİL, her koşuda tetiklenen

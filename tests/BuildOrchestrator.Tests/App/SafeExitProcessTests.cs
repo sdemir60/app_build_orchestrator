@@ -26,25 +26,25 @@ namespace BuildOrchestrator.Tests.App;
 /// ExitReady → Shutdown → OnExit zinciri) test gövdesi oynar; OnExit'in bekleyişinin kilitlenmediğini
 /// <see cref="AppShutdownTests"/> pinler — burada ölçülen Supervisor ve MSBuild tarafıdır.</para>
 ///
-/// <para><b>İddialar, bu sırayla:</b> (1) TEK graceful <c>stopRun</c> gider ve gittiği anda <c>ExitReady</c> henüz
-/// yoktur; (2) <c>ExitReady</c> geldiğinde koşuda görülen her <c>MSBuild.exe</c> ÇOKTAN çıkmıştır (kendiliğinden
-/// bitti — henüz hiçbir şey öldürülmedi) ve stop anında uçuşta olan her proje <c>projectSucceeded</c> raporlamıştır;
-/// (3) disposal bekleyişi döndükten sonra Supervisor ve job'da görülen her üye en çok 2 sn içinde çıkmıştır
-/// (0 orphan). Drain'i beklemeden kapanan ya da uçuştakileri öldüren bir çıkış (2)'yi kırar.</para>
+/// <para><b>İddialar, bu sırayla:</b> (1) TEK graceful <c>stopRun</c> gider — drain boyunca da tek kalır — ve ne
+/// gittiği anda ne de <see cref="RunViewModel.RequestExit"/> dönerken <c>ExitReady</c> vardır; (2) <c>ExitReady</c>
+/// geldiğinde koşuda görülen her <c>MSBuild.exe</c> ÇOKTAN çıkmıştır (kendiliğinden bitti — henüz hiçbir şey
+/// öldürülmedi) ve stop anında uçuşta olan her proje <c>projectSucceeded</c> raporlamıştır; (3) disposal kendi
+/// tavanı (<see cref="AppShutdown.DisposalTimeout"/>) içinde biter ve döndükten sonra Supervisor ile job'da görülen
+/// her üye <see cref="TestPaths.OrphanBudget"/> içinde çıkmıştır (0 orphan — <see cref="ProcessTree"/>). Drain'i
+/// beklemeden kapanan ya da uçuştakileri öldüren bir çıkış (1)'i ya da (2)'yi kırar.</para>
 ///
 /// <para><b>Harness:</b> VM thread-safe değildir, üretimde her çağrısı UI dispatcher'ında koşar. Burada da TEK
 /// thread'i vardır: <see cref="DispatcherSynchronizationContext"/> kurulu bir STA thread'i (<see cref="StaThread"/>);
-/// motor olayları MainWindow'daki gibi <c>Dispatcher.InvokeAsync</c> ile oraya taşınır, bekleyişler
-/// <see cref="DispatcherPump.PumpUntil"/> ile olaya bağlanır (sleep yok — D8). Process ağacı outer Job'un IOCP'si
-/// ile izlenir (<see cref="JobMembers"/>). Test <c>[SkippableFact]</c>'tir (<c>[StaFact]</c> Skip'i tanımaz): STA
-/// gövdesinde atılan Skip, <see cref="StaThread"/>'in TCS'inden tipi değişmeden geçer.</para>
+/// motor olayları MainWindow'daki gibi dispatcher kuyruğuyla oraya taşınır (<c>BeginInvoke</c> ile: VM'den kaçan bir
+/// istisna testi o anda düşürür — gerekçe gövdede), bekleyişler <see cref="DispatcherPump.PumpUntil"/> ile olaya
+/// bağlanır (sleep yok — D8). Process ağacı outer Job'un IOCP'si ile izlenir (<see cref="JobMembers"/>). Test
+/// <c>[SkippableFact]</c>'tir (<c>[StaFact]</c> Skip'i tanımaz): STA gövdesinde atılan Skip, <see cref="StaThread"/>'in
+/// TCS'inden tipi değişmeden geçer.</para>
 /// </summary>
 [Trait("Category", "MsBuild")]
 public sealed class SafeExitProcessTests
 {
-    /// <summary>§3/D8 kabul ölçütü "app ölür → ≤2s, orphan yok" — <see cref="CascadeKillTests"/>'in penceresi.</summary>
-    private const int OrphanBudgetMs = 2000;
-
     [SkippableFact]
     public async Task After_a_safe_exit_no_supervisor_or_msbuild_process_is_left()
     {
@@ -65,20 +65,13 @@ public sealed class SafeExitProcessTests
         {
             var exit = await StaThread.RunAsync(() => RunAndExit(engine, members, repo.RootPath), "safe-exit");
 
-            // (3) Uygulama öldü (OnExit'in bekleyişi döndü): Supervisor ve job'da görülen her üye en çok 2 sn içinde
-            // çıkar. Handle'lar üyeler doğarken açıldı, bekleyiş olaya bağlı — CascadeKillTests deseni.
+            // (3) Uygulama öldü (OnExit'in bekleyişi döndü): disposal kendi tavanı içinde bitti ve Supervisor ile job'da
+            // görülen her üye TestPaths.OrphanBudget içinde çıktı. Handle'lar üyeler doğarken açıldı; bekleyiş ve iddia
+            // CascadeKillTests/KillMidBuildTests ile ortak (ProcessTree).
+            Assert.True(exit.DisposalCompleted,
+                $"the engine's disposal did not finish within AppShutdown.DisposalTimeout ({AppShutdown.DisposalTimeout})");
             Assert.Contains(exit.Observed, p => p.Id == exit.SupervisorPid); // vakum karşıtı: port doğumları taşıdı
-            using (var budget = new CancellationTokenSource(OrphanBudgetMs))
-            {
-                try { foreach (var p in exit.Observed) await p.WaitForExitAsync(budget.Token); }
-                catch (OperationCanceledException) { /* aşım — aşağıdaki iddia orphan'ları adlandırır */ }
-            }
-            long sinceExitMs = exit.SinceExit.ElapsedMilliseconds;
-            var orphans = exit.Observed.Where(p => !p.HasExited).Select(p => p.Id).ToList();
-            Assert.True(orphans.Count == 0,
-                $"orphans {sinceExitMs} ms after the app exited: pid {string.Join(", ", orphans)} "
-                + $"(supervisor {exit.SupervisorPid}, disposal completed: {exit.DisposalCompleted})");
-            Assert.True(sinceExitMs <= OrphanBudgetMs, $"the tree took {sinceExitMs} ms to die after the app exited");
+            await ProcessTree.AssertNoOrphansAsync(exit.Observed, TestPaths.OrphanBudget, exit.SinceExit, "the app exited");
         }
         finally
         {
@@ -100,13 +93,16 @@ public sealed class SafeExitProcessTests
             LegacyWorktreePoolRoot = TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
 
-        // Motorun olayları MainWindow'daki gibi VM'in thread'ine taşınır; sıra korunur. Proje sonuçları VM'e
-        // verilmeden ÖNCE kaydedilir: ExitReady bir olayın ORTASINDA atılır ve o ana kadarki her sonucu görmelidir.
+        // Motorun olayları MainWindow'daki gibi VM'in thread'ine, dispatcher kuyruğuyla taşınır; sıra korunur. Yol
+        // InvokeAsync DEĞİL BeginInvoke'tur [Task 5 fix round 1 · M3]: InvokeAsync, VM'den (ya da ExitReady
+        // handler'ından) kaçan bir istisnayı kendi görevinde sessizce tutar ve test bir zaman aşımına düşerdi;
+        // BeginInvoke onu pompadan kaçırır — PumpUntil gerçek sebeple, o anda kırılır. Proje sonuçları VM'e verilmeden
+        // ÖNCE kaydedilir: ExitReady bir olayın ORTASINDA atılır ve o ana kadarki her sonucu görmelidir.
         var succeeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool synced = false;
         ErrorEvent? error = null;
-        engine.EventReceived += ev => dispatcher.InvokeAsync(() =>
+        engine.EventReceived += ev => dispatcher.BeginInvoke(() =>
         {
             switch (ev)
             {
@@ -117,7 +113,7 @@ public sealed class SafeExitProcessTests
             }
             vm.OnEvent(ev);
         });
-        engine.EngineExited += code => dispatcher.InvokeAsync(() => vm.OnEngineExited(code));
+        engine.EngineExited += code => dispatcher.BeginInvoke(() => vm.OnEngineExited(code));
 
         // (1)'in ölçüsü: stopRun giderken ExitReady kaç kez atılmıştı. (2)'ninki: ExitReady ANINDAKİ durum.
         var sent = new List<IpcCommand>();
@@ -160,15 +156,18 @@ public sealed class SafeExitProcessTests
         // Güvenli çıkış — Close to tray kapalıyken × ya da tepsi → Exit.
         vm.RequestExit();
 
-        // (1) TEK graceful stopRun gitti ve gittiği anda ExitReady henüz yoktu: çıkış drain'i bekliyor.
+        // (1) TEK graceful stopRun gitti; ExitReady ne o gittiği anda ne de RequestExit dönerken vardı — çıkış drain'i
+        // bekliyor. Drain bitince yeniden sayılır: bekleyiş ikinci bir stopRun da üretmedi.
         var stop = Assert.Single(sent.OfType<StopRunCommand>());
         Assert.Equal(StopKind.Graceful, stop.Kind);
         Assert.True(readyAtStop == 0, "ExitReady fired before the stop was sent");
+        Assert.True(readyCount == 0, "ExitReady fired before the drain — RequestExit did not wait for the work in flight");
+        DispatcherPump.PumpUntil(() => atReady is not null, TestPaths.WideRunTimeout);
+        Assert.True(atReady is not null, "ExitReady never fired — the drain did not end");
+        Assert.True(sent.OfType<StopRunCommand>().Count() == 1, "a second stopRun was sent while the exit waited");
 
         // (2) ExitReady anında koşuda görülen her MSBuild.exe kendiliğinden çıkmıştı — henüz hiçbir şey öldürülmedi —
         // ve stop anında uçuştaki her proje başarıyla bitti: drain kesilmedi.
-        DispatcherPump.PumpUntil(() => atReady is not null, TestPaths.WideRunTimeout);
-        Assert.True(atReady is not null, "ExitReady never fired — the drain did not end");
         Assert.True(atReady.LiveMsBuilds.Count == 0,
             $"MSBuild.exe still running when ExitReady fired (pid {string.Join(", ", atReady.LiveMsBuilds)}) "
             + "— the exit did not wait for the drain");
@@ -204,29 +203,40 @@ public sealed class SafeExitProcessTests
     /// sabitlenseydi (3) onu orphan sayardı; <c>IsProcessInJob</c> yalnız bu job'un (iç içe job'ları dahil)
     /// üyelerini geçirir. <c>MSBuild.exe</c>'ler ayrıca işaretlenir
     /// (<see cref="KillMidBuildTests.IsMsBuildProcess"/> — isim süzgecinin tek yeri).</para>
+    ///
+    /// <para><b>[Task 5 fix round 1 · M3] İzleme sessizce ölemez:</b> döngü yalnız <see cref="Dispose"/> portu
+    /// kapattığında kendiliğinden biter; başka her istisna (ör. <see cref="Pin"/>'den kaçan beklenmedik bir hata)
+    /// task'ı düşürür ve <see cref="MsBuilds"/>/<see cref="Freeze"/> onu orijinal tipiyle yeniden fırlatır. Aksi hâlde
+    /// (2) ve (3) eksik kalmış bir üye kümesini — bir alt kümeyi — sessizce denetlerdi.</para>
     /// </summary>
     private sealed class JobMembers : IDisposable
     {
         private readonly JobCompletionPort _port;
         private readonly nint _job;
+        private readonly Task _watch;
         private readonly Lock _gate = new();
         private readonly List<Process> _members = [];
         private readonly List<Process> _msBuilds = [];
         private bool _frozen;
+        private volatile bool _closing;
 
         /// <summary>Port <paramref name="job"/>'a HEMEN bağlanır: motor başlamadan kurulmalıdır ki doğum kaçmasın.</summary>
         public JobMembers(JobObject job)
         {
             _job = job.Handle;
             _port = job.AttachCompletionPort();
-            _ = Task.Factory.StartNew(Watch, CancellationToken.None, TaskCreationOptions.LongRunning,
+            _watch = Task.Factory.StartNew(Watch, CancellationToken.None, TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
         }
 
         /// <summary>Koşuda görülen her <c>MSBuild.exe</c>.</summary>
         public IReadOnlyList<Process> MsBuilds
         {
-            get { lock (_gate) return [.. _msBuilds]; }
+            get
+            {
+                ThrowIfWatchFailed();
+                lock (_gate) return [.. _msBuilds];
+            }
         }
 
         /// <summary>Şu an canlı <c>MSBuild.exe</c> sayısı.</summary>
@@ -235,11 +245,23 @@ public sealed class SafeExitProcessTests
         /// <summary>İzlemeyi bitirir: bundan sonra doğan sabitlenmez. Dönen küme o ana kadar görülen her üyedir.</summary>
         public IReadOnlyList<Process> Freeze()
         {
+            ThrowIfWatchFailed();
+            return TakeFrozen();
+        }
+
+        private IReadOnlyList<Process> TakeFrozen()
+        {
             lock (_gate)
             {
                 _frozen = true;
                 return [.. _members];
             }
+        }
+
+        /// <summary>İzleme düştüyse üye kümesi eksiktir: sebep burada, orijinal tipiyle fırlatılır.</summary>
+        private void ThrowIfWatchFailed()
+        {
+            if (_watch.IsFaulted) _watch.GetAwaiter().GetResult();
         }
 
         private void Watch()
@@ -248,7 +270,7 @@ public sealed class SafeExitProcessTests
             {
                 JobNotification? n;
                 try { n = _port.WaitNext(Timeout.InfiniteTimeSpan); }
-                catch (Exception ex) when (ex is Win32Exception or ObjectDisposedException)
+                catch (Exception ex) when (_closing && ex is (Win32Exception or ObjectDisposedException))
                 {
                     return; // port kapandı (Dispose): bloklu bekleyiş ERROR_ABANDONED_WAIT_0 ile döner — izleme biter
                 }
@@ -284,8 +306,9 @@ public sealed class SafeExitProcessTests
 
         public void Dispose()
         {
+            _closing = true;
             _port.Dispose(); // bloklu WaitNext döner, izleme thread'i biter
-            foreach (var p in Freeze()) p.Dispose();
+            foreach (var p in TakeFrozen()) p.Dispose(); // Dispose fırlatmaz: asıl hatayı (varsa) örtmesin
         }
 
         [DllImport("kernel32.dll", SetLastError = true)]

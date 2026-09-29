@@ -50,12 +50,8 @@ public class CascadeKillTests
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         outer.Dispose(); // App'in en sert ölümü: son job handle kapanışı → KILL_ON_JOB_CLOSE kaskadı
-        foreach (var p in handles)
-            await p.WaitForExitAsync(new CancellationTokenSource(2000).Token); // aşım → OCE → FAIL
-        sw.Stop();
-        Assert.True(sw.ElapsedMilliseconds <= 2000, $"kaskat {sw.ElapsedMilliseconds}ms (spike: 18–34ms)");
-        foreach (var p in handles) // 0 orphan
-            Assert.Throws<ArgumentException>(() => Process.GetProcessById(p.Id));
+        // ≤ TestPaths.OrphanBudget, 0 orphan — bekleyiş ve iddia ortak yardımcıda
+        await ProcessTree.AssertNoOrphansAsync(handles, TestPaths.OrphanBudget, sw, "the outer job closed (spike: 18–34 ms)");
     }
 
     [Fact]
