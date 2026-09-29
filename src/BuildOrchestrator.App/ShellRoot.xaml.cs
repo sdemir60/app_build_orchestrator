@@ -156,16 +156,69 @@ public partial class ShellRoot : UserControl
     /// <summary>[design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace var mı — panellerin boş durum görünümünün
     /// TEK girişi: workspace yokken graf, konsol ve akış başlıkları sayaç taşımaz, PROJECTS başlığında liste araçları
     /// (<c>build-order</c> etiketi + filtre chip'i, filtre kutusu) yoktur ve konsolun prompt satırı workspace bekler.
-    /// MainWindow bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (ilk açılış ve kapanış aynı yol).</summary>
+    /// MainWindow bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (ilk açılış ve kapanış aynı yol). Liste araçlarının
+    /// kapısı keşifle ORTAKTIR (<see cref="ApplyListTools"/>).</summary>
     public void SetHasWorkspace(bool hasWorkspace)
     {
-        var tools = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
-        ((UIElement)PART_ProjectsHeader.LeftContent!).Visibility = tools;
-        _projectFilter.Visibility = tools;
+        _hasWorkspace = hasWorkspace;
+        ApplyListTools();
         PART_Graph.SetHasWorkspace(hasWorkspace);
         PART_ConsoleHeader.SetHasWorkspace(hasWorkspace);
         PART_ConsoleView.SetHasWorkspace(hasWorkspace);
         PART_EventStream.SetHasWorkspace(hasWorkspace);
+    }
+
+    // ---- [design v1.24.0 §2.3 · §2.4] Sync keşfi sürerken iki panel ----
+
+    /// <summary>[design v1.24.0 · plan K6] Keşif sürüyor mu (<c>RunViewModel.IsDiscovering</c>'ten, MainWindow
+    /// sürer): başlıkta liste araçları gizlenir (<see cref="ApplyListTools"/>) ve graf keşif bloğuna geçer. Listenin
+    /// kendi bloğu (<c>PART_Discovering</c>) bir davet durumudur — <see cref="SetListInvite"/> gösterir, karar
+    /// <c>ListInvite.Resolve</c>'dadır.</summary>
+    public void SetDiscovering(bool discovering)
+    {
+        _discovering = discovering;
+        ApplyListTools();
+        PART_Graph.SetDiscovering(discovering);
+    }
+
+    /// <summary>[design v1.24.0 §9] Keşif sayacını yazar: toplam ayrı bir run'da (text-dim), geri kalanı text-faint —
+    /// metin <see cref="ViewModels.InteractionText.DiscoveryCounter"/>'dan (tek kaynak). Sayaç sakin bir canlı
+    /// bölgedir: keşif açıkken metin DEĞİŞTİYSE ekran okuyucuya <c>LiveRegionChanged</c> yükselir — aynı değerin
+    /// yeniden yazılması duyurulmaz (<c>StickyRibbon.AnnouncePhaseIfChanged</c> deseni).
+    /// <para><b>UIA adı AÇIKÇA yazılır</b> (ölçüldü): run metni sonradan yazılınca <c>TextBlock.Text</c> boş döner ve
+    /// adı ondan türeyen peer ekran okuyucuya boş bir bölge duyururdu.</para></summary>
+    public void SetDiscoveryCount(int repository, int external, bool breakdown)
+    {
+        var (total, tail) = ViewModels.InteractionText.DiscoveryCounter(repository, external, breakdown);
+        if (PART_DiscoveryTotal.Text == total && PART_DiscoveryTail.Text == tail) return;
+        PART_DiscoveryTotal.Text = total;
+        PART_DiscoveryTail.Text = tail;
+        AutomationProperties.SetName(PART_DiscoveryCount, total + tail);
+        if (!_discovering) return;
+        DiscoveryAnnouncements++;
+        var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(PART_DiscoveryCount)
+                   ?? System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(PART_DiscoveryCount);
+        peer?.RaiseAutomationEvent(System.Windows.Automation.Peers.AutomationEvents.LiveRegionChanged);
+    }
+
+    /// <summary>[test yüzeyi] Sayacın canlı bölge duyurusu kaç kez yükseldi — peer'in olayı dinleyicisiz
+    /// gözlemlenemez.</summary>
+    internal int DiscoveryAnnouncements { get; private set; }
+
+    /// <summary>Workspace var mı / keşif sürüyor mu — PROJECTS başlığındaki liste araçlarının TEK kapısının iki girdisi.
+    /// Başlangıç değerleri XAML'deki görünürlükle aynıdır (araçlar görünür): kabuk ilk çağrıyı alana dek hiçbir şeyi
+    /// gizlemez.</summary>
+    private bool _hasWorkspace = true;
+    private bool _discovering;
+
+    /// <summary>PROJECTS başlığındaki liste araçlarının (<c>build-order</c> etiketi + filtre çipi, filtre kutusu) TEK
+    /// kapısı: workspace yokken süzülecek bir şey yoktur, keşif sürerken ([design v1.24.0 · plan K6]) liste henüz
+    /// bilinmiyordur — filtre VM'de korunur, keşif bitince araçlarla birlikte geri gelir.</summary>
+    private void ApplyListTools()
+    {
+        var tools = _hasWorkspace && !_discovering ? Visibility.Visible : Visibility.Collapsed;
+        ((UIElement)PART_ProjectsHeader.LeftContent!).Visibility = tools;
+        _projectFilter.Visibility = tools;
     }
 
     // ---- [design v1.8.0 §2.4] Proje listesi boş-durum davetleri (görünürlük + kablaj MainWindow'da) ----
@@ -199,12 +252,14 @@ public partial class ShellRoot : UserControl
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü uygular (karar <see cref="ViewModels.ListInvite"/>'te
     /// verilir — SAF; burada YALNIZ uygulanır). PickRepository → invite paneli; NoProjects → 0-proje metni;
-    /// [A13/T2 · 2.4] NoFilterMatch → "filtre eşleşmedi" metni; None → hepsi gizli. Durumlar birbirini DIŞLAR.</summary>
+    /// [A13/T2 · 2.4] NoFilterMatch → "filtre eşleşmedi" metni; [design v1.24.0] Discovering → keşif bloğu; None →
+    /// hepsi gizli. Durumlar birbirini DIŞLAR.</summary>
     public void SetListInvite(ViewModels.ListInviteState state)
     {
         PART_ListInvite.Visibility = state == ViewModels.ListInviteState.PickRepository ? Visibility.Visible : Visibility.Collapsed;
         PART_NoProjects.Visibility = state == ViewModels.ListInviteState.NoProjects ? Visibility.Visible : Visibility.Collapsed;
         PART_NoFilterMatch.Visibility = state == ViewModels.ListInviteState.NoFilterMatch ? Visibility.Visible : Visibility.Collapsed;
+        PART_Discovering.Visibility = state == ViewModels.ListInviteState.Discovering ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>Yerleşim durumunu görsele uygular: kolon/satır star oranları + graf/ayraç görünürlüğü.

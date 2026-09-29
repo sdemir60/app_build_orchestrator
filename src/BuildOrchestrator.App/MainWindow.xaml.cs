@@ -294,6 +294,15 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
+        // [design v1.24.0 §2.3 · §2.4] Sync proje kümesini keşfederken iki panel boş kalmaz: başlık araçları ve graf
+        // keşif durumuna geçer, liste bloğu davet kararından gelir (RefreshListInvite), sayaç her raporla yazılır. VM
+        // keşfi topolojinin yüzeyi yeniden kurmasından ÖNCE kapatır — bloklar reveal başlamadan kalkar.
+        ApplyDiscovery();
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.IsDiscovering)) ApplyDiscovery();
+            else if (e.PropertyName == nameof(RunViewModel.DiscoveredProjects)) RefreshDiscoveryCount();
+        };
 
         // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve
         // nokta söner (eskiden design v1.9.0'da About'un What's new sekmesi görülünce yazılırdı — About artık
@@ -1085,6 +1094,19 @@ public partial class MainWindow : Window
             ? _vm.VisibleProjects.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
     }
+
+    /// <summary>[design v1.24.0] Keşif durumunu kabuğa uygular: başlık araçları + graf (<see cref="ShellRoot.SetDiscovering"/>),
+    /// sayaç ve listenin bloğu (davet kararı). Sayaç bayraktan SONRA yazılır — keşif açıkken değişen metin duyurulur.</summary>
+    private void ApplyDiscovery()
+    {
+        Shell.SetDiscovering(_vm.IsDiscovering);
+        RefreshDiscoveryCount();
+        RefreshListInvite();
+    }
+
+    /// <summary>[design v1.24.0 §9] Keşif sayacını VM'in kümülatif değerlerinden yazar (metin kabukta tek kaynaktan kurulur).</summary>
+    private void RefreshDiscoveryCount() =>
+        Shell.SetDiscoveryCount(_vm.DiscoveredRepositoryProjects, _vm.DiscoveredExternalProjects, _vm.DiscoveryShowsBreakdown);
 
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite()

@@ -1141,6 +1141,23 @@
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
   </Style>
 
+  <!-- [design v1.24.0 §2.3 · §2.4] Keşif bloklarının ikon kimliği (BuildApp.jsx:856-866): 28×28 (viewBox 24'ten
+       ölçeklenir), opaklık 0.7, kontur text-faint, yuvarlak uç ve birleşim; hareket YOK. Graf (Icon.Network) ve liste
+       (Icon.ListLines) AYNI kimliği paylaşır — geometri ve kalınlık (Icon.X / Icon.X.StrokeThickness) ile yerleşim
+       (Margin) ÇAĞIRANDA kalır. -->
+  <Style x:Key="Ds.DiscoveryIcon" TargetType="Viewbox">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Opacity" Value="0.7" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+  </Style>
+  <Style x:Key="Ds.DiscoveryIcon.Path" TargetType="Path">
+    <Setter Property="Stroke" Value="{DynamicResource Brush.TextFaint}" />
+    <Setter Property="StrokeStartLineCap" Value="Round" />
+    <Setter Property="StrokeEndLineCap" Value="Round" />
+    <Setter Property="StrokeLineJoin" Value="Round" />
+  </Style>
+
   <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık
        açıklama (Ds.Text.Description, en çok 520px), altı 18px. Açıklama bir TextBlock'tur — Layers'ınki mono bir Run
        taşır. İki stil de sayfa başının kimliğidir (testler sayfa başlığını bu stille bulur). -->

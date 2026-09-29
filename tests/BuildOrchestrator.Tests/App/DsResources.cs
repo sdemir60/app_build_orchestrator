@@ -252,6 +252,38 @@ internal static class DsResources
     public static bool IsSelfOrDescendantOf(DependencyObject node, DependencyObject ancestor, bool includeLogical = false) =>
         SelfAndAncestors(node, includeLogical).Any(n => ReferenceEquals(n, ancestor));
 
+    /// <summary>
+    /// [A13/T2 · 2.4 · design v1.24.0] <paramref name="root"/> altında GÖRÜNÜR durumdaki metin blokları — kullanıcının
+    /// gerçekten okuduğu şey. <see cref="NoFilterMatchTests"/>'te yerel duruyordu; keşif blokları da aynı soruyu sorunca
+    /// buraya taşındı (kopya YASAK).
+    /// <para><c>IsVisible</c> KULLANILAMAZ: gerçek bir <c>PresentationSource</c> (HWND) ister ve kabuk testleri
+    /// pencereyi hiç <c>Show()</c> etmez (bkz. <see cref="MainWindowHost"/>). Bunun yerine öğenin KENDİ ve TÜM
+    /// atalarının <see cref="UIElement.Visibility"/>'si denetlenir (<see cref="IsShownWithin"/>) — boş-durum
+    /// overlay'leri zaten KAPSAYICI üzerinden gizlenir, bu yüzden yalnız yaprağa bakmak yanıltıcı olurdu.</para>
+    /// <para>Metin EKRANDA çizilen içerikten okunur (<see cref="DisplayedText"/>), <c>TextBlock.Text</c>'ten değil —
+    /// ölçüldü: run'larla kurulmuş bir blokta run metni sonradan yazılınca <c>Text</c> boş döner.</para>
+    /// </summary>
+    public static IReadOnlyList<string> ShownTexts(DependencyObject root) =>
+        [.. Descendants(root).OfType<TextBlock>().Where(t => IsShownWithin(t, root)).Select(DisplayedText)];
+
+    /// <summary>Bir metin bloğunun çizdiği içerik — düz <c>Text</c> da run'lar da aynı yoldan okunur.</summary>
+    public static string DisplayedText(TextBlock block)
+    {
+        ArgumentNullException.ThrowIfNull(block);
+        return new System.Windows.Documents.TextRange(block.ContentStart, block.ContentEnd).Text;
+    }
+
+    /// <summary>Düğüm ve <paramref name="root"/>'a kadarki tüm ataları <see cref="Visibility.Visible"/> mı.</summary>
+    public static bool IsShownWithin(DependencyObject node, DependencyObject root)
+    {
+        foreach (var n in SelfAndAncestors(node))
+        {
+            if (n is UIElement { Visibility: not Visibility.Visible }) return false;
+            if (ReferenceEquals(n, root)) break;
+        }
+        return true;
+    }
+
     /// <summary>Görsel ağacın tamamı — şablon içindeki şablonlara da iner (split button'ın yarımları gibi).</summary>
     public static IEnumerable<DependencyObject> Descendants(DependencyObject root)
     {
