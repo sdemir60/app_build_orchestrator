@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Windows.Input;
+using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.App.Shell;
 
@@ -108,6 +110,33 @@ public static class GlobalHotkeys
 
     /// <summary>Tek satır. Eksik ya da ikiz bir eylem burada fırlatır (sessizce yanlış satır üretmez).</summary>
     public static GlobalHotkey Get(GlobalHotkeyAction action) => All.Single(h => h.Action == action);
+
+    /// <summary>Bir global eylemin VM komutu. Build, pencere içindeki Build düğmesiyle AYNI komuttur — kapısı ikinci
+    /// kez yazılmaz, CanExecute'i ÇAĞIRAN onurlandırır. Getir/gizle bir VM komutu değildir (pencerenin kendi işi) →
+    /// <c>null</c>.</summary>
+    public static ICommand? CommandFor(GlobalHotkeyAction action, RunViewModel vm)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        return action == GlobalHotkeyAction.Build ? vm.BuildCommand : null;
+    }
+}
+
+/// <summary>Getir/gizle kısayolunun iki sonucu.</summary>
+public enum WindowToggleAction
+{
+    Show,
+    Hide,
+}
+
+/// <summary>
+/// [kullanıcı kararı 2026-09-29] Getir/gizle kısayolunun SAF kararı. Pencere YALNIZ gerçekten öndeyken (görünür,
+/// küçültülmemiş, aktif) gizlenir; tepsideyse, küçültülmüşse ya da başka bir pencerenin arkasındaysa öne gelir —
+/// arkadaki görünür pencereyi gizlemek, kullanıcının "getir" dediği anda pencereyi kaybettirirdi.
+/// </summary>
+public static class WindowToggle
+{
+    public static WindowToggleAction Decide(bool isVisible, bool isMinimized, bool isActive) =>
+        isVisible && !isMinimized && isActive ? WindowToggleAction.Hide : WindowToggleAction.Show;
 }
 
 /// <summary>

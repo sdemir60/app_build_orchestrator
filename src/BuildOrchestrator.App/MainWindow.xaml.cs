@@ -1238,10 +1238,26 @@ public partial class MainWindow : Window
         {
             if (hotkey.Id != (int)wParam) continue;
             handled = true;
-            if (hotkey.Action == GlobalHotkeyAction.ShowHide) ShowFromTray();
+            OnGlobalHotkey(hotkey.Action);
             break;
         }
         return 0;
+    }
+
+    /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
+    /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
+    /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).</summary>
+    private void OnGlobalHotkey(GlobalHotkeyAction action)
+    {
+        if (action == GlobalHotkeyAction.ShowHide)
+        {
+            bool minimized = WindowState == WindowState.Minimized;
+            if (WindowToggle.Decide(IsVisible, minimized, IsActive) == WindowToggleAction.Hide) Hide();
+            else ShowFromTray();
+            return;
+        }
+        var command = GlobalHotkeys.CommandFor(action, _vm);
+        if (command is not null && command.CanExecute(null)) command.Execute(null);
     }
 
     private void ToggleMaximizeRestore()

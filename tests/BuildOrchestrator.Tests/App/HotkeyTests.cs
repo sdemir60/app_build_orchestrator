@@ -42,6 +42,18 @@ public class HotkeyTests
         Assert.Equal(GlobalHotkeys.All.Count, GlobalHotkeys.All.Select(h => h.Id).Distinct().Count());
     }
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle: pencere YALNIZ gerçekten öndeyken (görünür, küçültülmemiş,
+    /// aktif) gizlenir; tepsideyse, küçültülmüşse ya da başka bir pencerenin (ör. VS) ARKASINDAYSA öne gelir.
+    /// Arkadaki görünür pencereyi gizlemek, kullanıcının "getir" dediği anda pencereyi kaybettirirdi.</summary>
+    [Theory]
+    [InlineData(false, false, false, WindowToggleAction.Show)] // tepside (gizli)
+    [InlineData(true, true, false, WindowToggleAction.Show)]   // görev çubuğunda küçültülmüş
+    [InlineData(true, false, false, WindowToggleAction.Show)]  // görünür ama VS'in arkasında
+    [InlineData(true, false, true, WindowToggleAction.Hide)]   // önde
+    public void The_show_hide_hotkey_hides_only_a_window_that_is_really_in_front(
+        bool visible, bool minimized, bool active, WindowToggleAction expected)
+        => Assert.Equal(expected, WindowToggle.Decide(visible, minimized, active));
+
     [Theory]
     [InlineData("ctrl+shift+f5", HotkeyBinding.MOD_CONTROL | HotkeyBinding.MOD_SHIFT | HotkeyBinding.MOD_NOREPEAT, 0x74u)]
     [InlineData("Win + Alt + 7", HotkeyBinding.MOD_WIN | HotkeyBinding.MOD_ALT | HotkeyBinding.MOD_NOREPEAT, 0x37u)]

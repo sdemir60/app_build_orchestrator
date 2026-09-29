@@ -39,6 +39,17 @@ public class KeyboardWiringTests
         Assert.Null(KeyboardShortcuts.CommandFor(ShortcutAction.None, vm));
     }
 
+    /// <summary>[kullanıcı kararı 2026-09-29] Global Build, pencere içindeki Build düğmesiyle AYNI komuttur
+    /// (<c>ReferenceEquals</c>) — kapısı (topoloji, uçuşta koşu, workspace işi) ikinci kez yazılmaz. Getir/gizle bir VM
+    /// komutu DEĞİLDİR (pencerenin kendi işi).</summary>
+    [StaFact]
+    public void The_background_build_hotkey_runs_the_view_models_own_build_command()
+    {
+        var vm = NewVm();
+        Assert.Same(vm.BuildCommand, GlobalHotkeys.CommandFor(GlobalHotkeyAction.Build, vm));
+        Assert.Null(GlobalHotkeys.CommandFor(GlobalHotkeyAction.ShowHide, vm));
+    }
+
     // ------------------------------------------------------------------ tuş+modifier → niyet (SetupKeyboardShortcuts kablajı)
 
     /// <summary>
