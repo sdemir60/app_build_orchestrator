@@ -1089,7 +1089,8 @@ public partial class MainWindow : Window
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite()
     {
-        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.IsDiscovering, _vm.Phase, _vm.Projects.Count,
+            _vm.VisibleProjects.Count));
         // [design v1.8.0 §2.4] Kurulum listesi davetle AYNI sinyalden tazelenir: kök ve katman sayısı.
         Shell.SetSetupChecklist(_vm.RootPath, _vm.LayerPatterns?.Count ?? 0);
     }
