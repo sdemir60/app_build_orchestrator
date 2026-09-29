@@ -2201,35 +2201,41 @@ is empty and what lets clicks fall through the same pixels. Consequences that ha
 ### 12.3 Single instance, tray, hotkey, autostart
 
 Single instance is a session-local mutex plus a named pipe whose name includes the session id; a busy pipe backs
-off instead of spinning. A second instance calls `AllowSetForegroundWindow` before signalling, then exits
-silently. If it cannot bring the existing window forward it does **not** go silent: it exits with a distinct
-exit code and shows a one-line tray balloon — unless *Show notifications* is off (below), which the second
-instance reads from `ui-state.json` itself, since it never builds a window or a view model. The exit code does
-not depend on the switch.
+off instead of spinning. A second instance calls `AllowSetForegroundWindow` before signalling; when the existing
+window comes forward, it exits silently with code 0. When it cannot bring the window forward it shows a one-line
+tray balloon first and exits after a short linger — tearing the temporary tray icon down in the same turn would
+cancel the balloon before the shell drew it — with a distinct exit code, so the two outcomes stay apart for
+anything watching the process. With *Show notifications* off (below) there is no balloon and no linger: the
+distinct exit code is then all that sets this case apart from the silent one. The second instance reads the
+switch from `ui-state.json` itself, since it never builds a window or a view model.
 
 **What closing the window does is the user's setting** — *Close to tray* under Settings → General (§13.3), on
 by default. `X`, `Alt+F4` and the system menu's *Close* all arrive at the window's one `Closing` handler, and a
 pure rule (`WindowCloseRule`) decides; the window only applies the answer. With the switch on, the close is
 cancelled and the window hides to the tray; the first time this happens, an **OS tray balloon** explains it,
-once — in-app toasts are prohibited by the design. With the switch off, the close becomes a full exit. The
-switch is read from `ui-state.json` on every close, so a value saved in Settings applies to the very next one.
+once — in-app toasts are prohibited by the design. With the switch off, the close becomes a full exit. No shell
+switch is copied anywhere: whatever acts on one reads it from `ui-state.json` at the moment it acts — this one on
+every close — so a value saved in Settings applies to the very next close.
 
 **A full exit waits for the work in flight.** The tray menu's *Exit* always asks for one, whatever the switch
-says; `X` asks for one when the switch is off. With nothing in flight the application closes at once — from the
-tray, without showing the window first. Otherwise the exit lets the work finish. A run is stopped gracefully
-(§4.5) — or, still in its opening choreography with nothing sent, withdrawn (§14.5) — so its in-flight projects
-finish, post-build copy included. A Sync, Clean, Optimize, checkout or pull has no cancel and runs to its end —
-cutting one off could leave the tree half-changed — together with the Sync a job chains on completion. While the
-exit waits, the ribbon reads the Stopping line whatever the phase (§13.2), the console records `exit requested —
-the app closes when the work in flight finishes` once, and the automatic Sync is off (§10.3), since a Sync
-started behind the drain would be one more thing to wait for. The window stays: `X` neither hides it nor asks
-again, and *Exit* brings it forward, because an exit waiting behind a hidden window would look like nothing
-happening; a second request sends no second stop and writes no second line. The wait is not endless — if the
-engine falls silent (§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and
-whatever it left through the outer job (§4.4). The view model decides only *when* (`RequestExit`, then
-`ExitReady` once); the shell does the closing, and from that moment every `Closing` really closes. A Windows
-session that ends closes the application at once, with neither the wait nor the tray — Windows does not wait
-either.
+says; `X` asks for one when the switch is off, and both take the same shell path. With nothing in flight the
+application closes at once — from the tray, without showing the window first. Otherwise the exit lets the work
+finish. A run is stopped gracefully (§4.5) — or, still in its opening choreography with nothing sent, withdrawn
+(§14.5) — so its in-flight projects finish, post-build copy included. A Clean, Optimize, checkout or pull has no
+cancel and runs to its end, since cutting one off could leave the tree half-changed; a Sync has no cancel either,
+and a fetching one writes git refs, so it too is let finish. No Sync starts while the exit waits — neither the
+automatic one (§10.3) nor the one a Clean, Optimize, checkout or pull chains on completion: either would be new
+work started after the request, only to refresh a window that is closing, and the next start syncs anyway. The
+job's own end releases the exit. While the exit waits, the ribbon reads the Stopping line whatever the phase
+(§13.2) and the console records `exit requested — the app closes when the work in flight finishes` once. The
+window stays and comes forward — out of the tray, or restored if it was closed while minimized — because an exit
+waiting behind a hidden window would look like nothing happening; a later `X` neither hides it nor asks again,
+and a second request sends no second stop and writes no second line. The wait is not endless — if the engine
+falls silent (§4.6) or dies, the exit goes ahead, and the application's shutdown closes the engine and whatever it
+left through the outer job (§4.4); an engine that is only quiet — a long git write, a build step that prints
+nothing — is cut off the same way (§20). The view model decides only *when* (`RequestExit`, then `ExitReady`
+once); the shell does the closing, and from that moment every `Closing` really closes. A Windows session that
+ends closes the application at once, with neither the wait nor the tray — Windows does not wait either.
 
 **A build that runs while the window is away is not invisible.** When the main window is hidden *and* a build is
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
@@ -2259,7 +2265,7 @@ the window is *visible* produces no balloon at all — the ribbon is already on 
 
 **Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
 three the application can show: the first-close explanation, the run result and the second instance's warning.
-Each reads the switch from `ui-state.json` at the moment it would appear — the run result only after the
+Each asks at the moment it would appear, like every shell switch (above) — the run result only after the
 overlay's exit and breath — so turning it off while a run is in flight silences that run's result. A
 first-close explanation held back by the switch is not counted as shown, so once the switch is back on it still
 appears, once. The overlay is not a notification and does not answer to the switch: it silences the balloons,
@@ -2327,10 +2333,11 @@ Splitters have a 7 px grab area over a 1 px visible line that turns amber while 
 
 ### 13.1 MVVM
 
-`RunViewModel` is the single run-facing view model, split across partial files by surface (core, action bar,
-event stream, workspace). It owns the project rows, the counters, the phase, the selection, the filter and the
-command set. Rows are `ProjectRowViewModel` — observable state only; every visual decision (colour, glyph,
-badge) is made in XAML from that state.
+`RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress and the safe
+exit. It owns the project rows, the counters, the phase, the selection, the filter and the command set. Rows are
+`ProjectRowViewModel` — observable state only; every visual decision (colour, glyph, badge) is made in XAML from
+that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
 `RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
@@ -2913,7 +2920,8 @@ is gone, and a green status answers to nothing on disk; that is why the plan sur
 than waiting to be corrected. An Optimize chains the same Sync for a plainer reason: its click cleared the rows
 too, and the two maintenance buttons sit side by side in one box, so they answer a click with one flow. A failed
 job chains nothing: the reason is already in the console, and a second error line on top of it would only be
-noise.
+noise. Nor does a job that ends while a full exit waits — no Sync starts during that wait (§12.3), so the gate
+simply opens.
 
 **The gate is handed over, never dropped.** It stays shut from the click until the chained Sync has claimed it,
 which covers `cleanCompleted` or `optimizeCompleted`, the held step and the beat after it — one handover shared
@@ -4956,6 +4964,11 @@ do, and how the interface works around each — useful to know before attempting
   deliberately does not add one. The keyboard route to any project is the projects list, which is fully
   traversable and drives the same selection everywhere (§13.7); the graph reflects that selection rather than
   being a second way to reach it.
+- **A full exit's wait ends on engine silence.** The exit waits for the work in flight (§12.3), but the silence
+  watchdog (§4.6) releases it once the engine has sent nothing for the threshold, and silence cannot tell a wedged
+  engine from one that is busy without a word. A checkout or pull whose git write runs longer than that, or a
+  build step that prints nothing for that long while a stop drains, is then cut off by the application's
+  shutdown. An engine heartbeat inside those waits — the one a package restore already has — would close it.
 - **The global hotkey has no settings UI** (§12.3).
 
 ---
@@ -5081,14 +5094,15 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
-| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs`, `App/Shell/SecondInstanceGate.cs` |
+| Second instance that could not bring the window forward: balloon or not, and the distinct exit code | `App/Shell/SecondInstanceGate.cs` |
+| Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkey, shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
 | Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
-| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
-| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs` |
-| …its shell side: tray *Exit*, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`ExitFromTray`, `ExitNow`) |
+| Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
+| Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
+| …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the three balloons (first close, run result, second instance) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs` |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |

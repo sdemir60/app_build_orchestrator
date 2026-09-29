@@ -461,14 +461,16 @@ it cannot bring the window forward; the corner mark is not a notification and st
 To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
 Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
 stopped the way *Stop* stops it — its in-flight projects finish — and a Sync, Clean, Optimize, branch switch or
-pull is left to finish. Meanwhile the window stays on screen (*Exit* brings it forward), the ribbon reads
-*▸ Stopping — …* and closing again changes nothing. Only an engine that stops answering, or dies, does not hold
-the exit up: the app then closes and takes the engine with it.
+pull is left to finish. Meanwhile the window stays on screen and comes forward (out of the tray, or restored if
+you closed it while minimized), the ribbon reads *▸ Stopping — …* and closing again changes nothing. Only an
+engine that stops answering, or dies, does not hold the exit up: the app then closes and takes the engine with
+it, even if a long branch switch, pull or build step was only quiet.
 
-If the engine ever stops answering — no event at all while a run start or a stop is still pending — the ribbon
-says so in amber and offers *Restart engine*. Nothing unlocks by itself, because a drain can legitimately take
-minutes; the action is there for the case where waiting is no longer the answer. Restarting kills the engine
-and every `MSBuild.exe` under it, then brings a fresh engine up.
+If the engine ever stops answering — no event at all while a run start, a stop, a Sync, a Clean, an Optimize, a
+branch switch or a pull is still waiting for its answer — the ribbon says so in amber and offers *Restart
+engine*. Nothing unlocks by itself, because a drain can legitimately take minutes; the action is there for the
+case where waiting is no longer the answer. Restarting kills the engine and every `MSBuild.exe` under it, then
+brings a fresh engine up.
 
 ### Keyboard shortcuts
 
