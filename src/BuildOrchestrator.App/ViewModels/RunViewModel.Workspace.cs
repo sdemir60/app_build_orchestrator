@@ -563,7 +563,8 @@ public sealed partial class RunViewModel
     /// (<see cref="OnGitOperationChanged"/>) buraya iner. Tüketicileri birbirine BAĞLANMAZ: koordinatör bekleyen
     /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur
     /// (<see cref="EvaluateExit"/>); [kullanıcı kararı 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
-    /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>).
+    /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>); [design v1.23.0 §2.12] güncelleme kartının Restart kilidi
+    /// yeniden sorulur (<see cref="NotifyUpdateRestartGate"/>).
     /// <para>Ad bu yüzden nötrdür ve yeri <see cref="WorkspaceIdle"/>'ın yanıdır: çıkış beklerken koordinatör YOKTUR
     /// (<see cref="RequestExit"/> onu kapatır), yani buraya konacak bir "koordinatör yoksa dön" kısayolu bekleyen her
     /// çıkışı sessizce sonsuza dek bekletirdi.</para>
@@ -573,6 +574,7 @@ public sealed partial class RunViewModel
         _autoSync?.OnWorkspaceIdle();
         EvaluateExit();
         ResetEscNoteWhenIdle();
+        NotifyUpdateRestartGate();
     }
 
     /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
