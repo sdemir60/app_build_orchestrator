@@ -538,7 +538,8 @@ public partial class MainWindow : Window
     /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
     private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen;
 
-    /// <summary>Popover katmanını kapatır — dördünü birden (prototipte olduğu gibi); odak açık olanın tetikleyicisine döner.</summary>
+    /// <summary>Popover katmanını kapatır — hepsini birden (prototipte olduğu gibi): alt barınkiler
+    /// (<see cref="ShellRoot.CloseAllPopovers"/>) ve güncelleme kartı; odak açık olanın tetikleyicisine döner.</summary>
     private void CloseAllPopovers()
     {
         Shell.CloseAllPopovers();
@@ -715,8 +716,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Liste ve grafı EKRANDA boşaltır (VM'e dokunmaz — bkz.
-    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf Sync-öncesi etiketini göstermez: Sync zaten sürüyor,
-    /// panel yalnız boş/sakin durur. Liste daveti VM'den karar verilir ve satırlar VM'de durduğu için çıkmaz.</summary>
+    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf etiketsiz boşalır: Sync-öncesi etiketini ("appears after
+    /// Sync") ve sahte bir "0 projects" başlığını göstermez, Sync zaten sürüyor.
+    /// <para>[design v1.24.0] Boşluk ekranda kalmaz: aynı Sync isteği keşfi de açar (baştan başlayan yüzey, bkz.
+    /// <c>RunViewModel.OpensDiscovery</c>) ve topoloji gelene dek graf ile liste keşif bloklarını gösterir
+    /// (<see cref="ApplyDiscovery"/>). Listenin "proje yok" ve "filtre eşleşmedi" davetleri o sırada çıkmaz: keşif,
+    /// davet kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
     private void BlankPlanSurface()
     {
         Shell.ProjectsList.SetGroups([], reveal: false);
