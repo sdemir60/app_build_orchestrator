@@ -1,6 +1,6 @@
 # Build Orchestrator
 
-![ci](https://github.com/sdemir60/app_build_orchestrator/actions/workflows/ci.yml/badge.svg)
+![ci](https://github.com/sdemir60/app_build_orchestrator/actions/workflows/ci.yml/badge.svg?branch=main)
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from source content on
@@ -122,9 +122,9 @@ build a real large repository (~2 min) and are run separately with `--filter "Ca
 Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
 their environment variable is set (ARCHITECTURE.md §17.5).
 
-CI (`.github/workflows/ci.yml`) runs the same build and suite on every push to `main` and every pull request. A
-test that cannot run on the hosted runner carries `Category=LocalOnly` and is excluded there only; the local full
-run stays the gate.
+CI (`.github/workflows/ci.yml`) runs the same build and suite on every push to `develop` and `main` and every pull
+request. A test that cannot run on the hosted runner carries `Category=LocalOnly` and is excluded there only; the
+local full run stays the gate.
 
 ## Package and release
 
@@ -174,17 +174,21 @@ the App and proving the Supervisor dies *by itself* through the job cascade. Exi
 `2` = precondition not met (close the running instance first — tray icon → Exit).
 
 **Releasing** is one request in a Claude Code session: `/release` (the project skill in `.claude/skills/release/`).
-Claude writes the new version's `CHANGELOG.md` section — the rules are in [`CLAUDE.md`](CLAUDE.md) — and runs
-`scripts\release.ps1 -Version X.Y.Z`. The script stops before touching anything unless `main` is clean and level
-with `origin/main`, the section is on top and dated today, the tag exists neither locally nor on `origin`, and no
-copy of the app is running from this checkout (it keeps the checkout's files locked — tray icon → Exit; an installed
-copy elsewhere is no obstacle);
-then it writes `Version`, builds, runs the full suite, commits `release: vX.Y.Z` on `main`, tags it and pushes
-both atomically — either both reach GitHub or neither does. `-DryRun` runs only the `CHANGELOG.md` checks. The tag
-starts `.github/workflows/release.yml`: it checks that the tag, `Version` and the top `CHANGELOG.md` section agree
-and that the tagged commit is on `main`, runs the CI build and suite, packages with `package.ps1` and publishes
-the GitHub Release — the installer, the update packages and the version's notes as its text. Installed copies pick
-it up on their next check.
+Daily work lands on `develop`; `main` carries releases only, and the release script is the only thing that moves
+it. Claude writes the new version's `CHANGELOG.md` section — the rules are in [`CLAUDE.md`](CLAUDE.md) — and runs
+`scripts\release.ps1 -Version X.Y.Z` on `develop`. The script stops before touching anything unless `develop` is
+clean and level with `origin/develop`, `main` holds nothing `develop` lacks, the section is on top and dated today,
+the tag exists neither locally nor on `origin`, no copy of the app is running from this checkout (it keeps the
+checkout's files locked — tray icon → Exit; an installed copy elsewhere is no obstacle), and `develop`'s CI run is
+green (`-SkipCiCheck` skips that check when offline or in an emergency); then it writes `Version`, builds, runs the
+full suite, commits `release: vX.Y.Z` on `develop`, merges `develop` into `main`, tags the merge, moves `develop`
+up to `main` and pushes `main`, `develop` and the tag atomically — all three reach GitHub or none does. Should it
+stop after the release commit, its last line prints the commands that undo the local commit, merge and tag — unless
+a push that reported an error still left the tag on GitHub, which it then reports instead. `-DryRun` runs every
+check and stops there. The tag starts `.github/workflows/release.yml`: it checks that the
+tag, `Version` and the top `CHANGELOG.md` section agree and that the tagged commit is on `main`, runs the CI build
+and suite, packages with `package.ps1` and publishes the GitHub Release — the installer, the update packages and the
+version's notes as its text. Installed copies pick it up on their next check.
 
 ## Using it
 

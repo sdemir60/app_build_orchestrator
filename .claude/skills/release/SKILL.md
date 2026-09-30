@@ -1,6 +1,6 @@
 ---
 name: release
-description: Build Orchestrator için yeni sürüm çıkar — CHANGELOG bölümünü yaz, numarayı seç, scripts/release.ps1 ile commit+tag+push; CI paketleyip GitHub Releases'a yayınlar. Kullanıcı "/release", "sürüm çıkar", "yeni versiyon" dediğinde.
+description: Build Orchestrator için yeni sürüm çıkar — CHANGELOG bölümünü yaz, numarayı seç, scripts/release.ps1 ile develop'tan main'e merge + tag + atomik push; CI paketleyip GitHub Releases'a yayınlar. Kullanıcı "/release", "sürüm çıkar", "yeni versiyon" dediğinde.
 ---
 
 # /release
@@ -8,24 +8,42 @@ description: Build Orchestrator için yeni sürüm çıkar — CHANGELOG bölüm
 Kurallar — kaynak, numara, notun yazımı, `Version` — CLAUDE.md **"Sürüm çıkarma"** bölümündedir; burada
 tekrarlanmaz. Bu skill yalnız sırayı ve komutları verir.
 
-**Ön koşul (ilk `/release`'ten önce):** `ci.yml` `main`'de en az bir kez yeşil koşmuş ve `LocalOnly` triage'ı
-(runner'da koşamayan testlerin `Category=LocalOnly` alması — CLAUDE.md "Build / test") bitmiş olmalı; release koşusu
-ilk CI koşusu olmasın. Değilse dur ve söyle.
+**Model:** günlük iş `develop`'ta, `main` yalnız sürümleri taşır. `main`'e yalnız `scripts/release.ps1` dokunur;
+`main`'deki her merge commit'i bir sürüm + tag'tir (CLAUDE.md "Git"; tek istisna adım 6'daki yeniden çıkarma).
 
-1. **Ana proje checkout'unda** (`D:\Projects\Other\Apps\app_build_orchestrator`) `main` üzerinde koş — worktree'de
-   (`main-ai`) DEĞİL: `main` orada açılamaz ve script `main` dışında durur. Ağaç temiz olmalı; `git fetch` →
-   `origin/main` ile eşit değilse dur ve söyle. Bu checkout'tan çalışan Build Orchestrator (`bin\`'den açılan kopya)
-   kapalı olmalı: açıksa script `Version`'a dokunmadan durur. Tepsideki kurulu kopya
-   (`%LOCALAPPDATA%\BuildOrchestrator.App\current`) engel değildir.
+1. **Ana proje checkout'unda** (`D:\Projects\Other\Apps\app_build_orchestrator`) `develop` üzerinde koş — worktree'de
+   (`develop-ai`) DEĞİL; script `develop` dışında durur. **Ön koşullar** — script hepsini denetler; tutmayan olursa
+   hiçbir şeye dokunmadan durur ve sebebini yazar:
+   - `develop` push edilmiş ve güncel (`git fetch` sonrası `develop == origin/develop`); ağaçta `CHANGELOG.md` /
+     `Directory.Build.props` dışında değişiklik yok.
+   - **`develop` HEAD'inin `ci.yml` koşusu yeşil** (`completed` + `success`): push'tan sonra Actions'ta bitmesini
+     bekle. Koşu yoksa, sürüyorsa ya da kırmızıysa script durur.
+   - Yerel `main` (varsa) `origin/main`'e eşit, `origin/main` `develop`'un atası, `main` başka bir worktree'de açık
+     değil; `vX.Y.Z` tag'i ne yerelde ne origin'de var.
+   - Bu checkout'tan çalışan Build Orchestrator (`bin\`'den açılan kopya) kapalı: açıksa script `Version`'a dokunmadan
+     durur. Tepsideki kurulu kopya (`%LOCALAPPDATA%\BuildOrchestrator.App\current`) engel değildir.
 2. Numarayı ve CHANGELOG bölümünü CLAUDE.md "Sürüm çıkarma" adım 1-3'e göre hazırla (major ise kullanıcıya SOR);
-   `Version`'ı script yazar.
+   `Version`'ı script yazar. Ön koşullardan emin değilsen önce `-DryRun`: bütün guard'lar koşar; dosyaya, branch'e ve
+   tag'e dokunulmaz.
 3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
-   — guard'lar, `Version`, build + tam süit, `release: vX.Y.Z` commit'i, annotated tag, atomik push (`main` ve tag
-   ya birlikte gider ya hiçbiri). Düşerse sebebi kullanıcıya ilet; hiçbir şey push edilmemiştir.
-4. **Push reddedilirse** (fetch'ten sonra `origin/main` ilerlemiş): yerelde `release:` commit'i ve tag kalır, origin'e
-   hiçbiri gitmemiştir. Kurtarma — `git fetch`/`pull`'dan ÖNCE (yerel `origin/main` henüz yayının başladığı
-   commit'tir): `git tag -d vX.Y.Z` → `git reset --soft origin/main`. CHANGELOG/props değişikliği çalışma ağacında
-   kalır; sonra `git pull --ff-only` ve adım 3 yeniden.
+   — guard'lar → `Version` → build + tam süit → `develop`'ta `release: vX.Y.Z` commit'i → `main`'e `--no-ff` merge
+   (`merge: release vX.Y.Z`) → merge commit'ine annotated tag → `develop` `main`'e ff (develop = main) →
+   `git push --atomic origin main develop vX.Y.Z` (üçü birlikte gider ya da hiçbiri). `-SkipCiCheck` yalnız
+   çevrimdışı/acil durumda: CI kontrolünü atlar ve uyarır (`release.yml` tag'i yine derleyip test eder).
+4. **Script durduysa** sebebi kullanıcıya ilet. Nerede durduğuna göre:
+   - **Release commit'inden ÖNCE** (guard, build, test): commit/tag yok, hiçbir şey push edilmedi. En fazla
+     `Directory.Build.props`'ta yeni `Version` yazılıdır; CHANGELOG ile birlikte ağaçta kalır, yeniden koşu aynı
+     değeri yazar. Sebebi gider, adım 3'ü yeniden koş.
+   - **Release commit'inden SONRA** (en olası: push reddedildi — fetch'ten sonra `origin/develop` ya da `origin/main`
+     ilerledi; `--atomic` olduğu için origin'e hiçbir şey gitmedi): yerelde release commit'i, merge ve tag kalır.
+     Script'in bastığı kurtarma satırını (son `release: undo … with:` satırı) olduğu gibi çalıştır; komutları elle
+     yazma. Satırdaki sha'lar yayının başladığı commit'lerdir, araya bir `fetch` girse de doğru kalır. `develop` ve
+     `main` eski yerine döner, tag silinir; CHANGELOG bölümü ve `Version` çalışma ağacında değişiklik olarak kalır.
+     Sonra `git pull --ff-only` (develop), CI'ın yeşilini bekle, adım 3.
+   - **Push hata verdi ama script origin'e baktı:** `… but origin has vX.Y.Z …` derse sunucu push'u uygulamıştır —
+     kurtarma satırı basılmaz, undo YAPMA; `git fetch` ile origin'deki `main`, `develop` ve tag'in yereldekilerle
+     aynı olduğunu gör, adım 5. `… origin cannot be read …` derse kurtarma satırını ancak origin'e ulaşıp `vX.Y.Z`'nin
+     orada olmadığını gördükten sonra çalıştır (`git ls-remote origin refs/tags/vX.Y.Z`); oradaysa yayın çıkmıştır.
 5. Actions linkini ver: https://github.com/sdemir60/app_build_orchestrator/actions (`release` workflow'u). Bitince
    https://github.com/sdemir60/app_build_orchestrator/releases/latest sayfasında Setup.exe ve nupkg'ları gör.
 6. **Tag push edildi ama `release.yml` düştü** (guard reddetti, `ci` kırmızı ya da `publish` düştü — `vpk pack` bir
@@ -34,6 +52,8 @@ ilk CI koşusu olmasın. Değilse dur ve söyle.
    Actions'taki `release` koşusunun log'una bak, sonra:
    - **Geçici hata** (ağ, GitHub API, runner) → Actions'ta *Re-run failed jobs*. Hiçbir şey yüklenmemişse güvenlidir;
      `vpk upload --merge` yarım kalmış release'i tolere eder.
-   - **Kodun değişmesi gerekiyor** → branch'te düzelt, `main`'e merge et, sonra bir üst **patch sürümle** ileri düzelt
-     (`/release`, X.Y.(Z+1)). GitHub Release **hiç oluşmadıysa** alternatif: `git push origin :refs/tags/vX.Y.Z` +
-     `git tag -d vX.Y.Z`, CHANGELOG'daki sürüm tarihini bugüne yenile, `/release`'i aynı sürümle yeniden çalıştır.
+   - **Kodun değişmesi gerekiyor** → iş branch'inde düzelt, `develop`'a merge + push et, CI yeşil olunca bir üst
+     **patch sürümle** ileri düzelt (`/release`, X.Y.(Z+1)). GitHub Release **hiç oluşmadıysa** alternatif:
+     `git push origin :refs/tags/vX.Y.Z` + `git tag -d vX.Y.Z`, CHANGELOG'daki sürüm tarihini bugüne yenile,
+     `/release`'i aynı sürümle yeniden çalıştır (`main`'de tag'siz kalan önceki merge zararsızdır; yeni merge tag'i
+     taşır).

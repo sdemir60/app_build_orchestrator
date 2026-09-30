@@ -1,9 +1,10 @@
-# [yayin hatti] main'e her push'ta ve PR'da build + filtreli tam suit. Yayin yapmaz. release.yml ayni isi
-# workflow_call ile buradan alir (build/test adimlari iki yerde yazilmaz).
+# [yayin hatti] develop'a (gunluk is) ve main'e (yalniz surumler) her push'ta ve PR'da build + filtreli tam suit. Yayin
+# yapmaz. develop HEAD'inin bu kosusu yesil degilse release.ps1 durur. release.yml ayni isi workflow_call ile buradan alir
+# (build/test adimlari iki yerde yazilmaz).
 name: ci
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
   workflow_call:

@@ -48,7 +48,7 @@ public class RepoHygieneTests
             @"(?m)(^|[ \t]+)#.*$", "");
 
     [Fact]
-    public void CI_builds_and_tests_main_on_a_pinned_windows_image_and_is_callable_by_the_release()
+    public void CI_builds_and_tests_main_and_develop_on_a_pinned_windows_image_and_is_callable_by_the_release()
     {
         string ci = Workflow("ci.yml");
         Assert.Contains("runs-on: windows-2025", ci, StringComparison.Ordinal);   // windows-latest sürüklenmez
@@ -56,6 +56,37 @@ public class RepoHygieneTests
         Assert.Contains("global-json-file: global.json", ci, StringComparison.Ordinal);
         Assert.Contains("Category!=Acceptance&Category!=LocalOnly", ci, StringComparison.Ordinal);
         Assert.DoesNotContain("vpk", ci, StringComparison.Ordinal);               // CI yayın yapmaz
+    }
+
+    /// <summary>Günlük iş <c>develop</c>'ta, <c>main</c> yalnız sürümleri taşır (kullanıcı kararı 2026-09-30): CI iki branch'in
+    /// de her push'unu derleyip koşturur. <c>develop</c>'unki yayının ön koşuludur — <c>release.ps1</c>, develop HEAD'inin
+    /// <c>ci.yml</c> koşusu yeşil değilse durur (<see cref="ReleaseScriptsTests"/>); <c>main</c>'inki yayınlanan kodun durumudur
+    /// (README rozeti, <see cref="The_README_badge_shows_the_CI_run_of_main"/>). Listenin sırası serbesttir; pull request'ler de
+    /// koşar. Tetikleyicide yol filtresi (<c>paths</c> / <c>paths-ignore</c>) YOKTUR: release.ps1 develop'un HER ucunda bir koşu
+    /// bekler — yalnız doküman değiştiren bir develop ucu koşu almasaydı sonuç "not green (no run)" olur, yayın kilitlenirdi.</summary>
+    [Fact]
+    public void CI_runs_on_every_push_to_develop_and_main()
+    {
+        string ci = Workflow("ci.yml");
+        var push = Regex.Match(ci, @"(?m)^[ \t]+push:[ \t]*\n[ \t]+branches:[ \t]*\[(?<list>[^\]\n]*)\]");
+        Assert.True(push.Success, "ci.yml: push tetikleyicisinin branches listesi bulunamadı");
+        var branches = push.Groups["list"].Value.Split(',').Select(b => b.Trim().Trim('\'', '"')).ToHashSet();
+        Assert.Contains("develop", branches);
+        Assert.Contains("main", branches);
+        Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"(?m)^[ \t]+paths(-ignore)?:", ci); // her develop ucu koşu alır
+    }
+
+    /// <summary>README'nin CI rozeti <c>main</c>'in koşusunu gösterir — yayınlanan kodun durumu. Parametresiz rozet GitHub'ın
+    /// varsayılan branch'ini gösterir; develop/main modelinde varsayılan branch <c>develop</c>'a çevrilirse rozet sessizce
+    /// develop'un durumunu göstermeye başlardı. Bu yüzden her <c>ci.yml</c> rozeti <c>?branch=main</c> taşır.</summary>
+    [Fact]
+    public void The_README_badge_shows_the_CI_run_of_main()
+    {
+        string readme = File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, "README.md"));
+        var badges = Regex.Matches(readme, @"actions/workflows/ci\.yml/badge\.svg(?<query>[^)\s]*)");
+        Assert.NotEmpty(badges);
+        Assert.All(badges, badge => Assert.Equal("?branch=main", badge.Groups["query"].Value));
     }
 
     /// <summary>CI repoya yazmaz. Kendi <c>push</c>/<c>pull_request</c> koşularında token izni repo ayarının varsayılanından

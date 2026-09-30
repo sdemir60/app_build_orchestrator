@@ -1,8 +1,9 @@
 <#
  [yayin hatti] package.ps1, release-guard.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari: Directory.Build.props
- degerleri, CHANGELOG surum basliklari, GitHub'daki release sayisi, bir surumun onceki paketlerinin temizligi ve calisan
- uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin kendi
- parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
+ degerleri, CHANGELOG surum basliklari, GitHub API'si (release sayisi, bir commit'in CI kosusu), uc durumlu git ata sorusu,
+ bir surumun onceki paketlerinin temizligi ve calisan uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina
+ calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni
+ bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -45,18 +46,48 @@ function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App', [string]
         })
 }
 
+function Test-GitAncestor([string]$Ancestor, [string]$Descendant) {
+    # $Ancestor, $Descendant'in atasi mi (git merge-base --is-ancestor, repo $RepoRoot). Uc durum: cikis 0 = ata ($true), 1 = degil
+    # ($false), digeri = sorulamadi (ref yok, sig checkout) -> throw "git exit N". Sorulamayan ata ne "ata" ne "degil" sayilir
+    # (dogrulanamayan yayin cikmaz); cagiran (release.ps1'in ata guard'i, release-guard.ps1 -RequireOnMain) kendi mesajini yazar.
+    & git -C $RepoRoot merge-base --is-ancestor $Ancestor $Descendant
+    $code = $LASTEXITCODE
+    if ($code -eq 0) { return $true }
+    if ($code -eq 1) { return $false }
+    throw "git exit $code"
+}
+
+function Invoke-GitHubApi([string]$RepoUrl, [string]$Path, [string]$Token) {
+    # GitHub REST API'sine GET: RepoUrl web adresidir (https://github.com/<sahip>/<repo>), Path repo altindaki uc
+    # ('releases?per_page=1' gibi). Acik repo kimliksiz okunur (saatte 60 istek); Token verilirse Bearer gider. GitHub
+    # User-Agent'siz istegi reddeder. Cevap Invoke-RestMethod'un verdigi gibi gecer (degiskene atanip dondurulmez: donus
+    # diziyi numaralandirirdi) - JSON dizisini sayan cagiran Windows PowerShell 5.1 davranisini bilir (Get-ReleaseCount).
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $headers = @{ 'User-Agent' = 'BuildOrchestrator-scripts' }
+    if ($Token) { $headers['Authorization'] = "Bearer $Token" }
+    Invoke-RestMethod -Uri (($RepoUrl -replace '^https://github.com/', 'https://api.github.com/repos/') + '/' + $Path) -Headers $headers
+}
+
 function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {
     # Repoda yayinlanmis release var mi (0 = ilk yayin). Windows PowerShell 5.1'de Invoke-RestMethod JSON dizisini
     # numaralandirmaz: @(Invoke-RestMethod ...) bos diziyi TEK eleman olarak sarar (Count 1 verir). Bu yuzden cevap
     # once degiskene atanir, sonra sayilir. Bos cevap PowerShell 7'de $null gelir; @($null).Count da 1 oldugundan
     # $null ayrica sifir sayilir.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $api = ($RepoUrl -replace '^https://github.com/', 'https://api.github.com/repos/') + '/releases?per_page=1'
-    $headers = @{ 'User-Agent' = 'BuildOrchestrator-package' }
-    if ($Token) { $headers['Authorization'] = "Bearer $Token" }
-    $releases = Invoke-RestMethod -Uri $api -Headers $headers
+    $releases = Invoke-GitHubApi $RepoUrl 'releases?per_page=1' $Token
     if ($null -eq $releases) { return 0 }
     return @($releases).Count
+}
+
+function Get-CiConclusion([string]$RepoUrl, [string]$Sha, [string]$Workflow = 'ci.yml') {
+    # Bir commit'in en yeni workflow kosusu (release.ps1: develop HEAD'inin ci.yml'i yesil mi): kosu yoksa $null, varsa
+    # Status (queued / in_progress / completed ...) ve Conclusion (success / failure / cancelled ...; kosu bitmeden bos).
+    # Ayni commit'in birden cok kosusu olabilir: ayni sha'nin birden cok ref'e itilmesi (yayin main ile develop'u ayni sha'da
+    # iter), PR, elle tetikleme ("Re-run" yeni kosu acmaz, ayni kosunun yeni denemesidir). API en yenisini basta verir,
+    # per_page=1 onu alir. workflow_runs cevabin bir OZELLIGIDIR (ust duzey dizi degil): bos dizi @() icinde bos kalir.
+    $response = Invoke-GitHubApi $RepoUrl "actions/workflows/$Workflow/runs?head_sha=$Sha&per_page=1"
+    $run = @($response.workflow_runs) | Select-Object -First 1
+    if ($null -eq $run) { return $null }
+    return [pscustomobject]@{ Status = [string]$run.status; Conclusion = [string]$run.conclusion }
 }
 
 function Remove-PackagedVersion([string]$ReleasesDir, [string]$Version) {
