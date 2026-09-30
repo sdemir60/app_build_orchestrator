@@ -68,6 +68,17 @@ internal static class MainWindowHost
         return (window, vm);
     }
 
+    /// <summary>[motor · Task 8] <see cref="NewRealized"/> + kuruluma hazır bir teklif (<see cref="UpdateOffers.Sample"/>):
+    /// hap görünür, kartın içeriği dolu. Uygulama teklifsiz açılır; hapı/kartı sınayan kabuk testleri teklifi burada,
+    /// kurulumdan SONRA alır (üretimdeki gibi teklif sonradan gelir) ve görünür olan hap bir layout turuyla ölçülür.</summary>
+    public static (MainWindow window, RunViewModel vm) NewRealizedWithOffer(TempDir uiStateDir)
+    {
+        var (window, vm) = NewRealized(uiStateDir);
+        vm.AvailableUpdate = UpdateOffers.Sample();
+        ((FrameworkElement)window.Content).UpdateLayout();
+        return (window, vm);
+    }
+
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan
     /// alır. Yol ikinci bir yerde yeniden kurulsaydı ve biri değişseydi, test pencerenin hiç okumadığı bir dosyayı

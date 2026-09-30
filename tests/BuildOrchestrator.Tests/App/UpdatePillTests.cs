@@ -15,9 +15,10 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [design v1.23.0 §2.1 · §2.12 · §9 "Uygulama sayıları — güncelleme"] Title bar'daki güncelleme hapı. Güncelleme
-/// motoru yoktur: hap örnek teklifle her zaman görünür (plan U1) — teklif başlangıçta hazır olduğu için İLK karede
-/// görünür, giriş animasyonu yalnız teklif sonradan gelirse oynar (gelecekteki motorun dikişi).
+/// [design v1.23.0 §2.1 · §2.12 · §9 "Uygulama sayıları — güncelleme"] Title bar'daki güncelleme hapı. Hap yalnız
+/// kuruluma hazır (indirilmiş) bir teklif varken görünür (tasarım §2.12): uygulama teklifsiz açılır, teklif sonradan
+/// gelince giriş animasyonu bir kez oynar. Görünür hapı sınayan testler teklifi fixture'dan alır
+/// (<see cref="MainWindowHost.NewRealizedWithOffer"/>).
 ///
 /// <para><b>Yer:</b> sağ kümenin BAŞI — <c>[Update v] | [quad][list][focus] | [⚙][✦][ⓘ]</c>; arkasında mevcut
 /// ayraçla aynı stilde 1×14 ayraç. Küme sağa yaslı olduğundan hap boş alana doğru büyür ve mevcut ikonlar yerinden
@@ -69,7 +70,7 @@ public class UpdatePillTests
     public void The_existing_title_bar_buttons_do_not_move_when_the_pill_appears()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
         Assert.Equal(Visibility.Visible, window.UpdatePillSlot.Visibility); // ön-koşul: hap görünür
         var withPill = ExistingButtons(window).Select(b => RightInset(window, b)).ToList();
 
@@ -108,7 +109,7 @@ public class UpdatePillTests
     public void The_pill_is_drawn_to_the_design_numbers()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         var pill = window.UpdatePill;
 
         Assert.Equal(22.0, pill.ActualHeight, precision: 3);
@@ -154,7 +155,7 @@ public class UpdatePillTests
     public void The_open_pill_lifts_to_the_overlay_surface_and_hover_looks_the_same()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
         var pill = window.UpdatePill;
 
         pill.IsChecked = true;
@@ -180,7 +181,7 @@ public class UpdatePillTests
     public void The_pill_is_named_update_to_the_version_and_reports_whether_its_card_is_expanded()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         var pill = window.UpdatePill;
 
         var peer = UIElementAutomationPeer.CreatePeerForElement(pill);
@@ -198,19 +199,23 @@ public class UpdatePillTests
 
     // ---------------------------------------------------------------- görünürlük ve giriş
 
-    /// <summary>Örnek teklif açılışta hazırdır: hap ilk karede görünür ve giriş OYNAMAZ (animasyonlar açıkken bile).</summary>
+    /// <summary>Uygulama teklifsiz açılır: hap (ve ayracı) ilk karede YOKTUR ve hiçbir giriş oynamaz (animasyonlar
+    /// açıkken bile).
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: "örnek teklif açılışta hazırdır, hap ilk karede görünür" — motor yokken
+    /// tasarımın aktarımı için VM açılışta placeholder bir teklif (<c>UpdateOffer.Sample</c>) taşıyordu. Gerekçe: motor
+    /// geldi; hap yalnız indirilmiş, kuruluma hazır bir teklif varken görünür (tasarım §2.12 ilkesi), teklifi motor yazar.
+    /// Placeholder kalktı.</para></summary>
     [StaFact]
-    public void The_sample_offer_shows_the_pill_from_the_first_frame_without_an_entrance()
+    public void Without_an_offer_the_pill_is_hidden_from_the_first_frame()
     {
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealized(temp);
         var slot = window.UpdatePillSlot;
 
-        Assert.Equal(Visibility.Visible, slot.Visibility);
-        Assert.Equal(1.0, slot.Opacity);
+        Assert.Null(vm.AvailableUpdate);
+        Assert.Equal(Visibility.Collapsed, slot.Visibility);
         Assert.False(slot.HasAnimatedProperties);
-        Assert.True(slot.RenderTransform is null || slot.RenderTransform.Value.IsIdentity);
         GC.KeepAlive(window);
     }
 
@@ -225,16 +230,16 @@ public class UpdatePillTests
         var (window, vm) = MainWindowHost.NewRealized(temp);
         var slot = window.UpdatePillSlot;
 
-        vm.AvailableUpdate = null;
+        Assert.Null(vm.AvailableUpdate); // ön-koşul: uygulama teklifsiz açılır
         Assert.Equal(Visibility.Collapsed, slot.Visibility);
 
-        vm.AvailableUpdate = UpdateOffer.Sample;
+        vm.AvailableUpdate = UpdateOffers.Sample("9.8.0");
         Assert.Equal(Visibility.Visible, slot.Visibility);
         var entrance = Assert.IsType<TranslateTransform>(slot.RenderTransform);
         Assert.Equal(-4.0, entrance.Y);
         Assert.True(slot.HasAnimatedProperties, "giriş oynamadı");
 
-        vm.AvailableUpdate = UpdateOffer.Sample with { Version = "9.9.0" };
+        vm.AvailableUpdate = UpdateOffers.Sample("9.9.0");
         Assert.Same(entrance, slot.RenderTransform); // ikinci giriş kurulmadı
         Assert.Equal("9.9.0", window.UpdatePillVersion.Text);
         Assert.Equal(AccessibilityNames.UpdateTo("9.9.0"), AutomationProperties.GetName(window.UpdatePill));

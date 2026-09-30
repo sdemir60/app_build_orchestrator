@@ -1,3 +1,4 @@
+using System.Globalization;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 
@@ -5,8 +6,8 @@ namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
 /// [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Güncelleme hapının, kartının ve restart ekranının
-/// metinlerinin TEK kaynağı — XAML (<c>x:Static</c>), kabuk ve testler aynı sabiti okur. Güncelleme motoru henüz yoktur; metinler
-/// tasarımın kendisidir. Tüm metin İngilizce.
+/// metinlerinin TEK kaynağı — XAML (<c>x:Static</c>), kabuk ve testler aynı sabiti okur. Metinler tasarımın kendisidir.
+/// Tüm metin İngilizce.
 /// </summary>
 public static class UpdateText
 {
@@ -19,6 +20,11 @@ public static class UpdateText
     /// <summary>Kartın açıklama satırı — kilit yokken ne olacağını söyler.</summary>
     public const string RestartNote =
         "Restart takes a few seconds and reopens the workspace. If you wait, it installs on the next start.";
+
+    /// <summary>[K5] Kartın 5 maddeden sonrasını sayan satır — düz metin, tıklanmaz: gelen sürümün tüm notları restart'tan
+    /// sonra What's new'dedir.</summary>
+    public static string MoreHighlights(int count) =>
+        string.Create(CultureInfo.InvariantCulture, $"+{count} more in What's new after restart");
 
     /// <summary>Kartı kapatır; hap kalır.</summary>
     public const string Later = "Later";

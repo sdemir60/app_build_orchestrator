@@ -1,47 +1,56 @@
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Services.Updates;
+using BuildOrchestrator.App.ViewModels;
 
 namespace BuildOrchestrator.Tests.App;
 
-/// <summary>
-/// [design v1.23.0 §2.12 · plan U1] Güncelleme teklifinin verisi. Güncelleme motoru HENÜZ YOK: hap şimdilik her zaman
-/// görünür ve kartın içeriği prototipteki örnek kayıttır (<c>UPDATE_FEED</c>, BuildApp.jsx:1649-1658). Gelen sürüm
-/// elle yazılmaz — kurulu sürümün (<see cref="AppIdentity.Version"/>) bir sonraki minor'ıdır; CHANGELOG ve
-/// <c>Directory.Build.props</c> bu yüzden değişmez.
-/// </summary>
+/// <summary>[motor · Task 8 · K5] Feed kaydından karta: boyut MB tek ondalık; öne çıkanlar CHANGELOG bölümünün
+/// kendisidir (mevcut parser), KindOrder sırasıyla en çok 5 madde, kalanı sayı olarak (kart "+N more" yazar).
+/// <para><b>Değişen kural:</b> eski <c>Sample</c>/<c>NextMinor</c> (motor yokken hapı hep gösteren placeholder) kalktı;
+/// teklif artık yalnız gerçek bir feed kaydından üretilir. Örnek teklif testlerin fixture'ında (<c>UpdateOffers</c>).</para></summary>
 public class UpdateOfferTests
 {
-    /// <summary>Prototipin <c>nextMinor</c>'u (BuildApp.jsx:1649): minor bir artar, patch sıfırlanır; eksik parça 0
-    /// sayılır.</summary>
+    private const string Notes = "## [1.8.0] - 2026-10-01\n\n### Added\n\n- A\n- B\n\n### Changed\n\n- C\n\n### Fixed\n\n- D\n- E\n- F\n\n### Performance\n\n- G\n";
+
     [Theory]
-    [InlineData("1.7.0", "1.8.0")]
-    [InlineData("1.24.0", "1.25.0")]
-    [InlineData("2.9.3", "2.10.0")]
-    [InlineData("1.7", "1.8.0")]
-    [InlineData("3", "3.1.0")]
-    public void The_next_minor_raises_the_minor_and_resets_the_patch(string installed, string expected)
+    [InlineData(19_293_798, "18.4 MB")]
+    [InlineData(1_048_576, "1.0 MB")]
+    [InlineData(512_000, "0.5 MB")]
+    public void The_size_is_megabytes_with_one_decimal(long bytes, string expected) => Assert.Equal(expected, UpdateOffer.FormatSize(bytes));
+
+    [Fact]
+    public void Highlights_are_the_feed_notes_in_category_order_capped_at_five_with_the_rest_counted()
     {
-        Assert.Equal(expected, UpdateOffer.NextMinor(installed));
+        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 19_293_798, Notes));
+        Assert.Equal("1.8.0", offer.Version);
+        Assert.Equal("18.4 MB", offer.Size);
+        Assert.Equal(UpdateOffer.MaxHighlights, offer.Highlights.Count);
+        Assert.Equal(["A", "B", "C", "D", "E"], offer.Highlights.Select(n => n.Text));
+        Assert.Equal(2, offer.MoreCount);
     }
 
-    /// <summary>Örnek teklif: gelen sürüm kurulu sürümün bir sonraki minor'ı, boyut <c>18.4 MB</c>, maddeler
-    /// prototipin üç örnek maddesi (1 Performance, 2 Fixed) — yazıldıkları sırayla; çizim sırası kartın işidir
-    /// (<see cref="ReleaseNotes.KindOrder"/>).</summary>
     [Fact]
-    public void The_sample_offer_is_the_next_minor_of_the_installed_version_with_the_prototype_highlights()
+    public void A_short_feed_shows_everything_and_counts_nothing()
     {
-        var sample = UpdateOffer.Sample;
+        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 1, "## [1.8.0] - 2026-10-01\n### Fixed\n- D\n"));
+        Assert.Single(offer.Highlights);
+        Assert.Equal(0, offer.MoreCount);
+    }
 
-        Assert.Equal(UpdateOffer.NextMinor(AppIdentity.Version), sample.Version);
-        Assert.NotEqual(AppIdentity.Version, sample.Version);
-        Assert.Equal("18.4 MB", sample.Size);
-        Assert.Equal(
-            new[]
-            {
-                new ReleaseNote(NoteKind.Performance,
-                    "Sync reads project files in parallel — about twice as fast on large solutions."),
-                new ReleaseNote(NoteKind.Fixed, "Copy log keeps its line breaks when pasted into Teams or Outlook."),
-                new ReleaseNote(NoteKind.Fixed, "A project renamed on disk is picked up by the next Sync."),
-            },
-            sample.Highlights);
+    [Fact]
+    public void Unparsable_notes_yield_an_offer_without_highlights()
+    {
+        // Feed notu bozuksa (yayın script'i dışından üretilmiş bir paket) kart düşmez: hap yine çıkar, öne çıkanlar boş.
+        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 1, "not a changelog"));
+        Assert.Empty(offer.Highlights);
+        Assert.Equal(0, offer.MoreCount);
+        Assert.Empty(UpdateOffer.From(new UpdateCandidate("1.8.0", 1, "")).Highlights);
+    }
+
+    [Fact]
+    public void The_more_line_counts_what_the_card_leaves_out()
+    {
+        Assert.Equal("+3 more in What's new after restart", UpdateText.MoreHighlights(3));
+        Assert.Equal("+1 more in What's new after restart", UpdateText.MoreHighlights(1));
     }
 }

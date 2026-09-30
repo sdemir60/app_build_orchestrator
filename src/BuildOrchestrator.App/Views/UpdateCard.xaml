@@ -1,7 +1,7 @@
 <!-- [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Güncelleme kartı (UpdateCard, BuildApp.jsx:1688-1741).
      Kök taban tipi PopoverBase'tir (IsOpen + giriş + Esc + VM takası orada). Kabuk (Ds.Popover, 344px, dolgu 0) ve
      yerleşim (hapın 9px altı, Popup) MainWindow.xaml'dedir; burada yalnız gövde vardır: üç blok, aralarında 1px border.
-     Güncelleme motoru henüz yok — içerik RunViewModel.AvailableUpdate'in örnek teklifidir. -->
+     İçerik RunViewModel.AvailableUpdate'in teklifidir (UpdateCard.xaml.cs RefreshContent). -->
 <views:PopoverBase x:Class="BuildOrchestrator.App.Views.UpdateCard"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -44,10 +44,15 @@
     </Border>
 
     <!-- (2) ÖNE ÇIKANLAR — padding 13 16 14: What's new'in kategori blok dili (ReleaseNoteBlocks), kartın kompakt
-         ölçüleriyle (UpdateCard.HighlightBlocks). -->
+         ölçüleriyle (UpdateCard.HighlightBlocks). [K5] En çok 5 madde; kalanı PART_More düz metinle sayar (tıklanmaz).
+         Madde yoksa bant hiç çizilmez (RefreshContent). -->
     <Border x:Name="PART_HighlightsBlock" Padding="16,13,16,14" BorderThickness="0,1,0,0"
             BorderBrush="{DynamicResource Brush.Border}">
-      <StackPanel x:Name="PART_Highlights" />
+      <StackPanel>
+        <StackPanel x:Name="PART_Highlights" />
+        <TextBlock x:Name="PART_More" Margin="0,8,0,0" Visibility="Collapsed" FontSize="{DynamicResource FontSize.Xs}"
+                   Foreground="{DynamicResource Brush.TextFaint}" />
+      </StackPanel>
     </Border>
 
     <!-- (3) KARAR — padding 12 16 14: açıklama (ya da kilit nedeni) 12px text-dim, satır 1.5 · 12px altında sağa yaslı

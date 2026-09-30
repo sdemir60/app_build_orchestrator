@@ -108,7 +108,7 @@
             <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
                  BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
                  yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
-                 Güncelleme motoru henüz yok — örnek teklifle hap şimdilik her zaman görünür. Amber YOK. -->
+                 Hap yalnız kuruluma hazır bir teklif varken görünür. Amber YOK. -->
             <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
                         Visibility="Collapsed">
               <Grid VerticalAlignment="Center">

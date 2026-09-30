@@ -1,47 +1,44 @@
 using System.Globalization;
+using BuildOrchestrator.App.Services.Updates;
 
 namespace BuildOrchestrator.App.Services;
 
 /// <summary>
-/// [design v1.23.0 §2.12] İnip kuruluma hazır bekleyen bir güncelleme: gelen sürüm, paket boyutu ve kartta gösterilen
-/// öne çıkan maddeler. Maddeler What's new'in veri tipidir (<see cref="ReleaseNote"/>) — ikinci bir kategori tablosu
-/// yoktur; kart onları <see cref="ReleaseNotes.KindOrder"/> sırasıyla çizer.
-///
-/// <para><b>Güncelleme motoru henüz YAZILMADI.</b> Uygulamanın o anki teklifi tek yerde durur
-/// (<c>RunViewModel.AvailableUpdate</c>); şimdilik orada <see cref="Sample"/> vardır ve hap bu yüzden her zaman
-/// görünür (kullanıcı kararı 2026-09-29: güncelleme süreçlerinin yalnız tasarımı aktarılır). Motor yazıldığında
-/// teklifi o yazar.</para>
+/// [design v1.23.0 §2.12 · K5] İnip kuruluma hazır bekleyen bir güncelleme: gelen sürüm, paket boyutu, kartın öne
+/// çıkanları ve kartın göstermediği madde sayısı. Maddeler What's new'in veri tipidir (<see cref="ReleaseNote"/>); kart
+/// onları <see cref="ReleaseNotes.KindOrder"/> sırasıyla çizer. Teklif yalnız gerçek bir feed kaydından üretilir
+/// (<see cref="From"/>); feed notu yayın script'inin CHANGELOG'dan kestiği bölümdür ve aynı parser okur.
 /// </summary>
-public sealed record UpdateOffer(string Version, string Size, IReadOnlyList<ReleaseNote> Highlights)
+public sealed record UpdateOffer(string Version, string Size, IReadOnlyList<ReleaseNote> Highlights, int MoreCount)
 {
-    /// <summary>[prototip <c>nextMinor</c>, BuildApp.jsx:1649] Minor bir artar, patch sıfırlanır; okunamayan ya da eksik
-    /// parça 0 sayılır (<c>parseInt(n, 10) || 0</c>).</summary>
-    public static string NextMinor(string version)
+    /// <summary>Kartın gösterdiği en çok madde (K5) — 8 maddelik bir sürüm kartı ~580px'e çıkarıyordu.</summary>
+    public const int MaxHighlights = 5;
+
+    private const double BytesPerMegabyte = 1024 * 1024;
+
+    public static UpdateOffer From(UpdateCandidate candidate)
     {
-        ArgumentNullException.ThrowIfNull(version);
-        string[] parts = version.Split('.');
-        int major = Part(parts, 0), minor = Part(parts, 1);
-        return string.Create(CultureInfo.InvariantCulture, $"{major}.{minor + 1}.0");
+        ArgumentNullException.ThrowIfNull(candidate);
+        var (shown, more) = SelectHighlights(ParseNotes(candidate.NotesMarkdown));
+        return new(candidate.Version, FormatSize(candidate.DownloadBytes), shown, more);
     }
 
-    private static int Part(string[] parts, int index) =>
-        index < parts.Length && int.TryParse(parts[index], NumberStyles.None, CultureInfo.InvariantCulture, out int n)
-            ? n
-            : 0;
+    /// <summary>"18.4 MB" — Explorer'ın MB'ı (2^20), tek ondalık, İngilizce nokta.</summary>
+    internal static string FormatSize(long bytes) =>
+        string.Create(CultureInfo.InvariantCulture, $"{bytes / BytesPerMegabyte:0.0} MB");
 
-    /// <summary>
-    /// PLACEHOLDER — the update engine is not written yet. Prototipin örnek kaydı (<c>UPDATE_FEED</c>,
-    /// BuildApp.jsx:1650-1658): gelen sürüm kurulu sürümün (<see cref="AppIdentity.Version"/>) bir sonraki minor'ı,
-    /// boyut ve üç madde örnek metindir. Sürüm elle yazılmaz; CHANGELOG ve <c>Directory.Build.props</c> bu kayıttan
-    /// etkilenmez.
-    /// </summary>
-    public static UpdateOffer Sample { get; } = new(
-        NextMinor(AppIdentity.Version),
-        "18.4 MB",
-        [
-            new ReleaseNote(NoteKind.Performance,
-                "Sync reads project files in parallel — about twice as fast on large solutions."),
-            new ReleaseNote(NoteKind.Fixed, "Copy log keeps its line breaks when pasted into Teams or Outlook."),
-            new ReleaseNote(NoteKind.Fixed, "A project renamed on disk is picked up by the next Sync."),
-        ]);
+    /// <summary>KindOrder sırasıyla ilk <see cref="MaxHighlights"/> madde; kalan sayısı.</summary>
+    internal static (IReadOnlyList<ReleaseNote> Shown, int More) SelectHighlights(IReadOnlyList<ReleaseNote> notes)
+    {
+        var ordered = ReleaseNotes.KindOrder.SelectMany(kind => notes.Where(n => n.Kind == kind)).ToList();
+        return (ordered.Take(MaxHighlights).ToList(), Math.Max(0, ordered.Count - MaxHighlights));
+    }
+
+    /// <summary>Feed notu bu uygulamanın CHANGELOG bölümü değilse (elle yüklenmiş paket) kart düşmez: boş öne çıkanlar.</summary>
+    private static IReadOnlyList<ReleaseNote> ParseNotes(string markdown)
+    {
+        if (string.IsNullOrWhiteSpace(markdown)) return [];
+        try { return ReleaseNotes.Parse(markdown).FirstOrDefault()?.Notes ?? []; }
+        catch (FormatException) { return []; }
+    }
 }

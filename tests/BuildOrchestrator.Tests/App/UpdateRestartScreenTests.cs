@@ -360,7 +360,8 @@ public class UpdateRestartScreenTests
 
     // ================================================================ kabuk: katman, istek, uygulamaya dönüş
 
-    /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace; motora giden komutlar yakalanır, restart
+    /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace ve kuruluma hazır bir teklif
+    /// (<see cref="UpdateOffers.Sample"/> — uygulama teklifsiz açılır); motora giden komutlar yakalanır, restart
     /// ekranının zamanı sahtedir.</summary>
     private sealed record ShellRig(MainWindow Window, RunViewModel Vm, ScreenTime Time, List<IpcCommand> Sent)
     {
@@ -375,6 +376,7 @@ public class UpdateRestartScreenTests
     private static ShellRig NewShell(TempDir temp)
     {
         var (window, vm, _) = MainWindowHost.NewWithProjects(temp, ("A", null), ("B", null));
+        vm.AvailableUpdate = UpdateOffers.Sample();
         MainWindowHost.AcceptSends(vm);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;

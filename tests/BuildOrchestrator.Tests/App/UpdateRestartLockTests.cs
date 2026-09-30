@@ -27,9 +27,18 @@ public class UpdateRestartLockTests
 {
     private static readonly BranchRef FeatureX = new("feature/x", "bbbbbbbbbbbb", IsActive: false, IsRemoteTracking: false);
 
-    /// <summary>Sync'lenmiş, geride kalmış (pull yapılabilir), iki branch'li boşta bir workspace — kartın testleri de
-    /// (<see cref="UpdateCardTests"/>) aynı VM'i kullanır.</summary>
+    /// <summary>Sync'lenmiş, geride kalmış (pull yapılabilir), iki branch'li boşta bir workspace ve kuruluma hazır bir
+    /// teklif (<see cref="UpdateOffers.Sample"/>) — kartın testleri de (<see cref="UpdateCardTests"/>) aynı VM'i
+    /// kullanır.</summary>
     internal static RunViewModel NewVm()
+    {
+        var vm = NewVmWithoutOffer();
+        vm.AvailableUpdate = UpdateOffers.Sample();
+        return vm;
+    }
+
+    /// <summary><see cref="NewVm"/>'in workspace'i, teklifsiz — uygulamanın kendi başına vardığı durum.</summary>
+    private static RunViewModel NewVmWithoutOffer()
     {
         var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         {
@@ -193,7 +202,7 @@ public class UpdateRestartLockTests
     public void Without_an_offer_there_is_nothing_to_restart_into()
     {
         var vm = NewVm();
-        Assert.True(vm.RestartToUpdateCommand.CanExecute(null)); // ön-koşul: örnek teklif varken açık
+        Assert.True(vm.RestartToUpdateCommand.CanExecute(null)); // ön-koşul: teklif varken açık
 
         vm.AvailableUpdate = null;
 
@@ -238,11 +247,16 @@ public class UpdateRestartLockTests
         Assert.Equal(0, requests);
     }
 
-    /// <summary>Uygulama örnek teklifle açılır (motor yok, hap her zaman görünür — plan U1).</summary>
+    /// <summary>Uygulama teklifsiz açılır — Sync'lenmiş, boşta bir workspace'te bile: teklifi yalnız motor yazar ve
+    /// kurulacak bir şey yokken Restart kapalıdır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eski iddia: "uygulama örnek teklifle açılır" (<c>UpdateOffer.Sample</c> —
+    /// motor yokken hapı hep gösteren placeholder, plan U1). Gerekçe: motor geldi; hap yalnız indirilmiş bir teklif
+    /// varken görünür (tasarım §2.12 ilkesi). Placeholder kalktı.</para></summary>
     [Fact]
-    public void The_app_starts_with_the_sample_offer()
+    public void The_app_starts_without_an_offer()
     {
-        var vm = NewVm();
-        Assert.Same(UpdateOffer.Sample, vm.AvailableUpdate);
+        var vm = NewVmWithoutOffer();
+        Assert.Null(vm.AvailableUpdate);
+        Assert.False(vm.RestartToUpdateCommand.CanExecute(null));
     }
 }

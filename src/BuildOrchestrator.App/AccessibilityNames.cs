@@ -150,7 +150,8 @@ public static class AccessibilityNames
     /// arasında). About ile AYNI kural: UIA adı kısa, tooltip <see cref="Shell.ShortcutCatalog"/>'dan.</summary>
     public const string WhatsNew = "What's new";
 
-    /// <summary>[design v1.23.0 §2.12] Title bar'daki güncelleme hapı (<c>aria-label="Update to &lt;sürüm&gt;"</c>).</summary>
+    /// <summary>[design v1.23.0 §2.12] Title bar'daki güncelleme hapı (<c>aria-label="Update to &lt;sürüm&gt;"</c>) ve
+    /// açtığı kartın kökü — ekran okuyucu ikisini aynı adla duyar.</summary>
     public static string UpdateTo(string version) => "Update to " + version;
 
     // ---- Ayraçlar (resize separator'ları — E5 fold: klavye ile odaklanır + ok tuşlarıyla resize) ----
