@@ -131,7 +131,7 @@ kadarki tüm değişiklikler dokümanlara işlenir.
 Sürüm notları ve sürüm numarası **yalnız** kullanıcı "sürüm çıkar", "yeni versiyon", "versiyon no oluştur" gibi
 bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory.Build.props` → `Version`'a dokunulmaz.
 
-1. **Kaynak:** son tag'den bu yana main'e girenler — `git log --first-parent v<son>..main` merge mesajları +
+1. **Kaynak:** son tag'den bu yana `develop`'a girenler — `git log --first-parent v<son>..develop` merge mesajları +
    ilgili `.claude/outputs/` sonuç raporları. Ayrı bir ayrıntılı log dosyası tutulmaz; merge mesajı zaten odur.
 2. **Numara:** yalnız düzeltme → patch · yeni özellik → minor · büyük dönüm noktası → major (kullanıcıya sor).
 3. **Not:** `CHANGELOG.md`'nin en üstüne `## [x.y.z] - yyyy-MM-dd` (sürüm günü). Kategoriler Added · Changed ·
@@ -139,10 +139,13 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
    yok); kısa, genel, kullanıcının gördüğü özellik — iç terim, dosya/sınıf adı ve "şuraya şunu ekledik" yok;
    küçük işler tek genel satırda toplanır. Her madde o anki koda göre doğrulanır.
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
-5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`): guard'lar → tam süit → `main`'de
-   `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → annotated tag `vX.Y.Z` → push.
-   Tag'i gören `release.yml` derler, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin başka bir
-   şey yapman gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu).
+5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`), ana proje checkout'unda `develop`
+   üzerinde: guard'lar (develop push'lu ve `origin/develop`'la eşit, **develop HEAD'inin `ci.yml` koşusu yeşil**,
+   `origin/main` develop'un atası) → tam süit → `develop`'ta `release: vX.Y.Z` commit'i (bu commit için ayrı
+   branch açılmaz — tek istisna) → `main`'e `--no-ff` merge (`merge: release vX.Y.Z`) → merge commit'ine annotated
+   tag `vX.Y.Z` → `develop` `main`'e ff (develop = main) → `main`, `develop` ve tag tek atomik push. Tag'i gören
+   `release.yml` derler, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin başka bir şey yapman
+   gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu). Script durursa ne yapılacağı `/release` skill'inde.
 
 Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
@@ -167,11 +170,16 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 
 ## Git
 
-- Repo: `sdemir60/app_build_orchestrator` (GitHub). Ana branch: `main`.
-- Bir iş için kendi çalışma branch'ini aç, task başına commit at, bitince `main`'e merge + push.
+- Repo: `sdemir60/app_build_orchestrator` (GitHub). **`develop` günlük iş branch'idir; `main` yalnız sürümleri
+  taşır.**
+- Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at, bitince `develop`'a merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
-- Oturum **`main` üzerinde** bitirilir.
-- Tek istisna: `release: vX.Y.Z` sürüm commit'i `main`'de doğrudan atılır (ayrıntı "Sürüm çıkarma" adım 5).
+- **`main`'e yalnız `/release` (`scripts/release.ps1`) dokunur** — elle merge, commit ya da push yok. `main`'deki
+  her merge commit'i bir sürüm + tag'tir (ayrıntı "Sürüm çıkarma" adım 5). Doğrudan atılan tek commit
+  `release: vX.Y.Z`'dir; o da `develop`'ta atılır.
+- **Hotfix** de aynı yoldan geçer: `fix/x` → `develop`'a merge + push → `/release` (patch). `main` her zaman
+  `develop`'ın tamamını alır; yalnız düzeltmeyi taşıyan ayrı bir sürüm çıkmaz — bilinçli sınır.
+- Oturum **`develop` üzerinde** bitirilir.
 
 ### Nerede çalışılır
 
@@ -179,12 +187,14 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 kullanıcı açıkça **"worktree'de yap"** derse — o zaman kalıcı worktree kullanılır, yenisi açılmaz.
 
 **Adlandırma kuralı: `-ai` eki.** Kalıcı worktree'nin klasörü proje adı + `-ai`
-(`D:\Projects\Other\Apps\app_build_orchestrator-ai`), boştaki branch'i ana branch adı + `-ai`: **`main-ai`**.
+(`D:\Projects\Other\Apps\app_build_orchestrator-ai`), boştaki branch'i günlük iş branch'inin adı + `-ai`:
+**`develop-ai`**.
 
-- `main-ai`, `main`'in aynasıdır — kendi commit'i olmaz. Git aynı branch'in iki worktree'de birden açık
-  olmasına izin vermediği için worktree boştayken `main` yerine onu taşır.
-- İşe başlarken worktree önce `main-ai`'yi `main`'e ff-only günceller (`git merge --ff-only main`), sonra
+- `develop-ai`, `develop`'un aynasıdır — kendi commit'i olmaz. Git aynı branch'in iki worktree'de birden açık
+  olmasına izin vermediği için worktree boştayken `develop` yerine onu taşır.
+- İşe başlarken worktree önce `develop-ai`'yi `develop`'a ff-only günceller (`git merge --ff-only develop`), sonra
   oradan işin kendi çalışma branch'ini açar.
-- İş bitince çalışma branch'i `main`'e merge + push edilir, merge doğrulanınca branch local ve remote'tan
-  silinir. Worktree `main-ai`'ye döner ve yeniden `main`'e ff-only güncellenir; oturum orada biter. Worktree
-  yerinde kalır, silinmez; `main-ai` remote'a push edilmez.
+- İş bitince çalışma branch'i `develop`'a merge + push edilir, merge doğrulanınca branch local ve remote'tan
+  silinir. Worktree `develop-ai`'ye döner ve yeniden `develop`'a ff-only güncellenir; oturum orada biter. Worktree
+  yerinde kalır, silinmez; `develop-ai` remote'a push edilmez.
+- `/release` worktree'de koşmaz: `develop` ana proje checkout'unda açıktır; script orada, `develop` üzerinde koşar.

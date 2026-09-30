@@ -403,7 +403,8 @@ public class ReleaseScriptsTests
     public void The_release_script_refuses_a_version_whose_changelog_section_is_missing()
     {
         RequirePowerShell();
-        // -DryRun: git'e ve testlere dokunmaz; yalnız guard'lar koşar. CHANGELOG'da 99.0.0 yok → 1.
+        // -DryRun: yalnız guard'lar koşar, hiçbir şey yazılmaz. CHANGELOG guard'ı İLK sıradadır (git'ten, fetch'ten ve CI
+        // sorgusundan önce) — bu test GERÇEK repoda koştuğu için ağa ve git'e hiç inmez. CHANGELOG'da 99.0.0 yok → 1.
         var r = Run("release.ps1", "-Version", "99.0.0", "-DryRun");
         Assert.Equal(1, r.ExitCode);
         Assert.Contains("CHANGELOG.md", r.Output, StringComparison.Ordinal);
