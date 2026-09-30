@@ -613,8 +613,7 @@ public class ReleaseScriptsTests
 
         private void Configure(string repo)
         {
-            Git(repo, "config", "user.email", "test@buildorchestrator.local");
-            Git(repo, "config", "user.name", "Build Orchestrator Test");
+            GitTestRepo.ConfigureIdentity(repo); // kimlik tek yerde (GitTestRepo)
             Git(repo, "config", "core.autocrlf", "false"); // fixture LF yazar; kullanıcı ayarı satır sonu gürültüsü üretmesin
         }
 

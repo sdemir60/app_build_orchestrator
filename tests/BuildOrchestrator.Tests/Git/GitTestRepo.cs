@@ -16,6 +16,12 @@ public sealed class GitTestRepo : IDisposable
 {
     private readonly List<string> _extraDirsToClean = [];
 
+    /// <summary>Fixture repolarının commit kimliği — TEK yer. Kimlik repo-yerel yazılır (<see cref="ConfigureIdentity"/>):
+    /// yalnız testin kendi <c>commit</c>'leri değil, ürün kodunun o repoda koşturduğu <c>stash</c> gibi komutlar da kimlik
+    /// ister ve CI runner'ında global git kimliği YOKTUR ("Author identity unknown", ilk CI koşusunda görüldü).</summary>
+    public const string IdentityName = "Build Orchestrator Test";
+    public const string IdentityEmail = "test@buildorchestrator.local";
+
     public string RootPath { get; }
 
     public GitTestRepo()
@@ -23,8 +29,15 @@ public sealed class GitTestRepo : IDisposable
         RootPath = Path.Combine(Path.GetTempPath(), "gitsvc-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(RootPath);
         RunGit(RootPath, "init", "-q", ".");
-        RunGit(RootPath, "config", "user.email", "test@buildorchestrator.local");
-        RunGit(RootPath, "config", "user.name", "Build Orchestrator Test");
+        ConfigureIdentity(RootPath);
+    }
+
+    /// <summary>Bir repoya (kök ya da klon) fixture kimliğini repo-yerel yazar. Klonlar kaynağın <c>.git/config</c>'ini
+    /// devralmaz; bu yüzden her klon ayrıca yapılandırılır — kimliği olmayan makinede (CI) klondaki commit düşerdi.</summary>
+    public static void ConfigureIdentity(string repo)
+    {
+        RunGitAt(repo, "config", "user.email", IdentityEmail);
+        RunGitAt(repo, "config", "user.name", IdentityName);
     }
 
     /// <summary>Dosya yazar (yoksa oluşturur, varsa üzerine yazar) — commit/dirty senaryoları için.</summary>
@@ -102,6 +115,7 @@ public sealed class GitTestRepo : IDisposable
         string cloneRoot = Path.Combine(Path.GetTempPath(), "gitsvc-shallow-" + Guid.NewGuid().ToString("N"));
         string sourceUri = new Uri(RootPath).AbsoluteUri;
         RunGit(Path.GetTempPath(), "clone", "-q", "--depth", "1", sourceUri, cloneRoot);
+        ConfigureIdentity(cloneRoot);
         _extraDirsToClean.Add(cloneRoot);
         return cloneRoot;
     }
@@ -112,6 +126,7 @@ public sealed class GitTestRepo : IDisposable
         string cloneRoot = Path.Combine(Path.GetTempPath(), "gitsvc-clone-" + Guid.NewGuid().ToString("N"));
         string sourceUri = new Uri(RootPath).AbsoluteUri;
         RunGit(Path.GetTempPath(), "clone", "-q", sourceUri, cloneRoot);
+        ConfigureIdentity(cloneRoot);
         _extraDirsToClean.Add(cloneRoot);
         return cloneRoot;
     }

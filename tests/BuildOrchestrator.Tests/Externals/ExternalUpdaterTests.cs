@@ -97,7 +97,7 @@ public class ExternalUpdaterTests
         upstream.CommitAll("second");
         File.WriteAllText(Path.Combine(clone, "b.cs"), "local");
         GitTestRepo.RunGitAt(clone, "add", "-A");
-        GitTestRepo.RunGitAt(clone, "-c", "user.email=t@t.local", "-c", "user.name=T", "commit", "-q", "-m", "local");
+        GitTestRepo.RunGitAt(clone, "commit", "-q", "-m", "local"); // kimlik klona fixture'ca yazıldı (GitTestRepo.ConfigureIdentity)
 
         var ex = await Assert.ThrowsAsync<ExternalPreparationException>(() => UpdateAsync(Updater(), GitAt(clone)));
 

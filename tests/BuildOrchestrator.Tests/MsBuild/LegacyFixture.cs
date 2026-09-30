@@ -4,15 +4,51 @@ using System.IO;
 namespace BuildOrchestrator.Tests.MsBuild;
 
 /// <summary>
-/// Test fixture: minimal, gerçek, derlenebilir v4.6 class library üretir (spike'ın kanıtladığı gibi
-/// MSBuild.exe bu makinede legacy v4.6 projelerini derliyor). packages.config YOK, post-build copy YOK
+/// Test fixture: minimal, gerçek, derlenebilir legacy (SDK-dışı) .NET Framework class library üretir (spike'ın
+/// kanıtladığı gibi MSBuild.exe legacy projeleri derliyor). packages.config YOK, post-build copy YOK
 /// (Task 13 gerekirse genişletir). Üretilen kaynak dosyasının adı sabit ("Class1.cs") — çağıran testler
 /// (ör. derleme-hatası senaryosu) bu dosyanın üzerine bozuk kod yazarak fixture'ı genişletebilir.
 /// Fix wave 1 / Finding 1: <see cref="CreateClassLibWithLingeringPostBuild"/> istisna — post-build event
 /// İÇEREN tek fixture, kasıtlı olarak MsBuildInvoker'ın başarı-yolu drain'ini test etmek için eklendi.
+///
+/// <para><b>Hedef framework makineden seçilir</b> (<see cref="TargetFrameworkVersion"/>): v4.6 targeting pack'i varsa v4.6
+/// (OSYS'in legacy projeleri gibi), yoksa kurulu en yeni 4.x. Gerekçe: CI runner imajı (Windows 2025 + VS 2026) 4.6.2 ve
+/// üstünü taşır, 4.6'yı taşımaz — sabit v4.6 orada MSB3644 ile düşüyor ve gerçek MSBuild'e dayanan altı test kırmızı
+/// kalıyordu (ilk CI koşusu). Fixture'ın sınadığı şey belirli bir sürüm değil, legacy csproj'un çözülen MSBuild.exe ile
+/// derlenmesidir. Hiç paket yoksa v4.6 kalır ve MSBuild sebebi açıkça yazar.</para>
 /// </summary>
 public static class LegacyFixture
 {
+    /// <summary>Referans derlemelerinin (targeting pack) standart kökü — alt klasör adları <c>v4.6</c>, <c>v4.8.1</c>…</summary>
+    private static readonly string ReferenceAssembliesRoot = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+        "Reference Assemblies", "Microsoft", "Framework", ".NETFramework");
+
+    /// <summary>Fixture csproj'larının <c>TargetFrameworkVersion</c>'ı — bir kez, makinedeki paketlerden.</summary>
+    public static string TargetFrameworkVersion { get; } = ChooseTargetFramework(InstalledTargetingPacks());
+
+    /// <summary>Tercih edilen sürüm; kurulu değilse ve başka 4.x de yoksa yine bu yazılır (MSBuild açıkça düşer).</summary>
+    internal const string PreferredTargetFramework = "v4.6";
+
+    /// <summary>Saf seçim: <paramref name="installedPackDirs"/> targeting pack klasör adlarıdır (<c>v4.6</c>, <c>v4.X</c>…).
+    /// v4.6 varsa o; yoksa sürüm olarak ayrıştırılabilen 4.x'lerin en yenisi; hiçbiri yoksa v4.6.</summary>
+    internal static string ChooseTargetFramework(IEnumerable<string> installedPackDirs)
+    {
+        var packs = installedPackDirs.ToList();
+        if (packs.Contains(PreferredTargetFramework, StringComparer.OrdinalIgnoreCase)) return PreferredTargetFramework;
+        var newest = packs
+            .Select(name => (Name: name, Version: Version.TryParse(name.TrimStart('v', 'V'), out var v) ? v : null))
+            .Where(p => p.Version is { Major: 4 })
+            .OrderByDescending(p => p.Version)
+            .FirstOrDefault();
+        return newest.Name ?? PreferredTargetFramework;
+    }
+
+    private static IEnumerable<string> InstalledTargetingPacks() =>
+        Directory.Exists(ReferenceAssembliesRoot)
+            ? Directory.EnumerateDirectories(ReferenceAssembliesRoot).Select(d => Path.GetFileName(d)!)
+            : [];
+
     public static string CreateClassLib(string dir, string assemblyName)
     {
         Directory.CreateDirectory(dir);
@@ -42,7 +78,7 @@ public static class LegacyFixture
                 <OutputType>Library</OutputType>
                 <RootNamespace>{{assemblyName}}</RootNamespace>
                 <AssemblyName>{{assemblyName}}</AssemblyName>
-                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                <TargetFrameworkVersion>{{TargetFrameworkVersion}}</TargetFrameworkVersion>
               </PropertyGroup>
               <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
                 <DebugSymbols>true</DebugSymbols>
@@ -137,7 +173,7 @@ public static class LegacyFixture
                 <OutputType>Library</OutputType>
                 <RootNamespace>{{assemblyName}}</RootNamespace>
                 <AssemblyName>{{assemblyName}}</AssemblyName>
-                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                <TargetFrameworkVersion>{{TargetFrameworkVersion}}</TargetFrameworkVersion>
               </PropertyGroup>
               <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
                 <DebugSymbols>true</DebugSymbols>
@@ -229,7 +265,7 @@ public static class LegacyFixture
                 <OutputType>Library</OutputType>
                 <RootNamespace>{{assemblyName}}</RootNamespace>
                 <AssemblyName>{{assemblyName}}</AssemblyName>
-                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                <TargetFrameworkVersion>{{TargetFrameworkVersion}}</TargetFrameworkVersion>
               </PropertyGroup>
               <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
                 <DebugSymbols>true</DebugSymbols>
@@ -367,7 +403,7 @@ public static class LegacyFixture
                 <OutputType>Library</OutputType>
                 <RootNamespace>{{assemblyName}}</RootNamespace>
                 <AssemblyName>{{assemblyName}}</AssemblyName>
-                <TargetFrameworkVersion>v4.6</TargetFrameworkVersion>
+                <TargetFrameworkVersion>{{TargetFrameworkVersion}}</TargetFrameworkVersion>
               </PropertyGroup>
               <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
                 <DebugSymbols>true</DebugSymbols>

@@ -54,7 +54,11 @@ public class MsBuildInvokerTests
             line => { lock (lines) lines.Add(line); },
             CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(60));
 
-        Assert.Equal(0, result.ExitCode);
+        // Düşerse MSBuild'in hata satırları mesajda olsun: CI'da yalnız "Expected 0 Actual 1" görülmüştü (ilk koşu — runner'da
+        // v4.6 targeting pack yoktu), sebep ancak buradan okunabilir.
+        Assert.True(result.ExitCode == 0,
+            $"MSBuild exit {result.ExitCode} ({LegacyFixture.TargetFrameworkVersion}):\n"
+            + string.Join("\n", lines.Where(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))));
         Assert.False(result.TimedOut);
         Assert.False(result.Killed);
         Assert.NotEmpty(lines);
