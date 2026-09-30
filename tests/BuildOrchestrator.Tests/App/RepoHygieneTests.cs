@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -35,8 +36,12 @@ public class RepoHygieneTests
         Assert.Equal("vpk", vpk.GetProperty("commands")[0].GetString());
     }
 
+    /// <summary>Workflow metni YAML yorumları atılmış olarak: iddialar yalnız GitHub'ın koşturduğu satırlara bakar — bir
+    /// yorumdaki anahtar adı (ör. <c># ... -RequireOnMain ...</c>) adım silindiğinde testi yeşil tutmasın. Workflow'larda
+    /// tırnak içinde <c>#</c> yoktur; satır başındaki ya da boşluktan sonra gelen <c>#</c> yorum başlatır.</summary>
     private static string Workflow(string name) =>
-        File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, ".github", "workflows", name));
+        Regex.Replace(File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, ".github", "workflows", name)),
+            @"(?m)(^|[ \t]+)#.*$", "");
 
     [Fact]
     public void CI_builds_and_tests_main_on_a_pinned_windows_image_and_is_callable_by_the_release()
@@ -90,7 +95,10 @@ public class RepoHygieneTests
 
     /// <summary>Guard job'ı tag'in commit'inin origin/main'de olduğunu da ister — elle itilen, main'e hiç girmemiş bir
     /// commit'e duran tag yayın çıkarmaz: tam tarihçe (origin/main'e ata sorulabilsin) + <c>-RequireOnMain</c>. Kuralın
-    /// davranışı <see cref="ReleaseScriptsTests"/>'te gerçek git sandbox'ıyla pinlenir.</summary>
+    /// davranışı <see cref="ReleaseScriptsTests"/>'te gerçek git sandbox'ıyla pinlenir. Anahtar guard script'ini çağıran
+    /// <c>run:</c> satırında aranır (yorumlar <see cref="Workflow"/>'da atılır): eski hali job metninde düz
+    /// <c>Contains("-RequireOnMain")</c> idi ve <c>fetch-depth</c> satırının yorumu anahtar adını taşıdığı için anahtar
+    /// run satırından silindiğinde de yeşil kalıyordu.</summary>
     [Fact]
     public void The_release_guard_job_checks_that_the_tag_is_on_main()
     {
@@ -100,6 +108,6 @@ public class RepoHygieneTests
         Assert.True(guard > 0 && ci > guard, "release.yml: guard ya da ci job'ı bulunamadı");
         string guardJob = release[guard..ci];
         Assert.Contains("fetch-depth: 0", guardJob, StringComparison.Ordinal);
-        Assert.Contains("-RequireOnMain", guardJob, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^\s*- run: .*scripts/release-guard\.ps1 .*-RequireOnMain\b", guardJob);
     }
 }
