@@ -9,7 +9,7 @@ Kurallar — kaynak, numara, notun yazımı, `Version` — CLAUDE.md **"Sürüm 
 tekrarlanmaz. Bu skill yalnız sırayı ve komutları verir.
 
 **Model:** günlük iş `develop`'ta, `main` yalnız sürümleri taşır. `main`'e yalnız `scripts/release.ps1` dokunur;
-`main`'deki her merge commit'i bir sürüm + tag'tir (CLAUDE.md "Git").
+`main`'deki her merge commit'i bir sürüm + tag'tir (CLAUDE.md "Git"; tek istisna adım 6'daki yeniden çıkarma).
 
 1. **Ana proje checkout'unda** (`D:\Projects\Other\Apps\app_build_orchestrator`) `develop` üzerinde koş — worktree'de
    (`develop-ai`) DEĞİL; script `develop` dışında durur. **Ön koşullar** — script hepsini denetler; tutmayan olursa
@@ -36,11 +36,14 @@ tekrarlanmaz. Bu skill yalnız sırayı ve komutları verir.
      değeri yazar. Sebebi gider, adım 3'ü yeniden koş.
    - **Release commit'inden SONRA** (en olası: push reddedildi — fetch'ten sonra `origin/develop` ya da `origin/main`
      ilerledi; `--atomic` olduğu için origin'e hiçbir şey gitmedi): yerelde release commit'i, merge ve tag kalır.
-     Script'in son `release: undo ... with:` satırındaki komutları olduğu gibi çalıştır —
-     `git switch develop; git tag -d vX.Y.Z; git reset --soft <sha>; git restore --staged .; git branch -f main <sha>`
-     (sha'lar yayının başladığı commit'lerdir; araya bir `fetch` girse de doğru kalır). `develop` ve `main` eski
-     yerine döner, tag silinir; CHANGELOG bölümü ve `Version` çalışma ağacında değişiklik olarak kalır. Sonra
-     `git pull --ff-only` (develop), CI'ın yeşilini bekle, adım 3.
+     Script'in bastığı kurtarma satırını (son `release: undo … with:` satırı) olduğu gibi çalıştır; komutları elle
+     yazma. Satırdaki sha'lar yayının başladığı commit'lerdir, araya bir `fetch` girse de doğru kalır. `develop` ve
+     `main` eski yerine döner, tag silinir; CHANGELOG bölümü ve `Version` çalışma ağacında değişiklik olarak kalır.
+     Sonra `git pull --ff-only` (develop), CI'ın yeşilini bekle, adım 3.
+   - **Push hata verdi ama script origin'e baktı:** `… but origin has vX.Y.Z …` derse sunucu push'u uygulamıştır —
+     kurtarma satırı basılmaz, undo YAPMA; `git fetch` ile origin'deki `main`, `develop` ve tag'in yereldekilerle
+     aynı olduğunu gör, adım 5. `… origin cannot be read …` derse kurtarma satırını ancak origin'e ulaşıp `vX.Y.Z`'nin
+     orada olmadığını gördükten sonra çalıştır (`git ls-remote origin refs/tags/vX.Y.Z`); oradaysa yayın çıkmıştır.
 5. Actions linkini ver: https://github.com/sdemir60/app_build_orchestrator/actions (`release` workflow'u). Bitince
    https://github.com/sdemir60/app_build_orchestrator/releases/latest sayfasında Setup.exe ve nupkg'ları gör.
 6. **Tag push edildi ama `release.yml` düştü** (guard reddetti, `ci` kırmızı ya da `publish` düştü — `vpk pack` bir

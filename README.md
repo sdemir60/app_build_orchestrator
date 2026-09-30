@@ -183,8 +183,9 @@ checkout's files locked — tray icon → Exit; an installed copy elsewhere is n
 green (`-SkipCiCheck` skips that check when offline or in an emergency); then it writes `Version`, builds, runs the
 full suite, commits `release: vX.Y.Z` on `develop`, merges `develop` into `main`, tags the merge, moves `develop`
 up to `main` and pushes `main`, `develop` and the tag atomically — all three reach GitHub or none does. Should it
-stop after the release commit, its last line prints the commands that undo the local commit, merge and tag.
-`-DryRun` runs every check and stops there. The tag starts `.github/workflows/release.yml`: it checks that the
+stop after the release commit, its last line prints the commands that undo the local commit, merge and tag — unless
+a push that reported an error still left the tag on GitHub, which it then reports instead. `-DryRun` runs every
+check and stops there. The tag starts `.github/workflows/release.yml`: it checks that the
 tag, `Version` and the top `CHANGELOG.md` section agree and that the tagged commit is on `main`, runs the CI build
 and suite, packages with `package.ps1` and publishes the GitHub Release — the installer, the update packages and the
 version's notes as its text. Installed copies pick it up on their next check.

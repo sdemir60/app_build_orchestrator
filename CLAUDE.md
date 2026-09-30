@@ -175,7 +175,8 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 - Bir iş için kendi çalışma branch'ini `develop`'tan aç, task başına commit at, bitince `develop`'a merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - **`main`'e yalnız `/release` (`scripts/release.ps1`) dokunur** — elle merge, commit ya da push yok. `main`'deki
-  her merge commit'i bir sürüm + tag'tir (ayrıntı "Sürüm çıkarma" adım 5). Doğrudan atılan tek commit
+  her merge commit'i bir sürüm + tag'tir (ayrıntı "Sürüm çıkarma" adım 5; tek istisna: tag geri çekilip aynı sürüm
+  yeniden çıkarılınca önceki merge tag'siz kalır — `/release` skill'i adım 6). Doğrudan atılan tek commit
   `release: vX.Y.Z`'dir; o da `develop`'ta atılır.
 - **Hotfix** de aynı yoldan geçer: `fix/x` → `develop`'a merge + push → `/release` (patch). `main` her zaman
   `develop`'ın tamamını alır; yalnız düzeltmeyi taşıyan ayrı bir sürüm çıkmaz — bilinçli sınır.
