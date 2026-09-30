@@ -112,11 +112,11 @@ public class EngineHostTests
     /// <para><b>Ölçüt process handle'ının sinyali:</b> <c>Process.GetProcessById</c>'in "yok" demesi YETMEZ — çıkış kodu
     /// Kill'le hemen yazıldığı için process henüz sonlanmamışken de fırlatıyor (ölçüldü). Handle Dispose'dan ÖNCE
     /// açılır, sonra sinyali beklemeden (0 ms) sorulur.</para>
-    /// <para><b>Ayırt edicilik (ölçüldü):</b> ağaç öldürme (<c>Kill(entireProcessTree: true)</c>) Kill'den SONRA tüm
-    /// process'leri tarar ve bu tarama boştaki bir Supervisor'ın sonlanmasından çoğu kez uzun sürer — beklemesiz eski
-    /// kod bu makinede yeşildi. Taramayı çıkaran mutasyonla (<c>Kill()</c>) beklemesiz kod 5/5 kırmızı, beklemeli kod
-    /// yeşil. Yük altındaki ya da ağır (büyük bellek, çok thread) bir Supervisor'da sonlanma taramadan uzun sürer; bu
-    /// test o yarışın sözleşmesini pinler.</para></summary>
+    /// <para><b>Bu test beklemeyi PİNLEMEZ (ölçüldü):</b> ağaç öldürme (<c>Kill(entireProcessTree: true)</c>) Kill'den
+    /// SONRA tüm process'leri tarar ve bu tarama boştaki bir Supervisor'ın sonlanmasından çoğu kez uzun sürer —
+    /// beklemesiz eski kod bu makinede yeşildi. Üretim yolunu (Dispose → öldür + bekle) uçtan uca koşar; beklemenin
+    /// kendisini <see cref="Kill_and_await_exit_returns_only_after_the_process_has_ended"/> ağaç taraması olmadan
+    /// pinler.</para></summary>
     [Fact]
     public async Task Dispose_waits_for_the_supervisor_process_to_exit()
     {
@@ -129,6 +129,51 @@ public class EngineHostTests
 
         Assert.True(supervisor.WaitForExit(TimeSpan.Zero), "Dispose döndüğünde Supervisor process'i hâlâ sonlanmamıştı");
     }
+
+    /// <summary>[motor · Task 11 · fix-1] Öldürme + bekleme ilkeli (<see cref="EngineHost.KillAndAwaitExit"/>) ancak
+    /// process GERÇEKTEN sonlandıktan sonra döner — öldürmenin etkisi ne kadar geç inerse insin (bütçe
+    /// <see cref="EngineHost.KillExitWait"/>). Beklemeyi pinleyen test budur; <see cref="Dispose_waits_for_the_supervisor_process_to_exit"/>
+    /// üretim yolunu uçtan uca koşar ama ağaç öldürmenin taraması yarışı örttüğü için beklemesiz kodda da yeşildir.
+    /// <para><b>Neden geç inen öldürme:</b> <c>TerminateProcess</c> asenkrondur, gerçek yarış birkaç ms'dir ve
+    /// makineye bağlıdır. Öldürme stratejisi dikişin parametresidir; test gerçek bir child'ı (<c>PING.EXE</c>) 100 ms
+    /// SONRA öldüren bir strateji verir — yarış deterministik olur: ilke beklemeseydi dönüşte process kesin yaşar.</para></summary>
+    [Fact]
+    public async Task Kill_and_await_exit_returns_only_after_the_process_has_ended()
+    {
+        using var child = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "PING.EXE"), "-n 30 127.0.0.1")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        })!;
+        var lateKill = Task.CompletedTask;
+        try
+        {
+            EngineHost.KillAndAwaitExit(child, p => lateKill = KillAfterAsync(p, TimeSpan.FromMilliseconds(100)));
+
+            Assert.True(child.WaitForExit(TimeSpan.Zero), "KillAndAwaitExit döndüğünde process hâlâ sonlanmamıştı");
+        }
+        finally
+        {
+            await lateKill; // Process nesnesi dispose edilmeden önce geç öldürme insin
+            child.Kill();   // çıkmışsa no-op
+            child.WaitForExit();
+        }
+    }
+
+    /// <summary>Etkisi <paramref name="delay"/> sonra inen bir öldürme — asenkron sonlanmanın abartılmış hâli.</summary>
+    private static async Task KillAfterAsync(Process process, TimeSpan delay)
+    {
+        await Task.Delay(delay).ConfigureAwait(false);
+        process.Kill();
+    }
+
+    /// <summary>[motor · Task 11 · fix-1] Öldürülen process'e tanınan süre 1 SANİYEDE KALIR: kısalırsa (ör. 0) güncelleyici
+    /// <c>current\</c> klasörünü Supervisor'ın DLL kilitleri bırakılmadan değiştirmeye kalkar; uzarsa çıkış bütçesini
+    /// (<c>AppShutdown.DisposalTimeout</c>, 2 s = graceful yazma 500 ms + bu süre) aşar. Beklenen değer üretimden
+    /// OKUNMAZ, otorite literali olarak yazılır — <see cref="Default_startup_timeout_stays_five_seconds"/> deseni.</summary>
+    [Fact]
+    public void Kill_exit_wait_stays_one_second()
+        => Assert.Equal(TimeSpan.FromSeconds(1), EngineHost.KillExitWait);
 
     [Fact]
     public async Task StartAsync_timeout_disposes_child_and_no_leak()

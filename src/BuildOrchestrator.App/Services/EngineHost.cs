@@ -221,8 +221,21 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// değiştirmeden önce <c>supervisor\*.dll</c> kilitleri bırakılmış olsun (Update.exe App'in çıkışını bekler,
     /// Supervisor'ın değil). <c>TerminateProcess</c> asenkrondur: çağrı döndüğünde process birkaç ms daha yaşar.
     /// Çıkış bütçesi (<see cref="Shell.AppShutdown.DisposalTimeout"/>, 2 s) graceful yazma (500 ms) + bu süreyi
-    /// kapsar.</summary>
+    /// kapsar. Değeri <c>EngineHostTests.Kill_exit_wait_stays_one_second</c> literal ile pinler.</summary>
     internal static readonly TimeSpan KillExitWait = TimeSpan.FromSeconds(1);
+
+    /// <summary>Motorun öldürülmesi: Supervisor ve altındaki ağaç (<c>MSBuild.exe</c>'ler dahil).</summary>
+    private static readonly Action<System.Diagnostics.Process> KillTree = p => p.Kill(entireProcessTree: true);
+
+    /// <summary>[motor · Task 11 · fix-1] Öldür ve process'in GERÇEKTEN sonlanmasını bekle (en çok
+    /// <see cref="KillExitWait"/>). Öldürme stratejisi parametredir: üretim ağacı öldürür (<see cref="KillTree"/>);
+    /// test etkisi geç inen bir öldürme verir — ağaç öldürmenin process taraması kısa yarışı örttüğü için bekleme
+    /// ancak böyle sınanır (<c>EngineHostTests.Kill_and_await_exit_returns_only_after_the_process_has_ended</c>).</summary>
+    internal static void KillAndAwaitExit(System.Diagnostics.Process process, Action<System.Diagnostics.Process> kill)
+    {
+        kill(process);
+        process.WaitForExit(KillExitWait);
+    }
 
     private void KillCurrent()
     {
@@ -231,8 +244,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById(child.Pid);
-            process.Kill(entireProcessTree: true);
-            process.WaitForExit(KillExitWait);
+            KillAndAwaitExit(process, KillTree);
         }
         catch (ArgumentException) { /* zaten öldü */ }
         child.Dispose();
