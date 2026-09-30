@@ -41,9 +41,10 @@ public sealed class SupervisorSandbox : IDisposable
             [.. Args, .. debugHooks ? new[] { SupervisorHost.DebugHooksArg } : []]);
 
     /// <summary>Bu sandbox'ta başlayan bir <see cref="EngineHost"/> — gerçek motoru BAŞLATAN/YENİDEN BAŞLATAN her App
-    /// testi bunu kullanır.</summary>
-    public EngineHost IsolatedEngineHost(TimeSpan? startupTimeout = null) =>
-        new(TestPaths.SupervisorExe, startupTimeout, Args);
+    /// testi bunu kullanır. <paramref name="killStrategy"/> yalnız öldürmenin koştuğu bağlamı gözleyen test içindir
+    /// (<c>EngineHostTests</c>); verilmezse motoru üretimdeki gibi (ağaçla) öldürür.</summary>
+    public EngineHost IsolatedEngineHost(TimeSpan? startupTimeout = null, Action<Process>? killStrategy = null) =>
+        new(TestPaths.SupervisorExe, startupTimeout, Args, killStrategy);
 
     public void Dispose()
     {

@@ -41,8 +41,11 @@ public sealed class EngineUnavailableException(string exePath, EngineUnavailable
 /// argümansız başlar, önbellek kullanıcının <c>%LOCALAPPDATA%</c>'sındadır). Yalnız testler kullanır: gerçek bir motor
 /// başlatan her test <c>--logs &lt;sandbox&gt;</c> ile izole bir önbellek verir — aksi hâlde motorun açılış
 /// kurtarması (spec 2026-09-18 §5.5) kullanıcının gerçek <c>run-inflight.json</c>'ını işlerdi.</param>
+/// <param name="killStrategy">Motoru öldüren strateji (bkz. <see cref="KillStrategy"/>). <b>Üretim HİÇ geçmez</b>
+/// (varsayılan: Supervisor ve altındaki ağaç). Yalnız testler kullanır: öldürmenin hangi bağlamda koştuğu ancak buradan
+/// gözlenir.</param>
 public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeout = null,
-    IReadOnlyList<string>? supervisorArgs = null) : IAsyncDisposable
+    IReadOnlyList<string>? supervisorArgs = null, Action<System.Diagnostics.Process>? killStrategy = null) : IAsyncDisposable
 {
     /// <summary>[B1/F1] <see cref="StartAsync"/>'in <c>engineReady</c>'yi beklerken vazgeçme süresi.
     /// <b>Üretim varsayılanı 5s'de KALIR</b> — donmuş bir supervisor'da uygulama sonsuza dek asılı kalmasın
@@ -142,7 +145,11 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         }, CancellationToken.None);
         try
         {
-            return await _ready.Task.WaitAsync(StartupTimeout, ct);
+            // ConfigureAwait(false): catch devamı çağıranın (UI thread'i) bağlamına DÖNMEZ. KillCurrent process'in çıkışını
+            // en çok KillExitWait (1 s) bekler; bağlama dönseydi Dispatcher o kadar bloklanırdı (yavaş ilk açılış, antivirüs
+            // taraması: 5 s aşılır). Çağıranlar (MainWindow.StartEngineAsync, RunViewModel.RestartEngineAsync) kendi
+            // await'leriyle UI'a döner — burada dönmeye gerek yok. [final review #1]
+            return await _ready.Task.WaitAsync(StartupTimeout, ct).ConfigureAwait(false);
         }
         catch
         {
@@ -227,10 +234,17 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// <summary>Motorun öldürülmesi: Supervisor ve altındaki ağaç (<c>MSBuild.exe</c>'ler dahil).</summary>
     private static readonly Action<System.Diagnostics.Process> KillTree = p => p.Kill(entireProcessTree: true);
 
+    /// <summary>[final review #1] <see cref="KillCurrent"/>'in öldürme stratejisi — üretimde HEP <see cref="KillTree"/>
+    /// (kimse vermez). Dikiş yalnız testler içindir: öldürme, process'in çıkışını en çok <see cref="KillExitWait"/> bekler;
+    /// bu beklemenin çağıranın (UI) bağlamında koşmadığı ancak öldürmenin İÇİNDEN gözlenir
+    /// (<c>EngineHostTests.A_startup_timeout_kills_the_engine_off_the_callers_context</c>). Desen
+    /// <see cref="StartupTimeout"/> ile aynı: üretim değeri sabit, seam test için.</summary>
+    internal Action<System.Diagnostics.Process> KillStrategy { get; } = killStrategy ?? KillTree;
+
     /// <summary>[motor · Task 11 · fix-1] Öldür ve process'in GERÇEKTEN sonlanmasını bekle (en çok
     /// <see cref="KillExitWait"/>). Öldürme stratejisi parametredir: üretim ağacı öldürür (<see cref="KillTree"/>);
     /// test etkisi geç inen bir öldürme verir — ağaç öldürmenin process taraması kısa yarışı örttüğü için bekleme
-    /// ancak böyle sınanır (<c>EngineHostTests.Kill_and_await_exit_returns_only_after_the_process_has_ended</c>).</summary>
+    /// ancak böyle sınanır (<c>EngineHostKillWaitTests.Kill_and_await_exit_returns_only_after_the_process_has_ended</c>).</summary>
     internal static void KillAndAwaitExit(System.Diagnostics.Process process, Action<System.Diagnostics.Process> kill)
     {
         kill(process);
@@ -244,7 +258,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         try
         {
             using var process = System.Diagnostics.Process.GetProcessById(child.Pid);
-            KillAndAwaitExit(process, KillTree);
+            KillAndAwaitExit(process, KillStrategy);
         }
         catch (ArgumentException) { /* zaten öldü */ }
         child.Dispose();
