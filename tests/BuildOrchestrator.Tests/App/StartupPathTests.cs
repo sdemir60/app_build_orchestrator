@@ -109,6 +109,26 @@ public class StartupPathTests
         Assert.Contains("App.xaml.cs", SourceGuard.ScannedAppFiles("*.cs"));
     }
 
+    /// <summary>[motor · Task 12] Kablo kaynak üzerinden pinlenir (App headless kurulamaz): motor DI'da, kontrol pencere
+    /// gösterildikten SONRA başlar (açılış koreografisiyle yarışmaz), Restart isteği servise iner, OnExit motor
+    /// kapandıktan sonra kurulumu başlatır.</summary>
+    [Fact]
+    public void The_update_engine_is_wired_after_the_window_shows_and_installs_on_exit()
+    {
+        string startup = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "App.xaml.cs"));
+        Assert.Contains("new VelopackUpdater(UpdateFeed.CreateSource(", startup, StringComparison.Ordinal);
+        Assert.Contains("UpdateFeed.SourceOverrideVariable", startup, StringComparison.Ordinal);
+        Assert.Contains("UpdateFeed.PrereleaseVariable", startup, StringComparison.Ordinal);
+        int show = startup.IndexOf("else window.Show();", StringComparison.Ordinal);
+        int start = startup.IndexOf("GetRequiredService<UpdateService>().Start()", StringComparison.Ordinal);
+        Assert.True(show > 0 && start > show, "UpdateService.Start() pencere gösterildikten sonra çağrılmalı.");
+        Assert.Contains("RestartToUpdateRequested += (_, _) =>", startup, StringComparison.Ordinal);
+        Assert.Contains(".RequestRestart()", startup, StringComparison.Ordinal);
+        int dispose = startup.IndexOf("AppShutdown.WaitForAsyncDisposal(", StringComparison.Ordinal);
+        int apply = startup.IndexOf("GetService<UpdateService>()?.ApplyOnExit()", StringComparison.Ordinal);
+        Assert.True(dispose > 0 && apply > dispose, "ApplyOnExit motor kapandıktan sonra çağrılmalı.");
+    }
+
     // ---------------------------------------------------------------- t1: açılış seed'i motora komut göndermez
 
     [StaFact]

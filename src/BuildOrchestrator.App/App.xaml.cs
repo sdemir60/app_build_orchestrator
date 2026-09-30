@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.App.Services.Updates;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Core.Processes;
@@ -122,6 +123,13 @@ public partial class App : Application
         // Windows anahtarı (MainWindow ctor'u → SettingsDialog) aynı örneği kullanır. Gerçek registry yazıcısı YALNIZ
         // burada kurulur; MainWindow'un varsayılanı "Windows yüzeyi yok"tur (testler gerçek kayda ulaşamaz).
         sc.AddSingleton(_ => new AutostartService(new RegistryAutostartRegistry(), AutostartService.DefaultValueName, AutostartCommand()));
+        // [motor] Güncelleme: feed GitHub Releases (BO_UPDATE_SOURCE/BO_UPDATE_PRERELEASE dev/test kapıları), teklif VM'e
+        // UI thread'inde yazılır (kabuk PropertyChanged'da WPF öğelerine dokunur). Kurulu olmayan kopyada servis boşta kalır.
+        sc.AddSingleton<IAppUpdater>(_ => new VelopackUpdater(UpdateFeed.CreateSource(
+            Environment.GetEnvironmentVariable(UpdateFeed.SourceOverrideVariable),
+            UpdateFeed.IsEnabled(Environment.GetEnvironmentVariable(UpdateFeed.PrereleaseVariable)))));
+        sc.AddSingleton(sp => new UpdateService(sp.GetRequiredService<IAppUpdater>(), TimeProvider.System,
+            offer => Dispatcher.Invoke(() => sp.GetRequiredService<RunViewModel>().AvailableUpdate = offer)));
         sc.AddSingleton<MainWindow>();
         Services = sc.BuildServiceProvider();
 
@@ -139,6 +147,11 @@ public partial class App : Application
         // hazır olunca koşar (RunViewModel.OnEngineReady). Karar yukarıdaki TEK dikişten gelir.
         if (route == StartupRoute.StartInTray) window.StartInTray();
         else window.Show();
+
+        // [motor] Kontrol pencere gösterildikten 5 s sonra başlar (UpdateService.FirstCheckDelay); Restart isteği kuruluma
+        // "yeniden aç" der — kurulumun kendisi OnExit'te.
+        Services.GetRequiredService<RunViewModel>().RestartToUpdateRequested += (_, _) => Services.GetRequiredService<UpdateService>().RequestRestart();
+        Services.GetRequiredService<UpdateService>().Start();
     }
 
     /// <summary>[E2/FIX1] İkinci-instance balloon'unun explorer tarafından RENDER edilmesine zaman tanır: geçici
@@ -170,6 +183,9 @@ public partial class App : Application
     {
         // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
         AppShutdown.WaitForAsyncDisposal(Services?.GetService<EngineHost>(), AppShutdown.DisposalTimeout);
+        // [motor] Motor kapandı, dosya kilitleri bırakıldı → hazır güncelleme varsa Update.exe (job dışında) kurulumu
+        // process çıkınca yapar: Restart istendiyse yeniden açar, Later denmişse sessiz kurar.
+        Services?.GetService<UpdateService>()?.ApplyOnExit();
         _secondInstanceTray?.Dispose(); // [E2/triaj-f] geçici ikinci-instance balloon ikonu (varsa) bırakılır
         _singleInstance?.Dispose();
         base.OnExit(e);
