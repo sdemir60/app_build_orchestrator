@@ -2485,7 +2485,9 @@ package to Velopack's auto-apply at the next start (§12.1).
 names it. Two environment variables exist for development and testing, and the UI has no setting for either:
 `BO_UPDATE_SOURCE` replaces the feed with a folder — a local feed built by `package.ps1`, the rehearsal of §17.6 —
 or a URL (a GitHub repository, or any other address read as a plain web feed), and `BO_UPDATE_PRERELEASE=1` —
-exactly `1`, as with the measurement gates of §17.5 — makes a GitHub feed offer pre-releases too.
+exactly `1`, as with the measurement gates of §17.5 — makes a GitHub feed offer pre-releases too. A malformed
+`BO_UPDATE_SOURCE` — a path with characters no Windows path can hold, a URL that cannot be parsed — is ignored and
+the GitHub feed is used: a broken variable of a development gate must not keep the application from starting.
 
 ---
 

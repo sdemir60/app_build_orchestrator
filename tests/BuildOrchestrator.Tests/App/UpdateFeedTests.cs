@@ -32,6 +32,34 @@ public class UpdateFeedTests
         Assert.IsType<GithubSource>(UpdateFeed.CreateSource("https://github.com/someone/fork", prerelease: false));
     }
 
+    /// <summary>[final review #8] Bozuk bir <c>BO_UPDATE_SOURCE</c> uygulamayı DÜŞÜRMEZ: kaynak <c>App.xaml.cs</c>'te
+    /// <c>UpdateService</c>'in çözümlenmesi sırasında, pencere görününce kurulur ve orada yakalayan yoktur. Geçersiz yol
+    /// karakteri ya da çözümlenemeyen URL içeren değer yok sayılır ve GitHub kaynağına dönülür — sessiz geri dönüş
+    /// BİLİNÇLİDİR: kapı yalnız geliştirme/test içindir, kullanıcıya görünen bir ayarı yoktur ve kırık bir env değeri yüzünden
+    /// açılmayan bir uygulama, yanlış kaynaktan güncelleme almaktan kötüdür. Var olmayan ama geçerli bir klasör yok
+    /// SAYILMAZ (yerel feed provası, klasör henüz yoksa da o klasörü ister): o durumda kontrol sessizce sonuçsuz kalır.
+    /// Ön sürüm kapısı geri dönüşte de geçerlidir.</summary>
+    [Theory]
+    [InlineData("C:\\bad|path")]
+    [InlineData("C:\\bad<path>")]
+    [InlineData("C:\\bad\"path")]
+    [InlineData("C:\\bad*path")]
+    [InlineData("C:\\bad\tpath")]
+    [InlineData("C:\\bad\0path")]
+    [InlineData("http://")]
+    public void A_malformed_override_is_ignored_and_the_GitHub_feed_is_used(string malformed)
+    {
+        var github = Assert.IsType<GithubSource>(UpdateFeed.CreateSource(malformed, prerelease: false));
+        Assert.Equal(UpdateFeed.RepositoryUrl, github.RepoUri.ToString().TrimEnd('/'));
+        Assert.True(Assert.IsType<GithubSource>(UpdateFeed.CreateSource(malformed, prerelease: true)).Prerelease);
+    }
+
+    [Fact]
+    public void A_well_formed_folder_that_does_not_exist_yet_is_still_the_feed()
+    {
+        Assert.IsType<SimpleFileSource>(UpdateFeed.CreateSource(@"C:\no-such-feed-folder\artifacts\velopack", prerelease: false));
+    }
+
     [Theory]
     [InlineData("1", true)]
     [InlineData("0", false)]
