@@ -311,26 +311,21 @@ public class ReducedMotionCoverageTests
         Assert.True(el.RenderTransform.Value.IsIdentity);
     }
 
-    /// <summary>[design v1.23.0 §2.12] Restart ekranının iki sönümü de (180ms giriş, 280ms çıkış) aynı kapıdan geçer:
-    /// hareket kapalıyken ekran anında belirir ve bitişte anında kalkar — hiçbir saat kurulmaz. İlerleme çubuğu bir
-    /// süs değil bilgidir; o hareketten bağımsız olarak çizelgeyi izler.</summary>
+    /// <summary>[design v1.23.0 §2.12] Restart ekranının giriş sönümü (180ms) aynı kapıdan geçer: hareket kapalıyken
+    /// ekran anında belirir — hiçbir saat kurulmaz. İlerleme çubuğu bir süs değil bilgidir; o hareketten bağımsız olarak
+    /// çizelgeyi izler.
+    /// <para>Eski iddia: çıkış sönümü (280ms) de bu kapıdan geçer, ekran bitişte anında kalkardı. [motor · Task 11 · K6]
+    /// Çıkış sönümü kalktı — ekranı pencerenin kapanışı kaldırır; burada pinlenecek bir çıkış hareketi yoktur.</para></summary>
     [StaFact]
-    public void The_update_restart_screen_fades_snap_with_no_clock_when_off()
+    public void The_update_restart_screen_fade_in_snaps_with_no_clock_when_off()
     {
         Assert.Null(BuildOrchestrator.App.App.Motion); // seam'siz kapı: headless null (reduced) — sızıntı vacuous PASS'a dönüşmesin
-        var timer = new FakePollTimer();
-        long now = 0;
-        var screen = new UpdateRestartScreen { Timer = timer, NowMs = () => now, Opacity = 0.5 };
+        var screen = new UpdateRestartScreen { Timer = new FakePollTimer(), NowMs = () => 0, Opacity = 0.5 };
         var window = DsResources.Realize(DsResources.NewHost(), screen);
 
         screen.Play(AppIdentity.Version, "1.8.0");
         Assert.Equal(Visibility.Visible, screen.Visibility);
         Assert.Equal(1.0, screen.Opacity);
-        Assert.False(screen.HasAnimatedProperties);
-
-        now = (long)UpdateRestartTimeline.FadeOutAtMs;
-        timer.Tick();
-        Assert.Equal(Visibility.Collapsed, screen.Visibility);
         Assert.False(screen.HasAnimatedProperties);
         GC.KeepAlive(window);
     }

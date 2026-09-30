@@ -17,12 +17,17 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.10" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
+    <!-- [yayın hattı] Giriş noktası elle yazılmış Program.Main'dir: Velopack'in kurulum/güncelleme kancaları
+         (veloapp-* argümanları; XML yorumunda çift tire yazılamaz) WPF ayağa kalkmadan orada tüketilir.
+         WPF'in ürettiği App.Main kullanılmaz. -->
+    <StartupObject>BuildOrchestrator.App.Program</StartupObject>
     <!-- [A13.2] PerMonitorV2 DPI (px→DIP 1:1); T65 A/B'si için de önkoşul. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- [T64] .exe'nin Explorer/taskbar ikonu — çok boyutlu ICO (16/24/32/48/256), üreteci Assets/generate-app-icons.ps1. -->

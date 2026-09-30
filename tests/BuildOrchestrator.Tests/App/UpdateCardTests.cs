@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -154,6 +155,41 @@ public class UpdateCardTests
         GC.KeepAlive(window);
     }
 
+    [StaFact]
+    public void Beyond_five_highlights_the_card_says_how_many_more_wait_in_whats_new()
+    {
+        // K5: kart en çok 5 madde; kalanı düz metin bir satırla sayar (tıklanmaz — gelen sürümün notları restart'tan sonra What's new'de).
+        var vm = UpdateRestartLockTests.NewVm();
+        var (card, window) = OpenRealized(vm);
+        vm.AvailableUpdate = UpdateOffers.Sample() with { MoreCount = 3 };
+        var more = (TextBlock)card.FindName("PART_More");
+        Assert.Equal(Visibility.Visible, more.Visibility);
+        Assert.Equal(UpdateText.MoreHighlights(3), more.Text); // metnin literali UpdateOfferTests'te (tek otorite)
+        vm.AvailableUpdate = UpdateOffers.Sample();
+        Assert.Equal(Visibility.Collapsed, more.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void An_offer_without_highlights_collapses_the_highlights_band()
+    {
+        var vm = UpdateRestartLockTests.NewVm();
+        var (card, window) = OpenRealized(vm);
+        vm.AvailableUpdate = UpdateOffers.Sample() with { Highlights = [] };
+        Assert.Equal(Visibility.Collapsed, ((FrameworkElement)card.FindName("PART_HighlightsBlock")).Visibility);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void The_card_is_named_for_screen_readers_like_its_pill()
+    {
+        var vm = UpdateRestartLockTests.NewVm();
+        var (card, window) = OpenRealized(vm);
+        vm.AvailableUpdate = UpdateOffers.Sample("9.9.0");
+        Assert.Equal(AccessibilityNames.UpdateTo("9.9.0"), AutomationProperties.GetName(card));
+        GC.KeepAlive(window);
+    }
+
     /// <summary>Karar bloğu: açıklama (12px <c>text-dim</c>, satır 18) · 12px altında sağa yaslı <c>Later</c>
     /// (Secondary.Sm) + <c>Restart to update</c> (Primary.Sm, rotate-cw ikonu), aralarında 8. İlk odak <c>Later</c>'dadır.</summary>
     [StaFact]
@@ -179,7 +215,7 @@ public class UpdateCardTests
         Assert.Same(card.FindResource("Ds.Button.Secondary.Sm"), later.Style);
         Assert.Same(card.FindResource("Ds.Button.Primary.Sm"), restart.Style);
         Assert.Equal(UpdateText.Later, later.Content);
-        Assert.Equal(UpdateText.RestartToUpdate, System.Windows.Automation.AutomationProperties.GetName(restart));
+        Assert.Equal(UpdateText.RestartToUpdate, AutomationProperties.GetName(restart));
         Assert.Contains(UpdateText.RestartToUpdate, DsResources.ShownTexts(restart));
         var rotate = DsResources.Descendants(restart).OfType<Path>().Single();
         Assert.Same(card.FindResource("Icon.Rebuild"), rotate.Data);
@@ -295,7 +331,7 @@ public class UpdateCardTests
     public void The_card_hangs_9px_below_the_pill_left_edge_on_the_pills_in_a_344px_popover_shell()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         var popup = window.UpdatePopup;
 
         Assert.Same(window.UpdatePill, popup.PlacementTarget);
@@ -342,7 +378,7 @@ public class UpdateCardTests
     public void Later_closes_the_card_and_the_pill_stays()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
         window.UpdatePill.IsChecked = true;
 
         CommandPress.Click(window.UpdateCardView.PART_Later);
@@ -362,7 +398,7 @@ public class UpdateCardTests
     public void The_window_escape_closes_the_card_before_the_selection()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         vm.SelectProject(@"C:\p\a.csproj");
         window.UpdatePill.IsChecked = true;
 
@@ -385,7 +421,7 @@ public class UpdateCardTests
     public void Opening_a_dialog_closes_the_card(string dialog)
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
         window.SettingsOverlay.PickImportPath = () => null; // gerçek dosya seçici açılmasın
         window.SettingsOverlay.ImportHold = _ => Task.CompletedTask;
         window.UpdatePill.IsChecked = true;
@@ -411,7 +447,7 @@ public class UpdateCardTests
     public void Restart_to_update_closes_the_card()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         window.UpdateRestartOverlay.Timer = new FakePollTimer();
         window.UpdatePill.IsChecked = true;
 
@@ -426,7 +462,7 @@ public class UpdateCardTests
     public void Withdrawing_the_offer_closes_the_card_and_hides_the_pill()
     {
         using var temp = new TempDir();
-        var (window, vm) = MainWindowHost.NewRealized(temp);
+        var (window, vm) = MainWindowHost.NewRealizedWithOffer(temp);
         window.UpdatePill.IsChecked = true;
 
         vm.AvailableUpdate = null;
@@ -442,7 +478,7 @@ public class UpdateCardTests
     public void The_card_inside_the_window_resolves_its_tokens()
     {
         using var temp = new TempDir();
-        var (window, _) = MainWindowHost.NewRealized(temp);
+        var (window, _) = MainWindowHost.NewRealizedWithOffer(temp);
 
         Assert.Contains(window.UpdateCardView, DsResources.RealizedObjects((FrameworkElement)window.Content));
         Assert.Empty(DsResources.DynamicResourceTypeMismatches(window.UpdatePopup.Child));

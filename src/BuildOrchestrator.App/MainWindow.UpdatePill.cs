@@ -10,9 +10,9 @@ namespace BuildOrchestrator.App;
 /// metni, UIA adı ve giriş animasyonu teklifin tek yerinden (<see cref="RunViewModel.AvailableUpdate"/>) sürülür; kart
 /// mevcut popover altyapısıdır (hapın <c>IsChecked</c>'ı ↔ <c>UpdatePopup.IsOpen</c>).
 ///
-/// <para>Güncelleme motoru henüz YOK: VM açılışta örnek teklifi taşır ve hap İLK karede görünür — giriş animasyonu
-/// oynamaz. Giriş yalnız teklif sonradan gelirse (null → teklif) BİR KEZ oynar; bu, motorun yazılınca kullanacağı
-/// dikiştir. Hap görünürken gelen yeni bir teklif yalnız metni günceller.</para>
+/// <para>Uygulama teklifsiz açılır: hap yalnız kuruluma hazır (indirilmiş) bir teklif varken görünür (tasarım
+/// §2.12). Teklif sonradan gelince (null → teklif) giriş BİR KEZ oynar; ctor'daki ilk uygulama girişsizdir. Hap
+/// görünürken gelen yeni bir teklif yalnız metni günceller.</para>
 ///
 /// <para><b>Kartın kapanış yolları:</b> <c>Later</c> ve kartın içindeki Esc (<see cref="Views.PopoverBase.CloseRequested"/>
 /// → odak hapa döner), hapa ikinci basış (<see cref="PopoverToggle"/>), dışarı tık (<c>StaysOpen=False</c>), pencerenin
@@ -37,8 +37,10 @@ public partial class MainWindow
         UpdateCardView.CloseRequested += () => CloseUpdateCard(returnFocusToPill: true);
         foreach (var dialog in new ModalDialog[] { SettingsOverlay, AboutOverlay, NotesOverlay })
             dialog.Opened += (_, _) => CloseUpdateCard(returnFocusToPill: false);
-        // Restart isteği kartı kapatır ve restart ekranını oynatır (MainWindow.UpdateRestart.cs).
+        // Restart isteği kartı kapatır ve restart ekranını oynatır; ekranın çubuğu dolunca güvenli tam çıkış
+        // (MainWindow.UpdateRestart.cs).
         _vm.RestartToUpdateRequested += (_, _) => OnRestartToUpdateRequested();
+        UpdateRestartOverlay.BarFilled += OnRestartScreenFilled;
 
         ApplyUpdateOffer(entrance: false);
         _vm.PropertyChanged += (_, e) =>

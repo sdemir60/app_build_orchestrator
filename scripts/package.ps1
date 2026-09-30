@@ -1,0 +1,121 @@
+<#
+ [yayin hatti] Publish + surum notu kesimi + Velopack paketlemenin TEK sahibi. Lokal deneme ve release.yml AYNI
+ script'i calistirir; publish komutu baska hicbir yerde yazilmaz (README/ARCHITECTURE buraya isaret eder,
+ verify-publish.ps1 -PublishOnly ile cagirir).
+   package.ps1                          -> notes (artifacts\notes.md) + publish + vpk pack  (artifacts\velopack\)
+   package.ps1 -PublishOnly -PublishDir X
+   package.ps1 -NotesOnly -NotesVersion 1.8.0 -NotesOut notes.md
+   package.ps1 -DownloadPrevious -RepoUrl ... -Token ...   (delta icin onceki paketi ceker; release yoksa atlar)
+ -WhatIf hicbir seyi yazmaz/calistirmaz/sormaz (release sayisini soran GitHub cagrisi, download, publish, notes, pack
+ atlanir; ne yapacagini yazar); testler bunu kullanir.
+ Ayni surum yeniden paketlenebilir (lokal deneme/prova): pack'ten once o surumun onceki paketleri silinir, yoksa vpk pack
+ duser; baska surumlerin paketleri delta icin kalir (Remove-PackagedVersion, release-common.ps1).
+ Surum, Product ve Company Directory.Build.props'tan okunur (release-common.ps1), elle yazilmaz.
+#>
+[CmdletBinding(SupportsShouldProcess = $true)]
+param(
+    [string]$Configuration = 'Release',
+    [string]$RuntimeIdentifier = 'win-x64',
+    [string]$ArtifactsDir,
+    [string]$PublishDir,
+    [switch]$PublishOnly,
+    [switch]$NotesOnly,
+    [string]$NotesVersion,
+    [string]$NotesOut,
+    [switch]$DownloadPrevious,
+    [string]$RepoUrl,
+    [string]$Token,
+    [int]$ReleaseCount = -1
+)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'release-common.ps1')
+
+$Version = Get-BuildProp 'Version'
+$Product = Get-BuildProp 'Product'
+$Company = Get-BuildProp 'Company'
+if (-not $RepoUrl) { $RepoUrl = $DefaultRepoUrl }
+if (-not $ArtifactsDir) { $ArtifactsDir = Join-Path $RepoRoot 'artifacts' }
+if (-not $PublishDir) { $PublishDir = Join-Path $ArtifactsDir 'publish' }
+$ReleasesDir = Join-Path $ArtifactsDir 'velopack'
+# Surum notu Velopack'in cikti klasorunun (velopack\) DISINDA, yaninda durur: vpk download ve vpk pack o klasorun sahibidir ve
+# release.yml dosyayi yayin herkese acildiktan SONRA yeniden okur (gh release edit --notes-file).
+$notes = Join-Path $ArtifactsDir 'notes.md'
+$appProj = Join-Path $RepoRoot 'src\BuildOrchestrator.App\BuildOrchestrator.App.csproj'
+
+function Get-ChangelogSection([string]$Wanted) {
+    # "## [x.y.z] - yyyy-MM-dd" basligindan bir sonraki "## " basligina kadar (baslik dahil) - App'in parser'i
+    # (ReleaseNotes.Parse) bu bicimi tek bolum olarak okur.
+    $log = Read-Changelog
+    $heading = $log.Headings | Where-Object { $_.Version -eq $Wanted } | Select-Object -First 1
+    if (-not $heading) { throw "CHANGELOG.md has no section for version $Wanted." }
+    $end = $heading.Line + 1
+    while ($end -lt $log.Lines.Length -and -not $log.Lines[$end].StartsWith('## ')) { $end++ }
+    $section = New-Object System.Collections.Generic.List[string]
+    $section.AddRange([string[]]$log.Lines[$heading.Line..($end - 1)])
+    while ($section.Count -gt 0 -and $section[$section.Count - 1].Trim() -eq '') { $section.RemoveAt($section.Count - 1) }
+    return ($section -join "`r`n") + "`r`n"
+}
+
+function Write-ReleaseNotes([string]$Out, [string]$ForVersion) {
+    New-Item -ItemType Directory -Force (Split-Path $Out -Parent) | Out-Null
+    [System.IO.File]::WriteAllText($Out, (Get-ChangelogSection $ForVersion), (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host "notes -> $Out"
+}
+
+if ($NotesOnly) {
+    if (-not $NotesVersion) { $NotesVersion = $Version }
+    if (-not $NotesOut) { $NotesOut = $notes }
+    if ($PSCmdlet.ShouldProcess($NotesOut, 'write release notes')) { Write-ReleaseNotes $NotesOut $NotesVersion }
+    exit 0
+}
+
+# Not bolumu paketlemeden ONCE kesilir: CHANGELOG'da bu surum yoksa dakikalar suren publish'e girilmez.
+if (-not $PublishOnly -and $PSCmdlet.ShouldProcess($notes, 'write release notes')) { Write-ReleaseNotes $notes $Version }
+
+# Ayni surum yeniden paketlenebilir: klasorde o surumun paketi varken vpk pack duser. Temizlik notlardan SONRA (eksik CHANGELOG
+# bolumu bir sey silmeden duser) ve indirmeden ONCE kosar: yayinlanmis bir yayindan inen paket silinmez (ayni surumse pack zaten
+# duser - yayinlanmis surum yeniden paketlenmez). Diger surumlerin paketleri kalir. -PublishOnly paketlemez, klasore dokunmaz.
+if (-not $PublishOnly -and $PSCmdlet.ShouldProcess($ReleasesDir, "remove earlier packages of $Version")) { Remove-PackagedVersion $ReleasesDir $Version }
+
+if ($DownloadPrevious) {
+    # Release sayisini sormak bir ag cagrisidir: -WhatIf altinda atlanir (yalniz yazilir). Sayi bilinmeyince asagidaki
+    # indirme adimi da "ne olurdu" olarak yazilir; -ReleaseCount verilmisse ag zaten hic kullanilmaz.
+    if ($ReleaseCount -lt 0 -and $PSCmdlet.ShouldProcess($RepoUrl, 'GET releases')) { $ReleaseCount = Get-ReleaseCount $RepoUrl $Token }
+    if ($ReleaseCount -eq 0) {
+        Write-Host 'no previous release - delta skipped (first release)'
+    }
+    elseif ($PSCmdlet.ShouldProcess($RepoUrl, 'vpk download github')) {
+        $dl = @('vpk', 'download', 'github', '--repoUrl', $RepoUrl, '--outputDir', $ReleasesDir)
+        if ($Token) { $dl += @('--token', $Token) }
+        & dotnet @dl
+        if ($LASTEXITCODE -ne 0) { throw "vpk download github failed (exit $LASTEXITCODE)." }
+    }
+}
+
+if ($PSCmdlet.ShouldProcess($PublishDir, 'dotnet publish')) {
+    if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
+    & dotnet publish $appProj -c $Configuration -r $RuntimeIdentifier --self-contained false -o $PublishDir
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)." }
+}
+if ($PublishOnly) { exit 0 }
+
+# --shortcuts verilmez: Velopack varsayilani (Desktop + Start Menu) gecerlidir.
+if ($PSCmdlet.ShouldProcess("$Product $Version", 'vpk pack')) {
+    $pack = @(
+        'vpk', 'pack',
+        '--packId', 'BuildOrchestrator.App',
+        '--packVersion', $Version,
+        '--packDir', $PublishDir,
+        '--mainExe', 'BuildOrchestrator.App.exe',
+        '--packTitle', $Product,
+        '--packAuthors', $Company,
+        '--icon', (Join-Path $RepoRoot 'src\BuildOrchestrator.App\Assets\app-icon.ico'),
+        '--framework', 'net10.0-x64-desktop',
+        '--releaseNotes', $notes,
+        '--noPortable',
+        '--outputDir', $ReleasesDir
+    )
+    & dotnet @pack
+    if ($LASTEXITCODE -ne 0) { throw "vpk pack failed (exit $LASTEXITCODE)." }
+    Write-Host "package -> $ReleasesDir"
+}

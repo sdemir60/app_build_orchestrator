@@ -8,9 +8,9 @@ namespace BuildOrchestrator.App.ViewModels;
 /// [design v1.23.0 §2.12 · plan U1/U3] <see cref="RunViewModel"/>'in <b>güncelleme yüzeyi</b>: kuruluma hazır teklif
 /// (title bar'daki hap ve kartı onu gösterir), <c>Restart to update</c>'in kilidi ve Restart isteği.
 ///
-/// <para><b>Güncelleme motoru henüz YOK.</b> Teklifin tek yeri <see cref="AvailableUpdate"/>'tir ve açılışta
-/// <see cref="UpdateOffer.Sample"/> (placeholder) taşır — hap bu yüzden şimdilik her zaman görünür. Motor yazıldığında
-/// teklifi buraya o yazar; <c>null</c> → teklif geçişinde hap girişini oynatır (kabuk).</para>
+/// <para>Teklifin tek yeri <see cref="AvailableUpdate"/>'tir ve uygulama teklifsiz açılır (<c>null</c> = hap yok).
+/// Teklifi <c>UpdateService</c> yazar (UI thread'inde) — yalnız indirilmiş, kuruluma hazır bir paket için
+/// (tasarım §2.12); <c>null</c> → teklif geçişinde hap girişini oynatır (kabuk).</para>
 ///
 /// <para><b>Kilit (U3):</b> bir iş sürerken Restart kapalıdır ve kartın açıklama satırı nedeni söyler
 /// (<see cref="UpdateRestartBlockedReason"/>). Karar meşguliyet bildiriminin tek noktasında
@@ -19,10 +19,10 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public sealed partial class RunViewModel
 {
-    /// <summary>Kuruluma hazır güncelleme; <c>null</c> = hap yok. Şimdilik örnek kayıt — bkz. sınıf özeti.</summary>
+    /// <summary>Kuruluma hazır güncelleme. Teklifi <c>UpdateService</c> yazar (UI thread'inde); <c>null</c> = hap yok.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RestartToUpdateCommand))]
-    private UpdateOffer? _availableUpdate = UpdateOffer.Sample;
+    private UpdateOffer? _availableUpdate;
 
     /// <summary>
     /// <c>Restart to update</c> neden kapalı — <c>null</c> = açık. Sıra (plan U3): (1) Clean / Optimize / Resolve /
@@ -39,8 +39,10 @@ public sealed partial class RunViewModel
     /// <summary>Son duyurulan neden — bildirim yalnız değişimde gider (meşguliyet noktası sık tetiklenir).</summary>
     private string? _announcedRestartBlockedReason;
 
-    /// <summary>Kullanıcı <c>Restart to update</c>'e bastı. Kabuk kartı kapatır ve restart ekranını oynatır. VM başka
-    /// hiçbir şey yapmaz — motor yok, komut gitmez.</summary>
+    /// <summary>Kullanıcı <c>Restart to update</c>'e bastı. VM build motoruna (Supervisor) hiçbir komut göndermez, yalnız
+    /// isteği yayar; yanıtı iki abone verir: kabuk (<c>MainWindow</c>) kartı kapatır, restart ekranını oynatır ve çubuk
+    /// dolunca güvenli tam çıkışı ister; <c>App.xaml.cs</c> olayı <c>UpdateService.RequestRestart</c>'a bağlar — çıkışta
+    /// kurulum yeniden açmayı da söyler.</summary>
     public event EventHandler? RestartToUpdateRequested;
 
     /// <summary>İsteğin kapısı BURADADIR, tek yerde: kapıdan geçmeden gelen bir çağrı (doğrudan <c>Execute</c> —

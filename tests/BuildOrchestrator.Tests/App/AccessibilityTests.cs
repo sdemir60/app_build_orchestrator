@@ -411,7 +411,10 @@ public class AccessibilityTests
     public void Every_interactive_surface_in_the_app_has_a_screen_reader_name()
     {
         using var temp = new TempDir();
-        var (window, _, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", "Core"));
+        var (window, shellVm, _) = MainWindowHost.NewWithProjects(temp, ("OSYS.Base", null), ("OSYS.Domain", "Core"));
+        // [motor · Task 8] Uygulama teklifsiz açılır; title bar hapı da taransın diye kuruluma hazır bir teklif gelir.
+        var offer = UpdateOffers.Sample();
+        shellVm.AvailableUpdate = offer;
         // [fix-1 · bulgu 2] Veri SONRASI bir layout turu: liste kaplarını (ProjectRow) ItemsControl ancak measure
         // sırasında üretir — üretimde bunu bir sonraki render turu yapar. Bu satır olmadan kabukta HİÇ proje kartı
         // realize olmaz ve kartlar taramadan sessizce düşerdi (ölçüldü: 0 → 1 kart).
@@ -472,7 +475,7 @@ public class AccessibilityTests
                      AccessibilityNames.CloseSettings,                        // design v1.19.0 başlık satırı
                      "Layers",                                                // design v1.19.0 bölüm rayı
                      "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
-                     AccessibilityNames.UpdateTo(UpdateOffer.Sample.Version), // design v1.23.0 title bar hapı
+                     AccessibilityNames.UpdateTo(offer.Version),              // design v1.23.0 title bar hapı
                  })
             Assert.Contains(expected, names);
 

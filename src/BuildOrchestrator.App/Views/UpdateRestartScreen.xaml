@@ -3,7 +3,7 @@
      şablonu hiç açılmaz, pencerede hiçbir şeyi örtmez. Zemin surface-base ve dolu olduğu için tıklamaları yutar.
      232px ortalı kolon: marka 30 · 16 · başlık 13/600 text-primary · 6 · mono 11 sürüm geçişi (kurulu text-dim → ok 11
      text-faint → gelen text-secondary, aralar 7) · 20 · 2px amber Ds.ProgressBar · 9 · adım etiketi 11px text-faint.
-     Güncelleme motoru henüz yok — ekran tasarımın önizlemesidir (UpdateRestartScreen.xaml.cs).
+     Tek adım (Closing …); ekran pencere kapanana dek kalır, sönüş yoktur (UpdateRestartScreen.xaml.cs).
      Yazı tipi kökte: başlık ve adım etiketi Geist'tir (prototipin kökü font-sans) — pencere arayüz yazı tipini VERMEZ
      (sistem varsayılanı, Segoe UI; ölçüldü). Sürüm geçişi makine çıktısıdır, AppFonts.Mono'yu açıkça taşır. -->
 <UserControl x:Class="BuildOrchestrator.App.Views.UpdateRestartScreen"

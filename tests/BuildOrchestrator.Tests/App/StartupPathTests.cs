@@ -41,6 +41,9 @@ public class StartupPathTests
         // Argüman EŞLEŞMESİ tam metindir: benzeyen ama aynı olmayan bir bayrak dalı AÇMAZ.
         Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--autostartx"], startMinimizedToTray: true));
         Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--font-abx"], startMinimizedToTray: true));
+        // [yayın hattı] Velopack kanca argümanları Program.Main'de tüketilip process biter; buraya ulaşsalar da yutulur.
+        Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--veloapp-install", "1.8.0"], startMinimizedToTray: true));
+        Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--veloapp-updated", "1.8.0"], startMinimizedToTray: false));
     }
 
     [Fact]
@@ -104,6 +107,34 @@ public class StartupPathTests
         Assert.Contains("StartupRoute.StartInTray", startup, StringComparison.Ordinal);
         // Ön-koşul (vakum yasak): tarama gerçekten App.xaml.cs'i gördü.
         Assert.Contains("App.xaml.cs", SourceGuard.ScannedAppFiles("*.cs"));
+    }
+
+    /// <summary>[motor · Task 12] Kablo kaynak üzerinden pinlenir (App headless kurulamaz): motor DI'da, kontrol pencere
+    /// gösterildikten SONRA başlar (açılış koreografisiyle yarışmaz), Restart isteği servise iner, OnExit motor
+    /// kapandıktan sonra kurulumu başlatır.</summary>
+    [Fact]
+    public void The_update_engine_is_wired_after_the_window_shows_and_installs_on_exit()
+    {
+        string startup = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "App.xaml.cs"));
+        Assert.Contains("new VelopackUpdater(UpdateFeed.CreateSource(", startup, StringComparison.Ordinal);
+        Assert.Contains("UpdateFeed.SourceOverrideVariable", startup, StringComparison.Ordinal);
+        Assert.Contains("UpdateFeed.PrereleaseVariable", startup, StringComparison.Ordinal);
+        int show = startup.IndexOf("else window.Show();", StringComparison.Ordinal);
+        int start = startup.IndexOf("GetRequiredService<UpdateService>().Start()", StringComparison.Ordinal);
+        Assert.True(show > 0 && start > show, "UpdateService.Start() pencere gösterildikten sonra çağrılmalı.");
+        Assert.Contains("RestartToUpdateRequested += (_, _) =>", startup, StringComparison.Ordinal);
+        Assert.Contains(".RequestRestart()", startup, StringComparison.Ordinal);
+        int dispose = startup.IndexOf("AppShutdown.WaitForAsyncDisposal(", StringComparison.Ordinal);
+        int apply = startup.IndexOf("GetService<UpdateService>()?.ApplyOnExit()", StringComparison.Ordinal);
+        Assert.True(dispose > 0 && apply > dispose, "ApplyOnExit motor kapandıktan sonra çağrılmalı.");
+        // Kurulumu başlatma zincirinin (Update.exe yok, Process.Start atar) ya da servisin ilk kurulumunun atması çıkış
+        // temizliğini atlamamalı: çağrı temizlik satırlarından SONRA, base.OnExit'ten hemen önce durur.
+        int trayDispose = startup.IndexOf("_secondInstanceTray?.Dispose(); // [E2/triaj-f]", StringComparison.Ordinal);
+        int singleDispose = startup.IndexOf("_singleInstance?.Dispose();", StringComparison.Ordinal);
+        int baseExit = startup.IndexOf("base.OnExit(e);", StringComparison.Ordinal);
+        Assert.True(trayDispose > 0 && singleDispose > 0 && baseExit > 0, "OnExit'in temizlik satırları bulunamadı.");
+        Assert.True(apply > trayDispose && apply > singleDispose && apply < baseExit,
+            "ApplyOnExit çıkış temizliğinden sonra, base.OnExit'ten önce çağrılmalı.");
     }
 
     // ---------------------------------------------------------------- t1: açılış seed'i motora komut göndermez

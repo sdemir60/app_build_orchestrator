@@ -4,75 +4,61 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// [design v1.23.0 §2.12 · §9 "Restart ekranı" · plan U4] Restart ekranının zaman çizelgesi — saf çekirdek. Üç adım
-/// (<c>UPDATE_STEPS</c>, BuildApp.jsx:1660): kapanış 800ms → %20, kurulum 1100ms → %78, açılış 800ms → %100; ilerleme
-/// adım İÇİNDE doğrusaldır (BuildApp.jsx:1757-1763). Toplam 2700ms; ekran toplamdan 120ms sonra sönmeye başlar
-/// (BuildApp.jsx:2661). Güncelleme motoru henüz yok — çizelge tasarımın kendisidir, ekran onu oynatıp uygulamaya döner.
+/// [design v1.23.0 §2.12 · §9 "Restart ekranı" · motor · Task 11 · K6] Restart ekranının zaman çizelgesi — saf çekirdek.
+/// TEK adım: kapanış (<c>Closing &lt;ürün&gt;…</c>); çubuk 800ms'de doğrusal olarak %100'e dolar ve orada kalır.
+///
+/// <para><b>Eski iddia</b> (motor yokken tasarımın önizlemesi): üç adım — kapanış 800ms → %20, kurulum 1100ms → %78,
+/// açılış 800ms → %100 (<c>UPDATE_STEPS</c>, BuildApp.jsx:1660); toplam 2700ms, ekran toplamdan 120ms sonra sönmeye
+/// başlardı (BuildApp.jsx:2661) ve uygulama aynen kalırdı. <b>Değişti</b> (K6, kullanıcı kararı 2026-09-30): Windows
+/// çalışan bir programın dosyalarını değiştirmeye izin vermez — kurulum ancak uygulama kapandıktan sonra Update.exe
+/// tarafından, penceresiz yapılır. Uygulamanın kendi penceresinde gösterebileceği tek adım kapanıştır; kurulum ve
+/// açılış bu ekranda oynatılsaydı gerçekte olmayan bir şeyi anlatırdı. Sönüş de yoktur: ekran pencere kapanana dek
+/// kalır.</para>
 /// </summary>
 public class UpdateRestartTimelineTests
 {
-    /// <summary>Adımlar adlandırılmış sabitlerdir ve tasarımın sırasıyla dizilir.</summary>
+    /// <summary>Tek adım kapanıştır, adlandırılmış sabitlerle: 800ms'de %100. Çizelgenin toplamı o adımın süresidir;
+    /// toplamın ötesi %100'de kalır — çıkış gecikirse çubuk dolu durur.</summary>
     [Fact]
-    public void The_three_steps_are_closing_installing_and_starting_with_the_design_durations_and_ends()
+    public void The_only_step_is_closing_and_the_bar_fills_over_800ms()
     {
         Assert.Equal(800.0, UpdateRestartTimeline.ClosingMs);
-        Assert.Equal(1100.0, UpdateRestartTimeline.InstallingMs);
-        Assert.Equal(800.0, UpdateRestartTimeline.StartingMs);
-        Assert.Equal(20.0, UpdateRestartTimeline.ClosingEndPercent);
-        Assert.Equal(78.0, UpdateRestartTimeline.InstallingEndPercent);
-        Assert.Equal(100.0, UpdateRestartTimeline.StartingEndPercent);
+        Assert.Equal(100.0, UpdateRestartTimeline.ClosingEndPercent);
 
-        Assert.Equal(
-            new[]
-            {
-                new UpdateRestartStage(UpdateRestartStep.Closing, 800, 20),
-                new UpdateRestartStage(UpdateRestartStep.Installing, 1100, 78),
-                new UpdateRestartStage(UpdateRestartStep.Starting, 800, 100),
-            },
-            UpdateRestartTimeline.Stages);
+        var stage = Assert.Single(UpdateRestartTimeline.Stages);
+        Assert.Equal(UpdateRestartStep.Closing, stage.Step);
+        Assert.Equal(800, stage.DurationMs);
+        Assert.Equal(100, stage.EndPercent);
+        Assert.Equal(800, UpdateRestartTimeline.TotalMs);
+        Assert.Equal(new UpdateRestartFrame(UpdateRestartStep.Closing, 50), UpdateRestartTimeline.At(400));
+        Assert.Equal(100, UpdateRestartTimeline.At(5000).Percent); // çıkış gecikirse çubuk dolu kalır
     }
 
-    /// <summary>Toplam 2700ms (<c>UPDATE_TOTAL</c>); sönüş toplamdan 120ms sonra başlar (<c>UPDATE_TOTAL + 120</c>).</summary>
-    [Fact]
-    public void The_screen_plays_2700ms_and_starts_fading_120ms_later()
-    {
-        Assert.Equal(2700.0, UpdateRestartTimeline.TotalMs);
-        Assert.Equal(120.0, UpdateRestartTimeline.FadeOutDelayMs);
-        Assert.Equal(2820.0, UpdateRestartTimeline.FadeOutAtMs);
-    }
-
-    /// <summary>Adım sınırlarında ve adım ortalarında hangi adımın okunduğu ve ilerleme yüzdesi: sınırda bir sonraki adım
-    /// başlar (önceki adımın bitiş yüzdesiyle), ortada doğrusal ara değer; toplamın ötesi son adımda %100'de kalır,
-    /// sıfırın öncesi (saat geri giderse) başlangıçtır.</summary>
+    /// <summary>Her an kapanış adımını ve doğrusal yüzdeyi okur: sıfırın öncesi (saat geri giderse) başlangıçtır, adımın
+    /// ortası ara değerdir, bitişi ve ötesi %100'dür.</summary>
     [Theory]
-    [InlineData(-50, UpdateRestartStep.Closing, 0)]
-    [InlineData(0, UpdateRestartStep.Closing, 0)]
-    [InlineData(400, UpdateRestartStep.Closing, 10)]
-    [InlineData(799, UpdateRestartStep.Closing, 19.975)]
-    [InlineData(800, UpdateRestartStep.Installing, 20)]
-    [InlineData(1350, UpdateRestartStep.Installing, 49)]
-    [InlineData(1900, UpdateRestartStep.Starting, 78)]
-    [InlineData(2300, UpdateRestartStep.Starting, 89)]
-    [InlineData(2700, UpdateRestartStep.Starting, 100)]
-    [InlineData(9000, UpdateRestartStep.Starting, 100)]
-    public void Each_moment_reads_its_step_and_a_linear_percentage(double elapsedMs, UpdateRestartStep step, double percent)
+    [InlineData(-50, 0)]
+    [InlineData(0, 0)]
+    [InlineData(400, 50)]
+    [InlineData(799, 99.875)]
+    [InlineData(800, 100)]
+    [InlineData(9000, 100)]
+    public void Each_moment_reads_the_closing_step_and_a_linear_percentage(double elapsedMs, double percent)
     {
         var frame = UpdateRestartTimeline.At(elapsedMs);
 
-        Assert.Equal(step, frame.Step);
+        Assert.Equal(UpdateRestartStep.Closing, frame.Step);
         Assert.Equal(percent, frame.Percent, precision: 6);
     }
 
     /// <summary>Metinler (tek kaynak <see cref="UpdateText"/>): başlık <c>Updating &lt;ürün&gt;</c>; adım etiketi
-    /// <c>Closing &lt;ürün&gt;</c> / <c>Installing &lt;gelen&gt;</c> / <c>Starting &lt;gelen&gt;</c>, sonunda U+2026. Ürün
-    /// adı yazılmaz, <see cref="AppIdentity.Product"/>'tan okunur.</summary>
+    /// <c>Closing &lt;ürün&gt;</c>, sonunda U+2026. Ürün adı yazılmaz, <see cref="AppIdentity.Product"/>'tan okunur.
+    /// <para>Eski iddia: <c>Installing &lt;gelen&gt;…</c> ve <c>Starting &lt;gelen&gt;…</c> etiketleri de vardı — iki adım
+    /// kalktı (K6), etiket artık gelen sürümü anmaz.</para></summary>
     [Fact]
-    public void The_heading_and_the_step_labels_name_the_product_and_the_incoming_version()
+    public void The_step_label_names_the_product()
     {
         Assert.Equal("Updating " + AppIdentity.Product, UpdateText.RestartHeading);
-        Assert.Equal("Closing " + AppIdentity.Product + "…",
-            UpdateText.RestartStepLabel(UpdateRestartStep.Closing, "1.8.0"));
-        Assert.Equal("Installing 1.8.0…", UpdateText.RestartStepLabel(UpdateRestartStep.Installing, "1.8.0"));
-        Assert.Equal("Starting 1.8.0…", UpdateText.RestartStepLabel(UpdateRestartStep.Starting, "1.8.0"));
+        Assert.Equal("Closing " + AppIdentity.Product + "…", UpdateText.RestartStepLabel(UpdateRestartStep.Closing));
     }
 }

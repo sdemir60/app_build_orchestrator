@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Bu script It-5 kabul kalemini elle-gozlem olmaktan cikarir. Adimlar:
-    1. dotnet publish (framework-dependent, klasor tabanli, win-x64)
+    1. publish: scripts\package.ps1 -PublishOnly (publish komutunun TEK sahibi; framework-dependent, klasor tabanli, win-x64)
     2. Publish yerlesimi: supervisor\BuildOrchestrator.Supervisor.exe + Assets\GEIST-LICENSE.txt
     3. Publish edilen supervisor ikilisi ile NDJSON round-trip (engineReady + surum)
     4. [A13/T6 t6] Publish edilen supervisor ikilisi GERCEK bir Sync + Build kosturur ve en az bir
@@ -44,8 +44,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$appProj = Join-Path $repoRoot 'src\BuildOrchestrator.App\BuildOrchestrator.App.csproj'
+. (Join-Path $PSScriptRoot 'release-common.ps1')   # calisan-ornek sondasi (Get-RunningApp) release.ps1 ile ORTAK
 $failures = New-Object System.Collections.Generic.List[string]
 $appProcess = $null
 $child = $null      # App'in dogurdugu supervisor (WMI olayindan) — kapanis dogrulamasi bunu kullanir
@@ -72,7 +71,8 @@ function SendCommand([System.IO.Stream] $stream, $command) {
 # Makinede acik bir ornek varken bu script yanlis-KIRMIZI verirdi (baslattigimiz process aninda olurdu).
 # Bu bir dogrulama hatasi DEGIL, kullanim hatasidir: net mesajla ve AYRISAN cikis koduyla (2) dur.
 Step 'precondition: no Build Orchestrator instance is running'
-$running = @(Get-Process -Name 'BuildOrchestrator.App' -ErrorAction SilentlyContinue)
+# Sonda kok VERMEZ (release.ps1'den farkli): App tek-orneklidir ve olcum canli pencereyi okur; kurulu kopya dahil HER ornek engeldir.
+$running = @(Get-RunningApp)
 if ($running.Count -gt 0) {
     Write-Host "    [STOP] A Build Orchestrator is already running (pid: $($running.Id -join ', '))."
     Write-Host '           The App is SINGLE-INSTANCE, so this script cannot take a meaningful measurement:'
@@ -101,7 +101,7 @@ catch { Write-Host '    (note: the console input encoding could not be changed -
 try {
     # --------------------------------------------------------------- 1. publish
     Step "publish -> $OutputDir"
-    $publishLog = & dotnet publish $appProj -c $Configuration -r $RuntimeIdentifier --self-contained false -o $OutputDir -v m 2>&1
+    $publishLog = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'package.ps1') -PublishOnly -PublishDir $OutputDir -Configuration $Configuration -RuntimeIdentifier $RuntimeIdentifier
     Check 'dotnet publish exit code 0' ($LASTEXITCODE -eq 0) "(exit $LASTEXITCODE)"
     if ($LASTEXITCODE -ne 0) { $publishLog | Select-Object -Last 15 | ForEach-Object { Write-Host "        $_" } }
 

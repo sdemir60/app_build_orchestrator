@@ -92,6 +92,64 @@ public class EngineHostTests
         Assert.Null(host.EnginePid); // vazgeçince child öldürüldü — sızıntı yok
     }
 
+    /// <summary>[final review #1] Motor hazır olamadan vazgeçilince (zaman aşımı, iptal, başlangıçta ölüm — hepsi
+    /// <c>StartAsync</c>'in aynı <c>catch</c>'inden geçer) motor öldürülür ve process'in çıkışı en çok
+    /// <see cref="EngineHost.KillExitWait"/> (1 s) beklenir. Çağıran UI thread'i olduğunda
+    /// (<c>MainWindow.StartEngineAsync</c>) bu bekleme Dispatcher'ı bloklamamalı; ama <c>await _ready.Task.WaitAsync(...)</c>
+    /// <c>ConfigureAwait(false)</c> taşımıyordu, <c>catch</c> devamı çağıranın bağlamına post edilir ve öldürme + bekleme
+    /// orada koşardı (yavaş ilk açılışta ya da antivirüs taramasında 5 s aşılır — kurulum tam bu durumu üretir).
+    /// <para><b>Nasıl gözlenir:</b> öldürme stratejisi (<see cref="EngineHost.KillStrategy"/>) çağrıldığı andaki
+    /// <see cref="SynchronizationContext.Current"/>'ı yakalar ve motoru gerçekten öldürür. Çağıranın bağlamı <see cref="CallerContext"/>:
+    /// devamı kendisi <c>Current</c> iken bir havuz thread'inde koşturur (pompalanmayan gerçek bir Dispatcher'ın aksine
+    /// kusurlu kodda test asılmaz, kırmızı olur).</para>
+    /// <para><b>Neden iptal:</b> zaman aşımı da aynı yola girer, ama yarışa açıktır: 1 ms'lik zamanlayıcı <c>await</c>'ten ÖNCE
+    /// dolabilir; o zaman bekleyiş hiç askıya girmez, <c>StartAsync</c> öldürmeyi çağıranın thread'inde satır içi koşturup
+    /// tamamlanmış döner ve önkoşul (aşağıda, <c>start.IsCompleted</c> yanlış olmalı) düşer. Yani düzeltmeli (doğru) kod da
+    /// aralıklı KIRMIZI verirdi — yalancı yeşil değil, yalancı kırmızı. İptal <c>StartAsync</c> bekleyişe girdikten SONRA
+    /// verilir; sıra deterministiktir: önkoşul hep sağlanır ve devamın çağıranın bağlamına post edilip edilmediği sonucu tek
+    /// başına belirler.</para></summary>
+    [Fact]
+    public async Task A_start_that_gives_up_kills_the_engine_off_the_callers_context()
+    {
+        using var sandbox = new SupervisorSandbox();
+        var killContext = new TaskCompletionSource<SynchronizationContext?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout, killStrategy: p =>
+        {
+            killContext.TrySetResult(SynchronizationContext.Current);
+            p.Kill(entireProcessTree: true);
+        });
+        var caller = new CallerContext();
+        using var giveUp = new CancellationTokenSource();
+
+        Task<EngineReadyEvent> start;
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(caller);
+        try { start = host.StartAsync(giveUp.Token); } // bekleyişin devamı ÇAĞIRANIN bağlamını yakalar
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        Assert.False(start.IsCompleted, "StartAsync bekleyişe girmeden döndü — önkoşul kurulamadı");
+
+        giveUp.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => start);
+
+        Assert.True(killContext.Task.IsCompleted, "vazgeçilen başlatma motoru öldürmedi");
+        Assert.NotSame(caller, await killContext.Task); // öldürme + ≤1 s bekleme çağıranın bağlamında koşmadı
+        Assert.Null(host.EnginePid);
+    }
+
+    /// <summary>Çağıranın (UI thread'i) bağlamının taklidi: <c>Post</c> edilen devamı, kendisi <c>Current</c> iken bir havuz
+    /// thread'inde koşturur — bağlama dönen bir devam, altında çalıştığı bağlamı gözlemcisine gösterir.</summary>
+    private sealed class CallerContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) =>
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var previous = Current;
+                SetSynchronizationContext(this);
+                try { d(state); }
+                finally { SetSynchronizationContext(previous); }
+            });
+    }
+
     /// <summary>[B1/F1 · fix-1 İŞ 1b] ÜRETİM VARSAYILANI 5 SANİYEDE KALIR — bu bir yasak sınırdır: büyütülürse
     /// donmuş bir supervisor'da kullanıcının uygulaması asılı kalır (bkz. task-B1-brief.md kural 4). Seam
     /// eklendikten sonra bu değeri koruyan hiçbir şey yoktu; biri bir flake'i "5 → 60" yaparak susturabilirdi.
@@ -103,6 +161,40 @@ public class EngineHostTests
         await using var host = new EngineHost(TestPaths.SupervisorExe); // startupTimeout VERİLMEDİ = üretim yolu
         Assert.Equal(TimeSpan.FromSeconds(5), host.StartupTimeout);
     }
+
+    /// <summary>[motor · Task 11] Güncelleyici (Update.exe) App çıkar çıkmaz <c>current\</c> klasörünü değiştirir;
+    /// Supervisor hâlâ <c>current\supervisor\*.dll</c>'leri tutuyorsa kurulum yarım kalır. Dispose, öldürdüğü process'in
+    /// GERÇEKTEN çıkmasını bekler (≤ <see cref="EngineHost.KillExitWait"/>) — önceden Kill'den sonra beklenmiyordu:
+    /// <c>TerminateProcess</c> asenkrondur, çağrı döndüğünde process birkaç ms daha yaşar (ölçüldü: boştaki bir
+    /// Supervisor'da ~4-10 ms).
+    /// <para><b>Ölçüt process handle'ının sinyali:</b> <c>Process.GetProcessById</c>'in "yok" demesi YETMEZ — çıkış kodu
+    /// Kill'le hemen yazıldığı için process henüz sonlanmamışken de fırlatıyor (ölçüldü). Handle Dispose'dan ÖNCE
+    /// açılır, sonra sinyali beklemeden (0 ms) sorulur.</para>
+    /// <para><b>Bu test beklemeyi PİNLEMEZ (ölçüldü):</b> ağaç öldürme (<c>Kill(entireProcessTree: true)</c>) Kill'den
+    /// SONRA tüm process'leri tarar ve bu tarama boştaki bir Supervisor'ın sonlanmasından çoğu kez uzun sürer —
+    /// beklemesiz eski kod bu makinede yeşildi. Üretim yolunu (Dispose → öldür + bekle) uçtan uca koşar; beklemenin
+    /// kendisini <see cref="EngineHostKillWaitTests.Kill_and_await_exit_returns_only_after_the_process_has_ended"/> ağaç
+    /// taraması olmadan pinler.</para></summary>
+    [Fact]
+    public async Task Dispose_waits_for_the_supervisor_process_to_exit()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout); // erken bir hata motoru sızdırmasın; ikinci Dispose no-op
+        await host.StartAsync();
+        using var supervisor = Process.GetProcessById(host.EnginePid!.Value); // handle Dispose'dan ÖNCE açılır
+
+        await host.DisposeAsync();
+
+        Assert.True(supervisor.WaitForExit(TimeSpan.Zero), "Dispose döndüğünde Supervisor process'i hâlâ sonlanmamıştı");
+    }
+
+    /// <summary>[motor · Task 11 · fix-1] Öldürülen process'e tanınan süre 1 SANİYEDE KALIR: kısalırsa (ör. 0) güncelleyici
+    /// <c>current\</c> klasörünü Supervisor'ın DLL kilitleri bırakılmadan değiştirmeye kalkar; uzarsa çıkış bütçesini
+    /// (<c>AppShutdown.DisposalTimeout</c>, 2 s = graceful yazma 500 ms + bu süre) aşar. Beklenen değer üretimden
+    /// OKUNMAZ, otorite literali olarak yazılır — <see cref="Default_startup_timeout_stays_five_seconds"/> deseni.</summary>
+    [Fact]
+    public void Kill_exit_wait_stays_one_second()
+        => Assert.Equal(TimeSpan.FromSeconds(1), EngineHost.KillExitWait);
 
     [Fact]
     public async Task StartAsync_timeout_disposes_child_and_no_leak()

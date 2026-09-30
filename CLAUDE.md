@@ -7,7 +7,7 @@
 | Doküman | Ne için |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
-| [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
+| [README.md](README.md) | Giriş: ne yapar, gereksinimler, kurulum, build/test/run, paketleme ve yayın, kullanım, güncelleme, kısayollar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
@@ -20,7 +20,7 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 
 | Proje | Target | Sorumluluk |
 |---|---|---|
-| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray, single-instance, IPC client. **Outer Job Object** sahibi. |
+| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray, single-instance, IPC client, güncelleme motoru (Velopack). **Outer Job Object** sahibi. |
 | `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek: discovery, graph, incremental karar, scheduler, git, MSBuild sözleşmesi, job primitifleri, state. |
 | `src/BuildOrchestrator.Supervisor` | net10.0-windows | Motor process: build kuyruğu, **inner Job Object**, per-project `MSBuild.exe`, IPC server. Planlamaz, yürütür. |
 | `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor sözleşmesi: command/event, DTO, JSON, NDJSON framing. |
@@ -48,6 +48,10 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   TEK dosyadır: `Core/Git/RepositoryWriter.cs` (kaynak guard'ı).
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
+- **Velopack yalnız App'te.** Paket referansı, giriş noktası (`Program.Main`) ve güncelleme motoru
+  (`Services/Updates/`) App'tedir; Core, Supervisor ve Contracts'a girmez.
+- **Güncelleme motoru yalnız kurulu kopyada çalışır;** bin'den ya da publish klasöründen çalışan kopya hiç kontrol
+  etmez. Hap yalnız indirilmiş, kuruluma hazır bir teklif varken görünür — örnek/yer tutucu teklif yoktur.
 - **Kopya YASAK / tek doğruluk kaynağı:** aynı değer, metin veya primitif iki yerde tanımlanmaz — ne kodda
   (perf tablosu, konsol not metni, supervisor klasör adı) ne testlerde (ortak fixture/host tek yerde).
 
@@ -71,6 +75,9 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 Süit **filtrelidir**: `Category=Acceptance` üç test gerçek OSYS reposunu derler (~2 dk), ayrı koşulur
 (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor kendi binary'lerini kilitler.
 
+- **CI (`ci.yml`) aynı süiti windows-2025 runner'ında koşar;** runner'da koşamayan/kararsız test
+  **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik gevşetilmez, test silinmez; lokal tam
+  süit kapı olmaya devam eder.
 - **Ölçüm/sonda testi = ortam değişkeni kapısı.** `Category=Measurement` etiketi TEK BAŞINA yetmez:
   `Category!=Acceptance` filtresi diğer her kategoriyi kabul eder. Pencere açan, balloon gösteren ya da CPU
   yakan her YENİ test `[SkippableFact]` + ilk satırda `Skip.IfNot(<BO_... değişkeni> == "1")` taşır (içerik
@@ -132,8 +139,10 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
    yok); kısa, genel, kullanıcının gördüğü özellik — iç terim, dosya/sınıf adı ve "şuraya şunu ekledik" yok;
    küçük işler tek genel satırda toplanır. Her madde o anki koda göre doğrulanır.
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
-5. **Yayın:** tam süit yeşil → commit → `main`'e merge → merge commit'ine annotated tag `vX.Y.Z` → `git push` +
-   `git push origin vX.Y.Z`.
+5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`): guard'lar → tam süit → `main`'de
+   `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → annotated tag `vX.Y.Z` → push.
+   Tag'i gören `release.yml` derler, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin başka bir
+   şey yapman gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu).
 
 Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
@@ -162,6 +171,7 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 - Bir iş için kendi çalışma branch'ini aç, task başına commit at, bitince `main`'e merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - Oturum **`main` üzerinde** bitirilir.
+- Tek istisna: `release: vX.Y.Z` sürüm commit'i `main`'de doğrudan atılır (ayrıntı "Sürüm çıkarma" adım 5).
 
 ### Nerede çalışılır
 

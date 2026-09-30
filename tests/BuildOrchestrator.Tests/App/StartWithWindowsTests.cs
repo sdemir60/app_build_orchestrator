@@ -404,20 +404,31 @@ public class StartWithWindowsTests
         Assert.Same(service, window.SettingsOverlay.Autostart);
     }
 
-    /// <summary>Kaynak guard'ı (App headless kurulamaz): gerçek registry'ye giden yazıcı App ağacında TEK yerde,
-    /// composition root'ta kurulur ve DI'a TEK servis olarak girer; açılışın uzlaştırması da o servisi kullanır
-    /// (MainWindow onu DI'dan alıp Settings'e verir). Testler gerçek yazıcıyı ASLA kurmaz.</summary>
+    /// <summary>Kaynak guard'ı (App headless kurulamaz): gerçek registry'ye giden yazıcı App ağacında YALNIZ İKİ bilinen
+    /// yerde kurulur. (1) Composition root (<c>App.xaml.cs</c>): DI'a TEK servis olarak girer; açılışın uzlaştırması da
+    /// o servisi kullanır (MainWindow onu DI'dan alıp Settings'e verir). (2) <c>Program.Main</c>'in Velopack kaldırma
+    /// kancası (<c>Program.cs</c>): kanca modunda process WPF/DI kurulmadan biter, servis örneği yoktur — yazıcı doğrudan
+    /// <c>AutostartService.RemoveForUninstall</c>'a verilir. Testler gerçek yazıcıyı ASLA kurmaz.
+    /// <para>[yayın hattı · Task 2] Eski iddia: "TEK yerde, composition root'ta". Değişme gerekçesi: kaldırma kancası
+    /// DI'dan ÖNCE koşar (Velopack ana exe'yi <c>--veloapp-uninstall</c> ile çalıştırır) ve kaldırmada Run değerinin
+    /// silinmesi gerekir; oraya DI'daki servis taşınamaz. Kural gevşetilmedi, kapı sayısı kadar daraltıldı: üçüncü bir
+    /// kurulum yeri ya da kancanın başka bir biçimde kurulması hâlâ kırmızı verir.</para></summary>
     [Fact]
-    public void The_real_registry_writer_is_built_once_in_the_composition_root_and_never_in_tests()
+    public void The_real_registry_writer_is_built_only_in_the_composition_root_and_the_uninstall_hook_and_never_in_tests()
     {
         var rule = new Regex(@"new\s+RegistryAutostartRegistry\s*\(");
-        string hit = Assert.Single(SourceGuard.ScanApp("*.cs", rule, skipCommentLines: true));
-        Assert.StartsWith("App.xaml.cs:", hit, StringComparison.Ordinal);
+        var hits = SourceGuard.ScanApp("*.cs", rule, skipCommentLines: true);
+        Assert.Equal(2, hits.Count);
+        Assert.Single(hits, h => h.StartsWith("App.xaml.cs:", StringComparison.Ordinal));
+        Assert.Single(hits, h => h.StartsWith("Program.cs:", StringComparison.Ordinal));
         Assert.Empty(SourceGuard.ScanTests("*.cs", rule, skipCommentLines: true));
 
         // Beklenen biçimler regex ile yazılır: düz metin olarak yazılsaydı yukarıdaki tarama bu dosyayı da yakalardı.
         string app = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "App.xaml.cs"));
         Assert.Matches(@"sc\.AddSingleton\(_ => new AutostartService\(new\s+RegistryAutostartRegistry\(\)", app);
         Assert.Contains("Services.GetRequiredService<AutostartService>().Apply(", app, StringComparison.Ordinal);
+
+        string program = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "Program.cs"));
+        Assert.Matches(@"AutostartService\.RemoveForUninstall\(new\s+RegistryAutostartRegistry\(\)\)", program);
     }
 }

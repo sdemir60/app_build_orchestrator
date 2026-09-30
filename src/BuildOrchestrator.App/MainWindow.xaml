@@ -108,7 +108,7 @@
             <!-- [design v1.23.0 §2.12] GÜNCELLEME HAPI — kümenin BAŞI, arkasında mevcut ayraçla aynı ayraç; ikisi
                  BİRLİKTE girer (PopIn.PlayEntrance), bu yüzden tek kaptadır. Görünürlük ve metin teklifin tek
                  yerinden (RunViewModel.AvailableUpdate) MainWindow.UpdatePill.cs'te sürülür; başlangıçta Collapsed.
-                 Güncelleme motoru henüz yok — örnek teklifle hap şimdilik her zaman görünür. Amber YOK. -->
+                 Hap yalnız kuruluma hazır bir teklif varken görünür. Amber YOK. -->
             <StackPanel x:Name="UpdatePillSlot" Orientation="Horizontal" VerticalAlignment="Center"
                         Visibility="Collapsed">
               <Grid VerticalAlignment="Center">
@@ -288,7 +288,8 @@
       <!-- [design v1.23.0 §2.12 · plan U4] RESTART EKRANI — modalların da ÜSTÜNDE, pencerenin EN ÜST katmanı: title bar
            dahil her şeyi örter (prototip zIndex 300) ve caption bandında da tıklamayı kendisi alır (sürükleme ve pencere
            düğmeleri altında kalır). Varsayılan Collapsed; Restart to update onu oynatır, görünürken pencere klavyeyi ve
-           global kısayolları yok sayar (MainWindow.UpdateRestart.cs). Güncelleme motoru henüz yok — tasarım önizlemesi. -->
+           global kısayolları yok sayar (MainWindow.UpdateRestart.cs). Pencere kapanana dek kalır — çubuğu dolunca uygulama
+           güvenli tam çıkışa girer, kurulumu Update.exe yapar. -->
       <views:UpdateRestartScreen x:Name="UpdateRestartOverlay" Grid.Row="0" Grid.RowSpan="2"
                                  WindowChrome.IsHitTestVisibleInChrome="True" />
     </Grid>
