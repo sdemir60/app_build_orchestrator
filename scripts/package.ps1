@@ -20,7 +20,7 @@ param(
     [string]$NotesVersion,
     [string]$NotesOut,
     [switch]$DownloadPrevious,
-    [string]$RepoUrl = 'https://github.com/sdemir60/app_build_orchestrator',
+    [string]$RepoUrl,
     [string]$Token,
     [int]$ReleaseCount = -1
 )
@@ -30,6 +30,7 @@ $ErrorActionPreference = 'Stop'
 $Version = Get-BuildProp 'Version'
 $Product = Get-BuildProp 'Product'
 $Company = Get-BuildProp 'Company'
+if (-not $RepoUrl) { $RepoUrl = $DefaultRepoUrl }
 if (-not $ArtifactsDir) { $ArtifactsDir = Join-Path $RepoRoot 'artifacts' }
 if (-not $PublishDir) { $PublishDir = Join-Path $ArtifactsDir 'publish' }
 $ReleasesDir = Join-Path $ArtifactsDir 'velopack'

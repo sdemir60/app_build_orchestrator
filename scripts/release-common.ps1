@@ -5,6 +5,7 @@
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
+$DefaultRepoUrl = 'https://github.com/sdemir60/app_build_orchestrator'
 
 # "## [x.y.z] - yyyy-MM-dd" - Keep a Changelog surum basligi.
 $ChangelogHeadingPattern = '^## \[(?<version>\d+\.\d+\.\d+)\] - (?<date>\d{4}-\d{2}-\d{2})$'

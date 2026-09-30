@@ -69,4 +69,26 @@ public class ReleaseScriptsTests
         Assert.True(code == 0, output);
         Assert.Contains("no previous release", output, StringComparison.Ordinal);
     }
+
+    [SkippableFact]
+    public void The_release_guard_accepts_only_the_tag_of_the_current_version()
+    {
+        RequirePowerShell();
+        string version = ReleaseNotes.All[0].Version; // == props Version (WhatsNewTests pinler)
+        Assert.Equal(0, Run("release-guard.ps1", "-Tag", "v" + version).ExitCode);
+        var wrong = Run("release-guard.ps1", "-Tag", "v0.0.1");
+        Assert.Equal(1, wrong.ExitCode);
+        Assert.Contains("v0.0.1", wrong.Output, StringComparison.Ordinal);
+        Assert.Equal(1, Run("release-guard.ps1", "-Tag", version).ExitCode); // 'v' öneki şart
+    }
+
+    [SkippableFact]
+    public void The_release_script_refuses_a_version_whose_changelog_section_is_missing()
+    {
+        RequirePowerShell();
+        // -DryRun: git'e ve testlere dokunmaz; yalnız guard'lar koşar. CHANGELOG'da 99.0.0 yok → 1.
+        var r = Run("release.ps1", "-Version", "99.0.0", "-DryRun");
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains("CHANGELOG.md", r.Output, StringComparison.Ordinal);
+    }
 }
