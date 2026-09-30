@@ -39,8 +39,12 @@ public class RepoHygieneTests
     /// <summary>Workflow metni YAML yorumları atılmış olarak: iddialar yalnız GitHub'ın koşturduğu satırlara bakar — bir
     /// yorumdaki anahtar adı (ör. <c># ... -RequireOnMain ...</c>) adım silindiğinde testi yeşil tutmasın. Workflow'larda
     /// tırnak içinde <c>#</c> yoktur; satır başındaki ya da boşluktan sonra gelen <c>#</c> yorum başlatır.</summary>
+    /// <summary>Workflow metni: YAML yorumları atılmış, satır sonları LF'e indirilmiş. Satır sonu normalizasyonu şart —
+    /// runner checkout'u CRLF verir ve <c>(?m)…$</c> .NET'te yalnız <c>\n</c> öncesini yakalar; ilk CI koşusunda
+    /// <see cref="CI_only_reads_the_repository"/> bu yüzden runner'da düşüp lokalde geçiyordu.</summary>
     private static string Workflow(string name) =>
-        Regex.Replace(File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, ".github", "workflows", name)),
+        Regex.Replace(
+            File.ReadAllText(Path.Combine(RepoPaths.RepoRoot, ".github", "workflows", name)).Replace("\r\n", "\n"),
             @"(?m)(^|[ \t]+)#.*$", "");
 
     [Fact]

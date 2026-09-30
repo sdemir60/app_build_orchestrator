@@ -123,7 +123,7 @@ public class FastForwardUpdaterTests
         // Klonda AYRI bir commit — artık fast-forward mümkün değil.
         File.WriteAllText(Path.Combine(clone, "b.txt"), "local work");
         GitTestRepo.RunGitAt(clone, "add", "-A");
-        GitTestRepo.RunGitAt(clone, "-c", "user.email=t@t.local", "-c", "user.name=T", "commit", "-q", "-m", "local");
+        GitTestRepo.RunGitAt(clone, "commit", "-q", "-m", "local"); // kimlik klona fixture'ca yazıldı (GitTestRepo.ConfigureIdentity)
         string headBefore = HeadOf(clone);
 
         var result = await Updater(clone).UpdateAsync();
