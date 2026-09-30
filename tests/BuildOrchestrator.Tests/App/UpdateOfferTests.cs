@@ -37,14 +37,32 @@ public class UpdateOfferTests
         Assert.Equal(0, offer.MoreCount);
     }
 
-    [Fact]
-    public void Unparsable_notes_yield_an_offer_without_highlights()
+    /// <summary>Feed notu bozuksa (yayın script'i dışından üretilmiş bir paket) kart düşmez: hap yine çıkar, öne
+    /// çıkanlar boş. Girdiler parser'ın GERÇEKTEN reddettiği notlardır — ön-koşul <c>Assert.Throws</c> bunu pinler;
+    /// parser bir gün bu girdileri kabul etmeye başlarsa test <c>ParseNotes</c>'un <c>catch</c>'ini koruduğunu sessizce
+    /// iddia etmeye devam etmez, önce ön-koşulda düşer. İlk girdi GitHub'ın otomatik yayın notunun biçimidir.</summary>
+    [Theory]
+    [InlineData("## What's Changed\n* x\n")]
+    [InlineData("## [1.8.0] - 2026-10-01\nstray text\n")]
+    public void Unparsable_notes_yield_an_offer_without_highlights(string notes)
     {
-        // Feed notu bozuksa (yayın script'i dışından üretilmiş bir paket) kart düşmez: hap yine çıkar, öne çıkanlar boş.
-        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 1, "not a changelog"));
+        Assert.Throws<FormatException>(() => ReleaseNotes.Parse(notes));
+        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 1, notes));
+        Assert.Equal("1.8.0", offer.Version);
         Assert.Empty(offer.Highlights);
         Assert.Equal(0, offer.MoreCount);
-        Assert.Empty(UpdateOffer.From(new UpdateCandidate("1.8.0", 1, "")).Highlights);
+    }
+
+    /// <summary>Boş not ya da hiç sürüm başlığı taşımayan metin parser'a hata değildir (ilk sürümden önceki her şey
+    /// veri sayılmaz) — <c>catch</c>'e ulaşmadan boş öne çıkanlar verir.</summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("not a changelog")]
+    public void Notes_without_a_version_section_yield_an_offer_without_highlights(string notes)
+    {
+        var offer = UpdateOffer.From(new UpdateCandidate("1.8.0", 1, notes));
+        Assert.Empty(offer.Highlights);
+        Assert.Equal(0, offer.MoreCount);
     }
 
     [Fact]
