@@ -52,17 +52,34 @@ public sealed class VelopackUpdater : IAppUpdater
         return Manager.DownloadUpdatesAsync(info, progress: null, ct);
     }
 
+    /// <summary>Yalnız <paramref name="candidate"/> olan sürüm kurulur (<see cref="AssetToApply"/>); eşleşme yoksa hiçbir
+    /// şey başlatılmaz. <c>WaitExitThenApplyUpdates(null)</c> "klasördeki en yeni paketi kur" demektir — UpdateService'in
+    /// "hiç gösterilmemiş paket çıkışta kurulmaz" garantisi (yayım atan tur) aday yok sayılırsa bozulurdu.</summary>
     public void ApplyOnExit(UpdateCandidate candidate, bool restart)
     {
-        var asset = Manager.UpdatePendingRestart ?? _lastInfo?.TargetFullRelease;
+        if (AssetToApply(candidate, Manager.UpdatePendingRestart, _lastInfo?.TargetFullRelease) is not { } asset) return;
         Manager.WaitExitThenApplyUpdates(asset, silent: true, restart: restart);
+    }
+
+    /// <summary>Kurulacak varlık: önce diskteki (indirilmiş) paket, yoksa son kontrolün hedefi — ve yalnız o
+    /// <paramref name="candidate"/>'in sürümüyse. Diskteki en yeni paket başka bir sürümse <paramref name="lastCheckTarget"/>
+    /// aday olsa bile <c>null</c>: o paketin dosyası temizlenmiştir, Update.exe <c>--package</c> bulamayıp klasördeki en
+    /// yeniyi (gösterilmemişi) kurardı.</summary>
+    internal static VelopackAsset? AssetToApply(UpdateCandidate candidate, VelopackAsset? downloaded, VelopackAsset? lastCheckTarget)
+    {
+        var asset = downloaded ?? lastCheckTarget;
+        return asset is not null && VersionOf(asset) == candidate.Version ? asset : null;
     }
 
     /// <summary>İndirilecek olan: delta zinciri varsa toplamı, yoksa tam paket.</summary>
     internal static long DownloadBytes(long full, IReadOnlyList<long> deltas) => deltas.Count > 0 ? deltas.Sum() : full;
 
-    /// <summary>Feed varlığını teklife çevirir. <c>SemanticVersion.ToString()</c> normalize biçimdir ("1.8.0"; ön sürüm
-    /// etiketi varsa "1.9.0-beta.1"), notu olmayan paket boş nota döner.</summary>
+    /// <summary>Feed varlığını teklife çevirir; notu olmayan paket boş nota döner.</summary>
     internal static UpdateCandidate ToCandidate(VelopackAsset asset, long bytes) =>
-        new(asset.Version.ToString(), bytes, asset.NotesMarkdown ?? "");
+        new(VersionOf(asset), bytes, asset.NotesMarkdown ?? "");
+
+    /// <summary>Varlığın sürüm dizgesinin TEK üretildiği yer (teklif ve kurulacak varlığın eşlenmesi aynı biçimi kullanır).
+    /// <c>SemanticVersion.ToString()</c> normalize biçimdir: "1.8.0" (sıfır revizyon yazılmaz), ön sürüm etiketi varsa
+    /// "1.9.0-beta.1", metadata atılır.</summary>
+    private static string VersionOf(VelopackAsset asset) => asset.Version.ToString();
 }

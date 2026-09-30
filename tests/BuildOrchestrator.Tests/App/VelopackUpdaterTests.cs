@@ -1,3 +1,4 @@
+using System.IO;
 using BuildOrchestrator.App.Services.Updates;
 using Velopack;
 using Velopack.Locators;
@@ -8,7 +9,8 @@ namespace BuildOrchestrator.Tests.App;
 /// Velopack'in kendi <see cref="TestVelopackLocator"/>'ı "kurulu kopya"yı, ondan türeyen <see cref="NotInstalledLocator"/>
 /// "konumlayıcı var ama kurulu sürüm yok" durumunu (bin/publish klasöründen çalışan kopya) taklit eder — ikisi de
 /// <c>UpdateManager.IsInstalled</c> yolundan geçer. Process-global <c>VelopackLocator.Current</c>'e dokunulmaz: sonuç
-/// süitteki başka bir testin sırasına bağlı olmaz. Kurulu kopyadaki Check/Download davranışı yerel feed provasıyla elle
+/// süitteki başka bir testin sırasına bağlı olmaz. Çıkışta kurulum <see cref="RecordingLocator"/> ile sınanır (Update.exe
+/// başlatılışı kaydedilir, process açılmaz). Kurulu kopyadaki Check/Download davranışı yerel feed provasıyla elle
 /// doğrulanır (ARCHITECTURE §17.6).</summary>
 public class VelopackUpdaterTests
 {
@@ -18,6 +20,39 @@ public class VelopackUpdaterTests
     private sealed class NotInstalledLocator(string packagesDir) : TestVelopackLocator("bo-test", "1.0.0", packagesDir)
     {
         public override SemanticVersion? CurrentlyInstalledVersion => null;
+    }
+
+    /// <summary>Update.exe'nin başlatılışını KAYDEDER, gerçek process açmaz: Velopack'in <c>UpdateExe.Apply</c>'ı komut
+    /// satırını kurup <c>Locator.Process.StartProcess</c>'e verir; <see cref="TestVelopackLocator"/> o çağrıda gerçekten
+    /// process başlatırdı. <see cref="IProcessImpl"/>'in yeniden uygulanması <c>Process =&gt; this</c> çağrısını buraya yönlendirir.</summary>
+    private sealed class RecordingLocator(string dir, string updateExe, string installed, VelopackAsset downloaded)
+        : TestVelopackLocator("bo-test", installed, dir, appDir: dir, rootDir: dir, updateExe: updateExe, localPackage: downloaded),
+            IProcessImpl
+    {
+        public List<string[]> Started { get; } = [];
+        string IProcessImpl.GetCurrentProcessPath() => GetCurrentProcessPath();
+        uint IProcessImpl.GetCurrentProcessId() => GetCurrentProcessId();
+        void IProcessImpl.Exit(int exitCode) => Exit(exitCode);
+        void IProcessImpl.StartProcess(string exePath, IEnumerable<string> args, string workDir, bool showWindow) =>
+            Started.Add([.. args]);
+    }
+
+    /// <summary>Paket klasöründe yalnız <paramref name="downloadedVersion"/> iner (Velopack yenisini indirince eskiyi siler);
+    /// <c>Update.exe</c> ve paket dosyası <c>UpdateExe.Apply</c>'ın <c>File.Exists</c> denetimi için bulunur.</summary>
+    private static (VelopackUpdater Updater, RecordingLocator Locator, string PackagePath) UpdaterWithDownload(
+        TempDir dir, string downloadedVersion)
+    {
+        var fileName = $"bo-test-{downloadedVersion}-full.nupkg";
+        var package = Path.Combine(dir.Path, fileName);
+        File.WriteAllText(package, "");
+        var updateExe = Path.Combine(dir.Path, "Update.exe");
+        File.WriteAllText(updateExe, "");
+        var asset = new VelopackAsset
+        {
+            Version = SemanticVersion.Parse(downloadedVersion), Type = VelopackAssetType.Full, FileName = fileName, Size = 1,
+        };
+        var locator = new RecordingLocator(dir.Path, updateExe, installed: "1.7.0", asset);
+        return (UpdaterFor(locator), locator, package);
     }
 
     private static VelopackUpdater UpdaterFor(IVelopackLocator locator) =>
@@ -68,6 +103,55 @@ public class VelopackUpdaterTests
         };
         var updater = UpdaterFor(InstalledCopy(dir, "1.7.0", downloaded));
         Assert.Equal(new UpdateCandidate("1.9.0", 1234, "### Added\n- Thing"), updater.PendingRestart);
+    }
+
+    /// <summary>Çıkışta Update.exe indirilmiş paketle, <c>--silent</c> (K6: Velopack penceresi yok) başlatılır;
+    /// <c>--norestart</c> yalnız <c>restart</c> false iken eklenir (Later + normal çıkış → sessiz kurulum).</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Exit_applies_the_offered_package_silently_and_restarts_only_when_asked(bool restart)
+    {
+        using var dir = new TempDir();
+        var (updater, locator, package) = UpdaterWithDownload(dir, "1.9.0");
+        updater.ApplyOnExit(new UpdateCandidate("1.9.0", 1, ""), restart);
+        var args = Assert.Single(locator.Started);
+        Assert.Contains("--silent", args);
+        Assert.Contains("apply", args);
+        Assert.Equal(package, args[Array.IndexOf(args, "--package") + 1]);
+        Assert.Equal(restart, !args.Contains("--norestart"));
+    }
+
+    /// <summary>Teklif 1.8.0 iken sonraki tur 1.9.0'ı indirip yayımı attıysa (UpdateService: yayım atarsa sürüm "hazır"
+    /// sayılmaz) paket klasöründe yalnız gösterilmemiş 1.9.0 vardır. Çıkış bunu KURMAZ: <c>UpdatePendingRestart</c> en yeni
+    /// indirilmiş paketi verir, aday yok sayılırsa kullanıcının hiç görmediği sürüm sessizce kurulurdu.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Exit_never_applies_a_package_that_was_not_the_one_offered(bool restart)
+    {
+        using var dir = new TempDir();
+        var (updater, locator, _) = UpdaterWithDownload(dir, "1.9.0");
+        updater.ApplyOnExit(new UpdateCandidate("1.8.0", 1, ""), restart);
+        Assert.Empty(locator.Started);
+    }
+
+    /// <summary>Seçici saf kural: kurulacak varlık ADAYIN sürümüdür. Önce diskteki (indirilmiş) paket, yoksa son kontrolün
+    /// hedefi; ikisinden ilki aday değilse uygulanmaz — <c>lastCheckTarget</c> aday olsa bile: diskteki en yeni paket
+    /// başkasıysa Update.exe <c>--package</c> bulamayıp klasördeki en yeniyi kurardı.</summary>
+    [Fact]
+    public void The_asset_to_apply_is_the_offered_version_or_nothing()
+    {
+        var offered = new UpdateCandidate("1.8.0", 1, "");
+        var downloaded18 = new VelopackAsset { Version = SemanticVersion.Parse("1.8.0") };
+        var downloaded19 = new VelopackAsset { Version = SemanticVersion.Parse("1.9.0") };
+        var target18 = new VelopackAsset { Version = SemanticVersion.Parse("1.8.0") };
+
+        Assert.Same(downloaded18, VelopackUpdater.AssetToApply(offered, downloaded18, target18)); // indirilmiş paket önce
+        Assert.Same(target18, VelopackUpdater.AssetToApply(offered, downloaded: null, target18)); // diskte bilinen yok → son kontrol
+        Assert.Null(VelopackUpdater.AssetToApply(offered, downloaded19, target18));               // en yeni paket gösterilmemiş
+        Assert.Null(VelopackUpdater.AssetToApply(offered, downloaded: null, lastCheckTarget: downloaded19));
+        Assert.Null(VelopackUpdater.AssetToApply(offered, downloaded: null, lastCheckTarget: null));
     }
 
     [Fact]
