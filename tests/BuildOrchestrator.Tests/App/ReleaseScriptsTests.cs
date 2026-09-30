@@ -128,13 +128,19 @@ public class ReleaseScriptsTests
             + $"& '{box.ReleaseScript}' -Version {box.NextVersion} {switches}; exit $LASTEXITCODE",
             box.Work);
 
+    /// <summary>Kurtarma satırının başı (release.ps1 <c>Fail</c>).</summary>
+    private const string UndoLinePrefix = "release: undo ";
+
+    /// <summary>Push reddinde script'in "origin'e hiçbir şey gitmedi" iddiası — yalnız origin'de tag olmadığı GÖRÜLDÜYSE yazılır.</summary>
+    private const string NothingReachedOrigin = "nothing reached origin";
+
     /// <summary>Script'in kurtarma satırındaki komutlar. Satır script'in SON <c>release:</c> satırıdır (git'in kendi hata satırları
     /// stderr'dedir ve birleşik çıktıda sonra gelir); biçimi <c>release: undo ... with: &lt;komut&gt;; &lt;komut&gt; ...</c>.</summary>
     private static string UndoCommands(string output)
     {
         string last = output.Split('\n').Select(l => l.TrimEnd('\r')).Last(l => l.StartsWith("release: ", StringComparison.Ordinal));
         const string marker = " with: ";
-        Assert.StartsWith("release: undo ", last, StringComparison.Ordinal);
+        Assert.StartsWith(UndoLinePrefix, last, StringComparison.Ordinal);
         return last[(last.IndexOf(marker, StringComparison.Ordinal) + marker.Length)..];
     }
 
@@ -658,6 +664,7 @@ public class ReleaseScriptsTests
         if (moved == "develop") Assert.Equal(mainBefore, box.OriginMain);             // öteki branch de gitmedi
         else Assert.Equal(developBefore, box.OriginDevelop);
         Assert.Equal("", box.OriginTags);                                             // tag origin'e ULAŞMADI (atomik push)
+        Assert.Contains(NothingReachedOrigin, r.Output, StringComparison.Ordinal);   // script de bunu origin'e bakıp söyler
 
         box.Git(box.Work, "fetch", "-q", "origin"); // kurtarmadan önce araya giren fetch: isim yarışan commit'e kayar
         Assert.Equal(box.OtherHead, box.Git(box.Work, "rev-parse", "refs/remotes/origin/" + moved).Trim());
@@ -691,8 +698,8 @@ public class ReleaseScriptsTests
         Assert.Equal(box.LocalMain, box.OriginMain);
         Assert.Equal(box.LocalDevelop, box.OriginDevelop);
         Assert.Contains("but origin has v1.8.0", r.Output, StringComparison.Ordinal);
-        Assert.DoesNotContain("nothing reached origin", r.Output, StringComparison.Ordinal);
-        Assert.DoesNotContain("release: undo", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain(NothingReachedOrigin, r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain(UndoLinePrefix, r.Output, StringComparison.Ordinal);
     }
 
     /// <summary>Push düştükten sonra origin OKUNAMAZSA (ağ gitti) script "hiçbir şey gitmedi" diyemez: <c>ls-remote</c> hatası
@@ -711,7 +718,7 @@ public class ReleaseScriptsTests
         Assert.Equal(1, r.ExitCode);
         Assert.Equal(originBefore, box.OriginRefs); // push gitmedi
         Assert.Contains("origin cannot be read", r.Output, StringComparison.Ordinal);
-        Assert.DoesNotContain("nothing reached origin", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain(NothingReachedOrigin, r.Output, StringComparison.Ordinal);
         Assert.Contains("git reset --soft", UndoCommands(r.Output), StringComparison.Ordinal);
     }
 

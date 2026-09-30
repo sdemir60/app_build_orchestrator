@@ -8,8 +8,8 @@
    Guard'lar: CHANGELOG'un en ust bolumu bu surum ve bugun; branch develop; agacta CHANGELOG/props disinda degisiklik yok;
    budayan fetch sonrasi develop ve main origin'de var, develop == origin/develop, yerel main (varsa) == origin/main,
    origin/main develop'un atasi, main baska bir worktree'de acik degil; tag ne yerelde ne origin'de; bu checkout'tan calisan
-   uygulama yok; develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan bir guard (git ya da API hatasi)
-   gecmis sayilmaz, durdurur.
+   uygulama yok; develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan ata, worktree listesi, uzak tag ve
+   CI kosusu (git ya da API hatasi) gecmis sayilmaz, durdurur.
    Build/test'te durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
    arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar. Push hata dondugunde once
    origin'e tag sorulur: tag oradaysa yayin cikmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once origin'e bakmayi ister.
