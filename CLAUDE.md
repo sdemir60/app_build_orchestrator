@@ -7,7 +7,7 @@
 | Doküman | Ne için |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Teknik referans.** Mimari, process topolojisi, IPC, incremental karar, build motoru, git yüzeyi, UI, design system, güven sınırı, bilinçli kararlar, bilinen sınırlar. |
-| [README.md](README.md) | Giriş: ne yapar, gereksinimler, build/test/run/publish, kullanım, kısayollar. |
+| [README.md](README.md) | Giriş: ne yapar, gereksinimler, kurulum, build/test/run, paketleme ve yayın, kullanım, güncelleme, kısayollar. |
 | [CHANGELOG.md](CHANGELOG.md) | Sürüm notları — What's new ekranının TEK kaynağı (exe'ye gömülür). Yalnız sürüm çıkarılırken yazılır. |
 
 **Bir kusur veya davranış sorusu geldiğinde önce bunları oku.** ARCHITECTURE.md §22 kod haritasıdır (hangi
@@ -20,7 +20,7 @@ Solution: `BuildOrchestrator.slnx` (kökte).
 
 | Proje | Target | Sorumluluk |
 |---|---|---|
-| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray, single-instance, IPC client. **Outer Job Object** sahibi. |
+| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray, single-instance, IPC client, güncelleme motoru (Velopack). **Outer Job Object** sahibi. |
 | `src/BuildOrchestrator.Core` | net10.0 | Saf çekirdek: discovery, graph, incremental karar, scheduler, git, MSBuild sözleşmesi, job primitifleri, state. |
 | `src/BuildOrchestrator.Supervisor` | net10.0-windows | Motor process: build kuyruğu, **inner Job Object**, per-project `MSBuild.exe`, IPC server. Planlamaz, yürütür. |
 | `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor sözleşmesi: command/event, DTO, JSON, NDJSON framing. |
@@ -48,6 +48,10 @@ Solution: `BuildOrchestrator.slnx` (kökte).
   TEK dosyadır: `Core/Git/RepositoryWriter.cs` (kaynak guard'ı).
 - **stdout yalnız NDJSON;** tüm log/tanı stderr'e.
 - **Planlama Core'da.** İş mantığını App/Supervisor'a sızdırma; Core UI ve process bağımsız test edilebilir kalır.
+- **Velopack yalnız App'te.** Paket referansı, giriş noktası (`Program.Main`) ve güncelleme motoru
+  (`Services/Updates/`) App'tedir; Core, Supervisor ve Contracts'a girmez.
+- **Güncelleme motoru yalnız kurulu kopyada çalışır;** bin'den ya da publish klasöründen çalışan kopya hiç kontrol
+  etmez. Hap yalnız indirilmiş, kuruluma hazır bir teklif varken görünür — örnek/yer tutucu teklif yoktur.
 - **Kopya YASAK / tek doğruluk kaynağı:** aynı değer, metin veya primitif iki yerde tanımlanmaz — ne kodda
   (perf tablosu, konsol not metni, supervisor klasör adı) ne testlerde (ortak fixture/host tek yerde).
 

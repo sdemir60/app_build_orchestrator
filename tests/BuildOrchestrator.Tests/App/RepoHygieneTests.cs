@@ -62,4 +62,44 @@ public class RepoHygieneTests
         Assert.Contains("gh release edit", release, StringComparison.Ordinal);     // gövde = CHANGELOG bölümü
         Assert.DoesNotContain("dotnet publish", release, StringComparison.Ordinal); // publish komutunun tek sahibi package.ps1
     }
+
+    /// <summary>İki tag arka arkaya itilirse iki yayın aynı anda koşmaz (ikincisinin delta'sı birincinin henüz yüklenmemiş
+    /// paketine dayanırdı) ve koşan yayın yenisi yüzünden iptal edilmez (yarım yüklenmiş bir release kalırdı).</summary>
+    [Fact]
+    public void Releases_run_one_at_a_time_and_a_running_one_is_never_cancelled()
+    {
+        string release = Workflow("release.yml");
+        Assert.Contains("group: release", release, StringComparison.Ordinal);
+        Assert.Contains("cancel-in-progress: false", release, StringComparison.Ordinal);
+    }
+
+    /// <summary>Yazma izni yalnız yayımlayan job'dadır: guard ve ci (tag'in kodunu derleyip koşturur) yalnız okur.
+    /// Workflow seviyesi <c>contents: read</c>; <c>contents: write</c> tek yerde, son job olan publish'in içinde.</summary>
+    [Fact]
+    public void Only_the_publish_job_may_write_to_the_repository()
+    {
+        string release = Workflow("release.yml");
+        int jobs = release.IndexOf("\njobs:", StringComparison.Ordinal);
+        int publish = release.IndexOf("\n  publish:", StringComparison.Ordinal);
+        Assert.True(jobs > 0 && publish > jobs, "release.yml: 'jobs:' ya da publish job'ı bulunamadı");
+        Assert.Contains("contents: read", release[..jobs], StringComparison.Ordinal);
+        int write = release.IndexOf("contents: write", StringComparison.Ordinal);
+        Assert.True(write > publish, "contents: write publish job'ının dışında");
+        Assert.Equal(write, release.LastIndexOf("contents: write", StringComparison.Ordinal)); // tek yer
+    }
+
+    /// <summary>Guard job'ı tag'in commit'inin origin/main'de olduğunu da ister — elle itilen, main'e hiç girmemiş bir
+    /// commit'e duran tag yayın çıkarmaz: tam tarihçe (origin/main'e ata sorulabilsin) + <c>-RequireOnMain</c>. Kuralın
+    /// davranışı <see cref="ReleaseScriptsTests"/>'te gerçek git sandbox'ıyla pinlenir.</summary>
+    [Fact]
+    public void The_release_guard_job_checks_that_the_tag_is_on_main()
+    {
+        string release = Workflow("release.yml");
+        int guard = release.IndexOf("\n  guard:", StringComparison.Ordinal);
+        int ci = release.IndexOf("\n  ci:", StringComparison.Ordinal);
+        Assert.True(guard > 0 && ci > guard, "release.yml: guard ya da ci job'ı bulunamadı");
+        string guardJob = release[guard..ci];
+        Assert.Contains("fetch-depth: 0", guardJob, StringComparison.Ordinal);
+        Assert.Contains("-RequireOnMain", guardJob, StringComparison.Ordinal);
+    }
 }

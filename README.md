@@ -1,5 +1,7 @@
 # Build Orchestrator
 
+![ci](https://github.com/sdemir60/app_build_orchestrator/actions/workflows/ci.yml/badge.svg)
+
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from source content on
 disk — an output's date alone never makes it current), and builds only those — in parallel, under a supervisor
@@ -29,7 +31,7 @@ tool are picked up automatically.
 
 | Project | Target | Responsibility |
 |---|---|---|
-| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray icon, single instance. Owns the **outer Job Object** and spawns the Supervisor. |
+| `src/BuildOrchestrator.App` | net10.0-windows (WPF) | UI, MVVM, DI, tray icon, single instance, self-update. Owns the **outer Job Object** and spawns the Supervisor. |
 | `src/BuildOrchestrator.Core` | net10.0 | Pure logic: project discovery, dependency graph, git service, incremental planning, state/config persistence, Job Object + process control primitives. |
 | `src/BuildOrchestrator.Supervisor` | net10.0-windows | Separate engine process: run queue, **inner Job Object**, one `MSBuild.exe` child per project, log parsing, IPC server over stdio. |
 | `src/BuildOrchestrator.Contracts` | net10.0 | App ↔ Supervisor IPC contracts: commands, events, JSON serialization, NDJSON framing. |
@@ -70,13 +72,41 @@ Key consequences of that layout:
 
 ## Requirements
 
+**To use it:**
+
 - **Windows.** WPF, Job Objects and the Win32 process control are not portable.
-- **.NET 10 SDK** — to build and run this repository.
+- **.NET 10 Desktop Runtime** — the installer sets it up when it is missing.
 - **Visual Studio 2022 or Build Tools** with the `Microsoft.Component.MSBuild` component. The engine resolves
   `MSBuild.exe` at run time through
   `%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe`; without it, builds fail with a resolve
   error (the Supervisor itself still starts). "Open in Visual Studio" additionally needs a full VS IDE install.
 - **`git` on `PATH`** — the engine invokes `git` by name.
+
+**To build it**, additionally:
+
+- **.NET 10 SDK** — the band `global.json` names, or a later 10.0 feature band. CI builds with the same file.
+
+## Install
+
+Download the installer from the latest release — the link always points at the newest version:
+
+<https://github.com/sdemir60/app_build_orchestrator/releases/latest/download/BuildOrchestrator.App-win-Setup.exe>
+
+- It installs for the current user only, without admin rights, into `%LOCALAPPDATA%\BuildOrchestrator.App\`, with
+  Start menu and desktop shortcuts.
+- The installer is not code-signed yet, so Windows SmartScreen may stop it the first time: choose
+  **More info → Run anyway**.
+- From then on the app keeps itself up to date ([Update](#update)).
+
+**Moving from a copied folder.** Close the old copy first — tray icon → *Exit*; the app is single-instance, and a
+running old copy would answer the new one's start by coming to the front instead. Run the installer, then delete
+the old folder. Settings, caches and logs live in `%LOCALAPPDATA%\BuildOrchestrator\`, which belongs to neither
+copy, so they carry over; *Start with Windows*, if it was on, is re-pointed to the installed copy on its first
+start.
+
+**Uninstall** from Windows Settings → Apps → Installed apps. It removes the installation, its shortcuts and the
+*Start with Windows* value; your data in `%LOCALAPPDATA%\BuildOrchestrator\` stays — delete that folder by hand to
+remove it too.
 
 ## Build, test, run
 
@@ -92,14 +122,27 @@ build a real large repository (~2 min) and are run separately with `--filter "Ca
 Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
 their environment variable is set (ARCHITECTURE.md §17.5).
 
-## Publish
+CI (`.github/workflows/ci.yml`) runs the same build and suite on every push to `main` and every pull request. A
+test that cannot run on the hosted runner carries `Category=LocalOnly` and is excluded there only; the local full
+run stays the gate.
 
-Framework-dependent, folder-based publish:
+## Package and release
+
+Packaging has one owner, `scripts/package.ps1`: the publish command, the release-note cut and the installer build
+are written there and nowhere else, and a local try-out, `verify-publish.ps1` and the release workflow all run it.
 
 ```powershell
-dotnet publish src\BuildOrchestrator.App\BuildOrchestrator.App.csproj `
-  -c Release -r win-x64 --self-contained false -o <output-folder>
+dotnet tool restore                                                  # once: the pinned Velopack CLI (vpk)
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1         # publish + notes + installer
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -PublishOnly -PublishDir <folder>
 ```
+
+Version, product name and company are read from `Directory.Build.props`. The publish is framework-dependent and
+folder-based (`Release`, `win-x64`) and lands in `artifacts\publish\`; that version's section of `CHANGELOG.md` is
+cut into `artifacts\velopack\notes.md`; and Velopack packs the installer, `BuildOrchestrator.App-win-Setup.exe`, and
+the update packages into `artifacts\velopack\` — with a delta package too when the previous release's package is
+there (`-DownloadPrevious` fetches it; the release workflow does). `-PublishOnly` stops after the publish;
+`artifacts\` is ignored by git.
 
 **The `supervisor\` subfolder next to the published `.exe` is mandatory.** It is not an optional extra: it
 *is* the build engine. The App resolves `<app folder>\supervisor\BuildOrchestrator.Supervisor.exe` at startup;
@@ -111,8 +154,8 @@ Not supported:
 
 - **`PublishSingleFile`** — rejected by an MSBuild target with an explicit error. `AppContext.BaseDirectory`
   would point at the extraction directory and the `supervisor\` subfolder cannot go into the bundle.
-- **Self-contained publish** is not verified. The only publish mode that is exercised end to end is
-  `-c Release -r win-x64 --self-contained false`.
+- **Self-contained publish** is not verified. The only publish mode that is exercised end to end is the
+  framework-dependent one `package.ps1` runs.
 
 To verify a publish output end to end:
 
@@ -121,13 +164,24 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-publish.ps1
 ```
 
 It first refuses to measure anything if an instance is already running (the app is single-instance), then
-publishes to a temp folder and checks the whole chain: publish exit code, layout, an NDJSON round trip against
-the published Supervisor binary, a full Sync + Build driven through it against a throwaway workspace (proving
-the published binary really compiles and writes the DLL), launching the published `.exe` and confirming via
-WMI that the Supervisor child was spawned from that same folder, reading the console boot line and the ribbon
-state out of the live window through UI Automation, and finally killing only the App and proving the Supervisor
-dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail, `2` = precondition not met (close
-the running instance first — tray icon → Exit).
+publishes to a temp folder through `package.ps1 -PublishOnly` and checks the whole chain: publish exit code,
+layout, an NDJSON round trip against the published Supervisor binary, a full Sync + Build driven through it
+against a throwaway workspace (proving the published binary really compiles and writes the DLL), launching the
+published `.exe` and confirming via WMI that the Supervisor child was spawned from that same folder, reading the
+console boot line and the ribbon state out of the live window through UI Automation, and finally killing only
+the App and proving the Supervisor dies *by itself* through the job cascade. Exit code `0` = pass, `1` = fail,
+`2` = precondition not met (close the running instance first — tray icon → Exit).
+
+**Releasing** is one request in a Claude Code session: `/release` (the project skill in `.claude/skills/release/`).
+Claude writes the new version's `CHANGELOG.md` section — the rules are in [`CLAUDE.md`](CLAUDE.md) — and runs
+`scripts\release.ps1 -Version X.Y.Z`. The script stops before touching anything unless `main` is clean and level
+with `origin/main`, the section is on top and dated today, and the tag exists neither locally nor on `origin`;
+then it writes `Version`, builds, runs the full suite, commits `release: vX.Y.Z` on `main`, tags it and pushes
+both atomically — either both reach GitHub or neither does. `-DryRun` runs only the `CHANGELOG.md` checks. The tag
+starts `.github/workflows/release.yml`: it checks that the tag, `Version` and the top `CHANGELOG.md` section agree
+and that the tagged commit is on `main`, runs the CI build and suite, packages with `package.ps1` and publishes
+the GitHub Release — the installer, the update packages and the version's notes as its text. Installed copies pick
+it up on their next check.
 
 ## Using it
 
@@ -559,20 +613,32 @@ survives a stray keypress.
 
 ### Update
 
-The title bar's command group starts with an *Update {version}* pill; the icons to its right never move for it.
-Clicking it opens a card: the installed and incoming versions with the package size, the highlights grouped like
-the release notes, and *Later* / *Restart to update*. While a build, a Sync or a maintenance task is running,
-*Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it` for a build; it
-comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere, Esc or opening a
-dialog closes the card; the pill stays.
+An installed copy keeps itself up to date. Five seconds after it starts, and every four hours after that, it
+asks the project's GitHub Releases whether there is a newer version — silently: no progress, no balloon, and a
+check or download that fails (offline, rate-limited, a package that does not verify) simply waits for the next
+round. A newer version downloads in the background, and only once it is on disk does the title bar's command
+group start with an *Update {version}* pill; the icons to its right never move for it.
+
+Clicking the pill opens a card: the installed and incoming versions with the download size, the new version's
+highlights from its release notes grouped like What's new — at most five, with a `+N more in What's new after
+restart` line when there are more — and *Later* / *Restart to update*. While a build, a Sync or a maintenance task
+is running, *Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it`
+for a build; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
+Esc or opening a dialog closes the card; the pill stays.
 
 *Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:
-the product mark, `Updating Build Orchestrator`, the version change and a progress bar that walks through
-closing, installing and starting in about three seconds. While it shows, keys and the global hotkeys do nothing.
+the product mark, `Updating Build Orchestrator`, the version change, a progress bar and
+`Closing Build Orchestrator…`. When the bar fills, the app exits the way tray → *Exit* does; the installer then
+replaces the files without a window of its own, and the new version opens — with the dot on What's new's star.
+While the restart screen shows, keys and the global hotkeys do nothing.
 
-There is no update engine yet. The pill shows a sample offer — the next minor version with example highlights —
-so it is always visible, and the restart screen is a preview of the design: when it fades out, the app is exactly
-as it was.
+Not restarting is fine too: after *Later*, or with the pill simply left alone, the downloaded version installs
+silently when the app exits, and the next start is the new version. A copy that is not installed — run from
+`bin\` or from a publish folder — never checks and never shows the pill.
+
+Two environment variables exist for development and testing: `BO_UPDATE_SOURCE` points the check at a local
+folder of packages or another URL instead of GitHub Releases (ARCHITECTURE.md §17.6 walks through a local
+rehearsal), and `BO_UPDATE_PRERELEASE=1` also offers pre-releases.
 
 ### State on disk
 
@@ -584,6 +650,10 @@ as not built and prints `previous run was interrupted; N projects will rebuild`,
 never taken for a finished one. *Start with Windows*, when on, writes one value to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights, no HKLM, no service — and turning it on
 also clears Task Manager's *disabled* mark for that value, if it has one.
+
+The installation itself lives apart, in `%LOCALAPPDATA%\BuildOrchestrator.App\`: an update replaces only the
+program there, and uninstalling removes that folder and the *Start with Windows* value but never touches
+`%LOCALAPPDATA%\BuildOrchestrator\`.
 
 Older versions kept a pool of git worktrees under `worktrees\`. Nothing uses it any more; if the folder is
 still there, the console says so once per session. Delete it to reclaim the space, then run
@@ -663,8 +733,7 @@ and design decision the implementation rests on, plus a code map of which file o
 
 ## Licence
 
-There is **no licence file for this project** — the repository ships no `LICENSE`, so no licence is granted
-here by default.
+The project is licensed under the **MIT License** — see [`LICENSE`](LICENSE).
 
 The one third-party licence *text* that is included and redistributed is the **Geist** and **Geist Mono**
 fonts, licensed under the **SIL Open Font License 1.1**: `src/BuildOrchestrator.App/Assets/GEIST-LICENSE.txt`,

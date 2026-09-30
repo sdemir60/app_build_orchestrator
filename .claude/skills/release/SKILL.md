@@ -5,15 +5,20 @@ description: Build Orchestrator için yeni sürüm çıkar — CHANGELOG bölüm
 
 # /release
 
-1. `main`'de ve temiz ol; `git fetch` → `origin/main` ile eşit değilse dur ve söyle.
-2. Kaynak: `git log --first-parent v<son tag>..main` merge mesajları + ilgili `.claude/outputs/*results*.md`.
-3. Numara: yalnız düzeltme → patch · yeni özellik → minor · büyük dönüm noktası → major (kullanıcıya SOR).
-4. `CHANGELOG.md`'nin en üstüne `## [X.Y.Z] - <bugün>` bölümü: kategoriler Added · Changed · Fixed · Performance ·
-   Removed sırasıyla, boşu yazma; maddeler İngilizce, düz metin (markdown işareti yok), kısa, kullanıcının gördüğü
-   özellik; iç terim, dosya/sınıf adı yok; küçük işler tek satırda. Her maddeyi o anki koda göre doğrula.
-5. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
-   — guard'lar, `Version`, build + tam süit, `release: vX.Y.Z` commit'i, annotated tag, push. Düşerse sebebi
-   kullanıcıya ilet; hiçbir şey push edilmemiştir.
-6. Actions linkini ver: https://github.com/sdemir60/app_build_orchestrator/actions — `release` workflow'u ~15 dk.
-   Bitince https://github.com/sdemir60/app_build_orchestrator/releases/latest sayfasında Setup.exe ve nupkg'ları gör.
-7. Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
+Kurallar — kaynak, numara, notun yazımı, `Version` — CLAUDE.md **"Sürüm çıkarma"** bölümündedir; burada
+tekrarlanmaz. Bu skill yalnız sırayı ve komutları verir.
+
+1. **Ana proje checkout'unda** (`D:\Projects\Other\Apps\app_build_orchestrator`) `main` üzerinde koş — worktree'de
+   (`main-ai`) DEĞİL: `main` orada açılamaz ve script `main` dışında durur. Ağaç temiz olmalı; `git fetch` →
+   `origin/main` ile eşit değilse dur ve söyle.
+2. Numarayı ve CHANGELOG bölümünü CLAUDE.md "Sürüm çıkarma" adım 1-3'e göre hazırla (major ise kullanıcıya SOR);
+   `Version`'ı script yazar.
+3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
+   — guard'lar, `Version`, build + tam süit, `release: vX.Y.Z` commit'i, annotated tag, atomik push (`main` ve tag
+   ya birlikte gider ya hiçbiri). Düşerse sebebi kullanıcıya ilet; hiçbir şey push edilmemiştir.
+4. **Push reddedilirse** (fetch'ten sonra `origin/main` ilerlemiş): yerelde `release:` commit'i ve tag kalır, origin'e
+   hiçbiri gitmemiştir. Kurtarma — `git fetch`/`pull`'dan ÖNCE (yerel `origin/main` henüz yayının başladığı
+   commit'tir): `git tag -d vX.Y.Z` → `git reset --soft origin/main`. CHANGELOG/props değişikliği çalışma ağacında
+   kalır; sonra `git pull --ff-only` ve adım 3 yeniden.
+5. Actions linkini ver: https://github.com/sdemir60/app_build_orchestrator/actions (`release` workflow'u). Bitince
+   https://github.com/sdemir60/app_build_orchestrator/releases/latest sayfasında Setup.exe ve nupkg'ları gör.

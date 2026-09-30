@@ -4,20 +4,30 @@ name: release
 on:
   push:
     tags: ['v*']
+# Varsayilan okuma: guard ve ci (tag'in kodunu derleyip kosturur) repoya yazamaz; yazma yalniz publish job'inda.
 permissions:
-  contents: write
+  contents: read
+# Yayinlar sirayla: ikinci tag'in delta'si birincinin yuklenmemis paketine dayanmasin; kosan yayin iptal edilmez
+# (yarim yuklenmis release kalmasin).
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
   guard:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
-      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -Tag ${{ github.ref_name }}
+        with:
+          fetch-depth: 0   # tam tarihce: -RequireOnMain tag'in commit'ini origin/main'e karsi sorar
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -Tag ${{ github.ref_name }} -RequireOnMain
   ci:
     needs: guard
     uses: ./.github/workflows/ci.yml
   publish:
     needs: ci
     runs-on: windows-2025
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4

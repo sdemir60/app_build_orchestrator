@@ -203,6 +203,29 @@ public class ReleaseScriptsTests
         Assert.Contains("<Version>1.8.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal);
     }
 
+    /// <summary>Kusur: release.yml'in guard'ı yalnız tag == Version == CHANGELOG eşitliğine bakıyordu; elle itilen ve
+    /// origin/main'de OLMAYAN bir commit'e duran tag (bir iş branch'inden, push edilmemiş bir denemeden) aynı eşitliği
+    /// taşırsa yayın çıkardı. <c>-RequireOnMain</c> (CI'ın kipi) HEAD'in origin/main'in atası olmasını da ister. Yerel
+    /// <c>release.ps1</c> bu anahtarı vermez: orada guard release commit'inden önce koşar.</summary>
+    [SkippableFact]
+    public void The_release_guard_on_CI_refuses_a_commit_that_origin_main_does_not_contain()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.CommitTheNextVersionWithoutPushing();
+        string tag = "v" + box.NextVersion;
+
+        Assert.Equal(0, RunIn(box.Work, box.GuardScript, "-Tag", tag).ExitCode); // yerel kip: ata sorulmaz
+
+        var refused = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
+        Assert.Equal(1, refused.ExitCode);
+        Assert.Contains("origin/main", refused.Output, StringComparison.Ordinal);
+
+        box.Git(box.Work, "push", "-q", "origin", "main"); // commit artık origin/main'de
+        var accepted = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
+        Assert.True(accepted.ExitCode == 0, accepted.Output);
+    }
+
     /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin + çalışma klonu (script'ler ve asgari
     /// props/CHANGELOG/slnx içerir; script kökü kendi konumundan çıkarır) + origin'i "başka biri" gibi ilerleten ikinci klon.
     /// Yeni sürümün CHANGELOG bölümü commit EDİLMEMİŞ değişikliktir (gerçek akışta Claude yazar, script commit'ler). Gerçek
@@ -215,13 +238,17 @@ public class ReleaseScriptsTests
         public string Work => Path.Combine(_temp.Path, "work");
         public string Other => Path.Combine(_temp.Path, "other");
         public string ReleaseScript => Path.Combine(Work, "scripts", "release.ps1");
+        public string GuardScript => Path.Combine(Work, "scripts", "release-guard.ps1");
         public string PropsPath => Path.Combine(Work, "Directory.Build.props");
+        /// <summary>CHANGELOG'un en üstüne (commit'siz) yazılan yeni sürüm.</summary>
+        public string NextVersion { get; }
         public string OriginMain => Git(Origin, "rev-parse", "main").Trim();
         public string WorkHead => Git(Work, "rev-parse", "HEAD").Trim();
         public string OtherHead => Git(Other, "rev-parse", "HEAD").Trim();
 
         public ReleaseSandbox(string nextVersion)
         {
+            NextVersion = nextVersion;
             Git(_temp.Path, "init", "-q", "--bare", "-b", "main", Origin);
             Git(_temp.Path, "clone", "-q", Origin, Work);
             Configure(Work);
@@ -253,6 +280,15 @@ public class ReleaseScriptsTests
             Git(repo, "config", "user.email", "test@buildorchestrator.local");
             Git(repo, "config", "user.name", "Build Orchestrator Test");
             Git(repo, "config", "core.autocrlf", "false"); // fixture LF yazar; kullanıcı ayarı satır sonu gürültüsü üretmesin
+        }
+
+        /// <summary>Yeni sürümü (props <c>Version</c> + bekleyen CHANGELOG bölümü) çalışma klonunda commit'ler ama push
+        /// ETMEZ: tag == Version == CHANGELOG tutarlıdır, commit origin/main'de yoktur.</summary>
+        public void CommitTheNextVersionWithoutPushing()
+        {
+            File.WriteAllText(PropsPath, System.Text.RegularExpressions.Regex.Replace(
+                File.ReadAllText(PropsPath), "<Version>[^<]*</Version>", $"<Version>{NextVersion}</Version>"));
+            Git(Work, "commit", "-q", "-a", "-m", "release: v" + NextVersion);
         }
 
         /// <summary>Origin'e, hiçbir branch'ten erişilemeyen (parent'sız) bir commit'i gösteren tag koyar: çalışma klonunun

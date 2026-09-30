@@ -47,7 +47,8 @@ rebuilt, in what order, and how do we run that safely.**
 Multi-repo *history* — one repository's git history drives the branch, the HEAD watcher and the `N behind`
 distance. Additional **external roots** (§10.4) are scanned into the same graph and built alongside, but they
 contribute no branch and no remote distance of their own.
-Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging.
+Headless/CLI operation. Light theme. Command palette. Onboarding flow. MSIX packaging. Code signing — the
+installer and its updates are unsigned (§12.5, §21.5).
 `packages.config` migration. Build-output isolation per branch. Graph editing. Attaching to an already-running
 Visual Studio instance via ROT/DTE (the "Open in Visual Studio" action resolves `devenv.exe` through `vswhere`
 — once per session, off the UI thread, since the query can take seconds and its timeout is 30 — and opens the
@@ -69,6 +70,8 @@ solution fresh).
 | Build engine | `MSBuild.exe`, located via `vswhere` | **Not** `dotnet build` — the target repository is predominantly legacy .NET Framework |
 | Process control | Win32 job objects, `CreateProcessW`, `RegisterHotKey`, `WindowChrome`, DWM | P/Invoke in `Core/ProcessControl` and `App/Shell` |
 | Fonts | Geist / Geist Mono, static OTF, embedded | SIL OFL 1.1; variable fonts are not usable by WPF |
+| Installer and updates | Velopack 1.2 (library in the App, `vpk` CLI as a local tool) | Per-user installer, delta packages, GitHub Releases as the feed, install on exit (§12.5, §18) |
+| CI and release | GitHub Actions, GitHub Releases | Pinned `windows-2025` runner; a `v*` tag publishes (§18) |
 
 ---
 
@@ -83,7 +86,7 @@ Solution file: `BuildOrchestrator.slnx` at the repository root.
 | `src/BuildOrchestrator.Contracts` | `net10.0` | The App↔Supervisor contract: command and event records, domain DTOs, polymorphic JSON options, NDJSON framing. No logic. |
 | `src/BuildOrchestrator.Core` | `net10.0` | All decision-making, pure and testable: discovery, evaluation cache, dependency graph, layers, signature and incremental planning, scheduler, git service and the single git writer, HEAD watcher, MSBuild argument/invocation contract, job-object primitives, run logs, state persistence. |
 | `src/BuildOrchestrator.Supervisor` | `net10.0-windows` | The engine process. Owns the inner job object, runs the plan Core produced, shells out one `MSBuild.exe` per project, writes per-run logs, serves the IPC. Executes; does not plan. |
-| `src/BuildOrchestrator.App` | `net10.0-windows` (WPF) | The interface. MVVM, DI, window shell, tray, single instance, global hotkeys, all rendering and motion. Owns the outer job object and spawns the Supervisor. |
+| `src/BuildOrchestrator.App` | `net10.0-windows` (WPF) | The interface. MVVM, DI, window shell, tray, single instance, global hotkeys, all rendering and motion. Owns the outer job object and spawns the Supervisor. The only project that references Velopack: the entry point and the update engine (§12.5). |
 | `tests/BuildOrchestrator.Tests` | `net10.0-windows` (`UseWPF`) | One suite for everything: Core unit tests, process-control tests, IPC tests, WPF realization/STA tests, source guards, integration and acceptance tests. |
 
 ### 3.2 Reference rules
@@ -155,7 +158,10 @@ Neither job is created with `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, so a child asking f
 
 The App is deliberately **not** a member of its own outer job. Two consequences follow, both wanted: the CPU
 cap written to the inner job can never throttle the interface, and processes the App starts on the user's
-behalf (`explorer.exe`, `devenv.exe`) survive the app closing.
+behalf (`explorer.exe`, `devenv.exe`) survive the app closing. The updater is the third of these: when a
+downloaded update is ready, the App's exit starts Velopack's `Update.exe`, which has to outlive the App — it
+waits for the App to exit before it replaces the installed files (§12.5). It starts only for a version the
+update pill has offered: at the user's *Restart to update*, or at an ordinary exit while that offer is pending.
 
 There is no managed parent-watcher and no PID heuristic. The guarantee is the OS handle semantics: when the
 last handle on a job closes, `KILL_ON_JOB_CLOSE` terminates its members.
@@ -194,7 +200,7 @@ stayed on `stopping` indefinitely. One unread pipe, both symptoms.
 | Actor | Target | Mechanism |
 |---|---|---|
 | App | everything | Disposing the outer job closes the last handle → cascade |
-| App | Supervisor only | `Process.Kill(entireProcessTree: true)` |
+| App | Supervisor only | `Process.Kill(entireProcessTree: true)`, then a wait of at most a second for it to end — the kill is asynchronous, and an update must not meet the engine's files still locked (§12.5) |
 | Supervisor | the whole MSBuild tree | `TerminateJobObject(inner)` — the hard stop |
 | Supervisor | one project | `Kill(entireProcessTree: true)` on that `MSBuild.exe` |
 | Supervisor | App | not possible — the App's death reaches it as stdin EOF and it exits cleanly |
@@ -2204,6 +2210,16 @@ floor (§4.5).
 
 ### 12.1 Startup routes and composition
 
+The entry point is a hand-written `Program.Main` — the App's `.csproj` names it as the `StartupObject`, so WPF's
+generated `Main` is not used — and its first statement is `VelopackApp.Build()…Run()`. Velopack runs its install,
+update and uninstall hooks by starting the main executable with `--veloapp-install`, `--veloapp-obsolete`,
+`--veloapp-updated` or `--veloapp-uninstall` and a version; `Run()` recognises those arguments, runs the hook and
+ends the process there, so a hook never sets up WPF, the single-instance mutex, the tray or DI. The one hook
+registered is the uninstall one, which deletes the *Start with Windows* value (§12.3). On an ordinary start `Run()`
+returns and the `App` starts as it always did — except that a downloaded update that was never installed (the
+process ended without its exit installing it — killed, say) is applied there first: Velopack's auto-apply on
+startup is left at its default, on (§12.5). A source guard (`EntryPointTests`) keeps `Run()` ahead of the `App`.
+
 Argument parsing has one owner and three routes, in priority order: `--font-ab` (a developer shell for the font
 comparison — no DI, no engine, deliberately outside the single-instance gate), start hidden in the tray, and
 normal. `--autostart` is only the marker the Windows startup entry (§12.3) passes to say *Windows started me*:
@@ -2214,9 +2230,15 @@ other; a start by hand always shows the window. An unrecognized argument is swal
 
 The composition root registers the `EngineHost` (resolving the Supervisor path from the assembly metadata of
 §3.3), the console batcher (a ~50 ms flush window, opened by the first waiting line), the OS actions service, the
-autostart service (the one owner of the Windows startup entry, §12.3) and the view models. Two application-wide
-singletons are exposed statically because their owners have no constructor seam: the reduced-motion settings and
-the hero-motion coordinator.
+autostart service (the one owner of the Windows startup entry, §12.3), the update engine — `IAppUpdater`, whose
+implementation `VelopackUpdater` reads the feed of §12.5, and `UpdateService`, which publishes its offer to the
+view model on the UI thread — and the view models. Two application-wide singletons are exposed statically because
+their owners have no constructor seam: the reduced-motion settings and the hero-motion coordinator.
+
+The update engine starts only once the window has been shown or put in the tray, so its first check, five seconds
+later, comes after the opening rather than inside it; the view model's *Restart to update* request is wired to it
+at the same point, and `OnExit` asks it to install once the build engine has been shut down and the
+single-instance handles released (§12.5).
 
 The shell also enables the automatic Sync (§10.3) once: the HEAD watcher attaches to the repository root and
 follows it when the root changes, and window activation is wired to the same coordinator.
@@ -2366,7 +2388,12 @@ no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path o
 by `--autostart` (§12.1). The saved switch is the app's wish, and every start reconciles the value with it: an
 executable that has moved is re-pointed on its next launch, and a registry that refuses the write — a policy,
 security software — is skipped rather than taking the start down. A Windows start that meets a running instance
-follows the second-instance rule above, and either kind of start runs the startup Sync of §12.1.
+follows the second-instance rule above, and either kind of start runs the startup Sync of §12.1. In an installed
+copy the running executable is `%LOCALAPPDATA%\BuildOrchestrator.App\current\BuildOrchestrator.App.exe`, and an
+update does not move it — Velopack replaces the contents of `current\` — so the value survives updates; a copy
+that moved from a publish folder to the installation is re-pointed by the same reconciliation on its first start.
+Uninstalling deletes the value: the uninstall hook of §12.1 removes it, and a registry that refuses is ignored,
+since a hook can show nothing.
 
 The switch shows what Windows will actually do, not the saved wish: no value reads off, a value reads on —
 unless the user turned the app off in Task Manager's *Startup apps* (or Settings → Apps → Startup). Windows
@@ -2397,9 +2424,9 @@ buttons, opens with the **update pill** and a hairline of its own (§13.3), then
 commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
 sparkle (What's new) and the `i` (About). Both hairlines are one style. The cluster is docked right, so the pill
 grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
-pill is there or not. There is no update engine yet — the pill shows a sample offer, the next minor of the
-installed version, and is therefore always visible; it is neutral (no amber, the title bar's rule), and it plays
-an entrance only when an offer arrives after startup (§14.5), never on the first frame.
+pill is there or not. The pill shows only while a downloaded update is ready to install (§12.5); the application
+starts with no offer, so it is absent until one arrives. It is neutral (no amber, the title bar's rule), and it
+plays its entrance when the offer arrives (§14.5), never on the first frame.
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -2407,6 +2434,58 @@ Three view modes from the title bar: **quad** (default; returning to the preset 
 
 Splitters have a 7 px grab area over a 1 px visible line that turns amber while dragging. Bounds: columns
 28–72 %, rows 18–82 %. Mode and all three split positions persist.
+
+### 12.5 Distribution and updates
+
+**Installation.** The application ships as a Velopack installer, `BuildOrchestrator.App-win-Setup.exe`, attached to
+every GitHub Release (§18). It installs per user and without elevation into `%LOCALAPPDATA%\BuildOrchestrator.App\`
+— the folder is named after the package id — with Start menu and desktop shortcuts. Inside it, Velopack keeps its
+own `Update.exe`, a stub executable the shortcuts start, `current\` (the application, `supervisor\` included) and
+`packages\` (downloaded packages). That folder is deliberately not the state folder of §16: Velopack deletes its
+own folder on uninstall, and settings, caches and logs must survive both an update and an uninstall. The package is
+framework-dependent; the installer sets up the .NET 10 Desktop Runtime when it is missing. Nothing is code-signed
+(§21.5).
+
+**The update engine** lives in the App alone — Velopack enters neither Core, the Supervisor nor Contracts — behind
+one seam, `IAppUpdater`: whether this copy is installed, the package already downloaded, check, download, and
+install on exit. `VelopackUpdater` implements it over Velopack's `UpdateManager`, and tests replace it with a fake.
+`UpdateService` is the engine proper: a small state machine on a timer taken from `TimeProvider`, so tests move
+time rather than wait for it. No type spells the states out; they are these:
+
+| State | What happens |
+|---|---|
+| Off | The copy is not installed — run from `bin\` or from a publish folder. No timer, no check, never a pill. |
+| Idle | Waiting for the timer: the first check 5 s after `Start` (§12.1), then one every 4 hours. |
+| Checking | The feed is asked for a newer version. None, one not newer than the installed version, or the one already offered → Idle. |
+| Downloading | In the background, with no indicator anywhere; Velopack verifies the package's size and SHA before it counts as downloaded. One round at a time: a tick that finds a round still running does nothing. |
+| Ready | The offer (`UpdateOffer`: version, download size, highlights — §13.3) is published to the view model on the UI thread and the pill appears. The timer keeps running, and a still newer version replaces the offer. |
+
+Failure is silent in every state — a feed that cannot be reached, the rate limit, a download that fails
+verification, an offer whose publication throws, an installer that cannot be started — and the next round simply
+tries again; only running out of memory is not swallowed. There is deliberately no diagnostic log. A version counts
+as ready only once its offer has been published, so a version the pill never showed is never installed at exit. A
+package already downloaded when `Start` runs is offered at once, without waiting for a check.
+
+Versions compare as SemVer, through Velopack's own `SemanticVersion` — the order the feed itself uses — so a
+pre-release sorts after the previous release and before its own; `System.Version` could not parse a pre-release
+tag at all.
+
+**Installing.** Nothing is installed while the application runs: Windows does not let a running program's files be
+replaced. The last step of `App.OnExit` — after the build engine has been shut down and its process waited for
+(§4.4), and the single-instance handles released — asks `UpdateService` to install the ready offer. That starts
+`Update.exe` through `WaitExitThenApplyUpdates`, silent, so Velopack shows no window of its own; `Update.exe` waits
+for this process to exit, replaces `current\`, and starts the new version only if the user chose *Restart to
+update* (§13.3). An ordinary exit with the offer still pending — *Later*, or the pill never opened — installs
+silently, and the next start is the new version. Only the offered version is installed; if the package on disk is
+another one, nothing starts. `ApplyUpdatesAndRestart` is not used: it exits at once and would skip `OnExit`, and
+with it the build engine's orderly shutdown. A process that ends without its exit — killed, say — leaves the
+package to Velopack's auto-apply at the next start (§12.1).
+
+**The feed** is the public repository's GitHub Releases, read without a token; `UpdateFeed` is the one place that
+names it. Two environment variables exist for development and testing, and the UI has no setting for either:
+`BO_UPDATE_SOURCE` replaces the feed with a folder — a local feed built by `package.ps1`, the rehearsal of §17.6 —
+or a URL (a GitHub repository, or any other address read as a plain web feed), and `BO_UPDATE_PRERELEASE=1` —
+exactly `1`, as with the measurement gates of §17.5 — makes a GitHub feed offer pre-releases too.
 
 ---
 
@@ -3203,7 +3282,7 @@ detached HEAD the last known name stays.
 the update pill (§12.4). It hangs 9 px *below* the pill with its left edge on the pill's, in a 344 px `Ds.Popover`
 shell without padding, and it drops in instead of popping up (§14.5). The pill is a toggle whose screen-reader
 name is `Update to <version>` and which also reports whether the card is expanded. The card is three blocks
-separated by `border` hairlines. The **identity** block carries a caps *Update ready* with the package size on the
+separated by `border` hairlines. The **identity** block carries a caps *Update ready* with the download size on the
 right, then the version change in mono — installed in `text-dim`, an arrow, incoming larger and in
 `text-primary`. The **highlights** are drawn in What's new's category-block language at compact measures (blocks
 12 px apart, 6 px under the heading, items 5 px apart in 12 px `text-secondary` on an 18 px line): both surfaces
@@ -3222,7 +3301,14 @@ reads as a task; it is announced only when it changes, so the button comes back 
 *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's popover layer
 (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule exists
 because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
-The card's content is the sample offer the pill shows.
+
+The card shows the offer the pill shows (§12.5): the incoming version and the download size come from the feed
+entry, and the highlights are that version's section of `CHANGELOG.md`, which the packaging script embeds in the
+package (§18) and the card reads with What's new's own parser. It shows at most five items, taken in the
+categories' fixed order; the rest are counted on one faint plain-text line, `+N more in What's new after restart`,
+which is not a link — the incoming version's notes are all in What's new once it runs. An entry with no items, or
+with notes that are not this application's `CHANGELOG.md` format, shows no highlights block at all rather than an
+empty band. The card's root carries the pill's screen-reader name, `Update to <version>`.
 
 *Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
 the button's `CanExecute` still raises nothing while the restart is locked or there is no offer. The shell answers
@@ -3230,16 +3316,23 @@ by closing the card and playing **the restart screen** (`UpdateRestartScreen`), 
 the modals and over the title bar, taking clicks in the caption band too, so neither dragging nor the window
 buttons reach through it. On `surface-base` it centres a 232 px column: the product mark at 30 px,
 `Updating <product>` at 13 px/600, the version change in 11 px mono (installed in `text-dim`, an 11 px arrow,
-incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. Three steps —
-`Closing <product>…` for 800 ms up to 20 %, `Installing <version>…` for 1100 ms up to 78 %, `Starting <version>…`
-for 800 ms up to 100 % — each advance the bar linearly. The numbers live in a pure core (`UpdateRestartTimeline`);
-the screen reads it on every tick of one frame timer against an injected clock, so tests step through it frame by
-frame without waiting. The step line is a polite live region, announced once per step rather than per frame.
-120 ms after the last step the screen fades out and goes away (§14.5). There is no update engine yet, so the
-screen is a preview of the design: when it leaves, the application is exactly as it was — no Sync, no reset, the
-selection and the pill in place. While it shows, its fade-out included, the window ignores the keyboard — every
-key is consumed at the window's tunnelling key event, before any shortcut binding sees it — and the global
-hotkeys do nothing (§13.9).
+incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. There is one step,
+`Closing <product>…`, and the bar fills linearly over its 800 ms. Closing is the only step the application's own
+window can truthfully show: Windows does not let a running program's files be replaced, so the installation
+happens after the application has closed, in `Update.exe` with no window, and the new version then opens like any
+start (§12.5). The numbers live in a pure core (`UpdateRestartTimeline`); the screen reads it on every tick of one
+frame timer against an injected clock, so tests step through it frame by frame without waiting. The step line is a
+polite live region, announced once per step rather than per frame.
+
+When the bar is full the timer stops, the screen raises `BarFilled`, and the shell sends the application down the
+safe full exit that tray → *Exit* takes (§12.3) — which also waits for any work that started meanwhile. The exit is
+asked for only then on purpose: requested in the same turn as the screen, the shutdown runs at the dispatcher's
+Normal priority, ahead of the Render-priority pass that first draws the screen, and the window would close before
+the screen was ever seen. The screen has no exit motion; it stays, bar full, until the window closes. The new
+version opens with the amber dot on the sparkle button, since the version last read in What's new is no longer
+the running one (below). While the screen shows, the window ignores the keyboard — every key is consumed
+at the window's tunnelling key event, before any shortcut binding sees it — and the global hotkeys do nothing
+(§13.9).
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -4351,8 +4444,8 @@ Three pieces of shared machinery keep the copies from multiplying:
 - **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
   menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update card's drop-in and
   the update restart screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has no
-  exit animation; overlays hide immediately, and the one surface that leaves with a fade — the restart screen —
-  owns that exit itself.
+  exit animation, and no overlay has one of its own: overlays hide immediately, and the restart screen does not
+  leave at all — the window closes under it.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
 
@@ -4386,8 +4479,9 @@ active set appears as a removable chip in the panel header.
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
 and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
 `Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
-start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3), none of these
-keys — window or global — does anything; one shell property answers that question for both paths.
+start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3) — from the
+*Restart to update* click until the window closes — none of these keys, window or global, does anything; one
+shell property answers that question for both paths.
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
 `F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
@@ -4769,12 +4863,11 @@ scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` 
 hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
 because it hangs from the pill; the update restart screen only fades in, over `Duration.Base` — it covers the
 whole window and has no edge to travel, so no transform is set up at all. All ease out and all snap to their end
-state under reduced motion. Only the restart screen has an exit: it fades out over `Duration.Slow` with the same
-ease-out, lets clicks through while it fades, and leaves when the fade ends — at once under reduced motion. Its
-progress bar is information rather than decoration and advances whatever the motion setting. The pill's entrance
-is the one that is conditional: it plays once, when an offer arrives after startup — the
-sample offer the pill shows today is there from the first frame, so it never plays yet — and the pill does not
-move after that. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
+state under reduced motion. None of them has an exit motion, the restart screen included: it stays, bar full,
+until the window closes (§13.3). Its progress bar is information rather than decoration and advances whatever the
+motion setting. The pill's entrance is the one that is conditional: it plays when an offer arrives — the
+application starts without one (§12.5), so that is the moment an update becomes ready, never the first frame — and
+a later offer while the pill is showing only changes its text. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
 says 80 ms, but its own measurements and prototype use the standard one.
 
 **Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
@@ -4981,6 +5074,12 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
 disabled mark for that value under `HKCU\...\Explorer\StartupApproved\Run` when there is one (§12.3).
 
+**The state folder is not the installation.** An installed copy lives in `%LOCALAPPDATA%\BuildOrchestrator.App\`
+(§12.5), a different folder on purpose: Velopack owns that one — its `Update.exe`, `current\` and the downloaded
+packages under `packages\` — replaces `current\` on every update and deletes the whole folder on uninstall. None of
+that reaches `%LOCALAPPDATA%\BuildOrchestrator\`: an update or an uninstall leaves the settings, caches and logs
+where they are. Of what this section lists, an uninstall removes only the *Start with Windows* value (§12.3).
+
 The three ledgers are **shared by every workspace**, so neither maintenance operation deletes a file; both work
 by key.
 
@@ -5039,6 +5138,14 @@ recognise a skip), fixtures (`GitTestRepo`, `LegacyFixture`, `SyntheticGraph`, `
 (`PerfMeasure`). Tests that cannot run concurrently declare it explicitly through serial collections — the
 CPU-saturating job tests, the console UI tests and the build-state store tests.
 
+The release scripts are tested by running them under Windows PowerShell 5.1, the shell the release itself uses
+(`ReleaseScriptsTests`): the note cut checked against the App's own release-note parser, the release count read
+from a faked API answer, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
+tag `origin` already has, a `main` that moves before the push, a tagged commit `origin/main` does not contain.
+Nothing is packaged there; that takes minutes and the Velopack tool. The update engine is tested through its seam
+with a fake updater and a fake clock, and `VelopackUpdater` against an injected Velopack locator, since a test host
+never runs `Program.Main`.
+
 Font and resource assets are copied into the test output so that headless tests can load them from disk;
 `pack://` URIs do not resolve without an `Application` instance. `App.xaml` itself is copied too, so a test can
 assert structurally that it really merges the token and motion dictionaries.
@@ -5071,6 +5178,8 @@ A category of tests that assert properties of the *source*, not of a run:
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
 | Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16) |
+| Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
+| Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, and the workflows: CI builds and tests on the pinned image and can be called by the release; the release runs on `v*` tags one at a time and is never cancelled, writes only from its publish job, checks that the tag is on `main`, and publishes through `package.ps1` (§18) |
 
 ### 17.3 Determinism
 
@@ -5122,11 +5231,34 @@ differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
 root exists they run with the normal suite.
 
+A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
+runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
+command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
+
 Test counts are deliberately not recorded here — run the suite for the current number.
+
+### 17.6 Update rehearsal
+
+The update path — installer, feed, pill, restart, installation — cannot run in the suite, because it needs an
+installed copy. It is rehearsed by hand against a local feed, with nothing pushed:
+
+1. `scripts\package.ps1` builds the installer and packages of the current version into `artifacts\velopack\`.
+2. `BuildOrchestrator.App-win-Setup.exe` from there installs that version. Turn *Start with Windows* on if the
+   rehearsal should cover it, then exit the installed copy (tray → *Exit*).
+3. Raise `Version` in `Directory.Build.props` and give `CHANGELOG.md` a section for it — locally, never committed —
+   and run `package.ps1` again: the same folder now holds the next version too, with a delta against the first.
+4. Start the installed copy with the feed pointed at that folder:
+   `$env:BO_UPDATE_SOURCE = "<repo>\artifacts\velopack"; & "$env:LOCALAPPDATA\BuildOrchestrator.App\current\BuildOrchestrator.App.exe"`.
+5. About five seconds later the pill shows the next version; the card shows its download size and highlights.
+6. *Restart to update*: the screen shows `Closing <product>…`, the window closes, and the next version opens —
+   About reads the new version, the sparkle button carries the What's new dot, and the *Start with Windows* value
+   still points at `current\BuildOrchestrator.App.exe`. The silent path is the same up to step 5, then *Later*
+   and tray → *Exit*: the next start is the new version.
+7. Revert the version change; uninstall from Windows' installed apps to clean up.
 
 ---
 
-## 18. Build, run, publish
+## 18. Build, run, package, release
 
 ```powershell
 dotnet build BuildOrchestrator.slnx
@@ -5134,14 +5266,43 @@ dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filt
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
-Close any running instance before building — a live Supervisor keeps its own binaries locked.
+Close any running instance before building — a live Supervisor keeps its own binaries locked. `global.json` names
+the SDK band (a later 10.0 feature band is accepted), so a local build and CI use the same SDK.
 
-**Publish** is framework-dependent and folder-based:
+**CI.** `.github/workflows/ci.yml` builds in Release and runs the suite without the `Acceptance` and `LocalOnly`
+categories (§17.5) on every push to `main`, every pull request, on demand, and when the release workflow calls it
+(`workflow_call`) — the build and test steps are written once. The runner is pinned to `windows-2025` rather than
+`windows-latest`, whose image moves under it; MSBuild is found there through `vswhere` as anywhere else. A newer
+push to the same ref cancels the older run, and the test results are kept as a TRX artifact. CI never publishes.
 
-```powershell
-dotnet publish src\BuildOrchestrator.App\BuildOrchestrator.App.csproj `
-  -c Release -r win-x64 --self-contained false -o <output-folder>
-```
+**Packaging** has one owner, `scripts/package.ps1`: the publish command is written there and nowhere else, and
+`verify-publish.ps1`, the release workflow and a local try-out all run it. It reads `Version`, `Product` and
+`Company` from `Directory.Build.props` and takes three steps:
+
+1. **Notes.** The `CHANGELOG.md` section of `Version` — its heading through the line before the next `## ` — is cut
+   into `artifacts\velopack\notes.md`. That comes before the publish, so a missing section fails in seconds rather
+   than after it. A test parses the cut with the App's own release-note reader and compares it with the embedded
+   entry, so the card and What's new read one text (§13.3).
+2. **Publish**, framework-dependent and folder-based — `Release`, `win-x64`, not self-contained — into
+   `artifacts\publish\`. `-PublishOnly` stops after it, and `-PublishDir` moves it.
+3. **Pack** with the Velopack CLI (`vpk`, a local tool pinned in `.config/dotnet-tools.json` to the version of the
+   `Velopack` library the App references — a guard keeps the two equal) into `artifacts\velopack\`:
+
+| Parameter | Value | Why |
+|---|---|---|
+| `--packId` | `BuildOrchestrator.App` | names the install folder (§12.5); `BuildOrchestrator` is the state folder, which an uninstall would then delete |
+| `--packVersion` · `--packTitle` · `--packAuthors` | `Version` · `Product` · `Company` | read from the property file, never written a second time |
+| `--mainExe` | `BuildOrchestrator.App.exe` | |
+| `--framework` | `net10.0-x64-desktop` | the installer sets up the Desktop Runtime the framework-dependent publish needs |
+| `--icon` | the App's ICO | |
+| `--releaseNotes` | `notes.md` | travels with the package into the feed — the card's highlights (§13.3) |
+| `--noPortable` | | the installer is the one distribution form |
+| shortcuts | Velopack's default | Start menu and desktop |
+| delta | Velopack's default | produced when the previous release's full package is in the output folder. `-DownloadPrevious` fetches it (`vpk download github`), and skips when the repository has no release yet — so the first release carries no delta |
+
+The output is the installer `BuildOrchestrator.App-win-Setup.exe`, the full package, a delta package when there
+was a previous one, and the feed files `vpk upload` publishes. `-WhatIf` runs none of it and prints what it would
+do; the tests use it. `artifacts\` is ignored by git.
 
 The `supervisor\` subfolder next to the published executable **is** the build engine, not an optional extra.
 The App resolves `<app folder>\supervisor\BuildOrchestrator.Supervisor.exe` at startup. Three MSBuild targets
@@ -5155,13 +5316,44 @@ extraction directory and the `supervisor\` subfolder cannot enter the bundle. Se
 verified.
 
 `scripts/verify-publish.ps1` validates a publish output end to end. It refuses to measure anything while an
-instance is running, then publishes to a temp folder and runs a series of checks: publish exit code, layout,
-an NDJSON round trip against the published Supervisor binary, a full Sync + Build driven through it against a
-throwaway workspace (proving the published binary really compiles and writes a DLL), launching the published
-executable and confirming through WMI that the Supervisor child came from that same folder, reading the console
-boot line and the ribbon state out of the live window via UI Automation, and finally killing only the App and
-proving the Supervisor dies by itself through the job cascade. Exit code 0 = pass, 1 = fail, 2 = precondition
-not met.
+instance is running, then publishes to a temp folder through `package.ps1 -PublishOnly` and runs a series of
+checks: publish exit code, layout, an NDJSON round trip against the published Supervisor binary, a full Sync +
+Build driven through it against a throwaway workspace (proving the published binary really compiles and writes a
+DLL), launching the published executable and confirming through WMI that the Supervisor child came from that same
+folder, reading the console boot line and the ribbon state out of the live window via UI Automation, and finally
+killing only the App and proving the Supervisor dies by itself through the job cascade. Exit code 0 = pass, 1 =
+fail, 2 = precondition not met.
+
+**Release.** A release is one request, `/release` — a project skill (`.claude/skills/release/`) in which Claude
+writes the version's `CHANGELOG.md` section and picks the number by the rules in `CLAUDE.md` — and everything after
+the notes is scripted:
+
+- **`scripts/release.ps1 -Version X.Y.Z`** checks before it touches anything: the top `CHANGELOG.md` section is
+  `X.Y.Z` and dated today; the branch is `main`; the tree is clean but for `CHANGELOG.md` and
+  `Directory.Build.props`; after a fetch, `main` equals `origin/main`; and `vX.Y.Z` exists neither locally nor on
+  `origin`. The remote check asks `git ls-remote`, because a fetch brings only the tags of the history it brings,
+  and a failed `ls-remote` stops the release rather than counting as "no tag". Then it writes `Version`, runs
+  `release-guard.ps1`, builds, runs the full suite (`-SkipTests` when it was just seen green), commits
+  `release: vX.Y.Z` on `main` — the one commit made on `main` directly — tags it (annotated) and pushes `main` and
+  the tag with `--atomic`. The build and the suite take minutes; should `origin/main` move meanwhile, both refs are
+  refused together, so no tag reaches `origin` on a commit its `main` does not have. `-DryRun` runs only the
+  `CHANGELOG.md` checks.
+- **`scripts/release-guard.ps1 -Tag vX.Y.Z`** requires tag = `v` + `Version` = the top `CHANGELOG.md` version.
+  `release.ps1` runs it before its commit; the release workflow runs it with `-RequireOnMain`, which also requires
+  the tagged commit to be an ancestor of `origin/main`, so a tag pushed by hand on a commit that never reached
+  `main` publishes nothing.
+- **`scripts/release-common.ps1`** is dot-sourced by the three scripts and is the one place for what they share:
+  the property reader, the `CHANGELOG.md` heading pattern and reader, the repository URL, and the release count
+  from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not enumerate the JSON array
+  `Invoke-RestMethod` returns, so the answer is counted from a variable — wrapped directly, an empty list would
+  count as one release.
+- **`.github/workflows/release.yml`** runs on a `v*` tag: `guard` (a full-history checkout and
+  `release-guard.ps1 -RequireOnMain`) → `ci` (`ci.yml` through `workflow_call`) → `publish` (`dotnet tool
+  restore`, `package.ps1 -DownloadPrevious`, `vpk upload github --publish --merge` onto the tag's release, then
+  `gh release edit --notes-file`, so the release text is the `CHANGELOG.md` section). Releases run one at a time,
+  and a running one is never cancelled — two tags in a row would otherwise race for the delta and could leave a
+  half-uploaded release. The token is read-only except in `publish`, which alone has `contents: write`; there is
+  no secret beyond the automatic `GITHUB_TOKEN`.
 
 ---
 
@@ -5289,6 +5481,7 @@ execution; it only **contains** it (job object) and **throttles** it (CPU cap).
 | Layer regex | Settings editor | `Regex` constructor with a 100 ms match timeout | ReDoS closed |
 | Solution to open | row icon | `devenv "<sln>"` — hand-quoted | theoretical (below) |
 | External root path | Settings editor, or `ui-state.json` | resolved on every run (§10.4): the project files found under it become MSBuild arguments, escaped per MSVCRT rules; the working-copy root becomes the working directory of `git`/`tf` — never an argument | none |
+| Update feed entry | this repository's GitHub Releases, or `BO_UPDATE_SOURCE` (§12.5) | the version is compared as SemVer; the notes go through the release-note reader and are drawn as plain text; the package is checked for size and SHA, then installed by `Update.exe` | none beyond whoever can publish a release (§21.5) |
 
 Shell injection is structurally absent: arguments are added individually to `ProcessSpec`/`ArgumentList` —
 manual string concatenation is prohibited — `UseShellExecute` is false everywhere, and neither `cmd.exe` nor
@@ -5364,13 +5557,21 @@ privileges. The following are not defended against, deliberately:
 - **A malicious `.sln`, `packages.config` or NuGet package** — `-t:restore` downloads packages and runs their
   build targets; package contents are not inspected.
 - **An attacker with local file-system access.** `ui-state.json`, `build-state.json`, `evaluation-cache.json`
-  and the autostart registry value are plain text and unsigned. The same person could edit the `.csproj`.
+  and the autostart registry value are plain text and unsigned, and the installation under
+  `%LOCALAPPDATA%\BuildOrchestrator.App\` is the user's to write. The same person could edit the `.csproj`.
 - **Whoever can write to the Supervisor's stdin.** The IPC has no authentication — anonymous pipes inherited
   parent-to-child — so that position is equivalent to being the App.
 - **Local privilege escalation.** No admin rights are requested, nothing is written to HKLM, no service is
   installed.
-- **The network.** The only network touch is `git fetch`; authentication, TLS and host verification are
-  entirely git's own configuration.
+- **The network.** There are two network touches. `git fetch`, whose authentication, TLS and host verification
+  are entirely git's own configuration; and an installed copy's update check (§12.5): HTTPS to `api.github.com`
+  for the release list and to GitHub's release downloads for the feed and the package — anonymous, a few seconds
+  after startup and then every four hours, far inside GitHub's 60 unauthenticated requests per hour per IP.
+  Integrity rests on a chain: Velopack checks the package's size and SHA against the feed, the feed and the
+  package arrive over TLS, and both are published by the repository's GitHub account. Nothing is code-signed
+  (§1.3), so that account is the distribution channel itself — whoever holds it ships code every installed copy
+  will run, which is why it must be protected by two-factor authentication. `Update.exe` itself runs locally,
+  from the installation folder.
 - **Multi-user or multi-tenant isolation.** The single-instance gate is per user and session; isolation between
   users is the operating system's job.
 
@@ -5385,13 +5586,14 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Composition root, startup routes, second-instance handling | `App/App.xaml.cs` |
+| Entry point: Velopack's hooks ahead of WPF (`VelopackApp…Run()`), the uninstall hook, then the `App` | `App/Program.cs`; `StartupObject` in `App/BuildOrchestrator.App.csproj` |
+| Composition root, startup routes, second-instance handling; the update engine's registration, its start after the window and the install at `OnExit` | `App/App.xaml.cs` |
 | Second instance that could not bring the window forward: balloon or not, and the distinct exit code | `App/Shell/SecondInstanceGate.cs` |
 | Argument parsing (`--font-ab`, `--autostart`), tray or window for a Windows start | `App/Shell/StartupArgs.cs` |
 | Window shell, layout wiring, shortcut binding | `App/MainWindow.xaml(.cs)`, `App/ShellRoot.xaml(.cs)` |
 | Maximize overflow fix · DWM corners/border · caption glyphs | `App/Shell/MaximizeFix.cs`, `Dwm.cs`, `CaptionGlyphs.cs` |
 | Single instance, tray icon, global hotkeys (table, show/hide decision), shutdown | `App/Shell/SingleInstance.cs`, `AppTrayIcon.cs`, `Hotkey.cs`, `App/Shell/AppShutdown.cs` |
-| Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write | `App/Services/AutostartService.cs` |
+| Start with Windows — the `Run` value, Task Manager's disabled mark, the state the switch shows, the save-time write, the removal at uninstall (`RemoveForUninstall`) | `App/Services/AutostartService.cs` |
 | Window close decision — `X`, `Alt+F4`, system-menu *Close*: close, stay, hide to the tray or ask for a full exit — and whether a waiting exit brings the window forward | `App/Shell/WindowCloseRule.cs`; applied in `App/MainWindow.xaml.cs` (`OnClosing`) |
 | Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
@@ -5409,10 +5611,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
-| Update offer — version, size, highlights; the next-minor rule and the sample placeholder the app starts with (no update engine yet) | `App/Services/UpdateOffer.cs` |
+| Update offer built from a feed entry (`From`) — version, download size, at most five highlights in category order and the count of the rest; notes that do not parse give no highlights | `App/Services/UpdateOffer.cs` |
+| Update engine — the timer (first check, interval), check → download → publish the offer, silent failure, the package already downloaded, the SemVer comparison, the Restart flag and the install at exit | `App/Services/Updates/UpdateService.cs` |
+| Updater seam and its Velopack implementation — installed or not, check, download, the download size (deltas or full), install at exit of the offered version only | `App/Services/Updates/IAppUpdater.cs`, `VelopackUpdater.cs` |
+| Update feed — GitHub Releases of this repository, `BO_UPDATE_SOURCE`, `BO_UPDATE_PRERELEASE` | `App/Services/Updates/UpdateFeed.cs` |
 | Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
 | Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
-| Restart request → the update restart screen as the topmost layer; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
+| Restart request → the update restart screen as the topmost layer; the safe full exit when its bar fills; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `OnRestartScreenFilled`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `RequestFullExit`) |
 | Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
@@ -5423,7 +5628,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Skip reason literals — single source read by Core, Supervisor and App | `Contracts/Ipc/SkipReasons.cs` |
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
-| Spawning the engine, generation guard, engine-died signal | `App/Services/EngineHost.cs` |
+| Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
@@ -5607,7 +5812,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
-| Update restart screen — the 232 px column, the frame timer and clock, the fade in and out, the once-per-step announcement; its steps, durations and percentages | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
+| Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
 | Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
@@ -5683,6 +5888,19 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Accessibility names | `App/AccessibilityNames.cs` |
 | Live-region announcement — the one place a region's peer is found or created and `LiveRegionChanged` raised; each region decides when | `App/Controls/LiveRegion.cs` |
 
+**Packaging, release and CI** (paths from the repository root)
+
+| Behaviour | File |
+|---|---|
+| Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
+| What the release scripts share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
+| Tag = `Version` = top `CHANGELOG.md` version; with `-RequireOnMain`, the tagged commit on `origin/main` | `scripts/release-guard.ps1` |
+| One-command release: guards, `Version`, build + suite, release commit, annotated tag, atomic push | `scripts/release.ps1` |
+| The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |
+| End-to-end check of a publish output | `scripts/verify-publish.ps1` |
+| CI build and suite; the release workflow (guard → CI → package → GitHub Release) | `.github/workflows/ci.yml`, `.github/workflows/release.yml` |
+| SDK band · pinned `vpk` · licence | `global.json` · `.config/dotnet-tools.json` · `LICENSE` |
+
 **Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*
 and its *WPF wiring*, the decision lives in a pure, testable class and the control only applies it. Ribbon
 wording, filter rules, scroll arbitration, graph layout and camera, typewriter cadence, keyboard intent and
@@ -5695,9 +5913,10 @@ decided, look at the pure class; when it concerns *how* it was drawn or animated
 
 | Document | Role |
 |---|---|
-| [`README.md`](README.md) | Entry point: what the tool does, requirements, how to build/run/publish, how to use it |
+| [`README.md`](README.md) | Entry point: what the tool does, requirements, how to install, build, run, package and release it, how to use it |
 | **`ARCHITECTURE.md`** (this file) | Technical reference: architecture, processes, contracts, algorithms, UI, design system, security boundary, code map |
 | [`CLAUDE.md`](CLAUDE.md) | Working conventions for this repository |
+| `.claude/skills/release/` | The `/release` skill (§18) — a working instruction, not part of the record below |
 | `.claude/` · `.superpowers/` | Historical record of the delivery, kept as written. Superseded by the three documents above; not an authority for the current system |
 
 **Maintenance.** This document describes the system as it is. When behaviour changes, the affected section is
