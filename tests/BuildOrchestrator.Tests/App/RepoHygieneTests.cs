@@ -58,6 +58,22 @@ public class RepoHygieneTests
         Assert.DoesNotContain("vpk", ci, StringComparison.Ordinal);               // CI yayın yapmaz
     }
 
+    /// <summary>Günlük iş <c>develop</c>'ta, <c>main</c> yalnız sürümleri taşır (kullanıcı kararı 2026-09-30): CI iki branch'in
+    /// de her push'unu derleyip koşturur. <c>develop</c>'unki yayının ön koşuludur — <c>release.ps1</c>, develop HEAD'inin
+    /// <c>ci.yml</c> koşusu yeşil değilse durur (<see cref="ReleaseScriptsTests"/>); <c>main</c>'inki yayınlanan kodun durumudur
+    /// (README rozeti). Listenin sırası serbesttir; pull request'ler de koşar.</summary>
+    [Fact]
+    public void CI_runs_on_every_push_to_develop_and_main()
+    {
+        string ci = Workflow("ci.yml");
+        var push = Regex.Match(ci, @"(?m)^[ \t]+push:[ \t]*\n[ \t]+branches:[ \t]*\[(?<list>[^\]\n]*)\]");
+        Assert.True(push.Success, "ci.yml: push tetikleyicisinin branches listesi bulunamadı");
+        var branches = push.Groups["list"].Value.Split(',').Select(b => b.Trim().Trim('\'', '"')).ToHashSet();
+        Assert.Contains("develop", branches);
+        Assert.Contains("main", branches);
+        Assert.Contains("pull_request:", ci, StringComparison.Ordinal);
+    }
+
     /// <summary>CI repoya yazmaz. Kendi <c>push</c>/<c>pull_request</c> koşularında token izni repo ayarının varsayılanından
     /// gelir (yazma olabilir); <c>release.yml</c>'den çağrıldığında çağıranın <c>contents: read</c>'iyle kesişir. Workflow
     /// seviyesinde açık <c>contents: read</c> ikisini de sabitler. Satır başındaki (girintisiz) <c>permissions:</c> workflow
