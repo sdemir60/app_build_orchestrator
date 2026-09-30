@@ -1,6 +1,6 @@
 # Build Orchestrator
 
-![ci](https://github.com/sdemir60/app_build_orchestrator/actions/workflows/ci.yml/badge.svg)
+![ci](https://github.com/sdemir60/app_build_orchestrator/actions/workflows/ci.yml/badge.svg?branch=main)
 
 A Windows desktop application that builds a multi-project .NET solution incrementally. It scans a repository
 for projects, derives the dependency graph, decides which projects actually changed (from source content on
