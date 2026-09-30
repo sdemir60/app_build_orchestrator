@@ -102,9 +102,12 @@ public class EngineHostTests
     /// <see cref="SynchronizationContext.Current"/>'ı yakalar ve motoru gerçekten öldürür. Çağıranın bağlamı <see cref="CallerContext"/>:
     /// devamı kendisi <c>Current</c> iken bir havuz thread'inde koşturur (pompalanmayan gerçek bir Dispatcher'ın aksine
     /// kusurlu kodda test asılmaz, kırmızı olur).</para>
-    /// <para><b>Neden iptal:</b> zaman aşımı da aynı yola girer, ama 1 ms'lik bir zamanlayıcı <c>await</c>'ten ÖNCE
-    /// dolabilir ve devam çağıranın thread'inde satır içi koşar — bağlam post edilmediği için düzeltmesiz kod da yeşil
-    /// verirdi. İptal <c>StartAsync</c> bekleyişe girdikten SONRA verilir; sıra deterministiktir.</para></summary>
+    /// <para><b>Neden iptal:</b> zaman aşımı da aynı yola girer, ama yarışa açıktır: 1 ms'lik zamanlayıcı <c>await</c>'ten ÖNCE
+    /// dolabilir; o zaman bekleyiş hiç askıya girmez, <c>StartAsync</c> öldürmeyi çağıranın thread'inde satır içi koşturup
+    /// tamamlanmış döner ve önkoşul (aşağıda, <c>start.IsCompleted</c> yanlış olmalı) düşer. Yani düzeltmeli (doğru) kod da
+    /// aralıklı KIRMIZI verirdi — yalancı yeşil değil, yalancı kırmızı. İptal <c>StartAsync</c> bekleyişe girdikten SONRA
+    /// verilir; sıra deterministiktir: önkoşul hep sağlanır ve devamın çağıranın bağlamına post edilip edilmediği sonucu tek
+    /// başına belirler.</para></summary>
     [Fact]
     public async Task A_start_that_gives_up_kills_the_engine_off_the_callers_context()
     {
