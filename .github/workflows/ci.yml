@@ -1,0 +1,27 @@
+# [yayin hatti] main'e her push'ta ve PR'da build + filtreli tam suit. Yayin yapmaz. release.yml ayni isi
+# workflow_call ile buradan alir (build/test adimlari iki yerde yazilmaz).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-test:
+    runs-on: windows-2025   # pinli: windows-latest imaji zamanla degisir; MSBuild vswhere ile cozuldugu icin VS surumunden bagimsiz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build BuildOrchestrator.slnx -c Release
+      - run: dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj -c Release --no-build --filter "Category!=Acceptance&Category!=LocalOnly" --logger "trx;LogFileName=tests.trx"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: tests/BuildOrchestrator.Tests/TestResults/*.trx

@@ -1,0 +1,31 @@
+# [yayin hatti] vX.Y.Z tag'i push edilince: guard -> (ci.yml: build + test) -> package.ps1 (publish + notlar + vpk pack,
+# onceki paketten delta) -> GitHub Release + asset'ler -> govde = CHANGELOG bolumu. Gizli anahtar gerekmez.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  guard:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release-guard.ps1 -Tag ${{ github.ref_name }}
+  ci:
+    needs: guard
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: ci
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet tool restore
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -DownloadPrevious -RepoUrl https://github.com/${{ github.repository }} -Token ${{ secrets.GITHUB_TOKEN }}
+      - run: dotnet vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --outputDir artifacts/velopack --publish --merge --releaseName "Build Orchestrator ${{ github.ref_name }}" --tag ${{ github.ref_name }}
+      - run: gh release edit ${{ github.ref_name }} --notes-file artifacts/velopack/notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
