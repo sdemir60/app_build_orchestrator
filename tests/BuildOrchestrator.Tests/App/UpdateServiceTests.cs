@@ -26,12 +26,22 @@ public class UpdateServiceTests
 
     private static readonly UpdateCandidate Newer = new("99.0.0", 19_293_798, "## [99.0.0] - 2026-10-01\n### Fixed\n- D\n");
 
-    private static (UpdateService Service, FakeUpdater Updater, FakeTimeProvider Time, List<UpdateOffer> Published) Rig()
+    /// <param name="beforePublish">Yayım delegate'inin içinde koşar; atarsa teklif <c>Published</c>'a girmez (UI'a
+    /// marshal başarısız olmuş demektir).</param>
+    private static (UpdateService Service, FakeUpdater Updater, FakeTimeProvider Time, List<UpdateOffer> Published) Rig(
+        Action<UpdateOffer>? beforePublish = null)
     {
         var updater = new FakeUpdater();
         var time = new FakeTimeProvider();
         var published = new List<UpdateOffer>();
-        return (new UpdateService(updater, time, published.Add), updater, time, published);
+        return (new UpdateService(updater, time, offer => { beforePublish?.Invoke(offer); published.Add(offer); }), updater, time, published);
+    }
+
+    /// <summary>İlk çağrıda atan, sonrakilerde geçen yayım kancası (geçici bir marshal hatası).</summary>
+    private static Action<UpdateOffer> FailsOnce()
+    {
+        var attempts = 0;
+        return _ => { if (++attempts == 1) throw new InvalidOperationException("marshal"); };
     }
 
     [Fact]
@@ -107,6 +117,50 @@ public class UpdateServiceTests
         updater.OnDownload = _ => Task.CompletedTask;
         await service.RunCycleAsync();
         Assert.Single(published);
+    }
+
+    /// <summary>Durum teklif yayımından SONRA işlenir: yayım atarsa sürüm "hazır" sayılmaz. Aksi hâlde aynı sürümün
+    /// yinelenen-yayım elemesi (<c>candidate.Version == _ready.Version</c>) oturum boyunca yeniden denemeyi keserdi ve
+    /// kullanıcının hiç görmediği paket çıkışta sessizce kurulurdu.</summary>
+    [Fact]
+    public async Task A_publish_that_fails_leaves_no_ready_offer_and_no_install_on_exit()
+    {
+        var (service, updater, time, published) = Rig(FailsOnce());
+        updater.OnCheck = () => Newer;
+        await service.RunCycleAsync();               // yayım atar → sessiz
+        Assert.Empty(published);
+        Assert.Null(service.Ready);
+        service.ApplyOnExit();
+        Assert.Null(updater.Applied);                // hiç teklif edilmemiş paket kurulmaz
+    }
+
+    [Fact]
+    public async Task A_publish_that_fails_is_retried_on_the_next_cycle()
+    {
+        var (service, updater, time, published) = Rig(FailsOnce());
+        updater.OnCheck = () => Newer;
+        await service.RunCycleAsync();               // yayım atar → sessiz
+        await service.RunCycleAsync();               // sonraki tur aynı sürümü yeniden dener
+        var offer = Assert.Single(published);
+        Assert.Same(offer, service.Ready);
+        Assert.Equal(2, updater.Checks);
+    }
+
+    /// <summary>Açılışta önceki oturumdan kalan teklifin yayımı da aynı kurala tabidir: atarsa App açılışına yayılmaz
+    /// ve zamanlayıcı yine kurulur (Start ile döngü yolu tutarlı).</summary>
+    [Fact]
+    public async Task A_pending_offer_that_fails_to_publish_is_silent_and_the_timer_still_runs()
+    {
+        var (service, updater, time, published) = Rig(FailsOnce());
+        updater.PendingRestart = Newer;
+        updater.OnCheck = () => Newer;
+        service.Start();                             // yayım atar → Start'a yayılmaz
+        Assert.Empty(published);
+        time.Advance(UpdateService.FirstCheckDelay);
+        await service.RunningCycle;
+        Assert.Equal(1, updater.Checks);             // zamanlayıcı kuruldu, tur koştu
+        var offer = Assert.Single(published);        // ve teklif bu turda yeniden yayımlandı
+        Assert.Same(offer, service.Ready);
     }
 
     [Fact]

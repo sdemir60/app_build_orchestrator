@@ -3,7 +3,8 @@ namespace BuildOrchestrator.App.Services.Updates;
 /// <summary>
 /// [design v1.23.0 §2.12 · K8] Güncelleme motorunun durum makinesi: kurulu kopyada açılıştan <see cref="FirstCheckDelay"/>
 /// sonra ve her <see cref="CheckInterval"/>'de sessiz kontrol; yeni sürüm arka planda iner; indirme bitince teklif
-/// <paramref name="publish"/> ile yayımlanır (hap o anda belirir). Hata sessizdir — bir sonraki turda yeniden. Kurulu
+/// <paramref name="publish"/> ile yayımlanır (hap o anda belirir). Hata (kontrol, indirme ve yayım dahil) sessizdir —
+/// bir sonraki turda yeniden; sürüm ancak yayım başarılı olunca "hazır" sayılır. Kurulu
 /// olmayan kopya (bin'den dev build, publish klasörü) hiç kontrol etmez. Önceki oturumdan indirilmiş paket
 /// (<see cref="IAppUpdater.PendingRestart"/>) açılışta hemen teklif edilir.
 /// <para><b>Çıkış:</b> hazır teklif varsa <see cref="ApplyOnExit"/> Update.exe'yi başlatır — <c>Restart to update</c>
@@ -36,8 +37,11 @@ public sealed class UpdateService(IAppUpdater updater, TimeProvider time, Action
     public void Start()
     {
         if (!updater.IsInstalled) return;
-        if (updater.PendingRestart is { } pending) Publish(pending);
         _timer = time.CreateTimer(_ => _ = RunCycleAsync(), null, FirstCheckDelay, CheckInterval);
+        // Zamanlayıcı önce kurulur ve bekleyen teklifin yayımı da döngüyle aynı kurala tabidir: atarsa App açılışına
+        // yayılmaz, _ready boş kalır ve ilk tur aynı sürümü yeniden dener.
+        try { if (updater.PendingRestart is { } pending) Publish(pending); }
+        catch (Exception ex) when (IsSilent(ex)) { }
     }
 
     /// <summary>Bir kontrol turu (zamanlayıcı da bunu çağırır). Uçuşta tur varsa yenisi başlamaz.</summary>
@@ -57,15 +61,22 @@ public sealed class UpdateService(IAppUpdater updater, TimeProvider time, Action
             await updater.DownloadAsync(candidate, CancellationToken.None).ConfigureAwait(false);
             Publish(candidate);
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException) { /* sessiz: çevrimdışı, limit, hash — sonraki tur */ }
+        catch (Exception ex) when (IsSilent(ex)) { /* sessiz: çevrimdışı, limit, hash, yayım — sonraki tur */ }
         finally { Volatile.Write(ref _cycleRunning, 0); }
     }
 
+    /// <summary>Hata sessizdir (tanı logu bilinçli yok): yalnız bellek tükenmesi yutulmaz.</summary>
+    private static bool IsSilent(Exception ex) => ex is not OutOfMemoryException;
+
+    /// <summary>Önce teklif kurulur ve yayımlanır, durum sonra işlenir: teklif kurulamaz ya da yayım atarsa <c>_ready</c>
+    /// boş kalır — aynı sürüm yinelenen-yayım elemesine takılmadan sonraki turda yeniden denenir ve hiç gösterilmemiş
+    /// paket çıkışta kurulmaz.</summary>
     private void Publish(UpdateCandidate candidate)
     {
+        var offer = UpdateOffer.From(candidate);
+        publish(offer);
         _ready = candidate;
-        Ready = UpdateOffer.From(candidate);
-        publish(Ready);
+        Ready = offer;
     }
 
     /// <summary>Velopack yalnız daha yenisini döndürür; yine de eşit/eski sürüm burada da elenir (feed hatası hapı açmasın).</summary>
