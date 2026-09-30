@@ -131,6 +131,7 @@ public sealed partial class RunViewModel
                 // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
                 // gerekir.
                 OnPropertyChanged(nameof(IsResolvingCycles)); // bakım kutusunun Resolve spinner'ı bunu okur
+                NotifyUpdateRestartGate(); // [design v1.23.0 §2.12] Resolve, Restart kilidinde görev gibi okunur
                 // [Task 4] Yeni run: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
                 (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
                 _cycleRoundLeaderId = null;

@@ -326,15 +326,13 @@ public partial class StickyRibbon : UserControl
     };
 
     /// <summary>[E5/T47] Faz metni bir live region'dır: faz ENUM'u DEĞİŞTİĞİNDE (elapsed/ETA tick'inde DEĞİL)
-    /// ekran okuyucuya <c>LiveRegionChanged</c> yükselt — SR yeni faz metnini duyurur. Peer yoksa (henüz realize
-    /// olmamış) sessizce atlanır; dinleyici yoksa raise güvenli (no-op).</summary>
+    /// ekran okuyucuya <c>LiveRegionChanged</c> yükselt — SR yeni faz metnini duyurur (<see cref="LiveRegion.Announce"/>,
+    /// duyurunun tek yeri).</summary>
     private void AnnouncePhaseIfChanged()
     {
         if (_vm is null || _vm.Phase == _lastAnnouncedPhase) return;
         _lastAnnouncedPhase = _vm.Phase;
-        var peer = System.Windows.Automation.Peers.UIElementAutomationPeer.FromElement(PART_PhaseText)
-                   ?? System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(PART_PhaseText);
-        peer?.RaiseAutomationEvent(System.Windows.Automation.Peers.AutomationEvents.LiveRegionChanged);
+        LiveRegion.Announce(PART_PhaseText);
     }
 
     // ---------------------------------------------------------------- progress

@@ -1,0 +1,48 @@
+<!-- [design v1.23.0 §2.12 · §9 "Restart ekranı"] Restart to update'in ekranı (UpdateRestart, BuildApp.jsx:1745-1786).
+     MainWindow onu EN ÜST katman olarak tüm pencerenin üstüne (title bar dahil) koyar; varsayılan Collapsed — kapalıyken
+     şablonu hiç açılmaz, pencerede hiçbir şeyi örtmez. Zemin surface-base ve dolu olduğu için tıklamaları yutar.
+     232px ortalı kolon: marka 30 · 16 · başlık 13/600 text-primary · 6 · mono 11 sürüm geçişi (kurulu text-dim → ok 11
+     text-faint → gelen text-secondary, aralar 7) · 20 · 2px amber Ds.ProgressBar · 9 · adım etiketi 11px text-faint.
+     Güncelleme motoru henüz yok — ekran tasarımın önizlemesidir (UpdateRestartScreen.xaml.cs).
+     Yazı tipi kökte: başlık ve adım etiketi Geist'tir (prototipin kökü font-sans) — pencere arayüz yazı tipini VERMEZ
+     (sistem varsayılanı, Segoe UI; ölçüldü). Sürüm geçişi makine çıktısıdır, AppFonts.Mono'yu açıkça taşır. -->
+<UserControl x:Class="BuildOrchestrator.App.Views.UpdateRestartScreen"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+             Visibility="Collapsed" Background="{DynamicResource Brush.SurfaceBase}"
+             FontFamily="{x:Static controls:AppFonts.Ui}"
+             AutomationProperties.Name="{x:Static vm:UpdateText.RestartHeading}">
+  <StackPanel x:Name="PART_Column" Width="232" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <!-- Ürün markası (tek çizim Controls/AppMark.xaml'de); tüketici yalnız yüksekliği verir. -->
+    <controls:AppMark x:Name="PART_Mark" Height="30" HorizontalAlignment="Center" />
+    <TextBlock x:Name="PART_Heading" Text="{x:Static vm:UpdateText.RestartHeading}" Margin="0,16,0,0"
+               HorizontalAlignment="Center" TextWrapping="NoWrap"
+               FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Heading}"
+               Foreground="{DynamicResource Brush.TextPrimary}" />
+    <StackPanel x:Name="PART_Transition" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,6,0,0">
+      <TextBlock x:Name="PART_Installed" VerticalAlignment="Center"
+                 FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                 Foreground="{DynamicResource Brush.TextDim}" />
+      <Viewbox x:Name="PART_Arrow" Width="11" Height="11" Margin="7,0,0,0" VerticalAlignment="Center">
+        <Canvas Width="24" Height="24">
+          <Path x:Name="PART_ArrowPath" Data="{DynamicResource Icon.ArrowRight}"
+                StrokeThickness="{DynamicResource Icon.ArrowRight.StrokeThickness}"
+                Stroke="{DynamicResource Brush.TextFaint}"
+                StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+        </Canvas>
+      </Viewbox>
+      <TextBlock x:Name="PART_Incoming" Margin="7,0,0,0" VerticalAlignment="Center"
+                 FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                 Foreground="{DynamicResource Brush.TextSecondary}" />
+    </StackPanel>
+    <!-- Prototip: DS.ProgressBar status="building" height=2, kolon genişliğinde. -->
+    <ProgressBar x:Name="PART_Progress" Style="{DynamicResource Ds.ProgressBar}"
+                 Height="{DynamicResource Size.ProgressHeight}" Margin="0,20,0,0" Minimum="0" Maximum="100" />
+    <!-- role="status" aria-live="polite": adım değişince bir kez duyurulur (code-behind). -->
+    <TextBlock x:Name="PART_Step" Margin="0,9,0,0" HorizontalAlignment="Center" TextWrapping="NoWrap"
+               FontSize="{DynamicResource FontSize.2xs}" Foreground="{DynamicResource Brush.TextFaint}"
+               AutomationProperties.LiveSetting="Polite" />
+  </StackPanel>
+</UserControl>

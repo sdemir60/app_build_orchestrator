@@ -190,8 +190,12 @@ the running instance first — tray icon → Exit).
    added or removed — otherwise the rows simply change colour in place, the graph keeps its zoom, and rows the
    last build finished are re-decided too, so a project that changed in the background turns grey again.
    Pressing *Sync* yourself, changing branch or switching *Debug*/*Release* starts the screen over instead: the
-   list and the graph empty together with the console and the event stream, then come back with their opening
-   animation and the graph fitted to the panel. If that Sync fails, the previous list and graph come back. A
+   console and the event stream empty, and while the Sync finds the projects the list reads *Discovering
+   projects* with a running count (`31 found`, or `31 found · 29 repository · 2 external` when external roots are
+   registered) and the graph says it appears once they are found; then both come back with their opening
+   animation and the graph fitted to the panel. If that Sync fails, the previous list and graph come back. The
+   Sync that runs at start-up, after a *Clean* or an *Optimize* and after a repository change shows the same
+   count while the list is empty. A
    *Debug*/*Release* switch runs that Sync in the new configuration, and its rows stay uncoloured until the
    answer arrives; like the branch chip, the switch is locked while a build, a Sync or another action is running.
 
@@ -350,7 +354,7 @@ then *Build* takes care of everything else, including whatever depends on them.
 project it finds, external roots included, along with their build state, so the next *Build* compiles
 everything from scratch. It starts on the click, with no confirmation dialog: the project list and the graph
 empty out, the button turns amber with a spinner, and when the deletion is done a *Sync* runs by itself and
-fills them in again. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
+fills them in again — counting the projects it finds in the meantime. The console keeps the whole story. It is not the per-project *Clean* in the row menu and
 not the Build menu's *Clean*: no `msbuild /t:Clean` runs. Files held by a running application are skipped and
 reported rather than failing the Clean. An SDK-style project loses its restored package assets with `obj`, and
 a build does not restore them: run *Optimize* before building it again.
@@ -552,6 +556,23 @@ version. Opening the dialog clears the dot for good; it does not return until th
 
 Esc closes whichever dialog is on top first — What's new, then About, then Settings — so a lower one's state
 survives a stray keypress.
+
+### Update
+
+The title bar's command group starts with an *Update {version}* pill; the icons to its right never move for it.
+Clicking it opens a card: the installed and incoming versions with the package size, the highlights grouped like
+the release notes, and *Later* / *Restart to update*. While a build, a Sync or a maintenance task is running,
+*Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it` for a build; it
+comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere, Esc or opening a
+dialog closes the card; the pill stays.
+
+*Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:
+the product mark, `Updating Build Orchestrator`, the version change and a progress bar that walks through
+closing, installing and starting in about three seconds. While it shows, keys and the global hotkeys do nothing.
+
+There is no update engine yet. The pill shows a sample offer — the next minor version with example highlights —
+so it is always visible, and the restart screen is a preview of the design: when it fades out, the app is exactly
+as it was.
 
 ### State on disk
 

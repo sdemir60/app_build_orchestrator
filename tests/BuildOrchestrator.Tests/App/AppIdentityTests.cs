@@ -89,6 +89,35 @@ public class AppIdentityTests
         Assert.Empty(offenders);
     }
 
+    /// <summary>Güncelleme yüzeyinin (hap, kart, restart ekranı) kaynak dosyaları — ürün adını cümle içinde taşıyan
+    /// metinler (<c>Updating …</c>, <c>Closing …</c>) buradadır.</summary>
+    private static readonly string[] UpdateSurfaceFiles =
+    [
+        Path.Combine("ViewModels", "UpdateText.cs"),
+        Path.Combine("ViewModels", "UpdateRestartTimeline.cs"),
+        Path.Combine("Views", "UpdateRestartScreen.xaml"),
+        Path.Combine("Views", "UpdateRestartScreen.xaml.cs"),
+    ];
+
+    /// <summary>
+    /// [design v1.23.0 §2.12] KAYNAK GUARD'ı: restart ekranının cümleleri ürün adını İÇERİR (<c>Updating &lt;ürün&gt;</c>,
+    /// <c>Closing &lt;ürün&gt;…</c>) ve yukarıdaki guard yalnız TAM tırnaklı adı yakalar — cümleye gömülmüş ad ondan kaçar.
+    /// Güncelleme yüzeyinin dosyalarında ad hiçbir literalin PARÇASI olamaz; cümle <see cref="AppIdentity.Product"/> ile
+    /// kurulur. Ad testte de yazılmaz, kimlikten okunur.
+    /// </summary>
+    [Fact]
+    public void The_update_surface_never_embeds_the_product_name_in_a_literal()
+    {
+        var rule = new System.Text.RegularExpressions.Regex(
+            System.Text.RegularExpressions.Regex.Escape(AppIdentity.Product));
+        var offenders = UpdateSurfaceFiles
+            .SelectMany(f => SourceGuard.ScanLiteralText(
+                f, File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, f)), Path.GetExtension(f), rule))
+            .ToList();
+
+        Assert.Empty(offenders);
+    }
+
     /// <summary>
     /// KAYNAK GUARD'ı: uygulama ikonunun pack URI'si de TEK yerde yazılır — <see cref="AppIdentity.AppIconUri"/>.
     ///

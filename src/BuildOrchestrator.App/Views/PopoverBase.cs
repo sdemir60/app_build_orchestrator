@@ -8,8 +8,8 @@ using BuildOrchestrator.App.ViewModels;
 namespace BuildOrchestrator.App.Views;
 
 /// <summary>
-/// [W2/It-5] <see cref="BranchPopover"/>'ın taban iskeleti — TEK yer. Eskiden iki popover (branch + worktree)
-/// aşağıdaki dört parçayı gövde olarak birebir aynı yazıyordu:
+/// [W2/It-5] <see cref="BranchPopover"/>'ın ve [design v1.23.0] <see cref="UpdateCard"/>'ın taban iskeleti — TEK yer.
+/// Eskiden iki popover (branch + worktree) aşağıdaki dört parçayı gövde olarak birebir aynı yazıyordu:
 /// <list type="number">
 ///   <item><see cref="IsOpen"/> DP'si (iki-yönlü; ActionBar <c>Popup.IsOpen</c>'a bağlar) + açılış davranışı:
 ///     içeriği tazele → 140ms <see cref="PopIn"/> → odağı İÇERİ taşı.</item>
@@ -82,13 +82,21 @@ public abstract class PopoverBase : UserControl
     {
     }
 
+    /// <summary>Açılış girişi — varsayılan popover pop-in'i (aşağıdan 4px). [design v1.23.0 §2.12] Güncelleme kartı
+    /// bunu <see cref="PopIn.PlayDropIn"/> ile ezer (yukarıdan, sol üst köşeden).</summary>
+    protected virtual void PlayEntrance() => PopIn.Play(this);
+
+    /// <summary>Türevin kendi "kapat" düğmesi (güncelleme kartının <c>Later</c>'ı) Esc ile AYNI isteği yayar —
+    /// kapatma ve odağın tetikleyiciye dönüşü tek yerde, kabuğun <see cref="CloseRequested"/> cevabında kalır.</summary>
+    protected void RequestClose() => CloseRequested?.Invoke();
+
     private static void OnIsOpenChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         var popover = (PopoverBase)d;
         if (e.NewValue is not true) { popover.OnClosed(); return; }
 
         popover.RefreshContent();
-        PopIn.Play(popover);
+        popover.PlayEntrance();
         // [E5/T47] Açılınca odak İÇERİ (ilk etkileşimli öğe). Popup içeriği bu an henüz realize olmamış olabilir
         // → layout tamamlanınca odakla (Input önceliği).
         popover.Dispatcher.BeginInvoke(

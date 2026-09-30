@@ -550,6 +550,39 @@
   </Style>
 
   <!--
+    [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Title bar'daki güncelleme HAPI (UpdatePill,
+    BuildApp.jsx:1664-1686): 22px, padding `0 8px 0 6px`, radius-sm, surface-raised + 1px border-strong; metin
+    text-primary 12px/500. Hover ya da kart AÇIK (IsChecked): surface-overlay + neutral-500 — iki tetikleyici AYNI
+    görünümü yazar (prototipte `lit = open || hover`). Geçiş DsTransition'ın 120ms'i (Duration.Fast · ease-standard;
+    README §2.12'deki 80ms kendi §9 sayılarıyla çelişir — plan U5).
+    AMBER YOK: title bar'da chevron dışında amber olmaması kuralı korunur; vurguyu ikonlu şeritteki tek yazılı öğe
+    olması taşır.
+    Mono sürüm metni ikinci renk kanalını (DsChrome.IconForeground) okur: nötrde text-dim, hover/açıkta
+    text-secondary — metnin geri kalanı text-primary'de sabit kalır (Ds.Bar.Chip'in Σ deseni).
+  -->
+  <Style x:Key="Ds.UpdatePill" TargetType="ToggleButton" BasedOn="{StaticResource Ds.Button.Base}">
+    <Setter Property="Height" Value="22" />
+    <Setter Property="Padding" Value="6,0,8,0" />
+    <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
+    <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceRaised}" />
+    <Setter Property="controls:DsTransition.AnimatedForeground" Value="{DynamicResource Brush.TextPrimary}" />
+    <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.BorderStrong}" />
+    <Setter Property="controls:DsTransition.AnimatedIconForeground" Value="{DynamicResource Brush.TextDim}" />
+    <Style.Triggers>
+      <Trigger Property="IsMouseOver" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+        <Setter Property="controls:DsTransition.AnimatedIconForeground" Value="{DynamicResource Brush.TextSecondary}" />
+      </Trigger>
+      <Trigger Property="IsChecked" Value="True">
+        <Setter Property="controls:DsTransition.AnimatedBackground" Value="{DynamicResource Brush.SurfaceOverlay}" />
+        <Setter Property="controls:DsTransition.AnimatedBorderBrush" Value="{DynamicResource Brush.Neutral500}" />
+        <Setter Property="controls:DsTransition.AnimatedIconForeground" Value="{DynamicResource Brush.TextSecondary}" />
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
+  <!--
     [design §2.4-4 — KAYITLI SAPMA] SATIRDAKİ ikon butonlar. Paylaşılan Ds.IconButton hover zemini
     `Brush.SurfaceRaised`tır; satırın KENDİ hover zemini ise `Brush.SurfaceHover`dır ve ikisi de #1a1a1e'dir
     (tasarım token'larında da öyle: surface-hover ve surface-raised ikisi de neutral-850). Satır ikonları
@@ -1139,6 +1172,32 @@
     <Setter Property="LineHeight" Value="{DynamicResource LineHeight.Snug12}" />
     <Setter Property="FontSize" Value="{DynamicResource FontSize.Xs}" />
     <Setter Property="Foreground" Value="{DynamicResource Brush.TextDim}" />
+  </Style>
+
+  <!-- [design v1.24.0 §2.3 · §2.4] Keşif bloklarının ikon kimliği (BuildApp.jsx:856-866): 28×28 (viewBox 24'ten
+       ölçeklenir), opaklık 0.7, kontur text-faint, yuvarlak uç ve birleşim; hareket YOK. Graf (Icon.Network) ve liste
+       (Icon.ListLines) AYNI kimliği paylaşır — geometri ve kalınlık (Icon.X / Icon.X.StrokeThickness) ile yerleşim
+       (Margin) ÇAĞIRANDA kalır. -->
+  <Style x:Key="Ds.DiscoveryIcon" TargetType="Viewbox">
+    <Setter Property="Width" Value="28" />
+    <Setter Property="Height" Value="28" />
+    <Setter Property="Opacity" Value="0.7" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+  </Style>
+  <Style x:Key="Ds.DiscoveryIcon.Path" TargetType="Path">
+    <Setter Property="Stroke" Value="{DynamicResource Brush.TextFaint}" />
+    <Setter Property="StrokeStartLineCap" Value="Round" />
+    <Setter Property="StrokeEndLineCap" Value="Round" />
+    <Setter Property="StrokeLineJoin" Value="Round" />
+  </Style>
+  <!-- [design v1.24.0 §9 · §14.2] İki keşif bloğunun ortalı kolonu (ikon · metin · sayaç) ve yazı tipi: metinler
+       Geist'tir (graf etiketi 12px, liste başlığı 13px/500). Pencere arayüz yazı tipini VERMEZ (sistem varsayılanı —
+       Segoe UI; ölçüldü), bu yüzden kolon onu kendi taşır ve iki bloğun metinleri mirasla alır. Sayaç makine
+       çıktısıdır, kendi AppFonts.Mono'sunu açıkça taşır. -->
+  <Style x:Key="Ds.DiscoveryBlock" TargetType="StackPanel">
+    <Setter Property="HorizontalAlignment" Value="Center" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="TextElement.FontFamily" Value="{x:Static controls:AppFonts.Ui}" />
   </Style>
 
   <!-- [design v1.19.0 §2.9 · prototip PaneHead] Her sayfanın başı: başlık (Ds.Heading.Md) + 5px altında TEK satırlık

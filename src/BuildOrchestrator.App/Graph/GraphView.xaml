@@ -57,6 +57,24 @@
         <TextBlock x:Name="EmptyStateLabel" Text="{x:Static vm:InteractionText.GraphEmpty}" Margin="26,18"
                    FontSize="12" Foreground="{DynamicResource Brush.TextFaint}" />
       </Grid>
+
+      <!-- [design v1.24.0 §2.3 · §9] Sync proje kümesini keşfederken graf gövdesi yerine ortalı sabit blok: network
+           ikonu · 10 · "Graph appears once projects are discovered" (12px text-faint); zemin surface-base, motion YOK.
+           Açıkken kesikli kutu, düğüm yüzeyi ve başlık sayacı gizlidir (GraphView.ApplyBodyState). First run'ın
+           kutusundan (EmptyState) AYRIDIR — workspace yokken bu blok hiç görünmez. -->
+      <Grid x:Name="DiscoveryState" Visibility="Collapsed" Background="{DynamicResource Brush.SurfaceBase}">
+        <StackPanel Style="{DynamicResource Ds.DiscoveryBlock}">
+          <Viewbox Style="{DynamicResource Ds.DiscoveryIcon}">
+            <Canvas Width="24" Height="24">
+              <Path Style="{DynamicResource Ds.DiscoveryIcon.Path}" Data="{DynamicResource Icon.Network}"
+                    StrokeThickness="{DynamicResource Icon.Network.StrokeThickness}" />
+            </Canvas>
+          </Viewbox>
+          <TextBlock Text="{x:Static vm:InteractionText.GraphDiscovering}" Margin="0,10,0,0"
+                     HorizontalAlignment="Center" TextWrapping="NoWrap"
+                     FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextFaint}" />
+        </StackPanel>
+      </Grid>
     </Grid>
   </DockPanel>
 </UserControl>

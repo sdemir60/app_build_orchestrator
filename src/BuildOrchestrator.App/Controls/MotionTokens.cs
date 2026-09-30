@@ -93,6 +93,11 @@ internal static class MotionTokens
     public static KeySpline ResolveKeySpline(FrameworkElement host, string key, KeySpline fallback)
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 
+    /// <summary><c>KeySpline.EaseOut</c>'un (<c>cubic-bezier(.22,1,.36,1)</c>) çözüm ifadesi, fallback dahil —
+    /// girişlerin (<see cref="PopIn"/>) ve restart ekranının çıkış sönümünün ORTAK eğrisi.</summary>
+    public static KeySpline ResolveEaseOut(FrameworkElement host)
+        => ResolveKeySpline(host, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
+
     /// <summary>
     /// From'SUZ, tek <see cref="SplineDoubleKeyFrame"/>'lik "hedefe git" animasyonu — CSS <c>transition</c>
     /// paritesinin WPF karşılığı: <c>HandoffBehavior.SnapshotAndReplace</c> ile başlatıldığında uçuştaki bir

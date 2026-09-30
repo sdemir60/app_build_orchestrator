@@ -77,6 +77,15 @@ internal static class PopoverToggle
             };
     }
 
+    /// <summary>[test yüzeyi] Tetikleyiciye kapı bağlandı mı. Kapının davranışı gerçek bir popup'la
+    /// <c>PopoverToggleTests</c>'te sürülür; gösterilmeyen bir pencerede popup hiç açılamadığı (<c>IsOpen</c> yüklenmeye
+    /// dek false'a zorlanır) için kabuk testleri yalnız bağlandığını sorar.</summary>
+    internal static bool IsBound(ButtonBase trigger)
+    {
+        ArgumentNullException.ThrowIfNull(trigger);
+        return trigger.GetValue(GuardProperty) is GestureGuard;
+    }
+
     /// <summary>Tetikleyicinin kendi jest damgası. Attached property, çünkü tetikleyiciler paylaşılan
     /// şablon/XAML öğeleridir; alan taşıyacak bir sahipleri yok.</summary>
     private static readonly DependencyProperty GuardProperty = DependencyProperty.RegisterAttached(

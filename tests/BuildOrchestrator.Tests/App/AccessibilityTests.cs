@@ -472,6 +472,7 @@ public class AccessibilityTests
                      AccessibilityNames.CloseSettings,                        // design v1.19.0 başlık satırı
                      "Layers",                                                // design v1.19.0 bölüm rayı
                      "OSYS.Base",                                             // proje kartı (BÖLÜM 2 — bozulmadı)
+                     AccessibilityNames.UpdateTo(UpdateOffer.Sample.Version), // design v1.23.0 title bar hapı
                  })
             Assert.Contains(expected, names);
 

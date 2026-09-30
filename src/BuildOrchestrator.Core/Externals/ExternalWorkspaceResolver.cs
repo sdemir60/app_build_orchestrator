@@ -32,6 +32,18 @@ public sealed record ExternalWorkspace(
     IReadOnlyList<ExternalRoot> Roots,
     IReadOnlyList<ExternalScanProblem> Problems);
 
+/// <summary>
+/// [design v1.24.0] Keşif sayacının bir raporu: o ana kadar bulunan projeler, KÜMÜLATİF (delta değil). Sayım
+/// kuralı birleşik çalışma alanının kendi gruplamasıyla aynıdır — son rapor, çözümün <see
+/// cref="ExternalWorkspace"/>'iyle birebir örtüşür.
+/// </summary>
+/// <param name="repositoryProjects">Ana taramadaki tekil projelerden harici OLMAYANLAR (grafın
+/// <c>IsExternal</c> ayrımı). Ana kökün üst klasörünü gösteren bir kart ana projeleri de harici yapabildiği için
+/// tek başına azalabilir; toplam (iki sayının toplamı) asla azalmaz.</param>
+/// <param name="externalProjects">O ana kadar çözülen kartlardan gelen tekil proje kimlikleri — üst üste binen
+/// kartlar bir projeyi iki kez saymaz.</param>
+public delegate void DiscoveryProgress(int repositoryProjects, int externalProjects);
+
 /// <summary>Bir harici kartın taranamama nedeni.</summary>
 /// <param name="Project">Ayarlar'daki kart.</param>
 /// <param name="Name">Kullanıcıya görünen ad.</param>
@@ -62,12 +74,19 @@ public static class ExternalWorkspaceResolver
     /// <param name="mainRootPath">Ana çalışma alanı kökü — <see cref="InsideMainWorkspaceMessage"/> kontrolünün
     /// karşılaştırdığı taraf. Çözülemezse (boş/geçersiz) kontrol atlanır (bkz. <see
     /// cref="RootScope.NormalizeRoot"/> — never-throw), diğer hata sınıfları zaten aşağıda yakalanır.</param>
+    /// <param name="onDiscovered">[design v1.24.0] Kaynak başına keşif sayacı — yalnız Sync verir (Clean,
+    /// Optimize ve koşu planlaması vermez, sayaç göndermezler). Ana tarama burada zaten bitmiştir: ilk rapor
+    /// kartlardan ÖNCE gider (harici 0), sonra projeye çözülen HER kart için bir rapor; çözülemeyen kart rapor
+    /// vermez ve hiçbir sayıyı artırmaz. Çağrı eşzamanlıdır, çözüm sürerken yapılır.</param>
     public static ExternalWorkspace Resolve(
         ScanResult mainScan, IReadOnlyList<ExternalProject>? externals, WorkspaceScanner scanner,
-        string mainRootPath)
+        string mainRootPath, DiscoveryProgress? onDiscovered = null)
     {
         ArgumentNullException.ThrowIfNull(mainScan);
         ArgumentNullException.ThrowIfNull(scanner);
+
+        var report = Reporter(mainScan, onDiscovered);
+        report(EmptyIdSet());
 
         if (externals is not { Count: > 0 })
             return new ExternalWorkspace(mainScan, EmptyIdSet(), [], []);
@@ -102,10 +121,25 @@ public static class ExternalWorkspaceResolver
                 externalProjectIds.Add(path);
             }
             sln.AddRange(scan.SlnPaths);
+            report(externalProjectIds);
         }
 
         return new ExternalWorkspace(
             new ScanResult(Canonical(csproj), Canonical(sln)), externalProjectIds, roots, problems);
+    }
+
+    /// <summary>
+    /// [design v1.24.0] Sayım kuralının TEK yeri: repository = ana taramadaki tekil projelerden o ana kadarki
+    /// harici kimliklerde OLMAYANLAR, external = o ana kadarki tekil harici kimlikler. Birleşik tarama da aynı
+    /// karşılaştırıcıyla (OrdinalIgnoreCase) tekilleştirildiği için son rapor, çözümün gruplamasının ta kendisidir.
+    /// Sayaç istenmediyse hiçbir küme kurulmaz.
+    /// </summary>
+    private static Action<IReadOnlySet<string>> Reporter(ScanResult mainScan, DiscoveryProgress? onDiscovered)
+    {
+        if (onDiscovered is null) return static _ => { };
+
+        var mainIds = new HashSet<string>(mainScan.CsprojPaths, StringComparer.OrdinalIgnoreCase);
+        return externalIds => onDiscovered(mainIds.Count(id => !externalIds.Contains(id)), externalIds.Count);
     }
 
     /// <summary>

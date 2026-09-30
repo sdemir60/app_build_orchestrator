@@ -35,27 +35,9 @@ public class NoFilterMatchTests
         return (window, vm);
     }
 
-    /// <summary>Kabukta GÖRÜNÜR durumdaki metin blokları (kullanıcının gerçekten okuduğu şey).
-    /// <para><c>IsVisible</c> KULLANILAMAZ: gerçek bir <c>PresentationSource</c> (HWND) ister ve bu testler
-    /// pencereyi hiç <c>Show()</c> etmez (bkz. <see cref="MainWindowHost"/>). Bunun yerine öğenin KENDİ ve TÜM
-    /// atalarının <see cref="UIElement.Visibility"/>'si denetlenir — boş-durum overlay'leri zaten KAPSAYICI
-    /// üzerinden gizlenir, bu yüzden yalnız yaprağa bakmak yanıltıcı olurdu.</para></summary>
-    private static IReadOnlyList<string> VisibleTexts(MainWindow window) =>
-        [.. DsResources.Descendants(window.Shell).OfType<TextBlock>()
-            .Where(t => IsShown(t, window.Shell))
-            .Select(t => t.Text)];
-
-    // [A13/T3 fix-2 · 7] Yürüyüşün kendisi DsResources.SelfAndAncestors'ta (kopya YASAK); buradaki KURAL
-    // (görünürlük + kökte dur) yerinde kalır — semantik değişmedi.
-    private static bool IsShown(DependencyObject node, DependencyObject root)
-    {
-        foreach (var n in DsResources.SelfAndAncestors(node))
-        {
-            if (n is UIElement { Visibility: not Visibility.Visible }) return false;
-            if (ReferenceEquals(n, root)) break;
-        }
-        return true;
-    }
+    /// <summary>Kabukta GÖRÜNÜR durumdaki metin blokları (kullanıcının gerçekten okuduğu şey) — kural
+    /// <see cref="DsResources.ShownTexts"/>'te (keşif blokları da aynı soruyu sorar; kopya YASAK).</summary>
+    private static IReadOnlyList<string> VisibleTexts(MainWindow window) => DsResources.ShownTexts(window.Shell);
 
     [StaFact]
     public void A_filter_that_matches_nothing_explains_itself_verbatim()

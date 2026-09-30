@@ -282,6 +282,56 @@ public class ExternalSyncIntegrationTests
             withExternal.OfType<SyncCompletedEvent>().Single().ProjectCount);
     }
 
+    // ---------------------------------------------------------------- [design v1.24.0] keşif sayacı
+
+    /// <summary>
+    /// Sync'in keşif sayacı kaynak başına KÜMÜLATİF ilerler: önce ana repo (harici henüz 0), sonra projeye
+    /// çözülen her harici kart. Üst üste binen kartlar (bir klasör ve içindeki <c>.sln</c>) aynı projeyi iki kez
+    /// saymaz; toplam asla azalmaz ve son rapor topolojinin kendi gruplamasına (<c>IsExternal</c>) eşittir —
+    /// sayaç, keşif bitince ekranda görünecek iki grubun sayısıyla aynı yerde durur.
+    /// </summary>
+    [Fact]
+    public async Task The_discovery_counter_grows_per_resolved_card_and_never_counts_a_project_twice()
+    {
+        using var main = new GitTestRepo();
+        WriteWorkspace(main);
+        main.CommitAll("workspace");
+        using var external = new TempDir();
+        string mail = WriteExternal(external.Path, "Mail");
+        string sln = ExternalFixtureFiles.WriteSolution(external.Path, "Mail", mail);
+
+        var events = await RunSyncAsync(main, NewCacheRoot(),
+            new ExternalProject(external.Path), new ExternalProject(sln));
+
+        var reports = events.OfType<SyncDiscoveryEvent>().Select(e => (e.RepositoryProjects, e.ExternalProjects)).ToList();
+        Assert.Equal([(1, 0), (1, 1), (1, 1)], reports);
+        var totals = reports.Select(r => r.RepositoryProjects + r.ExternalProjects).ToList();
+        Assert.Equal(totals.Order(), totals);
+
+        var nodes = Topology(events).Nodes;
+        Assert.Equal((nodes.Count(n => !n.IsExternal), nodes.Count(n => n.IsExternal)), reports[^1]);
+        Assert.True(events.FindIndex(e => e is SyncDiscoveryEvent) > 0
+            && events.FindLastIndex(e => e is SyncDiscoveryEvent) < events.FindIndex(e => e is WorkspaceTopologyEvent),
+            "keşif sayacı syncStarted'tan sonra, topolojiden önce gelmeli");
+    }
+
+    /// <summary>Çözülemeyen kart (bulunamayan yol) sayaca HİÇBİR şey eklemez ve kendi raporunu vermez: uyarısı
+    /// konsola düşer, sayaç yalnız ana repoyu gösterir.</summary>
+    [Fact]
+    public async Task A_card_that_resolves_to_nothing_adds_nothing_to_the_discovery_counter()
+    {
+        using var main = new GitTestRepo();
+        WriteWorkspace(main);
+        main.CommitAll("workspace");
+        var missing = new ExternalProject(Path.Combine(Path.GetTempPath(), "DoganTrend-51c0"));
+
+        var events = await RunSyncAsync(main, NewCacheRoot(), missing);
+
+        Assert.Equal([new SyncDiscoveryEvent(RepositoryProjects: 1, ExternalProjects: 0)],
+            events.OfType<SyncDiscoveryEvent>());
+        Assert.Contains(ProgressLines(events), l => l.Contains("'DoganTrend-51c0'", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task An_empty_external_list_leaves_the_flow_exactly_as_it_was()
     {

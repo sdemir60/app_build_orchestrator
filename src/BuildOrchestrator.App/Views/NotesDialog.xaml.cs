@@ -130,13 +130,9 @@ public partial class NotesDialog : ModalDialog
 
         var notes = new StackPanel();
         Grid.SetColumn(notes, 2);
-        // [§2.11] Kategori BLOK başlığıdır (satır başına ikon/sigil YOK); boş kategori hiç çizilmez.
-        foreach (var kind in ReleaseNotes.KindOrder)
-        {
-            var items = entry.Notes.Where(n => n.Kind == kind).ToList();
-            if (items.Count == 0) continue;
-            notes.Children.Add(BuildCategory(kind, items, first: notes.Children.Count == 0));
-        }
+        // [§2.11] Kategori BLOK başlığıdır (satır başına ikon/sigil YOK); boş kategori hiç çizilmez. Blok dili
+        // güncelleme kartıyla ortaktır (ReleaseNoteBlocks); buradaki yalnız What's new'in okuma ölçüleridir.
+        ReleaseNoteBlocks.Fill(notes, entry.Notes, NoteBlocks);
         grid.Children.Add(notes);
 
         block.Child = grid;
@@ -219,60 +215,13 @@ public partial class NotesDialog : ModalDialog
         return chip;
     }
 
-    /// <summary>[v1.19.0 §2.11] Kategori bloğu (sağ kolon): 6px kare + 7px + caps <c>text-dim</c> başlık; başlık
-    /// altında 7px; maddeler 13px içeriden, aralarında 10px, 13px <c>text-secondary</c>, satır yüksekliği 1.62,
-    /// en çok 500px genişlikte sarılır. Kategori blokları arası 15px.</summary>
-    private FrameworkElement BuildCategory(NoteKind kind, IReadOnlyList<ReleaseNote> items, bool first)
-    {
-        var group = new StackPanel { Margin = new Thickness(0, first ? 0 : 15, 0, 0) };
-
-        var heading = new StackPanel { Orientation = Orientation.Horizontal };
-        var swatch = new System.Windows.Shapes.Rectangle
-        {
-            Width = 6,
-            Height = 6,
-            RadiusX = 1,
-            RadiusY = 1,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        swatch.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, ReleaseNotes.SwatchBrushKey(kind));
-        heading.Children.Add(swatch);
-
-        var label = new TrackedTextBlock
-        {
-            Text = ReleaseNotes.Label(kind),
-            Margin = new Thickness(7, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        // Hedef DP'ler AÇIKÇA nitelenir (BuildInstalledChip ile AYNI kural): TrackedTextBlock kendi
-        // Foreground/FontSize DP'lerini kaydeder, TextBlock/Control ailesindekiler burada ETKİSİZDİR.
-        label.SetResourceReference(TrackedTextBlock.FontSizeProperty, "FontSize.2xs");
-        label.SetResourceReference(TrackedTextBlock.ForegroundProperty, "Brush.TextDim");
-        heading.Children.Add(label);
-        group.Children.Add(heading);
-
-        var list = new StackPanel { Margin = new Thickness(13, 7, 0, 0) };
-        // [v1.19.0 §2.11] CSS `line-height: 1.62` → LineHeight.Reading13 token'ı (About paragrafıyla ORTAK).
-        double lineHeight = (double)FindResource("LineHeight.Reading13");
-        foreach (var note in items)
-        {
-            var text = new TextBlock
-            {
-                Text = note.Text,
-                Margin = new Thickness(0, list.Children.Count == 0 ? 0 : 10, 0, 0),
-                MaxWidth = NoteMaxWidth,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                TextWrapping = TextWrapping.Wrap,
-                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-                LineHeight = lineHeight,
-            };
-            text.SetResourceReference(FontSizeProperty, "FontSize.Sm");
-            text.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextSecondary");
-            list.Children.Add(text);
-        }
-        group.Children.Add(list);
-        return group;
-    }
+    /// <summary>[v1.19.0 §2.11] Kategori bloklarının What's new ölçüleri (sağ kolon): blok dili ortaktır
+    /// (<see cref="ReleaseNoteBlocks"/> — 6px kare + 7px + caps <c>text-dim</c> başlık, maddeler 13px içeriden,
+    /// <c>text-secondary</c>); burada kategori blokları arası 15px, başlık altı 7px, maddeler arası 10px, 13px metin,
+    /// satır yüksekliği 1.62 (<c>LineHeight.Reading13</c>, About paragrafıyla ORTAK) ve en çok 500px ölçü.</summary>
+    private static readonly ReleaseNoteBlockMetrics NoteBlocks = new(
+        BlockGap: 15, HeadGap: 7, ItemGap: 10, FontSizeKey: "FontSize.Sm", LineHeightKey: "LineHeight.Reading13",
+        MaxWidth: NoteMaxWidth);
 
     // ---------------------------------------------------------------- sticky sol kolon
 

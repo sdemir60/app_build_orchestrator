@@ -1876,14 +1876,42 @@ public partial class GraphView : UserControl
 
     /// <summary>[design v1.8.0 §3.1 · prototip panel başlığı] Workspace yokken başlık sayaç taşımaz — sayılacak bir şey
     /// yoktur. Kabuk bunu <c>RunViewModel.HasWorkspace</c>'ten sürer (<c>ShellRoot.SetHasWorkspace</c>).</summary>
-    public void SetHasWorkspace(bool hasWorkspace) =>
-        CountsText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
+    public void SetHasWorkspace(bool hasWorkspace)
+    {
+        _hasWorkspace = hasWorkspace;
+        ApplyBodyState();
+    }
+
+    /// <summary>[design v1.24.0 §2.3 · plan K7] Sync proje kümesini keşfediyor mu: açıkken gövde keşif bloğudur —
+    /// kesikli Sync-öncesi kutu, düğüm yüzeyi ve başlık sayacı gizlenir. Kabuk bunu <c>RunViewModel.IsDiscovering</c>'ten
+    /// sürer (<c>ShellRoot.SetDiscovering</c>). VM keşfi topolojinin grafı yeniden kurmasından ÖNCE kapatır, yani reveal
+    /// her zaman görünür bir yüzeye oynar.</summary>
+    public void SetDiscovering(bool discovering)
+    {
+        _discovering = discovering;
+        ApplyBodyState();
+    }
 
     private void ShowEmptyState(bool visible)
     {
-        EmptyState.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        Viewport.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+        _emptyState = visible;
+        ApplyBodyState();
     }
+
+    /// <summary>Başlık sayacı ve gövde katmanlarının (keşif bloğu · kesikli kutu · düğüm yüzeyi) TEK kapısı — üç girdi:
+    /// workspace var mı, keşif sürüyor mu, boş graf Sync-öncesi kutusunu istiyor mu. Keşif kutuyu ve yüzeyi örter; kutu
+    /// yüzeyi örter. Başlangıç değerleri XAML'deki ilk görünümle aynıdır (sayaç görünür, kutu kurucuda istenir).</summary>
+    private void ApplyBodyState()
+    {
+        DiscoveryState.Visibility = _discovering ? Visibility.Visible : Visibility.Collapsed;
+        EmptyState.Visibility = !_discovering && _emptyState ? Visibility.Visible : Visibility.Collapsed;
+        Viewport.Visibility = !_discovering && !_emptyState ? Visibility.Visible : Visibility.Collapsed;
+        CountsText.Visibility = _hasWorkspace && !_discovering ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private bool _hasWorkspace = true;
+    private bool _discovering;
+    private bool _emptyState;
 
     // ---------------------------------------------------------------- test/görünürlük yüzeyi
 
@@ -1908,6 +1936,8 @@ public partial class GraphView : UserControl
     internal string HeaderCountsText => CountsText.Text;
     internal FontFamily HeaderCountsFontFamily => CountsText.FontFamily;
     internal bool IsEmptyStateVisible => EmptyState.Visibility == Visibility.Visible;
+    internal bool IsDiscoveryStateVisible => DiscoveryState.Visibility == Visibility.Visible;
+    internal bool IsViewportVisible => Viewport.Visibility == Visibility.Visible;
     internal string EmptyStateText => EmptyStateLabel.Text;
     internal Size ViewportSize => new(Ground.ActualWidth, Ground.ActualHeight);
     /// <summary>Düğümün İÇERİK koordinatlarındaki merkezi.</summary>

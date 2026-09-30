@@ -183,6 +183,32 @@
                        Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20"
                        TextWrapping="Wrap"
                        FontSize="{DynamicResource FontSize.Xs}" Foreground="{DynamicResource Brush.TextDim}" />
+
+            <!-- [design v1.24.0 §2.4 · §9] Sync proje kümesini keşfederken liste boş kalmaz: ortalı sabit blok — list
+                 ikonu (altında +2) · 8 · "Discovering projects" (13px/500 text-secondary) · 8 · mono 11px sayaç (toplam
+                 text-dim, gerisi text-faint; tabular, satır kırmaz). Zemin surface-base, yatay padding 24; motion YOK.
+                 Görünürlük ListInvite.Resolve'dan (Discovering), sayaç SetDiscoveryCount'tan. Sayaç sakin bir canlı
+                 bölgedir (aria-live="polite"): sayı değişince duyurulur (ShellRoot.SetDiscoveryCount). -->
+            <Border x:Name="PART_Discovering" Visibility="Collapsed" Padding="24,0"
+                    Background="{DynamicResource Brush.SurfaceBase}">
+              <StackPanel Style="{DynamicResource Ds.DiscoveryBlock}">
+                <Viewbox Style="{DynamicResource Ds.DiscoveryIcon}" Margin="0,0,0,2">
+                  <Canvas Width="24" Height="24">
+                    <Path Style="{DynamicResource Ds.DiscoveryIcon.Path}" Data="{DynamicResource Icon.ListLines}"
+                          StrokeThickness="{DynamicResource Icon.ListLines.StrokeThickness}" />
+                  </Canvas>
+                </Viewbox>
+                <TextBlock Text="{x:Static vm:InteractionText.DiscoveringProjects}" Margin="0,8,0,0"
+                           HorizontalAlignment="Center" TextWrapping="NoWrap"
+                           FontSize="{DynamicResource FontSize.Sm}" FontWeight="{DynamicResource FontWeight.Emphasis}"
+                           Foreground="{DynamicResource Brush.TextSecondary}" />
+                <TextBlock x:Name="PART_DiscoveryCount" Margin="0,8,0,0" HorizontalAlignment="Center"
+                           TextWrapping="NoWrap" Typography.NumeralAlignment="Tabular"
+                           FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                           Foreground="{DynamicResource Brush.TextFaint}"
+                           AutomationProperties.LiveSetting="Polite"><Run x:Name="PART_DiscoveryTotal" Foreground="{DynamicResource Brush.TextDim}" /><Run x:Name="PART_DiscoveryTail" /></TextBlock>
+              </StackPanel>
+            </Border>
           </Grid>
         </DockPanel>
       </Grid>

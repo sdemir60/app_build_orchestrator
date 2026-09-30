@@ -294,6 +294,15 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.HasWorkspace)) Shell.SetHasWorkspace(_vm.HasWorkspace);
         };
+        // [design v1.24.0 §2.3 · §2.4] Sync proje kümesini keşfederken iki panel boş kalmaz: başlık araçları ve graf
+        // keşif durumuna geçer, liste bloğu davet kararından gelir (RefreshListInvite), sayaç her raporla yazılır. VM
+        // keşfi topolojinin yüzeyi yeniden kurmasından ÖNCE kapatır — bloklar reveal başlamadan kalkar.
+        ApplyDiscovery();
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.IsDiscovering)) ApplyDiscovery();
+            else if (e.PropertyName == nameof(RunViewModel.DiscoveredProjects)) RefreshDiscoveryCount();
+        };
 
         // [design v1.13.0 §2.11] Görülmemiş sürüm işareti: NotesDialog AÇILDIĞI anda kalıcı duruma yazılır ve
         // nokta söner (eskiden design v1.9.0'da About'un What's new sekmesi görülünce yazılırdı — About artık
@@ -407,6 +416,7 @@ public partial class MainWindow : Window
 
         SetupKeyboardShortcuts();
         SetupAboutButtonTooltip();
+        SetupUpdatePill(); // [design v1.23.0 §2.12] title bar'ın güncelleme hapı (MainWindow.UpdatePill.cs)
         _ = RunConsolePumpAsync();
     }
 
@@ -523,13 +533,26 @@ public partial class MainWindow : Window
         SettingsOverlay.Visibility == Visibility.Visible || AboutOverlay.Visibility == Visibility.Visible
         || NotesOverlay.Visibility == Visibility.Visible;
 
+    /// <summary>[E5/T46 · design v1.23.0 §2.12] Esc zincirinin POPOVER katmanı: alt bardaki popover/menüler
+    /// (<see cref="ShellRoot.AnyPopoverOpen"/>) ve title bar'daki güncelleme kartı (prototip: <c>branchPop || buildMenu
+    /// || updPop</c>). Kartın İÇİNDEKİ Esc'i kartın kendisi yakalar; bu katman odak pencerede kalmışken devreye girer.</summary>
+    private bool AnyPopoverOpen => Shell.AnyPopoverOpen || IsUpdateCardOpen;
+
+    /// <summary>Popover katmanını kapatır — hepsini birden (prototipte olduğu gibi): alt barınkiler
+    /// (<see cref="ShellRoot.CloseAllPopovers"/>) ve güncelleme kartı; odak açık olanın tetikleyicisine döner.</summary>
+    private void CloseAllPopovers()
+    {
+        Shell.CloseAllPopovers();
+        CloseUpdateCard(returnFocusToPill: true);
+    }
+
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
     /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
     private void OnEscapePressed()
     {
-        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, Shell.AnyPopoverOpen, _vm.SelectedProjectId is not null,
+        switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
                     _vm.EscRunState))
         {
             case EscAction.CloseDialog:
@@ -537,7 +560,7 @@ public partial class MainWindow : Window
                 else if (AboutOverlay.Visibility == Visibility.Visible) AboutOverlay.CloseDialog();
                 else SettingsOverlay.CloseDialog();
                 break;
-            case EscAction.ClosePopovers: Shell.CloseAllPopovers(); break;
+            case EscAction.ClosePopovers: CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
             case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
             case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;
@@ -693,8 +716,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[task 3 · kullanıcı kararı 2026-09-19] Liste ve grafı EKRANDA boşaltır (VM'e dokunmaz — bkz.
-    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf Sync-öncesi etiketini göstermez: Sync zaten sürüyor,
-    /// panel yalnız boş/sakin durur. Liste daveti VM'den karar verilir ve satırlar VM'de durduğu için çıkmaz.</summary>
+    /// <see cref="RunViewModel.PlanSurfaceRestarting"/>). Graf etiketsiz boşalır: Sync-öncesi etiketini ("appears after
+    /// Sync") ve sahte bir "0 projects" başlığını göstermez, Sync zaten sürüyor.
+    /// <para>[design v1.24.0] Boşluk ekranda kalmaz: aynı Sync isteği keşfi de açar (baştan başlayan yüzey, bkz.
+    /// <c>RunViewModel.OpensDiscovery</c>) ve topoloji gelene dek graf ile liste keşif bloklarını gösterir
+    /// (<see cref="ApplyDiscovery"/>). Listenin "proje yok" ve "filtre eşleşmedi" davetleri o sırada çıkmaz: keşif,
+    /// davet kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
     private void BlankPlanSurface()
     {
         Shell.ProjectsList.SetGroups([], reveal: false);
@@ -1086,10 +1113,24 @@ public partial class MainWindow : Window
             : null;
     }
 
+    /// <summary>[design v1.24.0] Keşif durumunu kabuğa uygular: başlık araçları + graf (<see cref="ShellRoot.SetDiscovering"/>),
+    /// sayaç ve listenin bloğu (davet kararı). Sayaç bayraktan SONRA yazılır — keşif açıkken değişen metin duyurulur.</summary>
+    private void ApplyDiscovery()
+    {
+        Shell.SetDiscovering(_vm.IsDiscovering);
+        RefreshDiscoveryCount();
+        RefreshListInvite();
+    }
+
+    /// <summary>[design v1.24.0 §9] Keşif sayacını VM'in kümülatif değerlerinden yazar (metin kabukta tek kaynaktan kurulur).</summary>
+    private void RefreshDiscoveryCount() =>
+        Shell.SetDiscoveryCount(_vm.DiscoveredRepositoryProjects, _vm.DiscoveredExternalProjects, _vm.DiscoveryShowsBreakdown);
+
     /// <summary>[E2/T10] Liste boş-durum davetinin görünürlüğünü tazeler — karar SAF <see cref="ListInvite.Resolve"/>'te.</summary>
     private void RefreshListInvite()
     {
-        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.Phase, _vm.Projects.Count, _vm.VisibleProjects.Count));
+        Shell.SetListInvite(ListInvite.Resolve(_vm.HasWorkspace, _vm.IsDiscovering, _vm.Phase, _vm.Projects.Count,
+            _vm.VisibleProjects.Count));
         // [design v1.8.0 §2.4] Kurulum listesi davetle AYNI sinyalden tazelenir: kök ve katman sayısı.
         Shell.SetSetupChecklist(_vm.RootPath, _vm.LayerPatterns?.Count ?? 0);
     }
@@ -1258,9 +1299,12 @@ public partial class MainWindow : Window
 
     /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
     /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
-    /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).</summary>
-    private void OnGlobalHotkey(GlobalHotkeyAction action)
+    /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).
+    /// <para>[design v1.23.0 §2.12] Restart ekranı görünürken hiçbir global kısayol çalışmaz
+    /// (<see cref="InputSuspended"/>). internal: test yüzeyi — <c>WM_HOTKEY</c> gösterilmeyen pencerede üretilemez.</para></summary>
+    internal void OnGlobalHotkey(GlobalHotkeyAction action)
     {
+        if (InputSuspended) return;
         if (action == GlobalHotkeyAction.ShowHide)
         {
             bool minimized = WindowState == WindowState.Minimized;

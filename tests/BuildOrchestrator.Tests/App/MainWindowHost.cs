@@ -1,5 +1,6 @@
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -56,6 +57,17 @@ internal static class MainWindowHost
         return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
     }
 
+    /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
+    /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
+    /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
+    /// <see cref="NewWithProjects"/> da buradan başlar.</summary>
+    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir)
+    {
+        var (window, vm) = New(uiStateDir);
+        Realize(window);
+        return (window, vm);
+    }
+
     /// <summary>[P3 · final review O5] Bir testin geçici kalıcı durum dosyası — <see cref="New"/>'ün pencereye verdiği
     /// store'un yolu. TEK tanım: pencerenin okuduğu dosyayı tohumlayan ya da sonradan okuyan her test yolu buradan
     /// alır. Yol ikinci bir yerde yeniden kurulsaydı ve biri değişseydi, test pencerenin hiç okumadığı bir dosyayı
@@ -85,8 +97,7 @@ internal static class MainWindowHost
         TempDir uiStateDir, params (string Name, string? Layer)[] nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
-        var (window, vm) = New(uiStateDir);
-        Realize(window);
+        var (window, vm) = NewRealized(uiStateDir);
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
@@ -101,6 +112,19 @@ internal static class MainWindowHost
 
     /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
     public static string IdOf(string name) => $@"C:\p\{name}.csproj";
+
+    /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar: pencere düzeyindeki Esc
+    /// bağlamasının komutu, üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa
+    /// hiçbir şey olmaz). WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir, bu yüzden tuş olayı değil
+    /// bağlamanın kendisi sürülür. Esc zincirini süren testlerin TEK basış yeri — <c>EscStopTests</c> ve
+    /// <c>UpdateCardTests</c> bunu birebir aynı gövdeyle ayrı ayrı yazmıştı.</summary>
+    public static void PressEscape(MainWindow window)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        var escape = window.InputBindings.OfType<KeyBinding>()
+            .Single(k => k.Key == Key.Escape && k.Modifiers == ModifierKeys.None);
+        CommandPress.Press(escape.Command);
+    }
 
     /// <summary>[task 3] Gönderimler motor yerine başarıyla "gider" (<see cref="RunViewModel.DebugSendOverride"/>) —
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>

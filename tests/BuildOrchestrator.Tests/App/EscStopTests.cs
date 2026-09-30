@@ -18,13 +18,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EscStopTests
 {
-    private static void PressEscape(MainWindow window)
-    {
-        var escape = window.InputBindings.OfType<KeyBinding>()
-            .Single(k => k.Key == Key.Escape && k.Modifiers == ModifierKeys.None);
-        if (escape.Command.CanExecute(null)) escape.Command.Execute(null);
-    }
-
     private static (MainWindow window, RunViewModel vm, List<IpcCommand> sent) NewWindowWithSends(TempDir temp)
     {
         var (window, vm) = MainWindowHost.New(temp);
@@ -47,7 +40,7 @@ public class EscStopTests
         var (window, vm, sent) = NewWindowWithSends(temp);
         MainWindowHost.StartBuild(vm);
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(AppPhase.Stopping, vm.Phase);
         Assert.Single(sent.OfType<StopRunCommand>(), s => s.Kind == StopKind.Graceful);
@@ -62,11 +55,11 @@ public class EscStopTests
         MainWindowHost.StartBuild(vm);
         vm.SelectProject(@"C:\p\a.csproj");
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         Assert.Null(vm.SelectedProjectId);
         Assert.Empty(sent.OfType<StopRunCommand>()); // ilk Esc yalnız seçimi bıraktı
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         Assert.Single(sent.OfType<StopRunCommand>());
         GC.KeepAlive(window);
     }
@@ -79,13 +72,13 @@ public class EscStopTests
         using var temp = new TempDir();
         var (window, vm, sent) = NewWindowWithSends(temp);
         MainWindowHost.StartBuild(vm);
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         Assert.Equal(AppPhase.Stopping, vm.Phase); // ön-koşul
         int acknowledged = 0;
         vm.StopRequestAcknowledged += (_, _) => acknowledged++;
         string console = vm.GetRunDocumentText();
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
 
         Assert.Single(sent.OfType<StopRunCommand>());
         Assert.Equal(1, acknowledged);
@@ -103,8 +96,8 @@ public class EscStopTests
         await MainWindowHost.StartSync(vm, SyncMode.Manual);
         Assert.True(vm.SyncBusy); // ön-koşul: motorun cevabı bekleniyor
 
-        PressEscape(window);
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.Sync)));
         GC.KeepAlive(window);
@@ -118,12 +111,12 @@ public class EscStopTests
         using var temp = new TempDir();
         var (window, vm, _) = NewWindowWithSends(temp);
         await MainWindowHost.StartSync(vm, SyncMode.Manual);
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
         MainWindowHost.ReplySync(vm, ("A", null)); // Sync bitti — meşguliyet kalktı
 
         await vm.CleanCommand.ExecuteAsync(null); // derin Clean: motorun cevabı bekleniyor
         Assert.True(vm.CleanBusy); // ön-koşul
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
         GC.KeepAlive(window);
@@ -140,7 +133,7 @@ public class EscStopTests
         Assert.True(vm.SyncBusy); // ön-koşul
         string console = vm.GetRunDocumentText();
 
-        PressEscape(window);
+        MainWindowHost.PressEscape(window);
 
         Assert.Equal(console, vm.GetRunDocumentText());
         GC.KeepAlive(window);

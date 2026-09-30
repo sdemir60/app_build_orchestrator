@@ -1,0 +1,84 @@
+<!-- [design v1.23.0 §2.12 · §9 "Uygulama sayıları — güncelleme"] Güncelleme kartı (UpdateCard, BuildApp.jsx:1688-1741).
+     Kök taban tipi PopoverBase'tir (IsOpen + giriş + Esc + VM takası orada). Kabuk (Ds.Popover, 344px, dolgu 0) ve
+     yerleşim (hapın 9px altı, Popup) MainWindow.xaml'dedir; burada yalnız gövde vardır: üç blok, aralarında 1px border.
+     Güncelleme motoru henüz yok — içerik RunViewModel.AvailableUpdate'in örnek teklifidir. -->
+<views:PopoverBase x:Class="BuildOrchestrator.App.Views.UpdateCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:BuildOrchestrator.App.Controls"
+             xmlns:services="clr-namespace:BuildOrchestrator.App.Services"
+             xmlns:vm="clr-namespace:BuildOrchestrator.App.ViewModels"
+             xmlns:views="clr-namespace:BuildOrchestrator.App.Views">
+  <StackPanel>
+    <!-- (1) KİMLİK — padding 13 16 15: caps UPDATE READY (text-faint) + sağda mono boyut; 11px altında sürüm geçişi
+         kurulu (mono 13 text-dim) → arrow-right 12 (text-faint) → gelen (mono 16/500 text-primary), gap 9. -->
+    <Border x:Name="PART_Identity" Padding="16,13,16,15">
+      <StackPanel>
+        <DockPanel x:Name="PART_HeadingRow">
+          <TextBlock x:Name="PART_Size" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="8,0,0,0"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.2xs}"
+                     FontWeight="{DynamicResource FontWeight.Body}" Typography.NumeralAlignment="Tabular"
+                     Foreground="{DynamicResource Brush.TextFaint}" />
+          <controls:TrackedTextBlock x:Name="PART_Heading" Text="{x:Static vm:UpdateText.CardHeading}"
+                                     VerticalAlignment="Center" FontSize="{DynamicResource FontSize.2xs}"
+                                     FontWeight="{DynamicResource FontWeight.Emphasis}"
+                                     Foreground="{DynamicResource Brush.TextFaint}" />
+        </DockPanel>
+        <StackPanel x:Name="PART_Transition" Orientation="Horizontal" Margin="0,11,0,0">
+          <TextBlock x:Name="PART_Installed" Text="{x:Static services:AppIdentity.Version}" VerticalAlignment="Center"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Sm}"
+                     FontWeight="{DynamicResource FontWeight.Body}" Foreground="{DynamicResource Brush.TextDim}" />
+          <Viewbox x:Name="PART_Arrow" Width="12" Height="12" Margin="9,0,0,0" VerticalAlignment="Center">
+            <Canvas Width="24" Height="24">
+              <Path Data="{DynamicResource Icon.ArrowRight}"
+                    StrokeThickness="{DynamicResource Icon.ArrowRight.StrokeThickness}"
+                    Stroke="{DynamicResource Brush.TextFaint}"
+                    StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+            </Canvas>
+          </Viewbox>
+          <TextBlock x:Name="PART_Incoming" Margin="9,0,0,0" VerticalAlignment="Center"
+                     FontFamily="{x:Static controls:AppFonts.Mono}" FontSize="{DynamicResource FontSize.Lg}"
+                     FontWeight="{DynamicResource FontWeight.Emphasis}" Foreground="{DynamicResource Brush.TextPrimary}" />
+        </StackPanel>
+      </StackPanel>
+    </Border>
+
+    <!-- (2) ÖNE ÇIKANLAR — padding 13 16 14: What's new'in kategori blok dili (ReleaseNoteBlocks), kartın kompakt
+         ölçüleriyle (UpdateCard.HighlightBlocks). -->
+    <Border x:Name="PART_HighlightsBlock" Padding="16,13,16,14" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource Brush.Border}">
+      <StackPanel x:Name="PART_Highlights" />
+    </Border>
+
+    <!-- (3) KARAR — padding 12 16 14: açıklama (ya da kilit nedeni) 12px text-dim, satır 1.5 · 12px altında sağa yaslı
+         Later (secondary sm) + Restart to update (primary sm, rotate-cw), aralarında 8. -->
+    <Border x:Name="PART_Decision" Padding="16,12,16,14" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource Brush.Border}">
+      <StackPanel>
+        <TextBlock x:Name="PART_Note" TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight"
+                   LineHeight="{DynamicResource LineHeight.Normal12}" FontSize="{DynamicResource FontSize.Xs}"
+                   Foreground="{DynamicResource Brush.TextDim}" />
+        <StackPanel x:Name="PART_Actions" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+          <Button x:Name="PART_Later" Style="{DynamicResource Ds.Button.Secondary.Sm}"
+                  Content="{x:Static vm:UpdateText.Later}" />
+          <Button x:Name="PART_Restart" Style="{DynamicResource Ds.Button.Primary.Sm}" Margin="8,0,0,0"
+                  Command="{Binding RestartToUpdateCommand}"
+                  AutomationProperties.Name="{x:Static vm:UpdateText.RestartToUpdate}">
+            <StackPanel Orientation="Horizontal">
+              <!-- rotate-cw = Icon.Rebuild (12px); kontur düğmenin Foreground'u (text-on-accent). -->
+              <Viewbox Width="12" Height="12" Margin="0,0,6,0" VerticalAlignment="Center">
+                <Canvas Width="24" Height="24">
+                  <Path Data="{DynamicResource Icon.Rebuild}"
+                        StrokeThickness="{DynamicResource Icon.Rebuild.StrokeThickness}"
+                        Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                        StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                </Canvas>
+              </Viewbox>
+              <TextBlock Text="{x:Static vm:UpdateText.RestartToUpdate}" VerticalAlignment="Center" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </StackPanel>
+    </Border>
+  </StackPanel>
+</views:PopoverBase>

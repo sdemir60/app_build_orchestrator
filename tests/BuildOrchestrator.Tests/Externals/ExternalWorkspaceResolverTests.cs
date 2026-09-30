@@ -32,13 +32,23 @@ public class ExternalWorkspaceResolverTests
         return csproj;
     }
 
-    private static string WriteSolution(string directory, string name, params string[] csprojPaths)
+    /// <summary>[design v1.24.0] Çözümü keşif sayacıyla koşar; sayacın her raporu sırasıyla döner.</summary>
+    private static (ExternalWorkspace Workspace, List<(int Repository, int External)> Reports) ResolveCounting(
+        ScanResult main, string mainRootPath, params ExternalProject[] externals)
     {
-        string sln = Path.Combine(directory, name + ".sln");
-        File.WriteAllText(sln, string.Concat(csprojPaths.Select(p =>
-            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"" + Path.GetFileNameWithoutExtension(p)
-            + "\", \"" + Path.GetRelativePath(directory, p) + "\", \"{1}\"\nEndProject\n")));
-        return sln;
+        var reports = new List<(int Repository, int External)>();
+        var workspace = ExternalWorkspaceResolver.Resolve(main, externals, new WorkspaceScanner(), mainRootPath,
+            (repository, external) => reports.Add((repository, external)));
+        return (workspace, reports);
+    }
+
+    /// <summary>Son rapor, çözümün kendi gruplamasıyla (grafın <c>IsExternal</c> ayrımı) AYNI olmalı:
+    /// harici = rozetli kimlikler, repository = birleşik taramanın geri kalanı.</summary>
+    private static void AssertLastReportMatchesTheWorkspace(
+        ExternalWorkspace workspace, List<(int Repository, int External)> reports)
+    {
+        int external = workspace.ExternalProjectIds.Count;
+        Assert.Equal((workspace.Scan.CsprojPaths.Count - external, external), reports[^1]);
     }
 
     // ---------------------------------------------------------------- yolun üç biçimi
@@ -63,7 +73,7 @@ public class ExternalWorkspaceResolverTests
         using var temp = new TempDir();
         string inside = WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
         WriteProject(Path.Combine(temp.Path, "Sandbox"), "Sandbox");
-        string sln = WriteSolution(temp.Path, "Mail", inside);
+        string sln = ExternalFixtureFiles.WriteSolution(temp.Path, "Mail", inside);
 
         var workspace = Resolve(EmptyMain, new ExternalProject(sln));
 
@@ -144,6 +154,86 @@ public class ExternalWorkspaceResolverTests
         Assert.Empty(workspace.Roots);
         Assert.Empty(workspace.ExternalProjectIds);
         Assert.Empty(workspace.Problems);
+    }
+
+    // ---------------------------------------------------------------- [design v1.24.0] keşif sayacı
+
+    /// <summary>Kart yoksa sayaç TEK rapor verir: ana taramanın projeleri, harici 0. Sync'in keşif satırı
+    /// harici tanım yokken de bu raporla <c>N found</c>'a ulaşır.</summary>
+    [Fact]
+    public void Without_cards_the_counter_reports_the_main_scan_once()
+    {
+        var main = new ScanResult([@"D:\repo\A\A.csproj", @"D:\repo\B\B.csproj"], [@"D:\repo\Osys.sln"]);
+
+        var (workspace, reports) = ResolveCounting(main, ExternalTestRoots.UnrelatedMainRoot);
+
+        Assert.Equal([(2, 0)], reports);
+        AssertLastReportMatchesTheWorkspace(workspace, reports);
+    }
+
+    /// <summary>Sayaç kaynak başına ilerler: önce ana tarama (harici henüz 0), sonra projeye çözülen HER kart
+    /// için bir rapor — değerler KÜMÜLATİFTİR (o ana kadar bulunanlar). Çözülemeyen kart rapor VERMEZ ve hiçbir
+    /// sayıyı artırmaz: uyarısı ayrı yoldan (<see cref="ExternalWorkspace.Problems"/>) gelir.</summary>
+    [Fact]
+    public void The_counter_reports_the_main_scan_first_then_each_resolved_card_cumulatively()
+    {
+        using var main = new TempDir();
+        using var external = new TempDir();
+        string a = WriteProject(Path.Combine(main.Path, "A"), "A");
+        WriteProject(Path.Combine(external.Path, "Tools", "Mail"), "Mail");
+        WriteProject(Path.Combine(external.Path, "Tools", "Ocr"), "Ocr");
+        string pay = WriteProject(Path.Combine(external.Path, "Pay"), "Pay");
+
+        var (workspace, reports) = ResolveCounting(new ScanResult([a], []), main.Path,
+            new ExternalProject(Path.Combine(external.Path, "Tools")),
+            new ExternalProject(Path.Combine(Path.GetTempPath(), "gone-4c21")),
+            new ExternalProject(pay));
+
+        Assert.Equal([(1, 0), (1, 2), (1, 3)], reports);
+        Assert.Single(workspace.Problems);
+        AssertLastReportMatchesTheWorkspace(workspace, reports);
+    }
+
+    /// <summary>Üst üste binen kartlar (bir klasör ve içindeki <c>.sln</c>) aynı projeyi iki kez SAYMAZ: harici
+    /// sayı tekil kimliklerdir — birleşik taramanın tekilleştirmesiyle aynı kural. İkinci kart yine de rapor verir
+    /// (kaynak okundu), yalnız sayı yerinde kalır.</summary>
+    [Fact]
+    public void Overlapping_cards_do_not_count_a_project_twice()
+    {
+        using var temp = new TempDir();
+        string mail = WriteProject(Path.Combine(temp.Path, "Mail"), "Mail");
+        string sln = ExternalFixtureFiles.WriteSolution(temp.Path, "Mail", mail);
+
+        var (workspace, reports) = ResolveCounting(EmptyMain, ExternalTestRoots.UnrelatedMainRoot,
+            new ExternalProject(temp.Path), new ExternalProject(sln));
+
+        Assert.Equal([(0, 0), (0, 1), (0, 1)], reports);
+        AssertLastReportMatchesTheWorkspace(workspace, reports);
+    }
+
+    /// <summary>
+    /// AYIRT EDİCİ — <b>repository, ana taramadaki projelerden harici OLMAYANLARdır</b>, ana taramanın ham sayısı
+    /// değil. Ana kökün ÜST klasörünü gösteren bir kart reddedilmez (yalnız ana kökün içi reddedilir) ve ana
+    /// repo projelerini de harici rozetiyle getirir; o projeler satır gruplamasında <c>EXTERNAL PROJECTS</c>
+    /// altına düşer, sayaç da onları oraya taşır. Repository bu yüzden azalabilir; TOPLAM (bulunan tekil
+    /// projeler) asla azalmaz.
+    /// </summary>
+    [Fact]
+    public void A_card_above_the_main_root_moves_its_projects_to_external_and_the_total_never_drops()
+    {
+        using var temp = new TempDir();
+        string mainRoot = Path.Combine(temp.Path, "main");
+        string a = WriteProject(Path.Combine(mainRoot, "A"), "A");
+        WriteProject(Path.Combine(temp.Path, "Shared", "B"), "B");
+
+        var (workspace, reports) = ResolveCounting(new ScanResult([a], []), mainRoot,
+            new ExternalProject(temp.Path));
+
+        Assert.Equal([(1, 0), (0, 2)], reports);
+        Assert.Empty(workspace.Problems);
+        var totals = reports.Select(r => r.Repository + r.External).ToList();
+        Assert.Equal(totals.Order(), totals);
+        AssertLastReportMatchesTheWorkspace(workspace, reports);
     }
 
     // ---------------------------------------------------------------- çözülemeyen yollar

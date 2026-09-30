@@ -405,13 +405,22 @@ restore step drops out. The repair degrades; it does not stop.
 ### 5.3 Events
 
 Lifecycle: `engineReady` · `pong` · `error` · `debugChildrenSpawned` (the test hook's answer, §5.2).
-Sync: `syncStarted` · `syncProgress` · `workspaceTopology` · `buildPreview` · `syncCompleted` · `pullCompleted` ·
-`checkoutCompleted`.
+Sync: `syncStarted` · `syncProgress` · `syncDiscovery` · `workspaceTopology` · `buildPreview` · `syncCompleted` ·
+`pullCompleted` · `checkoutCompleted`.
 Clean: `cleanStarted` · `cleanProgress` · `cleanCompleted`.
 Optimize: `optimizeStarted` · `optimizeProgress` · `optimizeCompleted`.
 Run: `planProgress` · `runStarted` · `projectStarted` · `projectLog` · `projectSucceeded` · `projectFailed` ·
 `projectSkipped` · `cycleRoundStarted` · `cycleMemberHeld` · `cycleCompleted` · `runStopped` · `runCompleted`.
 Queries: `branchList` · `projectLogChunk`.
+
+`syncDiscovery` is the one count a Sync reports while it discovers the project set: how many projects it has
+found so far, as repository projects and external projects, cumulative rather than a delta, so a report
+arriving late never takes a number back. The engine sends one when the main repository scan is done and one
+after every external root that resolved to projects (§10.2). It is its own discriminator rather than a
+`syncProgress` line because the numbers are what matters, and parsing them back out of console text would define
+the same count a second time. It carries no denominator and no source name; the total is the sum of the two
+fields and is not put on the wire. Only Sync sends it — Clean, Optimize and a run's planning resolve the same
+workspace without it.
 
 `planProgress` is the only run event that precedes `runStarted`; it carries the planning steps of the run
 (§8.6). It stays separate from `syncProgress` because the App treats that one as part of a Sync
@@ -1790,7 +1799,8 @@ Sync runs the whole analysis, in Core:
 
 ```
 git fetch origin <branch> --no-tags   (ref-only; skipped when the Sync does not fetch)
-  → scan → evaluate (cached) → producer map → edges → SCC/topo → layers
+  → scan (syncDiscovery after the main walk and after each external root)
+  → evaluate (cached) → producer map → edges → SCC/topo → layers
   → will-build pass
   → workspaceTopology + buildPreview + syncCompleted
 ```
@@ -1813,6 +1823,19 @@ back to the local HEAD, and the flow continues. The degraded path does **not** s
 pass — offline still produces a complete, usable Sync. A Sync that does not fetch never goes to the network: it
 reads the last known remote tip (`refs/remotes/origin/<branch>`) and measures against that; with no remote ref
 the target is the local HEAD and the distance is unknown, which is not a degraded fetch.
+
+**Discovery counts.** The App learns the project set only from `workspaceTopology`, and the evaluation and the
+will-build pass sit between the scan and that event. Sync therefore reports the discovery itself as it goes
+(`syncDiscovery`, §5.3): one report when the main repository walk is done, with no external project yet, and
+one after every external root (§10.4) that resolved to projects. Each carries the distinct counts found so far —
+repository projects that are not external, and external project ids — so two cards that overlap (a folder and a
+`.sln` inside it) never count a project twice. A card that resolves to nothing only warns: it sends no report
+and adds nothing. The counting rule lives once, in the resolver that merges the roots
+(`ExternalWorkspaceResolver`), with the same comparer the merged scan is made distinct with, so the last report
+is exactly the grouping the topology then carries (`IsExternal`). The total never drops; the repository share
+alone can, when a card points above the repository root and brings the repository's own projects in as
+external. The scan is not reordered for the counter: it still runs after the fetch, the main walk before the
+external roots, and the scan lines keep their place.
 
 **Who starts a Sync, and what it does to the screen.** The console tells one *section* at a time. A new
 section is opened by an operation the user started, or by the world under the list changing — the branch.
@@ -1843,9 +1866,10 @@ above zero.
 **The Sync button, a branch change and a configuration switch start the screen over; the other kinds refresh it
 in place.** A Manual, BranchChange or ConfigurationChange Sync (`SyncModeRules.RestartsPlanSurface`) blanks the
 project list and the graph at the request, in the same moment as the console and the event stream. Only the
-screen is blanked: the rows, their decisions and the topology stay in the view model, so the phase does not drop
-to `Boot`, the list shows no invite and the graph no *appears after Sync* label, and its header stays empty
-rather than counting zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
+screen starts over: the rows, their decisions and the topology stay in the view model, so the phase does not
+drop to `Boot`. Until the topology arrives the list and the graph show their discovery blocks (below) — never
+the no-projects message, a filter's no-match line or the graph's *appears after Sync* box — and the graph header
+counts nothing rather than zero projects. A ConfigurationChange Sync is the one kind that lets go of the decisions
 too (`SyncModeRules.DropsDecisions`): the configuration is part of every signature, so the decisions in hand
 belong to the configuration selected before, and when the engine starts that Sync every row returns to the start
 mode (§14.3) until the new configuration's preview colours it. It happens then and not at the click, because the
@@ -1859,6 +1883,22 @@ node ids, names, layers and edges — reconciles the rows in place, leaves the g
 are, and only a project added or removed, a moved layer or a changed edge replays the reveal (§13.2). The click
 of Clean and Optimize empties the plan itself, and a real repository change does too; each also forgets the
 signature, so the Sync chained behind it reveals even the same structure.
+
+**While the project set is unknown, the two panels say so.** A Sync that finds the list on the screen empty — no
+rows in the view model (application start, the hand-over after Clean or Optimize, a repository change) or a
+surface that is starting over (the three kinds above) — opens the *discovery state* (`RunViewModel.IsDiscovering`)
+at its request, in the same moment the request gate closes. The graph and the project list then show a fixed
+block that names what is happening, and the list counts the projects found so far from the `syncDiscovery`
+reports (§13.2). A silent Sync never opens it — it leaves no trace on the screen — and neither does an Appended
+Sync that keeps its rows (a pull, a Save that changed only the external roots or the layers): those rows stay and
+are reconciled in place. The work of Clean or Optimize before its Sync is not discovery either: until the chained
+Sync is requested the list stays empty and the graph keeps its *appears after Sync* box. The state closes when the
+topology arrives — before the surface is rebuilt, so the reveal plays on a visible surface — and on every path
+that ends a Sync without one (the send failed, planning failed, the engine was lost, it completed without a
+topology), all of which run through one place (`EndSyncMode`). Reports are read only while the state is open, and
+the App takes the latest values as they come: they are cumulative, and the total is their sum. The breakdown
+(` · N repository · N external`) is shown when at least one external root was registered at the request, whether
+or not it resolves to anything; that snapshot does not change while the Sync runs.
 
 Every preview that arrives outside a run — every Sync's, the silent one included — rewrites the decision of every
 row, including a row the last run finished, so a project that changed in the background after a run goes grey
@@ -2352,9 +2392,14 @@ operation markers, so the branch chip's amber dot and the git locks are current 
 The title bar opens with a **logo lock**: the product mark at 19 px in full colour, the product name, a
 hairline, and finally the company logo at 10 px and 55 % opacity. The hierarchy is the point — product ahead
 and vivid, company behind and quiet. The lock ends there, and the title bar names no repository: the action
-bar below says it once, with the workspace name and the branch chip. The window's application
-commands sit at the other end, ahead of the caption buttons, in decreasing order of use: the three view-mode
-toggles, a hairline separator, then the gear (Settings), the sparkle (What's new) and the `i` (About).
+bar below says it once, with the workspace name and the branch chip. The other end, ahead of the caption
+buttons, opens with the **update pill** and a hairline of its own (§13.3), then carries the window's application
+commands in decreasing order of use: the three view-mode toggles, a hairline, then the gear (Settings), the
+sparkle (What's new) and the `i` (About). Both hairlines are one style. The cluster is docked right, so the pill
+grows into the empty space on its left: the icons keep their distance from the window's right edge whether the
+pill is there or not. There is no update engine yet — the pill shows a sample offer, the next minor of the
+installed version, and is therefore always visible; it is neutral (no amber, the title bar's rule), and it plays
+an entrance only when an offer arrives after startup (§14.5), never on the first frame.
 
 Three view modes from the title bar: **quad** (default; returning to the preset resets all three splits to
 50/50/50), **list** (graph hidden, left column is the project list), **focus** (graph hidden, console takes
@@ -2370,20 +2415,20 @@ Splitters have a 7 px grab area over a 1 px visible line that turns amber while 
 ### 13.1 MVVM
 
 `RunViewModel` is the single run-facing view model, split across partial files by surface — the run core, the
-action bar, the event stream, the workspace, the automatic Sync, the git operation in progress and the safe
-exit. It owns the project rows, the counters, the phase, the selection, the filter and the command set. Rows are
-`ProjectRowViewModel` — observable state only; every visual decision (colour, glyph, badge) is made in XAML from
-that state.
+action bar, the event stream, the workspace, the automatic Sync, the git operation in progress, the safe exit,
+Esc's run layer, the discovery state and the update offer. It owns the project rows, the counters, the phase, the
+selection, the filter and the command set. Rows are `ProjectRowViewModel` — observable state only; every visual
+decision (colour, glyph, badge) is made in XAML from that state.
 
 Text that the design specifies literally is produced by **pure, testable static classes**, not by controls:
-`RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `ProjectFilter`, `RunCounters`,
-`LayerGrouping`. A control that also decided its own wording would be a second source of truth.
+`RibbonText` (one line per ribbon phase), `StreamText`, `InteractionText`, `UpdateText`, `ProjectFilter`,
+`RunCounters`, `LayerGrouping`. A control that also decided its own wording would be a second source of truth.
 
 ### 13.2 Panels
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ TITLE BAR 40px — product mark · title · company mark   ⊞ ≡ ▣ ⚙ i — □ ×│
+│ TITLE BAR 40px — mark · title · logo   Update v │ ⊞ ≡ ▣ │ ⚙ ✦ i  — □ ×│
 ├──────────────────────────────────────────────────────────────────────┤
 │ STICKY RIBBON 32px — operation pill · phase · building chips ·        │
 │                      failure chips        · global progress 2px      │
@@ -2399,7 +2444,8 @@ Text that the design specifies literally is produced by **pure, testable static 
 
 **Title bar.** The brand alone: the product mark, the product name, a hairline, the company mark. It carries
 no repository or branch context — the branch already has a chip in the action bar, and the one remaining fact,
-*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root.
+*which workspace is open*, sits next to it as a mono label whose tooltip is the repository root. Its right end is
+the update pill and the application commands (§12.4).
 
 **No workspace.** Without a repository root — on first run, or after a Save closed the workspace (§13.3) — the
 window is the first-run screen: the project list carries the setup invitation (`Configure the workspace`, a
@@ -2409,6 +2455,22 @@ checklist of the root and the layer count, *Open settings* and *Import settings�
 dependencies`, `N lines` or `N events` — and the PROJECTS header neither the `build-order` label nor the filter
 box: there is nothing to count or filter. Sync, Build, the maintenance box and the action bar's chips are
 disabled. One switch drives the panel side of this from `HasWorkspace` (`ShellRoot.SetHasWorkspace`).
+
+**While a Sync discovers the project set** (§10.2), neither left panel sits empty. The graph's body is a centred
+block on `surface-base` — Lucide *network* at 28 px, 1.4 stroke, `text-faint` at 70 % opacity, and 10 px below it
+`Graph appears once projects are discovered` in 12 px `text-faint`; the dashed *appears after Sync* box, the node
+surface and the header's `N projects · N dependencies` count are hidden for the duration (`GraphView.ApplyBodyState`,
+the one gate for the header count and the three body layers). The project list shows its own block, also on
+`surface-base` with 24 px side padding: Lucide *list* in the same icon look, `Discovering projects` in 13 px/500
+`text-secondary`, and a mono 11 px tabular line that never wraps — `29 found`, or with an external root registered
+`31 found · 29 repository · 2 external`; the total is one step brighter (`text-dim`), the rest `text-faint`. There
+is no denominator and no source name, because how many solutions or roots remain is not known until the scan ends,
+and nothing moves — no spinner, no pulse; only the numbers change. The block is a list state like the others:
+`ListInvite.Resolve` puts it after the setup invitation and before *No projects found* and *No projects match this
+filter*, so a filter that matches nothing cannot cover it. The PROJECTS header hides its filter box, `build-order`
+label and filter chip meanwhile, through the same gate as the no-workspace look (`ShellRoot.ApplyListTools`); the
+filter itself survives the Sync and comes back with its chip. The counter is a polite live region (§15). The
+first-run screen does not change: without a workspace there is no Sync and no discovery.
 
 **Sticky ribbon.** On the left a **persistent operation pill** — `SYNC` · `BUILD` · `REBUILD` · `CLEAN` ·
 `DEEP CLEAN` · `OPTIMIZE` · `RESOLVE` — mono, caps, 19 px, one-pixel border. `CLEAN` is a `-t:Clean` run —
@@ -2695,9 +2757,9 @@ staggered reveal and — when nothing is selected — scrolls it back to the top
 reveal in the same moment, so the two read together as "listed from scratch". The rule holds for the Syncs that
 run on their own and the appended ones (§10.2), because a list that jumped back to the top on every commit or
 return to the window would take the user's place away from them. The Sync button and a branch change are the
-user saying "start over", and they get exactly that: the list and the graph blank with the console at the
-request and come back with the reveal, back at the top, even when the structure is unchanged — or, if the Sync
-brings no topology, the previous surface comes back. While the surface is blank, previews and row
+user saying "start over", and they get exactly that: the list and the graph give way to the discovery blocks with
+the console at the request and come back with the reveal, back at the top, even when the structure is unchanged —
+or, if the Sync brings no topology, the previous surface comes back. While the surface is blank, previews and row
 updates do not quietly refill the list; only the topology's reveal (or the restore) does. The click of Clean
 and Optimize, and a real repository change, empty the surface and forget the signature, so the Sync that fills
 it again always reveals.
@@ -2952,8 +3014,10 @@ plan takes the old one down with the click, not with the reply — and an Optimi
 own does not take the plan down: it replaces decisions, not the plan's structure (§10.2).
 The phase moves
 to `Boot` for the duration, which is what makes an empty list honest — the list invite reads an empty list in
-`Idle` as "no projects under this folder", which would be a lie, and the graph shows its own *appears after
-Sync* empty state. A repository change does exactly this for the same reason; a branch change does not — its
+`Idle` as "no projects under this folder", which would be a lie — and the graph shows its own *appears after
+Sync* empty state. That is the job's own stretch, before any Sync: the moment the chained Sync is requested, both
+panels switch to their discovery blocks and the list counts the projects as they are found, until the topology
+fills them in (§10.2). A repository change does exactly this for the same reason; a branch change does not — its
 rows and decisions stay in the plan, only the screen starts over until its Sync's topology brings them back
 (§10.2). Because the emptying happens at the
 click, a command that fails to send, or one the Supervisor rejects, leaves the list empty until the user runs a
@@ -3116,8 +3180,8 @@ shadow, and a 140 ms pop-in (4 px up, scale .985 → 1). Outside click, Esc, or 
 that opened them closes them. That last one needs saying because WPF does not give it for free: a popup that
 closes on outside clicks drops its `IsOpen` while the press is still travelling, and the same press then
 re-checks the trigger and reopens it — the gesture cancels itself out and the popover cannot be closed by
-the control that opened it. One gate (`PopoverToggle`) closes that window for all four popovers — branch, the
-Build chevron, the row menu and the Open-in-VS chooser. Rows inside them are 28 px. The branch popover is
+the control that opened it. One gate (`PopoverToggle`) closes that window for all five popovers — branch, the
+Build chevron, the row menu, the Open-in-VS chooser and the update card. Rows inside them are 28 px. The branch popover is
 272 px wide and carries a search box; picking a row is a checkout (§10.3), picking the active branch does
 nothing, and the remote `origin/HEAD` pointer is not listed.
 
@@ -3134,6 +3198,48 @@ wholesale replacement implies is safe here, unlike in the projects list: there i
 selection to preserve. The branch the chip shows is not a choice the list has to keep: it is the inventory's
 active entry — HEAD — read afresh on every publish, and `syncCompleted` aligns it even earlier (§5.3). On a
 detached HEAD the last known name stays.
+
+**The update card** is the title bar's popover (`UpdateCard`, on the same base as the branch popover), opened by
+the update pill (§12.4). It hangs 9 px *below* the pill with its left edge on the pill's, in a 344 px `Ds.Popover`
+shell without padding, and it drops in instead of popping up (§14.5). The pill is a toggle whose screen-reader
+name is `Update to <version>` and which also reports whether the card is expanded. The card is three blocks
+separated by `border` hairlines. The **identity** block carries a caps *Update ready* with the package size on the
+right, then the version change in mono — installed in `text-dim`, an arrow, incoming larger and in
+`text-primary`. The **highlights** are drawn in What's new's category-block language at compact measures (blocks
+12 px apart, 6 px under the heading, items 5 px apart in 12 px `text-secondary` on an 18 px line): both surfaces
+draw their blocks through one helper (`ReleaseNoteBlocks`) with their own numbers, so they cannot drift, and the
+categories come in the same fixed order. The **decision** block is one line of text above a right-aligned *Later*
+and *Restart to update*. The line says what a restart does; while work is in flight *Restart to update* is
+disabled and the line names what it waits for, in a fixed order — a Clean, Optimize, Resolve, checkout or pull
+(`Available once the running task finishes.`), then any Sync, the silent one included
+(`Available once Sync finishes.`), then a build that is running, being marked or waiting for other work to end
+(`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
+read from the shortcut catalog). The reason is one computed property of the view model; its task bucket takes the
+workspace work other than Sync from the same list the workspace-busy question reads, so the two cannot drift. It is
+re-evaluated at the workspace-busy notification — which every change of the Sync, Clean, Optimize, checkout and
+pull flags and of the run lock reaches, and so does the end of a run — and when a run starts, since a Resolve
+reads as a task; it is announced only when it changes, so the button comes back on its own when the work ends.
+*Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's popover layer
+(§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule exists
+because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
+The card's content is the sample offer the pill shows.
+
+*Restart to update* raises a request on the view model, and the command itself is the gate: a call that bypasses
+the button's `CanExecute` still raises nothing while the restart is locked or there is no offer. The shell answers
+by closing the card and playing **the restart screen** (`UpdateRestartScreen`), the window's topmost layer — above
+the modals and over the title bar, taking clicks in the caption band too, so neither dragging nor the window
+buttons reach through it. On `surface-base` it centres a 232 px column: the product mark at 30 px,
+`Updating <product>` at 13 px/600, the version change in 11 px mono (installed in `text-dim`, an 11 px arrow,
+incoming in `text-secondary`), a 2 px amber progress bar and a step line in 11 px `text-faint`. Three steps —
+`Closing <product>…` for 800 ms up to 20 %, `Installing <version>…` for 1100 ms up to 78 %, `Starting <version>…`
+for 800 ms up to 100 % — each advance the bar linearly. The numbers live in a pure core (`UpdateRestartTimeline`);
+the screen reads it on every tick of one frame timer against an injected clock, so tests step through it frame by
+frame without waiting. The step line is a polite live region, announced once per step rather than per frame.
+120 ms after the last step the screen fades out and goes away (§14.5). There is no update engine yet, so the
+screen is a preview of the design: when it leaves, the application is exactly as it was — no Sync, no reset, the
+selection and the pill in place. While it shows, its fade-out included, the window ignores the keyboard — every
+key is consumed at the window's tunnelling key event, before any shortcut binding sees it — and the global
+hotkeys do nothing (§13.9).
 
 **The three modals — Settings, About and What's new — share one shell** (`ModalDialog`, with its look in the
 `Ds.ModalDialog` template). It owns everything that is not content: a full-bleed scrim, the `Ds.Dialog` frame
@@ -3152,7 +3258,8 @@ focus navigation finds nothing and focus would stay on the dialog itself. Every 
 duration read from the `Duration.Base` token and snapping to the end state under reduced motion. The dialog's
 typography (the UI font and `text-primary`) is set on the dialog rather than the frame, because the slot content
 is logically parented to the dialog and WPF value inheritance follows the logical parent. No dialog file
-re-implements any of this; a source guard keeps it that way.
+re-implements any of this; a source guard keeps it that way. Because every opening passes through the shell, it
+is also the one place that announces it (`Opened`) — the window closes the update card there.
 
 The Settings dialog is a fixed 880 × 576 px, split into two panes under a head row that carries the title and a
 close button taking the same path as *Cancel*. Down the left runs a 196 px **section rail** on the `surface`
@@ -4142,7 +4249,8 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 `Back`, or Esc, clears it and follow-mode resumes. Text selection inside the console never clears the project
 selection.
 
-Esc is a chain and only ever closes the topmost layer: dialog → popover/menu → selection → the running build.
+Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
+title bar's update card) → selection → the running build.
 With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
 dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
 pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
@@ -4240,14 +4348,18 @@ Three pieces of shared machinery keep the copies from multiplying:
   corner radius has no animation type at all, so it is *bound* to the animating inset and follows it frame by
   frame, which also keeps the pill a true capsule at both widths (a fixed radius would be clipped
   horizontally but not vertically, turning the ends into ellipses).
-- **`PopIn`** is the single 140 ms entrance animation, shared by both popovers and the Build menu. There is no
-  exit animation; overlays hide immediately.
+- **`PopIn`** is the one entrance body: the 140 ms popover pop-in (the branch popover, the Build menu, the row
+  menu and the Open-in-VS chooser), the modal entrance, the update pill's entrance, the update card's drop-in and
+  the update restart screen's fade-in differ only in duration, direction, scale and scale origin (§14.5). It has no
+  exit animation; overlays hide immediately, and the one surface that leaves with a fade — the restart screen —
+  owns that exit itself.
 - **`RevealStagger`** owns the hero acquisition, generation stamping and guarded release of the opening
   reveal. The *cadence* is deliberately not shared — the graph staggers by layer, the list by row (§13.2).
 
-The branch popover derives from a common base that owns the open state, the refresh-then-animate-then-focus
-sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc chain does not reach it) and
-outside click; only the branch search filter is its own. The width belongs to
+The branch popover and the update card derive from a common base that owns the open state, the
+refresh-then-animate-then-focus sequence, the Esc handling (a popover is a separate HWND, so the window-level Esc
+chain does not reach it) and outside click; what each adds is its own — the branch search filter; the card's
+drop-in and its *Later*, which asks to close exactly the way Esc does. The width belongs to
 the shell `Border` alone — each body stretches into whatever the shell's padding leaves rather than restating a
 number, since a restated width silently drops the shell's border thickness and WPF then clips the overflowing
 edge of the body.
@@ -4274,7 +4386,8 @@ active set appears as a removable chip in the panel header.
 These are the only shortcuts. `F5` does not branch on state: in Visual Studio `F5` never stops what is running,
 and a key that both starts and stops starts a new build when it is pressed to stop one that has just finished.
 `Shift+F5` is deliberately unbound — it is Visual Studio's *Stop Debugging*, and pressed out of habit it used to
-start a Rebuild here. What's new has no key (§13.3).
+start a Rebuild here. What's new has no key (§13.3). While the update restart screen shows (§13.3), none of these
+keys — window or global — does anything; one shell property answers that question for both paths.
 
 The key → intent table is a pure, tested structure that `MainWindow` merely wires into `InputBinding`s; `F5`,
 `F6` and `F7` bind straight to the view model's Build, Rebuild and CleanAll commands, and every dispatch
@@ -4555,6 +4668,18 @@ four-point star, keyed `Icon.WhatsNew` rather than the design's own name for it 
 unrelated source guard protecting the event stream's own celebration vocabulary) is drawn at the same 1.7 px
 for the same reason; all three title-bar icon buttons read as one family.
 
+The two discovery blocks (§13.2) are the one place an icon is drawn large: Lucide *network* for the graph and
+*list* for the project list, 28 px, a 1.4 stroke, `text-faint` at 70 % opacity — an empty-state picture, not a
+control. The look is one shared style (`Ds.DiscoveryIcon` with its `.Path` twin); geometry and weight stay in the
+dictionary like every other icon. The list icon is keyed `Icon.ListLines`, so it cannot be mistaken for the layout
+selector's `Icon.LayList`.
+
+The update pill (§12.4) draws Lucide *circle-arrow-up* (`Icon.UpdateReady`) at 13 px in the pill's text colour and
+the title bar's 1.7 weight. Its ring is r = 9, as the design draws it — the design calls it the same circle as the
+`info` icon, but the derived `info` circle is r = 10 and the pill follows the design. The card's version change
+uses *arrow-right* (`Icon.ArrowRight`, 1.8), and its *Restart to update* button reuses `Icon.Rebuild`, the
+rotate-cw of the Build menu family, rather than a second copy of the same geometry.
+
 **Two marks, one hierarchy.** The application carries its own brand — five pill strips and a gradient chevron —
 and the company logo sits behind it. Both are controls, not fragments of markup: `Controls/AppMark.xaml` draws
 the product mark (title bar 19 px, About hero 30 px) and `Controls/BrandLogo.xaml` the company wordmark (title
@@ -4637,6 +4762,20 @@ Five contract rules, each enforced by a test:
    the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
+
+**Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
+Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
+scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its
+hairline; the update card drops 4 px from above at scale .985 over 140 ms, scaling from its top-left corner
+because it hangs from the pill; the update restart screen only fades in, over `Duration.Base` — it covers the
+whole window and has no edge to travel, so no transform is set up at all. All ease out and all snap to their end
+state under reduced motion. Only the restart screen has an exit: it fades out over `Duration.Slow` with the same
+ease-out, lets clicks through while it fades, and leaves when the fade ends — at once under reduced motion. Its
+progress bar is information rather than decoration and advances whatever the motion setting. The pill's entrance
+is the one that is conditional: it plays once, when an offer arrives after startup — the
+sample offer the pill shows today is there from the first frame, so it never plays yet — and the pill does not
+move after that. Its hover is the design system's 120 ms colour transition (`Duration.Fast`); the design's text
+says 80 ms, but its own measurements and prototype use the standard one.
 
 **Two choreographies frame an operation.** They are the largest pieces of motion in the application, and both
 are driven by one `DispatcherTimer` apiece (`StepPlayer`) with their numbers in pure cores
@@ -4809,8 +4948,13 @@ opposite of that and are encouraged. Toasts and in-app popups do not exist.
 
 Rows are focusable with a tab index; Enter toggles selection; arrow keys navigate. The focus ring is 2 px amber
 at 50 % with a 1 px offset. Dialogs trap focus; popovers manage it explicitly. `AutomationProperties.Name` is
-set from one central name table so the same element cannot be named two ways, and the ribbon acts as a live
-region. Contrast is asserted by test for every text token, including the dim ones.
+set from one central name table so the same element cannot be named two ways. The live regions are the ribbon's
+phase text, assertive and announced when the phase changes; the discovery counter (§13.2), polite and announced
+once when the count changes — its automation name is written with the text, because a block built from two runs
+reports an empty `Text` once the runs are rewritten; and the update restart screen's step line (§13.3), polite
+and announced once per step rather than per frame. Each region decides when it speaks; how it speaks is one
+helper (`LiveRegion`), which finds or creates the element's automation peer and raises the live-region event, so
+no region raises it on its own. Contrast is asserted by test for every text token, including the dim ones.
 
 Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
 in the automation tree, named with the project and its status from the same central table and refreshed by the
@@ -5265,6 +5409,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
 | Workspace label text (the repository root's folder name) | `App/ViewModels/TitleBarContext.cs` |
 | Release notes (What's new data, categories, fold rule) | `CHANGELOG.md` (content), `App/Services/ReleaseNotes.cs` (reader and rules) |
+| Update offer — version, size, highlights; the next-minor rule and the sample placeholder the app starts with (no update engine yet) | `App/Services/UpdateOffer.cs` |
+| Update surface of the view model — the current offer, the Restart lock and its order, the Restart request and its gate | `App/ViewModels/RunViewModel.Update.cs`, texts `App/ViewModels/UpdateText.cs`; the lock's task bucket reads the workspace work from `RunViewModel.Workspace.cs` (`NonSyncWorkspaceBusy`, the list `WorkspaceBusy` also reads); re-evaluated from `RunViewModel.Workspace.cs` (`OnWorkspaceBusyChanged`) and `RunViewModel.Stream.cs` (`runStarted`) |
+| Title bar update pill — the first element of the right cluster, its shared hairline style, visibility, version and name from the offer, the entrance; the card's popup and its placement below the pill's left edge (custom, independent of the Windows handedness setting), its close paths (dialogs, the Esc popover layer, the Restart request) | `App/MainWindow.UpdatePill.cs` (`UpdateCardGap`), `App/Controls/PopoverPlacement.cs`, `App/MainWindow.xaml` (`UpdatePillSlot`, `UpdatePopup`, `TitleBarSeparator`), `App/MainWindow.xaml.cs` (`AnyPopoverOpen`, `CloseAllPopovers`), `App/Resources/Controls.xaml` (`Ds.UpdatePill`) |
+| Restart request → the update restart screen as the topmost layer; keyboard and global hotkeys suspended while it shows | `App/MainWindow.UpdateRestart.cs` (`OnRestartToUpdateRequested`, `InputSuspended`, `OnPreviewKeyDown`), `App/MainWindow.xaml` (`UpdateRestartOverlay`), `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
+| Popover trigger that reports expanded / collapsed to UI Automation | `App/Controls/PopupToggleButton.cs` |
 
 **Engine and IPC**
 
@@ -5375,7 +5524,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Configuration switch: the segment's gate, the Sync it starts and its section line, the decisions dropped when that Sync starts | `App/ViewModels/RunViewModel.cs` (`SetConfiguration`, `ConfigurationChangedLine`), `RunViewModel.ActionBar.cs` (`CanSwitchConfiguration`), `RunViewModel.Workspace.cs` (`OnSyncStarted`), `App/Views/ActionBar.xaml.cs` (`RefreshConfigGate`) |
 | The legacy pool folder and its one-line hint | `Core/Paths/LegacyWorktreePool.cs` |
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
-| Sync flow (fetch or last known remote → analysis → events) | `Core/Workspace/SyncWorkspaceService.cs` |
+| Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
@@ -5393,6 +5542,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Path → scannable root (folder, `.sln` or `.csproj`) merged into one workspace | `Core/Externals/ExternalWorkspaceResolver.cs` |
+| Discovery counting rule — repository vs. external, distinct, cumulative, one report per resolved source | `Core/Externals/ExternalWorkspaceResolver.cs` (`DiscoveryProgress`, `Reporter`) |
 | Reserved layer name and index for external projects (single source) | `Core/Externals/ExternalProjectsConventions.cs` |
 | Working-copy root discovery (`.git` file or directory) | `Core/Externals/VcsDetector.cs` |
 | The update step, its gate and its two error classes | `Core/Externals/ExternalUpdater.cs` |
@@ -5420,7 +5570,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Status counters | `App/ViewModels/RunCounters.cs` |
 | Layer grouping (from topology only — no regex in the App) | `App/ViewModels/LayerGrouping.cs` |
 | Graph feed construction | `App/ViewModels/GraphBinder.cs` |
-| Interaction copy (console notes, empty states) | `App/ViewModels/InteractionText.cs` |
+| Interaction copy (console notes, empty states, the discovery blocks' texts and counter line); the list-state decision (`ListInvite.Resolve`) | `App/ViewModels/InteractionText.cs` |
+| Discovery state while a Sync finds the project set — when it opens and closes, the cumulative counter, the breakdown snapshot | `App/ViewModels/RunViewModel.Discovery.cs`; opened in `RunViewModel.cs` (`SyncCoreAsync`), closed in `RunViewModel.Workspace.cs` (`OnWorkspaceTopology`, `EndSyncMode`) |
 | Settings draft state (layers, external roots + pending root, Save gate and its footer reason) | `App/ViewModels/SettingsDraftViewModel.cs` |
 | Settings General page catalog (groups, rows, defaults, dependencies — *Stash and switch branches* included) and its row state | `App/ViewModels/GeneralSettings.cs`, `App/Resources/Controls.xaml` (`Ds.Settings.ToggleRow`) |
 | General shell switches (*Start with Windows*, *Start minimized to tray*, *Close to tray*, *Show notifications*): how each is read from and written to `ui-state.json` and the settings file, its console note, the saved-or-default value every reader asks for, the Save that notes a change | `App/Shell/ShellSwitches.cs` |
@@ -5450,13 +5601,17 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Hollow reset of rows and the will-build surface (repository change, the start of a configuration switch's Sync) | `App/ViewModels/RunViewModel.ActionBar.cs` (`ResetRowsToHollow`) |
 | Emptying rows, graph and the will-build surface at a Clean or Optimize click, on a real repository change and when a Save closes the workspace | `App/ViewModels/RunViewModel.ActionBar.cs` (`ClearPlanSurface`) |
 | Closing the workspace on a Save with an empty root (root, phase, plan and git surface, selection, filter, a new console page) | `App/ViewModels/RunViewModel.ActionBar.cs` (`CloseWorkspace`, `RootOf`), `RunViewModel.Workspace.cs` (`ForgetGitSurface`) |
-| No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
+| No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
+| Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
 | Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
-| Branch popover and its base | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
+| Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
+| Update restart screen — the 232 px column, the frame timer and clock, the fade in and out, the once-per-step announcement; its steps, durations and percentages | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |
+| Release-note category blocks — one drawing for What's new and the update card, measures per surface | `App/Views/ReleaseNoteBlocks.cs` |
 | Branch popover row (virtualized item container) | `App/Views/BranchRow.cs` |
 | Settings dialog (section rail + pages), layer/external-project drag-reorder | `App/Views/SettingsDialog.xaml(.cs)`, `App/Controls/DragReorderBehavior.cs` |
-| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
+| Shared modal shell (scrim, frame, head/tabs/body/footer slots, rounded clip, host clamp, entrance, focus trap, Esc and scrim dismissal, the `Opened` announcement) | `App/Controls/ModalDialog.cs`, `DialogSize.cs`, `App/Resources/Controls.xaml` (`Ds.ModalDialog`) |
 | About dialog (identity block, About / Environment / Shortcuts tabs, What's new hand-off) | `App/Views/AboutDialog.xaml(.cs)` |
 | What's new dialog (release-note list, two-column version blocks, sticky identity column, version and installed chips) | `App/Views/NotesDialog.xaml(.cs)`, `App/Controls/StickyColumn.cs` |
 | Product mark · company wordmark | `App/Controls/AppMark.xaml(.cs)`, `BrandLogo.xaml(.cs)` |
@@ -5526,6 +5681,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |
+| Live-region announcement — the one place a region's peer is found or created and `LiveRegionChanged` raised; each region decides when | `App/Controls/LiveRegion.cs` |
 
 **Reading the map.** A rule of thumb that holds across the code base: where a behaviour has both a *decision*
 and its *WPF wiring*, the decision lives in a pure, testable class and the control only applies it. Ribbon

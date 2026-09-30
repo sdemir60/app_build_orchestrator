@@ -27,4 +27,13 @@ internal static class CommandPress
     /// pompalar (<see cref="DispatcherPump"/>).</summary>
     public static void Invoke(Button button) =>
         ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)!).Invoke();
+
+    /// <summary>Bir düğmenin <c>Click</c> olayını SENKRON yükseltir — yalnız <c>Click</c> handler'ları koşar (bağlı bir
+    /// komut ve bir <c>ToggleButton</c>'ın kendi işaret değişimi koşmaz). Pencere gösterilmeyen kabuk testleri içindir;
+    /// orada <see cref="Invoke"/>'un dispatcher'a bıraktığı basış, bir popup'ı da gerçekten açtırırdı.</summary>
+    public static void Click(System.Windows.Controls.Primitives.ButtonBase button)
+    {
+        ArgumentNullException.ThrowIfNull(button);
+        button.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+    }
 }

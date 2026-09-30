@@ -544,6 +544,21 @@ public class OptimizeWorkspaceServiceTests : IDisposable
         Assert.Equal(external.Path, Assert.Single(invoker.Requests).ProjectId);
     }
 
+    /// <summary>[design v1.24.0] Keşif sayacı (<see cref="SyncDiscoveryEvent"/>) Sync'e aittir: Optimize aynı
+    /// çözümlemeyle kendi kümesini kurar ama sayaç GÖNDERMEZ — proje sayısı bitişte
+    /// <see cref="OptimizeCompletedEvent"/> ile gelir.</summary>
+    [Fact]
+    public async Task Optimize_never_reports_the_sync_discovery_counter()
+    {
+        WriteLegacyProject("Main");
+        var external = WriteExternalProject("Shared");
+
+        var events = await RunAsync(ServiceWith(), externals: [external]);
+
+        Assert.Equal(2, Completed(events).ProjectCount);
+        Assert.Empty(events.OfType<SyncDiscoveryEvent>());
+    }
+
     /// <summary>Çözülemeyen bir kart Optimize'ı DÜŞÜRMEZ: isimli bir uyarı yazılır ve ana kök yine onarılır.</summary>
     [Fact]
     public async Task An_external_card_that_resolves_to_nothing_warns_and_the_main_root_is_still_repaired()

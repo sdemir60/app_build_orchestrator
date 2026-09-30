@@ -115,6 +115,9 @@ public sealed class DesignTokenScaleTests
         // [design v1.19.0 §2.10/§2.11] okuma ölçüsü: CSS'te token DEĞİL, iki dialogun (What's new maddeleri,
         // About paragrafı) ortak ham `line-height: 1.62`'si — tek yerde adlandırılır.
         Assert.Equal(13 * 1.62, (double)t["LineHeight.Reading13"], 6);
+        // [design v1.23.0 §9 "Uygulama sayıları"] güncelleme kartının 12px maddeleri ve açıklama satırı 1.5 satır
+        // yüksekliğindedir — --leading-normal @ text-xs.
+        Assert.Equal(12 * 1.5, (double)t["LineHeight.Normal12"]);
         Assert.Equal(0.07, (double)t["Tracking.Caps"]);             // --tracking-caps 0.07em
     }
 

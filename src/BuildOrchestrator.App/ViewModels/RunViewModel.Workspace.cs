@@ -549,7 +549,13 @@ public sealed partial class RunViewModel
     /// o sırada BAŞLAYAN bir Build yeni ağaçta başlar ve checkout cevabının temizliği onun konsolunu siler, bir
     /// Pull ise yanlış branch'i ilerletir. [kullanıcı bildirimi 2026-09-29] Bu yüzden o sırada basılan Build başlamaz,
     /// bekler (<see cref="QueueRun"/>) ve checkout'un Sync'i bitince yeni ağaçta açılır.</para></summary>
-    private bool WorkspaceBusy => SyncBusy || CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
+    private bool WorkspaceBusy => SyncBusy || NonSyncWorkspaceBusy;
+
+    /// <summary>Sync DIŞINDAKİ workspace işleri: Clean, Optimize, checkout ya da pull. <see cref="WorkspaceBusy"/>'nin
+    /// üyelik listesinin TEK yeri — güncelleme kartının Restart kilidi bunları Sync'ten AYRI bir kovada ("görev")
+    /// okur (<see cref="UpdateRestartBlockedReason"/>); yeni bir workspace işi buraya eklenince iki soru birlikte
+    /// görür.</summary>
+    private bool NonSyncWorkspaceBusy => CleanBusy || OptimizeBusy || CheckoutBusy || PullBusy;
 
     /// <summary>[final review M3] Workspace'e yeni bir iş başlatılabilir mi: koşu kilidi yok (<see cref="IsMidRunLocked"/>)
     /// ve workspace işi yok (<see cref="WorkspaceBusy"/>). Settings Save'in kapısı; komut kapıları
@@ -563,7 +569,8 @@ public sealed partial class RunViewModel
     /// (<see cref="OnGitOperationChanged"/>) buraya iner. Tüketicileri birbirine BAĞLANMAZ: koordinatör bekleyen
     /// kendiliğinden Sync tetiğini yeniden değerlendirir; [P3 · Task 2] güvenli çıkış uçuştaki iş bitince hazır olur
     /// (<see cref="EvaluateExit"/>); [kullanıcı kararı 2026-09-29] Esc'in "durdurulamaz" satırı iş bitince yeniden
-    /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>).
+    /// yazılabilir olur (<see cref="ResetEscNoteWhenIdle"/>); [design v1.23.0 §2.12] güncelleme kartının Restart kilidi
+    /// yeniden sorulur (<see cref="NotifyUpdateRestartGate"/>).
     /// <para>Ad bu yüzden nötrdür ve yeri <see cref="WorkspaceIdle"/>'ın yanıdır: çıkış beklerken koordinatör YOKTUR
     /// (<see cref="RequestExit"/> onu kapatır), yani buraya konacak bir "koordinatör yoksa dön" kısayolu bekleyen her
     /// çıkışı sessizce sonsuza dek bekletirdi.</para>
@@ -573,6 +580,7 @@ public sealed partial class RunViewModel
         _autoSync?.OnWorkspaceIdle();
         EvaluateExit();
         ResetEscNoteWhenIdle();
+        NotifyUpdateRestartGate();
     }
 
     /// <summary>[final review O1] Workspace komut kapısının TEK sorusu: <see cref="WorkspaceIdle"/> ve motor erişilebilir.
@@ -757,11 +765,14 @@ public sealed partial class RunViewModel
         if (mode == SyncMode.Silent) _silentBaseline = DecisionKeys();
     }
 
-    /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.</summary>
+    /// <summary>Uçuştaki Sync'in kipini bırakır — tamamlanma, Sync'e ait hata ve motor kaybı yolları.
+    /// [design v1.24.0] Sync'in her bitiş yolu buradan geçtiği için keşif bloğu da BURADA kapanır (tek yer): topoloji
+    /// getirmeden biten bir Sync bloğu asılı bırakmaz.</summary>
     private void EndSyncMode()
     {
         _syncMode = SyncMode.Manual;
         _silentBaseline = null;
+        EndDiscovery();
     }
 
     /// <summary>[spec 2026-09-18 §6.2] Sync transkripti satırı. Sessiz kipte yalnız sorun satırları (warn/error)
@@ -924,6 +935,9 @@ public sealed partial class RunViewModel
     /// </summary>
     private void OnWorkspaceTopology(WorkspaceTopologyEvent e)
     {
+        // [design v1.24.0] Proje kümesi artık biliniyor: keşif bloğu, yüzey yeniden kurulmadan ve reveal oynamadan
+        // ÖNCE kalkar — aksi hâlde reveal bloğun altındaki gizli yüzeye oynardı.
+        EndDiscovery();
         Topology = e.Nodes;
         Solutions = e.Solutions;
         // [cycle rounds/I2] SCC üyelik haritası topolojinin İKİNCİ yarısından (Cycles) kurulur — motorun grubu

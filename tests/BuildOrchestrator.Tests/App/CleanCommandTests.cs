@@ -352,9 +352,11 @@ public class CleanCommandTests
         Assert.Equal(0, vm.WillBuildCount);
         Assert.True(vm.AllClean);
         // Panel YANLIŞ konuşmaz: boş liste + Boot fazı = hiçbir davet (klasörde proje YOK demek olurdu).
+        // [design v1.24.0 · plan K2] Clean'in kendi penceresi keşif DEĞİLDİR (Sync yok) — keşif bloğu da çıkmaz.
         Assert.Equal(AppPhase.Boot, vm.Phase);
+        Assert.False(vm.IsDiscovering);
         Assert.Equal(ListInviteState.None,
-            ListInvite.Resolve(vm.HasWorkspace, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
+            ListInvite.Resolve(vm.HasWorkspace, vm.IsDiscovering, vm.Phase, vm.Projects.Count, vm.VisibleProjects.Count));
     }
 
     /// <summary>[kullanıcı kararı 2026-09-12] Boşaltma TIKLAMADADIR, dolayısıyla motora hiç ulaşmamış bir Clean de

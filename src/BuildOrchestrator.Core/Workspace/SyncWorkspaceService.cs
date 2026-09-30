@@ -10,9 +10,10 @@ using BuildOrchestrator.Core.State;
 namespace BuildOrchestrator.Core.Workspace;
 
 /// <summary>
-/// [A5/T69] Sync akışının TAMAMI, Core'da (D3 — planlama App/Supervisor'a sızmaz): ref-only fetch → tarama →
-/// evaluate/graf/topo (plan) → will-build pass → <see cref="WorkspaceTopologyEvent"/> + <see
-/// cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/>. v7 A5'e göre TAM ANALİZ YALNIZ SYNC'te koşar;
+/// [A5/T69] Sync akışının TAMAMI, Core'da (D3 — planlama App/Supervisor'a sızmaz): ref-only fetch → tarama
+/// (kaynak başına <see cref="SyncDiscoveryEvent"/>) → evaluate/graf/topo (plan) → will-build pass → <see
+/// cref="WorkspaceTopologyEvent"/> + <see cref="BuildPreviewEvent"/> + <see cref="SyncCompletedEvent"/>. v7 A5'e
+/// göre TAM ANALİZ YALNIZ SYNC'te koşar;
 /// Build'in örtük Sync'i evaluation-cache sayesinde ucuzdur.
 ///
 /// <para><b>K1 (mutlak):</b> git adımı YALNIZ <see cref="GitService.FetchRefOnlyAsync"/>'tir. checkout / pull /
@@ -124,8 +125,13 @@ public sealed class SyncWorkspaceService(
         // [design v1.14.0 §9] Harici kartlar TARANABİLİR köklerdir: bulunan projeler ana taramayla BİRLEŞİR
         // ve buradan sonrası onları ayırt etmez — kenarları, sıraları ve incremental kararları sıradan
         // projelerinkiyle aynı yoldan gelir. Hiçbir VCS komutu çalışmaz: Sync yalnız BAKAR.
+        // [design v1.24.0] Keşif sayacı: ana tarama bitince (harici 0) ve projeye çözülen her harici kökten sonra
+        // KÜMÜLATİF bir syncDiscovery. Tarama yeniden SIRALANMAZ (fetch'ten sonra, adım satırları yerinde):
+        // keşif milisaniyeler sürer ve App proje kümesini ancak topolojide öğrenir — sayaç o boşluğu doldurur.
+        // Sayım kuralı çözümün kendisindedir (ExternalWorkspaceResolver.Reporter), burada tekrarlanmaz.
         var workspace = ExternalWorkspaceResolver.Resolve(
-            scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner, cmd.RootPath);
+            scanner.Scan(cmd.RootPath), cmd.ExternalProjects, scanner, cmd.RootPath,
+            onDiscovered: (repository, external) => emit(new SyncDiscoveryEvent(repository, external)));
         foreach (var problem in workspace.Problems)
             emit(Warn(PlanProgressLines.ExternalNotScanned(problem.Name, problem.Problem)));
 

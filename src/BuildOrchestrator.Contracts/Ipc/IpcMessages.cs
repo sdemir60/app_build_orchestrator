@@ -256,6 +256,7 @@ public sealed record ListBranchesCommand(string RootPath) : IpcCommand;
 [JsonDerivedType(typeof(RunCompletedEvent), "runCompleted")]
 [JsonDerivedType(typeof(SyncStartedEvent), "syncStarted")]
 [JsonDerivedType(typeof(SyncProgressEvent), "syncProgress")]
+[JsonDerivedType(typeof(SyncDiscoveryEvent), "syncDiscovery")]
 [JsonDerivedType(typeof(SyncCompletedEvent), "syncCompleted")]
 [JsonDerivedType(typeof(PullCompletedEvent), "pullCompleted")]
 [JsonDerivedType(typeof(CheckoutCompletedEvent), "checkoutCompleted")]
@@ -340,6 +341,18 @@ public sealed record RunCompletedEvent(string RunId, RunOutcome Outcome, int Suc
 public sealed record SyncStartedEvent(string RootPath, string Branch) : IpcEvent;
 /// <param name="Level">dim/info/warn — App tarafında satır rengini belirler. [It-3]</param>
 public sealed record SyncProgressEvent(string Line, string Level) : IpcEvent;
+/// <summary>[design v1.24.0] Sync'in keşif adımının bulunan proje sayacı: o ana kadar bulunan projeler,
+/// KÜMÜLATİF (delta değil — idempotent, sırası kayan bir olay eski değeri geri getirmez). Motor her kaynak
+/// okununca bir tane gönderir: ana repo taraması bitince (harici henüz 0), sonra çözülen her harici kökten
+/// sonra; sorunlu kart sayıyı artırmaz. Yalnız Sync gönderir — Clean, Optimize ve koşu planlaması göndermez.
+/// <para><c>syncProgress</c>'ten AYRI bir kanaldır: o, konsola düşen bir metin satırıdır; sayacı metinden geri
+/// ayrıştırmak aynı sayıyı ikinci bir biçimde tanımlamak olurdu. Payda ve kaynak adı YOKTUR (tasarım ikisini
+/// de reddetti), toplam App'te türetilir.</para></summary>
+/// <param name="RepositoryProjects">Ana repo taramasında bulunan tekil proje dosyalarından harici OLMAYANLAR —
+/// satır gruplamasıyla (<c>ProjectNode.IsExternal</c>) aynı ayrım.</param>
+/// <param name="ExternalProjects">O ana kadar çözülen harici köklerden gelen tekil proje kimlikleri (üst üste
+/// binen kartlar bir projeyi iki kez saymaz).</param>
+public sealed record SyncDiscoveryEvent(int RepositoryProjects, int ExternalProjects) : IpcEvent;
 /// <summary>[planlama görünürlüğü] Her run'da, <see cref="RunStartedEvent"/>'ten ÖNCE koşan
 /// planlama penceresinin adım satırı (tarama → graf → topo → incremental → MSBuild
 /// çözümü). Satır metinleri <c>Core.Planning.PlanProgressLines</c>'tan gelir — Sync'in yazdıklarıyla AYNI
