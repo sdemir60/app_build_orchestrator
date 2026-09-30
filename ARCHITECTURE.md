@@ -5247,9 +5247,12 @@ Test counts are deliberately not recorded here — run the suite for the current
 The update path — installer, feed, pill, restart, installation — cannot run in the suite, because it needs an
 installed copy. It is rehearsed by hand against a local feed, with nothing pushed:
 
-1. `scripts\package.ps1` builds the installer and packages of the current version into `artifacts\velopack\`.
-2. `BuildOrchestrator.App-win-Setup.exe` from there installs that version. Turn *Start with Windows* on if the
-   rehearsal should cover it, then exit the installed copy (tray → *Exit*).
+1. Once per checkout, `dotnet tool restore` fetches the pinned Velopack CLI; then `scripts\package.ps1` builds the
+   installer and packages of the current version into `artifacts\velopack\`.
+2. Close any copy running from `bin\` first: the installer starts the installed copy when it finishes, that copy meets
+   the single-instance gate (§12.3), and the gate brings the older one forward instead of letting it open.
+   `BuildOrchestrator.App-win-Setup.exe` from the folder above installs that version. Turn *Start with Windows* on if
+   the rehearsal should cover it, then exit the installed copy (tray → *Exit*).
 3. Raise `Version` in `Directory.Build.props` and give `CHANGELOG.md` a section for it — locally, never committed —
    and run `package.ps1` again: the same folder now holds the next version too, with a delta against the first.
 4. Start the installed copy with the feed pointed at that folder:
@@ -5364,6 +5367,16 @@ the notes is scripted:
   and a running one is never cancelled — two tags in a row would otherwise race for the delta and could leave a
   half-uploaded release. The token is read-only except in `publish`, which alone has `contents: write`; there is
   no secret beyond the automatic `GITHUB_TOKEN`.
+
+**When the workflow fails after the tag is pushed** — the guard refuses, `ci` goes red, or `publish` fails (a GitHub
+hiccup, `vpk pack` rejecting an argument) — the tag stays on `origin` with no release behind it, and `release.ps1`
+refuses that version from then on (`tag vX.Y.Z already exists on origin`). A transient failure is answered in Actions
+with *Re-run failed jobs*: that is safe while nothing has been uploaded, and `vpk upload --merge` accepts a release
+an earlier run left half-created. A failure that needs a code change is fixed on a branch and merged to `main`, then
+released forward as the next patch version; when no GitHub Release was created at all, the tag can be withdrawn
+instead — `git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z` — the `CHANGELOG.md` date refreshed, and
+`/release` run again for the same version. The first `/release` follows a green `ci.yml` run on `main` and the
+triage of `LocalOnly` tests (§17.5), so that the release run is not the first CI run.
 
 ---
 
