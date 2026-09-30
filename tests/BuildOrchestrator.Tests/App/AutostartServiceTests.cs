@@ -54,6 +54,25 @@ public class AutostartServiceTests
         Assert.Equal("BuildOrchestrator", AutostartService.DefaultValueName);
     }
 
+    /// <summary>[yayın hattı · Task 2] Kaldırma kancası: Velopack uninstall'da Windows başlangıç kaydı silinir; registry
+    /// reddederse kanca fırlatmaz (Velopack kancayı 30 s içinde bitmemişse öldürür, hata göstermez). Reddeden registry
+    /// için ayrı bir fake YAZILMAZ (kopya YASAK): ortak <see cref="FakeAutostartRegistry.FailWritesWith"/> kancası
+    /// <c>Remove</c>'u da fırlattırır.</summary>
+    [Fact]
+    public void RemoveForUninstall_deletes_the_run_value_and_swallows_a_registry_refusal()
+    {
+        var registry = new FakeAutostartRegistry();
+        registry.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        AutostartService.RemoveForUninstall(registry);
+        Assert.False(registry.Exists(AutostartService.DefaultValueName));
+
+        var refusing = new FakeAutostartRegistry();
+        refusing.Set(AutostartService.DefaultValueName, FakeAutostartRegistry.Command);
+        refusing.FailWritesWith = new UnauthorizedAccessException("denied"); // Remove → UnauthorizedAccessException
+        Assert.Null(Record.Exception(() => AutostartService.RemoveForUninstall(refusing))); // fırlatmaz
+        Assert.True(refusing.Exists(AutostartService.DefaultValueName)); // reddedildi → kayıt yerinde kaldı (yutuldu, silinmedi)
+    }
+
     /// <summary>[P4] Açılışın uzlaştırması (<c>App.OnStartup</c>) Windows kaydı yazılamadığında uygulamayı
     /// DÜŞÜRMEZ — bir politika ya da güvenlik yazılımı <c>HKCU\...\Run</c>'ı kilitlemiş olabilir; kayıt bir
     /// sonraki açılışta yeniden denenir.</summary>

@@ -95,6 +95,15 @@ public sealed class AutostartService(IAutostartRegistry registry, string valueNa
     /// geçer — uygulamanın açılışı bir tercih yüzünden düşmez; bir sonraki açılış yeniden dener.</summary>
     public void Apply(bool autostartEnabled) => TryWrite(() => WriteRunValue(autostartEnabled), out _);
 
+    /// <summary>[yayın hattı] Velopack'in kaldırma kancası: başlangıç kaydını siler. Servis örneği kurulmaz (komut
+    /// gerekmez), registry reddederse sessizce geçer — kanca UI gösteremez ve fırlatması işe yaramaz.</summary>
+    public static void RemoveForUninstall(IAutostartRegistry registry)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        try { registry.Remove(DefaultValueName); }
+        catch (Exception ex) when (IsRegistryRefusal(ex)) { /* kaldırma bir kayıt yüzünden durmaz */ }
+    }
+
     /// <summary>[P4] Windows'un GERÇEK durumu — Settings'in Start with Windows anahtarı bundan açılır (kayıtlı
     /// tercihten değil): Run değeri yoksa <see cref="AutostartState.Off"/>; varsa ve Görev Yöneticisi'nde devre dışı
     /// bırakılmışsa <see cref="AutostartState.DisabledInStartupApps"/>; aksi hâlde <see cref="AutostartState.On"/>.

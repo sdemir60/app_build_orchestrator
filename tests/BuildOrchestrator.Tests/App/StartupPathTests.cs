@@ -41,6 +41,9 @@ public class StartupPathTests
         // Argüman EŞLEŞMESİ tam metindir: benzeyen ama aynı olmayan bir bayrak dalı AÇMAZ.
         Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--autostartx"], startMinimizedToTray: true));
         Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--font-abx"], startMinimizedToTray: true));
+        // [yayın hattı] Velopack kanca argümanları Program.Main'de tüketilip process biter; buraya ulaşsalar da yutulur.
+        Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--veloapp-install", "1.8.0"], startMinimizedToTray: true));
+        Assert.Equal(StartupRoute.ShowWindow, StartupArgs.Decide(["--veloapp-updated", "1.8.0"], startMinimizedToTray: false));
     }
 
     [Fact]
