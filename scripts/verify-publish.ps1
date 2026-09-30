@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Bu script It-5 kabul kalemini elle-gozlem olmaktan cikarir. Adimlar:
-    1. dotnet publish (framework-dependent, klasor tabanli, win-x64)
+    1. publish: scripts\package.ps1 -PublishOnly (publish komutunun TEK sahibi; framework-dependent, klasor tabanli, win-x64)
     2. Publish yerlesimi: supervisor\BuildOrchestrator.Supervisor.exe + Assets\GEIST-LICENSE.txt
     3. Publish edilen supervisor ikilisi ile NDJSON round-trip (engineReady + surum)
     4. [A13/T6 t6] Publish edilen supervisor ikilisi GERCEK bir Sync + Build kosturur ve en az bir
@@ -45,7 +45,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$appProj = Join-Path $repoRoot 'src\BuildOrchestrator.App\BuildOrchestrator.App.csproj'
 $failures = New-Object System.Collections.Generic.List[string]
 $appProcess = $null
 $child = $null      # App'in dogurdugu supervisor (WMI olayindan) — kapanis dogrulamasi bunu kullanir
@@ -101,7 +100,7 @@ catch { Write-Host '    (note: the console input encoding could not be changed -
 try {
     # --------------------------------------------------------------- 1. publish
     Step "publish -> $OutputDir"
-    $publishLog = & dotnet publish $appProj -c $Configuration -r $RuntimeIdentifier --self-contained false -o $OutputDir -v m 2>&1
+    $publishLog = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'package.ps1') -PublishOnly -PublishDir $OutputDir -Configuration $Configuration -RuntimeIdentifier $RuntimeIdentifier
     Check 'dotnet publish exit code 0' ($LASTEXITCODE -eq 0) "(exit $LASTEXITCODE)"
     if ($LASTEXITCODE -ne 0) { $publishLog | Select-Object -Last 15 | ForEach-Object { Write-Host "        $_" } }
 
