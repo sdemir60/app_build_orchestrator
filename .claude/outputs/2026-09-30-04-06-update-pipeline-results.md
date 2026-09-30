@@ -61,8 +61,17 @@ inceleme + iki düzeltme dalgası. Ledger ve tüm raporlar: `.superpowers/sdd/20
   kapsamlı yeniden inceleme: 13/13 kapandı. Kapanış doğrulamasının kalıntıları (aynı-sürüm paketleme, sonda kapsamı, 3 küçük) → ikinci
   dalga (6 commit) + yeniden inceleme: 5/5 kapandı, yeni kırılma yok (yalnız kozmetik notlar: bir assertion tekrarı, uzun doküman
   satırı).
-- Gerçek Actions koşusu ve kurulu kopyada güncelleme provası **yapılmadı** (ilk CI koşusu `main`'e push ile; prova §17.6 kullanıcının
-  makinesinde).
+- **CI (`ci.yml`, `windows-2025` = Windows Server 2025 + Visual Studio 2026 18.10 imajı):** build her koşuda 1 dk'da geçti (SDK
+  `global.json` bandı, restore, WPF). Test triage üç koşu sürdü — #3: 11 düşüş (runner'da global git kimliği yok → klonlardaki test
+  commit'leri "Author identity unknown", 4 test; legacy fixture `v4.6` targeting pack imajda yok → MSB3644, 6 test; workflow guard
+  testi CRLF checkout'ta `(?m)$` tutmadı, 1 test) · #4: 7 düşüş (runner'da çıplak bir `v4.6` klasörü var, pack değil → seçim yine
+  ona düştü; UI bütçe testi paylaşımlı CPU'da 71 ms > 50 ms) · **#5: yeşil** (4053+ test). Düzeltmeler test altyapısında:
+  `GitTestRepo.ConfigureIdentity` klonlara da kimlik yazar (tek yer); `LegacyFixture.TargetFrameworkVersion` makinedeki GERÇEK
+  targeting pack'lerden seçilir (v4.6 varsa o, yoksa `RedistList\FrameworkList.xml` taşıyan en yeni 4.x — MSBuild'in ölçütü),
+  düşen derleme mesajına MSBuild hata satırları + pack envanteri girer; `RepoHygieneTests.Workflow()` satır sonlarını LF'e indirir;
+  `UiResponsivenessBudgetTests` **`LocalOnly`** (eşik gevşetilmedi; lokal tam süit koşturur). CI'daki `LocalOnly` kümesi bugün bu
+  tek sınıftır.
+- Kurulu kopyada güncelleme provası (§17.6) ve temiz makinede Setup **yapılmadı** — kullanıcının makinesinde.
 
 ## Kararlar (plan dışı, ledger'da gerekçeli)
 
@@ -80,8 +89,7 @@ inceleme + iki düzeltme dalgası. Ledger ve tüm raporlar: `.superpowers/sdd/20
 
 ## Kullanıcının adımları (K7: v1.8.0 = installer + motor)
 
-1. `main`'e merge sonrası ilk `ci.yml` koşusunu izle; runner'da düşen ortam testi varsa `[Trait("Category","LocalOnly")]` + gerekçe
-   (eşik gevşetme yok). İlk `/release` bundan sonra.
+1. ~~İlk CI koşusu ve `LocalOnly` triage'ı~~ — yapıldı: `ci.yml` `main`'de yeşil (koşu #5). İlk `/release` için ön koşul tamam.
 2. GitHub hesabında 2FA açık mı doğrula (yayın kanalı = hesap). İsteğe bağlı: `main` ruleset (force-push/silme kapalı), `v*` tag ruleset.
    Secret gerekmez.
 3. Yerel prova (ARCHITECTURE §17.6): `package.ps1` → Setup → sürümü artırıp tekrar `package.ps1` → `BO_UPDATE_SOURCE=<klasör>` ile
