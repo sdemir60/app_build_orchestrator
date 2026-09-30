@@ -54,6 +54,18 @@ public class RepoHygieneTests
         Assert.DoesNotContain("vpk", ci, StringComparison.Ordinal);               // CI yayın yapmaz
     }
 
+    /// <summary>CI repoya yazmaz. Kendi <c>push</c>/<c>pull_request</c> koşularında token izni repo ayarının varsayılanından
+    /// gelir (yazma olabilir); <c>release.yml</c>'den çağrıldığında çağıranın <c>contents: read</c>'iyle kesişir. Workflow
+    /// seviyesinde açık <c>contents: read</c> ikisini de sabitler. Satır başındaki (girintisiz) <c>permissions:</c> workflow
+    /// seviyesidir — bir job'ın bloğu girintilidir ve bu deseni karşılamaz.</summary>
+    [Fact]
+    public void CI_only_reads_the_repository()
+    {
+        string ci = Workflow("ci.yml");
+        Assert.Matches(@"(?m)^permissions:[ \t]*\r?\n[ \t]+contents: read[ \t]*$", ci);
+        Assert.DoesNotMatch(@"(?m):[ \t]*write[ \t]*$", ci); // hiçbir kapsam yazma izni istemez
+    }
+
     [Fact]
     public void The_release_workflow_runs_on_version_tags_reuses_CI_and_publishes_through_the_package_script()
     {

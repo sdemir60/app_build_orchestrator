@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+# CI repoya yazmaz: kendi push/pull_request kosularinda token izni repo ayarinin varsayilanindan gelir (yazma olabilir);
+# workflow seviyesi okuma bunu sabitler. release.yml'den cagrildiginda cagiranin okuma iziniyle zaten kesisir.
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
