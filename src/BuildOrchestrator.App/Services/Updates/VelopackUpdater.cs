@@ -13,14 +13,26 @@ namespace BuildOrchestrator.App.Services.Updates;
 /// (<c>VelopackApp.Build().Run()</c>, <c>Program.Main</c>'in ilk ifadesi) ister ve yoksa fırlatır. Test host'unda
 /// <c>Main</c> hiç koşmadığından konumlayıcı yoktur; kurucu yerine <see cref="IsInstalled"/> ona bakıp <c>false</c> döner
 /// — böylece kurulmamış kopya sarmalayıcıyı fırlatmadan kurar ve <c>UpdateService</c> kapısı çalışır.</para></summary>
-public sealed class VelopackUpdater(IUpdateSource source) : IAppUpdater
+public sealed class VelopackUpdater : IAppUpdater
 {
-    private readonly Lazy<UpdateManager> _lazyManager = new(() => new UpdateManager(source));
+    private readonly Lazy<UpdateManager> _lazyManager;
+    private readonly bool _hasInjectedLocator;
     private UpdateInfo? _lastInfo; // DownloadAsync'in indireceği paket (CheckAsync'in bulduğu)
+
+    public VelopackUpdater(IUpdateSource source) : this(source, locator: null) { }
+
+    /// <param name="locator">Test dikişi: verilirse <see cref="UpdateManager"/> process-global konumlayıcı yerine bunu
+    /// kullanır (Velopack'in kendi <c>TestVelopackLocator</c> önerisi) ve <c>IsCurrentSet</c> kapısı atlanır — enjekte
+    /// konumlayıcı zaten vardır, kararı yalnız <c>Manager.IsInstalled</c> verir (üretimdeki durum). Üretimde <c>null</c>.</param>
+    internal VelopackUpdater(IUpdateSource source, IVelopackLocator? locator)
+    {
+        _hasInjectedLocator = locator is not null;
+        _lazyManager = new(() => new UpdateManager(source, null, locator));
+    }
 
     private UpdateManager Manager => _lazyManager.Value;
 
-    public bool IsInstalled => VelopackLocator.IsCurrentSet && Manager.IsInstalled;
+    public bool IsInstalled => (_hasInjectedLocator || VelopackLocator.IsCurrentSet) && Manager.IsInstalled;
 
     public UpdateCandidate? PendingRestart =>
         IsInstalled && Manager.UpdatePendingRestart is { } asset ? ToCandidate(asset, asset.Size) : null;
