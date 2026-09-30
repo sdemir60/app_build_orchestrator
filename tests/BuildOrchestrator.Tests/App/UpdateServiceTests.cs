@@ -25,7 +25,7 @@ public class UpdateServiceTests
         public void ApplyOnExit(UpdateCandidate c, bool restart) { Applied = (c, restart); OnApply(); }
     }
 
-    private static readonly UpdateCandidate Newer = new("99.0.0", 19_293_798, "## [99.0.0] - 2026-10-01\n### Fixed\n- D\n");
+    private static readonly UpdateCandidate Newer = UpdateOffers.Candidate("99.0.0");
 
     /// <param name="beforePublish">Yayım delegate'inin içinde koşar; atarsa teklif <c>Published</c>'a girmez (UI'a
     /// marshal başarısız olmuş demektir).</param>
@@ -43,6 +43,17 @@ public class UpdateServiceTests
     {
         var attempts = 0;
         return _ => { if (++attempts == 1) throw new InvalidOperationException("marshal"); };
+    }
+
+    /// <summary>[tasarım K8] Kontrol ritmi: pencere görününce 5 saniye sonra ilk kontrol, sonra 4 saatte bir. Beklenen değerler
+    /// üretimden OKUNMAZ, otorite literali olarak yazılır (totoloji yasak) — <c>EngineHostTests.Kill_exit_wait_stays_one_second</c>
+    /// deseni. Diğer testler bu iki sabiti üretimden okuyup zamanı onunla ilerletir; biri "5 s → 5 dk" ya da "4 saat → 4 dk"
+    /// yapsa (bir flake'i susturmak, GitHub'ı sık yoklamak) süit sessiz kalırdı.</summary>
+    [Fact]
+    public void The_check_rhythm_stays_five_seconds_then_four_hours()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(5), UpdateService.FirstCheckDelay);
+        Assert.Equal(TimeSpan.FromHours(4), UpdateService.CheckInterval);
     }
 
     [Fact]
@@ -71,7 +82,7 @@ public class UpdateServiceTests
         Assert.Equal(1, updater.Downloads);
         var offer = Assert.Single(published);
         Assert.Equal("99.0.0", offer.Version);
-        Assert.Equal("18.4 MB", offer.Size);
+        Assert.Equal(UpdateOffers.SampleSize, offer.Size);
         Assert.Same(offer, service.Ready);
     }
 

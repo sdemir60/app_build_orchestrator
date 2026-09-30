@@ -164,7 +164,7 @@ public class UpdateCardTests
         vm.AvailableUpdate = UpdateOffers.Sample() with { MoreCount = 3 };
         var more = (TextBlock)card.FindName("PART_More");
         Assert.Equal(Visibility.Visible, more.Visibility);
-        Assert.Equal("+3 more in What's new after restart", more.Text);
+        Assert.Equal(UpdateText.MoreHighlights(3), more.Text); // metnin literali UpdateOfferTests'te (tek otorite)
         vm.AvailableUpdate = UpdateOffers.Sample();
         Assert.Equal(Visibility.Collapsed, more.Visibility);
         GC.KeepAlive(window);
