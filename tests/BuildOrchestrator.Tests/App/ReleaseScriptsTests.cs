@@ -30,12 +30,32 @@ public class ReleaseScriptsTests
     }
 
     /// <summary>-Command ile koşturur: komutta tanımlanan (global kapsamlı) fonksiyonlar, çağrılan script'e görünür ve
-    /// aynı adlı cmdlet'i gölgeler — ağ çağrısı (Invoke-RestMethod) script'e dokunmadan taklit edilir.</summary>
-    private static (int ExitCode, string Output) RunCommand(string command)
+    /// aynı adlı cmdlet'i gölgeler — ağ çağrısı (Invoke-RestMethod), çalışan process sorgusu (Get-Process) ve
+    /// <c>dotnet</c> script'e dokunmadan taklit edilir. Script'in kendi tanımladığı bir fonksiyonu (dot-source ettiği
+    /// release-common.ps1'inkiler) gölgelemek İŞE YARAMAZ: script kapsamındaki tanım öndedir.</summary>
+    private static (int ExitCode, string Output) RunCommand(string command, string? workingDirectory = null)
     {
-        var psi = NewPowerShell(RepoPaths.RepoRoot);
+        var psi = NewPowerShell(workingDirectory ?? RepoPaths.RepoRoot);
         psi.ArgumentList.Add("-Command"); psi.ArgumentList.Add(command);
         return Execute(psi);
+    }
+
+    private static string PackageScript => Path.Combine(Scripts, "package.ps1");
+
+    /// <summary>Gölge <c>dotnet</c>: çağrıyı yazar ve başarılı sayılır (script <c>$LASTEXITCODE</c>'a bakar) — package.ps1'in
+    /// download / publish / pack adımları koşmadan hangi komutu, hangi sırayla ve hangi argümanlarla vereceği çıktıdan okunur.
+    /// Gerçek publish dakikalar sürer ve Velopack aracı ister.</summary>
+    private const string RecordingDotnet = "function dotnet { 'DOTNET ' + ($args -join ' '); $global:LASTEXITCODE = 0 }";
+
+    /// <summary>release.ps1'i sandbox'ta koşturur. Çalışan-örnek sondası (<c>Get-Process</c>) gölgelenir: geliştirici makinesinde
+    /// gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu verir. <paramref name="appRunning"/> sondaya
+    /// sahte bir process (pid 4242) döndürtür.</summary>
+    private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, bool appRunning = false)
+    {
+        string processes = appRunning ? "[pscustomobject]@{ Id = 4242 }" : "@()";
+        return RunCommand(
+            $"function Get-Process {{ {processes} }}; & '{box.ReleaseScript}' -Version {box.NextVersion} -SkipTests; exit $LASTEXITCODE",
+            box.Work);
     }
 
     private static ProcessStartInfo NewPowerShell(string workingDirectory)
@@ -100,28 +120,87 @@ public class ReleaseScriptsTests
     /// (release.yml böyle çağırır) sayım <c>@(Invoke-RestMethod ...).Count</c> idi; Windows PowerShell 5.1'de Invoke-RestMethod
     /// JSON dizisini numaralandırmaz, <c>@()</c> boş diziyi TEK eleman olarak sarar → release'siz repoda 0 yerine 1, atlama dalı
     /// ilk yayında hiç çalışmazdı. Bu test cevabı gerçek cmdlet gibi (numaralandırmayan <c>ConvertFrom-Json</c>) verir ve
-    /// -ReleaseCount'u VERMEZ.</summary>
+    /// -ReleaseCount'u VERMEZ.
+    /// <para><b>Değişen mekanizma:</b> eskiden test <c>-WhatIf</c> ile koşardı ve sayım yine API'den okunurdu. <c>-WhatIf</c>
+    /// artık ağa çıkmaz (<see cref="WhatIf_never_asks_the_api_for_the_release_count"/>), dolayısıyla sayımın script içindeki
+    /// bağlantısı <c>-WhatIf</c>'siz koşulur; <c>dotnet</c> taklit edilir (<see cref="RecordingDotnet"/>) ve gerçek indirme /
+    /// publish / pack çalışmaz. İddia aynı: boş liste → indirme atlanır.</para></summary>
     [SkippableFact]
     public void An_empty_release_list_from_the_api_is_counted_as_no_release()
     {
         RequirePowerShell();
-        string script = Path.Combine(Scripts, "package.ps1");
+        using var temp = new TempDir();
         var (code, output) = RunCommand(
-            $"function Invoke-RestMethod {{ '[]' | ConvertFrom-Json }}; & '{script}' -DownloadPrevious -WhatIf");
+            $"function Invoke-RestMethod {{ '[]' | ConvertFrom-Json }}; {RecordingDotnet}; & '{PackageScript}' -DownloadPrevious -ArtifactsDir '{temp.Path}'");
         Assert.True(code == 0, output);
         Assert.Contains("no previous release", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("DOTNET vpk download", output, StringComparison.Ordinal); // indirme atlandı
+        Assert.Contains("DOTNET publish", output, StringComparison.Ordinal);            // yayın akışı sürdü
     }
 
+    /// <summary>Bir kayıt dönen liste → sayım 1 → önceki paket indirilir. Mekanizma için bkz.
+    /// <see cref="An_empty_release_list_from_the_api_is_counted_as_no_release"/>.</summary>
     [SkippableFact]
     public void A_release_list_with_an_entry_from_the_api_still_downloads_the_previous_package()
     {
         RequirePowerShell();
-        string script = Path.Combine(Scripts, "package.ps1");
+        using var temp = new TempDir();
         var (code, output) = RunCommand(
-            $"function Invoke-RestMethod {{ '[{{\"tag_name\":\"v1.7.0\"}}]' | ConvertFrom-Json }}; & '{script}' -DownloadPrevious -WhatIf");
+            $"function Invoke-RestMethod {{ '[{{\"tag_name\":\"v1.7.0\"}}]' | ConvertFrom-Json }}; {RecordingDotnet}; & '{PackageScript}' -DownloadPrevious -ArtifactsDir '{temp.Path}'");
         Assert.True(code == 0, output);
         Assert.DoesNotContain("no previous release", output, StringComparison.Ordinal);
-        Assert.Contains("vpk download github", output, StringComparison.Ordinal); // -WhatIf: çalıştırılmaz, yalnız yazılır
+        Assert.Contains($"DOTNET vpk download github --repoUrl https://github.com/sdemir60/app_build_orchestrator --outputDir {Path.Combine(temp.Path, "velopack")}",
+            output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Kusur: <c>-DownloadPrevious</c> ve <c>-ReleaseCount</c> verilmeden <c>-WhatIf</c> koşusu release sayısını
+    /// GitHub API'sinden sorardı (<c>Invoke-RestMethod</c>) — başlıktaki ve ARCHITECTURE §18'deki "-WhatIf hiçbir şeyi
+    /// çalıştırmaz" iddiasına aykırı. Önceki testler <c>-ReleaseCount 0</c> verir ya da cmdlet'i taklit ettiği için
+    /// yüzeye çıkmıyordu. Bu test cmdlet'i ATAN bir taklitle değiştirir: ağa gidilirse script düşer. Sayı bilinmediğinden
+    /// indirme adımı "ne olurdu" olarak listelenir.</summary>
+    [SkippableFact]
+    public void WhatIf_never_asks_the_api_for_the_release_count()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        var (code, output) = RunCommand(
+            $"function Invoke-RestMethod {{ throw 'NETWORK-TOUCHED' }}; & '{PackageScript}' -DownloadPrevious -WhatIf -ArtifactsDir '{temp.Path}'");
+        Assert.True(code == 0, output);
+        Assert.DoesNotContain("NETWORK-TOUCHED", output, StringComparison.Ordinal);
+        Assert.Contains("GET releases", output, StringComparison.Ordinal);        // yapacağı çağrıyı yazar
+        Assert.Contains("vpk download github", output, StringComparison.Ordinal); // sayı bilinmiyor: indirme "ne olurdu" satırı
+    }
+
+    /// <summary>Kusur: <c>notes.md</c> Velopack'in kendi çıktı klasörüne (<c>artifacts\velopack</c>) yazılıyordu; <c>vpk download</c>
+    /// ve <c>vpk pack</c> o klasörün sahibidir ve <c>release.yml</c> dosyayı yayın herkese açıldıktan SONRA
+    /// (<c>gh release edit --notes-file</c>) yeniden okur. Bir vpk sürümü klasördeki bilinmeyen dosyayı temizleseydi hata
+    /// yayından sonra düşerdi. Not artık <c>artifacts\notes.md</c>'dedir (klasörün dışında, yanında); <c>vpk pack</c>
+    /// <c>--releaseNotes</c> ile aynı dosyayı okur. Test <c>dotnet</c>'u taklit eder ve verilen komut satırını okur.</summary>
+    [SkippableFact]
+    public void The_release_notes_sit_beside_the_velopack_folder_and_vpk_pack_reads_them_from_there()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        var (code, output) = RunCommand($"{RecordingDotnet}; & '{PackageScript}' -ArtifactsDir '{temp.Path}'");
+        Assert.True(code == 0, output);
+
+        string notes = Path.Combine(temp.Path, "notes.md");
+        Assert.True(File.Exists(notes), output);
+        Assert.False(File.Exists(Path.Combine(temp.Path, "velopack", "notes.md")), "notes.md Velopack'in çıktı klasöründe");
+        string pack = Assert.Single(output.Split('\n'), line => line.StartsWith("DOTNET vpk pack", StringComparison.Ordinal));
+        Assert.Contains($"--releaseNotes {notes}", pack, StringComparison.Ordinal);
+        Assert.Contains($"--outputDir {Path.Combine(temp.Path, "velopack")}", pack, StringComparison.Ordinal);
+    }
+
+    /// <summary>Not yolunun varsayılanı tek yerdedir: <c>-NotesOnly</c> ve tam koşu aynı dosyayı yazar.</summary>
+    [SkippableFact]
+    public void Notes_only_writes_to_the_same_default_place_as_a_full_run()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        var (code, output) = Run("package.ps1", "-NotesOnly", "-ArtifactsDir", temp.Path);
+        Assert.True(code == 0, output);
+        Assert.True(File.Exists(Path.Combine(temp.Path, "notes.md")), output);
     }
 
     [SkippableFact]
@@ -146,6 +225,76 @@ public class ReleaseScriptsTests
         Assert.Contains("CHANGELOG.md", r.Output, StringComparison.Ordinal);
     }
 
+    /// <summary>[final review #4] Çalışan örnek sondası (<c>Get-RunningApp</c>, release-common.ps1) process'i ada göre bulur; hiçbiri
+    /// yoksa boş dizi döner. Test gerçek uygulamayı AÇMAZ: olmayan bir ad "yok" verir, bu test sırasında zaten çalışan
+    /// <c>powershell</c> "var" verir. Varsayılan ad Get-Process'in gölgesiyle okunur: uygulamanın process adı
+    /// <c>BuildOrchestrator.App</c>.</summary>
+    [SkippableFact]
+    public void The_running_app_probe_finds_a_process_by_name()
+    {
+        RequirePowerShell();
+        string common = Path.Combine(Scripts, "release-common.ps1");
+
+        var absent = RunCommand($". '{common}'; @(Get-RunningApp 'bo-no-such-process-{Guid.NewGuid():N}').Count");
+        Assert.True(absent.ExitCode == 0, absent.Output);
+        Assert.Equal("0", absent.Output.Trim());
+
+        var present = RunCommand($". '{common}'; @(Get-RunningApp 'powershell').Count -gt 0");
+        Assert.True(present.ExitCode == 0, present.Output);
+        Assert.Equal("True", present.Output.Trim());
+
+        var byDefault = RunCommand($"function Get-Process {{ [CmdletBinding()] param([string]$Name) $Name }}; . '{common}'; Get-RunningApp");
+        Assert.True(byDefault.ExitCode == 0, byDefault.Output);
+        Assert.Equal("BuildOrchestrator.App", byDefault.Output.Trim());
+    }
+
+    /// <summary>[final review #4] Sonda TEK sahiplidir (kopya yasak): <c>release.ps1</c> ve <c>verify-publish.ps1</c> process
+    /// adını kendileri yazmaz, <c>Get-RunningApp</c>'i çağırır. Eskiden verify-publish sondayı kendi içinde taşıyordu.</summary>
+    [Fact]
+    public void The_running_app_probe_has_one_owner()
+    {
+        foreach (string script in new[] { "release.ps1", "verify-publish.ps1" })
+        {
+            string text = File.ReadAllText(Path.Combine(Scripts, script));
+            Assert.True(text.Contains("Get-RunningApp", StringComparison.Ordinal), $"{script} sondayı release-common.ps1'den çağırmıyor");
+            Assert.False(text.Contains("'BuildOrchestrator.App'", StringComparison.Ordinal), $"{script} process adını kendisi yazıyor");
+        }
+        Assert.Contains("'BuildOrchestrator.App'", File.ReadAllText(Path.Combine(Scripts, "release-common.ps1")), StringComparison.Ordinal);
+    }
+
+    /// <summary>[final review #4] Uygulama açıkken build alınmaz (CLAUDE.md): Release build çalışan Supervisor'ın kilitli
+    /// binary'lerine çarpar, ama kusur bunun ÇOK sonra ortaya çıkmasıydı — <c>Version</c> <c>Directory.Build.props</c>'a
+    /// çoktan yazılmış, açıklanması gereken kirli bir dosya kalmıştı. Script artık props'a dokunmadan durur: çıkış 1, pid
+    /// mesajda, ne props ne yerel HEAD ne origin değişir. Çalışan uygulama gerçekten açılmaz: <c>Get-Process</c> gölgelenir.</summary>
+    [SkippableFact]
+    public void The_release_script_refuses_while_the_app_is_running_before_it_writes_the_version()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        string originBefore = box.OriginMain;
+        string localBefore = box.WorkHead;
+
+        var r = RunRelease(box, appRunning: true);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains("4242", r.Output, StringComparison.Ordinal);
+        Assert.Contains("<Version>1.7.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal); // Version yazılmadı
+        Assert.Equal(localBefore, box.WorkHead);
+        Assert.Equal(originBefore, box.OriginMain);
+    }
+
+    /// <summary>[final review #4] Sondanın verify-publish'teki kullanımı taşındıktan sonra da aynıdır: çalışan örnek varken hiçbir
+    /// ölçüm yapmadan <c>RESULT: SKIPPED</c> ve ön koşul kodu 2 ile durur (uygulama tek-örnektir). Sonda gölgelenir.</summary>
+    [SkippableFact]
+    public void Verify_publish_stops_with_the_precondition_code_while_the_app_runs()
+    {
+        RequirePowerShell();
+        var r = RunCommand($"function Get-Process {{ [pscustomobject]@{{ Id = 4242 }} }}; & '{Path.Combine(Scripts, "verify-publish.ps1")}'; exit $LASTEXITCODE");
+        Assert.Equal(2, r.ExitCode);
+        Assert.Contains("4242", r.Output, StringComparison.Ordinal);
+        Assert.Contains("RESULT: SKIPPED", r.Output, StringComparison.Ordinal);
+    }
+
     /// <summary>Kusur: guard'lar tag'e yalnız YEREL bakıyordu (<c>git tag --list</c>). <c>git fetch</c> ise sadece getirdiği
     /// tarihçeye işaret eden tag'leri alır; origin'de erişilemeyen bir commit'e duran aynı ad yerelde görünmez. Sonuç: main
     /// push edilir, tag reddedilir → main'de yayını olmayan bir release commit'i. Bu test o tag'i origin'e koyar ve script'in
@@ -160,7 +309,7 @@ public class ReleaseScriptsTests
         string localBefore = box.WorkHead;
         Assert.Equal("", box.Git(box.Work, "tag", "--list", "v1.8.0").Trim()); // yerel klon görmüyor: kusur bu
 
-        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+        var r = RunRelease(box);
 
         Assert.Equal(1, r.ExitCode);
         Assert.Contains("already exists on origin", r.Output, StringComparison.Ordinal);
@@ -180,7 +329,7 @@ public class ReleaseScriptsTests
         using var box = new ReleaseSandbox("1.8.0");
         box.AdvanceOriginRightAfterTheNextCommit();
 
-        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+        var r = RunRelease(box);
 
         Assert.Equal(1, r.ExitCode);
         Assert.Equal(box.OtherHead, box.OriginMain); // yarış gerçekten kuruldu: origin'de yalnız rakip commit var
@@ -194,7 +343,7 @@ public class ReleaseScriptsTests
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
 
-        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+        var r = RunRelease(box);
 
         Assert.True(r.ExitCode == 0, r.Output);
         Assert.Equal(box.WorkHead, box.OriginMain);

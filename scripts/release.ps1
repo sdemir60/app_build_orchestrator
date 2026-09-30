@@ -1,7 +1,7 @@
 <# [yayin hatti] Tek komutla yayin - /release skill'inin mekanik yarisi. Notu Claude yazmis olmali (CHANGELOG en ustte
-   "## [X.Y.Z] - <bugun>"); script: guard'lar -> Version'i yazar -> build + tam suit -> "release: vX.Y.Z" commit'i ->
-   annotated tag -> atomik push (main + tag ya birlikte gider ya hicbiri). Herhangi bir adimda durursa hicbir sey
-   push edilmemistir.
+   "## [X.Y.Z] - <bugun>"); script: guard'lar (calisan uygulama ornegi dahil) -> Version'i yazar -> build + tam suit ->
+   "release: vX.Y.Z" commit'i -> annotated tag -> atomik push (main + tag ya birlikte gider ya hicbiri). Herhangi bir
+   adimda durursa hicbir sey push edilmemistir.
      release.ps1 -Version 1.8.0            (tam akis)
      release.ps1 -Version 1.8.0 -SkipTests (suit lokalde zaten yesil gorulduyse)
      release.ps1 -Version 1.8.0 -DryRun    (yalniz guard'lar; git'e/dosyaya dokunmaz) #>
@@ -36,6 +36,10 @@ if (git tag --list "v$Version") { Fail "tag v$Version already exists." }
 $remoteTag = & git ls-remote --tags origin "refs/tags/v$Version"
 if ($LASTEXITCODE -ne 0) { Fail "git ls-remote failed (exit $LASTEXITCODE); cannot verify tag v$Version on origin." }
 if ($remoteTag) { Fail "tag v$Version already exists on origin." }
+# Calisan uygulama (CLAUDE.md "uygulama acikken build alma"): Release build calisan Supervisor'in kilitli binary'lerine carpar.
+# Sonda Version yazilmadan ONCE kosar; sonradan dusen build, aciklanmasi gereken degismis bir Directory.Build.props birakirdi.
+$running = @(Get-RunningApp)
+if ($running.Count -gt 0) { Fail "Build Orchestrator is running (pid $($running.Id -join ', ')); close it first (tray icon > Exit) - a running instance keeps its binaries locked and the build would fail." }
 
 # --- Version tek yerde
 $propsPath = Join-Path $RepoRoot 'Directory.Build.props'

@@ -5140,11 +5140,14 @@ CPU-saturating job tests, the console UI tests and the build-state store tests.
 
 The release scripts are tested by running them under Windows PowerShell 5.1, the shell the release itself uses
 (`ReleaseScriptsTests`): the note cut checked against the App's own release-note parser, the release count read
-from a faked API answer, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
-tag `origin` already has, a `main` that moves before the push, a tagged commit `origin/main` does not contain.
-Nothing is packaged there; that takes minutes and the Velopack tool. The update engine is tested through its seam
-with a fake updater and a fake clock, and `VelopackUpdater` against an injected Velopack locator, since a test host
-never runs `Program.Main`.
+from a faked API answer — with `dotnet` replaced by a stand-in that records the command it is given, so what
+`package.ps1` would download, publish and pack is read from the output, the notes file's place included — the
+running-instance probe, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
+tag `origin` already has, a `main` that moves before the push, a tagged commit `origin/main` does not contain, an
+application still running (the process query is faked in every sandbox run, so the outcome does not depend on
+what is open on the machine). Nothing is packaged there; that takes minutes and the Velopack tool. The update
+engine is tested through its seam with a fake updater and a fake clock, and `VelopackUpdater` against an injected
+Velopack locator, since a test host never runs `Program.Main`.
 
 Font and resource assets are copied into the test output so that headless tests can load them from disk;
 `pack://` URIs do not resolve without an `Application` instance. `App.xaml` itself is copied too, so a test can
@@ -5280,9 +5283,10 @@ push to the same ref cancels the older run, and the test results are kept as a T
 `Company` from `Directory.Build.props` and takes three steps:
 
 1. **Notes.** The `CHANGELOG.md` section of `Version` — its heading through the line before the next `## ` — is cut
-   into `artifacts\velopack\notes.md`. That comes before the publish, so a missing section fails in seconds rather
-   than after it. A test parses the cut with the App's own release-note reader and compares it with the embedded
-   entry, so the card and What's new read one text (§13.3).
+   into `artifacts\notes.md`, beside Velopack's output folder rather than inside it: `vpk` owns that folder, and the
+   release workflow reads the file again after the release is public. That comes before the publish, so a missing
+   section fails in seconds rather than after it. A test parses the cut with the App's own release-note reader and
+   compares it with the embedded entry, so the card and What's new read one text (§13.3).
 2. **Publish**, framework-dependent and folder-based — `Release`, `win-x64`, not self-contained — into
    `artifacts\publish\`. `-PublishOnly` stops after it, and `-PublishDir` moves it.
 3. **Pack** with the Velopack CLI (`vpk`, a local tool pinned in `.config/dotnet-tools.json` to the version of the
@@ -5301,8 +5305,9 @@ push to the same ref cancels the older run, and the test results are kept as a T
 | delta | Velopack's default | produced when the previous release's full package is in the output folder. `-DownloadPrevious` fetches it (`vpk download github`), and skips when the repository has no release yet — so the first release carries no delta |
 
 The output is the installer `BuildOrchestrator.App-win-Setup.exe`, the full package, a delta package when there
-was a previous one, and the feed files `vpk upload` publishes. `-WhatIf` runs none of it and prints what it would
-do; the tests use it. `artifacts\` is ignored by git.
+was a previous one, and the feed files `vpk upload` publishes. `-WhatIf` runs none of it — the GitHub query for the
+release count included, which is skipped and printed like the other steps — and prints what it would do; the tests
+use it. `artifacts\` is ignored by git.
 
 The `supervisor\` subfolder next to the published executable **is** the build engine, not an optional extra.
 The App resolves `<app folder>\supervisor\BuildOrchestrator.Supervisor.exe` at startup. Three MSBuild targets
@@ -5330,9 +5335,11 @@ the notes is scripted:
 
 - **`scripts/release.ps1 -Version X.Y.Z`** checks before it touches anything: the top `CHANGELOG.md` section is
   `X.Y.Z` and dated today; the branch is `main`; the tree is clean but for `CHANGELOG.md` and
-  `Directory.Build.props`; after a fetch, `main` equals `origin/main`; and `vX.Y.Z` exists neither locally nor on
-  `origin`. The remote check asks `git ls-remote`, because a fetch brings only the tags of the history it brings,
-  and a failed `ls-remote` stops the release rather than counting as "no tag". Then it writes `Version`, runs
+  `Directory.Build.props`; after a fetch, `main` equals `origin/main`; `vX.Y.Z` exists neither locally nor on
+  `origin`; and no instance of the application is running, since a live Supervisor keeps its binaries locked and the
+  build would fail — after `Version` was written, which the check therefore precedes. The remote check asks
+  `git ls-remote`, because a fetch brings only the tags of the history it brings, and a failed `ls-remote` stops
+  the release rather than counting as "no tag". Then it writes `Version`, runs
   `release-guard.ps1`, builds, runs the full suite (`-SkipTests` when it was just seen green), commits
   `release: vX.Y.Z` on `main` — the one commit made on `main` directly — tags it (annotated) and pushes `main` and
   the tag with `--atomic`. The build and the suite take minutes; should `origin/main` move meanwhile, both refs are
@@ -5342,11 +5349,12 @@ the notes is scripted:
   `release.ps1` runs it before its commit; the release workflow runs it with `-RequireOnMain`, which also requires
   the tagged commit to be an ancestor of `origin/main`, so a tag pushed by hand on a commit that never reached
   `main` publishes nothing.
-- **`scripts/release-common.ps1`** is dot-sourced by the three scripts and is the one place for what they share:
-  the property reader, the `CHANGELOG.md` heading pattern and reader, the repository URL, and the release count
-  from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not enumerate the JSON array
-  `Invoke-RestMethod` returns, so the answer is counted from a variable — wrapped directly, an empty list would
-  count as one release.
+- **`scripts/release-common.ps1`** is dot-sourced by the release scripts and by `verify-publish.ps1` and is the one
+  place for what they share: the property reader, the `CHANGELOG.md` heading pattern and reader, the repository
+  URL, the running-instance probe (`Get-RunningApp` — `release.ps1` stops on it, `verify-publish.ps1` skips its
+  measurement), and the release count from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not
+  enumerate the JSON array `Invoke-RestMethod` returns, so the answer is counted from a variable — wrapped
+  directly, an empty list would count as one release.
 - **`.github/workflows/release.yml`** runs on a `v*` tag: `guard` (a full-history checkout and
   `release-guard.ps1 -RequireOnMain`) → `ci` (`ci.yml` through `workflow_call`) → `publish` (`dotnet tool
   restore`, `package.ps1 -DownloadPrevious`, `vpk upload github --publish --merge` onto the tag's release, then
@@ -5893,7 +5901,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
-| What the release scripts share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
+| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`), release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version; with `-RequireOnMain`, the tagged commit on `origin/main` | `scripts/release-guard.ps1` |
 | One-command release: guards, `Version`, build + suite, release commit, annotated tag, atomic push | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |

@@ -44,7 +44,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'release-common.ps1')   # calisan-ornek sondasi (Get-RunningApp) release.ps1 ile ORTAK
 $failures = New-Object System.Collections.Generic.List[string]
 $appProcess = $null
 $child = $null      # App'in dogurdugu supervisor (WMI olayindan) — kapanis dogrulamasi bunu kullanir
@@ -71,7 +71,7 @@ function SendCommand([System.IO.Stream] $stream, $command) {
 # Makinede acik bir ornek varken bu script yanlis-KIRMIZI verirdi (baslattigimiz process aninda olurdu).
 # Bu bir dogrulama hatasi DEGIL, kullanim hatasidir: net mesajla ve AYRISAN cikis koduyla (2) dur.
 Step 'precondition: no Build Orchestrator instance is running'
-$running = @(Get-Process -Name 'BuildOrchestrator.App' -ErrorAction SilentlyContinue)
+$running = @(Get-RunningApp)
 if ($running.Count -gt 0) {
     Write-Host "    [STOP] A Build Orchestrator is already running (pid: $($running.Id -join ', '))."
     Write-Host '           The App is SINGLE-INSTANCE, so this script cannot take a meaningful measurement:'

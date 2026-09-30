@@ -1,8 +1,8 @@
 <#
- [yayin hatti] package.ps1, release-guard.ps1 ve release.ps1'in ORTAK okuyuculari: Directory.Build.props degerleri,
- CHANGELOG surum basliklari ve GitHub'daki release sayisi tek yerde okunur (dot-source edilir, tek basina
- calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin
- ayni bolumu verdigini pinler.
+ [yayin hatti] package.ps1, release-guard.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari: Directory.Build.props
+ degerleri, CHANGELOG surum basliklari, GitHub'daki release sayisi ve calisan uygulama ornegi sondasi tek yerde
+ (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur;
+ ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -18,6 +18,13 @@ function Get-BuildProp([string]$Name) {
     $node = $doc.SelectSingleNode("/Project/PropertyGroup/$Name")
     if (-not $node) { throw "Directory.Build.props has no <$Name>." }
     return $node.InnerText
+}
+
+function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App') {
+    # Calisan uygulama ornekleri (yoksa bos). Uygulama tek-orneklidir (ikinci ornek mevcut pencereyi one getirip kapanir) ve
+    # calisan Supervisor kendi binary'lerini kilitler (CLAUDE.md "uygulama acikken build alma"): release.ps1 (Release build)
+    # ve verify-publish.ps1 (olcum) ayni sondayi kullanir. Tek elemanli sonuc dizi olarak gelmez - cagiran @(...) ile sarar.
+    return @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
 }
 
 function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {

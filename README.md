@@ -139,10 +139,11 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1 -PublishOnly -Publi
 
 Version, product name and company are read from `Directory.Build.props`. The publish is framework-dependent and
 folder-based (`Release`, `win-x64`) and lands in `artifacts\publish\`; that version's section of `CHANGELOG.md` is
-cut into `artifacts\velopack\notes.md`; and Velopack packs the installer, `BuildOrchestrator.App-win-Setup.exe`, and
-the update packages into `artifacts\velopack\` — with a delta package too when the previous release's package is
-there (`-DownloadPrevious` fetches it; the release workflow does). `-PublishOnly` stops after the publish;
-`artifacts\` is ignored by git.
+cut into `artifacts\notes.md`, beside Velopack's own folder; and Velopack packs the installer,
+`BuildOrchestrator.App-win-Setup.exe`, and the update packages into `artifacts\velopack\` — with a delta package
+too when the previous release's package is there (`-DownloadPrevious` fetches it; the release workflow does).
+`-PublishOnly` stops after the publish; `-WhatIf` prints what would run and touches nothing, the network
+included; `artifacts\` is ignored by git.
 
 **The `supervisor\` subfolder next to the published `.exe` is mandatory.** It is not an optional extra: it
 *is* the build engine. The App resolves `<app folder>\supervisor\BuildOrchestrator.Supervisor.exe` at startup;
@@ -175,7 +176,8 @@ the App and proving the Supervisor dies *by itself* through the job cascade. Exi
 **Releasing** is one request in a Claude Code session: `/release` (the project skill in `.claude/skills/release/`).
 Claude writes the new version's `CHANGELOG.md` section — the rules are in [`CLAUDE.md`](CLAUDE.md) — and runs
 `scripts\release.ps1 -Version X.Y.Z`. The script stops before touching anything unless `main` is clean and level
-with `origin/main`, the section is on top and dated today, and the tag exists neither locally nor on `origin`;
+with `origin/main`, the section is on top and dated today, the tag exists neither locally nor on `origin`, and the
+app is not running (a running instance keeps its files locked — tray icon → Exit);
 then it writes `Version`, builds, runs the full suite, commits `release: vX.Y.Z` on `main`, tags it and pushes
 both atomically — either both reach GitHub or neither does. `-DryRun` runs only the `CHANGELOG.md` checks. The tag
 starts `.github/workflows/release.yml`: it checks that the tag, `Version` and the top `CHANGELOG.md` section agree

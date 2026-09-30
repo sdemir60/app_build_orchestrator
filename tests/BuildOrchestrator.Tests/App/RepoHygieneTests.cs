@@ -78,6 +78,8 @@ public class RepoHygieneTests
         Assert.Contains("vpk upload github", release, StringComparison.Ordinal);
         Assert.Contains("gh release edit", release, StringComparison.Ordinal);     // gövde = CHANGELOG bölümü
         Assert.DoesNotContain("dotnet publish", release, StringComparison.Ordinal); // publish komutunun tek sahibi package.ps1
+        // Not, Velopack'in çıktı klasörünün (artifacts/velopack) DIŞINDA: vpk o klasörün sahibidir ve dosya yayın açıldıktan SONRA okunur.
+        Assert.Matches(@"--notes-file artifacts/notes\.md\b", release);
     }
 
     /// <summary>İki tag arka arkaya itilirse iki yayın aynı anda koşmaz (ikincisinin delta'sı birincinin henüz yüklenmemiş
