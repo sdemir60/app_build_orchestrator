@@ -92,15 +92,39 @@ public class ReleaseScriptsTests
             + "else { " + NoCiRunAnswer + " } }";
     }
 
+    /// <summary>Gölge <c>git</c>: script'in her git çağrısı (<c>Invoke-Git</c> dahil) önce <paramref name="body"/>'den geçer;
+    /// <c>$args[0]</c> alt komuttur. Gerçek git'e <see cref="RealGit"/> ile inilir; <c>return</c> eden dal hiç inmez. Çıkış kodu
+    /// script'in okuduğu <c>$global:LASTEXITCODE</c>'a yazılır. Ayrı process'te koşan release-guard.ps1'e gölge geçmez.</summary>
+    private static string GitShadow(string body) => "function git { " + body + " }";
+
+    /// <summary>Gölgenin gerçek git'e geçen çağrısı (<c>git</c> adı gölgenin kendisidir; <c>git.exe</c> uygulamadır).</summary>
+    private const string RealGit = "& git.exe @args";
+
+    /// <summary><c>git worktree list</c> düşer (çıkış 128, çıktı yok); öteki her çağrı gerçek git'tir.</summary>
+    private static string WorktreeListFails =>
+        GitShadow("if ($args[0] -eq 'worktree') { $global:LASTEXITCODE = 128; return }; " + RealGit);
+
+    /// <summary>Push GERÇEKTEN yapılır (origin yayını alır) ama çıkış kodu 1 döner: sunucu atomik güncellemeyi uyguladıktan sonra
+    /// cevap gelmeden kopan bağlantı.</summary>
+    private static string PushAppliesButReportsAnError =>
+        GitShadow(RealGit + "; if ($args[0] -eq 'push') { $global:LASTEXITCODE = 1 }");
+
+    /// <summary>Push hiç gönderilmez (çıkış 1 — ağ gitti) ve ondan SONRA origin okunamaz: push'tan sonraki <c>ls-remote</c> 128
+    /// döner. Guard evresindeki <c>ls-remote</c> gerçektir.</summary>
+    private static string PushFailsAndOriginCannotBeRead =>
+        GitShadow("if ($args[0] -eq 'push') { $global:pushTried = $true; $global:LASTEXITCODE = 1; return }; "
+            + "if ($args[0] -eq 'ls-remote' -and $global:pushTried) { $global:LASTEXITCODE = 128; return }; " + RealGit);
+
     /// <summary>release.ps1'i sandbox'ta koşturur; iki sonda gölgelenir. Çalışan-örnek sondası (<c>Get-Process</c>): varsayılan
     /// <see cref="NoAppShadow"/> — geliştirici makinesinde gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu
     /// verir; <paramref name="processShadow"/> sondaya sahte bir uygulama (<see cref="RunningApp"/>) gösterir. develop'un CI koşusu
     /// (<c>Invoke-RestMethod</c>): varsayılan, develop'un ŞU ANKİ commit'i için yeşil bir koşu (<see cref="CiRun"/>);
-    /// <paramref name="ciShadow"/> başka bir cevap verir. <paramref name="switches"/> script'e verilen anahtarlardır.</summary>
+    /// <paramref name="ciShadow"/> başka bir cevap verir. <paramref name="switches"/> script'e verilen anahtarlardır.
+    /// <paramref name="gitShadow"/> verilirse script'in git çağrıları ondan geçer (<see cref="GitShadow"/>); varsayılan gerçek git.</summary>
     private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, string processShadow = NoAppShadow,
-        string? ciShadow = null, string switches = "-SkipTests") =>
+        string? ciShadow = null, string switches = "-SkipTests", string gitShadow = "") =>
         RunCommand(
-            $"{processShadow}; {ciShadow ?? CiRun(box.LocalDevelop, "completed", "success")}; "
+            $"{processShadow}; {ciShadow ?? CiRun(box.LocalDevelop, "completed", "success")}; {gitShadow}; "
             + $"& '{box.ReleaseScript}' -Version {box.NextVersion} {switches}; exit $LASTEXITCODE",
             box.Work);
 
@@ -624,6 +648,49 @@ public class ReleaseScriptsTests
         Assert.Contains($"<Version>{box.NextVersion}</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal);
     }
 
+    /// <summary>Kusur: push sıfırdan farklı döndüğünde script "--atomic: nothing reached origin" diyor ve kurtarma satırını
+    /// basıyordu. Oysa sunucu atomik güncellemeyi uyguladıktan sonra bağlantı koparsa git yine hata döner ve yayın origin'dedir:
+    /// kurtarma yerel develop/main/tag'i geri alır, ardından <c>git pull --ff-only</c> çalışma ağacındaki CHANGELOG/props
+    /// değişikliğine çarpar. Script "hiçbir şey gitmedi" demeden origin'e tag'i sorar (<c>git ls-remote</c>); tag oradaysa bunu
+    /// söyler ve kurtarma satırı BASMAZ. Gölge <c>git</c> push'u gerçekten yapar, yalnız çıkış kodunu bozar; tag sondası gerçek
+    /// origin'e sorar.</summary>
+    [SkippableFact]
+    public void A_push_that_errs_after_origin_took_the_release_says_so_and_prints_no_undo()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+
+        var r = RunRelease(box, gitShadow: PushAppliesButReportsAnError);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim()); // yayın gerçekten origin'de
+        Assert.Equal(box.LocalMain, box.OriginMain);
+        Assert.Equal(box.LocalDevelop, box.OriginDevelop);
+        Assert.Contains("but origin has v1.8.0", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing reached origin", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("release: undo", r.Output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Push düştükten sonra origin OKUNAMAZSA (ağ gitti) script "hiçbir şey gitmedi" diyemez: <c>ls-remote</c> hatası
+    /// "tag yok" sayılmaz (guard'lardaki kural). Kurtarma satırı yine son satırdır (büyük olasılıkla push gitmemiştir), ama
+    /// üstündeki satır önce origin'de tag'in olmadığını görmeyi söyler. Gölge <c>git</c> push'u hiç göndermez ve push'tan sonraki
+    /// <c>ls-remote</c>'u düşürür.</summary>
+    [SkippableFact]
+    public void A_failed_push_whose_outcome_cannot_be_read_asks_to_check_origin_before_the_undo()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        string originBefore = box.OriginRefs;
+
+        var r = RunRelease(box, gitShadow: PushFailsAndOriginCannotBeRead);
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal(originBefore, box.OriginRefs); // push gitmedi
+        Assert.Contains("origin cannot be read", r.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing reached origin", r.Output, StringComparison.Ordinal);
+        Assert.Contains("git reset --soft", UndoCommands(r.Output), StringComparison.Ordinal);
+    }
+
     /// <summary>Temiz yayın: develop'taki <c>release: vX</c> commit'i main'e <c>--no-ff</c> merge edilir (<c>merge: release vX</c>),
     /// annotated tag o merge commit'ine konur, develop main'e ilerler (develop == main) ve üç ref birlikte origin'e gider. main'in
     /// ilk ebeveyni önceki sürüm, ikincisi develop'un release commit'idir — o da develop'un yayından önceki ucunun üstündedir
@@ -734,24 +801,36 @@ public class ReleaseScriptsTests
 
     /// <summary>Akışın git ön koşulları yazmadan ÖNCE denetlenir; tutmazsa script hiçbir şeye dokunmadan durur:
     /// <list type="bullet">
+    /// <item><c>develop</c> ve <c>main</c> origin'de var: fetch budar (<c>--prune</c>) — origin'de silinmiş bir branch'in uzak izleme
+    /// ref'i klonda kalsaydı guard onu var sayar ve yayın silinmiş branch'i yeniden yaratırdı.</item>
     /// <item><c>develop</c> = <c>origin/develop</c> (fetch sonrası): yayın origin'deki ve CI'ın gördüğü commit'ten çıkar.</item>
     /// <item>yerel <c>main</c> (varsa) = <c>origin/main</c>: main'i yalnız yayın ilerletir; farklıysa elle dokunulmuştur.</item>
     /// <item><c>origin/main</c> develop'un atası: main develop'un tamamını alır, fazlasını değil — değilse merge, build'in hiç
     /// görmediği bir ağaç üretirdi (çakışırsa main'de yarım bir merge kalırdı).</item>
     /// <item><c>main</c> başka bir worktree'de açık değil: akış <c>git switch main</c> yapar; açıksa bu, release commit'inden SONRA
-    /// düşerdi.</item>
+    /// düşerdi. <c>git worktree list</c> düşerse guard sessizce geçmez (doğrulanamayan yayın çıkmaz).</item>
     /// </list></summary>
     [SkippableTheory]
+    [InlineData("develop-missing-on-origin", "origin has no develop branch")]
+    [InlineData("main-missing-on-origin", "origin has no main branch")]
     [InlineData("develop-behind-origin", "develop and origin/develop differ")]
     [InlineData("local-main-moved", "main and origin/main differ")]
     [InlineData("main-not-in-develop", "origin/main has commits develop does not have")]
     [InlineData("main-in-another-worktree", "main is checked out in")]
+    [InlineData("worktree-list-fails", "cannot check where main is checked out")]
     public void The_release_script_refuses_a_develop_or_main_out_of_step_before_touching_anything(string scenario, string message)
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
+        string gitShadow = "";
         switch (scenario)
         {
+            case "develop-missing-on-origin":
+                box.DeleteOnOrigin("develop");
+                break;
+            case "main-missing-on-origin":
+                box.DeleteOnOrigin("main");
+                break;
             case "develop-behind-origin":
                 box.AdvanceOrigin("develop");
                 break;
@@ -766,10 +845,13 @@ public class ReleaseScriptsTests
             case "main-in-another-worktree":
                 box.CheckOutMainInAnotherWorktree();
                 break;
+            case "worktree-list-fails":
+                gitShadow = WorktreeListFails;
+                break;
         }
         string before = box.Snapshot();
 
-        var r = RunRelease(box);
+        var r = RunRelease(box, gitShadow: gitShadow);
 
         Assert.Equal(1, r.ExitCode);
         Assert.Contains(message, r.Output, StringComparison.Ordinal);
@@ -871,6 +953,8 @@ public class ReleaseScriptsTests
         public string OriginMain => Git(Origin, "rev-parse", "main").Trim();
         public string OriginDevelop => Git(Origin, "rev-parse", "develop").Trim();
         public string OriginTags => Git(Work, "ls-remote", "--tags", "origin").Trim();
+        /// <summary>origin'in bütün ref'leri (branch + tag) ve gösterdikleri nesneler.</summary>
+        public string OriginRefs => Git(Origin, "for-each-ref", "--format=%(refname) %(objectname)").Trim();
         public string WorkHead => Git(Work, "rev-parse", "HEAD").Trim();
         public string LocalDevelop => Git(Work, "rev-parse", "refs/heads/develop").Trim();
         public string LocalMain => Git(Work, "rev-parse", "refs/heads/main").Trim();
@@ -912,7 +996,7 @@ public class ReleaseScriptsTests
         /// klonunun yerel branch ve tag'leri, açık branch ve props'un metni. Guard'ların kendi <c>fetch</c>'i yalnız uzak izleme
         /// ref'lerini (<c>refs/remotes</c>) günceller; onlar görüntüye girmez.</summary>
         public string Snapshot() => string.Join("\n",
-            "origin: " + Git(Origin, "for-each-ref", "--format=%(refname) %(objectname)").Trim(),
+            "origin: " + OriginRefs,
             "work: " + Git(Work, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads", "refs/tags").Trim(),
             "branch: " + CurrentBranch,
             "props: " + File.ReadAllText(PropsPath));
@@ -973,6 +1057,11 @@ public class ReleaseScriptsTests
                 + string.Concat(CompetingCommit(branch).Select(args => "git " + string.Join(' ', args) + " || exit 1\n"));
             File.WriteAllText(Path.Combine(Work, ".git", "hooks", "post-commit"), hook);
         }
+
+        /// <summary>origin'den <paramref name="branch"/>'i siler ("başka biri sildi"): çalışma klonu habersizdir, uzak izleme ref'i
+        /// (<c>origin/&lt;branch&gt;</c>) klonda kalır. Bare repoda doğrudan silinir — origin'in HEAD'i <c>main</c>'dir ve git,
+        /// HEAD'in branch'ini push'la sildirmez (<c>deletion of the current branch prohibited</c>).</summary>
+        public void DeleteOnOrigin(string branch) => Git(Origin, "update-ref", "-d", "refs/heads/" + branch);
 
         /// <summary><c>main</c>'i sandbox içindeki ikinci bir worktree'de açar (çalışma klonu develop'ta kalır).</summary>
         public void CheckOutMainInAnotherWorktree() =>
