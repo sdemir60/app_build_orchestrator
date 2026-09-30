@@ -269,6 +269,30 @@ public class ReleaseScriptsTests
         Assert.Equal("True", r.Output.Trim());
     }
 
+    /// <summary>Üç durumlu ata sorusu tek yerdedir (<c>Test-GitAncestor</c>, release-common.ps1): <c>git merge-base --is-ancestor</c>
+    /// çıkışı 0 → <c>$true</c>, 1 → <c>$false</c>, diğeri (ref yok, sığ checkout) → istisna (<c>git exit N</c>). Sorulamayan ata ne
+    /// "ata" ne "değil" sayılır — çağıranlar (release.ps1'in ata guard'ı, release-guard.ps1'in <c>-RequireOnMain</c>'i) kendi
+    /// mesajıyla durur. Sorular geçici bir repoya sorulur: script kökü (<c>$RepoRoot</c>) dot-source'tan sonra oraya çevrilir.</summary>
+    [SkippableFact]
+    public void The_ancestry_probe_answers_yes_or_no_and_throws_when_git_cannot_tell()
+    {
+        RequirePowerShell();
+        using var repo = new GitTestRepo();
+        repo.WriteFile("a.txt", "1");
+        string older = repo.CommitAll("older");
+        repo.WriteFile("a.txt", "2");
+        string newer = repo.CommitAll("newer");
+
+        var r = RunCommand($". '{CommonScript}'; $RepoRoot = '{repo.RootPath}'; "
+            + $"'yes=' + (Test-GitAncestor {older} {newer}); 'no=' + (Test-GitAncestor {newer} {older}); "
+            + $"try {{ $null = Test-GitAncestor no-such-ref {newer}; 'unknown=answered' }} catch {{ 'unknown=threw ' + $_.Exception.Message }}");
+
+        string[] lines = r.Output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        Assert.Contains("yes=True", lines);
+        Assert.Contains("no=False", lines);
+        Assert.Contains(lines, l => l.StartsWith("unknown=threw git exit ", StringComparison.Ordinal));
+    }
+
     /// <summary>Kusur: <c>-DownloadPrevious</c> ve <c>-ReleaseCount</c> verilmeden <c>-WhatIf</c> koşusu release sayısını
     /// GitHub API'sinden sorardı (<c>Invoke-RestMethod</c>) — başlıktaki ve ARCHITECTURE §18'deki "-WhatIf hiçbir şeyi
     /// çalıştırmaz" iddiasına aykırı. Önceki testler <c>-ReleaseCount 0</c> verir ya da cmdlet'i taklit ettiği için
@@ -903,7 +927,8 @@ public class ReleaseScriptsTests
     /// origin/main'de OLMAYAN bir commit'e duran tag (bir iş branch'inden, push edilmemiş bir denemeden) aynı eşitliği
     /// taşırsa yayın çıkardı. <c>-RequireOnMain</c> (CI'ın kipi) HEAD'in origin/main'in atası olmasını da ister. Yerel
     /// <c>release.ps1</c> bu anahtarı vermez: orada guard release commit'inden önce koşar. develop'a push edilmiş ama main'e
-    /// girmemiş bir commit de yayın çıkarmaz: main yalnız sürümleri taşır, tag release.ps1'in main'deki merge'ündedir.</summary>
+    /// girmemiş bir commit de yayın çıkarmaz: main yalnız sürümleri taşır, tag release.ps1'in main'deki merge'ündedir. Ata
+    /// sorulamazsa (<c>origin/main</c> yok) da reddeder — üç durum <c>Test-GitAncestor</c>'dadır.</summary>
     [SkippableFact]
     public void The_release_guard_on_CI_refuses_a_commit_that_origin_main_does_not_contain()
     {
@@ -924,6 +949,11 @@ public class ReleaseScriptsTests
         box.Git(box.Work, "push", "-q", "origin", "HEAD:main"); // commit artık origin/main'de
         var accepted = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
         Assert.True(accepted.ExitCode == 0, accepted.Output);
+
+        box.Git(box.Work, "update-ref", "-d", "refs/remotes/origin/main"); // ata sorulamaz (tarihçesi getirilmemiş checkout gibi)
+        var unknown = RunIn(box.Work, box.GuardScript, "-Tag", tag, "-RequireOnMain");
+        Assert.Equal(1, unknown.ExitCode);                                  // sorulamayan ata "ata" sayılmaz
+        Assert.Contains("cannot check the tagged commit against origin/main", unknown.Output, StringComparison.Ordinal);
     }
 
     /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin (<c>main</c> ve onun bir commit önündeki

@@ -1,8 +1,9 @@
 <#
  [yayin hatti] package.ps1, release-guard.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari: Directory.Build.props
- degerleri, CHANGELOG surum basliklari, GitHub API'si (release sayisi, bir commit'in CI kosusu), bir surumun onceki
- paketlerinin temizligi ve calisan uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina calistirilmaz). Baslik
- bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
+ degerleri, CHANGELOG surum basliklari, GitHub API'si (release sayisi, bir commit'in CI kosusu), uc durumlu git ata sorusu,
+ bir surumun onceki paketlerinin temizligi ve calisan uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina
+ calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni
+ bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -45,6 +46,17 @@ function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App', [string]
         })
 }
 
+function Test-GitAncestor([string]$Ancestor, [string]$Descendant) {
+    # $Ancestor, $Descendant'in atasi mi (git merge-base --is-ancestor, repo $RepoRoot). Uc durum: cikis 0 = ata ($true), 1 = degil
+    # ($false), digeri = sorulamadi (ref yok, sig checkout) -> throw "git exit N". Sorulamayan ata ne "ata" ne "degil" sayilir
+    # (dogrulanamayan yayin cikmaz); cagiran (release.ps1'in ata guard'i, release-guard.ps1 -RequireOnMain) kendi mesajini yazar.
+    & git -C $RepoRoot merge-base --is-ancestor $Ancestor $Descendant
+    $code = $LASTEXITCODE
+    if ($code -eq 0) { return $true }
+    if ($code -eq 1) { return $false }
+    throw "git exit $code"
+}
+
 function Invoke-GitHubApi([string]$RepoUrl, [string]$Path, [string]$Token) {
     # GitHub REST API'sine GET: RepoUrl web adresidir (https://github.com/<sahip>/<repo>), Path repo altindaki uc
     # ('releases?per_page=1' gibi). Acik repo kimliksiz okunur (saatte 60 istek); Token verilirse Bearer gider. GitHub
@@ -69,8 +81,9 @@ function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {
 function Get-CiConclusion([string]$RepoUrl, [string]$Sha, [string]$Workflow = 'ci.yml') {
     # Bir commit'in en yeni workflow kosusu (release.ps1: develop HEAD'inin ci.yml'i yesil mi): kosu yoksa $null, varsa
     # Status (queued / in_progress / completed ...) ve Conclusion (success / failure / cancelled ...; kosu bitmeden bos).
-    # Ayni commit'in birden cok kosusu olabilir (yeniden kosturma, elle tetikleme); API en yenisini basta verir, per_page=1
-    # onu alir. workflow_runs cevabin bir OZELLIGIDIR (ust duzey dizi degil): bos dizi @() icinde bos kalir.
+    # Ayni commit'in birden cok kosusu olabilir: ayni sha'nin birden cok ref'e itilmesi (yayin main ile develop'u ayni sha'da
+    # iter), PR, elle tetikleme ("Re-run" yeni kosu acmaz, ayni kosunun yeni denemesidir). API en yenisini basta verir,
+    # per_page=1 onu alir. workflow_runs cevabin bir OZELLIGIDIR (ust duzey dizi degil): bos dizi @() icinde bos kalir.
     $response = Invoke-GitHubApi $RepoUrl "actions/workflows/$Workflow/runs?head_sha=$Sha&per_page=1"
     $run = @($response.workflow_runs) | Select-Object -First 1
     if ($null -eq $run) { return $null }

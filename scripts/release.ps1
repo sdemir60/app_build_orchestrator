@@ -62,12 +62,9 @@ $localMain = git rev-parse --verify --quiet refs/heads/main
 if ($localMain -and $localMain -ne $main) { Fail 'main and origin/main differ; main moves only by a release - reset it (git branch -f main origin/main).' }
 # main develop'un tamamini alir, fazlasini degil: origin/main develop'un atasi degilse merge, build'in hic gormedigi bir agac
 # uretirdi (catisirsa main'de yarim bir merge kalirdi).
-& git merge-base --is-ancestor $main $develop
-switch ($LASTEXITCODE) {
-    0 { }
-    1 { Fail 'origin/main has commits develop does not have; merge main into develop first.' }
-    default { Fail "cannot check origin/main against develop (git exit $LASTEXITCODE)." }
-}
+try { $mainInDevelop = Test-GitAncestor $main $develop }
+catch { Fail "cannot check origin/main against develop ($($_.Exception.Message))." }
+if (-not $mainInDevelop) { Fail 'origin/main has commits develop does not have; merge main into develop first.' }
 # Akis main'e gecer (git switch main); main baska bir worktree'de acikken bu, release commit'inden SONRA duserdi. Liste
 # okunamazsa guard gecmez (dogrulanamayan yayin cikmaz - ata ve ls-remote guard'lari gibi).
 $worktrees = @(git worktree list --porcelain)

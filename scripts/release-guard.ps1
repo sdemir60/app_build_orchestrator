@@ -18,13 +18,9 @@ $problems = @()
 if ($Tag -ne "v$version") { $problems += "tag '$Tag' does not match Directory.Build.props Version '$version' (expected 'v$version')" }
 if ($topVersion -ne $version) { $problems += "CHANGELOG.md top section is '$topVersion', Directory.Build.props Version is '$version'" }
 if ($RequireOnMain) {
-    # Cikis 0 = ata, 1 = degil, digeri = sorulamadi (origin/main yok, sig checkout). Dogrulanamayan yayin cikmaz.
-    & git -C $RepoRoot merge-base --is-ancestor HEAD origin/main
-    switch ($LASTEXITCODE) {
-        0 { }
-        1 { $problems += "the tagged commit is not on origin/main (release tags sit only on main)" }
-        default { $problems += "cannot check the tagged commit against origin/main (git exit $LASTEXITCODE; is the history fetched?)" }
-    }
+    # Ata sorulamazsa (origin/main yok, sig checkout) da durur: dogrulanamayan yayin cikmaz (uc durum Test-GitAncestor'da).
+    try { if (-not (Test-GitAncestor HEAD origin/main)) { $problems += "the tagged commit is not on origin/main (release tags sit only on main)" } }
+    catch { $problems += "cannot check the tagged commit against origin/main ($($_.Exception.Message); is the history fetched?)" }
 }
 if ($problems.Count -gt 0) { $problems | ForEach-Object { Write-Host "release guard: $_" }; exit 1 }
 $onMain = if ($RequireOnMain) { ', on origin/main' } else { '' }
