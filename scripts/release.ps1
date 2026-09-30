@@ -1,6 +1,7 @@
 <# [yayin hatti] Tek komutla yayin - /release skill'inin mekanik yarisi. Notu Claude yazmis olmali (CHANGELOG en ustte
    "## [X.Y.Z] - <bugun>"); script: guard'lar -> Version'i yazar -> build + tam suit -> "release: vX.Y.Z" commit'i ->
-   annotated tag -> push main + tag. Herhangi bir adimda durursa hicbir sey push edilmemistir.
+   annotated tag -> atomik push (main + tag ya birlikte gider ya hicbiri). Herhangi bir adimda durursa hicbir sey
+   push edilmemistir.
      release.ps1 -Version 1.8.0            (tam akis)
      release.ps1 -Version 1.8.0 -SkipTests (suit lokalde zaten yesil gorulduyse)
      release.ps1 -Version 1.8.0 -DryRun    (yalniz guard'lar; git'e/dosyaya dokunmaz) #>
@@ -30,6 +31,11 @@ if (git status --porcelain | Where-Object { $_ -notmatch '^.. (Directory\.Build\
 Invoke-Git fetch origin --quiet
 if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) { Fail 'main and origin/main differ; sync first.' }
 if (git tag --list "v$Version") { Fail "tag v$Version already exists." }
+# Uzak tag: fetch yalniz getirdigi tarihceye isaret eden tag'leri alir; origin'de erisilemeyen bir commit'e duran ayni ad
+# yerelde gorunmez ve push'ta reddedilirdi. ls-remote hatasi "tag yok" sayilmaz (dogrulanamayan yayin cikmaz).
+$remoteTag = & git ls-remote --tags origin "refs/tags/v$Version"
+if ($LASTEXITCODE -ne 0) { Fail "git ls-remote failed (exit $LASTEXITCODE); cannot verify tag v$Version on origin." }
+if ($remoteTag) { Fail "tag v$Version already exists on origin." }
 
 # --- Version tek yerde
 $propsPath = Join-Path $RepoRoot 'Directory.Build.props'
@@ -51,6 +57,8 @@ if (-not $SkipTests) {
 Invoke-Git add CHANGELOG.md Directory.Build.props
 if (git status --porcelain) { Invoke-Git commit -q -m "release: v$Version" }
 Invoke-Git tag -a "v$Version" -m "$(Get-BuildProp 'Product') $Version - release notes in CHANGELOG.md"
-Invoke-Git push origin main "v$Version"
+# --atomic: fetch ile push arasinda build + tam suit dakikalar surer; origin/main bu arada ilerlerse main reddedilir ve tag de
+# gitmez (atomiksiz push tag'i yine gonderirdi: CI'da guard gecer, origin/main'de olmayan commit'ten yayin cikardi).
+Invoke-Git push --atomic origin main "v$Version"
 Write-Host "release: v$Version pushed - $DefaultRepoUrl/actions"
 exit 0

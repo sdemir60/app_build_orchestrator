@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using BuildOrchestrator.App.Services;
+using BuildOrchestrator.Tests.Git;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -143,5 +144,145 @@ public class ReleaseScriptsTests
         var r = Run("release.ps1", "-Version", "99.0.0", "-DryRun");
         Assert.Equal(1, r.ExitCode);
         Assert.Contains("CHANGELOG.md", r.Output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Kusur: guard'lar tag'e yalnız YEREL bakıyordu (<c>git tag --list</c>). <c>git fetch</c> ise sadece getirdiği
+    /// tarihçeye işaret eden tag'leri alır; origin'de erişilemeyen bir commit'e duran aynı ad yerelde görünmez. Sonuç: main
+    /// push edilir, tag reddedilir → main'de yayını olmayan bir release commit'i. Bu test o tag'i origin'e koyar ve script'in
+    /// HİÇBİR şeye dokunmadan durmasını ister.</summary>
+    [SkippableFact]
+    public void The_release_script_refuses_a_tag_that_origin_already_has_before_touching_anything()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.TagAnUnreachableCommitOnOrigin("v1.8.0");
+        string originBefore = box.OriginMain;
+        string localBefore = box.WorkHead;
+        Assert.Equal("", box.Git(box.Work, "tag", "--list", "v1.8.0").Trim()); // yerel klon görmüyor: kusur bu
+
+        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Contains("already exists on origin", r.Output, StringComparison.Ordinal);
+        Assert.Equal(originBefore, box.OriginMain);                                        // main push edilmedi
+        Assert.Equal(localBefore, box.WorkHead);                                           // release commit'i atılmadı
+        Assert.Contains("<Version>1.7.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal); // Version yazılmadı
+    }
+
+    /// <summary>Kusur: <c>git push origin main vX</c> atomik değildi. Fetch ile push arasında build + tam süit dakikalar sürer;
+    /// origin/main bu arada ilerlerse git main'i non-fast-forward diye reddeder ama tag'i GÖNDERİRDİ → CI'daki release-guard
+    /// geçer, origin/main'de olmayan bir commit'ten yayın çıkar. Yarış, release commit'inin hemen ardından origin'i ilerleten bir
+    /// post-commit hook ile (fetch'ten sonra, push'tan önce) deterministik kurulur.</summary>
+    [SkippableFact]
+    public void A_main_that_moved_before_the_push_leaves_no_tag_on_origin()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+        box.AdvanceOriginRightAfterTheNextCommit();
+
+        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+
+        Assert.Equal(1, r.ExitCode);
+        Assert.Equal(box.OtherHead, box.OriginMain); // yarış gerçekten kuruldu: origin'de yalnız rakip commit var
+        Assert.Equal("", box.Git(box.Work, "ls-remote", "--tags", "origin").Trim()); // tag origin'e ULAŞMADI (atomik push)
+    }
+
+    /// <summary>Atomik push normal akışı bozmaz: yarış yokken release commit'i ve annotated tag birlikte origin'e ulaşır.</summary>
+    [SkippableFact]
+    public void A_clean_release_pushes_the_release_commit_and_the_annotated_tag_together()
+    {
+        RequirePowerShell();
+        using var box = new ReleaseSandbox("1.8.0");
+
+        var r = RunIn(box.Work, box.ReleaseScript, "-Version", "1.8.0", "-SkipTests");
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        Assert.Equal(box.WorkHead, box.OriginMain);
+        Assert.Equal("release: v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main").Trim());
+        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim()); // annotated: tag nesnesi
+        Assert.Contains("<Version>1.8.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal);
+    }
+
+    /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin + çalışma klonu (script'ler ve asgari
+    /// props/CHANGELOG/slnx içerir; script kökü kendi konumundan çıkarır) + origin'i "başka biri" gibi ilerleten ikinci klon.
+    /// Yeni sürümün CHANGELOG bölümü commit EDİLMEMİŞ değişikliktir (gerçek akışta Claude yazar, script commit'ler). Gerçek
+    /// repoya dokunulmaz; <see cref="GitTestRepo.RunGitAt"/> kullanılır.</summary>
+    private sealed class ReleaseSandbox : IDisposable
+    {
+        private readonly TempDir _temp = new();
+
+        public string Origin => Path.Combine(_temp.Path, "origin.git");
+        public string Work => Path.Combine(_temp.Path, "work");
+        public string Other => Path.Combine(_temp.Path, "other");
+        public string ReleaseScript => Path.Combine(Work, "scripts", "release.ps1");
+        public string PropsPath => Path.Combine(Work, "Directory.Build.props");
+        public string OriginMain => Git(Origin, "rev-parse", "main").Trim();
+        public string WorkHead => Git(Work, "rev-parse", "HEAD").Trim();
+        public string OtherHead => Git(Other, "rev-parse", "HEAD").Trim();
+
+        public ReleaseSandbox(string nextVersion)
+        {
+            Git(_temp.Path, "init", "-q", "--bare", "-b", "main", Origin);
+            Git(_temp.Path, "clone", "-q", Origin, Work);
+            Configure(Work);
+
+            Directory.CreateDirectory(Path.Combine(Work, "scripts"));
+            foreach (string script in new[] { "release.ps1", "release-guard.ps1", "release-common.ps1" })
+                File.Copy(Path.Combine(Scripts, script), Path.Combine(Work, "scripts", script));
+            File.WriteAllText(PropsPath,
+                "<Project><PropertyGroup><Version>1.7.0</Version><Product>Sandbox</Product><Company>Sandbox</Company></PropertyGroup></Project>\n");
+            File.WriteAllText(Path.Combine(Work, "BuildOrchestrator.slnx"), "<Solution />\n");
+            const string older = "## [1.7.0] - 2026-01-01\n\n### Added\n- Older entry.\n";
+            string changelog = Path.Combine(Work, "CHANGELOG.md");
+            File.WriteAllText(changelog, "# Changelog\n\n" + older);
+            Git(Work, "add", "-A");
+            Git(Work, "commit", "-q", "-m", "init");
+            Git(Work, "push", "-q", "origin", "main");
+
+            Git(_temp.Path, "clone", "-q", Origin, Other);
+            Configure(Other);
+
+            string today = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            File.WriteAllText(changelog, $"# Changelog\n\n## [{nextVersion}] - {today}\n\n### Added\n- New entry.\n\n" + older);
+        }
+
+        public string Git(string workingDirectory, params string[] args) => GitTestRepo.RunGitAt(workingDirectory, args);
+
+        private void Configure(string repo)
+        {
+            Git(repo, "config", "user.email", "test@buildorchestrator.local");
+            Git(repo, "config", "user.name", "Build Orchestrator Test");
+            Git(repo, "config", "core.autocrlf", "false"); // fixture LF yazar; kullanıcı ayarı satır sonu gürültüsü üretmesin
+        }
+
+        /// <summary>Origin'e, hiçbir branch'ten erişilemeyen (parent'sız) bir commit'i gösteren tag koyar: çalışma klonunun
+        /// <c>git fetch</c>'i bunu getirmez, <c>git tag --list</c> göremez.</summary>
+        public void TagAnUnreachableCommitOnOrigin(string tag)
+        {
+            string orphan = Git(Other, "commit-tree", "HEAD^{tree}", "-m", "orphan").Trim();
+            Git(Other, "tag", tag, orphan);
+            Git(Other, "push", "-q", "origin", "refs/tags/" + tag);
+        }
+
+        /// <summary>Çalışma klonunda atılacak İLK commit'in hemen ardından ikinci klondan origin/main'e bir commit iter
+        /// (release.ps1'de commit, fetch'ten sonra ve push'tan önce gelir).</summary>
+        public void AdvanceOriginRightAfterTheNextCommit()
+        {
+            string other = Other.Replace('\\', '/');
+            string hook = "#!/bin/sh\n"
+                + "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\n" // hook'a git'in kendi ortamı geçer; öteki klonu bozmasın
+                + $"cd \"{other}\" || exit 1\n"
+                + "git commit -q --allow-empty -m competing || exit 1\n"
+                + "git push -q origin main || exit 1\n";
+            File.WriteAllText(Path.Combine(Work, ".git", "hooks", "post-commit"), hook);
+        }
+
+        public void Dispose()
+        {
+            // git nesne dosyaları salt-okunurdur; TempDir bunları silemez (ve assertion hatasını Dispose istisnasıyla örterdi).
+            foreach (string file in Directory.EnumerateFiles(_temp.Path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            _temp.Dispose();
+        }
     }
 }
