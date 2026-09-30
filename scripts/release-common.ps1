@@ -20,11 +20,28 @@ function Get-BuildProp([string]$Name) {
     return $node.InnerText
 }
 
-function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App') {
+function Get-RunningApp([string]$ProcessName = 'BuildOrchestrator.App', [string]$UnderPath) {
     # Calisan uygulama ornekleri (yoksa bos). Uygulama tek-orneklidir (ikinci ornek mevcut pencereyi one getirip kapanir) ve
-    # calisan Supervisor kendi binary'lerini kilitler (CLAUDE.md "uygulama acikken build alma"): release.ps1 (Release build)
-    # ve verify-publish.ps1 (olcum) ayni sondayi kullanir. Tek elemanli sonuc dizi olarak gelmez - cagiran @(...) ile sarar.
-    return @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+    # calisan Supervisor kendi binary'lerini kilitler (CLAUDE.md "uygulama acikken build alma"). Iki cagiran, iki soru:
+    #  - release.ps1 -UnderPath <repo koku> verir: Release build yalniz BU checkout'tan calisan kopyanin dosyalarina carpar; tepsideki
+    #    KURULU kopya (%LocalAppData%\BuildOrchestrator.App\current) baska klasordedir ve yayini durdurmamali.
+    #  - verify-publish.ps1 kok VERMEZ: tek-ornek kapisi ve canli pencere okuma yuzunden HER ornek (kurulu kopya dahil) olcumu bozar.
+    # -UnderPath verilince yalniz exe'si o klasorun ALTINDA olan process'ler sayilir; sinir klasordur, metin oneki degil ("C:\a"
+    # altinda "C:\a-ai" yok - repo ile -ai calisma klasoru kardestir). Konumu okunamayan process (erisim reddi: yukseltilmis ya da
+    # baska kullanicinin sureci) SAYILIR: yanlis "yok" build'i kilitli dosyada dusurur, yanlis "var" yalniz bir "kapat" mesaji ister.
+    # Tek elemanli sonuc dizi olarak gelmez - cagiran @(...) ile sarar.
+    $running = @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+    if (-not $UnderPath) { return $running }
+    $root = [System.IO.Path]::GetFullPath($UnderPath).TrimEnd('\', '/') + '\'
+    return @($running | Where-Object {
+            $counted = $true
+            try {
+                $exe = $_.Path
+                if ($exe) { $counted = [System.IO.Path]::GetFullPath($exe).StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) }
+            }
+            catch { }
+            $counted
+        })
 }
 
 function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {

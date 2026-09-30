@@ -47,7 +47,7 @@ public class ReleaseScriptsTests
     /// Gerçek publish dakikalar sürer ve Velopack aracı ister.</summary>
     private const string RecordingDotnet = "function dotnet { 'DOTNET ' + ($args -join ' '); $global:LASTEXITCODE = 0 }";
 
-    /// <summary>Sahte "çalışan uygulama"nın pid'i: <see cref="RunningAppShadow"/> tek bir process döndürür ve onu reddeden
+    /// <summary>Sahte "çalışan uygulama"nın pid'i: <see cref="RunningApp"/> tek bir process döndürür ve onu reddeden
     /// script'lerin (release.ps1, verify-publish.ps1) çıktısında bu sayı aranır.</summary>
     private const int FakeAppPid = 4242;
 
@@ -55,15 +55,25 @@ public class ReleaseScriptsTests
     /// Geliştirici makinesinde gerçek bir Build Orchestrator açıkken de sonuç değişmez; <see cref="RecordingDotnet"/> ile aynı yol.</summary>
     private const string NoAppShadow = "function Get-Process { @() }";
 
-    /// <summary>Gölge <c>Get-Process</c>: sonda tek bir sahte uygulama (<see cref="FakeAppPid"/>) görür.</summary>
-    private static readonly string RunningAppShadow = $"function Get-Process {{ [pscustomobject]@{{ Id = {FakeAppPid} }} }}";
+    /// <summary>Gölge <c>Get-Process</c>: sonda tek bir sahte uygulama (<see cref="FakeAppPid"/>) görür. <paramref name="exePath"/>
+    /// onun konumudur (<c>Path</c>); verilmezse konum OKUNAMAZ (erişim reddi gibi) — <c>Path</c> boş gelir.</summary>
+    private static string RunningApp(string? exePath = null)
+    {
+        string path = exePath is null ? "$null" : "'" + exePath.Replace("'", "''") + "'";
+        return $"function Get-Process {{ [pscustomobject]@{{ Id = {FakeAppPid}; Path = {path} }} }}";
+    }
 
-    /// <summary>release.ps1'i sandbox'ta koşturur. Çalışan-örnek sondası (<c>Get-Process</c>) gölgelenir (<see cref="NoAppShadow"/>):
-    /// geliştirici makinesinde gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu verir.
-    /// <paramref name="appRunning"/> sondaya sahte bir process (<see cref="FakeAppPid"/>) döndürtür.</summary>
-    private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, bool appRunning = false) =>
+    /// <summary>Kurulu kopyanın konumu (Velopack: <c>%LocalAppData%\BuildOrchestrator.App\current</c>) — hiçbir checkout'un içinde
+    /// değil; dosyanın gerçekten var olması gerekmez, sonda yalnız <c>Path</c> metnine bakar.</summary>
+    private static string InstalledAppPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BuildOrchestrator.App", "current", "BuildOrchestrator.App.exe");
+
+    /// <summary>release.ps1'i sandbox'ta koşturur. Çalışan-örnek sondası (<c>Get-Process</c>) gölgelenir: varsayılan
+    /// <see cref="NoAppShadow"/> — geliştirici makinesinde gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu
+    /// verir; <paramref name="processShadow"/> sondaya sahte bir uygulama (<see cref="RunningApp"/>) gösterir.</summary>
+    private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, string processShadow = NoAppShadow) =>
         RunCommand(
-            $"{(appRunning ? RunningAppShadow : NoAppShadow)}; & '{box.ReleaseScript}' -Version {box.NextVersion} -SkipTests; exit $LASTEXITCODE",
+            $"{processShadow}; & '{box.ReleaseScript}' -Version {box.NextVersion} -SkipTests; exit $LASTEXITCODE",
             box.Work);
 
     private static ProcessStartInfo NewPowerShell(string workingDirectory)
@@ -333,19 +343,73 @@ public class ReleaseScriptsTests
     public void The_running_app_probe_finds_a_process_by_name()
     {
         RequirePowerShell();
-        string common = Path.Combine(Scripts, "release-common.ps1");
 
-        var absent = RunCommand($". '{common}'; @(Get-RunningApp 'bo-no-such-process-{Guid.NewGuid():N}').Count");
+        var absent = RunCommand($". '{CommonScript}'; @(Get-RunningApp 'bo-no-such-process-{Guid.NewGuid():N}').Count");
         Assert.True(absent.ExitCode == 0, absent.Output);
         Assert.Equal("0", absent.Output.Trim());
 
-        var present = RunCommand($". '{common}'; @(Get-RunningApp 'powershell').Count -gt 0");
+        var present = RunCommand($". '{CommonScript}'; @(Get-RunningApp 'powershell').Count -gt 0");
         Assert.True(present.ExitCode == 0, present.Output);
         Assert.Equal("True", present.Output.Trim());
 
-        var byDefault = RunCommand($"function Get-Process {{ [CmdletBinding()] param([string]$Name) $Name }}; . '{common}'; Get-RunningApp");
+        var byDefault = RunCommand($"function Get-Process {{ [CmdletBinding()] param([string]$Name) $Name }}; . '{CommonScript}'; Get-RunningApp");
         Assert.True(byDefault.ExitCode == 0, byDefault.Output);
         Assert.Equal("BuildOrchestrator.App", byDefault.Output.Trim());
+    }
+
+    /// <summary>Kusur: sonda process'i yalnız ADA göre buluyordu; ilk kurulumdan sonra kullanıcının tepsideki KURULU kopyası
+    /// (<c>%LocalAppData%\BuildOrchestrator.App\current</c>) da <c>/release</c>'i durdururdu — oysa gerekçe (çalışan Supervisor kendi
+    /// binary'lerini kilitler) yalnız bu checkout'un <c>bin\</c>'inden çalışan kopya için geçerli. <c>-UnderPath</c> verilince yalnız
+    /// <c>Path</c>'i o klasörün altındaki process'ler sayılır; verilmezse eski davranış (her örnek).
+    /// <para>GERÇEK bir process kullanılır: testin kendi <c>powershell</c>'i (<c>Path</c> = System32 altı); havuz yalnız o tek
+    /// process'e daraltılır ki makinedeki başka (yükseltilmiş, konumu okunamayan) bir powershell sonucu bozmasın. Klasör sınırı tam
+    /// ad eşleşmesidir: <c>...\v1</c>, <c>...\v1.0</c>'ın metin öneki olsa da sayılmaz — kardeş çalışma klasörleri
+    /// (<c>app_build_orchestrator</c> / <c>app_build_orchestrator-ai</c>) birbirini durdurmasın.</para></summary>
+    [SkippableFact]
+    public void The_running_app_probe_counts_only_processes_under_the_given_folder()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        const string onlyThisProcess = "function Get-Process { [System.Diagnostics.Process]::GetCurrentProcess() }";
+        const string powershellDir = @"Join-Path $env:SystemRoot 'System32\WindowsPowerShell'";
+
+        var r = RunCommand($"{onlyThisProcess}; . '{CommonScript}'; $dir = {powershellDir}; "
+            + $"'outside=' + @(Get-RunningApp 'powershell' -UnderPath '{temp.Path}').Count; "
+            + "'inside=' + @(Get-RunningApp 'powershell' -UnderPath $dir).Count; "
+            + "'trailing=' + @(Get-RunningApp 'powershell' -UnderPath ($dir + '\\')).Count; "
+            + "'prefix=' + @(Get-RunningApp 'powershell' -UnderPath (Join-Path $dir 'v1')).Count; "
+            + "'unscoped=' + @(Get-RunningApp 'powershell').Count");
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        var counts = r.Output.Split('\n').Select(l => l.Trim().Split('=')).Where(p => p.Length == 2).ToDictionary(p => p[0], p => p[1]);
+        Assert.Equal("0", counts["outside"]);   // kök dışındaki process sayılmaz
+        Assert.Equal("1", counts["inside"]);    // kökün altındaki sayılır
+        Assert.Equal("1", counts["trailing"]);  // kökün sonundaki ayraç fark etmez
+        Assert.Equal("0", counts["prefix"]);    // metin öneki klasör değildir
+        Assert.Equal("1", counts["unscoped"]);  // kök verilmezse eski davranış: her örnek
+    }
+
+    /// <summary>Konumu OKUNAMAYAN process (erişim reddi: yükseltilmiş ya da başka kullanıcının süreci — <c>Path</c> boş ya da okuması
+    /// istisna atar) temkinle SAYILIR: yanlış "yok" build'i kilitli dosyada düşürürdü, yanlış "var" yalnız bir "kapat" mesajı ister.
+    /// Kök dışında okunabilir konumdaki process sayılmaz; kök adıyla başlayan kardeş klasör (<c>C:\root-ai</c>) de.</summary>
+    [SkippableFact]
+    public void A_process_whose_location_cannot_be_read_is_still_counted()
+    {
+        RequirePowerShell();
+        const string shadow = @"function Get-Process {
+            $inside = [pscustomobject]@{ Id = 1; Path = 'C:\root\app\a.exe' }
+            $elsewhere = [pscustomobject]@{ Id = 2; Path = 'C:\other\a.exe' }
+            $empty = [pscustomobject]@{ Id = 3; Path = $null }
+            $denied = [pscustomobject]@{ Id = 4 }
+            $denied | Add-Member -MemberType ScriptProperty -Name Path -Value { throw 'Access is denied' }
+            $sibling = [pscustomobject]@{ Id = 5; Path = 'C:\root-ai\a.exe' }
+            $inside; $elsewhere; $empty; $denied; $sibling
+        }";
+
+        var r = RunCommand($"{shadow}; $ErrorActionPreference = 'Stop'; . '{CommonScript}'; (Get-RunningApp -UnderPath 'C:\\root' | ForEach-Object Id) -join ','");
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        Assert.Equal("1,3,4", r.Output.Trim());
     }
 
     /// <summary>[final review #4] Sonda TEK sahiplidir (kopya yasak): <c>release.ps1</c> ve <c>verify-publish.ps1</c> process
@@ -362,19 +426,23 @@ public class ReleaseScriptsTests
         Assert.Contains("'BuildOrchestrator.App'", File.ReadAllText(Path.Combine(Scripts, "release-common.ps1")), StringComparison.Ordinal);
     }
 
-    /// <summary>[final review #4] Uygulama açıkken build alınmaz (CLAUDE.md): Release build çalışan Supervisor'ın kilitli
-    /// binary'lerine çarpar, ama kusur bunun ÇOK sonra ortaya çıkmasıydı — <c>Version</c> <c>Directory.Build.props</c>'a
+    /// <summary>[final review #4] Bu checkout'tan çalışan uygulamayla build alınmaz (CLAUDE.md): Release build çalışan Supervisor'ın
+    /// kilitli binary'lerine çarpar, ama kusur bunun ÇOK sonra ortaya çıkmasıydı — <c>Version</c> <c>Directory.Build.props</c>'a
     /// çoktan yazılmış, açıklanması gereken kirli bir dosya kalmıştı. Script artık props'a dokunmadan durur: çıkış 1, pid
-    /// mesajda, ne props ne yerel HEAD ne origin değişir. Çalışan uygulama gerçekten açılmaz: <c>Get-Process</c> gölgelenir.</summary>
+    /// mesajda, ne props ne yerel HEAD ne origin değişir. Çalışan uygulama gerçekten açılmaz: <c>Get-Process</c> gölgelenir ve
+    /// process'in konumu checkout'un (sandbox'ın çalışma klasörü) altındadır.
+    /// <para><b>Değişen kural:</b> eski iddia "uygulama (herhangi bir konumdan) çalışıyorsa durur"du; process'in konumu olmayan
+    /// sahte bir process yeterdi. Gerekçe yalnız bu checkout'tan çalışan kopya için geçerli olduğundan sınır repo köküne çekildi
+    /// (bkz. <see cref="A_copy_installed_elsewhere_does_not_stop_the_release"/>); iddia aynı kaldı: o kopya açıkken durur.</para></summary>
     [SkippableFact]
-    public void The_release_script_refuses_while_the_app_is_running_before_it_writes_the_version()
+    public void The_release_script_refuses_while_this_checkouts_app_is_running_before_it_writes_the_version()
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
         string originBefore = box.OriginMain;
         string localBefore = box.WorkHead;
 
-        var r = RunRelease(box, appRunning: true);
+        var r = RunRelease(box, RunningApp(Path.Combine(box.Work, "src", "BuildOrchestrator.App", "bin", "Release", "BuildOrchestrator.App.exe")));
 
         Assert.Equal(1, r.ExitCode);
         Assert.Contains(FakeAppPid.ToString(), r.Output, StringComparison.Ordinal);
@@ -383,13 +451,32 @@ public class ReleaseScriptsTests
         Assert.Equal(originBefore, box.OriginMain);
     }
 
-    /// <summary>[final review #4] Sondanın verify-publish'teki kullanımı taşındıktan sonra da aynıdır: çalışan örnek varken hiçbir
-    /// ölçüm yapmadan <c>RESULT: SKIPPED</c> ve ön koşul kodu 2 ile durur (uygulama tek-örnektir). Sonda gölgelenir.</summary>
+    /// <summary>Kusur: sonda process'i yalnız ADA göre buluyordu — ilk kurulumdan sonra tepsideki KURULU kopya
+    /// (<c>%LocalAppData%\BuildOrchestrator.App\current</c>) da <c>/release</c>'i durdururdu, oysa o kopyanın dosyaları bu
+    /// checkout'un build'ini kilitlemez. release.ps1 sondaya repo kökünü verir (<c>-UnderPath</c>): kurulu kopya açıkken yayın
+    /// sonuna kadar gider (release commit'i ve tag origin'de).</summary>
     [SkippableFact]
-    public void Verify_publish_stops_with_the_precondition_code_while_the_app_runs()
+    public void A_copy_installed_elsewhere_does_not_stop_the_release()
     {
         RequirePowerShell();
-        var r = RunCommand($"{RunningAppShadow}; & '{Path.Combine(Scripts, "verify-publish.ps1")}'; exit $LASTEXITCODE");
+        using var box = new ReleaseSandbox("1.8.0");
+
+        var r = RunRelease(box, RunningApp(InstalledAppPath));
+
+        Assert.True(r.ExitCode == 0, r.Output);
+        Assert.Equal(box.WorkHead, box.OriginMain);
+        Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());
+    }
+
+    /// <summary>[final review #4] Sondanın verify-publish'teki kullanımı taşındıktan sonra da aynıdır: çalışan örnek varken hiçbir
+    /// ölçüm yapmadan <c>RESULT: SKIPPED</c> ve ön koşul kodu 2 ile durur. Uygulama TEK-ÖRNEKLİDİR ve script canlı pencereyi UI
+    /// Automation ile okur: kurulu kopya da ölçümü bozar (ikinci örnek mevcut pencereyi öne getirip kapanır), bu yüzden
+    /// verify-publish sondaya kök vermez ve konumu checkout dışında olan örnek de durdurur. Sonda gölgelenir.</summary>
+    [SkippableFact]
+    public void Verify_publish_stops_with_the_precondition_code_while_any_copy_of_the_app_runs()
+    {
+        RequirePowerShell();
+        var r = RunCommand($"{RunningApp(InstalledAppPath)}; & '{Path.Combine(Scripts, "verify-publish.ps1")}'; exit $LASTEXITCODE");
         Assert.Equal(2, r.ExitCode);
         Assert.Contains(FakeAppPid.ToString(), r.Output, StringComparison.Ordinal);
         Assert.Contains("RESULT: SKIPPED", r.Output, StringComparison.Ordinal);

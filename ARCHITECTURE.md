@@ -5147,8 +5147,8 @@ from a faked API answer — with `dotnet` replaced by a stand-in that records th
 folder as it stands when the download and the pack begin included — the removal of a version's earlier packages,
 the running-instance probe, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
 tag `origin` already has, a `main` that moves before the push, a tagged commit `origin/main` does not contain, an
-application still running (the process query is faked in every sandbox run, so the outcome does not depend on
-what is open on the machine). Nothing is packaged there; that takes minutes and the Velopack tool. The update
+application still running from the checkout and one installed elsewhere that does not stop the release (the process
+query is faked in every sandbox run, so the outcome does not depend on what is open on the machine). Nothing is packaged there; that takes minutes and the Velopack tool. The update
 engine is tested through its seam with a fake updater and a fake clock, and `VelopackUpdater` against an injected
 Velopack locator, since a test host never runs `Program.Main`.
 
@@ -5344,8 +5344,10 @@ the notes is scripted:
 - **`scripts/release.ps1 -Version X.Y.Z`** checks before it touches anything: the top `CHANGELOG.md` section is
   `X.Y.Z` and dated today; the branch is `main`; the tree is clean but for `CHANGELOG.md` and
   `Directory.Build.props`; after a fetch, `main` equals `origin/main`; `vX.Y.Z` exists neither locally nor on
-  `origin`; and no instance of the application is running, since a live Supervisor keeps its binaries locked and the
-  build would fail — after `Version` was written, which the check therefore precedes. The remote check asks
+  `origin`; and no copy of the application is running from this checkout: a live Supervisor keeps its binaries
+  locked and the build would fail, but only after `Version` was written, so the check comes first. A copy installed
+  elsewhere (`%LOCALAPPDATA%\BuildOrchestrator.App\current`) locks nothing here and does not count; a copy whose
+  location cannot be read does, to be safe. The remote check asks
   `git ls-remote`, because a fetch brings only the tags of the history it brings, and a failed `ls-remote` stops
   the release rather than counting as "no tag". Then it writes `Version`, runs
   `release-guard.ps1`, builds, runs the full suite (`-SkipTests` when it was just seen green), commits
@@ -5359,8 +5361,10 @@ the notes is scripted:
   `main` publishes nothing.
 - **`scripts/release-common.ps1`** is dot-sourced by the release scripts and by `verify-publish.ps1` and is the one
   place for what they share: the property reader, the `CHANGELOG.md` heading pattern and reader, the repository
-  URL, the running-instance probe (`Get-RunningApp` — `release.ps1` stops on it, `verify-publish.ps1` skips its
-  measurement), the removal of a version's earlier packages (`Remove-PackagedVersion`, for `package.ps1`), and the
+  URL, the running-instance probe (`Get-RunningApp` — `release.ps1` asks it for a copy running from its own
+  checkout, by folder, and stops on one; `verify-publish.ps1` asks for any copy, since the App is single-instance
+  and the measurement reads the live window, and skips its measurement), the removal of a version's earlier
+  packages (`Remove-PackagedVersion`, for `package.ps1`), and the
   release count from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not
   enumerate the JSON array `Invoke-RestMethod` returns, so the answer is counted from a variable — wrapped
   directly, an empty list would count as one release.
@@ -5920,7 +5924,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
-| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`), removal of a version's earlier packages (`Remove-PackagedVersion`), release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
+| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`, optionally scoped to a folder), removal of a version's earlier packages (`Remove-PackagedVersion`), release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version; with `-RequireOnMain`, the tagged commit on `origin/main` | `scripts/release-guard.ps1` |
 | One-command release: guards, `Version`, build + suite, release commit, annotated tag, atomic push | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |

@@ -36,10 +36,12 @@ if (git tag --list "v$Version") { Fail "tag v$Version already exists." }
 $remoteTag = & git ls-remote --tags origin "refs/tags/v$Version"
 if ($LASTEXITCODE -ne 0) { Fail "git ls-remote failed (exit $LASTEXITCODE); cannot verify tag v$Version on origin." }
 if ($remoteTag) { Fail "tag v$Version already exists on origin." }
-# Calisan uygulama (CLAUDE.md "uygulama acikken build alma"): Release build calisan Supervisor'in kilitli binary'lerine carpar.
-# Sonda Version yazilmadan ONCE kosar; sonradan dusen build, aciklanmasi gereken degismis bir Directory.Build.props birakirdi.
-$running = @(Get-RunningApp)
-if ($running.Count -gt 0) { Fail "Build Orchestrator is running (pid $($running.Id -join ', ')); close it first (tray icon > Exit) - a running instance keeps its binaries locked and the build would fail." }
+# Calisan uygulama (CLAUDE.md "uygulama acikken build alma"): Release build, BU checkout'tan calisan Supervisor'in kilitli
+# binary'lerine carpar; tepsideki KURULU kopya baska klasordedir ve build'i kilitlemez - sonda yalniz repo kokunun altindaki
+# kopyalari sayar (konumu okunamayan sayilir). Sonda Version yazilmadan ONCE kosar; sonradan dusen build, aciklanmasi gereken
+# degismis bir Directory.Build.props birakirdi.
+$running = @(Get-RunningApp -UnderPath $RepoRoot)
+if ($running.Count -gt 0) { Fail "Build Orchestrator is running from this checkout or from a location that could not be read (pid $($running.Id -join ', ')); close it first (tray icon > Exit) - a copy running from this checkout keeps its binaries locked and the build would fail." }
 
 # --- Version tek yerde
 $propsPath = Join-Path $RepoRoot 'Directory.Build.props'

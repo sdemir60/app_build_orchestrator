@@ -176,8 +176,9 @@ the App and proving the Supervisor dies *by itself* through the job cascade. Exi
 **Releasing** is one request in a Claude Code session: `/release` (the project skill in `.claude/skills/release/`).
 Claude writes the new version's `CHANGELOG.md` section — the rules are in [`CLAUDE.md`](CLAUDE.md) — and runs
 `scripts\release.ps1 -Version X.Y.Z`. The script stops before touching anything unless `main` is clean and level
-with `origin/main`, the section is on top and dated today, the tag exists neither locally nor on `origin`, and the
-app is not running (a running instance keeps its files locked — tray icon → Exit);
+with `origin/main`, the section is on top and dated today, the tag exists neither locally nor on `origin`, and no
+copy of the app is running from this checkout (it keeps the checkout's files locked — tray icon → Exit; an installed
+copy elsewhere is no obstacle);
 then it writes `Version`, builds, runs the full suite, commits `release: vX.Y.Z` on `main`, tags it and pushes
 both atomically — either both reach GitHub or neither does. `-DryRun` runs only the `CHANGELOG.md` checks. The tag
 starts `.github/workflows/release.yml`: it checks that the tag, `Version` and the top `CHANGELOG.md` section agree

@@ -71,6 +71,7 @@ function SendCommand([System.IO.Stream] $stream, $command) {
 # Makinede acik bir ornek varken bu script yanlis-KIRMIZI verirdi (baslattigimiz process aninda olurdu).
 # Bu bir dogrulama hatasi DEGIL, kullanim hatasidir: net mesajla ve AYRISAN cikis koduyla (2) dur.
 Step 'precondition: no Build Orchestrator instance is running'
+# Sonda kok VERMEZ (release.ps1'den farkli): App tek-orneklidir ve olcum canli pencereyi okur; kurulu kopya dahil HER ornek engeldir.
 $running = @(Get-RunningApp)
 if ($running.Count -gt 0) {
     Write-Host "    [STOP] A Build Orchestrator is already running (pid: $($running.Id -join ', '))."

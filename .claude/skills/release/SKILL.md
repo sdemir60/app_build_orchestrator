@@ -14,8 +14,9 @@ ilk CI koşusu olmasın. Değilse dur ve söyle.
 
 1. **Ana proje checkout'unda** (`D:\Projects\Other\Apps\app_build_orchestrator`) `main` üzerinde koş — worktree'de
    (`main-ai`) DEĞİL: `main` orada açılamaz ve script `main` dışında durur. Ağaç temiz olmalı; `git fetch` →
-   `origin/main` ile eşit değilse dur ve söyle. Build Orchestrator (tepsideki kopya dahil) kapalı olmalı: açıksa script
-   `Version`'a dokunmadan durur.
+   `origin/main` ile eşit değilse dur ve söyle. Bu checkout'tan çalışan Build Orchestrator (`bin\`'den açılan kopya)
+   kapalı olmalı: açıksa script `Version`'a dokunmadan durur. Tepsideki kurulu kopya
+   (`%LOCALAPPDATA%\BuildOrchestrator.App\current`) engel değildir.
 2. Numarayı ve CHANGELOG bölümünü CLAUDE.md "Sürüm çıkarma" adım 1-3'e göre hazırla (major ise kullanıcıya SOR);
    `Version`'ı script yazar.
 3. `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 -Version X.Y.Z`
