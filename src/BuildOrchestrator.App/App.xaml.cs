@@ -183,11 +183,13 @@ public partial class App : Application
     {
         // --font-ab yolunda DI hiç kurulmaz — Services null kalır.
         AppShutdown.WaitForAsyncDisposal(Services?.GetService<EngineHost>(), AppShutdown.DisposalTimeout);
-        // [motor] Motor kapandı, dosya kilitleri bırakıldı → hazır güncelleme varsa Update.exe (job dışında) kurulumu
-        // process çıkınca yapar: Restart istendiyse yeniden açar, Later denmişse sessiz kurar.
-        Services?.GetService<UpdateService>()?.ApplyOnExit();
         _secondInstanceTray?.Dispose(); // [E2/triaj-f] geçici ikinci-instance balloon ikonu (varsa) bırakılır
         _singleInstance?.Dispose();
+        // [motor] Motor kapandı, dosya kilitleri bırakıldı → hazır güncelleme varsa Update.exe (job dışında) kurulumu
+        // process çıkınca yapar: Restart istendiyse yeniden açar, Later denmişse sessiz kurar. Temizlikten SONRA durur:
+        // servisin ilk kurulumu (GetService) ya da başlatma zinciri atsa bile yukarıdaki bırakmalar atlanmaz (başlatma
+        // hatası ApplyOnExit içinde zaten sessizdir).
+        Services?.GetService<UpdateService>()?.ApplyOnExit();
         base.OnExit(e);
     }
 }

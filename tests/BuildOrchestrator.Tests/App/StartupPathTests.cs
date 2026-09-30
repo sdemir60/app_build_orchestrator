@@ -127,6 +127,14 @@ public class StartupPathTests
         int dispose = startup.IndexOf("AppShutdown.WaitForAsyncDisposal(", StringComparison.Ordinal);
         int apply = startup.IndexOf("GetService<UpdateService>()?.ApplyOnExit()", StringComparison.Ordinal);
         Assert.True(dispose > 0 && apply > dispose, "ApplyOnExit motor kapandıktan sonra çağrılmalı.");
+        // Kurulumu başlatma zincirinin (Update.exe yok, Process.Start atar) ya da servisin ilk kurulumunun atması çıkış
+        // temizliğini atlamamalı: çağrı temizlik satırlarından SONRA, base.OnExit'ten hemen önce durur.
+        int trayDispose = startup.IndexOf("_secondInstanceTray?.Dispose(); // [E2/triaj-f]", StringComparison.Ordinal);
+        int singleDispose = startup.IndexOf("_singleInstance?.Dispose();", StringComparison.Ordinal);
+        int baseExit = startup.IndexOf("base.OnExit(e);", StringComparison.Ordinal);
+        Assert.True(trayDispose > 0 && singleDispose > 0 && baseExit > 0, "OnExit'in temizlik satırları bulunamadı.");
+        Assert.True(apply > trayDispose && apply > singleDispose && apply < baseExit,
+            "ApplyOnExit çıkış temizliğinden sonra, base.OnExit'ten önce çağrılmalı.");
     }
 
     // ---------------------------------------------------------------- t1: açılış seed'i motora komut göndermez

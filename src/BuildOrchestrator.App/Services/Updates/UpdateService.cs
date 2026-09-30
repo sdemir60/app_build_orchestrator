@@ -5,7 +5,8 @@ namespace BuildOrchestrator.App.Services.Updates;
 /// <summary>
 /// [design v1.23.0 §2.12 · K8] Güncelleme motorunun durum makinesi: kurulu kopyada açılıştan <see cref="FirstCheckDelay"/>
 /// sonra ve her <see cref="CheckInterval"/>'de sessiz kontrol; yeni sürüm arka planda iner; indirme bitince teklif
-/// <paramref name="publish"/> ile yayımlanır (hap o anda belirir). Hata (kontrol, indirme ve yayım dahil) sessizdir —
+/// <paramref name="publish"/> ile yayımlanır (hap o anda belirir). Hata (kontrol, indirme, yayım ve çıkışta kurulumu
+/// başlatma dahil) sessizdir —
 /// bir sonraki turda yeniden; sürüm ancak yayım başarılı olunca "hazır" sayılır. Kurulu
 /// olmayan kopya (bin'den dev build, publish klasörü) hiç kontrol etmez. Önceki oturumdan indirilmiş paket
 /// (<see cref="IAppUpdater.PendingRestart"/>) açılışta hemen teklif edilir.
@@ -93,10 +94,14 @@ public sealed class UpdateService(IAppUpdater updater, TimeProvider time, Action
     public void RequestRestart() => RestartRequested = true;
 
     /// <summary>Çıkış yolunun son adımı: hazır teklif varsa Update.exe'yi başlatır (kurulum bu process çıkınca olur).
-    /// İndirmesi bitmemiş paket hazır sayılmaz — <c>_ready</c> yalnız indirme sonrası dolar.</summary>
+    /// İndirmesi bitmemiş paket hazır sayılmaz — <c>_ready</c> yalnız indirme sonrası dolar. Kurulumu başlatamamak
+    /// (Update.exe bulunamadı, <c>Process.Start</c> atar) sessizdir: çağıran <c>App.OnExit</c>'tir, orada yakalayan yoktur
+    /// ve atan bir çıkış çöker (Application Error); hazır teklif her açılışta geri geldiğinden çökme her çıkışta tekrarlanırdı.
+    /// Kurulum bu çıkışta olmazsa bir sonraki çıkış yeniden dener.</summary>
     public void ApplyOnExit()
     {
-        if (_ready is { } ready) updater.ApplyOnExit(ready, RestartRequested);
+        try { if (_ready is { } ready) updater.ApplyOnExit(ready, RestartRequested); }
+        catch (Exception ex) when (IsSilent(ex)) { }
     }
 
     public void Dispose() => _timer?.Dispose();

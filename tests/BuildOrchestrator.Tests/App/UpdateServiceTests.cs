@@ -17,11 +17,12 @@ public class UpdateServiceTests
         public UpdateCandidate? PendingRestart { get; set; }
         public Func<UpdateCandidate?> OnCheck = () => null;
         public Func<UpdateCandidate, Task> OnDownload = _ => Task.CompletedTask;
+        public Action OnApply = () => { };
         public int Checks, Downloads;
         public (UpdateCandidate Candidate, bool Restart)? Applied;
         public Task<UpdateCandidate?> CheckAsync(CancellationToken ct) { Checks++; return Task.FromResult(OnCheck()); }
         public Task DownloadAsync(UpdateCandidate c, CancellationToken ct) { Downloads++; return OnDownload(c); }
-        public void ApplyOnExit(UpdateCandidate c, bool restart) => Applied = (c, restart);
+        public void ApplyOnExit(UpdateCandidate c, bool restart) { Applied = (c, restart); OnApply(); }
     }
 
     private static readonly UpdateCandidate Newer = new("99.0.0", 19_293_798, "## [99.0.0] - 2026-10-01\n### Fixed\n- D\n");
@@ -216,6 +217,25 @@ public class UpdateServiceTests
         service.RequestRestart();
         service.ApplyOnExit();                       // Restart to update → yeniden açılır
         Assert.Equal((Newer, true), updater.Applied);
+    }
+
+    /// <summary>Kurulumu başlatamamak (Velopack "Cannot find Update.exe" ya da Update.exe'nin başlatılamaması —
+    /// <c>Win32Exception</c>) çıkışı çökertmez: <c>App.OnExit</c>'te yakalayan yoktur (DispatcherUnhandledException
+    /// handler'ı ve <c>Main</c>'de catch yok), atarsa Application Error çıkar ve hazır teklif her açılışta geri geldiği için
+    /// çökme her çıkışta tekrarlanır. Hata sessizdir (servisin genel sözleşmesi) — çağrı denenmiş sayılır, sonraki
+    /// açılış yine dener.</summary>
+    [Theory]
+    [InlineData(typeof(InvalidOperationException))]
+    [InlineData(typeof(System.ComponentModel.Win32Exception))]
+    public async Task A_failing_install_start_on_exit_is_silent(Type failure)
+    {
+        var (service, updater, time, published) = Rig();
+        updater.OnCheck = () => Newer;
+        await service.RunCycleAsync();
+        updater.OnApply = () => throw (Exception)Activator.CreateInstance(failure)!;
+        var thrown = Record.Exception(service.ApplyOnExit);
+        Assert.Null(thrown);
+        Assert.Equal((Newer, false), updater.Applied); // kurulum gerçekten denendi (atan çağrı buydu)
     }
 
     [Fact]
