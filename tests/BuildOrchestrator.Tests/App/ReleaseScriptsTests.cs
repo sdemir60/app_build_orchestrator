@@ -585,7 +585,10 @@ public class ReleaseScriptsTests
     /// ilerlemesi denenir.
     /// <para>Push reddinden sonra yerelde release commit'i, merge ve tag kalır; script'in son <c>release:</c> satırı onları geri alan
     /// komutları verir. Test o komutları ÇALIŞTIRIR: develop ve main yayının başladığı commit'e döner, tag silinir, CHANGELOG bölümü
-    /// ve <c>Version</c> çalışma ağacında değişiklik olarak kalır (yazılmış not kaybolmaz).</para>
+    /// ve <c>Version</c> çalışma ağacında değişiklik olarak kalır (yazılmış not kaybolmaz). Komutlardan ÖNCE bir <c>fetch</c> koşar:
+    /// kullanıcı araya fetch/pull sokabilir ve o zaman isimler (<c>origin/develop</c>, <c>origin/main</c>) yarışan commit'e kayar —
+    /// satırdaki sha'lar kaymaz. Sandbox'ta develop main'in önünde olduğundan yer değiştirmiş sha'lar da, isimli bir kurtarma da
+    /// burada kırmızı verir.</para>
     /// <para><b>Değişen kural (kullanıcı kararı 2026-09-30: günlük iş develop'ta, main yalnız sürümler):</b> eski iddia "origin/main
     /// ilerlerse main de tag de gitmez" idi — iki ref vardı, kurtarma elle yazılırdı (<c>git reset --soft origin/main</c>). Artık üç
     /// ref gider, develop'un ilerlemesi asıl olası yarıştır ve kurtarma komutlarını script verir.</para></summary>
@@ -597,6 +600,7 @@ public class ReleaseScriptsTests
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
         string developBefore = box.OriginDevelop, mainBefore = box.OriginMain;
+        Assert.NotEqual(mainBefore, developBefore); // sha'lar ayrışır: kurtarma satırında yer değiştirmeleri görünür
         box.AdvanceOriginRightAfterTheNextCommit(moved);
 
         var r = RunRelease(box);
@@ -607,6 +611,8 @@ public class ReleaseScriptsTests
         else Assert.Equal(developBefore, box.OriginDevelop);
         Assert.Equal("", box.OriginTags);                                             // tag origin'e ULAŞMADI (atomik push)
 
+        box.Git(box.Work, "fetch", "-q", "origin"); // kurtarmadan önce araya giren fetch: isim yarışan commit'e kayar
+        Assert.Equal(box.OtherHead, box.Git(box.Work, "rev-parse", "refs/remotes/origin/" + moved).Trim());
         var undo = RunCommand(UndoCommands(r.Output), box.Work);
 
         Assert.True(box.CurrentBranch == "develop", undo.Output);
@@ -620,7 +626,8 @@ public class ReleaseScriptsTests
 
     /// <summary>Temiz yayın: develop'taki <c>release: vX</c> commit'i main'e <c>--no-ff</c> merge edilir (<c>merge: release vX</c>),
     /// annotated tag o merge commit'ine konur, develop main'e ilerler (develop == main) ve üç ref birlikte origin'e gider. main'in
-    /// ilk ebeveyni önceki sürüm, ikincisi develop'un release commit'idir; oturum develop'ta, ağaç temiz biter.
+    /// ilk ebeveyni önceki sürüm, ikincisi develop'un release commit'idir — o da develop'un yayından önceki ucunun üstündedir
+    /// (son yayından beri develop'a giren iş main'e geçer); oturum develop'ta, ağaç temiz biter.
     /// <para><b>Değişen kural (kullanıcı kararı 2026-09-30: günlük iş develop'ta, main yalnız sürümler):</b> eski iddia "release
     /// commit'i main'de atılır, tag o commit'tedir, main ve tag birlikte push edilir" idi. main'e artık yalnız bu script dokunur ve
     /// main'deki her commit bir sürümün merge'üdür.</para></summary>
@@ -629,7 +636,8 @@ public class ReleaseScriptsTests
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
-        string mainBefore = box.OriginMain;
+        string mainBefore = box.OriginMain, developBefore = box.OriginDevelop;
+        Assert.NotEqual(mainBefore, developBefore); // develop'ta main'de olmayan iş var: ebeveynler ayırt edilir
 
         var r = RunRelease(box);
 
@@ -638,6 +646,7 @@ public class ReleaseScriptsTests
         Assert.Equal("merge: release v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main").Trim());
         Assert.Equal(mainBefore, box.Git(box.Origin, "rev-parse", "main^1").Trim());                    // ilk ebeveyn: önceki sürüm
         Assert.Equal("release: v1.8.0", box.Git(box.Origin, "log", "-1", "--format=%s", "main^2").Trim()); // ikinci: develop'un commit'i
+        Assert.Equal(developBefore, box.Git(box.Origin, "rev-parse", "main^2^1").Trim());               // ...develop'un ucunda atıldı
         Assert.Equal("tag", box.Git(box.Origin, "cat-file", "-t", "refs/tags/v1.8.0").Trim());          // annotated: tag nesnesi
         Assert.Equal(main, box.Git(box.Origin, "rev-parse", "refs/tags/v1.8.0^{commit}").Trim());        // tag merge commit'inde
         Assert.Equal(main, box.OriginDevelop);                                                            // develop == main
@@ -658,7 +667,7 @@ public class ReleaseScriptsTests
     {
         RequirePowerShell();
         using var box = new ReleaseSandbox("1.8.0");
-        box.Git(box.Work, "switch", "-q", "main"); // bekleyen CHANGELOG bölümü de gelir (iki branch aynı commit'te)
+        box.Git(box.Work, "switch", "-q", "main"); // bekleyen CHANGELOG bölümü de gelir (iş commit'i CHANGELOG'a dokunmaz)
         string before = box.Snapshot();
 
         var r = RunRelease(box);
@@ -835,13 +844,17 @@ public class ReleaseScriptsTests
         Assert.True(accepted.ExitCode == 0, accepted.Output);
     }
 
-    /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin (<c>main</c> ve <c>develop</c> eşit — son yayından
-    /// beri develop'a iş girmemiş hali) + <c>develop</c>'ta duran çalışma klonu (yerel <c>main</c>'i de vardır; script'ler ve asgari
-    /// props/CHANGELOG/slnx içerir; script kökü kendi konumundan çıkarır) + origin'i "başka biri" gibi ilerleten ikinci klon.
-    /// Yeni sürümün CHANGELOG bölümü commit EDİLMEMİŞ değişikliktir (gerçek akışta Claude yazar, script commit'ler). Gerçek
-    /// repoya dokunulmaz; <see cref="GitTestRepo.RunGitAt"/> kullanılır.
+    /// <summary>release.ps1'in gerçek git akışı için izole ortam: bare origin (<c>main</c> ve onun bir commit önündeki
+    /// <c>develop</c> — son yayından beri develop'a iş girmiş olağan hal; iş commit'i CHANGELOG'a ve props'a dokunmaz) +
+    /// <c>develop</c>'ta duran çalışma klonu (yerel <c>main</c>'i de vardır; script'ler ve asgari props/CHANGELOG/slnx içerir;
+    /// script kökü kendi konumundan çıkarır) + origin'i "başka biri" gibi ilerleten ikinci klon. Yeni sürümün CHANGELOG bölümü
+    /// commit EDİLMEMİŞ değişikliktir (gerçek akışta Claude yazar, script commit'ler). Gerçek repoya dokunulmaz;
+    /// <see cref="GitTestRepo.RunGitAt"/> kullanılır.
     /// <para><b>Değişen model (kullanıcı kararı 2026-09-30):</b> eskiden origin'de yalnız <c>main</c> vardı ve çalışma klonu
-    /// <c>main</c>'deydi — yayın main'den çıkardı. Artık günlük iş develop'ta, main yalnız sürümleri taşır.</para></summary>
+    /// <c>main</c>'deydi — yayın main'den çıkardı. Artık günlük iş develop'ta, main yalnız sürümleri taşır.</para>
+    /// <para><b>Neden develop önde:</b> ilk kurulumda <c>main</c> ile <c>develop</c> aynı commit'teydi; iki branch'in sha'sı
+    /// ayrışmadığı için yarış testinin kurtarma satırında sha'lar yer değiştirse ya da isimli ref'lere (<c>origin/develop</c>,
+    /// <c>origin/main</c>) dönse de test yeşil kalıyordu (ölçüldü) ve develop'ta main'de olmayan iş uçtan uca hiç koşmuyordu.</para></summary>
     private sealed class ReleaseSandbox : IDisposable
     {
         private readonly TempDir _temp = new();
@@ -882,8 +895,11 @@ public class ReleaseScriptsTests
             Git(Work, "add", "-A");
             Git(Work, "commit", "-q", "-m", "init");
             Git(Work, "push", "-q", "origin", "main");
-            Git(Work, "switch", "-q", "-c", "develop");         // günlük iş develop'ta; yerel main de durur
-            Git(Work, "push", "-q", "-u", "origin", "develop"); // origin: main == develop
+            Git(Work, "switch", "-q", "-c", "develop"); // günlük iş develop'ta; yerel main de durur
+            File.WriteAllText(Path.Combine(Work, "work.txt"), "work since the last release\n"); // CHANGELOG'a ve props'a dokunmaz
+            Git(Work, "add", "work.txt");
+            Git(Work, "commit", "-q", "-m", "feat: work since the last release");
+            Git(Work, "push", "-q", "-u", "origin", "develop"); // origin: develop main'in bir commit önünde
 
             Git(_temp.Path, "clone", "-q", Origin, Other);
             Configure(Other);
