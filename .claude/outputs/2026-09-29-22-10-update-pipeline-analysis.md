@@ -544,13 +544,13 @@ komutu tek sahibe iner).
 
 | # | Karar | Öneri | Alternatif |
 |---|---|---|---|
-| K1 | Paket kimliği (kurulum klasörü adı) | **`BuildOrchestrator.App`** | `Delta.BuildOrchestrator` — `BuildOrchestrator` OLMAZ (state dizini) |
-| K2 | Kısayol | **yalnız Start Menu** | Start Menu + Masaüstü |
-| K3 | Lisans | **MIT** (SignPath önkoşulu; public repo'da lisanssız = hak verilmemiş) | başka OSI lisansı |
+| K1 | Paket kimliği (kurulum klasörü adı) | **`BuildOrchestrator.App`** (kullanıcı onayladı 2026-09-30) | `BuildOrchestrator` OLMAZ: state dizini `%LocalAppData%\BuildOrchestrator\` ile aynı klasör olur, kaldırma ayarları/önbelleği siler |
+| K2 | Kısayol | **Start Menu + Masaüstü** (kullanıcı kararı 2026-09-30; Velopack varsayılanı `Desktop,StartMenuRoot`) | — |
+| K3 | Lisans | **MIT** (kullanıcı onayladı 2026-09-30) | — |
 | K4 | Portable zip | **üretilmez** (`--noPortable`) | üretilir, "güncellenmez/kendini günceller" ayrıca doğrulanır |
-| K5 | Kart öne çıkanları | **en çok 5 madde + "+N more in What's new after restart"** (tasarım eki) | sınırsız, notlar kısa tutulur |
-| K6 | Restart ekranı | **tek adım "Closing…" eski process'te; Update.exe sessiz; yeni sürüm normal açılır** (tasarım güncellenir) | Velopack'in kendi apply penceresi (DS dışı görünüm) |
-| K7 | İlk yayın | **v1.8.0 = installer + motor birlikte**; yerel feed provası önce | installer önce (1.8.0), motor sonra (1.9.0) — 1.8.0 kullanıcıları elle kurar |
+| K5 | Kart öne çıkanları | **en çok 5 madde + "+N more in What's new after restart"** — satır düz metin, tıklanmaz; kalan maddeler yeni sürüm açılınca What's new'de (kullanıcı onayladı 2026-09-30; tasarım eki) | — |
+| K6 | Restart ekranı | **tek adım "Closing…" eski process'te; Update.exe sessiz; yeni sürüm normal açılır** (kullanıcı onayladı 2026-09-30; tasarım güncellenir) | — |
+| K7 | İlk yayın | **v1.8.0 = installer + motor birlikte**; yerel feed provası önce (kullanıcı onayladı 2026-09-30) | — |
 | K8 | Kontrol sıklığı | **açılış + 5 s, sonra 4 saat** | yalnız açılış / 1 saat |
 | K9 | Aşamalı yayın | **kapalı** (doğrudan yayın); istenirse `--pre` + `BO_UPDATE_PRERELEASE` bir bayrak | her yayın önce prerelease |
 | K10 | Release commit'i | **doğrudan `main`'de, script atar** (CLAUDE.md istisnası) | `release/vX` branch'i + merge |
