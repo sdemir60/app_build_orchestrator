@@ -217,11 +217,23 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
         }
     }
 
+    /// <summary>[motor · Task 11] Öldürülen process'in çıkışına tanınan süre — güncelleyici <c>current\</c> klasörünü
+    /// değiştirmeden önce <c>supervisor\*.dll</c> kilitleri bırakılmış olsun (Update.exe App'in çıkışını bekler,
+    /// Supervisor'ın değil). <c>TerminateProcess</c> asenkrondur: çağrı döndüğünde process birkaç ms daha yaşar.
+    /// Çıkış bütçesi (<see cref="Shell.AppShutdown.DisposalTimeout"/>, 2 s) graceful yazma (500 ms) + bu süreyi
+    /// kapsar.</summary>
+    internal static readonly TimeSpan KillExitWait = TimeSpan.FromSeconds(1);
+
     private void KillCurrent()
     {
         var child = Interlocked.Exchange(ref _child, null); // atomik: yalnız bir thread non-null alır → idempotent [it0-devir]
         if (child is null) return;
-        try { System.Diagnostics.Process.GetProcessById(child.Pid).Kill(entireProcessTree: true); }
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById(child.Pid);
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(KillExitWait);
+        }
         catch (ArgumentException) { /* zaten öldü */ }
         child.Dispose();
         _writer = null;

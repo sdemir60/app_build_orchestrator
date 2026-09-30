@@ -104,6 +104,32 @@ public class EngineHostTests
         Assert.Equal(TimeSpan.FromSeconds(5), host.StartupTimeout);
     }
 
+    /// <summary>[motor · Task 11] Güncelleyici (Update.exe) App çıkar çıkmaz <c>current\</c> klasörünü değiştirir;
+    /// Supervisor hâlâ <c>current\supervisor\*.dll</c>'leri tutuyorsa kurulum yarım kalır. Dispose, öldürdüğü process'in
+    /// GERÇEKTEN çıkmasını bekler (≤ <see cref="EngineHost.KillExitWait"/>) — önceden Kill'den sonra beklenmiyordu:
+    /// <c>TerminateProcess</c> asenkrondur, çağrı döndüğünde process birkaç ms daha yaşar (ölçüldü: boştaki bir
+    /// Supervisor'da ~4-10 ms).
+    /// <para><b>Ölçüt process handle'ının sinyali:</b> <c>Process.GetProcessById</c>'in "yok" demesi YETMEZ — çıkış kodu
+    /// Kill'le hemen yazıldığı için process henüz sonlanmamışken de fırlatıyor (ölçüldü). Handle Dispose'dan ÖNCE
+    /// açılır, sonra sinyali beklemeden (0 ms) sorulur.</para>
+    /// <para><b>Ayırt edicilik (ölçüldü):</b> ağaç öldürme (<c>Kill(entireProcessTree: true)</c>) Kill'den SONRA tüm
+    /// process'leri tarar ve bu tarama boştaki bir Supervisor'ın sonlanmasından çoğu kez uzun sürer — beklemesiz eski
+    /// kod bu makinede yeşildi. Taramayı çıkaran mutasyonla (<c>Kill()</c>) beklemesiz kod 5/5 kırmızı, beklemeli kod
+    /// yeşil. Yük altındaki ya da ağır (büyük bellek, çok thread) bir Supervisor'da sonlanma taramadan uzun sürer; bu
+    /// test o yarışın sözleşmesini pinler.</para></summary>
+    [Fact]
+    public async Task Dispose_waits_for_the_supervisor_process_to_exit()
+    {
+        using var sandbox = new SupervisorSandbox();
+        await using var host = sandbox.IsolatedEngineHost(WideStartupTimeout); // erken bir hata motoru sızdırmasın; ikinci Dispose no-op
+        await host.StartAsync();
+        using var supervisor = Process.GetProcessById(host.EnginePid!.Value); // handle Dispose'dan ÖNCE açılır
+
+        await host.DisposeAsync();
+
+        Assert.True(supervisor.WaitForExit(TimeSpan.Zero), "Dispose döndüğünde Supervisor process'i hâlâ sonlanmamıştı");
+    }
+
     [Fact]
     public async Task StartAsync_timeout_disposes_child_and_no_leak()
     {

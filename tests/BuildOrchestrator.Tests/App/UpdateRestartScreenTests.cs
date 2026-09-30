@@ -19,12 +19,15 @@ namespace BuildOrchestrator.Tests.App;
 /// BuildApp.jsx:1745-1786): pencerenin tamamını (title bar dahil) <c>surface-base</c> ile örter, 180ms'de belirir;
 /// ortada 232px'lik bir kolon — marka 30px · 16 · <c>Updating &lt;ürün&gt;</c> (13/600 <c>text-primary</c>) · 6 · mono
 /// 11px sürüm geçişi (kurulu <c>text-dim</c> → ok 11px <c>text-faint</c> → gelen <c>text-secondary</c>, aralar 7) · 20 ·
-/// 2px amber ilerleme çubuğu · 9 · adım etiketi (11px <c>text-faint</c>, sonunda …). Adımlar
-/// <see cref="UpdateRestartTimeline"/>'dan; bitişten 120ms sonra 280ms'de söner ve kalkar.
+/// 2px amber ilerleme çubuğu · 9 · adım etiketi (11px <c>text-faint</c>, sonunda …). Tek adım (<c>Closing
+/// &lt;ürün&gt;…</c>) <see cref="UpdateRestartTimeline"/>'dan; çubuk dolunca zamanlayıcı durur.
 ///
-/// <para><b>Güncelleme motoru henüz yok:</b> ekran tasarımın önizlemesidir — oynar, söner ve uygulama aynen kalır
-/// (plan U4). Zaman tek bir dikişten gelir (enjekte zamanlayıcı + saat, D8): testler <see cref="FakePollTimer"/> ile
-/// kare atar, gerçek zaman beklemez.</para>
+/// <para><b>[motor · Task 11 · K6] Ekran pencere kapanana dek kalır, sönüş yoktur:</b> <c>Restart to update</c>
+/// uygulamayı güvenli tam çıkış yoluna sokar ve kurulumu çıkıştan sonra Update.exe penceresiz yapar
+/// (<see cref="UpdateRestartFlowTests"/>). Eski iddia — ekran üç adımı oynar, bitişten 120ms sonra 280ms'de söner,
+/// kalkar ve uygulama aynen kalır (motor yokken tasarımın önizlemesi, plan U4) — kurulum çalışan programın dosyalarını
+/// değiştiremediği için değişti. Zaman tek bir dikişten gelir (enjekte zamanlayıcı + saat, D8): testler
+/// <see cref="FakePollTimer"/> ile kare atar, gerçek zaman beklemez.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdateRestartScreenTests
@@ -191,8 +194,9 @@ public class UpdateRestartScreenTests
     // ================================================================ zaman çizelgesi (sahte zamanlayıcı)
 
     /// <summary>Oynatma tek bir kare zamanlayıcısıyla sürülür (aralığı <see cref="UpdateRestartScreen.FrameMs"/>); her
-    /// karede saat okunur, etiket ve çubuk <see cref="UpdateRestartTimeline"/>'a göre yazılır — adım sınırlarında ve adım
-    /// ortalarında.</summary>
+    /// karede saat okunur, etiket ve çubuk <see cref="UpdateRestartTimeline"/>'a göre yazılır: tek adım, çubuk 0 → 100.
+    /// <para>Eski iddia: üç adım, adım sınırlarında etiket değişirdi (Closing → Installing → Starting) — K6 ile tek adım
+    /// kaldı.</para></summary>
     [StaFact]
     public void The_step_label_and_the_bar_follow_the_timeline_frame_by_frame()
     {
@@ -204,45 +208,49 @@ public class UpdateRestartScreenTests
         Assert.Equal(Visibility.Visible, screen.Visibility);
         Assert.True(timer.IsRunning);
         Assert.Equal(TimeSpan.FromMilliseconds(UpdateRestartScreen.FrameMs), timer.Interval);
-        AssertFrame(UpdateRestartStep.Closing, 0);
+        AssertFrame(0);
 
+        rig.Time.FrameAt(200);
+        AssertFrame(25);
         rig.Time.FrameAt(400);
-        AssertFrame(UpdateRestartStep.Closing, 10);
+        AssertFrame(50);
+        rig.Time.FrameAt(799);
+        AssertFrame(99.875);
         rig.Time.FrameAt(800);
-        AssertFrame(UpdateRestartStep.Installing, 20);
-        rig.Time.FrameAt(1350);
-        AssertFrame(UpdateRestartStep.Installing, 49);
-        rig.Time.FrameAt(1900);
-        AssertFrame(UpdateRestartStep.Starting, 78);
-        rig.Time.FrameAt(2300);
-        AssertFrame(UpdateRestartStep.Starting, 89);
-        rig.Time.FrameAt(2700);
-        AssertFrame(UpdateRestartStep.Starting, 100);
+        AssertFrame(100);
         GC.KeepAlive(rig.Window);
 
-        void AssertFrame(UpdateRestartStep expectedStep, double expectedPercent)
+        void AssertFrame(double expectedPercent)
         {
-            Assert.Equal(UpdateText.RestartStepLabel(expectedStep, "1.8.0"), screen.PART_Step.Text);
+            Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), screen.PART_Step.Text);
             Assert.Equal(expectedPercent, screen.PART_Progress.Value, precision: 6);
         }
     }
 
-    /// <summary>Bitişten 120ms sonra ekran söner ve kalkar; zamanlayıcı durur. Hareket kapalıyken (headless) sönüş
-    /// anındadır — ekran aynı karede kalkar.</summary>
+    /// <summary>Çubuk dolunca (<see cref="UpdateRestartTimeline.TotalMs"/>) zamanlayıcı durur ama ekran KALIR — sönüş
+    /// yoktur, pencereyi güvenli tam çıkış kapatır. Çıkış gecikse de (ör. 5 s) ekran dolu çubukla görünür durur.
+    /// <para>Eski iddia: bitişten 120ms sonra ekran söner ve kalkardı (uygulama aynen kalırdı) — K6 ile ekran pencere
+    /// kapanana dek kalır.</para></summary>
     [StaFact]
-    public void The_screen_leaves_120ms_after_the_last_step_and_stops_its_timer()
+    public void The_screen_stays_until_the_process_exits_and_stops_its_timer()
     {
         var rig = NewRig();
         Play(rig);
 
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs - 1);
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs - 1);
         Assert.True(rig.Screen.IsShowing);
         Assert.True(rig.Time.Timer.IsRunning);
 
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-        Assert.Equal(Visibility.Collapsed, rig.Screen.Visibility);
-        Assert.False(rig.Screen.IsShowing);
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs);
         Assert.False(rig.Time.Timer.IsRunning);
+        Assert.True(rig.Screen.IsShowing);
+        Assert.Equal(100.0, rig.Screen.PART_Progress.Value);
+
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs + 5000);
+        Assert.True(rig.Screen.IsShowing);
+        Assert.Equal(Visibility.Visible, rig.Screen.Visibility);
+        Assert.False(rig.Time.Timer.IsRunning);
+        Assert.Equal(100.0, rig.Screen.PART_Progress.Value);
         GC.KeepAlive(rig.Window);
     }
 
@@ -252,41 +260,45 @@ public class UpdateRestartScreenTests
     {
         var rig = NewRig();
         Play(rig);
-        rig.Time.FrameAt(1350);
+        rig.Time.FrameAt(400);
 
-        rig.Time.Now = StartMs + 1400;
+        rig.Time.Now = StartMs + 450;
         rig.Screen.Play(AppIdentity.Version, "9.9.0");
-        rig.Time.FrameAt(1350);
+        rig.Time.FrameAt(400);
 
-        Assert.Equal(49.0, rig.Screen.PART_Progress.Value, precision: 6);
+        Assert.Equal(50.0, rig.Screen.PART_Progress.Value, precision: 6);
         Assert.Equal("1.8.0", rig.Screen.PART_Incoming.Text);
         GC.KeepAlive(rig.Window);
     }
 
-    /// <summary>Bir oynatma bittikten sonra ekran yeniden oynayabilir — baştan, yeni sürümle.</summary>
+    /// <summary>Çubuk dolduktan sonra gelen bir istek de ekranı baştan oynatmaz: ekran görünür kalır, çubuk dolu, sürüm
+    /// ve durmuş zamanlayıcı yerinde.
+    /// <para>Eski iddia (<c>After_it_leaves_the_screen_can_play_again_from_the_start</c>): bir oynatma bitince ekran
+    /// kalkar, yeniden baştan ve yeni sürümle oynayabilirdi. K6 ile ekran kalkmaz — pencere kapanır; görünürken gelen
+    /// isteğin yok sayılması çubuk dolduktan sonra da geçerlidir.</para></summary>
     [StaFact]
-    public void After_it_leaves_the_screen_can_play_again_from_the_start()
+    public void After_the_bar_fills_a_second_play_keeps_the_screen_as_it_is()
     {
         var rig = NewRig();
         Play(rig);
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-        Assert.False(rig.Screen.IsShowing); // ön-koşul
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs);
+        Assert.False(rig.Time.Timer.IsRunning); // ön-koşul: çubuk doldu
 
         rig.Time.Now = StartMs;
         Play(rig, "2.0.0");
 
         Assert.True(rig.Screen.IsShowing);
-        Assert.Equal(0.0, rig.Screen.PART_Progress.Value);
-        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing, "2.0.0"), rig.Screen.PART_Step.Text);
-        Assert.Equal(1.0, rig.Screen.Opacity);
-        Assert.True(rig.Screen.IsHitTestVisible);
+        Assert.Equal(100.0, rig.Screen.PART_Progress.Value);
+        Assert.Equal("1.8.0", rig.Screen.PART_Incoming.Text);
+        Assert.False(rig.Time.Timer.IsRunning);
         GC.KeepAlive(rig.Window);
     }
 
     // ================================================================ ekran okuyucu
 
-    /// <summary><c>role="status" aria-live="polite"</c>: adım etiketi sakin bir canlı bölgedir ve her adım BİR KEZ
-    /// duyurulur — kare başına değil (üç adım, üç duyuru).</summary>
+    /// <summary><c>role="status" aria-live="polite"</c>: adım etiketi sakin bir canlı bölgedir ve adım BİR KEZ
+    /// duyurulur — kare başına değil (tek adım, tek duyuru).
+    /// <para>Eski iddia: üç adım, üç duyuru — K6 ile tek adım kaldı.</para></summary>
     [StaFact]
     public void Each_step_is_announced_once_to_a_screen_reader()
     {
@@ -295,70 +307,43 @@ public class UpdateRestartScreenTests
 
         Play(rig);
         Assert.Equal(1, rig.Screen.StepAnnouncements);
-        foreach (double at in new[] { 100.0, 400, 799, 800, 1200, 1899, 1900, 2500, 2700, 2800 })
+        foreach (double at in new[] { 100.0, 400, 799, 800, 1200, 1900, 2700, 2800 })
             rig.Time.FrameAt(at);
 
-        Assert.Equal(3, rig.Screen.StepAnnouncements);
+        Assert.Equal(1, rig.Screen.StepAnnouncements);
         GC.KeepAlive(rig.Window);
     }
 
     // ================================================================ hareket
 
-    /// <summary>Hareket açıkken ekran <c>Duration.Base</c>'te (180ms) belirir ve bitişte <c>Duration.Slow</c>'da (280ms)
-    /// söner; sönerken tıklamaları geçirir (<c>pointer-events: none</c>), sönüş bitince kalkar ve opaklığı bir sonraki
-    /// oynatma için geri gelir.
-    /// <para><b>Sönüş GÖRÜNÜR ekrandan başlar ve sürer</b> (ölçülen kusur): giriş, yerel taban değeri 0 yazıp üstüne
-    /// son değerini tutan bir animasyon kurar (<see cref="PopIn.PlayFadeIn"/>) — görünen 1'i yalnız o animasyon tutar.
-    /// Çıkış o animasyonu silip hedefi 0 olan (başlangıcı olmayan) sönümü başlatınca opaklık o karede tabana, 0'a düşüyor
-    /// ve sönüm 0 → 0 oynuyordu: ekran tek karede kayboluyor, 280ms boyunca görünmez ama Visible kalıyordu. Sönüş
-    /// başlarken opaklık hâlâ ~1'dir ve ekran görünür kaldığı sürece çizilen hiçbir karede saydam (0) değildir — 0'a
-    /// ancak <c>Duration.Slow</c>'luk sönüm bittiğinde, kalktığı karede varır. Kareler WPF'in kendi saatinden
-    /// (<see cref="CompositionTarget.Rendering"/>) okunur, duvar saati kullanılmaz: WPF sönümün saatini çağrıdan önce
-    /// başlamış sayabiliyor (ölçüldü: çağrıdan kalkışa duvar saatiyle 259ms &lt; 280ms), duvar saatli bir süre alt sınırı
-    /// yanlış kırmızı verirdi. Sürenin kendisi yukarıdaki token eşitliğiyle pinlidir.</para></summary>
+    /// <summary>Hareket açıkken ekran <c>Duration.Base</c>'te (180ms) belirir; çubuk dolduktan sonra da görünür,
+    /// tıklanabilir (arkadaki uygulamaya tıklama geçirmez) ve tam opak kalır — çıkış hareketi yoktur.
+    /// <para>Eski iddia (<c>…_and_out_over_the_slow_one</c>): bitişte <c>Duration.Slow</c>'da (280ms) sönerdi, sönerken
+    /// tıklamaları geçirirdi ve sönüş bitince kalkardı; sönüşün görünür ekrandan başladığı da (ölçülen kusur: giriş
+    /// animasyonu silinince opaklık tabana, 0'a düşüyordu) burada pinliydi. K6 ile sönüş kalktı: ekranı pencerenin
+    /// kapanışı kaldırır.</para></summary>
     [StaFact]
-    public void With_motion_on_it_fades_in_over_the_base_duration_and_out_over_the_slow_one()
+    public void With_motion_on_it_fades_in_over_the_base_duration()
     {
         using var _ = MotionScope.Enable(new MotionSettings(new FakeMotionSignal { AnimationsEnabled = true }));
         var rig = NewRig();
         var screen = rig.Screen;
         Assert.Equal(((Duration)screen.FindResource("Duration.Base")).TimeSpan, PopIn.FadeInDuration(screen));
         Assert.Equal(TimeSpan.FromMilliseconds(180), PopIn.FadeInDuration(screen));
-        Assert.Equal(((Duration)screen.FindResource("Duration.Slow")).TimeSpan, UpdateRestartScreen.FadeOutDuration(screen));
-        Assert.Equal(TimeSpan.FromMilliseconds(280), UpdateRestartScreen.FadeOutDuration(screen));
 
         Play(rig);
         Assert.True(screen.HasAnimatedProperties, "ekran belirerek girmedi");
         DispatcherPump.PumpUntil(() => screen.Opacity >= 1.0, TimeSpan.FromSeconds(3));
         Assert.Equal(1.0, screen.Opacity, precision: 3);
 
-        // Sönüş sürerken çizilen HER karede ekranın opaklığı (ekran görünürken) — duvar saati değil, WPF'in kareleri.
-        var opacityWhileShowing = new List<double>();
-        EventHandler onFrame = (_, _) => { if (screen.IsShowing) opacityWhileShowing.Add(screen.Opacity); };
-        CompositionTarget.Rendering += onFrame;
-        try
-        {
-            rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-            Assert.True(screen.IsShowing, "sönüş beklenmeden kalktı");
-            Assert.False(screen.IsHitTestVisible);
-            Assert.True(screen.HasAnimatedProperties, "ekran sönerek çıkmadı");
-            Assert.True(screen.Opacity > 0.99, $"sönüş görünür ekrandan başlamadı: Opacity = {screen.Opacity}");
-
-            DispatcherPump.PumpUntil(() => screen.Visibility == Visibility.Collapsed, TimeSpan.FromSeconds(3));
-        }
-        finally
-        {
-            CompositionTarget.Rendering -= onFrame;
-        }
-        Assert.Equal(Visibility.Collapsed, screen.Visibility);
-        Assert.True(opacityWhileShowing.All(opacity => opacity > 0.0),
-            $"ekran sönüş bitmeden saydamlaştı — görünürken çizilen karelerin opaklığı: [{string.Join(", ", opacityWhileShowing)}]");
-        Assert.False(screen.HasAnimatedProperties);
-        Assert.Equal(1.0, screen.Opacity);
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs + 5000);
+        Assert.True(screen.IsShowing, "çubuk dolunca ekran kalktı");
+        Assert.True(screen.IsHitTestVisible, "çubuk dolunca ekran tıklamaları arkaya geçirdi");
+        Assert.Equal(1.0, screen.Opacity, precision: 3);
         GC.KeepAlive(rig.Window);
     }
 
-    // ================================================================ kabuk: katman, istek, uygulamaya dönüş
+    // ================================================================ kabuk: katman, istek
 
     /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace ve kuruluma hazır bir teklif
     /// (<see cref="UpdateOffers.Sample"/> — uygulama teklifsiz açılır); motora giden komutlar yakalanır, restart
@@ -403,7 +388,8 @@ public class UpdateRestartScreenTests
         GC.KeepAlive(window);
     }
 
-    /// <summary><c>Restart to update</c> kartı kapatır ve ekranı oynatır: kurulu sürüm → teklifin sürümü.</summary>
+    /// <summary><c>Restart to update</c> kartı kapatır ve ekranı oynatır: kurulu sürüm → teklifin sürümü. Ardından
+    /// gelen güvenli tam çıkış <see cref="UpdateRestartFlowTests"/>'tedir.</summary>
     [StaFact]
     public void Restart_to_update_closes_the_card_and_plays_the_screen_into_the_offered_version()
     {
@@ -417,50 +403,7 @@ public class UpdateRestartScreenTests
         Assert.True(rig.Screen.IsShowing);
         Assert.Equal(AppIdentity.Version, rig.Screen.PART_Installed.Text);
         Assert.Equal(rig.Vm.AvailableUpdate!.Version, rig.Screen.PART_Incoming.Text);
-        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing, rig.Vm.AvailableUpdate.Version),
-            rig.Screen.PART_Step.Text);
-        GC.KeepAlive(rig.Window);
-    }
-
-    /// <summary>[plan U4] Ekran bitince uygulama AYNEN önceki gibidir: motora hiçbir komut gitmez (Sync yok), seçim,
-    /// faz ve satırlar yerinde, hap ve teklif duruyor.</summary>
-    [StaFact]
-    public void When_the_screen_leaves_the_app_is_exactly_as_it_was()
-    {
-        using var temp = new TempDir();
-        var rig = NewShell(temp);
-        rig.Vm.SelectProject(MainWindowHost.IdOf("B"));
-        var phase = rig.Vm.Phase;
-        var offer = rig.Vm.AvailableUpdate;
-        int rows = rig.Vm.Projects.Count;
-
-        rig.PressRestart();
-        rig.Time.FrameAt(1000);
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-
-        Assert.False(rig.Screen.IsShowing);
-        Assert.Empty(rig.Sent);
-        Assert.Equal(MainWindowHost.IdOf("B"), rig.Vm.SelectedProjectId);
-        Assert.Equal(phase, rig.Vm.Phase);
-        Assert.Equal(rows, rig.Vm.Projects.Count);
-        Assert.Same(offer, rig.Vm.AvailableUpdate);
-        Assert.Equal(Visibility.Visible, rig.Window.UpdatePillSlot.Visibility);
-        GC.KeepAlive(rig.Window);
-    }
-
-    /// <summary>Kilitli bir Restart ekranı AÇMAZ — istek kapıdan geçmeden (doğrudan <c>Execute</c>) gelse bile: bir koşu
-    /// sürerken kurulum onu yarıda keserdi.</summary>
-    [StaFact]
-    public void A_locked_restart_never_plays_the_screen()
-    {
-        using var temp = new TempDir();
-        var rig = NewShell(temp);
-        MainWindowHost.StartBuild(rig.Vm);
-        Assert.NotNull(rig.Vm.UpdateRestartBlockedReason); // ön-koşul
-
-        rig.Vm.RestartToUpdateCommand.Execute(null);
-
-        Assert.False(rig.Screen.IsShowing);
+        Assert.Equal(UpdateText.RestartStepLabel(UpdateRestartStep.Closing), rig.Screen.PART_Step.Text);
         GC.KeepAlive(rig.Window);
     }
 
@@ -489,14 +432,19 @@ public class UpdateRestartScreenTests
     }
 
     /// <summary>Ekran görünürken pencere klavyeyi yok sayar (prototip: keydown'da erken dönüş): F5 derleme başlatmaz, Esc
-    /// seçimi temizlemez. Ekran kalkınca aynı tuşlar yeniden çalışır — kontrol, tuş yolunun gerçekten bağlama ulaştığını
-    /// kanıtlar.</summary>
+    /// seçimi temizlemez. Kontrol ekran açılmadan ÖNCE yapılır: aynı Esc seçimi temizler — tuş yolunun gerçekten bağlama
+    /// ulaştığının kanıtı.
+    /// <para>Eski iddia: kontrol ekran kalktıktan SONRA yapılırdı (Esc ve F5 yeniden çalışırdı). K6 ile ekran kalkmaz —
+    /// pencere kapanır; kontrol Esc için öne alındı (F5 önceden basılsaydı başlayan derleme Restart'ı kilitlerdi).</para></summary>
     [StaFact]
     public void The_window_ignores_the_keyboard_while_the_screen_shows()
     {
         using var temp = new TempDir();
         var rig = NewShell(temp);
         var (source, keepAlive) = KeySource();
+        rig.Vm.SelectProject(MainWindowHost.IdOf("A"));
+        PressKey(rig.Window, source, Key.Escape);
+        Assert.Null(rig.Vm.SelectedProjectId); // kontrol: ekran yokken Esc bağlamaya ulaşır
         rig.Vm.SelectProject(MainWindowHost.IdOf("A"));
 
         rig.PressRestart();
@@ -508,34 +456,30 @@ public class UpdateRestartScreenTests
         Assert.Empty(rig.Runs);
         Assert.False(rig.Vm.IsStarting);
         Assert.Equal(MainWindowHost.IdOf("A"), rig.Vm.SelectedProjectId);
-
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-        Assert.False(rig.Screen.IsShowing); // ön-koşul: ekran kalktı
-        PressKey(rig.Window, source, Key.Escape);
-        Assert.Null(rig.Vm.SelectedProjectId);
-        PressKey(rig.Window, source, Key.F5);
-        Assert.True(rig.Vm.IsStarting || rig.Runs.Any(), "ekran kalktıktan sonra F5 derlemeyi başlatmadı");
         GC.KeepAlive(rig.Window);
         GC.KeepAlive(keepAlive);
     }
 
-    /// <summary>Ekran görünürken global kısayollar da yok sayılır — Ctrl+Shift+Space arka planda derleme başlatmaz. Ekran
-    /// kalkınca aynı kısayol derlemeyi başlatır.</summary>
+    /// <summary>Ekran görünürken global kısayollar da yok sayılır — Ctrl+Shift+Space arka planda derleme başlatmaz.
+    /// Kontrol ekransız ikinci bir kabukta yapılır: aynı kısayol orada derlemeyi başlatır.
+    /// <para>Eski iddia: kontrol ekran kalktıktan SONRA aynı kabukta yapılırdı. K6 ile ekran kalkmaz — pencere kapanır;
+    /// aynı kabukta önceden basılan kısayol başlattığı derlemeyle Restart'ı kilitlerdi.</para></summary>
     [StaFact]
     public void Global_hotkeys_are_ignored_while_the_screen_shows()
     {
         using var temp = new TempDir();
         var rig = NewShell(temp);
+        using var controlTemp = new TempDir();
+        var control = NewShell(controlTemp);
+        control.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
+        Assert.True(control.Vm.IsStarting || control.Runs.Any(), "kontrol: ekran yokken kısayol derlemeyi başlatmadı");
 
         rig.PressRestart();
         rig.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
 
         Assert.Empty(rig.Runs);
         Assert.False(rig.Vm.IsStarting);
-
-        rig.Time.FrameAt(UpdateRestartTimeline.FadeOutAtMs);
-        rig.Window.OnGlobalHotkey(GlobalHotkeyAction.Build);
-        Assert.True(rig.Vm.IsStarting || rig.Runs.Any(), "ekran kalktıktan sonra kısayol derlemeyi başlatmadı");
         GC.KeepAlive(rig.Window);
+        GC.KeepAlive(control.Window);
     }
 }

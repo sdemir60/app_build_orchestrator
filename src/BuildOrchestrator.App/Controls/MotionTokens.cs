@@ -94,7 +94,7 @@ internal static class MotionTokens
         => host.TryFindResource(key) is KeySpline k ? k : fallback;
 
     /// <summary><c>KeySpline.EaseOut</c>'un (<c>cubic-bezier(.22,1,.36,1)</c>) çözüm ifadesi, fallback dahil —
-    /// girişlerin (<see cref="PopIn"/>) ve restart ekranının çıkış sönümünün ORTAK eğrisi.</summary>
+    /// girişlerin (<see cref="PopIn"/>) ORTAK eğrisi.</summary>
     public static KeySpline ResolveEaseOut(FrameworkElement host)
         => ResolveKeySpline(host, "KeySpline.EaseOut", new KeySpline(0.22, 1, 0.36, 1));
 
