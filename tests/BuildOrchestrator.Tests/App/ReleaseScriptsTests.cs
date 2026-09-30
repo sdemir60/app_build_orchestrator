@@ -47,16 +47,24 @@ public class ReleaseScriptsTests
     /// Gerçek publish dakikalar sürer ve Velopack aracı ister.</summary>
     private const string RecordingDotnet = "function dotnet { 'DOTNET ' + ($args -join ' '); $global:LASTEXITCODE = 0 }";
 
-    /// <summary>release.ps1'i sandbox'ta koşturur. Çalışan-örnek sondası (<c>Get-Process</c>) gölgelenir: geliştirici makinesinde
-    /// gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu verir. <paramref name="appRunning"/> sondaya
-    /// sahte bir process (pid 4242) döndürtür.</summary>
-    private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, bool appRunning = false)
-    {
-        string processes = appRunning ? "[pscustomobject]@{ Id = 4242 }" : "@()";
-        return RunCommand(
-            $"function Get-Process {{ {processes} }}; & '{box.ReleaseScript}' -Version {box.NextVersion} -SkipTests; exit $LASTEXITCODE",
+    /// <summary>Sahte "çalışan uygulama"nın pid'i: <see cref="RunningAppShadow"/> tek bir process döndürür ve onu reddeden
+    /// script'lerin (release.ps1, verify-publish.ps1) çıktısında bu sayı aranır.</summary>
+    private const int FakeAppPid = 4242;
+
+    /// <summary>Gölge <c>Get-Process</c> (çalışan-örnek sondası <c>Get-RunningApp</c>, release-common.ps1): hiç process görmez.
+    /// Geliştirici makinesinde gerçek bir Build Orchestrator açıkken de sonuç değişmez; <see cref="RecordingDotnet"/> ile aynı yol.</summary>
+    private const string NoAppShadow = "function Get-Process { @() }";
+
+    /// <summary>Gölge <c>Get-Process</c>: sonda tek bir sahte uygulama (<see cref="FakeAppPid"/>) görür.</summary>
+    private static readonly string RunningAppShadow = $"function Get-Process {{ [pscustomobject]@{{ Id = {FakeAppPid} }} }}";
+
+    /// <summary>release.ps1'i sandbox'ta koşturur. Çalışan-örnek sondası (<c>Get-Process</c>) gölgelenir (<see cref="NoAppShadow"/>):
+    /// geliştirici makinesinde gerçek bir Build Orchestrator açıkken de git akışı testleri aynı sonucu verir.
+    /// <paramref name="appRunning"/> sondaya sahte bir process (<see cref="FakeAppPid"/>) döndürtür.</summary>
+    private static (int ExitCode, string Output) RunRelease(ReleaseSandbox box, bool appRunning = false) =>
+        RunCommand(
+            $"{(appRunning ? RunningAppShadow : NoAppShadow)}; & '{box.ReleaseScript}' -Version {box.NextVersion} -SkipTests; exit $LASTEXITCODE",
             box.Work);
-    }
 
     private static ProcessStartInfo NewPowerShell(string workingDirectory)
     {
@@ -369,7 +377,7 @@ public class ReleaseScriptsTests
         var r = RunRelease(box, appRunning: true);
 
         Assert.Equal(1, r.ExitCode);
-        Assert.Contains("4242", r.Output, StringComparison.Ordinal);
+        Assert.Contains(FakeAppPid.ToString(), r.Output, StringComparison.Ordinal);
         Assert.Contains("<Version>1.7.0</Version>", File.ReadAllText(box.PropsPath), StringComparison.Ordinal); // Version yazılmadı
         Assert.Equal(localBefore, box.WorkHead);
         Assert.Equal(originBefore, box.OriginMain);
@@ -381,9 +389,9 @@ public class ReleaseScriptsTests
     public void Verify_publish_stops_with_the_precondition_code_while_the_app_runs()
     {
         RequirePowerShell();
-        var r = RunCommand($"function Get-Process {{ [pscustomobject]@{{ Id = 4242 }} }}; & '{Path.Combine(Scripts, "verify-publish.ps1")}'; exit $LASTEXITCODE");
+        var r = RunCommand($"{RunningAppShadow}; & '{Path.Combine(Scripts, "verify-publish.ps1")}'; exit $LASTEXITCODE");
         Assert.Equal(2, r.ExitCode);
-        Assert.Contains("4242", r.Output, StringComparison.Ordinal);
+        Assert.Contains(FakeAppPid.ToString(), r.Output, StringComparison.Ordinal);
         Assert.Contains("RESULT: SKIPPED", r.Output, StringComparison.Ordinal);
     }
 
