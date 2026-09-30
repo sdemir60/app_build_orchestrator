@@ -57,7 +57,7 @@ public class MsBuildInvokerTests
         // Düşerse MSBuild'in hata satırları mesajda olsun: CI'da yalnız "Expected 0 Actual 1" görülmüştü (ilk koşu — runner'da
         // v4.6 targeting pack yoktu), sebep ancak buradan okunabilir.
         Assert.True(result.ExitCode == 0,
-            $"MSBuild exit {result.ExitCode} ({LegacyFixture.TargetFrameworkVersion}):\n"
+            $"MSBuild exit {result.ExitCode} ({LegacyFixture.TargetFrameworkVersion}; {LegacyFixture.DescribeTargetingPacks()}):\n"
             + string.Join("\n", lines.Where(l => l.Contains("error", StringComparison.OrdinalIgnoreCase))));
         Assert.False(result.TimedOut);
         Assert.False(result.Killed);
