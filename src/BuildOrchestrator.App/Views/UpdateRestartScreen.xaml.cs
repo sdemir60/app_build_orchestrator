@@ -12,9 +12,10 @@ namespace BuildOrchestrator.App.Views;
 /// <see cref="UpdateRestartTimeline"/>'dan, metinler <see cref="UpdateText"/>'ten gelir.
 ///
 /// <para><b>[motor · Task 11 · K6] Ekran pencere kapanana dek kalır; sönüş yoktur.</b> Tek adımı (<c>Closing
-/// &lt;ürün&gt;…</c>) gösterir, çubuk dolunca zamanlayıcı durur. Arkasında uygulama güvenli tam çıkış yoluna girer
-/// (<c>MainWindow.UpdateRestart.cs</c>); pencere kapanınca kurulumu Update.exe penceresiz yapar ve yeni sürüm normal
-/// açılır. Ekranı kaldıran şey kendi hareketi değil, pencerenin kapanışıdır.</para>
+/// &lt;ürün&gt;…</c>) gösterir; çubuk dolunca zamanlayıcı durur ve ekran bunu bildirir (<see cref="BarFilled"/>). Kabuk
+/// o anda uygulamayı güvenli tam çıkış yoluna sokar (<c>MainWindow.UpdateRestart.cs</c>); pencere kapanınca kurulumu
+/// Update.exe penceresiz yapar ve yeni sürüm normal açılır. Ekranı kaldıran şey kendi hareketi değil, pencerenin
+/// kapanışıdır.</para>
 ///
 /// <para><b>Tek zaman dikişi (D8):</b> bir kare zamanlayıcısı (<see cref="Timer"/>, <see cref="FrameMs"/> aralıkla) ve
 /// bir saat (<see cref="NowMs"/>). Her karede saat okunur ve çizelgenin o anı yazılır — prototipin rAF +
@@ -54,6 +55,10 @@ public partial class UpdateRestartScreen : UserControl
     /// <summary>Son yazılan (ve duyurulan) adım — etiket yalnız adım değişince yazılır.</summary>
     private UpdateRestartStep? _shownStep;
 
+    /// <summary>[motor · Task 11 · fix-1] Çubuk doldu (<see cref="UpdateRestartTimeline.TotalMs"/>) — oynatma başına BİR
+    /// kez, zamanlayıcı durduğu karede. Kabuk bu anda güvenli tam çıkışı ister (<c>MainWindow.UpdateRestart.cs</c>).</summary>
+    public event Action? BarFilled;
+
     /// <summary>Ekran görünür mü — pencere klavyeyi bu sürece yok sayar.</summary>
     public bool IsShowing => Visibility == Visibility.Visible;
 
@@ -79,12 +84,15 @@ public partial class UpdateRestartScreen : UserControl
         Timer.Start(TimeSpan.FromMilliseconds(FrameMs), OnFrame);
     }
 
-    /// <summary>Bir kare: saati oku, çizelgenin o anını yaz; çubuk dolduysa zamanlayıcıyı durdur — ekran kalır.</summary>
+    /// <summary>Bir kare: saati oku, çizelgenin o anını yaz; çubuk dolduysa zamanlayıcıyı durdur ve bunu bildir
+    /// (<see cref="BarFilled"/>) — ekran kalır.</summary>
     private void OnFrame()
     {
         double elapsedMs = NowMs() - _startedAtMs;
         Render(elapsedMs);
-        if (elapsedMs >= UpdateRestartTimeline.TotalMs) Timer.Stop();
+        if (elapsedMs < UpdateRestartTimeline.TotalMs) return;
+        Timer.Stop();
+        BarFilled?.Invoke();
     }
 
     /// <summary>Çubuğu her karede, etiketi yalnız adım değişince yazar; yeni adım ekran okuyucuya BİR KEZ duyurulur

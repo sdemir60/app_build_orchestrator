@@ -32,41 +32,17 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class UpdateRestartScreenTests
 {
-    /// <summary>Oynatmanın başladığı an (sahte saat, ms).</summary>
-    private const long StartMs = 10_000;
+    /// <summary>Oynatmanın başladığı an (sahte saat, ms) — <see cref="RestartScreenTime"/>'ın.</summary>
+    private const long StartMs = RestartScreenTime.StartMs;
 
-    /// <summary>[design v1.23/v1.24 review C13] Ekranın sahte zamanı — iki rig'in (tek başına ekran, kabuk) TEK zaman
-    /// dikişi: kurulurken ekrana takılır (zamanlayıcı + <c>NowMs</c>), <see cref="FrameAt"/> saati ilerletip bir kare
-    /// atar. Her rig bunu ayrı ayrı kuruyor ve kare atmayı ayrı ayrı yazıyordu.</summary>
-    private sealed class ScreenTime
-    {
-        public FakePollTimer Timer { get; } = new();
-
-        /// <summary>Sahte saat — ekranın <c>NowMs</c>'i bunu okur.</summary>
-        public long Now = StartMs;
-
-        public ScreenTime(UpdateRestartScreen screen)
-        {
-            screen.Timer = Timer;
-            screen.NowMs = () => Now;
-        }
-
-        /// <summary>Saati oynatmanın başından <paramref name="elapsedMs"/> sonrasına alır ve bir kare atar.</summary>
-        public void FrameAt(double elapsedMs)
-        {
-            Now = StartMs + (long)elapsedMs;
-            Timer.Tick();
-        }
-    }
-
-    private sealed record Rig(UpdateRestartScreen Screen, ScreenTime Time, Window Window);
+    private sealed record Rig(UpdateRestartScreen Screen, RestartScreenTime Time, Window Window);
 
     /// <summary>Ekranı ekran dışı gerçek bir pencerede, sahte zamanlayıcı ve saatle kurar (henüz oynamaz).</summary>
     private static Rig NewRig(double width = 800, double height = 600)
     {
         var host = DsResources.NewHost();
         var screen = new UpdateRestartScreen();
-        var time = new ScreenTime(screen);
+        var time = new RestartScreenTime(screen);
         var window = DsResources.Realize(host, screen, width, height);
         return new Rig(screen, time, window);
     }
@@ -254,6 +230,30 @@ public class UpdateRestartScreenTests
         GC.KeepAlive(rig.Window);
     }
 
+    /// <summary>[motor · Task 11 · fix-1] Çubuk dolduğu kare ekran bunu BİR kez bildirir (<see cref="UpdateRestartScreen.BarFilled"/>
+    /// — kabuk o anda güvenli tam çıkışı ister, <see cref="UpdateRestartFlowTests"/>): dolmadan önce hiç, dolduktan
+    /// sonraki karelerde ve çubuk doluyken gelen ikinci bir oynatma isteğinde bir daha değil.</summary>
+    [StaFact]
+    public void When_the_bar_fills_the_screen_reports_it_once()
+    {
+        var rig = NewRig();
+        int fills = 0;
+        rig.Screen.BarFilled += () => fills++;
+        Play(rig);
+
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs - 1);
+        Assert.Equal(0, fills);
+
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs);
+        Assert.Equal(1, fills);
+
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs + 5000);
+        Play(rig, "2.0.0");
+        rig.Time.FrameAt(UpdateRestartTimeline.TotalMs + 6000);
+        Assert.Equal(1, fills);
+        GC.KeepAlive(rig.Window);
+    }
+
     /// <summary>Oynarken gelen ikinci bir istek çizelgeyi baştan başlatmaz.</summary>
     [StaFact]
     public void A_second_play_while_showing_keeps_the_running_timeline()
@@ -348,7 +348,7 @@ public class UpdateRestartScreenTests
     /// <summary>Realize edilmiş kabuk + iki projeli, boşta bir workspace ve kuruluma hazır bir teklif
     /// (<see cref="UpdateOffers.Sample"/> — uygulama teklifsiz açılır); motora giden komutlar yakalanır, restart
     /// ekranının zamanı sahtedir.</summary>
-    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, ScreenTime Time, List<IpcCommand> Sent)
+    private sealed record ShellRig(MainWindow Window, RunViewModel Vm, RestartScreenTime Time, List<IpcCommand> Sent)
     {
         public UpdateRestartScreen Screen => Window.UpdateRestartOverlay;
 
@@ -365,7 +365,7 @@ public class UpdateRestartScreenTests
         MainWindowHost.AcceptSends(vm);
         var sent = new List<IpcCommand>();
         vm.DebugOnCommandSent = sent.Add;
-        return new ShellRig(window, vm, new ScreenTime(window.UpdateRestartOverlay), sent);
+        return new ShellRig(window, vm, new RestartScreenTime(window.UpdateRestartOverlay), sent);
     }
 
     /// <summary>Ekran pencerenin EN ÜST katmanıdır (modalların da üstünde, XAML'de son), iki satırı da örter (title bar
