@@ -1,3 +1,5 @@
+using Velopack;
+
 namespace BuildOrchestrator.App.Services.Updates;
 
 /// <summary>
@@ -57,7 +59,7 @@ public sealed class UpdateService(IAppUpdater updater, TimeProvider time, Action
         try
         {
             var candidate = await updater.CheckAsync(CancellationToken.None).ConfigureAwait(false);
-            if (candidate is null || !IsNewer(candidate.Version) || candidate.Version == _ready?.Version) return;
+            if (candidate is null || !IsNewer(candidate.Version, AppIdentity.Version) || candidate.Version == _ready?.Version) return;
             await updater.DownloadAsync(candidate, CancellationToken.None).ConfigureAwait(false);
             Publish(candidate);
         }
@@ -79,9 +81,13 @@ public sealed class UpdateService(IAppUpdater updater, TimeProvider time, Action
         Ready = offer;
     }
 
-    /// <summary>Velopack yalnız daha yenisini döndürür; yine de eşit/eski sürüm burada da elenir (feed hatası hapı açmasın).</summary>
-    private static bool IsNewer(string version) =>
-        Version.TryParse(version, out var incoming) && Version.TryParse(AppIdentity.Version, out var installed) && incoming > installed;
+    /// <summary>Velopack yalnız daha yenisini döndürür; yine de eşit/eski sürüm burada da elenir (feed hatası hapı açmasın).
+    /// Karşılaştırma SemVer'dir ve feed'i sıralayan <see cref="SemanticVersion"/> ile aynıdır: ön sürüm etiketi de sıralanır
+    /// ("1.9.0-beta.1" &gt; "1.8.0", "1.9.0" &gt; "1.9.0-beta.1"). <c>System.Version</c> ön sürüm dizgesini parse edemez —
+    /// <c>BO_UPDATE_PRERELEASE=1</c> kapısı (K9) hiçbir teklif üretmezdi. Parse edilemeyen taraf (feed ya da kurulu sürüm)
+    /// <c>false</c> döner.</summary>
+    internal static bool IsNewer(string incoming, string installed) =>
+        SemanticVersion.TryParse(incoming, out var next) && SemanticVersion.TryParse(installed, out var current) && next > current;
 
     /// <summary><c>Restart to update</c>: çıkışta kurulum yapılır ve uygulama yeniden açılır.</summary>
     public void RequestRestart() => RestartRequested = true;

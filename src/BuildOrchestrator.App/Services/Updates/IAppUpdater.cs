@@ -6,7 +6,8 @@ public sealed record UpdateCandidate(string Version, long DownloadBytes, string 
 
 /// <summary>
 /// [motor] Güncelleme motorunun seam'i. Velopack bu arayüzün arkasındadır: testler fake kullanır, uygulamanın geri
-/// kalanı Velopack tiplerini görmez.
+/// kalanı Velopack tiplerini görmez (tek istisna: <c>UpdateService.IsNewer</c> sürümü feed'i sıralayan
+/// <c>SemanticVersion</c> ile karşılaştırır — ön sürüm etiketi de sıralanır).
 ///
 /// <para><see cref="PendingRestart"/> = indirilmiş, kurulum bekleyen paket (önceki oturumda indirilip process
 /// öldürülmüş olabilir). <see cref="ApplyOnExit"/> Update.exe'yi başlatır ve process'in çıkmasını bekletir

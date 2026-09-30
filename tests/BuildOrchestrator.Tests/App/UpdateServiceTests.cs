@@ -103,6 +103,36 @@ public class UpdateServiceTests
         Assert.Empty(published);
     }
 
+    /// <summary>Karşılaştırma SemVer'dir (Velopack'in <c>SemanticVersion</c>'ı, feed'i sıralayanla aynı): ön sürüm etiketi de
+    /// sıralanır — "1.9.0-beta.1" 1.8.0'dan yeni, kararlı "1.9.0" ondan yeni, "beta.2" "beta.1"den yeni; ön sürüm kendi
+    /// kararlısından eski. Eşit, eski ve parse edilemeyen (feed ya da kurulu sürüm) elenir: bozuk veri hapı açmasın.</summary>
+    [Theory]
+    [InlineData("1.9.0-beta.1", "1.8.0", true)]
+    [InlineData("1.9.0", "1.9.0-beta.1", true)]
+    [InlineData("1.9.0-beta.2", "1.9.0-beta.1", true)]
+    [InlineData("1.9.0-beta.1", "1.9.0", false)]
+    [InlineData("1.9.0-beta.1", "1.9.0-beta.1", false)]
+    [InlineData("1.8.0", "1.8.0", false)]
+    [InlineData("1.7.0", "1.8.0", false)]
+    [InlineData("1.10.0", "1.9.0", true)]
+    [InlineData("not-a-version", "1.8.0", false)]
+    [InlineData("1.9.0", "", false)]
+    public void Versions_are_compared_as_semantic_versions_including_the_prerelease_label(string incoming, string installed, bool newer) =>
+        Assert.Equal(newer, UpdateService.IsNewer(incoming, installed));
+
+    /// <summary>[K9 · <c>BO_UPDATE_PRERELEASE=1</c>] Ön sürüm feed'i "99.0.0-beta.1" gibi bir sürüm üretir
+    /// (<c>VelopackUpdater.ToCandidate</c>). Karşılaştırma <c>System.Version</c> ile yapılırken bu dizge parse edilemez,
+    /// <c>IsNewer</c> false döner ve dev kapısı hiçbir teklif üretmezdi.</summary>
+    [Fact]
+    public async Task A_prerelease_of_a_newer_version_is_offered()
+    {
+        var (service, updater, time, published) = Rig();
+        updater.OnCheck = () => Newer with { Version = "99.0.0-beta.1" };
+        await service.RunCycleAsync();
+        Assert.Equal(1, updater.Downloads);
+        Assert.Equal("99.0.0-beta.1", Assert.Single(published).Version);
+    }
+
     [Fact]
     public async Task A_failing_check_or_download_is_silent_and_retried_next_time()
     {

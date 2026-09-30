@@ -161,9 +161,9 @@ public class VelopackUpdaterTests
         Assert.Equal(1000, VelopackUpdater.DownloadBytes(full: 1000, deltas: []));
     }
 
-    /// <summary>Velopack'in <c>SemanticVersion.ToString()</c>'i normalize biçimi verir ("1.8.0", sıfır revizyon yazılmaz) —
-    /// UpdateService/AppIdentity'nin <c>System.Version</c> karşılaştırması bu biçime dayanır. Notu olmayan paket
-    /// (feed'de <c>NotesMarkdown</c> null) boş nota döner: UpdateOffer.From null görmez.</summary>
+    /// <summary>Velopack'in <c>SemanticVersion.ToString()</c>'i normalize biçimi verir ("1.8.0", sıfır revizyon yazılmaz;
+    /// ön sürümde "1.9.0-beta.1"). Notu olmayan paket (feed'de <c>NotesMarkdown</c> null) boş nota döner:
+    /// UpdateOffer.From null görmez.</summary>
     [Fact]
     public void A_feed_asset_becomes_a_candidate_with_a_plain_version_and_empty_notes_when_it_has_none()
     {
@@ -172,5 +172,17 @@ public class VelopackUpdaterTests
 
         var withNotes = new VelopackAsset { Version = SemanticVersion.Parse("1.9.2"), NotesMarkdown = "### Added\n- Thing" };
         Assert.Equal(new UpdateCandidate("1.9.2", 7, "### Added\n- Thing"), VelopackUpdater.ToCandidate(withNotes, bytes: 7));
+    }
+
+    /// <summary>Üretici (<c>ToCandidate</c>) ile tüketici (<c>UpdateService.IsNewer</c>) arasındaki sürüm sözleşmesi: ön
+    /// sürüm paketinin dizgesi ("1.9.0-beta.1", K9 kapısı) kurulu sürümden yeni sayılmalı, kararlısı ondan da yeni.
+    /// Sözleşme kırılırsa ön sürüm feed'i hiçbir hap üretmez.</summary>
+    [Fact]
+    public void A_prerelease_feed_asset_yields_a_version_the_update_gate_orders_correctly()
+    {
+        string FeedVersion(string v) => VelopackUpdater.ToCandidate(new VelopackAsset { Version = SemanticVersion.Parse(v) }, bytes: 0).Version;
+        Assert.Equal("1.9.0-beta.1", FeedVersion("1.9.0-beta.1"));
+        Assert.True(UpdateService.IsNewer(FeedVersion("1.9.0-beta.1"), "1.8.0"));
+        Assert.True(UpdateService.IsNewer(FeedVersion("1.9.0"), FeedVersion("1.9.0-beta.1")));
     }
 }
