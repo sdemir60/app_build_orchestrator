@@ -237,7 +237,7 @@ public sealed class EngineHost(string supervisorExePath, TimeSpan? startupTimeou
     /// <summary>[final review #1] <see cref="KillCurrent"/>'in öldürme stratejisi — üretimde HEP <see cref="KillTree"/>
     /// (kimse vermez). Dikiş yalnız testler içindir: öldürme, process'in çıkışını en çok <see cref="KillExitWait"/> bekler;
     /// bu beklemenin çağıranın (UI) bağlamında koşmadığı ancak öldürmenin İÇİNDEN gözlenir
-    /// (<c>EngineHostTests.A_startup_timeout_kills_the_engine_off_the_callers_context</c>). Desen
+    /// (<c>EngineHostTests.A_start_that_gives_up_kills_the_engine_off_the_callers_context</c>). Desen
     /// <see cref="StartupTimeout"/> ile aynı: üretim değeri sabit, seam test için.</summary>
     internal Action<System.Diagnostics.Process> KillStrategy { get; } = killStrategy ?? KillTree;
 
