@@ -24,8 +24,22 @@ public static class LegacyFixture
         Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
         "Reference Assemblies", "Microsoft", "Framework", ".NETFramework");
 
+    /// <summary>Bir klasörü targeting pack yapan dosya — MSBuild'in (<c>GetReferenceAssemblyPaths</c>) aradığı şey de budur:
+    /// çıplak bir <c>v4.6</c> klasörü (yalnız XML doc'lar, <c>v4.X</c> gibi) pack DEĞİLDİR ve MSB3644 ile düşer.</summary>
+    internal const string FrameworkListRelativePath = @"RedistList\FrameworkList.xml";
+
     /// <summary>Fixture csproj'larının <c>TargetFrameworkVersion</c>'ı — bir kez, makinedeki paketlerden.</summary>
-    public static string TargetFrameworkVersion { get; } = ChooseTargetFramework(InstalledTargetingPacks());
+    public static string TargetFrameworkVersion { get; } = ChooseTargetFramework(InstalledTargetingPacksUnder(ReferenceAssembliesRoot));
+
+    /// <summary>Düşen bir fixture derlemesinin mesajına eklenecek tanı: kök var mı, hangi klasörler pack (FrameworkList.xml)
+    /// hangileri değil — runner imajının ne taşıdığı ancak buradan okunur.</summary>
+    internal static string DescribeTargetingPacks()
+    {
+        if (!Directory.Exists(ReferenceAssembliesRoot)) return $"targeting packs: root missing ({ReferenceAssembliesRoot})";
+        var entries = Directory.EnumerateDirectories(ReferenceAssembliesRoot)
+            .Select(d => Path.GetFileName(d)! + (File.Exists(Path.Combine(d, FrameworkListRelativePath)) ? "" : " (no FrameworkList)"));
+        return $"targeting packs under {ReferenceAssembliesRoot}: {string.Join(", ", entries)}";
+    }
 
     /// <summary>Tercih edilen sürüm; kurulu değilse ve başka 4.x de yoksa yine bu yazılır (MSBuild açıkça düşer).</summary>
     internal const string PreferredTargetFramework = "v4.6";
@@ -44,9 +58,13 @@ public static class LegacyFixture
         return newest.Name ?? PreferredTargetFramework;
     }
 
-    private static IEnumerable<string> InstalledTargetingPacks() =>
-        Directory.Exists(ReferenceAssembliesRoot)
-            ? Directory.EnumerateDirectories(ReferenceAssembliesRoot).Select(d => Path.GetFileName(d)!)
+    /// <summary><paramref name="root"/> altındaki GERÇEK targeting pack klasörlerinin adları — yalnız
+    /// <see cref="FrameworkListRelativePath"/> taşıyanlar (MSBuild'in kabul ettiği ölçüt); kök yoksa boş.</summary>
+    internal static IEnumerable<string> InstalledTargetingPacksUnder(string root) =>
+        Directory.Exists(root)
+            ? Directory.EnumerateDirectories(root)
+                .Where(d => File.Exists(Path.Combine(d, FrameworkListRelativePath)))
+                .Select(d => Path.GetFileName(d)!)
             : [];
 
     public static string CreateClassLib(string dir, string assemblyName)
