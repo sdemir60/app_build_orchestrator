@@ -1,15 +1,18 @@
 <# [yayin hatti] Tek komutla yayin - /release skill'inin mekanik yarisi. Gunluk is develop'ta; main yalniz surumleri tasir
-   ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum + tag'tir (kullanici karari 2026-09-30). Notu
-   Claude yazmis olmali (CHANGELOG en ustte "## [X.Y.Z] - <bugun>"). Akis:
+   ve ona yalniz bu script dokunur: main'deki her merge commit'i bir surum + tag'tir (kullanici karari 2026-09-30; tek istisna:
+   tag geri cekilip ayni surum yeniden cikarilinca onceki merge tag'siz kalir). Notu Claude yazmis olmali (CHANGELOG en ustte
+   "## [X.Y.Z] - <bugun>"). Akis:
      guard'lar (hicbir yazmadan once) -> Version'i yazar -> build + tam suit -> develop'ta "release: vX.Y.Z" commit'i ->
      main'e --no-ff merge ("merge: release vX.Y.Z") -> merge commit'ine annotated tag -> develop main'e ff (develop == main)
      -> tek atomik push: main + develop + tag ya birlikte gider ya hicbiri.
    Guard'lar: CHANGELOG'un en ust bolumu bu surum ve bugun; branch develop; agacta CHANGELOG/props disinda degisiklik yok;
-   fetch sonrasi develop == origin/develop, yerel main (varsa) == origin/main, origin/main develop'un atasi, main baska bir
-   worktree'de acik degil; tag ne yerelde ne origin'de; bu checkout'tan calisan uygulama yok; develop HEAD'inin ci.yml
-   kosusu yesil (completed + success).
+   budayan fetch sonrasi develop ve main origin'de var, develop == origin/develop, yerel main (varsa) == origin/main,
+   origin/main develop'un atasi, main baska bir worktree'de acik degil; tag ne yerelde ne origin'de; bu checkout'tan calisan
+   uygulama yok; develop HEAD'inin ci.yml kosusu yesil (completed + success). Sorulamayan bir guard (git ya da API hatasi)
+   gecmis sayilmaz, durdurur.
    Build/test'te durursa hicbir sey commit/push edilmemistir. Release commit'inden sonra durursa (en olasi: push reddi - bu
-   arada origin/develop ya da origin/main ilerledi) origin'e hicbir sey gitmemistir; son satir yerel kurtarma komutlarini yazar.
+   arada origin/develop ya da origin/main ilerledi) son satir yerel kurtarma komutlarini yazar. Push hata dondugunde once
+   origin'e tag sorulur: tag oradaysa yayin cikmistir ve kurtarma basilmaz; origin okunamazsa kurtarma once origin'e bakmayi ister.
      release.ps1 -Version 1.8.0              (tam akis)
      release.ps1 -Version 1.8.0 -SkipTests   (suit lokalde zaten yesil gorulduyse)
      release.ps1 -Version 1.8.0 -SkipCiCheck (develop'un CI kosusu sorulmaz - cevrimdisi/acil durum; uyari yazar)
@@ -45,7 +48,9 @@ if ($top.Date -ne $today) { Fail "CHANGELOG.md $Version is dated $($top.Date); a
 
 if ((git branch --show-current) -ne 'develop') { Fail 'release runs from develop (daily work is on develop; main only carries releases).' }
 if (git status --porcelain | Where-Object { $_ -notmatch '^.. (Directory\.Build\.props|CHANGELOG\.md)$' }) { Fail 'working tree has changes besides CHANGELOG.md / Directory.Build.props.' }
-Invoke-Git fetch origin --quiet
+# --prune: origin'de silinmis bir branch'in uzak izleme ref'i klonda kalsaydi asagidaki "origin'de var mi" guard'lari onu var sayar,
+# yayin da silinmis branch'i origin'de yeniden yaratirdi.
+Invoke-Git fetch origin --prune --quiet
 $develop = git rev-parse HEAD
 $originDevelop = git rev-parse --verify --quiet refs/remotes/origin/develop
 if (-not $originDevelop) { Fail 'origin has no develop branch; push develop first.' }
@@ -63,9 +68,12 @@ switch ($LASTEXITCODE) {
     1 { Fail 'origin/main has commits develop does not have; merge main into develop first.' }
     default { Fail "cannot check origin/main against develop (git exit $LASTEXITCODE)." }
 }
-# Akis main'e gecer (git switch main); main baska bir worktree'de acikken bu, release commit'inden SONRA duserdi.
+# Akis main'e gecer (git switch main); main baska bir worktree'de acikken bu, release commit'inden SONRA duserdi. Liste
+# okunamazsa guard gecmez (dogrulanamayan yayin cikmaz - ata ve ls-remote guard'lari gibi).
+$worktrees = @(git worktree list --porcelain)
+if ($LASTEXITCODE -ne 0) { Fail "cannot check where main is checked out (git worktree list exit $LASTEXITCODE)." }
 $worktree = $null
-foreach ($line in @(git worktree list --porcelain)) {
+foreach ($line in $worktrees) {
     if ($line -like 'worktree *') { $worktree = $line.Substring(9) }
     elseif ($line -eq 'branch refs/heads/main') { Fail "main is checked out in $worktree; the release switches to main here - move that worktree off main first." }
 }
@@ -124,7 +132,18 @@ Invoke-Git merge -q --ff-only main
 # reddedilir ve digerleri de gitmez (atomiksiz push reddedilmeyenleri yine gonderirdi: main + tag gider develop gitmez - yayin
 # cikar, develop ile main ayrisir).
 & git push --atomic origin main develop $tag
-if ($LASTEXITCODE -ne 0) { Fail "push refused (git exit $LASTEXITCODE); --atomic: nothing reached origin - did origin/develop or origin/main move meanwhile?" }
+$pushExit = $LASTEXITCODE
+if ($pushExit -ne 0) {
+    # "Hicbir sey gitmedi" origin'e bakilmadan soylenmez: sunucu atomik guncellemeyi uyguladiktan sonra baglanti koparsa git yine
+    # hata doner. Tag origin'deyse yayin cikmistir; kurtarma basilmaz (yerel develop/main/tag'i geri alirdi, sonraki pull da
+    # agactaki CHANGELOG/props degisikligine carpardi). origin okunamazsa kurtarma basilir ama once origin'e bakilmasi istenir
+    # (ls-remote hatasi "tag yok" sayilmaz).
+    $onOrigin = & git ls-remote --tags origin "refs/tags/$tag"
+    $lsExit = $LASTEXITCODE
+    if ($lsExit -ne 0) { Fail "push failed (git exit $pushExit) and origin cannot be read to check it (git ls-remote exit $lsExit); run the undo below only after seeing origin has no $tag - if it has, the release went out." }
+    if ($onOrigin) { $script:Undo = $null; Fail "push reported an error (git exit $pushExit) but origin has $tag - the push may have partially applied; check origin (git fetch) before undoing anything." }
+    Fail "push refused (git exit $pushExit); --atomic: nothing reached origin - did origin/develop or origin/main move meanwhile?"
+}
 $script:Undo = $null
 Write-Host "release: $tag pushed (main, develop and the tag) - $DefaultRepoUrl/actions"
 exit 0
