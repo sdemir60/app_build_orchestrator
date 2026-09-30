@@ -1,8 +1,9 @@
 <# [yayin hatti] Tag <-> Directory.Build.props Version <-> CHANGELOG en ust surum esitligi. release.ps1 push'tan
    once, release.yml ilk adim olarak calistirir. Cikis 0 = tutarli, 1 = uyumsuz (mesaj sebebi yazar).
    -RequireOnMain (yalniz release.yml): HEAD - CI'da tag'in commit'i - origin/main'in atasi olmali; elle itilen ve
-   main'e hic girmemis bir commit'e duran tag yayin cikarmaz (checkout tam tarihce ister: fetch-depth 0). release.ps1
-   bu anahtari vermez: orada guard release commit'inden once kosar. #>
+   main'e hic girmemis bir commit'e duran tag yayin cikarmaz - develop'a girmis ama main'e girmemis olan da (main yalniz
+   surumleri tasir; release.ps1 tag'i main'deki merge commit'ine koyar). Checkout tam tarihce ister: fetch-depth 0.
+   release.ps1 bu anahtari vermez: orada guard release commit'inden once kosar. #>
 param(
     [Parameter(Mandatory = $true)][string]$Tag,
     [switch]$RequireOnMain
@@ -21,7 +22,7 @@ if ($RequireOnMain) {
     & git -C $RepoRoot merge-base --is-ancestor HEAD origin/main
     switch ($LASTEXITCODE) {
         0 { }
-        1 { $problems += "the tagged commit is not on origin/main (a release is cut only from main)" }
+        1 { $problems += "the tagged commit is not on origin/main (release tags sit only on main)" }
         default { $problems += "cannot check the tagged commit against origin/main (git exit $LASTEXITCODE; is the history fetched?)" }
     }
 }
