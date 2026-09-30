@@ -1,7 +1,8 @@
 <#
- [yayin hatti] package.ps1, release-guard.ps1 ve release.ps1'in ORTAK okuyuculari: Directory.Build.props degerleri ve
- CHANGELOG surum basliklari tek yerde okunur (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin
- kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
+ [yayin hatti] package.ps1, release-guard.ps1 ve release.ps1'in ORTAK okuyuculari: Directory.Build.props degerleri,
+ CHANGELOG surum basliklari ve GitHub'daki release sayisi tek yerde okunur (dot-source edilir, tek basina
+ calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin
+ ayni bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -17,6 +18,20 @@ function Get-BuildProp([string]$Name) {
     $node = $doc.SelectSingleNode("/Project/PropertyGroup/$Name")
     if (-not $node) { throw "Directory.Build.props has no <$Name>." }
     return $node.InnerText
+}
+
+function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {
+    # Repoda yayinlanmis release var mi (0 = ilk yayin). Windows PowerShell 5.1'de Invoke-RestMethod JSON dizisini
+    # numaralandirmaz: @(Invoke-RestMethod ...) bos diziyi TEK eleman olarak sarar (Count 1 verir). Bu yuzden cevap
+    # once degiskene atanir, sonra sayilir. Bos cevap PowerShell 7'de $null gelir; @($null).Count da 1 oldugundan
+    # $null ayrica sifir sayilir.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $api = ($RepoUrl -replace '^https://github.com/', 'https://api.github.com/repos/') + '/releases?per_page=1'
+    $headers = @{ 'User-Agent' = 'BuildOrchestrator-package' }
+    if ($Token) { $headers['Authorization'] = "Bearer $Token" }
+    $releases = Invoke-RestMethod -Uri $api -Headers $headers
+    if ($null -eq $releases) { return 0 }
+    return @($releases).Count
 }
 
 function Read-Changelog {

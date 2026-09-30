@@ -16,16 +16,40 @@ public class ReleaseScriptsTests
     private static void RequirePowerShell() =>
         Skip.IfNot(File.Exists(Environment.ExpandEnvironmentVariables(@"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe")));
 
-    private static (int ExitCode, string Output) Run(string script, params string[] args)
+    private static (int ExitCode, string Output) Run(string script, params string[] args) =>
+        RunIn(RepoPaths.RepoRoot, Path.Combine(Scripts, script), args);
+
+    /// <summary>Script'i verilen çalışma dizininde koşturur (sandbox testleri kendi kopyalarını çalıştırır).</summary>
+    private static (int ExitCode, string Output) RunIn(string workingDirectory, string scriptPath, params string[] args)
+    {
+        var psi = NewPowerShell(workingDirectory);
+        psi.ArgumentList.Add("-File"); psi.ArgumentList.Add(scriptPath);
+        foreach (string a in args) psi.ArgumentList.Add(a);
+        return Execute(psi);
+    }
+
+    /// <summary>-Command ile koşturur: komutta tanımlanan (global kapsamlı) fonksiyonlar, çağrılan script'e görünür ve
+    /// aynı adlı cmdlet'i gölgeler — ağ çağrısı (Invoke-RestMethod) script'e dokunmadan taklit edilir.</summary>
+    private static (int ExitCode, string Output) RunCommand(string command)
+    {
+        var psi = NewPowerShell(RepoPaths.RepoRoot);
+        psi.ArgumentList.Add("-Command"); psi.ArgumentList.Add(command);
+        return Execute(psi);
+    }
+
+    private static ProcessStartInfo NewPowerShell(string workingDirectory)
     {
         var psi = new ProcessStartInfo("powershell.exe")
         {
             RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
-            WorkingDirectory = RepoPaths.RepoRoot,
+            WorkingDirectory = workingDirectory,
         };
         psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-ExecutionPolicy"); psi.ArgumentList.Add("Bypass");
-        psi.ArgumentList.Add("-File"); psi.ArgumentList.Add(Path.Combine(Scripts, script));
-        foreach (string a in args) psi.ArgumentList.Add(a);
+        return psi;
+    }
+
+    private static (int ExitCode, string Output) Execute(ProcessStartInfo psi)
+    {
         using var p = Process.Start(psi)!;
         // İki akış AYRI okunur: biri dolarken diğerini bekleyen sıralı okuma child'ı kilitleyebilir.
         var stdout = p.StandardOutput.ReadToEndAsync();
@@ -65,9 +89,38 @@ public class ReleaseScriptsTests
     {
         RequirePowerShell();
         // -ReleaseCount 0: script GitHub'a sormaz (test), release yok → vpk download hiç çağrılmaz, çıkış 0.
+        // Bu yalnız -ReleaseCount giriş noktasını pinler; API'den gelen cevabın sayımı aşağıdaki iki testtedir.
         var (code, output) = Run("package.ps1", "-DownloadPrevious", "-ReleaseCount", "0", "-WhatIf");
         Assert.True(code == 0, output);
         Assert.Contains("no previous release", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>Eski iddia: "-ReleaseCount 0 verilince atlama dalı çalışır" (yukarıdaki test). Kusur: -ReleaseCount VERİLMEYİNCE
+    /// (release.yml böyle çağırır) sayım <c>@(Invoke-RestMethod ...).Count</c> idi; Windows PowerShell 5.1'de Invoke-RestMethod
+    /// JSON dizisini numaralandırmaz, <c>@()</c> boş diziyi TEK eleman olarak sarar → release'siz repoda 0 yerine 1, atlama dalı
+    /// ilk yayında hiç çalışmazdı. Bu test cevabı gerçek cmdlet gibi (numaralandırmayan <c>ConvertFrom-Json</c>) verir ve
+    /// -ReleaseCount'u VERMEZ.</summary>
+    [SkippableFact]
+    public void An_empty_release_list_from_the_api_is_counted_as_no_release()
+    {
+        RequirePowerShell();
+        string script = Path.Combine(Scripts, "package.ps1");
+        var (code, output) = RunCommand(
+            $"function Invoke-RestMethod {{ '[]' | ConvertFrom-Json }}; & '{script}' -DownloadPrevious -WhatIf");
+        Assert.True(code == 0, output);
+        Assert.Contains("no previous release", output, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void A_release_list_with_an_entry_from_the_api_still_downloads_the_previous_package()
+    {
+        RequirePowerShell();
+        string script = Path.Combine(Scripts, "package.ps1");
+        var (code, output) = RunCommand(
+            $"function Invoke-RestMethod {{ '[{{\"tag_name\":\"v1.7.0\"}}]' | ConvertFrom-Json }}; & '{script}' -DownloadPrevious -WhatIf");
+        Assert.True(code == 0, output);
+        Assert.DoesNotContain("no previous release", output, StringComparison.Ordinal);
+        Assert.Contains("vpk download github", output, StringComparison.Ordinal); // -WhatIf: çalıştırılmaz, yalnız yazılır
     }
 
     [SkippableFact]

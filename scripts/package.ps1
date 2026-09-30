@@ -68,13 +68,7 @@ $notes = Join-Path $ReleasesDir 'notes.md'
 if (-not $PublishOnly -and $PSCmdlet.ShouldProcess($notes, 'write release notes')) { Write-ReleaseNotes $notes $Version }
 
 if ($DownloadPrevious) {
-    if ($ReleaseCount -lt 0) {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $api = ($RepoUrl -replace '^https://github.com/', 'https://api.github.com/repos/') + '/releases?per_page=1'
-        $headers = @{ 'User-Agent' = 'BuildOrchestrator-package' }
-        if ($Token) { $headers['Authorization'] = "Bearer $Token" }
-        $ReleaseCount = @(Invoke-RestMethod -Uri $api -Headers $headers).Count
-    }
+    if ($ReleaseCount -lt 0) { $ReleaseCount = Get-ReleaseCount $RepoUrl $Token }
     if ($ReleaseCount -eq 0) {
         Write-Host 'no previous release - delta skipped (first release)'
     }
