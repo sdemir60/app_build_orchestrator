@@ -5378,13 +5378,14 @@ the notes is scripted:
 
 **When the workflow fails after the tag is pushed** — the guard refuses, `ci` goes red, or `publish` fails (a GitHub
 hiccup, `vpk pack` rejecting an argument) — the tag stays on `origin` with no release behind it, and `release.ps1`
-refuses that version from then on (`tag vX.Y.Z already exists on origin`). A transient failure is answered in Actions
-with *Re-run failed jobs*: that is safe while nothing has been uploaded, and `vpk upload --merge` accepts a release
-an earlier run left half-created. A failure that needs a code change is fixed on a branch and merged to `main`, then
-released forward as the next patch version; when no GitHub Release was created at all, the tag can be withdrawn
-instead — `git push origin :refs/tags/vX.Y.Z` and `git tag -d vX.Y.Z` — the `CHANGELOG.md` date refreshed, and
-`/release` run again for the same version. The first `/release` follows a green `ci.yml` run on `main` and the
-triage of `LocalOnly` tests (§17.5), so that the release run is not the first CI run.
+refuses that version from then on (`tag vX.Y.Z already exists on origin`). There are three ways out. A transient
+failure is answered by re-running the failed jobs in Actions: that is safe while nothing has been uploaded, and
+`vpk upload --merge` accepts a release an earlier run left half-created. A failure that needs a code change is fixed
+on a branch, merged to `main` and released forward as the next patch version. When no GitHub Release was created at
+all, the tag can instead be withdrawn from `origin` and from the local repository, the `CHANGELOG.md` date refreshed
+(`release.ps1` wants the section dated today) and `/release` run again for the same version. The commands of each
+way are in the release skill (`.claude/skills/release/SKILL.md`, step 6). The first `/release` follows a green
+`ci.yml` run on `main` and the triage of `LocalOnly` tests (§17.5), so that the release run is not the first CI run.
 
 ---
 
