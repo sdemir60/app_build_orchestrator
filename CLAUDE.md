@@ -71,6 +71,9 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 Süit **filtrelidir**: `Category=Acceptance` üç test gerçek OSYS reposunu derler (~2 dk), ayrı koşulur
 (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor kendi binary'lerini kilitler.
 
+- **CI (`ci.yml`) aynı süiti windows-2025 runner'ında koşar;** runner'da koşamayan/kararsız test
+  **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik gevşetilmez, test silinmez; lokal tam
+  süit kapı olmaya devam eder.
 - **Ölçüm/sonda testi = ortam değişkeni kapısı.** `Category=Measurement` etiketi TEK BAŞINA yetmez:
   `Category!=Acceptance` filtresi diğer her kategoriyi kabul eder. Pencere açan, balloon gösteren ya da CPU
   yakan her YENİ test `[SkippableFact]` + ilk satırda `Skip.IfNot(<BO_... değişkeni> == "1")` taşır (içerik
@@ -132,8 +135,10 @@ bir şey dediğinde yazılır. Sıradan işlerde `CHANGELOG.md`'ye ve `Directory
    yok); kısa, genel, kullanıcının gördüğü özellik — iç terim, dosya/sınıf adı ve "şuraya şunu ekledik" yok;
    küçük işler tek genel satırda toplanır. Her madde o anki koda göre doğrulanır.
 4. **Numara tek yerde:** `Version` aynı değere çekilir (guard: CHANGELOG'daki en üst sürüm = `Version`).
-5. **Yayın:** tam süit yeşil → commit → `main`'e merge → merge commit'ine annotated tag `vX.Y.Z` → `git push` +
-   `git push origin vX.Y.Z`.
+5. **Yayın:** `/release` (ya da elle `scripts/release.ps1 -Version X.Y.Z`): guard'lar → tam süit → `main`'de
+   `release: vX.Y.Z` commit'i (bu commit için ayrı branch açılmaz — tek istisna) → annotated tag `vX.Y.Z` → push.
+   Tag'i gören `release.yml` derler, `scripts/package.ps1` ile paketler ve GitHub Release'i açar; senin başka bir
+   şey yapman gerekmez. Paket çıktıları `artifacts/` altındadır (ignore'lu).
 
 Yayınlanmış bir sürümün notu yalnız yanlışsa düzeltilir.
 
@@ -162,6 +167,7 @@ kebab-case ve **İngilizce** (`scrollbar-restyle-plan` gibi; `plani`/`kayitlari`
 - Bir iş için kendi çalışma branch'ini aç, task başına commit at, bitince `main`'e merge + push.
 - Merge'ün geçtiğini **doğruladıktan sonra** branch'i local ve remote'tan sil.
 - Oturum **`main` üzerinde** bitirilir.
+- Tek istisna: `release: vX.Y.Z` sürüm commit'i `main`'de doğrudan atılır (ayrıntı "Sürüm çıkarma" adım 5).
 
 ### Nerede çalışılır
 
