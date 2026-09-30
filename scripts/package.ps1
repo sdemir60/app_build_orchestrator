@@ -8,6 +8,8 @@
    package.ps1 -DownloadPrevious -RepoUrl ... -Token ...   (delta icin onceki paketi ceker; release yoksa atlar)
  -WhatIf hicbir seyi yazmaz/calistirmaz/sormaz (release sayisini soran GitHub cagrisi, download, publish, notes, pack
  atlanir; ne yapacagini yazar); testler bunu kullanir.
+ Ayni surum yeniden paketlenebilir (lokal deneme/prova): pack'ten once o surumun onceki paketleri silinir, yoksa vpk pack
+ duser; baska surumlerin paketleri delta icin kalir (Remove-PackagedVersion, release-common.ps1).
  Surum, Product ve Company Directory.Build.props'tan okunur (release-common.ps1), elle yazilmaz.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -69,6 +71,11 @@ if ($NotesOnly) {
 
 # Not bolumu paketlemeden ONCE kesilir: CHANGELOG'da bu surum yoksa dakikalar suren publish'e girilmez.
 if (-not $PublishOnly -and $PSCmdlet.ShouldProcess($notes, 'write release notes')) { Write-ReleaseNotes $notes $Version }
+
+# Ayni surum yeniden paketlenebilir: klasorde o surumun paketi varken vpk pack duser. Temizlik notlardan SONRA (eksik CHANGELOG
+# bolumu bir sey silmeden duser) ve indirmeden ONCE kosar: yayinlanmis bir yayindan inen paket silinmez (ayni surumse pack zaten
+# duser - yayinlanmis surum yeniden paketlenmez). Diger surumlerin paketleri kalir. -PublishOnly paketlemez, klasore dokunmaz.
+if (-not $PublishOnly -and $PSCmdlet.ShouldProcess($ReleasesDir, "remove earlier packages of $Version")) { Remove-PackagedVersion $ReleasesDir $Version }
 
 if ($DownloadPrevious) {
     # Release sayisini sormak bir ag cagrisidir: -WhatIf altinda atlanir (yalniz yazilir). Sayi bilinmeyince asagidaki

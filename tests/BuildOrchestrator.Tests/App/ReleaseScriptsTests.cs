@@ -203,6 +203,98 @@ public class ReleaseScriptsTests
         Assert.True(File.Exists(Path.Combine(temp.Path, "notes.md")), output);
     }
 
+    private static string CommonScript => Path.Combine(Scripts, "release-common.ps1");
+
+    private static void Touch(string folder, params string[] names)
+    {
+        Directory.CreateDirectory(folder);
+        foreach (string name in names) File.WriteAllText(Path.Combine(folder, name), "x");
+    }
+
+    /// <summary>Kusur: aynı sürümü yeniden paketlemek (lokal prova/deneme) <c>vpk pack</c>'i düşürüyordu — "There is a release in
+    /// channel win which is equal or greater to the current version" — çünkü <c>artifacts\velopack</c> önceki koşunun
+    /// <c>-full.nupkg</c>'ını taşır (vpk bunu klasördeki nupkg'lardan okur; yalnız indeks dosyalarını silmek yetmez). Temizlik
+    /// yalnız O sürümün full/delta paketlerini ve vpk'nın o paketlerden yeniden ürettiği indeks dosyalarını siler; başka
+    /// sürümlerin nupkg'ları kalır (sonraki sürümün delta'sı onlardan üretilir — §17.6 provası). <c>11.7.0</c> ile <c>1.7.0</c>
+    /// karışmaz.</summary>
+    [SkippableFact]
+    public void Repackaging_a_version_removes_only_its_own_packages_and_the_indexes()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string[] mine = { "X-1.7.0-full.nupkg", "X-1.7.0-delta.nupkg", "releases.win.json", "RELEASES", "assets.win.json" };
+        string[] others = { "X-1.6.0-full.nupkg", "X-1.6.0-delta.nupkg", "X-11.7.0-full.nupkg" };
+        Touch(temp.Path, mine.Concat(others).ToArray());
+
+        var (code, output) = RunCommand($". '{CommonScript}'; Remove-PackagedVersion -ReleasesDir '{temp.Path}' -Version '1.7.0'");
+
+        Assert.True(code == 0, output);
+        foreach (string name in mine) Assert.False(File.Exists(Path.Combine(temp.Path, name)), $"{name} kaldı");
+        foreach (string name in others) Assert.True(File.Exists(Path.Combine(temp.Path, name)), $"{name} silindi");
+    }
+
+    /// <summary>Paketlenmemiş sürüm için temizlik hiçbir şeye dokunmaz — indeks dosyaları dahil (onlar önceki sürümlerin
+    /// kaydıdır) — ve klasör hiç yoksa (ilk koşu, CI) hata vermez.</summary>
+    [SkippableFact]
+    public void A_version_that_was_never_packed_leaves_the_folder_as_it_is()
+    {
+        RequirePowerShell();
+        using var temp = new TempDir();
+        string[] present = { "X-1.6.0-full.nupkg", "releases.win.json", "RELEASES", "assets.win.json" };
+        Touch(temp.Path, present);
+
+        var (code, output) = RunCommand($". '{CommonScript}'; Remove-PackagedVersion -ReleasesDir '{temp.Path}' -Version '1.7.0'");
+        Assert.True(code == 0, output);
+        foreach (string name in present) Assert.True(File.Exists(Path.Combine(temp.Path, name)), $"{name} silindi");
+
+        var missing = RunCommand($". '{CommonScript}'; Remove-PackagedVersion -ReleasesDir '{Path.Combine(temp.Path, "yok")}' -Version '1.7.0'");
+        Assert.True(missing.ExitCode == 0, missing.Output);
+    }
+
+    /// <summary>package.ps1 temizliği <c>vpk download</c> ve <c>vpk pack</c>'ten ÖNCE koşturur: <c>dotnet</c> gölgesi bu iki komutun
+    /// çağrıldığı andaki klasör içeriğini yazar. Sürümün eski paketi o anda yoktur, önceki sürümünki durur. İndirme öncesi
+    /// olması bilinçlidir: yayınlanmış bir yayından inen paket (aynı sürümse pack zaten düşmeli) silinmez.</summary>
+    [SkippableFact]
+    public void Packaging_clears_the_versions_earlier_packages_before_it_downloads_and_packs()
+    {
+        RequirePowerShell();
+        string version = ReleaseNotes.All[0].Version; // == props Version (WhatsNewTests pinler)
+        using var temp = new TempDir();
+        string velopack = Path.Combine(temp.Path, "velopack");
+        string mine = $"BuildOrchestrator.App-{version}-full.nupkg";
+        const string older = "BuildOrchestrator.App-0.0.1-full.nupkg";
+        Touch(velopack, mine, older);
+        string dotnet = "function dotnet { 'DOTNET ' + ($args -join ' '); "
+            + $"if ($args -contains 'download' -or $args -contains 'pack') {{ 'FOLDER ' + $args[1] + ' ' + ((Get-ChildItem -LiteralPath '{velopack}').Name -join ',') }}; "
+            + "$global:LASTEXITCODE = 0 }";
+
+        var (code, output) = RunCommand($"{dotnet}; & '{PackageScript}' -DownloadPrevious -ReleaseCount 1 -ArtifactsDir '{temp.Path}'");
+
+        Assert.True(code == 0, output);
+        string[] lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        Assert.Contains($"FOLDER download {older}", lines); // indirme geldiğinde temizlenmiş
+        Assert.Contains($"FOLDER pack {older}", lines);     // pack geldiğinde temizlenmiş; önceki sürüm delta için duruyor
+        Assert.False(File.Exists(Path.Combine(velopack, mine)), output);
+    }
+
+    /// <summary>-WhatIf temizliği de yalnız yazar: dosya silinmez, ne yapacağı çıktıdadır (başlıktaki "hiçbir şeyi yazmaz" sözü).</summary>
+    [SkippableFact]
+    public void WhatIf_reports_the_removal_of_earlier_packages_and_removes_nothing()
+    {
+        RequirePowerShell();
+        string version = ReleaseNotes.All[0].Version;
+        using var temp = new TempDir();
+        string velopack = Path.Combine(temp.Path, "velopack");
+        string mine = $"BuildOrchestrator.App-{version}-full.nupkg";
+        Touch(velopack, mine);
+
+        var (code, output) = RunCommand($"& '{PackageScript}' -WhatIf -ArtifactsDir '{temp.Path}'");
+
+        Assert.True(code == 0, output);
+        Assert.Contains($"remove earlier packages of {version}", output, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(velopack, mine)), output);
+    }
+
     [SkippableFact]
     public void The_release_guard_accepts_only_the_tag_of_the_current_version()
     {

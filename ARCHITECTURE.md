@@ -5143,8 +5143,9 @@ CPU-saturating job tests, the console UI tests and the build-state store tests.
 The release scripts are tested by running them under Windows PowerShell 5.1, the shell the release itself uses
 (`ReleaseScriptsTests`): the note cut checked against the App's own release-note parser, the release count read
 from a faked API answer — with `dotnet` replaced by a stand-in that records the command it is given, so what
-`package.ps1` would download, publish and pack is read from the output, the notes file's place included — the
-running-instance probe, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
+`package.ps1` would download, publish and pack is read from the output, the notes file's place and the package
+folder as it stands when the download and the pack begin included — the removal of a version's earlier packages,
+the running-instance probe, the guards, and `release.ps1`'s git flow in a sandbox of a bare origin and two clones — a
 tag `origin` already has, a `main` that moves before the push, a tagged commit `origin/main` does not contain, an
 application still running (the process query is faked in every sandbox run, so the outcome does not depend on
 what is open on the machine). Nothing is packaged there; that takes minutes and the Velopack tool. The update
@@ -5310,7 +5311,9 @@ push to the same ref cancels the older run, and the test results are kept as a T
 | delta | Velopack's default | produced when the previous release's full package is in the output folder. `-DownloadPrevious` fetches it (`vpk download github`), and skips when the repository has no release yet — so the first release carries no delta |
 
 The output is the installer `BuildOrchestrator.App-win-Setup.exe`, the full package, a delta package when there
-was a previous one, and the feed files `vpk upload` publishes. `-WhatIf` runs none of it — the GitHub query for the
+was a previous one, and the feed files `vpk upload` publishes. The same version can be packed again: the packages
+an earlier run left for it are removed first, because `vpk` refuses to pack over an equal or newer release, while
+the other versions' packages stay for the delta. `-WhatIf` runs none of it — the GitHub query for the
 release count included, which is skipped and printed like the other steps — and prints what it would do; the tests
 use it. `artifacts\` is ignored by git.
 
@@ -5357,7 +5360,8 @@ the notes is scripted:
 - **`scripts/release-common.ps1`** is dot-sourced by the release scripts and by `verify-publish.ps1` and is the one
   place for what they share: the property reader, the `CHANGELOG.md` heading pattern and reader, the repository
   URL, the running-instance probe (`Get-RunningApp` — `release.ps1` stops on it, `verify-publish.ps1` skips its
-  measurement), and the release count from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not
+  measurement), the removal of a version's earlier packages (`Remove-PackagedVersion`, for `package.ps1`), and the
+  release count from the GitHub API (`Get-ReleaseCount`). Windows PowerShell 5.1 does not
   enumerate the JSON array `Invoke-RestMethod` returns, so the answer is counted from a variable — wrapped
   directly, an empty list would count as one release.
 - **`.github/workflows/release.yml`** runs on a `v*` tag: `guard` (a full-history checkout and
@@ -5916,7 +5920,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Behaviour | File |
 |---|---|
 | Publish, release-note cut and Velopack pack — the one owner of the publish command; the previous package for the delta | `scripts/package.ps1` |
-| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`), release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
+| What the release scripts and `verify-publish.ps1` share: property reader, `CHANGELOG.md` heading pattern and reader, repository URL, running-instance probe (`Get-RunningApp`), removal of a version's earlier packages (`Remove-PackagedVersion`), release count from the GitHub API (`Get-ReleaseCount`) | `scripts/release-common.ps1` |
 | Tag = `Version` = top `CHANGELOG.md` version; with `-RequireOnMain`, the tagged commit on `origin/main` | `scripts/release-guard.ps1` |
 | One-command release: guards, `Version`, build + suite, release commit, annotated tag, atomic push | `scripts/release.ps1` |
 | The `/release` request: order and commands; the note rules stay in `CLAUDE.md` | `.claude/skills/release/SKILL.md` |

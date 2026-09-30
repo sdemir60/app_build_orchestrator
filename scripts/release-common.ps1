@@ -1,8 +1,8 @@
 <#
  [yayin hatti] package.ps1, release-guard.ps1, release.ps1 ve verify-publish.ps1'in ORTAK parcalari: Directory.Build.props
- degerleri, CHANGELOG surum basliklari, GitHub'daki release sayisi ve calisan uygulama ornegi sondasi tek yerde
- (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin kendi parser'i (ReleaseNotes.Parse) da okur;
- ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
+ degerleri, CHANGELOG surum basliklari, GitHub'daki release sayisi, bir surumun onceki paketlerinin temizligi ve calisan
+ uygulama ornegi sondasi tek yerde (dot-source edilir, tek basina calistirilmaz). Baslik bicimini uygulamanin kendi
+ parser'i (ReleaseNotes.Parse) da okur; ReleaseScriptsTests ikisinin ayni bolumu verdigini pinler.
 #>
 
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -39,6 +39,25 @@ function Get-ReleaseCount([string]$RepoUrl, [string]$Token) {
     $releases = Invoke-RestMethod -Uri $api -Headers $headers
     if ($null -eq $releases) { return 0 }
     return @($releases).Count
+}
+
+function Remove-PackagedVersion([string]$ReleasesDir, [string]$Version) {
+    # Ayni surumu yeniden paketlemek mesru (lokal deneme/prova), ama vpk pack klasorde ayni ya da daha yeni bir surumun paketi
+    # varken "There is a release in channel win which is equal or greater ..." diye duser. vpk bunu klasordeki nupkg'lardan
+    # okur (OLCULDU: yalniz indeks dosyalarini silmek yetmez; yalniz nupkg'lari silmek yeter). Bu yuzden O surumun full/delta
+    # paketleri silinir; DIGER surumlerin paketleri kalir - sonraki surumun delta'si onlardan uretilir. Indeks dosyalari
+    # (RELEASES, releases.*.json, assets.*.json) vpk'nin nupkg'lardan her pack'te yeniden urettigi ozetlerdir; silinen paketleri
+    # gosteren eski satir kalmasin diye paketlerle birlikte gider. Silinecek paket yoksa hicbir dosyaya dokunulmaz (indeksler
+    # onceki surumlerin kaydi). Kurulum dosyasi (*-Setup.exe) her pack'te uzerine yazilir; burada yeri yok.
+    if (-not (Test-Path -LiteralPath $ReleasesDir)) { return }
+    $files = @(Get-ChildItem -LiteralPath $ReleasesDir -File)
+    $own = '^.+-' + [regex]::Escape($Version) + '-(full|delta)\.nupkg$'
+    $packages = @($files | Where-Object { $_.Name -match $own })
+    if ($packages.Count -eq 0) { return }
+    $indexes = @($files | Where-Object { $_.Name -match '^(RELEASES|releases\..+\.json|assets\..+\.json)$' })
+    foreach ($file in ($packages + $indexes)) { Remove-Item -LiteralPath $file.FullName -Force }
+    $names = ($packages | ForEach-Object { $_.Name }) -join ', '
+    Write-Host "removed the earlier packages of $Version ($names) and the index files; the other versions stay for the delta"
 }
 
 function Read-Changelog {
