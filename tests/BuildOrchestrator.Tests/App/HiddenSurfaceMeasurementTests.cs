@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
@@ -18,7 +19,7 @@ namespace BuildOrchestrator.Tests.App;
 /// yalnız "ölçüm geçersizlenmedi"yi sınar; bu test gerçek bir pencerede gerçek layout geçişlerini ve thread döngüsünü OKUR.
 /// Bu bir pin DEĞİL, bir okuma: sayılar test çıktısına yazılır, eşik yoktur.
 ///
-/// <para><b>Neden kapılı:</b> gerçek (ekran dışı) bir pencere açar ve dört okuma boyunca ~55 sn pompalar.
+/// <para><b>Neden kapılı:</b> gerçek (ekran dışı) bir pencere açar ve beş okuma boyunca ~60 sn pompalar.
 /// <c>Category=Measurement</c> etiketi TEK BAŞINA bunu sağlamaz: <c>Category!=Acceptance</c> filtresi diğer her kategoriyi kabul
 /// eder. Gerçek kapı ilk satırdaki <c>Skip.IfNot</c>'tur: <c>BO_MEASURE_HIDDEN</c> <c>"1"</c> değilse test SKIPPED raporlanır ve
 /// pencere hiç açılmaz. Gövde <c>[StaFact]</c>'te DEĞİL, <see cref="StaThread.RunAsync{T}"/>'te koşar: <c>[StaFact]</c>'in
@@ -38,12 +39,15 @@ namespace BuildOrchestrator.Tests.App;
 /// konsol batch'leri pompanın yapacağı gibi <c>AppendConsoleBatch</c>'e verilir. Okunan: UI thread'in döngü sayacı
 /// (<c>QueryThreadCycleTime</c>, saniyede milyon döngü) ve pencerenin <c>LayoutUpdated</c> sayısı (layout geçişi).</para>
 ///
-/// <para><b>Okumanın sınırları:</b> dört okuma sırayla koşar — gizli ve OLAYSIZ (taban: pompanın yoklaması, tik zamanlayıcısı,
-/// boştaki pencere), gizli (JIT soğuk), görünür, gizli (JIT sıcak). Olayların maliyeti gizli okumadan tabanı çıkararak okunur;
-/// ikinci okuma ortak kodun JIT'ini öder, karşılaştırma için sıcak olanı kullan. Sayaç thread'in TÜM işini içerir (akışı besleyen
-/// test kodu ve VM'in olay işleme işi dahil); bunlar olaylı okumalarda aynıdır. Headless'ta <c>App.Motion</c> yoktur: hareket
-/// kapalıdır (reduced-motion), yani görünür okuma sonsuz animasyonların maliyetini İÇERMEZ — o farkı gerçek uygulama ölçümü
-/// gösterir.</para>
+/// <para><b>Okumanın sınırları:</b> beş okuma sırayla koşar — gizli ve OLAYSIZ (taban: pompanın yoklaması, tik zamanlayıcısı,
+/// boştaki pencere), gizli (JIT soğuk), görünür (JIT soğuk), gizli (JIT sıcak), görünür (JIT sıcak). Olayların maliyeti gizli
+/// okumadan tabanı çıkararak okunur; ikinci okuma ortak kodun JIT'ini öder, karşılaştırma için sıcak olanı kullan. Üçüncü okuma,
+/// yalnız görünürken koşan yolların da ilk-kullanım JIT'ini öder; görünür-gizli karşılaştırması bu yüzden sıcak çiftle (dördüncü
+/// ve beşinci okuma) yapılır. Sayaç thread'in TÜM işini içerir (akışı besleyen test kodu ve VM'in olay işleme işi dahil); bunlar
+/// olaylı okumalarda aynıdır. Headless'ta <c>App.Motion</c> yoktur: hareket kapalıdır (reduced-motion), yani görünür okuma sonsuz
+/// animasyonların maliyetini İÇERMEZ — o farkı gerçek uygulama ölçümü gösterir. Rig ayrıca tepsi topolojisi DEĞİLDİR (tepsi simgesi
+/// ve göstergesi, IPC ve olay pompası yoktur): sayılar yalnız yüzey maliyetidir ve gerçek uygulama kabul ölçümleriyle
+/// (measure2/measure3) karşılaştırılmaz.</para>
 /// </summary>
 [Trait("Category", "Measurement")]
 [Collection("Console UI (serial)")]
@@ -64,19 +68,28 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
 
     private readonly record struct Reading(double MegaCyclesPerSecond, int LayoutPasses, int Projects, int Events, double Seconds);
 
+    /// <summary>Çağıran thread'in o ana dek harcadığı CPU döngüsü. Çağrı başarısız olursa 0 basmak yerine fırlatır: sessiz 0,
+    /// okumayı sahte bir "sıfır maliyet"e çevirirdi.</summary>
+    private static ulong ThreadCycles()
+    {
+        if (!QueryThreadCycleTime(GetCurrentThread(), out ulong cycles)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return cycles;
+    }
+
     [SkippableFact]
     public async Task A_177_project_run_costs_this_much_UI_thread_time_hidden_and_visible()
     {
         Skip.IfNot(Environment.GetEnvironmentVariable("BO_MEASURE_HIDDEN") == "1",
-            "Opens a real offscreen window and pumps it for about 55 seconds — opt in with BO_MEASURE_HIDDEN=1.");
+            "Opens a real offscreen window and pumps it for about 60 seconds — opt in with BO_MEASURE_HIDDEN=1.");
 
         // Her okuma kendi STA thread'inde: bir önceki okumanın MainWindow'u (ve tik zamanlayıcısı) sonrakine karışmaz.
         var readings = new (string Label, bool Hidden, bool WithEvents)[]
         {
             ("hidden, no events (floor)", true, false),
             ("hidden (cold JIT)        ", true, true),
-            ("visible                  ", false, true),
+            ("visible (cold JIT)       ", false, true),
             ("hidden (warm)            ", true, true),
+            ("visible (warm)           ", false, true),
         };
         foreach (var (label, hidden, withEvents) in readings)
         {
@@ -147,9 +160,9 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
             };
             if (withEvents) feed.Start();
 
-            QueryThreadCycleTime(GetCurrentThread(), out ulong cyclesBefore);
+            ulong cyclesBefore = ThreadCycles();
             DispatcherPump.PumpFor(StreamWindow);
-            QueryThreadCycleTime(GetCurrentThread(), out ulong cyclesAfter);
+            ulong cyclesAfter = ThreadCycles();
             double seconds = clock.Elapsed.TotalSeconds;
 
             feed.Stop();

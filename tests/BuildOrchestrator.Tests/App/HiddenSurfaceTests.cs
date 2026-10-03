@@ -354,7 +354,7 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
         window.SetSurfaceHidden(true);
         MainWindowHost.RunBuild(vm, names);
-        Assert.NotEmpty(vm.StreamEvents.Where(e => e.GlowEligible));            // ön-koşul: parıldayacak (done + hatasız) satır var
+        Assert.Contains(vm.StreamEvents, e => e.GlowEligible);                  // ön-koşul: parıldayacak (done + hatasız) satır var
         Assert.Contains(vm.StreamEvents, e => !e.GlowPlayed && !e.TypePlayed);  // ön-koşul: gizliyken akanlar hiçbir görünümde oynanmadı
 
         window.SetSurfaceHidden(false);
@@ -980,6 +980,7 @@ public class HiddenSurfaceTests
         long startedAtMs = now;                           // koşunun da satırın da başladığı an
         var header = window.Shell.ConsoleHeaderControl;
         int lineWritesBefore = header.SetLineCountCalls;
+        int frontierBefore = window.FrontierFollowCount;
         var writes = new List<string>();
         vm.PropertyChanged += (_, e) =>
         {
@@ -995,7 +996,7 @@ public class HiddenSurfaceTests
 
         Assert.Empty(writes); // KIRMIZI kapısız: bugün her tik ElapsedMs'i, building satırın DurationMs'ini ve ETA'yı yazar
         Assert.Equal(lineWritesBefore, header.SetLineCountCalls); // satır sayacı yazılmadı
-        Assert.Equal(0, window.FrontierFollowCount);              // frontier takibi koşmadı
+        Assert.Equal(frontierBefore, window.FrontierFollowCount); // frontier takibi koşmadı
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow(); // Loaded-öncelikli kurulum pompasız koşsun (A4 testlerinin deseni)
 
@@ -1004,7 +1005,7 @@ public class HiddenSurfaceTests
         Assert.Equal(1, writes.Count(n => n == nameof(vm.ElapsedMs))); // ...TEK tikle
         Assert.Equal(1, writes.Count(n => n == nameof(row.DurationMs)));
         Assert.Equal(lineWritesBefore + 1, header.SetLineCountCalls); // satır sayacı dönüşte TEK kez yenilendi
-        Assert.Equal(0, window.FrontierFollowCount);                  // dönüş kurulumu frontier takibi yapmaz
+        Assert.Equal(frontierBefore, window.FrontierFollowCount);     // dönüş kurulumu frontier takibi yapmaz
         GC.KeepAlive(window);
     }
 
@@ -1019,6 +1020,7 @@ public class HiddenSurfaceTests
         var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
         var header = window.Shell.ConsoleHeaderControl;
         int lineWritesBefore = header.SetLineCountCalls;
+        int frontierBefore = window.FrontierFollowCount;
         now += 200;
 
         window.OnElapsedTick();
@@ -1026,7 +1028,7 @@ public class HiddenSurfaceTests
         Assert.Equal(200, vm.ElapsedMs);
         Assert.Equal(200, row.DurationMs);
         Assert.Equal(lineWritesBefore + 1, header.SetLineCountCalls); // satır sayacı her tikte yenilenir
-        Assert.Equal(1, window.FrontierFollowCount);                  // koşan derlemede frontier takibi koşar
+        Assert.Equal(frontierBefore + 1, window.FrontierFollowCount); // koşan derlemede frontier takibi koşar
         GC.KeepAlive(window);
     }
 
@@ -1066,6 +1068,7 @@ public class HiddenSurfaceTests
         Assert.NotNull(vm.EngineOverdueMessage); // bekçi gizliyken de uyardı
         Assert.Equal(1, ready);                  // ...ve bekleyen çıkışı serbest bıraktı
         DispatcherPump.PumpUntil(() => shutdowns > 0, TimeSpan.FromSeconds(2));
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // PumpUntil ilk çağrıda döner: geç gelen ikinci kapatma da yakalansın
         Assert.Equal(1, shutdowns);              // ...ve uygulama TAM bir kez kapatıldı
         GC.KeepAlive(window);
     }
@@ -1150,8 +1153,11 @@ public class HiddenSurfaceTests
     /// tepsideki derlemede UI thread'ine layout geçişi yaptırmamaktır ve bir layout geçişi ancak bir öğenin ölçümü ya da yerleşimi
     /// geçersizlendiğinde çıkar. Test 177 projelik bir derlemenin olay akışını gizliyken sürer — plan, başlangıç, derlenen bir satır,
     /// 300 log satırı, 3 sn'lik tikler (gerçek kabuğun tik gövdesi), bir konsol batch'i, her projenin başlayıp bitmesi ve koşunun
-    /// bitişi — ve kabuğun kapılı yüzeylerinin (şerit, proje listesi ve satırları, olay akışı, konsol ve başlığı, graf) başta
-    /// geçerli olan HER öğesinin sonda da geçerli kaldığını, konsol belgesinin hiç yeniden kurulmadığını sınar. Bir yüzeyin kapısı
+    /// bitişi — ve gerçekleşmiş kabuk içeriğinin TÜM görsel ağacında başta geçerli olan HER öğenin sonda da geçerli kaldığını,
+    /// konsol belgesinin gizlendikten sonra hiç yeniden kurulmadığını sınar. İzlenen küme elle seçilmiş köklerden değil ağacın
+    /// tamamından türer: kapısı unutulmuş yeni bir yüzey de yakalanır. Yüzeyler ayrıca tek tek kanıtlanır (şerit, proje satırları,
+    /// olay akışı, konsol, konsol başlığı ve graf kümeye öğe katar): bir yüzey kümede hiç yoksa iddia o yüzey için boşta yeşil kalırdı.
+    /// Bir yüzeyin kapısı
     /// kalkarsa o yüzeyin metni/chip'i/satırı yazılır, öğeleri geçersizlenir ve test kırmızıdır (şerit, proje satırları, olay akışı
     /// ve konsol kapıları için kırmızısı gösterildi).
     ///
@@ -1159,6 +1165,10 @@ public class HiddenSurfaceTests
     /// ölçüm "geçersizlenmedi"dir. Bu pinin görmediği işleri (ör. grafa statü itişi) ilgili kapının kendi testi sınar;
     /// dispatcher'ın sonradan koşturduğu işlerin layout geçişlerini ve thread döngüsünü gerçek bir pencerede kapılı ölçüm testi
     /// okur (<see cref="HiddenSurfaceMeasurementTests"/>).</para>
+    ///
+    /// <para><b>Pin dışı yüzeyler:</b> headless <c>Realize</c>'da <c>Loaded</c> ateşlenmez; görünümünü <c>Loaded</c>'da kuran
+    /// yüzeyler (alt çubuğun sayaç chip'leri) bu ağaçta hiç kurulmaz ve burada boşta yeşil kalırdı. Onları gerçek bir ekran dışı
+    /// pencerede <see cref="The_action_bar_counter_chips_are_not_refreshed_while_hidden_and_catch_up_on_show"/> pinler.</para>
     /// </summary>
     [StaFact]
     public void Run_events_and_console_batches_leave_the_realized_shell_measure_valid_while_the_surface_is_hidden()
@@ -1169,11 +1179,19 @@ public class HiddenSurfaceTests
         var content = MainWindowHost.Realize(window); // satır container'ları üretilir; ağaç ölçülmüş ve yerleştirilmiş
         var shell = window.Shell;
         window.SetSurfaceHidden(true);
-        var gated = LayoutValid(shell.Ribbon, shell.ProjectsList, shell.EventStreamControl,
-            shell.ConsoleViewControl, shell.ConsoleHeaderControl, shell.GraphHost);
+        int replacedBefore = shell.ConsoleViewControl.RunDocumentReplacedCount; // gizlemeden SONRAKİ taban: mutlak 0 değil
+        var gated = LayoutValid(content); // gerçekleşmiş kabuğun TÜM görsel ağacı: elle seçilmiş kök listesi yok
         Assert.True(content.IsMeasureValid && content.IsArrangeValid);     // ön-koşul: realize edilmiş ağaç geçerli
         Assert.True(gated.Contains(shell.Ribbon), "ön-koşul: şerit ölçülmüş");
         Assert.True(list.RevealRows.Any(row => gated.Contains(row)), "ön-koşul: gerçekleşmiş proje satırları ölçülmüş");
+        // Her yüzey ayrı kanıtlanır: kümede o yüzeyden hiç öğe yoksa (headless'ta çökük ya da ölçülmemiş) iddia o yüzey için boşta
+        // yeşil kalırdı. Eksik yüzeylerin adları tek iddiada hepsiyle birlikte bildirilir.
+        var surfaces = new (string Name, UIElement Root)[]
+        {
+            ("event stream", shell.EventStreamControl), ("console", shell.ConsoleViewControl),
+            ("console header", shell.ConsoleHeaderControl), ("graph", shell.GraphHost),
+        };
+        Assert.Empty(surfaces.Where(s => !gated.Any(e => DsResources.IsSelfOrDescendantOf(e, s.Root))).Select(s => s.Name));
 
         MainWindowHost.PreviewBuild(vm, names);                            // motorun planı
         MainWindowHost.StartBuild(vm, names);                              // runStarted
@@ -1181,13 +1199,14 @@ public class HiddenSurfaceTests
         for (int i = 0; i < 300; i++) MainWindowHost.LogLine(vm, names[0], i + 1, $"line {i}");
         for (int i = 0; i < 15; i++) window.OnElapsedTick();               // 3 sn'lik 200 ms tikler (üretimdeki tik gövdesi)
         window.AppendConsoleBatch(string.Join("", Enumerable.Range(0, 300).Select(i => $"line {i}\n")), window.ConsoleReseedGen);
-        MainWindowHost.FinishBuild(vm, names);                             // 177 x projectStarted + projectSucceeded, runCompleted
+        MainWindowHost.SucceedProject(vm, names[0]);                       // derlenen satır biter: projectStarted ikinci kez gelmez
+        MainWindowHost.FinishBuild(vm, names[1..]);                        // kalan her proje BİR kez başlar ve biter; runCompleted
 
         Assert.True(vm.StreamEvents.Count > 0 && vm.GetActiveLineCount() >= 300, "ön-koşul: olaylar ve log satırları modele ulaştı");
         Assert.True(content.IsMeasureValid && content.IsArrangeValid);
         Assert.True(shell.Ribbon.IsMeasureValid);
         Assert.Empty(gated.Where(e => !e.IsMeasureValid || !e.IsArrangeValid).Select(Describe)); // hiçbir kapılı öğe geçersizlenmedi
-        Assert.Equal(0, shell.ConsoleViewControl.RunDocumentReplacedCount);                        // konsol belgesi hiç kurulmadı
+        Assert.Equal(replacedBefore, shell.ConsoleViewControl.RunDocumentReplacedCount); // konsol belgesi gizliyken hiç yeniden kurulmadı
         GC.KeepAlive(window);
     }
 
@@ -1221,6 +1240,11 @@ public class HiddenSurfaceTests
         List<string> DocumentLines() => [.. console.EditorControl.Document.Text.TrimEnd().Split('\n').Select(l => l.TrimEnd('\r'))];
         void AssertConsoleMatchesModel()
         {
+            // Belge model metninin tamamını değil yalnız bir render dilimini (en çok RenderSliceLines satır) tutar: "belge satır
+            // sayısı == model satır sayısı" iddiası ancak toplam bunun altındayken doğrudur. Test büyürse iddialar yanlış
+            // sayılarla değil bu mesajla patlasın.
+            Assert.True(emitted < ConsoleView.RenderSliceLines,
+                $"toplam {emitted} satır render dilimini ({ConsoleView.RenderSliceLines}) aştı: belge/model eşitliği artık beklenemez");
             var lines = DocumentLines();
             Assert.Equal(vm.GetActiveLineCount(), lines.Count);   // konsol satır sayısı modelle eşit
             Assert.Equal(lines.Count, lines.Distinct().Count());  // çift satır yok
