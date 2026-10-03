@@ -85,6 +85,40 @@ public class HiddenDecorativeClockTests
         GC.KeepAlive(window);
     }
 
+    [StaFact]
+    public void A_row_that_starts_building_while_hidden_breathes_once_shown()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Succeeded);
+        var row = RealizeRow(vm, out var window);
+        window.Hide();
+        vm.State = ProjectRowState.Started; // model gizliyken building'e geçti
+        Assert.False(row.BreathLayer.HasAnimatedProperties); // non-vacuous: gizliyken gerçekten kurulmadı
+
+        window.Show();
+        window.UpdateLayout();
+
+        Assert.Equal(Visibility.Visible, row.BreathLayer.Visibility);
+        Assert.True(row.BreathLayer.HasAnimatedProperties); // dönüşte güncel model durumundan nefes başlar
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void A_row_that_stops_building_while_hidden_is_collapsed_and_clockless_once_shown()
+    {
+        var vm = new ProjectRowViewModel("id", "Foo", ProjectRowState.Started);
+        var row = RealizeRow(vm, out var window);
+        Assert.True(row.BreathLayer.HasAnimatedProperties, "ön-koşul: building satır GERÇEKTEN nefes almalı");
+        window.Hide();
+        vm.State = ProjectRowState.Succeeded; // model gizliyken building'i terk etti
+
+        window.Show();
+        window.UpdateLayout();
+
+        Assert.Equal(Visibility.Collapsed, row.BreathLayer.Visibility);
+        Assert.False(row.BreathLayer.HasAnimatedProperties); // dönüşte bayat "building" durumundan saat geri gelmez
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- şerit belirsiz süpürmesi
 
     private static StickyRibbon RealizeRibbon(RunViewModel vm, out Window window)

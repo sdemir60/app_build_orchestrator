@@ -240,7 +240,7 @@ public class SuccessFlourishTests
     [StaFact]
     public void Graph_nodes_release_their_clocks_when_they_succeed_instead_of_celebrating()
     {
-        var view = GraphTestView.Shown(new Size(600, 400), out var window, () => true);
+        var view = NewGraphView(out var window);
         view.SetGraph(
             [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Queued)],
             [new("OSYS.Base", "OSYS.Data")]);
@@ -421,9 +421,10 @@ public class SuccessFlourishTests
         return (view, DsResources.Realize(host, view));
     }
 
-    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi).
+    /// <summary>Animasyonu AÇIK bir GraphView (ReducedMotionCoverageTests.NewGraphView'ın açık-sinyal eşi). [perf A7] GÖSTERİLEN
+    /// host'ta kurulur: sonsuz beads saati görünmeyen ağaçta kurulmaz (bkz. GraphTestView.Shown).
     /// [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.</summary>
-    private static GraphView NewGraphView() => GraphTestView.Sized(new Size(600, 400), () => true);
+    private static GraphView NewGraphView(out Window window) => GraphTestView.Shown(new Size(600, 400), out window, () => true);
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 

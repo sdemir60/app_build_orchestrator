@@ -89,10 +89,11 @@ public class ReducedMotionCoverageTests
     /// <summary>[quiet] <b>Eski iddia:</b> bu test ayrıca <c>view.SharedDashClock</c>'un null olduğunu
     /// pinliyordu (kalıcı kenar ağının akan dash saati). v1.3.0 §2.3 kalıcı ağı kaldırdı — kenarlar yalnız
     /// seçimde çizilir — dolayısıyla o saatin sahibi de yok oldu.</summary>
+    /// <remarks>[perf A7] Gösterilen host'ta kurulur: HWND'siz görünümde saat görünmezlikten dolayı da null olurdu (vakum) — bu iddia yalnız reduced-motion'ın engellemesini pinler; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void GraphView_keeps_no_building_animation_and_an_instant_reveal_under_reduced_motion()
     {
-        var view = NewGraphView();
+        var view = NewGraphView(out var window);
         view.SetGraph(
             [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building),
              new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Discovered)],
@@ -101,6 +102,7 @@ public class ReducedMotionCoverageTests
         Assert.Null(view.NodeVisuals["OSYS.Base"].Beads);                            // beads yörüngesi HİÇ kurulmaz
         Assert.Null(view.BeadsClock);                                                // paylaşımlı saat doğmaz
         Assert.All(view.NodeVisuals.Values, v => Assert.Equal(1.0, v.Cell.Opacity)); // reveal ANİ (dalga yok)
+        GC.KeepAlive(window);
     }
 
     // ================================================================ 4) ProjectRow (3.8s nefes + mount reveal)
@@ -357,8 +359,9 @@ public class ReducedMotionCoverageTests
     // ---------------------------------------------------------------- helpers
 
     // [A13/T1 fix-1 · S1] Sözlük merge'i artık GraphTestView'da (TEK yer) — altı kopyanın biriydi.
-    private static GraphView NewGraphView()
-        => GraphTestView.Sized(new Size(600, 400), () => false, Off());
+    // [perf A7] Gösterilen host: sonsuz saat HWND'siz görünümde görünmezlikten dolayı da kurulmazdı (bkz. GraphTestView.Shown).
+    private static GraphView NewGraphView(out Window window)
+        => GraphTestView.Shown(new Size(600, 400), out window, () => false, Off());
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 

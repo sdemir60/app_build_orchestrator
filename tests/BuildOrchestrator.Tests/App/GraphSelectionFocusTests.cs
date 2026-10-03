@@ -37,11 +37,12 @@ public class GraphSelectionFocusTests
         return view;
     }
 
-    /// <summary>[perf A7] <see cref="Wired"/>'ın GÖSTERİLEN-host eşi (animasyon AÇIK): seçim kenarı akışı SONSUZ bir saattir
-    /// ve yalnız görünürken kurulur — eski iddia ve gerekçe <see cref="GraphTestView.Shown"/> dokümanında.</summary>
-    private static GraphView WiredShown(out Window window)
+    /// <summary>[perf A7] <see cref="Wired"/>'ın GÖSTERİLEN-host eşi: seçim kenarı akışı SONSUZ bir saattir ve yalnız
+    /// görünürken kurulur — eski iddia ve gerekçe <see cref="GraphTestView.Shown"/> dokümanında. <paramref name="animations"/>
+    /// false ise "saat YOK" iddiası da burada kurulur: HWND'siz görünümde saat görünmezlikten dolayı da null olurdu (vakum).</summary>
+    private static GraphView WiredShown(out Window window, bool animations = true)
     {
-        var view = GraphTestView.Shown(new Size(600, 400), out window, () => true);
+        var view = GraphTestView.Shown(new Size(600, 400), out window, () => animations);
         view.SetGraph(Nodes(), Edges());
         return view;
     }
@@ -122,10 +123,38 @@ public class GraphSelectionFocusTests
         Assert.Equal(TimeSpan.FromMilliseconds(SelectionEdgeStyle.FlowDurationMs), flow.Duration.TimeSpan);
         Assert.Equal(RepeatBehavior.Forever, flow.RepeatBehavior);
 
-        var still = Wired(animations: false);
+        // [perf A7] Gösterilen host'ta: HWND'siz görünümde akış saati görünmezlikten dolayı da null olurdu (vakum) — bu yarı
+        // yalnız reduced-motion'ın akışı engellediğini pinler.
+        var still = WiredShown(out var stillWindow, animations: false);
         still.SelectedNode = "OSYS.Data";
         Assert.NotEmpty(still.SelectionEdgePaths); // çizgiler VAR…
         Assert.Null(still.EdgeFlowClock);          // …ama akmıyorlar
+        GC.KeepAlive(window);
+        GC.KeepAlive(stillWindow);
+    }
+
+    /// <summary>[perf A7] Canlı reduced-motion: seçim kenarı akışı da sinyali ANINDA izler (<c>ReapplyMotion</c> kenar saatini
+    /// de uzlaştırır). Kapalıya geçişte saat bırakılır — çizgiler yerinde kalır, yalnız akmazlar; açığa dönüşte yeniden
+    /// kurulur. <c>Flipping_the_motion_signal_at_runtime_stops_the_building_animation_immediately</c>'ın (beads) kenar
+    /// akışı eşidir.</summary>
+    [StaFact]
+    public void Flipping_the_motion_signal_at_runtime_stops_and_restarts_the_edge_flow()
+    {
+        var motion = new FakeMotionSettings { AnimationsEnabled = true };
+        var view = GraphTestView.Shown(new Size(600, 400), out var window, () => motion.AnimationsEnabled, motion);
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent)); // aboneliği kur
+        view.SetGraph(Nodes(), Edges());
+        view.SelectedNode = "OSYS.Data";
+        Assert.NotNull(view.EdgeFlowClock); // ön-koşul: akış GERÇEKTEN dönüyor
+
+        motion.Flip(false); // OS reduced-motion'a geçti — bir sonraki seçim yeniden kurulumu BEKLENMEZ
+
+        Assert.Null(view.EdgeFlowClock);
+        Assert.NotEmpty(view.SelectionEdgePaths); // çizgiler yerinde, yalnız akış durdu
+
+        motion.Flip(true);
+
+        Assert.NotNull(view.EdgeFlowClock); // açığa dönüşte akış geri kurulur
         GC.KeepAlive(window);
     }
 

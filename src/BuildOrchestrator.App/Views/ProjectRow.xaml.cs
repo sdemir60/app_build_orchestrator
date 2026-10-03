@@ -656,7 +656,7 @@ public partial class ProjectRow : UserControl
     {
         bool building = _vm?.IsCompiling ?? false;
         // Katman "yalnız building'de var": görünürlük motion'dan BAĞIMSIZ (reduced-motion'da da building satırda
-        // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
+        // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken VE görünürken döner.
         PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
 
         // [perf A7] Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: ApplyBreathing her VM değişiminde koşar

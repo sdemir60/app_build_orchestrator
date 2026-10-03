@@ -86,7 +86,7 @@ public class GraphRenderTests
         bool animationsEnabled, double width = 600, double height = 400, IMotionSettings? motion = null)
         => GraphTestView.Sized(
             new Size(width, height),
-            () => motion?.AnimationsEnabled ?? animationsEnabled,
+            MotionProvider(animationsEnabled, motion),
             motion);
 
     /// <summary>[perf A7] <see cref="NewView"/>'ın GÖSTERİLEN-host eşi: sonsuz saat (beads) bekleyen testler görünümü
@@ -96,8 +96,13 @@ public class GraphRenderTests
         => GraphTestView.Shown(
             new Size(width, height),
             out window,
-            () => motion?.AnimationsEnabled ?? animationsEnabled,
+            MotionProvider(animationsEnabled, motion),
             motion);
+
+    /// <summary>Motion sinyalinin taze okuma kapısı: canlı kaynak (<paramref name="motion"/>) varsa onu, yoksa sabit bayrağı
+    /// okur — <see cref="NewView"/> ve <see cref="NewShownView"/> AYNI kapıyı kullanır (kopya YASAK).</summary>
+    private static Func<bool> MotionProvider(bool animationsEnabled, IMotionSettings? motion) =>
+        () => motion?.AnimationsEnabled ?? animationsEnabled;
 
     // ---------------------------------------------------------------- ilk açılış dalgası
 
@@ -406,14 +411,16 @@ public class GraphRenderTests
     }
 
     /// <summary>§2.3 son madde: <c>prefers-reduced-motion</c>'da beads TAMAMEN kapalı — yörünge hiç kurulmaz.</summary>
+    /// <remarks>[perf A7] Gösterilen host'ta kurulur: HWND'siz görünümde saat görünmezlikten dolayı da null olurdu (vakum) — bu iddia yalnız reduced-motion'ın engellemesini pinler; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Reduced_motion_builds_no_beads_at_all()
     {
-        var view = NewView(false);
+        var view = NewShownView(false, out var window);
         view.SetGraph(Nodes(dataStatus: GraphStatus.Building), Edges());
 
         Assert.Null(view.NodeVisuals["OSYS.Data.Core"].Beads);
         Assert.Null(view.BeadsClock);
+        GC.KeepAlive(window);
     }
 
     /// <summary>[M-2] Canlı reduced-motion. <b>Eski iddia:</b> bu test akan kenar dash saatinin

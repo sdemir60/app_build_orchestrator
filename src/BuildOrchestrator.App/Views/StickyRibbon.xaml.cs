@@ -417,7 +417,8 @@ public partial class StickyRibbon : UserControl
     }
 
     /// <summary>[Belirsiz mod] 35% genişlikte amber bir indikatörü TranslateX -110%→320% ile 1.4s EaseInOut,
-    /// 30fps, sonsuz süpürür (yalnız Syncing). Reduced-motion'da sweep kurulmaz — statik 35% bar kalır.</summary>
+    /// 30fps, sonsuz süpürür (yalnız Syncing). Reduced-motion'da ve görünmezken (ARCHITECTURE §14.5) sweep kurulmaz —
+    /// statik 35% bar kalır.</summary>
     private void ApplyIndeterminate()
     {
         double trackW = PART_ProgressTrack.ActualWidth;

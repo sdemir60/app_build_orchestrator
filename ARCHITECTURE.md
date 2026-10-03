@@ -4903,8 +4903,8 @@ Five contract rules, each enforced by a test:
    no consumer may hand-roll a colour keyframe.
 
 **One deliberate exception to "never layout".** The row's status stripe and the ribbon's progress indicator
-animate `Width`. Both are short, finite transitions on a single element; the rule is aimed at infinite, decorative
-animation, and neither of these is that, so they stay as they are.
+animate `Width`. Both are short, finite transitions on a single element, so their layout cost is a bounded burst that
+ends with the transition rather than a continuous stream.
 
 **Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
