@@ -81,7 +81,7 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// (eski hâl <c>MainWindow</c>'da ayrı bir kapı taşıyordu — bkz. bu sınıfın özeti). Uygulamada özel
     /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.
     /// <para>[Stop now] Maddenin başlığı Stop'un üç aşamasını izler (<see cref="StopText.Label"/>: Stop → Stop now →
-    /// Terminating…): Stopping'de ikinci basış hard stop olduğu için "Stop" demek basışın artık zararsız olmadığını gizlerdi.
+    /// Terminating…): Stopping'de basış hard stop olduğu için "Stop" demek basışın artık zararsız olmadığını gizlerdi.
     /// Durum <paramref name="run"/>'ın <see cref="RunViewModel.StopLabel"/>'ından gelir — Stop düğmesiyle ve satır ikonuyla
     /// AYNI kaynak; <c>null</c> ise (arkasında koşu olmayan tepsi) başlık ilk aşamada kalır. Abonelik menüyle aynı ömürdedir
     /// (menü uygulama boyunca yaşar), ayrıca çözülmez.</para></summary>
@@ -176,7 +176,8 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// [perf B2] Uygulama TEPSİDEYKEN basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
     /// NEDENİ. İş sürerken koşu komutları kapalıdır ve kısayol kuyruğa girmez; pencere gizliyken ekran da yoktur,
     /// yani kısayol sessizce hiçbir şey yapmazsa kullanıcı neden başlamadığını bilemez — balon tek yüzeydir.
-    /// Pencere görünürken balon YOKTUR (ekran zaten söylüyor: Sync düğmesi meşgul, şerit). İkon Info: hata değil,
+    /// Pencere görünürken balon YOKTUR (ekran zaten söylüyor: Sync düğmesi meşgul — sessiz Sync dahil; şeridi yalnız görünür
+    /// bir Sync <c>Syncing</c> diye yazar, sessiz Sync şeride dokunmaz). İkon Info: hata değil,
     /// durum bilgisi; başlık ürünün adı.
     /// <para>Kapı: <c>MainWindow.OnGlobalHotkey</c>, balonun TAM gösterileceği anda Show notifications'ı TAZE okur
     /// ve yalnız açıksa buraya gelir (<see cref="ShowClosedToTrayNotification"/> ile aynı kural).</para></summary>

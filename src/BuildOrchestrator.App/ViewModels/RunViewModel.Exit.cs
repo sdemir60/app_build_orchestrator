@@ -52,7 +52,7 @@ public sealed partial class RunViewModel
     /// Tam çıkış iste. Sıra: (1) ikinci istek hiçbir şey yapmaz; (2) kendiliğinden Sync kapanır; (3) uçuşta iş yoksa
     /// <see cref="ExitReady"/> hemen — bekleyiş açılmaz, satır yazılmaz, komut gitmez; (4) varsa bekleyiş açılır,
     /// konsola <see cref="ExitPendingLine"/> düşer ve Stop yapılabiliyorsa yapılır (marking fazında isteği geri alır,
-    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — çıkış kullanıcının ikinci basışı
+    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — çıkış Stopping'deki Stop basışı (hard)
     /// DEĞİLDİR, hard stop'a tırmanmaz ve drain'i bekler); (5) koşul
     /// hemen yeniden değerlendirilir (motor zaten susmuş olabilir).
     /// </summary>

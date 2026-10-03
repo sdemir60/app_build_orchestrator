@@ -81,7 +81,8 @@ public static class GeneralSettingsCatalog
         new("NOTIFICATIONS",
         [
             new(GeneralSetting.ShowNotifications, "Show notifications",
-                "A tray notification when a build finishes — succeeded or failed.", Default: true),
+                "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
+                + "and a second launch that could not bring the window forward.", Default: true),
         ]),
     ];
 

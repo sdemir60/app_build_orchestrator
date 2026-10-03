@@ -121,7 +121,8 @@ public partial class MainWindow : Window
         // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
         // açılış, yeniden başlatma) — Deactivated o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki
         // pencerede kırpardı. İçerik ilk çizildiğinde (Loaded'dan sonra; aktivasyon o ana dek işlenmiştir) durum pencerenin
-        // KENDİ IsActive'inden okunur, sonrası yukarıdaki olayların işidir. Pencerenin aktifliğini okuyan TEK yer burasıdır.
+        // KENDİ IsActive'inden okunur, sonrası yukarıdaki olayların işidir. İmleç saati için pencerenin IsActive'ini
+        // okuyan TEK yer burasıdır.
         ContentRendered += (_, _) => cursorClock.SetWindowActive(IsActive);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
@@ -563,8 +564,9 @@ public partial class MainWindow : Window
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
-    /// Stop kendi komutundan geçer: ilk Esc graceful, durdurma sürerken ikinci Esc hard stop gönderir
-    /// ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve üçüncü Esc'i kendi içinde yutar
+    /// Stop kendi komutundan geçer: Esc graceful gönderir; Stopping sürerken (kullanıcı ya da branch kesmesi istemiş
+    /// olsun) hard stop gönderir ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve
+    /// hard gittikten sonraki Esc'i kendi içinde yutar
     /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir).</summary>
     private void OnEscapePressed()
     {

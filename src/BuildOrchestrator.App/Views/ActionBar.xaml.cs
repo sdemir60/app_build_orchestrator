@@ -628,7 +628,7 @@ public partial class ActionBar : UserControl
         if (locked)
         {
             // [Stop now] Kilit SÜRERKEN Stop'un üç hâli var: istenmeden önce "Stop", graceful gittikten sonra "Stop now"
-            // (buton ETKİN — ikinci basış hard stop'tur), hard gittikten sonra "Terminating…" (pasif). Pasifleşmeyi bu metot
+            // (buton ETKİN — basış hard stop'tur), hard gittikten sonra "Terminating…" (pasif). Pasifleşmeyi bu metot
             // YAZMAZ — buton Command'ına bağlı olduğundan IsEnabled StopCommand.CanExecute'tan (hard kapısı) gelir; iki ayrı
             // yerden yazılan bir enable hâli olmaz.
             PART_Stop.Content = ButtonContent("Icon.Stop", StopText.Label(stage), "Brush.StatusFailText", 24);

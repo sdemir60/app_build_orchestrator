@@ -956,14 +956,14 @@ public partial class ProjectRow : UserControl
         return row;
     }
 
-    /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta
-    /// DataContext'i RunViewModel olan ilk öğeye (StickyLayerList/ShellRoot) çıkılır.</summary>
     /// <summary>[Stop now] Koşunun Stop aşaması değişti: hover bloğu kurulmuşsa Stop ikonunun adı/tooltip'i tazelenir.</summary>
     private void OnRunStopStageChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_actions is { } actions && sender is RunViewModel run) actions.ApplyStopStage(run.StopStage);
     }
 
+    /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta
+    /// DataContext'i RunViewModel olan ilk öğeye (StickyLayerList/ShellRoot) çıkılır.</summary>
     private ViewModels.RunViewModel? FindRunViewModel()
     {
         DependencyObject? d = this;

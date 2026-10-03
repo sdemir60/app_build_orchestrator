@@ -1459,7 +1459,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="StopStage.StopNow"/> — kullanıcının kendi Stop'u ya da branch kesmesi başlattı) gelen basıştan gider
     /// (<see cref="StopAsync"/>'in <c>StopNow</c> aşaması).</para>
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03 · "Stop now"]</b> ESKİ İDDİA: hard yolu kontratta/motorda
-    /// durur, App'ten GÖNDERİLMEZ; Stopping'de Stop pasiftir ve ikinci basış hiçbir şey üretmez. GEREKÇE: drain, uçuştaki en
+    /// durur, App'ten GÖNDERİLMEZ; Stopping'de Stop pasiftir ve basış hiçbir şey üretmez. GEREKÇE: drain, uçuştaki en
     /// yavaş projenin kalan süresi kadar sürebilir; beklemek istemeyen kullanıcı bunu söyleyebilmelidir. Durdurma sürerken gelen basış (ya da
     /// Esc) <see cref="StopKind.Hard"/> gönderir — inner job terminate edilir, uçuştakiler <c>failed("stopped")</c>
     /// olur — ve BİR KEZ gider (<see cref="HardStopRequested"/>); konsola <see cref="StopNowRequestedLine"/> düşer, bitişte
@@ -1485,7 +1485,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
         // [Stop now · kullanıcı kararı 2026-10-03] Basışın ne göndereceğini TEK durum seçer (StopStage): istenmedi → graceful;
-        // graceful gitti → hard, BİR KEZ; hard gitti → hiçbir şey (üçüncü basış ya da kapıyı atlayıp komutu doğrudan çalıştıran
+        // graceful gitti → hard, BİR KEZ; hard gitti → hiçbir şey (hard'dan sonraki basış ya da kapıyı atlayıp komutu doğrudan çalıştıran
         // Esc burada yutulur). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
         switch (StopStage)
         {
@@ -1558,7 +1558,7 @@ public sealed partial class RunViewModel : ObservableObject
         if (HardStopRequested && string.Equals(reason, FailureReasons.Stopped, StringComparison.Ordinal)) _hardTerminated++;
     }
 
-    // [Stop now] Kapı hard stop'a kadar açıktır: Stopping'de ikinci basış hard stop'tur ("Stop now") ve hard gidince
+    // [Stop now] Kapı hard stop'a kadar açıktır: Stopping'de basış (kullanıcı ya da branch kesmesi istemiş olsun) hard stop'tur ("Stop now") ve hard gidince
     // kapanır — başka bir basış gerekmez ("Terminating…"). Graceful basış bir kez gider: Stopping'deki basış graceful DEĞİL
     // hard'dır (StopAsync'in StopNow aşaması), yani graceful ikinci kez üretilmez.
     private bool CanStop() => (IsRunning || IsStarting) && !HardStopRequested;

@@ -78,7 +78,8 @@ public class SettingsGeneralPageTests
                 + "Off: switching stops and asks you to commit or stash first.")],
             actual[2].Rows);
         Assert.Equal(
-            [("Show notifications", "A tray notification when a build finishes — succeeded or failed.")],
+            [("Show notifications", "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
+                + "and a second launch that could not bring the window forward.")],
             actual[3].Rows);
     }
 

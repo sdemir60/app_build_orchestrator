@@ -25,7 +25,7 @@ public enum StopStage
 /// </summary>
 public static class StopText
 {
-    /// <summary>Görünür etiket: Stop düğmesi ve tepsi maddesi. İkinci basış yıkıcıdır (uçuştakiler öldürülür) — "Stop"
+    /// <summary>Görünür etiket: Stop düğmesi ve tepsi maddesi. Stopping'deki basış yıkıcıdır (uçuştakiler öldürülür) — "Stop"
     /// demek bunu gizlerdi.</summary>
     public static string Label(StopStage stage) => stage switch
     {
@@ -36,7 +36,7 @@ public static class StopText
     };
 
     /// <summary>Action bar Stop düğmesinin UIA adı: aşama "Stop" iken eski sabit ad, sonrasında etiketin kendisi — ekran
-    /// okuyucu da yıkıcı ikinci basışı ("Stop now") duyar.</summary>
+    /// okuyucu da yıkıcı basışı ("Stop now") duyar.</summary>
     public static string ActionBarName(StopStage stage) =>
         stage == StopStage.Stop ? AccessibilityNames.StopButton : Label(stage);
 

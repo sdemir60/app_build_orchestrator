@@ -232,7 +232,8 @@ again from scratch — up to `parallelism` half-finished compiles discarded, and
 turned red. Draining costs the remaining time of the slowest in-flight project and banks the work; terminating
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
 pressing *Build* — there is no separate resume — banking the work is the cheaper trade, which is why the hard stop
-waits for the user's second press instead of being what the first press does.
+is a press of its own while the drain runs — the user's own stop or a branch switch's — instead of being what the
+first press does.
 
 `runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
 `runCompleted` (the next Build counts from zero).
@@ -4423,14 +4424,13 @@ panel header switches to its project-log half with the `Back` button. Clicking t
 selection.
 
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
-title bar's update card) → selection → the running build.
-With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
-dropped by the first Esc and the build stopped by the second. While a stop drains — the user's own or a branch switch's —
-Esc is the hard stop, the same step pressing *Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep
-Clean, an Optimize, a checkout or a pull cannot be stopped; Esc during one writes a single console line saying so
-(`sync can't be stopped — it will
-finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a
-row is not a selection gesture — it opens the row menu and leaves the selection alone.
+title bar's update card) → selection → the running build. With nothing else open, Esc stops a Build, Rebuild or
+Clean gracefully (§4.5) — so a selection made mid-run is dropped by the first Esc and the build stopped by the
+second. While a stop drains — the user's own or a branch switch's — Esc is the hard stop, the same step pressing
+*Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep Clean, an Optimize, a checkout or a pull
+cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will finish on its own`),
+once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a row is not a selection
+gesture — it opens the row menu and leaves the selection alone.
 
 **Starting a run drops the selection and keeps the filter.** Build, Rebuild, Resolve cycles and a row's own
 Build, Rebuild and Clean all go through the same start: the selection is cleared, so the graph glides back to

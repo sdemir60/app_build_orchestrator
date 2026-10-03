@@ -11,8 +11,8 @@ public enum EscAction
     ClearSelection,
     /// <summary>[kullanıcı kararı 2026-09-29] Çalışan Build/Rebuild/Clean'i durdur (graceful).</summary>
     StopRun,
-    /// <summary>[kullanıcı kararı 2026-10-03] Durdurma zaten sürüyor: ikinci Esc hard stop'tur ("Stop now" — uçuştaki
-    /// derlemeler hemen sonlandırılır).</summary>
+    /// <summary>[kullanıcı kararı 2026-10-03] Durdurma zaten sürüyor (kullanıcı ya da branch kesmesi istemiş olsun): Esc
+    /// hard stop'tur ("Stop now" — uçuştaki derlemeler hemen sonlandırılır).</summary>
     StopNow,
     /// <summary>Durdurulamayan bir iş sürüyor: nedenini konsola bir kez yaz.</summary>
     ExplainUnstoppable,
@@ -26,7 +26,7 @@ public enum EscRunState
     Idle,
     /// <summary>Bir koşu uçuşta ya da işaretleniyor; Stop alınabilir.</summary>
     Stoppable,
-    /// <summary>Stop zaten istendi (uçuştakiler bitiyor); ikinci Esc hard stop'tur.</summary>
+    /// <summary>Stop zaten istendi (kullanıcı ya da branch kesmesi; uçuştakiler bitiyor): Esc hard stop'tur.</summary>
     Stopping,
     /// <summary>Kullanıcıya görünen, durdurulamayan bir workspace işi sürüyor (Sync, Deep Clean, Optimize, checkout, pull).</summary>
     Unstoppable,
@@ -92,10 +92,11 @@ public static class KeyboardShortcuts
     /// yapmazdı. Zincirin son halkası artık KOŞUDUR: çalışan Build/Rebuild/Clean durdurulur (graceful — biten
     /// projeler kaydedilir, sonraki Build kaldığı yerden devam eder), durdurulamayan bir iş sürüyorsa nedeni söylenir.</para>
     ///
-    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: durdurma zaten sürüyorsa ikinci Esc ikinci
-    /// bir stop GÖNDERMEZ, şerit "duyuldu" der. GEREKÇE: drain en yavaş projenin kalan süresi kadar sürebilir; ikinci Esc
-    /// beklemek istemediğini söyler ve hard stop'tur (<see cref="EscAction.StopNow"/> — uçuştakiler öldürülür, sonraki
-    /// Build onları baştan derler). Üçüncü Esc'i komutun kapısı yutar.</para></summary>
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: durdurma zaten sürüyorsa Esc ikinci
+    /// bir stop GÖNDERMEZ, şerit "duyuldu" der. GEREKÇE: drain en yavaş projenin kalan süresi kadar sürebilir;
+    /// durdurma sürerken (kullanıcı ya da branch kesmesi istemiş olsun) Esc beklemek istemediğini söyler ve hard
+    /// stop'tur (<see cref="EscAction.StopNow"/> — uçuştakiler öldürülür, sonraki Build onları baştan derler).
+    /// Hard gittikten sonraki Esc'i komutun kapısı yutar.</para></summary>
     public static EscAction ResolveEsc(bool dialogOpen, bool popoverOrMenuOpen, bool hasSelection, EscRunState run)
     {
         if (dialogOpen) return EscAction.CloseDialog;
