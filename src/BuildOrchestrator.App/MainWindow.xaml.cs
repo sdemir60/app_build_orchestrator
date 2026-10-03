@@ -851,6 +851,8 @@ public partial class MainWindow : Window
     /// Topoloji yokken no-op.</summary>
     private void PushGraphStatuses()
     {
+        // [perf Faz A · A4] Gizliyken itiş atlanır, graf "bayat" işaretlenir; dönüşte ResyncAfterShow üç itişi tek seferde yapar.
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; }
         // [E2/§5-a] Projects boşken (topoloji henüz gelmedi ya da workspace değişti) push ETME: RowsById()
         // boş olurdu ve GraphBinder her topoloji düğümünü bir kare Discovered'a "flash" ederdi (queued/dirty
         // statüleri kaybolur, sonra liste yeniden dolunca geri gelir). Guard no-op'tur — A13.2 Clear/reset
@@ -864,8 +866,11 @@ public partial class MainWindow : Window
     /// Kaynak koşunun gerçekten yolda olmasıdır (<see cref="RunViewModel.IsRunUnderway"/>) — [kullanıcı bildirimi
     /// 2026-09-29] bir işin bitmesini bekleyen istek kilidi taşır ama grafı söndürmez: o sırada graf süren işi ve önceki
     /// sonucu gösterir. (Eskiden kilidin kendisiydi, <see cref="RunViewModel.IsMidRunLocked"/>.)</summary>
-    private void PushGraphRunPhase() =>
+    private void PushGraphRunPhase()
+    {
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
         Shell.GraphHost.RunPhase = _vm.IsRunUnderway ? GraphRunPhase.Running : GraphRunPhase.Idle;
+    }
 
     /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
     private IReadOnlyDictionary<string, ProjectRowViewModel> RowsById()
@@ -880,6 +885,7 @@ public partial class MainWindow : Window
     /// yok sayar (aksi halde SelectProject toggle'ı seçimi geri alırdı).</summary>
     private void PushGraphSelection()
     {
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
         _suppressGraphSelection = true;
         try { Shell.GraphHost.SelectedNode = _vm.SelectedProjectId; }
         finally { _suppressGraphSelection = false; }

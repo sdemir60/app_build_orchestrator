@@ -10,8 +10,9 @@ namespace BuildOrchestrator.App;
 /// sinyal vardır: kalıtsal attached DP <see cref="HiddenSurface.IsHiddenProperty"/>. Yalnız
 /// <see cref="SetSurfaceHidden"/> yazar (pencerenin kendisine); torunlar miras alır, görünümler
 /// <see cref="HiddenSurface.GetIsHidden"/> okur. Bu sinyali okuyan yüzeyler: açılış koreografisi ve adım
-/// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali ve konsol belgesi (batch'ler gizliyken yazılmaz;
-/// dönüşte <see cref="ResyncAfterShow"/> kurar).</para>
+/// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali, grafa statü/faz/seçim itişleri
+/// (<see cref="_graphStaleWhileHidden"/>), olay akışı satırları (<c>EventStreamView</c> sinyali kendisi okur) ve konsol
+/// belgesi (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -73,6 +74,12 @@ public partial class MainWindow
     /// (<c>RunViewModel</c> tamponu) gerisinde. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
     private bool _consoleStaleWhileHidden;
 
+    /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı ya da seçim oldu (<c>PushGraphStatuses</c>,
+    /// <c>PushGraphRunPhase</c> ve <c>PushGraphSelection</c> gizliyken yalnız bunu kaldırır): graf modelin gerisinde.
+    /// <see cref="ResyncAfterShow"/> üç itişi tek seferde yapar ve sıfırlar. Topoloji (<c>RebuildGraph</c>) bu bayrağa
+    /// bağlı değildir: gizliyken de kurulur, grafın kendi <c>Visibility</c> bekletmesi vardır.</summary>
+    private bool _graphStaleWhileHidden;
+
     /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
     /// (<see cref="DispatcherPriority.Loaded"/>). Gizliyken biriken ekran işi burada tek seferde kurulur;
     /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için onlardan kurulacak bir
@@ -102,6 +109,14 @@ public partial class MainWindow
             else
                 _vm.SeedProjectDocument(activeProjectId, text => Shell.ConsoleViewControl.ReplaceProjectDocument(SplitLogLines(text)));
             if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+        }
+        if (_graphStaleWhileHidden)
+        {
+            _graphStaleWhileHidden = false;
+            // Sıra üretimdekiyle aynıdır (OnVmPropertyChangedForGraph, RebuildGraph): koşu fazı, statüler, seçim.
+            PushGraphRunPhase();
+            PushGraphStatuses();
+            PushGraphSelection();
         }
     }
 }

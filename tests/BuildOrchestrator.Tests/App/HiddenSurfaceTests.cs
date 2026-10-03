@@ -321,4 +321,72 @@ public class HiddenSurfaceTests
         Assert.Null(view.TypingRow);
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [perf Faz A · A4] <b>Gizli pencerede grafa statü, faz ve seçim itilmez.</b> Tepsideyken derlenen bir koşunun her
+    /// proje olayı (ve 200 ms'lik tik) grafın tüm düğümlerinin stilini yeniden hesaplatıyordu. Kaynak model zaten tam
+    /// durur: gizliyken üç itiş (<c>PushGraphStatuses</c>, <c>PushGraphRunPhase</c>, <c>PushGraphSelection</c>) yalnız
+    /// "graf bayat" bayrağını kaldırır; dönüşte <c>ResyncAfterShow</c> üçünü TEK seferde iter. Topoloji
+    /// (<c>RebuildGraph</c>) bu kapının dışındadır: grafın kendi <c>Visibility</c> bekletmesi vardır.
+    ///
+    /// <para>Dönüş kurulumu burada pompa beklenmeden doğrudan koşturulur: koşu sürerken 200 ms'lik tik her turda statü
+    /// iter ve "tam bir itiş" sayımını pompanın zamanlamasına bağlardı. <c>SetSurfaceHidden(false)</c>'ın kurulumu
+    /// Loaded önceliğiyle kuyruğa aldığı kablaj yukarıdaki konsol testlerinde pinlidir; bayrak sıfırlandığı için
+    /// kuyruktaki çağrı ikinci kez itmez.</para>
+    /// </summary>
+    [StaFact]
+    public void Graph_pushes_are_skipped_while_hidden_and_one_sync_brings_the_graph_up_to_date_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = [.. Enumerable.Range(0, 177).Select(i => $"P{i}")];
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
+        var graph = window.Shell.GraphHost;
+        window.SetSurfaceHidden(true);
+        int pushesBefore = graph.UpdateStatusesCallCount;
+
+        MainWindowHost.StartBuild(vm, names); // koşu fazı: model Running olur, graf Idle'da kalmalı
+        foreach (var name in names)           // 177 proje x started/succeeded: her biri bir statü itişi isterdi
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(name), name));
+            vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf(name), 100));
+        }
+        string selected = MainWindowHost.IdOf("P5");
+        vm.SelectProject(selected);
+
+        Assert.True(vm.IsRunUnderway);                                // ön-koşul: koşu sürüyor — model Running
+        Assert.Equal(pushesBefore, graph.UpdateStatusesCallCount);    // KIRMIZI: bugün her olay grafa itilir
+        Assert.Equal("Idle", graph.RunPhase.ToString());              // faz itilmedi
+        Assert.Null(graph.SelectedNode);                              // seçim itilmedi
+
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+
+        Assert.Equal(pushesBefore + 1, graph.UpdateStatusesCallCount); // TAM bir statü itişi
+        Assert.Equal("Running", graph.RunPhase.ToString());            // faz modele eşit
+        Assert.Equal(selected, graph.SelectedNode);                    // seçim modele eşit
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kontrol: AYNI olay akışı görünür pencerede grafa itilir — yani yukarıdaki test sayacın ölü olmasından
+    /// değil, gizli sinyalden geçer.</summary>
+    [StaFact]
+    public void Graph_pushes_still_reach_the_graph_while_the_surface_is_visible()
+    {
+        using var dir = new TempDir();
+        string[] names = ["A", "B", "C"];
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
+        var graph = window.Shell.GraphHost;
+        int pushesBefore = graph.UpdateStatusesCallCount;
+
+        MainWindowHost.StartBuild(vm, names);
+        foreach (var name in names)
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(name), name));
+            vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf(name), 100));
+        }
+
+        Assert.True(graph.UpdateStatusesCallCount > pushesBefore);
+        Assert.Equal("Running", graph.RunPhase.ToString());
+        GC.KeepAlive(window);
+    }
 }

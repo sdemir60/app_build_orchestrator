@@ -679,11 +679,17 @@ public partial class GraphView : UserControl
         ApplyGraph(nodes, edges, showEmptyState);
     }
 
+    /// <summary>[test yüzeyi · perf Faz A · A4] <see cref="UpdateStatuses"/>'in kaç kez ÇAĞRILDIĞI — panel gizli ya da
+    /// sönme bekliyor olsa da sayılır (kapının sonucu değil, çağrı sayısı). Gizli pencerede grafa statü itişi
+    /// yapılmadığını sınar.</summary>
+    internal int UpdateStatusesCallCount { get; private set; }
+
     /// <summary>Statüleri yerinde günceller: düğüm renkleri ve building animasyonu. Topoloji ve geometri
     /// korunur, açılış dalgası TEKRAR OYNAMAZ.</summary>
     public void UpdateStatuses(IReadOnlyList<GraphNode> nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
+        UpdateStatusesCallCount++;
 
         if (!IsPanelVisible) { _pendingStatuses = nodes; return; }
         // Koşuya girerken graf ÖNCE söner, görünüm SONRA değişir (aşağıdaki alanın doc'u).
