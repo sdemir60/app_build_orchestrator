@@ -96,8 +96,6 @@ public static class GraphBinder
 
     private static IReadOnlyDictionary<string, int> ComputeDepths(IReadOnlyList<ProjectNode> topology)
     {
-        ArgumentNullException.ThrowIfNull(topology);
-
         var byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
         foreach (var node in topology) byId[node.Id] = node;
 

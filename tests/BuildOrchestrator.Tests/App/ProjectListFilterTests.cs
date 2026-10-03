@@ -47,7 +47,8 @@ public class ProjectListFilterTests
     /// [perf Faz B · B5] Filtre kutusu yazıyı kısa bir gecikmeyle modele yazar. <c>ProjectQuery</c>'nin her değişimi bir
     /// <c>VisibleProjects</c> yayını demektir (liste grupları yeniden kurulur, graf soluklaşması tazelenir): hızlı yazılan beş
     /// harf beş yayın ve beş yeniden kurulumdu. Döngü dispatcher'a hiç tur vermez — beş tuş vuruşu yapı gereği TEK gecikme
-    /// penceresinin içindedir (planda 100 ms); gecikme dolunca model yalnız son metni alır ve bir kez yayınlar.
+    /// penceresinin içindedir (süre ShellRoot.xaml'deki <c>Binding.Delay</c>'dedir); gecikme dolunca model yalnız son metni alır
+    /// ve bir kez yayınlar.
     /// </summary>
     [StaFact]
     public void A_burst_of_keystrokes_in_the_filter_box_reaches_the_model_once()
@@ -60,7 +61,7 @@ public class ProjectListFilterTests
 
         foreach (var typed in new[] { "a", "al", "alp", "alph", "alpha" }) box.Text = typed;
 
-        Assert.Equal(0, published);        // KIRMIZI: bugün her tuş vuruşu o anda yayınlar (beş kez)
+        Assert.Equal(0, published);        // gecikme dolmadan hiçbir vuruş yayınlanmaz
         Assert.Equal("", vm.ProjectQuery); // gecikme dolmadan model eski metinde
         DispatcherPump.PumpUntil(() => vm.ProjectQuery == "alpha", TimeSpan.FromSeconds(2));
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(300)); // gecikmeli güncellemeler tamamen bitsin

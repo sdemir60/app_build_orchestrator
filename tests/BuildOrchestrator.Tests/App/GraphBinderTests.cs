@@ -46,7 +46,7 @@ public class GraphBinderTests
         GraphBinder.Nodes(topology, rows);
         GraphBinder.TopologicalDepths(topology);
 
-        Assert.Equal(before + 1, GraphBinder.DepthComputations); // KIRMIZI: bugün her çağrı yeniden hesaplar (üç kez)
+        Assert.Equal(before + 1, GraphBinder.DepthComputations); // iki Nodes + bir doğrudan TopologicalDepths çağrısı tek hesaplamayı paylaşır
 
         var sameContentNewReference = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
         GraphBinder.Nodes(sameContentNewReference, RowsFor(sameContentNewReference));

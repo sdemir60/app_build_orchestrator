@@ -57,8 +57,13 @@ public partial class StickyRibbon : UserControl
     private RunViewModel? _vm;
     private bool _isIndeterminate;
     private double _lastFraction; // determinate hedef (0..1) — resize'da yeniden uygulanır
+    // Chip kümesinin "son kurulan" durumu: id-imzaları (null = ekranda güvenilir küme yok) ve ekrandaki chip'ler kimliğe göre.
+    // Birlikte sıfırlanır ve birlikte kurulurlar (bkz. RebuildChipsIfChanged).
     private string? _lastBuildingSig;
     private string? _lastFailedSig;
+    private readonly Dictionary<string, ToggleButton> _buildingChipById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ToggleButton> _failureChipById = new(StringComparer.Ordinal);
+    private StackPanel? _failureStrip; // hata kümesinin tek şerit paneli (chip'ler + "+N more"); küme boşalınca atılır
     private AppPhase? _lastAnnouncedPhase; // [E5/T47] live-region: yalnız faz DEĞİŞİMİNDE duyur (elapsed tick'te değil)
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="Controls.MotionGate"/>) — latch'siz kip (ProjectRow ile aynı).</summary>
@@ -115,6 +120,11 @@ public partial class StickyRibbon : UserControl
     /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="RefreshAll"/> çağrı sayacı — yüzey gizliyken şeridin modele
     /// dokunmadığını, görününce TEK geçişin koştuğunu pinler.</summary>
     internal int RebuildCount { get; private set; }
+    /// <summary>[perf Faz B · B5 test yüzeyi] <see cref="RebuildChipsIfChanged"/>'in chip kümesini (building ya da failed) DEĞİŞMİŞ
+    /// bulduğu çağrı sayısı; tam kurulum da bir geçiştir. Kümeyi değiştirmeyen bildirimler — tick, sayaç (<c>DepAffected</c> dahil),
+    /// filtre sorgusu — artırmaz. <see cref="RebuildCount"/>'tan farkı: o tam kurulumları (<see cref="RefreshAll"/>), bu artımlı
+    /// yolun kümeye dokunduğu geçişleri sayar.</summary>
+    internal int ChipSetChangeCount { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // testler hatalı chip'leri buradan pinler
     internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
@@ -147,9 +157,8 @@ public partial class StickyRibbon : UserControl
     {
         if (_vm is not null) UnsubscribeVm(_vm);
         _vm = e.NewValue as RunViewModel;
-        _lastBuildingSig = _lastFailedSig = null; // yeni VM → chip imzalarını sıfırla (ilk kurulumda yeniden kur)
         if (_vm is not null) SubscribeVm(_vm);
-        RefreshAll();
+        RefreshAll(); // imzaları da sıfırlar: yeni VM → ilk geçiş chip'leri baştan kurar
     }
 
     // [E5 fold] VM aboneliğinin TEK giriş/çıkış kapısı (idempotent -= sonra += — çift-abonelik birikmez).
@@ -253,7 +262,7 @@ public partial class StickyRibbon : UserControl
         RebuildCount++;
         RefreshText();
         RefreshProgress();
-        _lastBuildingSig = _lastFailedSig = null;
+        _lastBuildingSig = _lastFailedSig = null; // ekrandaki küme güvenilir değil (DataContext değişimi dahil): ilk geçiş baştan kurar
         RebuildChipsIfChanged();
     }
 
@@ -444,11 +453,6 @@ public partial class StickyRibbon : UserControl
     }
 
     // ---------------------------------------------------------------- chip'ler
-    /// <summary>[perf Faz B · B5 test yüzeyi] <see cref="RebuildChipsIfChanged"/>'in chip kümesini DEĞİŞMİŞ bulduğu çağrı
-    /// sayısı (building ya da failed kümesi; tam kurulum da bir geçiştir). Kümeyi değiştirmeyen bildirimler — tick, sayaç,
-    /// filtre sorgusu — artırmaz.</summary>
-    internal int ChipsRebuiltCount { get; private set; }
-
     /// <summary>[perf Faz B · B5] Chip kümesi (building / failed id-imzası) DEĞİŞTİYSE ekrandakini modele yaklaştırır — YALNIZ
     /// FARKI uygular: çıkanı kaldırır, geleni kurar, kalanı AYNI örnek olarak yerinde bırakır (spinner ve şablon kurmak ölçülen
     /// maliyetti: 25 sn'lik bir koşuda 301 ms). Küme değişmediyse hiçbir şeye dokunmaz.
@@ -485,13 +489,8 @@ public partial class StickyRibbon : UserControl
             ReconcileFailureCluster(failed);
             changed = true;
         }
-        if (changed) ChipsRebuiltCount++;
+        if (changed) ChipSetChangeCount++;
     }
-
-    // "Son kurulan küme": ekrandaki chip'ler kimliğe göre. İmzayla birlikte sıfırlanırlar (bkz. RebuildChipsIfChanged).
-    private readonly Dictionary<string, ToggleButton> _buildingChipById = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, ToggleButton> _failureChipById = new(StringComparer.Ordinal);
-    private StackPanel? _failureStrip; // hata kümesinin tek şerit paneli (chip'ler + "+N more"); küme boşalınca atılır
 
     private void ResetBuildingChips()
     {
@@ -581,17 +580,19 @@ public partial class StickyRibbon : UserControl
             return;
         }
         string text = "+" + more.ToString(System.Globalization.CultureInfo.InvariantCulture) + " more";
-        if (FailureMoreChip?.Content is TextBlock moreText)
+        if (FailureMoreChip is null)
         {
-            if (moreText.Text != text) moreText.Text = text;
+            FailureMoreChip = CreateFailureMoreChip(text);
+            _failureStrip.Children.Add(FailureMoreChip);
             return;
         }
-        FailureMoreChip = CreateFailureMoreChip(text);
-        _failureStrip.Children.Add(FailureMoreChip);
+        var moreText = (TextBlock)FailureMoreChip.Content; // CreateFailureMoreChip içeriği hep TextBlock kurar
+        if (moreText.Text != text) moreText.Text = text;
     }
 
     /// <summary>Bir chip dizisini istenen kimlik sırasına getirir ve YALNIZ FARKI uygular: artık istenmeyenler çıkar, olmayanlar
-    /// <paramref name="create"/> ile kurulur, kalanlar AYNI örnek olarak yerinde durur (ya da gerekirse yer değiştirir).
+    /// <paramref name="create"/> ile kurulur, kalanlar AYNI örnek olarak yerinde durur (ya da gerekirse yer değiştirir) ve
+    /// etiketleri satırın o anki kısa adına tazelenir.
     /// İlk chip hariç hepsi gap marjini taşır (BuildApp.jsx:783/801 flex gap:4); ilk chip'in yerel marjini temizlenir
     /// (önceden ikinci olan chip ilk olduysa gap'ini bırakır). Panelin chip'ten başka çocukları (taşan "+N" ya da
     /// "+N more") yerinde kalır — chip'ler hep onların ÖNÜNE eklenir. Dönüş: görünen chip'ler, sırayla.</summary>
@@ -603,7 +604,15 @@ public partial class StickyRibbon : UserControl
         var keep = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in wanted)
         {
-            if (!shown.TryGetValue(row.Id, out var chip)) shown[row.Id] = chip = create(row);
+            // Tutulan chip'in etiketi de tazelenir: kısa ad satırın o anki adı + önekidir ve bir Sync öneki değiştirmiş olabilir;
+            // yalnız yeni gelen chip'i kurmak kalanları eski adla bırakırdı (ucuz: en çok 7 chip, metin aynıysa yazılmaz).
+            if (shown.TryGetValue(row.Id, out var chip))
+            {
+                var label = LabelOf(chip);
+                string text = LabelFor(row);
+                if (label.Text != text) label.Text = text;
+            }
+            else shown[row.Id] = chip = create(row);
             keep.Add(row.Id);
             next.Add(chip);
         }
@@ -632,12 +641,18 @@ public partial class StickyRibbon : UserControl
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal };
         content.Children.Add(icon);
-        content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = LabelFor(row), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         var chip = MakeChip(content, brushKey: null);
         string id = row.Id;
         chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
         return chip;
     }
+
+    /// <summary>Satır chip'inin görünür adı (ortak önek kırpılmış) — chip kurulurken ve tutulan chip tazelenirken TEK yerden.</summary>
+    private static string LabelFor(ProjectRowViewModel row) => GraphNode.ShortLabel(row.Name, row.NamePrefix);
+
+    /// <summary>Satır chip'inin etiketi: <see cref="CreateRowChip"/> içeriği [ikon, etiket] kurar — etiket ikinci çocuktur.</summary>
+    private static TextBlock LabelOf(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
 
     private ToggleButton CreateFailureMoreChip(string text)
     {

@@ -446,7 +446,7 @@ public class StickyRibbonTests
         var (ribbon, window) = Realize(vm);
         var building = ribbon.BuildingChips.ToList();
         var failure = ribbon.FailureChips.ToList();
-        int rebuilt = ribbon.ChipsRebuiltCount;
+        int rebuilt = ribbon.ChipSetChangeCount;
         int notified = 0;
         vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(RunViewModel.VisibleProjects)) notified++; };
 
@@ -458,7 +458,7 @@ public class StickyRibbonTests
         Assert.Single(failure);
         Assert.Equal(building, ribbon.BuildingChips);   // aynı ÖRNEKLER
         Assert.Equal(failure, ribbon.FailureChips);
-        Assert.Equal(rebuilt, ribbon.ChipsRebuiltCount);
+        Assert.Equal(rebuilt, ribbon.ChipSetChangeCount);
         GC.KeepAlive(window);
     }
 
@@ -477,14 +477,14 @@ public class StickyRibbonTests
         vm.OnEvent(new ProjectStartedEvent("r1", projects[1].Item1, "B"));
         var (ribbon, window) = Realize(vm);
         var (chipA, chipB) = (ribbon.BuildingChips[0], ribbon.BuildingChips[1]);
-        int rebuilt = ribbon.ChipsRebuiltCount;
+        int rebuilt = ribbon.ChipSetChangeCount;
 
         vm.OnEvent(new ProjectStartedEvent("r1", projects[2].Item1, "C")); // {A,B} → {A,B,C}
 
         Assert.Equal(["A", "B", "C"], ribbon.BuildingChips.Select(ChipLabel));
-        Assert.Same(chipA, ribbon.BuildingChips[0]); // KIRMIZI: bugün üç chip de yıkılıp baştan kurulur
+        Assert.Same(chipA, ribbon.BuildingChips[0]); // artımlı: kalan chip yıkılmaz, aynı örnek
         Assert.Same(chipB, ribbon.BuildingChips[1]);
-        Assert.Equal(rebuilt + 1, ribbon.ChipsRebuiltCount);
+        Assert.Equal(rebuilt + 1, ribbon.ChipSetChangeCount);
 
         vm.OnEvent(new ProjectSucceededEvent("r1", projects[0].Item1, 100, [])); // {A,B,C} → {B,C}
 
@@ -492,7 +492,7 @@ public class StickyRibbonTests
         Assert.Same(chipB, ribbon.BuildingChips[0]);
         Assert.Equal(0.0, chipB.Margin.Left);                 // artık İLK chip: gap yok
         Assert.Equal(4.0, ribbon.BuildingChips[1].Margin.Left);
-        Assert.Equal(rebuilt + 2, ribbon.ChipsRebuiltCount);
+        Assert.Equal(rebuilt + 2, ribbon.ChipSetChangeCount);
         GC.KeepAlive(window);
     }
 
@@ -512,21 +512,21 @@ public class StickyRibbonTests
         var chips = ribbon.BuildingChips.ToList();
         Assert.Equal(4, chips.Count);
         Assert.Null(ribbon.BuildingOverflow);            // ön-koşul: henüz taşan yok
-        int rebuilt = ribbon.ChipsRebuiltCount;
+        int rebuilt = ribbon.ChipSetChangeCount;
 
         vm.OnEvent(new ProjectStartedEvent("r1", projects[4].Item1, projects[4].Item2)); // beşinci: "+1" belirir
 
         var overflow = ribbon.BuildingOverflow;
         Assert.Equal("+1", overflow!.Text);
-        Assert.Equal(chips, ribbon.BuildingChips);       // KIRMIZI: bugün dört chip de yıkılıp baştan kurulur
-        Assert.Equal(rebuilt + 1, ribbon.ChipsRebuiltCount);
+        Assert.Equal(chips, ribbon.BuildingChips);       // taşan metin değişir, dört chip aynı örnek kalır
+        Assert.Equal(rebuilt + 1, ribbon.ChipSetChangeCount);
 
         vm.OnEvent(new ProjectStartedEvent("r1", projects[5].Item1, projects[5].Item2)); // altıncı: aynı metin nesnesi, yeni sayı
 
         Assert.Same(overflow, ribbon.BuildingOverflow);
         Assert.Equal("+2", ribbon.BuildingOverflow!.Text);
         Assert.Equal(chips, ribbon.BuildingChips);
-        Assert.Equal(rebuilt + 2, ribbon.ChipsRebuiltCount);
+        Assert.Equal(rebuilt + 2, ribbon.ChipSetChangeCount);
         GC.KeepAlive(window);
     }
 
@@ -556,7 +556,7 @@ public class StickyRibbonTests
         Fail(2); // üçüncü hata: yalnız bir chip eklenir
 
         Assert.Equal(["Fail0", "Fail1", "Fail2"], ribbon.FailureChips.Select(ChipLabel));
-        Assert.Same(first[0], ribbon.FailureChips[0]); // KIRMIZI: bugün küme yıkılıp baştan kurulur
+        Assert.Same(first[0], ribbon.FailureChips[0]); // yeni hata yalnız bir chip ekler: ilk chip aynı örnek
         Assert.Same(first[1], ribbon.FailureChips[1]);
         Assert.Null(ribbon.FailureMoreChip);
 
@@ -579,8 +579,9 @@ public class StickyRibbonTests
     /// <summary>
     /// [perf Faz B · B5 · karar 1] Gizli yüzeyde şerit chip kurmaz (A5) ve dönüşte TAM kurulum yapar; artımlı yolun "son
     /// kurulan küme" durumu o kurulumla tutarlı olmalı — yoksa dönüşten sonraki ilk görünür değişimde fark yanlış hesaplanır
-    /// (çift ya da eksik chip). Dönüş kurulumu modele eşit chip'ler verir; sonraki değişim YALNIZ farkı uygular ve panel
-    /// modelle birebir kalır.
+    /// (çift ya da eksik chip). Test chip'Lİ bir durumdan başlar: küme gizlilik öncesi {P0}, gizliyken {P1}'dir ve şerit o sırada
+    /// hiçbir şeye dokunmaz (eski chip'i tutar). Dönüş kurulumu eski kümenin chip'ini atar ve modele eşit chip'ler verir; sonraki
+    /// görünür değişim YALNIZ farkı uygular ve panel modelle birebir kalır.
     /// </summary>
     [StaFact]
     public void After_a_hidden_return_the_next_visible_change_applies_only_the_difference()
@@ -589,27 +590,179 @@ public class StickyRibbonTests
         string[] names = MainWindowHost.ProjectNames(3);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var ribbon = window.Shell.Ribbon;
+        var panel = Assert.IsAssignableFrom<Panel>(ribbon.FindName("PART_BuildingChips"));
         IEnumerable<string> ModelLabels() => vm.Projects.Where(p => p.IsCompiling)
             .Select(p => BuildOrchestrator.App.Graph.GraphNode.ShortLabel(p.Name, p.NamePrefix));
-        window.SetSurfaceHidden(true);
         MainWindowHost.PreviewBuild(vm, names);
         MainWindowHost.StartBuild(vm, names);
-        MainWindowHost.StartProject(vm, names[0]);       // gizliyken küme değişti: şerit chip kurmadı
-        Assert.Empty(ribbon.BuildingChips);
+        MainWindowHost.StartProject(vm, names[0]);       // görünürken: şeridin chip'i var ({P0})
+        var beforeHidden = Assert.Single(ribbon.BuildingChips);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.SucceedProject(vm, names[0]);
+        MainWindowHost.StartProject(vm, names[1]);       // gizliyken küme değişti ({P0} → {P1}): şerit dokunmadı
+        Assert.Equal(["P1"], ModelLabels());
+        Assert.Same(beforeHidden, Assert.Single(ribbon.BuildingChips)); // ön-koşul: şerit bayat, eski chip yerinde
 
         window.SetSurfaceHidden(false);                  // dönüş: tam kurulum
 
-        Assert.Single(ModelLabels());
+        Assert.Equal(["P1"], ribbon.BuildingChips.Select(ChipLabel));
         Assert.Equal(ModelLabels(), ribbon.BuildingChips.Select(ChipLabel));
         var returned = ribbon.BuildingChips[0];
-        var panel = Assert.IsAssignableFrom<Panel>(ribbon.FindName("PART_BuildingChips"));
+        Assert.NotSame(beforeHidden, returned);          // eski kümenin chip'i dönüşte atıldı
+        Assert.DoesNotContain(beforeHidden, panel.Children.OfType<ToggleButton>());
 
-        MainWindowHost.StartProject(vm, names[1]);       // görünürken değişim: yalnız fark
+        MainWindowHost.StartProject(vm, names[2]);       // görünürken değişim ({P1} → {P1,P2}): yalnız fark
 
         Assert.Equal(2, ribbon.BuildingChips.Count);
         Assert.Equal(ModelLabels(), ribbon.BuildingChips.Select(ChipLabel));
-        Assert.Same(returned, ribbon.BuildingChips[0]);  // KIRMIZI: bugün küme yıkılıp baştan kurulur
+        Assert.Same(returned, ribbon.BuildingChips[0]);  // dönüş kurulumunun chip'i sonraki değişimde de aynı örnek
         Assert.Equal(ribbon.BuildingChips, panel.Children.OfType<ToggleButton>()); // panel = model: çift/eksik chip yok
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz B · B5] Hata kümesinin imzası YALNIZ hata satırlarının kimliğidir: <c>DepAffected</c> sayacı kümeyi çizmez
+    /// ("N dependency-affected" metni şeritte değil, faz metninin bitiş satırındadır). İmzaya girseydi, yalnız o sayı
+    /// değiştiğinde — bir dep-issue'lu satır building'e hiç girmeden başarıyla bitince — küme boşuna yeniden uzlaştırılırdı.
+    /// Burada iki kümede de chip var; dep-issue taşıyan iki satır sırayla biter: <c>Counters</c> değişir ve şerit bunu duyar,
+    /// ama building/failed kümeleri aynı kalır → chip'ler aynı örnek ve küme-değişim sayacı yerinde.
+    /// </summary>
+    [StaFact]
+    public void A_dependency_affected_change_alone_does_not_touch_the_failure_cluster()
+    {
+        var vm = NewVm();
+        var failing = new[] { (@"C:\p\fail0.csproj", "Fail0"), (@"C:\p\fail1.csproj", "Fail1") };
+        var depAffecting = new[] { (@"C:\p\depA.csproj", "DepA"), (@"C:\p\depB.csproj", "DepB") };
+        var busy = (@"C:\p\busy.csproj", "Busy");
+        StartRun(vm, [.. failing, .. depAffecting, busy]);
+        foreach (var (id, name) in failing)
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", id, name));
+            vm.OnEvent(new ProjectFailedEvent("r1", id, 100, "exit 1"));
+        }
+        vm.OnEvent(new ProjectStartedEvent("r1", busy.Item1, busy.Item2)); // building kümesi de dolu
+        var (ribbon, window) = Realize(vm);
+        var failureChips = ribbon.FailureChips.ToList();
+        var buildingChips = ribbon.BuildingChips.ToList();
+        int changes = ribbon.ChipSetChangeCount;
+        int countersNotified = 0;
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(RunViewModel.Counters)) countersNotified++; };
+        Assert.Equal(2, failureChips.Count);   // ön-koşul: iki kümede de chip var
+        Assert.Single(buildingChips);
+        Assert.Equal(0, vm.Counters.DepAffected);
+
+        foreach (var (id, _) in depAffecting) // building'e hiç girmeden biter: kümeler aynı kalır, değişen sayaçtır
+            vm.OnEvent(new ProjectSucceededEvent("r1", id, 100, ["dependent X henüz derlenmedi"]));
+
+        Assert.True(countersNotified > 0, "ön-koşul: şeridin dinlediği sayaç bildirimi gerçekten yayınlandı — yoksa aşağıdaki eşitlikler boşta yeşil olurdu");
+        Assert.Equal(2, vm.Counters.DepAffected);        // ön-koşul: değişen şey gerçekten DepAffected
+        Assert.Equal(failureChips, ribbon.FailureChips); // aynı ÖRNEKLER
+        Assert.Equal(buildingChips, ribbon.BuildingChips);
+        Assert.Equal(changes, ribbon.ChipSetChangeCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz B · B5] Yeni chip, satır sırasında kendinden SONRA gelen bir chip'in ÖNÜNE girer: C önce derlenir, sonra A
+    /// başlar — panel [A, C] olur (satır sırası, başlama sırası değil). C aynı örnek kalır; yeni ilk chip gap taşımaz, C gap'i alır
+    /// (ilk chip HARİÇ kuralı).
+    /// </summary>
+    [StaFact]
+    public void A_new_chip_enters_in_front_of_an_existing_one_when_its_row_comes_first()
+    {
+        var vm = NewVm();
+        var projects = new[] { (@"C:\p\a.csproj", "A"), (@"C:\p\b.csproj", "B"), (@"C:\p\c.csproj", "C") };
+        SetTopology(vm, projects);                                  // satır sırası A, B, C — başlama sırasından bağımsız
+        StartRun(vm, projects);
+        vm.OnEvent(new ProjectStartedEvent("r1", projects[2].Item1, "C")); // C önce derlenir
+        var (ribbon, window) = Realize(vm);
+        var chipC = Assert.Single(ribbon.BuildingChips);
+        var panel = Assert.IsAssignableFrom<Panel>(ribbon.FindName("PART_BuildingChips"));
+        Assert.Equal(0.0, chipC.Margin.Left);                       // ön-koşul: tek chip ilk chip
+
+        vm.OnEvent(new ProjectStartedEvent("r1", projects[0].Item1, "A")); // A sonra başlar ama satır sırasında C'den önce gelir
+
+        Assert.Equal(["A", "C"], ribbon.BuildingChips.Select(ChipLabel));
+        Assert.Same(chipC, ribbon.BuildingChips[1]);
+        Assert.Equal(ribbon.BuildingChips, panel.Children.OfType<ToggleButton>()); // panel sırası = model sırası
+        Assert.Equal([0.0, 4.0], ribbon.BuildingChips.Select(chip => chip.Margin.Left));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz B · B5] Taşan "+N" varken görünür bir chip biter: kalan chip'ler aynı örnek, taşandan giren chip "+N"in ÖNÜNE
+    /// kurulur ("+N" hep panelin SONUNDA kalır), "+N" aynı metin nesnesinde azalır ve taşan kalmayınca panelden de kalkar.
+    /// </summary>
+    [StaFact]
+    public void A_visible_chip_finishing_during_overflow_pulls_the_next_project_in_front_of_the_overflow_text()
+    {
+        var vm = NewVm();
+        var projects = Enumerable.Range(0, 6).Select(i => ($@"C:\p\proj{i}.csproj", $"Proj{i}")).ToArray();
+        StartRun(vm, projects);
+        foreach (var (id, name) in projects) vm.OnEvent(new ProjectStartedEvent("r1", id, name)); // altısı da derleniyor
+        var (ribbon, window) = Realize(vm);
+        var panel = Assert.IsAssignableFrom<Panel>(ribbon.FindName("PART_BuildingChips"));
+        var chips = ribbon.BuildingChips.ToList();
+        var overflow = Assert.IsType<TextBlock>(ribbon.BuildingOverflow);
+        Assert.Equal(["Proj0", "Proj1", "Proj2", "Proj3"], ribbon.BuildingChips.Select(ChipLabel)); // ön-koşul
+        Assert.Equal("+2", overflow.Text);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projects[0].Item1, 100, [])); // görünür bir chip biter: beşinci proje içeri girer
+
+        Assert.Equal(["Proj1", "Proj2", "Proj3", "Proj4"], ribbon.BuildingChips.Select(ChipLabel));
+        Assert.Equal(chips.Skip(1), ribbon.BuildingChips.Take(3));                // kalanlar aynı örnekler
+        Assert.Same(overflow, ribbon.BuildingOverflow);                           // aynı metin nesnesi, azalan sayı
+        Assert.Equal("+1", overflow.Text);
+        Assert.Same(overflow, panel.Children[panel.Children.Count - 1]);          // "+N" panelin sonunda: giren chip onun önüne kuruldu
+        Assert.Equal(ribbon.BuildingChips, panel.Children.OfType<ToggleButton>());
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", projects[1].Item1, 100, [])); // bir tane daha: taşan kalmaz
+
+        Assert.Equal(["Proj2", "Proj3", "Proj4", "Proj5"], ribbon.BuildingChips.Select(ChipLabel));
+        Assert.Null(ribbon.BuildingOverflow);
+        Assert.Equal(ribbon.BuildingChips, panel.Children.OfType<ToggleButton>());
+        Assert.Equal(4, panel.Children.Count);                                    // "+N" panelden de çıktı
+        Assert.Equal(0.0, ribbon.BuildingChips[0].Margin.Left);                   // yeni ilk chip gap'ini bıraktı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz B · B5] Tutulan chip'in etiketi satırın O ANKİ kısa adını gösterir. Kısa ad ortak nokta-önekini kırpar ve önek
+    /// topolojiden türer: koşu sürerken bir Sync ona başka bir kökten proje katarsa ortak önek kalkar, satırların kısa adı uzar
+    /// ("Foo" → "OSYS.Foo"). Küme kümenin kendi değişimiyle değişir; kümenin bir SONRAKİ değişiminde kalan chip'ler yeni adı
+    /// göstermelidir. Kalan chip yıkılmadığı için (aynı örnek) etiketi de uzlaştırmada tazelenir.
+    /// </summary>
+    [StaFact]
+    public void A_kept_chip_shows_the_rows_current_short_label_when_the_set_changes_after_a_sync()
+    {
+        var vm = NewVm();
+        var projects = new[]
+        {
+            (@"C:\p\OSYS.Foo.csproj", "OSYS.Foo"), (@"C:\p\OSYS.Bar.csproj", "OSYS.Bar"), (@"C:\p\OSYS.Baz.csproj", "OSYS.Baz"),
+        };
+        SetTopology(vm, projects);
+        StartRun(vm, projects);
+        void Fail(int i)
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", projects[i].Item1, projects[i].Item2));
+            vm.OnEvent(new ProjectFailedEvent("r1", projects[i].Item1, 100, "exit 1"));
+        }
+        Fail(0);
+        Fail(1);
+        var (ribbon, window) = Realize(vm);
+        var kept = ribbon.FailureChips.ToList();
+        Assert.Equal(["Foo", "Bar"], ribbon.FailureChips.Select(ChipLabel)); // ön-koşul: ortak önek "OSYS." kırpılmış
+
+        SetTopology(vm, [.. projects, (@"C:\p\Other.Qux.csproj", "Other.Qux")]); // koşu sürerken Sync: ortak önek kalkar
+        var foo = vm.Projects.Single(p => p.Name == "OSYS.Foo");
+        Assert.Equal("", foo.NamePrefix);                                     // ön-koşul: satırın kısa adı uzadı
+        Assert.Equal(2, vm.Projects.Count(p => p.State == ProjectRowState.Failed)); // ön-koşul: hata durumları Sync'ten sağ çıktı
+
+        Fail(2); // küme değişir: üçüncü hata
+
+        Assert.Same(kept[0], ribbon.FailureChips[0]);                         // kalan chip'ler aynı örnek...
+        Assert.Same(kept[1], ribbon.FailureChips[1]);
+        Assert.Equal(["OSYS.Foo", "OSYS.Bar", "OSYS.Baz"], ribbon.FailureChips.Select(ChipLabel)); // ...ve satırın o anki kısa adını gösterir
         GC.KeepAlive(window);
     }
 

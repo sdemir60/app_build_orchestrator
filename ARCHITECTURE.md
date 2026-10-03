@@ -4462,9 +4462,9 @@ their visual route never reaches the window, and the popup manages its own focus
 
 **The filter box applies what it holds after a short pause, not on every keystroke.** Each change of the query
 rebuilds the list's groups and refreshes the graph's dimming, so the box's binding to `ProjectQuery` is delayed
-(`Binding.Delay`, with the source still updated on every change of the text): a burst of keystrokes publishes
-`VisibleProjects` once, with the text the burst ended on. Esc and the box's clear button take the same road, so the
-list follows them after the same pause.
+(`Binding.Delay`; the trigger stays `PropertyChanged`, so each change of the text restarts the pause): a burst of
+keystrokes publishes `VisibleProjects` once, with the text the burst ended on. Esc and the box's clear button take
+the same road, so the list follows them after the same pause.
 
 ### 13.8 Design-system control library
 
