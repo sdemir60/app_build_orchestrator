@@ -903,19 +903,22 @@ public partial class ActionBarTests
         var vm = NewVm();
         var (bar, window) = Realize(vm);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
-        Assert.Equal("Stop", StopLabel(bar));      // ön-koşul
+        Assert.Equal(StopText.Label(StopStage.Stop), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.Stop), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));      // ön-koşul
         Assert.True(bar.StopButton.IsEnabled);
 
         vm.Phase = AppPhase.Stopping;              // graceful gitti
 
         Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
         Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
-        Assert.Equal("Stop now", StopLabel(bar));
+        Assert.Equal(StopText.Label(StopStage.StopNow), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.StopNow), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));
         Assert.True(bar.StopButton.IsEnabled);
 
         vm.HardStopRequested = true;               // hard gitti
 
-        Assert.Equal("Terminating…", StopLabel(bar));
+        Assert.Equal(StopText.Label(StopStage.Terminating), StopLabel(bar));
+        Assert.Equal(StopText.ActionBarName(StopStage.Terminating), System.Windows.Automation.AutomationProperties.GetName(bar.StopButton));
         Assert.False(bar.StopButton.IsEnabled);
         GC.KeepAlive(window);
     }

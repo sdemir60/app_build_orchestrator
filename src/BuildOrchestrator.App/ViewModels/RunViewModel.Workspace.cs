@@ -22,7 +22,8 @@ public sealed partial class RunViewModel
     /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/stopping/done/stopped) sonraki UI
     /// task'larınındır.
     /// <para>[Stop now] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUMAZ — kapıyı <see cref="HardStopRequested"/>
-    /// kapatır; faz yalnız komutun ne göndereceğini seçer (<c>Stopping</c>'te hard, değilse graceful).</para></summary>
+    /// kapatır; faz, hard bayrağıyla birlikte <see cref="StopStage"/>'i (dolayısıyla komutun ne göndereceğini:
+    /// <c>Stopping</c>'te hard, değilse graceful) belirler.</para></summary>
     [ObservableProperty]
     private AppPhase _phase = AppPhase.Empty;
 
@@ -76,10 +77,12 @@ public sealed partial class RunViewModel
     /// <summary>Stop istendi (<see cref="AppPhase.Stopping"/>) ya da Sync başladı (<see cref="AppPhase.Syncing"/>):
     /// motor bundan sonra <c>runStopped</c>/<c>runCompleted</c> ya da <c>syncCompleted</c> ile cevap
     /// vermelidir — sessizlik saati burada kurulur (<see cref="OnIsStartingChanged"/> ile aynı gerekçe).
-    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir.</summary>
+    /// Faz set eden HER yol buradan geçtiği için kurma noktası tek yerdedir. Aynı kapı Stop aşamasını da tazeler
+    /// (<see cref="StopStage"/> fazdan türer).</summary>
     partial void OnPhaseChanged(AppPhase value)
     {
         if (value is AppPhase.Stopping or AppPhase.Syncing) ArmEngineWatchdog();
+        RefreshStopStage();
     }
 
     /// <summary>[N10] Sync'in çözdüğü hedef commit — remote ulaşılamadıysa yerel HEAD (bkz. <see cref="FetchDegraded"/>).</summary>

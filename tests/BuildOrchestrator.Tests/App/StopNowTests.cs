@@ -164,4 +164,127 @@ public class StopNowTests
         Assert.Equal(EscRunState.Stopping, vm.EscRunState);
         GC.KeepAlive(window);
     }
+
+    /// <summary>[Stop now · M1] Hard stop istendi ama motor hiçbir şeyi sonlandırmadı: uçuştakiler talep ile sonlandırma
+    /// arasında kendi başarısıyla bitti (koordinatör zaten kapanıyorsa host ikinci bir <c>runStopped(WasHard)</c> yazar).
+    /// Konsol "terminated" iddia ETMEZ — <c>runStopped</c> konsola hiçbir satır eklemez.</summary>
+    [StaFact]
+    public async Task A_hard_stop_that_found_nothing_to_terminate_adds_no_terminated_line()
+    {
+        using var temp = new TempDir();
+        var names = MainWindowHost.ProjectNames(2);
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp, names);
+        MainWindowHost.StartBuild(vm, names);
+        MainWindowHost.StartProject(vm, names[0]);
+        MainWindowHost.StartProject(vm, names[1]);
+        await vm.StopCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.HardStopRequested); // ön-koşul: hard gitti
+        MainWindowHost.SucceedProject(vm, names[0]); // uçuştakiler kendi başarısıyla döndü — hiçbiri sonlandırılmadı
+        MainWindowHost.SucceedProject(vm, names[1]);
+        string beforeEnd = vm.GetRunDocumentText();
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+
+        Assert.Equal(AppPhase.Stopped, vm.Phase);
+        Assert.Equal(beforeEnd, vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now · M1] Sayı hard stop İSTENDİKTEN sonra motorun <c>failed("stopped")</c> raporladığı projelerdir; talep
+    /// anındaki uçuş sayısı değil. Dört uçuştan biri kendi başarısıyla, biri kendi hatasıyla ("exit 1") döndü — ikisi de
+    /// sonlandırılmadı; yalnız iki proje sonlandırıldı.</summary>
+    [StaFact]
+    public async Task A_hard_stop_counts_only_the_projects_the_engine_reports_as_stopped()
+    {
+        using var temp = new TempDir();
+        var names = MainWindowHost.ProjectNames(4);
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp, names);
+        MainWindowHost.StartBuild(vm, names);
+        foreach (var name in names) MainWindowHost.StartProject(vm, name);
+        Assert.Equal(4, vm.Counters.Building); // ön-koşul: dört derleme uçuşta
+        await vm.StopCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        MainWindowHost.SucceedProject(vm, names[0]);
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf(names[1]), 100, "exit 1"));
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf(names[2]), 100, "stopped"));
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf(names[3]), 100, "stopped"));
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+
+        Assert.Contains(RunViewModel.HardStoppedLine(2), vm.GetRunDocumentText());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now · M2] Bitiş satırı sayıyı doğru çekimle söyler (<c>StreamText.Counted</c> kuralı): tekil sayıda
+    /// "1 in-flight compiles" kopya-yapıştır kokusudur.</summary>
+    [Fact]
+    public void The_hard_stopped_line_uses_the_right_grammar_for_one_and_many()
+    {
+        Assert.Equal("stopped — 1 in-flight compile terminated", RunViewModel.HardStoppedLine(1));
+        Assert.Equal("stopped — 2 in-flight compiles terminated", RunViewModel.HardStoppedLine(2));
+    }
+
+    /// <summary>[Stop now · M5] Hard gönderimi senkron düşerse (pipe koptu) istek geri alınır: kapı yeniden açılır, düğme
+    /// "Terminating…" demez ("Stop now" kalır) ve kullanıcı yeniden deneyebilir — graceful'daki hata yolunun deseni.</summary>
+    [StaFact]
+    public async Task A_hard_stop_that_cannot_be_sent_is_taken_back_and_can_be_retried()
+    {
+        using var temp = new TempDir();
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
+        MainWindowHost.StartBuild(vm);
+        await vm.StopCommand.ExecuteAsync(null); // graceful gitti
+        vm.DebugSendOverride = cmd => cmd is StopRunCommand { Kind: StopKind.Hard }
+            ? Task.FromException(new InvalidOperationException("pipe is broken"))
+            : Task.CompletedTask;
+
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.False(vm.HardStopRequested);
+        Assert.Equal(StopStage.StopNow, vm.StopStage);
+        Assert.True(vm.StopCommand.CanExecute(null));
+        Assert.Contains("[error] failed to send stop: pipe is broken", vm.GetRunDocumentText());
+
+        vm.DebugSendOverride = _ => Task.CompletedTask; // pipe düzeldi
+        await vm.StopCommand.ExecuteAsync(null);
+
+        StopRunCommand[] expected = [new("r1", StopKind.Graceful), new("r1", StopKind.Hard), new("r1", StopKind.Hard)];
+        Assert.Equal(expected, StopsOf(sent));
+        Assert.Equal(StopStage.Terminating, vm.StopStage);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now] Üç yüzün (düğme, tepsi, satır ikonu) ve komutun/Esc zincirinin/çıkışın ortak durumu: istenmedi →
+    /// graceful gitti → hard gitti → koşu bitti. Değişim yalnız gerçekten değiştiğinde duyurulur (fazın Running'e geçişi
+    /// aşamayı değiştirmez).</summary>
+    [StaFact]
+    public async Task The_stop_stage_walks_Stop_StopNow_Terminating_and_back_to_Stop_when_the_run_ends()
+    {
+        using var temp = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp);
+        var seen = new List<StopStage>();
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(RunViewModel.StopStage)) seen.Add(vm.StopStage); };
+        MainWindowHost.StartBuild(vm);
+        Assert.Equal(StopStage.Stop, vm.StopStage); // ön-koşul: koşu sürüyor, durdurma istenmedi
+        Assert.Empty(seen);
+
+        await vm.StopCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true));
+
+        StopStage[] expected = [StopStage.StopNow, StopStage.Terminating, StopStage.Stop];
+        Assert.Equal(expected, seen);
+        Assert.Equal(StopText.Label(StopStage.Stop), vm.StopLabel);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now] Üç aşamanın SÖZCÜKLERİ burada bir kez pinlenir; yüzler ve diğer testler metni <see cref="StopText"/>'ten
+    /// okur (tek kaynak).</summary>
+    [Fact]
+    public void The_stop_stages_read_Stop_then_Stop_now_then_Terminating()
+    {
+        Assert.Equal("Stop", StopText.Label(StopStage.Stop));
+        Assert.Equal("Stop now", StopText.Label(StopStage.StopNow));
+        Assert.Equal("Terminating…", StopText.Label(StopStage.Terminating));
+    }
 }

@@ -11,13 +11,13 @@ namespace BuildOrchestrator.App.ViewModels;
 /// </summary>
 public partial class RunViewModel
 {
-    /// <summary>Esc zincirinin koşu katmanı için o anki durum. Faz ÖNCE sorulur: Stop zaten istendiyse (Stopping) durum
-    /// <see cref="EscRunState.Stopping"/>'tir — kapı hard stop'a kadar AÇIK olsa da ikinci Esc "yeniden Stop" değil hard
-    /// stop'tur. Stop'un kapısı açıksa (koşu uçuşta ya da işaretleniyor, henüz durdurulmadı)
-    /// <see cref="EscRunState.Stoppable"/>; kullanıcıya görünen, durdurulamayan bir workspace işi sürüyorsa
-    /// <see cref="EscRunState.Unstoppable"/>.</summary>
+    /// <summary>Esc zincirinin koşu katmanı için o anki durum. Stop aşaması ÖNCE sorulur (<see cref="StopStage"/>): Stop zaten
+    /// istendiyse (<see cref="StopStage.StopNow"/> ya da <see cref="StopStage.Terminating"/>) durum
+    /// <see cref="EscRunState.Stopping"/>'tir — kapı hard stop'a kadar AÇIK olsa da Esc "yeniden Stop" değil hard stop'tur.
+    /// Stop'un kapısı açıksa (koşu uçuşta ya da işaretleniyor, henüz durdurulmadı) <see cref="EscRunState.Stoppable"/>;
+    /// kullanıcıya görünen, durdurulamayan bir workspace işi sürüyorsa <see cref="EscRunState.Unstoppable"/>.</summary>
     internal EscRunState EscRunState =>
-        Phase == AppPhase.Stopping ? EscRunState.Stopping
+        StopStage != StopStage.Stop ? EscRunState.Stopping
         : StopCommand.CanExecute(null) ? EscRunState.Stoppable
         : UnstoppableOperation is not null ? EscRunState.Unstoppable
         : EscRunState.Idle;

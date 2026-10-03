@@ -53,11 +53,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// zayıf bir event manager üzerinden abone olur.</summary>
     internal static readonly ICommand NoRunToStop = new RelayCommand(() => { }, () => false);
 
-    public AppTrayIcon(ICommand stopCommand)
+    public AppTrayIcon(ICommand stopCommand, RunViewModel? run = null)
     {
         _largeIcon = LoadBalloonIcon();
 
-        var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke());
+        var menu = CreateMenu(stopCommand, () => ExitRequested?.Invoke(), run);
 
         _icon = new TaskbarIcon
         {
@@ -74,19 +74,25 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         _icon.ForceCreate(false); // efficiency mode KAPALI: process askıya alınırsa derleme takibi durur
     }
 
-    /// <summary>Tepsi menüsündeki Stop maddesinin başlığı — kopya YASAK: metin TEK yerde tanımlanır, testler
-    /// de (<c>TrayMenuTests.StopItem</c>) buradan okur.</summary>
-    internal const string StopHeader = "Stop";
-
     /// <summary>Menü TEK yerden kurulur: <c>TaskbarIcon</c> (dolayısıyla ctor) headless testte kurulamaz
     /// (gerçek bir tepsi ikonu ister), bu yüzden menü mantığı statik bir fabrikaya ayrılır ki gerçek bir
     /// tepsi kurmadan sınanabilsin. Stop maddesi <paramref name="stop"/>'a DOĞRUDAN bağlanır (<c>Command</c>) —
     /// etkinliği WPF'in kendi komut kapısından gelir, ikinci bir <c>CanExecute</c> sorgusu burada YAZILMAZ
     /// (eski hâl <c>MainWindow</c>'da ayrı bir kapı taşıyordu — bkz. bu sınıfın özeti). Uygulamada özel
-    /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.</summary>
-    internal static ContextMenu CreateMenu(ICommand stop, Action exit)
+    /// <c>MenuItem</c> şablonu yoktur; WPF'in varsayılan şablonu pasif maddeyi gri çizer.
+    /// <para>[Stop now] Maddenin başlığı Stop'un üç aşamasını izler (<see cref="StopText.Label"/>: Stop → Stop now →
+    /// Terminating…): Stopping'de ikinci basış hard stop olduğu için "Stop" demek basışın artık zararsız olmadığını gizlerdi.
+    /// Durum <paramref name="run"/>'ın <see cref="RunViewModel.StopLabel"/>'ından gelir — Stop düğmesiyle ve satır ikonuyla
+    /// AYNI kaynak; <c>null</c> ise (arkasında koşu olmayan tepsi) başlık ilk aşamada kalır. Abonelik menüyle aynı ömürdedir
+    /// (menü uygulama boyunca yaşar), ayrıca çözülmez.</para></summary>
+    internal static ContextMenu CreateMenu(ICommand stop, Action exit, RunViewModel? run = null)
     {
-        var stopItem = new MenuItem { Header = StopHeader, Command = stop };
+        var stopItem = new MenuItem { Header = StopText.Label(run?.StopStage ?? StopStage.Stop), Command = stop };
+        if (run is not null)
+            run.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(RunViewModel.StopLabel)) stopItem.Header = run.StopLabel;
+            };
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (_, _) => exit();
 

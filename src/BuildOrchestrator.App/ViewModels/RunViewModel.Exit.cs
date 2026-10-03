@@ -68,9 +68,9 @@ public sealed partial class RunViewModel
         }
         ExitPending = true;
         AppendRunLine(ExitPendingLine);
-        // [Stop now] Stop zaten istendiyse (Stopping) komutun ikinci basışı hard stop'tur — çıkış isteği kullanıcının beklemek
-        // istemediği anlamına GELMEZ: ikinci bir stop göndermez, drain'i bekler (hard yalnız kullanıcının kendi ikinci basışıdır).
-        if (Phase != AppPhase.Stopping && StopCommand.CanExecute(null)) StopCommand.Execute(null);
+        // [Stop now] Stop zaten istendiyse (StopStage Stop değil) komutun basışı hard stop'tur — çıkış isteği kullanıcının
+        // beklemek istemediği anlamına GELMEZ: ikinci bir stop göndermez, drain'i bekler (hard yalnız kullanıcının kendi basışıdır).
+        if (StopStage == StopStage.Stop && StopCommand.CanExecute(null)) StopCommand.Execute(null);
         EvaluateExit();
     }
 

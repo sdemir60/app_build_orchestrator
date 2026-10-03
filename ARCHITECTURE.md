@@ -240,9 +240,11 @@ Because a drain can take as long as the slowest in-flight project, the App has t
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
 would leave the button reading *Stop*, and the next press is no longer harmless: it is the hard stop. The button
 stays visible and follows the stop: *Stop* until one is requested, then *Stop now* — still enabled, because pressing
-it again is the hard stop — and *Terminating…*, disabled, once the hard stop has been sent. The ribbon drops its ETA
-and reports how many projects are still finishing, and a line goes into the run document for each request: the
-graceful one, then the hard one, which also says the compiles in flight will be terminated. The mid-run lock is
+it again is the hard stop — and *Terminating…*, disabled, once the hard stop has been sent. The tray menu's Stop item
+reads the same three labels, and the Stop icon on a project row — it has no visible label — carries them in its tooltip
+and accessible name, so no surface says *Stop* while the next press is the hard stop. The ribbon drops its ETA and
+reports how many projects are still finishing, and a line goes into the run document for each request: the graceful
+one, then the hard one, which also says the compiles in flight will be terminated. The mid-run lock is
 deliberately *not* released: the engine is still working, so the branch chip and the configuration stay locked and
 the Build split-button does not come back.
 
@@ -253,10 +255,11 @@ the time the App sees it nothing is running — there is no ordering assumption 
 cannot even be sent the phase is put back.
 
 A hard stop leaves the same kind of trace when it ends: `runStopped` arrives marked as hard and the run document says
-how many in-flight compiles were terminated. That count is taken when the hard stop is requested — by the time the
-engine writes `runStopped` it has already reported every in-flight project, so the live counter has dropped to zero.
-The terminated projects are `failed("stopped")`: their stored state is invalidated and the next Build compiles them
-again from scratch, as described above.
+how many in-flight compiles were terminated. That count is the number of `failed("stopped")` results the engine reports
+after the hard stop was requested — by the time it writes `runStopped` it has already reported every terminated project,
+so the live counter has dropped to zero and cannot be read there. A project that finished on its own between the
+request and the termination is not counted, and when nothing was terminated the run document adds nothing. The
+terminated projects' stored state is invalidated and the next Build compiles them again from scratch, as described above.
 
 Once a drain begins the CPU cap is removed for the rest of that run, and the priority class can no longer be
 lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated against a resource setting.
@@ -5969,6 +5972,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Run state, rows, counters, commands | `App/ViewModels/RunViewModel*.cs` |
 | Ribbon phase lines and ETA display | `App/ViewModels/RibbonText.cs` |
+| The Stop button's three stages and their labels, shared by the action bar, the tray item and the row icon | `App/ViewModels/StopText.cs` |
 | Event stream composition and wording | `App/ViewModels/StreamComposer.cs`, `StreamText.cs`, `StreamEventViewModel.cs` |
 | Filter rule, chip labels and active-chip colours (multi-select set) | `App/ViewModels/ProjectFilter.cs` |
 | Warning-triangle text (one line, strongest reason wins) | `App/ViewModels/RowWarning.cs` |

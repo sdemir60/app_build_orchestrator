@@ -1449,8 +1449,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// yavaş projenin kalan süresi kadar sürebilir; beklemek istemeyen kullanıcı bunu söyleyebilmelidir. İkinci basış (ya da
     /// ikinci Esc) <see cref="StopKind.Hard"/> gönderir — inner job terminate edilir, uçuştakiler <c>failed("stopped")</c>
     /// olur — ve BİR KEZ gider (<see cref="HardStopRequested"/>); konsola <see cref="StopNowRequestedLine"/> düşer, bitişte
-    /// <see cref="HardStoppedLine"/>. Düğme üç hâl taşır: Stop → Stop now → Terminating…. Kullanıcının çıkış isteği hard
-    /// stop'a TIRMANMAZ (<see cref="RequestExit"/>).</para>
+    /// <see cref="HardStoppedLine"/> (yalnız bir şey sonlandırıldıysa). Basışın ne göndereceğini TEK durum seçer
+    /// (<see cref="StopStage"/>: Stop → Stop now → Terminating…); Stop düğmesi, tepsi maddesi ve satırdaki ikon da aynı durumu
+    /// okur. Kullanıcının çıkış isteği hard stop'a TIRMANMAZ (<see cref="RequestExit"/>).</para>
     /// <para>Drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir; uygulamanın tıklamayı ALDIĞINI o
     /// pencerede göstermesi bu yüzden davranışın kendisi kadar önemlidir.</para>
     /// <para><b>Faz gönderimden ÖNCE yazılır:</b> yavaş/tıkalı bir engine'de gönderimin dönmesini beklemek
@@ -1483,31 +1484,40 @@ public sealed partial class RunViewModel : ObservableObject
         // alınacak bir İSTEK var. Motora hiçbir şey gitmez.
         if (_pendingRunId is not null) { CancelPendingRun(); return; }
         if (_currentRunId is null) return;
-        // [Stop now · kullanıcı kararı 2026-10-03] Durdurma zaten sürüyor: ikinci basış hard stop'tur ve BİR KEZ gider —
-        // üçüncü basış (ya da kapıyı atlayıp komutu doğrudan çalıştıran Esc) burada yutulur. Hard da graceful ile AYNI
-        // gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir, geri alınacak bir şey değişmez.
-        if (Phase == AppPhase.Stopping)
+        // [Stop now · kullanıcı kararı 2026-10-03] Basışın ne göndereceğini TEK durum seçer (StopStage): istenmedi → graceful;
+        // graceful gitti → hard, BİR KEZ; hard gitti → hiçbir şey (üçüncü basış ya da kapıyı atlayıp komutu doğrudan çalıştıran
+        // Esc burada yutulur). Hard da graceful ile AYNI gönderim kapısından geçer (SendStopAsync): faz zaten Stopping'dir.
+        switch (StopStage)
         {
-            if (HardStopRequested) return;
-            _hardStopInFlight = Counters.Building;
-            HardStopRequested = true;
-            AppendRunLine(StopNowRequestedLine);
-            await SendStopAsync(_currentRunId, StopKind.Hard);
-            return;
+            case StopStage.Terminating:
+                return;
+            case StopStage.StopNow:
+                _hardTerminated = 0;
+                HardStopRequested = true;
+                AppendRunLine(StopNowRequestedLine);
+                // Gönderim senkron düşerse (engine hazır değil / pipe koptu) istek geri alınır — graceful'daki hata yolunun
+                // deseni: "Terminating…" yanlış bilgi vermesin, kapı yeniden açılsın ve kullanıcı tekrar deneyebilsin.
+                if (!await SendStopAsync(_currentRunId, StopKind.Hard)) HardStopRequested = false;
+                return;
+            default:
+                AppendRunLine(StopRequestedLine(Counters.Building));
+                await SendStopAsync(_currentRunId, StopKind.Graceful);
+                return;
         }
-        AppendRunLine(StopRequestedLine(Counters.Building));
-        await SendStopAsync(_currentRunId, StopKind.Graceful);
     }
 
-    /// <summary>Stop'un gönderimi — kullanıcının Stop'u ve branch kesmesi (<see cref="RequestInterruptAsync"/>) AYNI
-    /// kapıdan geçer: faz gönderimden ÖNCE <see cref="AppPhase.Stopping"/>'e yazılır, gönderim senkron düşerse geri
-    /// alınır (gerekçe <see cref="StopAsync"/>'in özetinde).</summary>
-    private async Task SendStopAsync(string runId, StopKind kind)
+    /// <summary>Stop'un gönderimi — kullanıcının Stop'u (graceful ve hard) ve branch kesmesi
+    /// (<see cref="RequestInterruptAsync"/>) AYNI kapıdan geçer: faz gönderimden ÖNCE <see cref="AppPhase.Stopping"/>'e
+    /// yazılır, gönderim senkron düşerse geri alınır (gerekçe <see cref="StopAsync"/>'in özetinde). Dönen <c>bool</c>
+    /// gönderimin kabul edilip edilmediğidir: hard dalında faz zaten Stopping olduğundan geri alma onu değiştirmez, hard
+    /// bayrağını çağıran geri alır.</summary>
+    private async Task<bool> SendStopAsync(string runId, StopKind kind)
     {
         var previous = Phase;
         Phase = AppPhase.Stopping;
-        if (!await TrySendAsync(new StopRunCommand(runId, kind), "stop"))
-            Phase = previous;
+        if (await TrySendAsync(new StopRunCommand(runId, kind), "stop")) return true;
+        Phase = previous;
+        return false;
     }
 
     /// <summary>[Stopping] Run dokümanına düşen tek satırlık not — konsol, tıklamanın kalıcı kaydıdır (şerit
@@ -1520,26 +1530,66 @@ public sealed partial class RunViewModel : ObservableObject
     /// derlemeler beklenmeden sonlandırılacak.</summary>
     internal static string StopNowRequestedLine => "stop now requested — in-flight compiles will be terminated";
 
-    /// <summary>[Stop now] Hard stop'un bitişi: <c>runStopped(WasHard)</c> geldiğinde konsola düşen tek satır.
-    /// <paramref name="inFlight"/> hard stop'un İSTENDİĞİ andaki uçuş sayısıdır — motor uçuştakileri
-    /// <c>failed("stopped")</c> raporladıktan SONRA <c>runStopped</c> yazar, yani bu sayı o ana kadar boşalmış sayaçtan
-    /// (<c>Counters.Building</c>) okunamaz.</summary>
-    internal static string HardStoppedLine(int inFlight) => string.Format(CultureInfo.InvariantCulture,
-        "stopped — {0} in-flight compiles terminated", inFlight);
+    /// <summary>[Stop now] Hard stop'un bitişi: <c>runStopped(WasHard)</c> geldiğinde, bir şey sonlandırıldıysa konsola düşen
+    /// tek satır. <paramref name="terminated"/> hard stop İSTENDİKTEN sonra motorun <c>failed("stopped")</c> raporladığı proje
+    /// sayısıdır (<see cref="NoteTerminated"/>) — talep anındaki uçuş sayısı değil: o projelerden bir kısmı talep ile
+    /// sonlandırma arasında kendi başarısıyla bitmiş olabilir. Motor uçuştakileri raporladıktan SONRA <c>runStopped</c>
+    /// yazar, yani sayı o ana kadar boşalmış sayaçtan (<c>Counters.Building</c>) okunamaz. Tekil/çoğul
+    /// <see cref="StreamText.Counted"/>'tadır ("1 in-flight compile" · "2 in-flight compiles").</summary>
+    internal static string HardStoppedLine(int terminated) => string.Format(CultureInfo.InvariantCulture,
+        "stopped — {0} terminated", StreamText.Counted(terminated, "in-flight compile"));
 
-    /// <summary>[Stop now] Bu koşuya hard stop gönderildi mi. Bir kez gider (<see cref="StopAsync"/>'in <c>Stopping</c> dalı);
-    /// koşunun sonraki başlangıcında düşer. <see cref="StopCommand"/>'ın kapısını ve Stop düğmesinin etiketini sürer.</summary>
+    /// <summary>[Stop now] Bu koşuya hard stop gönderildi mi. Bir kez gider (<see cref="StopAsync"/>'in <c>StopNow</c> aşaması);
+    /// gönderim düşerse geri alınır, koşunun sonraki başlangıcında düşer. <see cref="StopCommand"/>'ın kapısını ve
+    /// <see cref="StopStage"/>'in <see cref="StopStage.Terminating"/> girdisini sürer.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     private bool _hardStopRequested;
 
-    /// <summary>[Stop now] Hard stop'un İSTENDİĞİ andaki uçuş sayısı — <see cref="HardStoppedLine"/>'ın girdisi.</summary>
-    private int _hardStopInFlight;
+    /// <summary>[Stop now] Hard stop istendikten SONRA motorun <c>failed("stopped")</c> raporladığı proje sayısı —
+    /// <see cref="HardStoppedLine"/>'ın girdisi; her hard talebinde sıfırlanır.</summary>
+    private int _hardTerminated;
+
+    /// <summary>Motorun "kullanıcı durdurdu" nedeni (<c>projectFailed.Reason</c>): hard stop'ta uçuştaki her projenin ve kill
+    /// edilen bir child'ın nedeni. Sözleşmede bu değer için bir sabit yoktur (neden serbest metindir: "exit N" · "timeout" ·
+    /// "stopped"); App'te okunduğu TEK yer burasıdır.</summary>
+    private const string StoppedReason = "stopped";
+
+    /// <summary>[Stop now · M1] Hard stop istendikten SONRA gelen <c>failed("stopped")</c> sonucu sonlandırılmış bir derlemedir ve
+    /// sayılır. Talep anındaki uçuş sayısı yanlış sayıdır: motor hard'ı sahiplenmeden önce biten bir proje (ya da drain'in
+    /// son projesi) başarıyla ya da kendi hatasıyla döner ve sonlandırılmış sayılmaz.</summary>
+    private void NoteTerminated(string reason)
+    {
+        if (HardStopRequested && string.Equals(reason, StoppedReason, StringComparison.Ordinal)) _hardTerminated++;
+    }
 
     // [Stop now] Kapı hard stop'a kadar açıktır: Stopping'de ikinci basış hard stop'tur ("Stop now") ve hard gidince
     // kapanır — başka bir basış gerekmez ("Terminating…"). Graceful basış bir kez gider: Stopping'deki basış graceful DEĞİL
-    // hard'dır (StopAsync'in Stopping dalı), yani graceful ikinci kez üretilmez.
+    // hard'dır (StopAsync'in StopNow aşaması), yani graceful ikinci kez üretilmez.
     private bool CanStop() => (IsRunning || IsStarting) && !HardStopRequested;
+
+    /// <summary>[Stop now] Stop'un TEK durumu — koşunun durdurulma ilerleyişi: istenmedi (<see cref="StopStage.Stop"/>) →
+    /// graceful gitti, uçuştakiler bitiyor (<see cref="StopStage.StopNow"/>) → hard gitti (<see cref="StopStage.Terminating"/>).
+    /// <see cref="Phase"/> ve <see cref="HardStopRequested"/>'tan türer; "Stop zaten istendi mi" sorusunun TEK cevabıdır:
+    /// <see cref="StopAsync"/>, <see cref="EscRunState"/> ve <see cref="RequestExit"/> ile üç yüzün (Stop düğmesi, tepsi
+    /// maddesi, satırdaki ikon) etiketi buradan okur. Yalnız gerçek değişimde duyurulur (<see cref="StopLabel"/> ile birlikte).</summary>
+    public StopStage StopStage { get; private set; }
+
+    /// <summary>[Stop now] Aşamanın görünür etiketi (<see cref="StopText.Label"/>) — bağlanabilir yüzler (tepsi maddesi) için.</summary>
+    public string StopLabel => StopText.Label(StopStage);
+
+    private void RefreshStopStage()
+    {
+        var next = Phase != AppPhase.Stopping ? StopStage.Stop
+            : HardStopRequested ? StopStage.Terminating
+            : StopStage.StopNow;
+        if (next == StopStage) return;
+        StopStage = next;
+        OnPropertyChanged(nameof(StopStage));
+        OnPropertyChanged(nameof(StopLabel));
+    }
+
+    partial void OnHardStopRequestedChanged(bool value) => RefreshStopStage();
 
     // [design v1.7.0 §3.1] Sürdürme ve yeniden deneme AYRI birer komut DEĞİLDİR: Stop'tan sonra da hata
     // sonrasında da kullanıcı Build'e basar. Öldürülen ve başarısız projelerin stored BuildState'i
@@ -1895,7 +1945,10 @@ public sealed partial class RunViewModel : ObservableObject
             case ProjectLogEvent e: OnProjectLog(e); break;
             case ProjectLogChunkEvent e: OnProjectLogChunk(e); break;
             case ProjectSucceededEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Succeeded, e.DurationMs, e.DepIssues, e.CycleUnsettled, trusted: e.Trusted); break;
-            case ProjectFailedEvent e: OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, evidence: e.Evidence); break;
+            case ProjectFailedEvent e:
+                NoteTerminated(e.Reason);
+                OnProjectDone(e.ProjectId, ProjectRowState.Failed, e.DurationMs, e.DepIssues, evidence: e.Evidence);
+                break;
             case ProjectSkippedEvent e: OnProjectSkipped(e); break;
             case CycleMemberHeldEvent e: OnCycleMemberHeld(e); break;
             case CycleCompletedEvent e: OnCycleCompleted(e); break;
@@ -2433,13 +2486,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// finally + <c>_finishing</c> kapısı; sahiplenemediği durumda ise host anında yazar) — bu olay görüldüğünde
     /// koşan bir şey KALMAMIŞTIR. Arkadan gelen <c>runCompleted</c> aynı fazı yazdığı için ara görüntü oluşmaz;
     /// gelmezse de faz doğru yerde kalır.</para>
-    /// <para>[Stop now] <c>WasHard</c> (kullanıcının ikinci basışı) ise konsola <see cref="HardStoppedLine"/> düşer — kaç
-    /// derlemenin sonlandırıldığını söyler (sayı hard stop'un istendiği andaki uçuş sayısıdır).</para></summary>
+    /// <para>[Stop now] <c>WasHard</c> (kullanıcının "Stop now"u) ise ve bir şey sonlandırıldıysa konsola
+    /// <see cref="HardStoppedLine"/> düşer — kaç derlemenin sonlandırıldığını söyler (sayı hard stop istendikten sonra gelen
+    /// <c>failed("stopped")</c> sonuçlarıdır). Hiçbir şey sonlandırılmadıysa (drain talep ile sonlandırma arasında bitti;
+    /// koordinatör zaten kapanıyorsa host'un yazdığı ikinci <c>runStopped(WasHard)</c>) satır yazılmaz — "terminated" iddia
+    /// edilmez.</para></summary>
     private void OnRunStopped(bool wasHard)
     {
         // [Stop now] Hard stop'un konsol izi faz yazımından ÖNCE düşer (StopAsync'in simetriği): bitişin kendi satırı koşunun
         // son satırıdır, faz değişimini dinleyen yüzeyler onu kaçırmaz.
-        if (wasHard) AppendRunLine(HardStoppedLine(_hardStopInFlight));
+        if (wasHard && _hardTerminated > 0) AppendRunLine(HardStoppedLine(_hardTerminated));
         IsRunning = false;
         IsStarting = false; // planlama sırasında stop ack'i de buradan geçer — Build'i geri aç
         Phase = AppPhase.Stopped;

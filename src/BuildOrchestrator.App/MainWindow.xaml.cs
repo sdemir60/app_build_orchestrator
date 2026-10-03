@@ -1297,7 +1297,7 @@ public partial class MainWindow : Window
 
         // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
         // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
-        _tray = new AppTrayIcon(_vm.StopCommand);
+        _tray = new AppTrayIcon(_vm.StopCommand, _vm);
         _tray.RestoreRequested += ShowFromTray;
         _tray.ExitRequested += ExitFromTray;
 

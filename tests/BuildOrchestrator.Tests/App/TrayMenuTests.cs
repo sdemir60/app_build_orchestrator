@@ -27,8 +27,10 @@ public sealed class TrayMenuTests
         new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1")
         { RootPath = @"D:\repo" };
 
+    /// <summary>Stop maddesi menünün komutu olan TEK maddesidir (Exit'in komutu yoktur). Başlığı aşamaya göre değişir
+    /// (<see cref="StopText.Label"/>), bu yüzden başlıkla ARANMAZ.</summary>
     private static MenuItem StopItem(ContextMenu menu) =>
-        menu.Items.Cast<MenuItem>().Single(i => (string)i.Header == AppTrayIcon.StopHeader);
+        menu.Items.Cast<MenuItem>().Single(i => i.Command is not null);
 
     // ---------------------------------------------------------------- etkinlik = CanExecute
 
@@ -40,7 +42,7 @@ public sealed class TrayMenuTests
         var vm = NewVm();
         Assert.False(vm.StopCommand.CanExecute(null)); // ön-koşul: durdurulacak bir şey yok
 
-        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { });
+        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { }, vm);
 
         Assert.False(StopItem(menu).IsEnabled);
     }
@@ -56,7 +58,7 @@ public sealed class TrayMenuTests
     public void Tray_stop_follows_the_stop_command_through_a_run()
     {
         var vm = NewVm();
-        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { });
+        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { }, vm);
         var stop = StopItem(menu);
 
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
@@ -72,6 +74,35 @@ public sealed class TrayMenuTests
         Assert.False(stop.IsEnabled);
     }
 
+    /// <summary>[Stop now] Maddenin başlığı Stop düğmesiyle AYNI aşamayı okur (<see cref="RunViewModel.StopStage"/>; metin tek
+    /// kaynak <see cref="StopText"/>): Stopping'de ikinci basış hard stop olduğundan madde "Stop now" der — "Stop" demek,
+    /// basışın artık zararsız olmadığını gizlerdi — ve hard gidince "Terminating…" der (pasif). Koşu bitince başlık "Stop"a
+    /// döner. Eskiden başlık her aşamada "Stop" idi. Faz ve hard bayrağı doğrudan set edilir: buraya NASIL girildiği
+    /// <c>StopNowTests</c>'te pinli.</summary>
+    [StaFact]
+    public void Tray_stop_label_follows_the_stop_stage_through_a_run()
+    {
+        var vm = NewVm();
+        var stop = StopItem(AppTrayIcon.CreateMenu(vm.StopCommand, () => { }, vm));
+        Assert.Equal(StopText.Label(StopStage.Stop), (string)stop.Header); // ön-koşul
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
+        Assert.Equal(StopText.Label(StopStage.Stop), (string)stop.Header);
+
+        vm.Phase = AppPhase.Stopping; // graceful gitti
+
+        Assert.Equal(StopText.Label(StopStage.StopNow), (string)stop.Header);
+        Assert.True(stop.IsEnabled);
+
+        vm.HardStopRequested = true; // hard gitti
+
+        Assert.Equal(StopText.Label(StopStage.Terminating), (string)stop.Header);
+        Assert.False(stop.IsEnabled);
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: true)); // koşu bitti
+
+        Assert.Equal(StopText.Label(StopStage.Stop), (string)stop.Header);
+    }
+
     // ---------------------------------------------------------------- tıklama → gerçek stopRun
 
     /// <summary>Madde UIA ile çağrıldığında (ekran okuyucu/otomasyon yolunun ta kendisi) TEK bir
@@ -82,7 +113,7 @@ public sealed class TrayMenuTests
     public void Invoking_the_tray_stop_item_stops_the_run()
     {
         var vm = NewVm();
-        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { });
+        var menu = AppTrayIcon.CreateMenu(vm.StopCommand, () => { }, vm);
         var stop = StopItem(menu);
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug"));
         Assert.True(stop.IsEnabled); // ön-koşul: madde GERÇEKTEN tıklanabilir
@@ -101,7 +132,8 @@ public sealed class TrayMenuTests
 
     /// <summary>[kaynak] <c>MainWindow</c>, tepsiyi TAM BİR kez kurar ve Stop maddesine doğrudan
     /// <see cref="RunViewModel.StopCommand"/>'ı verir — action bar'ın Stop düğmesinin okuduğu AYNI örnek,
-    /// yani maddenin etkin/pasif durumunun TEK kaynağı vardır. Kural kaynağın KENDİSİNDE pinlenir çünkü
+    /// yani maddenin etkin/pasif durumunun TEK kaynağı vardır; VM'in kendisini de verir, böylece etiketin kaynağı da
+    /// (<see cref="RunViewModel.StopStage"/>) düğmeyle ortaktır. Kural kaynağın KENDİSİNDE pinlenir çünkü
     /// <see cref="AppTrayIcon"/> kurulamaz (ctor'u gerçek bir <c>TaskbarIcon</c> yaratır, headless süitte tepsi
     /// yoktur) — <c>TrayIndicatorBinderTests.Clicking_a_balloon_takes_the_same_restore_path_as_the_tray_icon</c>
     /// ile AYNI gerekçe/desen.</summary>
@@ -109,7 +141,7 @@ public sealed class TrayMenuTests
     public void MainWindow_wires_the_tray_stop_item_to_the_run_view_models_stop_command()
     {
         string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "MainWindow.xaml.cs"));
-        var wiring = new Regex(@"new AppTrayIcon\(_vm\.StopCommand\)");
+        var wiring = new Regex(@"new AppTrayIcon\(_vm\.StopCommand, _vm\)");
 
         Assert.Single(wiring.Matches(source));
     }

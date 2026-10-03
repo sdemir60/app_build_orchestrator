@@ -236,7 +236,7 @@ public partial class ActionBar : UserControl
             case nameof(RunViewModel.IsRunning):
             case nameof(RunViewModel.IsStarting):
             case nameof(RunViewModel.Phase):
-            case nameof(RunViewModel.HardStopRequested):
+            case nameof(RunViewModel.StopStage):
                 RefreshEnabled();
                 RefreshBuildArea();
                 break;
@@ -607,10 +607,10 @@ public partial class ActionBar : UserControl
         _syncIcon.Children.Add(IconVisual.BoundToForeground(PART_Sync, "Icon.Sync", LabelIconSize, 24));
         _syncIcon.Children.Add(new TextBlock { Text = "Sync", Margin = new Thickness(IconVisual.LabelGap, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
         PART_Sync.Content = _syncIcon;
-        // [Stop now] Stop'un İÇERİĞİ duruma bağlı (Stop / Stop now / Terminating…) — tek yazıcısı RefreshBuildArea'dır.
-        // UIA adı burada ve SABİT kalır: buton kimliği değişmiyor, yalnız durumu değişiyor.
+        // [Stop now] Stop'un İÇERİĞİ ve UIA adı duruma bağlı (Stop / Stop now / Terminating…) — tek yazıcısı RefreshBuildArea'dır;
+        // burada yalnız ilk aşamanın adı kurulur (metinler TEK kaynaktan: StopText).
         AutomationProperties.SetName(PART_Sync, AccessibilityNames.SyncButton);
-        AutomationProperties.SetName(PART_Stop, AccessibilityNames.StopButton);
+        AutomationProperties.SetName(PART_Stop, StopText.ActionBarName(StopStage.Stop));
     }
 
     private void RefreshBuildArea()
@@ -621,13 +621,17 @@ public partial class ActionBar : UserControl
         bool locked = _vm?.IsMidRunLocked ?? false;
         PART_Stop.Visibility = locked ? Visibility.Visible : Visibility.Collapsed;
         PART_Split.Visibility = locked ? Visibility.Collapsed : Visibility.Visible;
+        // [Stop now] Etiket ve UIA adı VM'in TEK Stop durumundan (StopStage) ve TEK metin kaynağından (StopText) gelir; tepsi
+        // maddesi ve satır ikonu da aynı ikisini okur. Ad her yenilemede yazılır: gizliyken de bir sonraki koşuya bayat kalmaz.
+        var stage = _vm?.StopStage ?? StopStage.Stop;
+        AutomationProperties.SetName(PART_Stop, StopText.ActionBarName(stage));
         if (locked)
         {
             // [Stop now] Kilit SÜRERKEN Stop'un üç hâli var: istenmeden önce "Stop", graceful gittikten sonra "Stop now"
             // (buton ETKİN — ikinci basış hard stop'tur), hard gittikten sonra "Terminating…" (pasif). Pasifleşmeyi bu metot
             // YAZMAZ — buton Command'ına bağlı olduğundan IsEnabled StopCommand.CanExecute'tan (hard kapısı) gelir; iki ayrı
             // yerden yazılan bir enable hâli olmaz.
-            PART_Stop.Content = ButtonContent("Icon.Stop", StopLabel(), "Brush.StatusFailText", 24);
+            PART_Stop.Content = ButtonContent("Icon.Stop", StopText.Label(stage), "Brush.StatusFailText", 24);
             return;
         }
 
@@ -636,11 +640,6 @@ public partial class ActionBar : UserControl
         PART_Split.PrimaryContent = ButtonContent("Icon.Play", "Build", "Brush.TextOnAccent", 24);
         PART_Split.PrimaryCommand = _vm?.BuildCommand;
     }
-
-    /// <summary>[Stop now] Stop düğmesinin etiketi: istenmedi → "Stop"; graceful gitti → "Stop now"; hard gitti →
-    /// "Terminating…". Tek çağıranı <see cref="RefreshBuildArea"/>'dır.</summary>
-    private string StopLabel() =>
-        _vm is not { Phase: AppPhase.Stopping } vm ? "Stop" : vm.HardStopRequested ? "Terminating…" : "Stop now";
 
     private StackPanel ButtonContent(string iconKey, string text, string iconBrushKey, double viewBox)
     {
