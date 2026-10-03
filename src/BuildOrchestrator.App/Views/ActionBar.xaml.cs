@@ -168,6 +168,7 @@ public partial class ActionBar : UserControl
             _vm.PropertyChanged -= OnVmPropertyChanged;
             _vm.PullRepositoryCommand.CanExecuteChanged -= OnPullGateChanged;
             _vm.SyncCommand.CanExecuteChanged -= OnSyncGateChanged;
+            _vm.BuildCommand.CanExecuteChanged -= OnBuildGateChanged;
         }
         _vm = e.NewValue as RunViewModel;
         // Popup içerikleri (görsel ağaç dışı) DataContext'i güvenilir MİRAS ALMAZ → açıkça bağla.
@@ -181,6 +182,8 @@ public partial class ActionBar : UserControl
             // [kullanıcı kararı 2026-09-29] Debug|Release segment'inin kapısı Sync komutunun kapısıdır (geçiş bir Sync
             // başlatır) — her geçişi buradan gelir; workspace'in varlığını RefreshEnabled ayrıca izler.
             _vm.SyncCommand.CanExecuteChanged += OnSyncGateChanged;
+            // [kullanıcı kararı 2026-10-02] Açık Build menüsü, koşu komutunun kapısı kapanınca kapanır (iş menü açıkken başlayabilir).
+            _vm.BuildCommand.CanExecuteChanged += OnBuildGateChanged;
         }
         RefreshAll();
     }
@@ -188,6 +191,17 @@ public partial class ActionBar : UserControl
     private void OnPullGateChanged(object? sender, EventArgs e) => RefreshBehindGate();
 
     private void OnSyncGateChanged(object? sender, EventArgs e) => RefreshConfigGate();
+
+    private void OnBuildGateChanged(object? sender, EventArgs e) => CloseBuildMenuWhenGateCloses();
+
+    /// <summary>[kullanıcı kararı 2026-10-02] Build menüsünün satırları (Build / Rebuild / Clean) koşu komutunun kapısındadır
+    /// (<c>BuildCommand.CanExecute</c>). Chevron kapı kapalıyken açılmaz (birincil yarının etkinliğini izler), ama AÇIK duran
+    /// bir menü kapıyı kendiliğinden görmez: iş menü açıkken başlarsa satırlar canlı görünür ve tıklamayı sessizce yutar.
+    /// Kapı kapanınca menü kapanır — bar kapıyı yeniden türetmez, komuta sorar.</summary>
+    private void CloseBuildMenuWhenGateCloses()
+    {
+        if (_built && !(_vm?.BuildCommand.CanExecute(null) ?? false)) PART_Split.IsMenuOpen = false;
+    }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Segment'in tıklanabilirliği = <see cref="RunViewModel.CanSwitchConfiguration"/>
     /// (workspace + Sync'in kapısı: koşu, Sync, Clean, Optimize, checkout, pull, motor) — bar kapıyı yeniden türetmez.</summary>
@@ -694,7 +708,10 @@ public partial class ActionBar : UserControl
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
         // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar. Sync sürerken
-        // (faz Syncing) tümden söner: iş sürerken koşu komutları kapalıdır, basış kuyruğa alınmaz.
+        // (faz Syncing) tümden söner. Fazı Syncing olmayan işlerde (görünmeyen Sync, Clean, Optimize, checkout, pull) kapıyı
+        // komut kurar: birincil yarı CanExecute'u AND'ler, chevron birincil yarıyı izler (şablon: PART_Menu.IsEnabled ←
+        // PART_Primary.IsEnabled); açık menüyü OnBuildGateChanged kapatır. İş sürerken koşu komutları kapalıdır, basış
+        // kuyruğa alınmaz.
         bool syncing = _vm?.Phase == AppPhase.Syncing;
         PART_Split.IsEnabled = hasWs && !syncing;
     }

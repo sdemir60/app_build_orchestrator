@@ -147,6 +147,10 @@ public class BranchCheckoutTests
     /// kullanıcı bildirimi 2026-09-29): checkout uçuştayken Build, Rebuild ve satırın play'i basılabilir — basış bekler ve
     /// checkout'un Sync'i bitince yeni ağaçta başlar. Kuyruk kaldırıldı: asıl ad ve iddia geri geldi — checkout uçuştayken
     /// Build, Rebuild ve satırın play'i KAPALIDIR (checkout'un temizliği mid-checkout başlayan koşunun konsolunu siler).
+    /// <para>Aynı kuralla iki test SİLİNDİ — pinledikleri davranış (kuyruk) artık yok; gerekçe <c>RunRequestDuringWorkTests</c>
+    /// doc'unda: <c>Build_pressed_during_a_checkout_starts_on_the_new_tree_after_its_sync</c> (checkout sürerken basılan Build'in
+    /// Sync'ten sonra yeni ağaçta başlaması) ve <c>A_build_waiting_on_a_checkout_that_does_not_switch_is_taken_back_and_the_reason_stays</c>
+    /// (checkout branch'i değiştirmeden bitince bekleyen Build'in geri alınması).</para>
     /// </summary>
     [Fact]
     public async Task Build_is_locked_while_a_checkout_is_in_flight()

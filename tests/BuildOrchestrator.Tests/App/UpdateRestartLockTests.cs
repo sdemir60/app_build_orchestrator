@@ -14,7 +14,7 @@ namespace BuildOrchestrator.Tests.App;
 /// açıklama satırı nedenini söyler — yarım kalan koşu olmaz. Karar VM'de TEK bir hesaplanan özelliktir
 /// (<see cref="RunViewModel.UpdateRestartBlockedReason"/>); sıra: (1) Clean / Optimize / Resolve / checkout / pull →
 /// <c>Available once the running task finishes.</c> (2) herhangi bir Sync, sessizi dahil →
-/// <c>Available once Sync finishes.</c> (3) koşu sürüyor, işaretleniyor ya da bekleyen bir Build isteği var →
+/// <c>Available once Sync finishes.</c> (3) koşu sürüyor ya da işaretleniyor (açılış koreografisi) →
 /// <c>Available once the build finishes — Esc stops it.</c> İş bitince düğme kendiliğinden açılır.
 ///
 /// <para><b>Tasarımdan sapma (plan U3):</b> tasarım "— F5 stops it." der; uygulamada F5 koşuyu durdurmaz, Esc
@@ -74,10 +74,12 @@ public class UpdateRestartLockTests
                 Assert.True(CommandPress.Press(vm.BuildCommand));
                 Assert.True(vm.IsStarting);
                 break;
-            case "buildWaitingForSync":
+            case "buildPressedDuringSync":
+                // [kullanıcı kararı 2026-10-02] Sync sürerken Build basılamaz: kapı kapalı, istek kuyruğa alınmaz — ne koşu
+                // başlar ne de işaretleme penceresi açılır; kilidin nedeni Sync'in nedeni olarak kalır.
                 Assert.True(CommandPress.Press(vm.SyncCommand));
-                Assert.True(CommandPress.Press(vm.BuildCommand)); // Sync sürerken basılan Build bekler
-                Assert.True(vm.IsStarting);
+                Assert.False(CommandPress.Press(vm.BuildCommand));
+                Assert.False(vm.IsStarting);
                 break;
             default: throw new ArgumentOutOfRangeException(nameof(work), work, null);
         }
@@ -102,8 +104,13 @@ public class UpdateRestartLockTests
 
     /// <summary>Her iş türü kendi nedenini söyler ve Restart kapanır. Resolve bir koşudur ama bir görev gibi okunur
     /// (tasarım: Clean/Optimize/Resolve); checkout ve pull tasarımda yoktur, görev kovasına girer. Sessiz Sync de kilitler
-    /// (plan U3) — ekranda görünmese de kurulum onu yarıda keserdi. Sync sürerken basılıp bekleyen Build, Sync'in nedenini
-    /// taşır: sıra görev > Sync > koşu.</summary>
+    /// (plan U3) — ekranda görünmese de kurulum onu yarıda keserdi. Sync sürerken Build'e basmak hiçbir şey başlatmaz (kapı
+    /// kapalı) ve kilidin nedenini DEĞİŞTİRMEZ: neden Sync'in nedeni olarak kalır, <c>IsStarting</c> açılmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>buildWaitingForSync</c>, kullanıcı
+    /// bildirimi 2026-09-29): Sync sürerken basılıp bekleyen Build kilidin nedenini Sync'ten alır (sıra görev &gt; Sync &gt;
+    /// koşu) — basış bir istekti ve <c>IsStarting</c>'i açardı. Kuyruk kaldırıldı: basış kapıdan geçmez. Vaka silinmedi, yeni
+    /// kurala göre yeniden yazıldı (gerekçe <c>RunRequestDuringWorkTests</c> doc'unda).</para></summary>
     [Theory]
     [InlineData("clean", "task")]
     [InlineData("optimize", "task")]
@@ -114,7 +121,7 @@ public class UpdateRestartLockTests
     [InlineData("silentSync", "sync")]
     [InlineData("build", "build")]
     [InlineData("marking", "build")]
-    [InlineData("buildWaitingForSync", "sync")]
+    [InlineData("buildPressedDuringSync", "sync")]
     public async Task Work_in_flight_locks_the_restart_and_names_the_reason(string work, string reason)
     {
         var vm = NewVm();

@@ -993,9 +993,12 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında hiçbir run BAŞLAMAZ
 
-    /// <summary>Tek projeli bir liste — kapıyı yalnız süren Sync kapatsın, listesizlik değil.</summary>
-    private static WorkspaceTopologyEvent OneProjectTopologyForGateTests() => new(
-        [new ProjectNode(@"C:\p\a.csproj", "A", @"C:\p\a.csproj", ["Osys"], [], 0, null, null, true, null)], [], [], []);
+    // [kullanıcı kararı 2026-10-02] Bu bölümün başındaki test (`A_run_pressed_while_a_sync_is_in_flight_waits_for_it_instead_of_starting`,
+    // eski adı `No_run_can_start_while_a_sync_is_in_flight`) silindi — kuyruk yok. "Sync sürerken hiçbir run komutu çalıştırılamaz"
+    // iddiası artık `RunRequestDuringWorkTests`'te pinlidir: her iş türü × her run komutu
+    // (`Every_run_command_is_not_executable_while_a_sync_clean_optimize_checkout_or_pull_is_in_flight`); kuyruğun kaldırılma
+    // gerekçesi o dosyanın doc'undadır. Aşağıdaki dört test kapının Sync BİTİNCE açıldığını pinler. Tek projeli liste ortak
+    // `VmTopology.Seed` ile kurulur (kapıyı yalnız süren Sync kapatsın, listesizlik değil).
 
     /// <summary>
     /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>A_sync_ending_without_a_project_list_closes_build_and_says_so</c>,
@@ -1008,7 +1011,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(OneProjectTopologyForGateTests());
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.BuildCommand.CanExecute(null)); // Sync sürerken kapalı
 
@@ -1033,7 +1036,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(OneProjectTopologyForGateTests());
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
@@ -1057,7 +1060,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(OneProjectTopologyForGateTests());
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 
@@ -1082,7 +1085,7 @@ public class RunViewModelStateTests
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(OneProjectTopologyForGateTests());
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
         Assert.False(vm.RebuildCommand.CanExecute(null));
 

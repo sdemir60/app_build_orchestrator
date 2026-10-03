@@ -38,7 +38,7 @@ public static class UpdateText
     /// <summary>[plan U3 · 2] Bir Sync (sessizi dahil) sürerken.</summary>
     public const string WaitForSync = "Available once Sync finishes.";
 
-    /// <summary>[plan U3 · 3] Koşu sürerken, işaretlenirken ya da bir Build isteği beklerken.
+    /// <summary>[plan U3 · 3] Koşu sürerken ya da işaretlenirken (açılış koreografisi oynarken).
     /// <para><b>Tasarımdan sapma:</b> tasarım "— F5 stops it." der; uygulamada F5 koşuyu durdurmaz, Esc durdurur. Tuşun
     /// adı elle yazılmaz, kısayol kataloğundan okunur (<see cref="ShortcutCatalog"/> — jestin tek kaynağı).</para></summary>
     public static string WaitForBuild { get; } =

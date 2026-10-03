@@ -441,6 +441,10 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
+    // [kullanıcı kararı 2026-10-02] `The_pill_of_the_last_operation_does_not_come_alive_while_a_build_waits` silindi — kuyruk yok:
+    // iş sürerken Build basılamaz, bekleyen istek (IsStarting) hiç oluşmaz; eski iddia (kullanıcı bildirimi 2026-09-29) ve
+    // gerekçe `RunRequestDuringWorkTests` doc'unda.
+
     /// <summary>Pill koşarken AMBER yanar (amber-soft zemin, amber-border, amber-text) ve içinde spinner
     /// döner; koşu bitince NÖTRLEŞİR (zemin yok, border-strong, text-dim) ama <b>KALIR</b> — "ne yapmıştım?"
     /// sorusu bir sonraki işleme kadar cevaplı durur.</summary>

@@ -1143,9 +1143,10 @@ public sealed partial class RunViewModel : ObservableObject
     /// kapıyı <see cref="NotifySyncGatedCommands"/> yeniden sorar.</para>
     /// <para>Tam çıkış beklerken (<see cref="ExitPending"/>) de kapalıdır: bekleyiş iş bitince kapanmak içindir — o sırada
     /// başlayan bir koşu çıkışı bir tam derleme boyunca bekletirdi.</para>
+    /// <para>Koşulların TEK yeri <see cref="WhyRunCannotStart"/>'tır: kapı onun <c>null</c> dönmesidir, yani kapı ile kapalı
+    /// olma nedeni ayrışamaz.</para>
     /// </summary>
-    private bool CanRequestRun() =>
-        !IsRunning && !IsStarting && !IsEngineUnavailable && !ExitPending && HasTopology && !WorkspaceBusy;
+    private bool CanRequestRun() => WhyRunCannotStart() is null;
 
     /// <summary>
     /// [perf B2] <see cref="CanRequestRun"/> kapalıyken NEDEN kapalı olduğunu tek kısa cümleyle söyler (kapı açıksa
@@ -1153,8 +1154,11 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<c>MainWindow.OnGlobalHotkey</c>). Sıra kapının kendi önceliğidir: önce hiç başlayamayacak durumlar (motor yok,
     /// çıkış bekleniyor), sonra uçuştaki koşu, sonra workspace işleri ("ne bitince?" sorusunun cevabı), en sonda
     /// proje listesinin yokluğu.
-    /// <para>Koşullar <see cref="CanRequestRun"/> ile AYNI kümedir; ayrışmaları yok sayılan bir kısayolun sessiz
-    /// kalması demektir — <c>TrayHotkeyBalloonTests</c> iki tarafın aynı durumlarda aynı kararı verdiğini pinler.</para>
+    /// <para>Koşullar ve sıraları BURADA tek yerde durur: <see cref="CanRequestRun"/> bu metodun <c>null</c> dönmesidir, yani
+    /// kapı ile neden ayrışamaz (ayrışsa yok sayılan bir kısayol sessiz kalırdı) — <c>TrayHotkeyBalloonTests</c> ikisinin aynı
+    /// durumlarda aynı kararı verdiğini pinler. Workspace işleri tek tek anılır ki her biri kendi cümlesini taşısın;
+    /// <see cref="WorkspaceBusy"/>'ye sonradan girecek bir iş cümlesi yazılana dek de kapıyı kapalı tutsun diye zincirin
+    /// sonunda <see cref="WorkspaceBusy"/>'nin kendisi de sorulur.</para>
     /// </summary>
     internal string? WhyRunCannotStart() =>
         IsEngineUnavailable ? "the engine is not available"
@@ -1165,6 +1169,7 @@ public sealed partial class RunViewModel : ObservableObject
         : OptimizeBusy      ? "an Optimize is in progress"
         : CheckoutBusy      ? "a branch switch is in progress"
         : PullBusy          ? "a pull is in progress"
+        : WorkspaceBusy     ? "a workspace task is in progress"
         : !HasTopology      ? "no project list yet — Sync first"
         : null;
 
@@ -1334,7 +1339,7 @@ public sealed partial class RunViewModel : ObservableObject
     // [D1 review · A3] Motor erişilemezken gönderim anlamsız.
     // [Sync guard] Uçuşta bir Sync varken (istek penceresi dahil — bkz. SyncBusy) ikinci bir Sync
     // ANLAMSIZDIR: motor aynı analizi baştan koşar, konsolda aynı transkript iki kez akar ve şerit
-    // Syncing → Idle → Syncing yapar. (Run komutları o sırada başlamaz, basışları bekler — CanRequestRun.)
+    // Syncing → Idle → Syncing yapar. (Run komutları o sırada kapalıdır — CanRequestRun.)
     // [clean] Clean uçuştayken Sync de beklemelidir: Sync'in tam analizi tam o sırada silinen bin/obj'i okur.
     // [final review O1] Soru tek yerde: WorkspaceGateOpen.
     private bool CanSync() => WorkspaceGateOpen;

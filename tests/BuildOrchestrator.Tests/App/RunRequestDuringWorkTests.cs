@@ -26,10 +26,9 @@ namespace BuildOrchestrator.Tests.App;
 /// SİLİNDİ — pinledikleri davranış artık yok: iş bitince başlayan Build (her iş türü için), Stop'un isteği geri alması,
 /// motor kaybının isteği düşürmesi, geç gelen koşu sonunun bekleyen Build'e dokunmaması, beklenen iş düşünce ya da
 /// satırın hedefi kaybolunca geri alma, tam çıkışın ve branch değişiminin isteği geri alması, beklerken gelen Sync
-/// hatasının atfı ve isteğin konsol satırı. Aynı ailenin başka dosyalardaki testleri de silindi: arka plandaki pencereye Build
-/// tıklamasıyla dönüş (<c>ActionBarTests</c>), checkout düşünce bekleyen Build'in geri alınması ve checkout'un Sync'inden
+/// hatasının atfı ve isteğin konsol satırı. Aynı ailenin başka dosyalardaki testleri de silindi: checkout düşünce bekleyen Build'in geri alınması ve checkout'un Sync'inden
 /// sonra başlaması (<c>BranchCheckoutTests</c>), Sync sürerken basılan koşunun beklemesi (<c>RunViewModelStateTests</c>) ve
-/// bekleyen Build'in pill'i canlandırmaması (<c>StickyRibbonTests</c>). Bunların yerine kapının işin tüm türlerinde kapalı, iş bitince açık olduğu
+/// bekleyen Build'in pill'i canlandırmaması (<c>StickyRibbonTests</c>). Arka plandaki pencereye Build tıklamasıyla dönüş testi (<c>ActionBarTests</c>) ise silinmedi, yeni kurala göre yeniden yazıldı: tık Build'in zaten kapalı düğmesine iner. Bunların yerine kapının işin tüm türlerinde kapalı, iş bitince açık olduğu
 /// aşağıda pinlenir; <c>CancelPendingRun</c> yalnız açılış koreografisi penceresi için kalır (kendi testleri
 /// <c>GraphFilterRunSuspendTests</c>'te).</para>
 ///
@@ -268,13 +267,15 @@ public class RunRequestDuringWorkTests
     {
         var rig = NewRig();
         await Begin(rig, work);
-        int told = 0;
-        rig.Vm.BuildCommand.CanExecuteChanged += (_, _) => told++;
+        // Yalnız kapı AÇIKKEN gelen bildirim sayılır: iş sürerken gelenler (Sync'in topolojisi kendi bildirimini atar) düğmeyi
+        // açamaz — onlar sayılsaydı bitişte unutulan bir bildirim bu testi kırmazdı.
+        int toldOpen = 0;
+        rig.Vm.BuildCommand.CanExecuteChanged += (_, _) => { if (rig.Vm.BuildCommand.CanExecute(null)) toldOpen++; };
         Assert.False(rig.Vm.BuildCommand.CanExecute(null)); // ön-koşul
 
         End(rig, work);
 
-        Assert.True(told > 0, $"{work}: the gate must be asked again when the work ends");
+        Assert.True(toldOpen > 0, $"{work}: the gate must be announced once it is open again when the work ends");
         Assert.Empty(rig.Runs); // iş bitti ama hiçbir koşu kendiliğinden başlamadı
         Assert.True(rig.Vm.BuildCommand.CanExecute(null));
         Assert.True(CommandPress.Press(rig.Vm.BuildCommand));
@@ -347,5 +348,44 @@ public class RunRequestDuringWorkTests
         Assert.Contains("optimize", told);
         Assert.Contains("pull", told);
         Assert.Contains("branch", told);
+    }
+
+    /// <summary>
+    /// Bir Sync İSTENDİĞİ anda (motor henüz <c>syncStarted</c> demeden) koşu komutları kapanır VE düğmeleri bundan haberdar
+    /// edilir: Build, Rebuild, Build menüsünün Clean'i, Resolve cycles ve üç satır komutu. Ölçülen kusur (kullanıcı bildirimi
+    /// 2026-09-29): pencereye dönüşün istek penceresinde Build'in kapısı kapanıyor ama düğme bundan habersiz parlak kalıyor,
+    /// tık iz bırakmadan yutuluyordu. Ayırt edicilik: her komut için kapı AÇIKKEN başlanır, istek sonrası KAPALIDIR ve
+    /// bildirim kapı kapalıyken gelmiştir — motor henüz cevap vermediği için bu pencerede topolojinin ya da Sync olaylarının
+    /// kendi bildirimi yoktur; <c>NotifySyncGatedCommands</c>'tan bir komutun bildirimi düşerse o komut burada kırılır.
+    /// </summary>
+    [Fact]
+    public void A_sync_request_closes_the_run_commands_and_tells_their_buttons_at_once()
+    {
+        var rig = NewRig();
+        SeedCycle(rig); // Resolve cycles'ın ön-koşulu: kapıyı iş kapatsın, döngüsüzlük değil
+        (string Name, System.Windows.Input.ICommand Command, object? Parameter)[] commands =
+        [
+            ("build", rig.Vm.BuildCommand, null),
+            ("rebuild", rig.Vm.RebuildCommand, null),
+            ("clean all", rig.Vm.CleanAllCommand, null),
+            ("resolve cycles", rig.Vm.BuildCyclesCommand, null),
+            ("row build", rig.Vm.BuildProjectCommand, A),
+            ("row rebuild", rig.Vm.RebuildProjectCommand, A),
+            ("row clean", rig.Vm.CleanProjectCommand, A),
+        ];
+        var toldWhileClosed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (name, command, parameter) in commands)
+        {
+            Assert.True(command.CanExecute(parameter), $"{name}: precondition — open while idle");
+            command.CanExecuteChanged += (_, _) => { if (!command.CanExecute(parameter)) toldWhileClosed.Add(name); };
+        }
+
+        ReturnToTheWindow(rig); // istek — syncStarted henüz yok
+
+        foreach (var (name, command, parameter) in commands)
+        {
+            Assert.False(command.CanExecute(parameter), $"{name}: must be closed as soon as the sync is requested");
+            Assert.Contains(name, toldWhileClosed);
+        }
     }
 }

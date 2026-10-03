@@ -149,8 +149,8 @@ public sealed partial class RunViewModel
     private bool _cleanRequested;
 
     /// <summary>[clean guard] Clean yüzeyi MEŞGUL mü — istek uçuşta YA DA <c>cleanStarted</c> görüldü.
-    /// Workspace meşguliyetinin (<see cref="WorkspaceBusy"/>) Clean yarısı (kopya YASAK): Clean/Sync/Optimize'ı kapatır,
-    /// run komutları içinse "basış bekler" demektir (<see cref="CanRequestRun"/>).
+    /// Workspace meşguliyetinin (<see cref="WorkspaceBusy"/>) Clean yarısı (kopya YASAK): Clean/Sync/Optimize'ı ve run
+    /// komutlarını kapatır (<see cref="CanRequestRun"/>).
     /// <para>Bakım kutusu da bunu okur (koşan düğme amber zemin + spinner olur), bu yüzden BİLDİRİMLİDİR:
     /// değeri değiştiren her yol <see cref="NotifySyncGatedCommands"/>'dan geçer ve bildirim oradan atılır.
     /// <b>İstek penceresi dahildir</b> — kullanıcı tıkladığı anda geri bildirim görmelidir, motorun cevabını
@@ -231,8 +231,8 @@ public sealed partial class RunViewModel
 
     /// <summary>[A5/T69] Sync başladı: faz <c>Syncing</c>'e geçer ve akış "uçuşta" işaretlenir.
     /// <para>[Fix wave 1, C2 review Finding 1] Sync'in kapısına bakan komutlar <c>_syncInFlight</c>'ı okur: Sync, bakım
-    /// işleri ve pull kapanır; run komutlarının kapısı (<see cref="RunViewModel.CanRequestRun"/>) ise liste yokken Sync
-    /// sürdükçe AÇIKTIR (basış bekler) ve Sync listesiz biterse kapanır. Bu geçişte CanExecuteChanged elle
+    /// işleri, pull ve run komutları (<see cref="RunViewModel.CanRequestRun"/>) kapanır — liste yokken de Sync sürdükçe run
+    /// komutları kapalıdır, basış kuyruğa alınmaz. Bu geçişte CanExecuteChanged elle
     /// tetiklenmezse [NotifyCanExecuteChangedFor] zinciri (yalnız IsRunning/IsStarting'e bağlı) gerçek pencerede
     /// düğmelerin kapısını tazelemez.</para>
     /// <para>[D2 review fix, Finding 1] Önizleme kümeleri BURADA temizlenir (<c>ClearPreviewSets</c>): küme ADD-ONLY
@@ -277,7 +277,7 @@ public sealed partial class RunViewModel
     private void NotifySyncGatedCommands()
     {
         SyncCommand.NotifyCanExecuteChanged();
-        BuildCommand.NotifyCanExecuteChanged(); // [DEĞİŞEN KURAL] Build de Sync penceresinde bekler
+        BuildCommand.NotifyCanExecuteChanged(); // run komutları iş sürerken kapalıdır (CanRequestRun) — düğmeleri buradan haberdar olur
         RebuildCommand.NotifyCanExecuteChanged();
         BuildCyclesCommand.NotifyCanExecuteChanged();
         BuildProjectCommand.NotifyCanExecuteChanged();   // [tek proje] satır komutları da aynı kapıdadır
