@@ -294,4 +294,23 @@ internal static class MainWindowHost
         content.UpdateLayout();
         return content;
     }
+
+    /// <summary>
+    /// [perf Faz A · A8/A9] Pencerenin kabuk içeriğini ekran dışı GERÇEK bir pencereye taşır; <see cref="MainWindow"/> kurulu kalır
+    /// (tik, VM kablajı, kapılar) ama içeriği barındırmaz. <see cref="Realize"/>'ın headless ağacında <c>Loaded</c> hiç ateşlenmez;
+    /// görünümünü <c>Loaded</c>'da kuran yüzeyler (ör. <c>ActionBar</c>'ın sayaç chip'leri) ancak burada kurulur — <c>Loaded</c>
+    /// dispatcher'dan gelir, çağıran pompalar. <c>DataContext</c> pencereden miras alınıyordu, açıkça taşınır.
+    /// <c>ContentPresenter</c> görsel çocuğunu ancak bir şablon/ölçüm turunda bırakır; yeni ebeveyn onu ancak bundan sonra alabilir.
+    /// Dönen pencereyi çağıran kapatır.
+    /// </summary>
+    public static Window HostOffscreen(MainWindow window, double width = 1400, double height = 800)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        var content = (FrameworkElement)window.Content;
+        var context = window.DataContext;
+        window.Content = null;
+        if (System.Windows.Media.VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
+        content.DataContext = context;
+        return DsResources.Realize(DsResources.NewHost(), content, width, height);
+    }
 }

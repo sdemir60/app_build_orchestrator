@@ -4,7 +4,6 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
-using System.Windows.Media;
 using System.Windows.Threading;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Controls;
@@ -95,7 +94,7 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
         using var dir = new TempDir();
         string[] names = HiddenSurfaceTests.Names(ProjectCount);
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, HiddenSurfaceTests.ProjectPairs(names));
-        var host = HostOffscreen(window);
+        var host = MainWindowHost.HostOffscreen(window);
         try
         {
             if (hidden)
@@ -162,20 +161,5 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
         {
             host.Close();
         }
-    }
-
-    /// <summary>
-    /// <see cref="MainWindow"/>'un kabuk içeriğini ekran dışı gerçek bir pencereye taşır; pencerenin kendisi kurulu kalır (tik,
-    /// VM kablajı, kapılar) ama içeriği barındırmaz. <c>DataContext</c> pencereden miras alınıyordu, açıkça taşınır.
-    /// <c>ContentPresenter</c> görsel çocuğunu ancak bir şablon/ölçüm turunda bırakır; yeni ebeveyn onu ancak bundan sonra alabilir.
-    /// </summary>
-    private static Window HostOffscreen(MainWindow window)
-    {
-        var content = (FrameworkElement)window.Content;
-        var context = window.DataContext;
-        window.Content = null;
-        if (VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(1400, 800));
-        content.DataContext = context;
-        return DsResources.Realize(DsResources.NewHost(), content, 1400, 800);
     }
 }

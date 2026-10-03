@@ -16,8 +16,9 @@ namespace BuildOrchestrator.App;
 /// finali · grafa statü/faz/seçim itişleri ve filtre yenilemesi (<see cref="_graphStaleWhileHidden"/>) · konsol belgesi
 /// (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar) · proje listesi
 /// (<see cref="_listStaleWhileHidden"/>) · 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik
-/// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, proje satırları ve olay akışı satırları (her biri kendi
-/// bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte yetişir).</para>
+/// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları ve olay
+/// akışı satırları (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte
+/// yetişir).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -122,8 +123,8 @@ public partial class MainWindow
     /// <para><b>Liste:</b> gizliyken topoloji ve görünür-küme değişimleri listeye yazılmadı (<see cref="_listStaleWhileHidden"/>);
     /// dönüşte liste modelden TEK geçişte, <b>reveal'siz</b> kurulur (<c>ApplyProjectGroups(reveal: false)</c>) — gizlilikte olan bir
     /// değişimin kademeli belirişi geriye dönük oynanmaz. İmza <c>ApplyProjectGroups</c>'ta yazıldığı için ardından
-    /// <c>RefreshVisibleRows</c> çağırmak boş bir karşılaştırma olurdu. Sticky şerit, Build menüsü ve satırlar burada DEĞİL:
-    /// kalıtsal sinyalin kendi değişiminde (<c>OnPropertyChanged</c>) her biri kendi bayrağıyla yetişir.</para>
+    /// <c>RefreshVisibleRows</c> çağırmak boş bir karşılaştırma olurdu. Sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri ve
+    /// satırlar burada DEĞİL: kalıtsal sinyalin kendi değişiminde (<c>OnPropertyChanged</c>) her biri kendi bayrağıyla yetişir.</para>
     ///
     /// <para><b>Tik:</b> gizliyken 200 ms'lik tik yalnız motor sessizlik bekçisini koşturdu
     /// (<c>RunViewModel.TickElapsed(false)</c>); canlı süreler ve konsol başlığının satır sayacı yazılmadı

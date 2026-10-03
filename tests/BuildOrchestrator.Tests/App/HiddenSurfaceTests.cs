@@ -1071,6 +1071,60 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [perf Faz A · A9] <b>Gizli pencerede alt çubuğun sayaç chip'leri modele dokunmaz.</b> Kapılı ölçüm testi gizliyken proje
+    /// başına ≈1 layout geçişi okuyordu; WPF'in layout kuyruğu tek kaynağın bu chip'ler olduğunu gösterdi: her <c>projectStarted</c>
+    /// ve <c>projectSucceeded</c> <c>RunViewModel.Counters</c>'ı değiştirir ve çubuk chip değerlerini ve building ikonunu yeniden
+    /// yazıyordu. Kaynak model zaten tam durur: çubuk gizliyken yalnız "chip'ler modelin gerisinde" bayrağını kaldırır, görününce
+    /// TEK geçişte modele yetişir (dönüş kurulumu DP değişiminde eşzamanlıdır, pompa gerekmez).
+    ///
+    /// <para>Chip'ler <c>ActionBar.OnLoaded</c>'da kurulur ve headless ağaçta <c>Loaded</c> hiç ateşlenmez — orada test boşta yeşil
+    /// kalırdı. Kabuk içeriği bu yüzden ekran dışı gerçek bir pencereye taşınır (<see cref="MainWindowHost.HostOffscreen"/>); sinyal
+    /// o pencereye yazılır ve kalıtımla çubuğa iner. Koşu görünürken başlar ve ağaç yerleşir, sonra pencere gizlenir: tepsiye
+    /// indirilen bir koşu.</para>
+    /// </summary>
+    [StaFact]
+    public void The_action_bar_counter_chips_are_not_refreshed_while_hidden_and_catch_up_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(5);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var host = MainWindowHost.HostOffscreen(window);
+        try
+        {
+            var bar = DsResources.Descendants(window.Shell).OfType<BuildOrchestrator.App.Views.ActionBar>().Single();
+            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
+            var building = ((System.Windows.Controls.StackPanel)bar.BuildingChip.Content).Children
+                .OfType<System.Windows.Controls.TextBlock>().Single();
+            var spinner = DsResources.Descendants(bar.BuildingChip).OfType<BuildingSpinner>().First();
+            MainWindowHost.PreviewBuild(vm, names);
+            MainWindowHost.StartBuild(vm, names);
+            window.Shell.UpdateLayout();                                // koşu görünürken başladı, ağaç yerleşti
+            Assert.Equal("0", building.Text);                           // ön-koşul: chip'ler kurulu, derlenen proje yok
+            Assert.Equal(Visibility.Collapsed, spinner.Visibility);
+            HiddenSurface.SetIsHidden(host, true);
+            var chips = LayoutValid(bar.SigmaChip, bar.BuildingChip, bar.CurrentChip, bar.FailedChip, bar.WarnChip);
+            Assert.True(chips.Contains(building), "ön-koşul: building değeri ölçülmüş ve yerleştirilmiş");
+
+            MainWindowHost.StartProject(vm, names[0]);
+
+            Assert.Equal(1, vm.Counters.Building);                      // ön-koşul: model sayacı değişti
+            Assert.Equal("0", building.Text);                           // KIRMIZI kapısız: her sayaç bildirimi değeri yeniden yazar
+            Assert.Equal(Visibility.Collapsed, spinner.Visibility);     //                   ve building ikonunu çevirir
+            Assert.Empty(chips.Where(e => !e.IsMeasureValid || !e.IsArrangeValid).Select(Describe)); // hiçbir chip öğesi geçersizlenmedi
+
+            HiddenSurface.SetIsHidden(host, false);
+
+            Assert.Equal("1", building.Text);                           // dönüşte chip'ler modele eşit
+            Assert.Equal(Visibility.Visible, spinner.Visibility);
+        }
+        finally
+        {
+            host.Close();
+        }
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A8] Düzeni geçerli (ölçülmüş VE yerleştirilmiş) görsel ağaç öğeleri: <paramref name="roots"/>'un kendileri ve
     /// tüm görsel torunları. Bir layout geçişi ancak bir öğenin ölçümü ya da yerleşimi geçersizlendiğinde çıkar; "hiçbir ölçüm
     /// geçersizlenmedi" iddiası bu kümenin SONRADAN da geçerli kalmasıdır. Başta geçersiz olanlar (hiç ölçülmemiş, çökük alt
