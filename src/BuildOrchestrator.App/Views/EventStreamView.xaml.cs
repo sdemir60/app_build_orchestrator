@@ -267,7 +267,8 @@ public partial class EventStreamView : UserControl
         // saat yalnız Unloaded ile durur; ağaçtan Unloaded gelmeyen (hiç yüklenmemiş) satırda Render önceliğinde sonsuza dek
         // tıklardı. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki FinishTyping ile kapatılır) ve DataContext'ten
         // ÖNCE koşar: TypingEnded satırı bırakır ve prompt satırını göstergeye döndürür (ReleaseToBuffer) — yoksa atılan satır
-        // yazı yüzeyi olarak asılı kalır ve dönüşteki UpdateActiveLine atılmış satırın yarım metnini bırakmazdı.
+        // yazı yüzeyi olarak asılı kalır (_writingRow dolu) ve dönüşteki UpdateActiveLine göstergeyi yazmadan döner: prompt satırı
+        // atılmış satırın yarım metnini taşımaya devam ederdi.
         _typingRow?.FinishTyping();
         _typingRow = null;
         // Atılan satırlar kendi öğe VM'lerinin PropertyChanged'ine abone kalmasın (her gösterimde biriken, sınırlı bir sızıntı

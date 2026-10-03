@@ -3,6 +3,7 @@ using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using BuildOrchestrator.App.Console;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.App.Views;
@@ -150,10 +151,9 @@ public class EventStreamTypingTests
     /// üretim yolu budur; pompa yoktur, yani ağaçtan <c>Unloaded</c> gelmeden ve daktilo hiç tik atmadan sonuç okunur.</summary>
     private void RebuildThroughHideAndShow(RunViewModel vm, EventStreamView view)
     {
-        BuildOrchestrator.App.Controls.HiddenSurface.SetIsHidden(view, true);
-        _clock += 10_000;
+        HiddenSurface.SetIsHidden(view, true);
         vm.OnEvent(new ProjectSkippedEvent("r1", B, SkipReasons.UpToDate)); // gizliyken gelen olay
-        BuildOrchestrator.App.Controls.HiddenSurface.SetIsHidden(view, false);
+        HiddenSurface.SetIsHidden(view, false);
     }
 
     /// <summary>
