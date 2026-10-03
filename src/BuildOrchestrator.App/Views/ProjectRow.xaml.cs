@@ -97,6 +97,9 @@ public partial class ProjectRow : UserControl
         PART_Dot.AnimationsEnabledProvider = () => _motion.Enabled;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        // [perf A7] Nefes saati yalnız görünürken döner (§14.5): pencere tepsiye inince Unloaded ATEŞLENMEZ, satır
+        // ağaçta kalır — saat görünürlük değişiminde yeniden değerlendirilir (kapının kendisi ApplyBreathing'dedir).
+        IsVisibleChanged += (_, _) => ApplyBreathing();
         // [L1] Hover ikonlarının kablajı ctor'dan EnsureActions'a taşındı — ikonlar artık ilk hover'da doğuyor.
     }
 
@@ -646,7 +649,10 @@ public partial class ProjectRow : UserControl
         // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
         PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
 
-        bool shouldBreathe = building && AnimationsEnabledProvider();
+        // [perf A7] Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: ApplyBreathing her VM değişiminde koşar
+        // ve tepsideyken de koşar — yalnız IsVisibleChanged'de durdurmak saati bir sonraki olayda geri kurardı
+        // (ConsoleView.StartBlink ile aynı gerekçe; bkz. HiddenDecorativeClockTests).
+        bool shouldBreathe = building && IsVisible && AnimationsEnabledProvider();
         if (shouldBreathe == _isBreathing) return; // zaten dönen nabız baştan almaz (StatusGlyph deseni)
         _isBreathing = shouldBreathe;
         if (!shouldBreathe) { StopBreathing(); return; }

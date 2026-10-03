@@ -4902,6 +4902,10 @@ Five contract rules, each enforced by a test:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
 
+**One deliberate exception to "never layout".** The row's status stripe and the ribbon's progress indicator
+animate `Width`. Both are short, finite transitions on a single element; the rule is aimed at infinite, decorative
+animation, and neither of these is that, so they stay as they are.
+
 **Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
 scaling; the title bar's update pill drops 4 px from above over `Duration.Slow` without scaling, together with its

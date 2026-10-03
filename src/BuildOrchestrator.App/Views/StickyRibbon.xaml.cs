@@ -92,6 +92,10 @@ public partial class StickyRibbon : UserControl
         _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        // [perf A7] Süpürme saati yalnız görünürken döner (§14.5): pencere tepsiye inince Unloaded ATEŞLENMEZ, şerit
+        // ağaçta kalır. Belirsiz mod (_isIndeterminate) korunur; saat görünürlük değişiminde durdurulur / geri kurulur
+        // (kapının kendisi ApplyIndeterminate'dedir).
+        IsVisibleChanged += (_, _) => { if (_isIndeterminate) ApplyIndeterminate(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -423,10 +427,12 @@ public partial class StickyRibbon : UserControl
         PART_ProgressIndicator.Width = indW;
         SetIndicatorColor("Brush.Amber"); // FILL.building (_ds_bundle.js:499)
 
-        if (!AnimationsEnabledProvider())
+        // [perf A7] Görünmezken süpürme KURULMAZ. Kapı burada, çağıranlarda değil: RefreshProgress ve OnTrackSizeChanged
+        // tepsideyken de çağırır — yalnız IsVisibleChanged'de durdurmak saati bir sonraki çağrıda geri kurardı
+        // (bkz. HiddenDecorativeClockTests). Reduced-motion ile AYNI dal: statik çubuk kalır.
+        if (!AnimationsEnabledProvider() || !IsVisible)
         {
-            PART_IndicatorTranslate.BeginAnimation(TranslateTransform.XProperty, null);
-            PART_IndicatorTranslate.X = 0;
+            StopIndeterminate();
             return;
         }
 

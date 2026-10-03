@@ -37,6 +37,15 @@ public class GraphSelectionFocusTests
         return view;
     }
 
+    /// <summary>[perf A7] <see cref="Wired"/>'ın GÖSTERİLEN-host eşi (animasyon AÇIK): seçim kenarı akışı SONSUZ bir saattir
+    /// ve yalnız görünürken kurulur — eski iddia ve gerekçe <see cref="GraphTestView.Shown"/> dokümanında.</summary>
+    private static GraphView WiredShown(out Window window)
+    {
+        var view = GraphTestView.Shown(new Size(600, 400), out window, () => true);
+        view.SetGraph(Nodes(), Edges());
+        return view;
+    }
+
     /// <summary>Seçim yokken graf ÇİZGİSİZDİR (§2.3 "Kaldırılanlar": kalıcı bağımlılık çizgi ağı).</summary>
     [StaFact]
     public void With_no_selection_the_graph_carries_no_edges_at_all()
@@ -99,10 +108,11 @@ public class GraphSelectionFocusTests
 
     /// <summary>Akan kesikler TEK paylaşımlı saate bağlanır (beads ile aynı gerekçe) ve reduced-motion'da
     /// hiç doğmaz (§2.3: "prefers-reduced-motion: beads ve akan çizgiler tamamen kapalı").</summary>
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void The_flowing_dashes_share_one_clock_and_never_start_under_reduced_motion()
     {
-        var moving = Wired(animations: true);
+        var moving = WiredShown(out var window);
         moving.SelectedNode = "OSYS.Data";
         var clock = moving.EdgeFlowClock;
         Assert.NotNull(clock);
@@ -116,6 +126,7 @@ public class GraphSelectionFocusTests
         still.SelectedNode = "OSYS.Data";
         Assert.NotEmpty(still.SelectionEdgePaths); // çizgiler VAR…
         Assert.Null(still.EdgeFlowClock);          // …ama akmıyorlar
+        GC.KeepAlive(window);
     }
 
     /// <summary>WPF'te dash birimi kalınlık çarpanıdır: MUTLAK desen (4/8 px) ve mutlak yol (24 px) 1.2'ye

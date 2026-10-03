@@ -236,10 +236,11 @@ public class SuccessFlourishTests
         GC.KeepAlive(window);
     }
 
+    /// <remarks>[perf A7] Eski iddia: saat HWND'siz (gösterilmeyen) görünümde de kurulurdu. Değişme gerekçesi: sonsuz saat yalnız görünürken kurulur (ARCHITECTURE §14.5) — görünüm gösterilen host'ta kurulur, iddialar aynen; ayrıntı <see cref="GraphTestView.Shown"/>.</remarks>
     [StaFact]
     public void Graph_nodes_release_their_clocks_when_they_succeed_instead_of_celebrating()
     {
-        var view = NewGraphView();
+        var view = GraphTestView.Shown(new Size(600, 400), out var window, () => true);
         view.SetGraph(
             [new("OSYS.Base", "OSYS.Base", 0, GraphStatus.Building), new("OSYS.Data", "OSYS.Data", 1, GraphStatus.Queued)],
             [new("OSYS.Base", "OSYS.Data")]);
@@ -262,6 +263,7 @@ public class SuccessFlourishTests
             // meşrudur ve başarıya özel DEĞİLDİR.)
             Assert.False(visual.Square.HasAnimatedProperties);
         }
+        GC.KeepAlive(window);
     }
 
     // ================================================================ 4) KAYNAK GUARD'LARI (drift kapısı)

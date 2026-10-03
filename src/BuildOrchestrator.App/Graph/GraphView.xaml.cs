@@ -260,6 +260,9 @@ public partial class GraphView : UserControl
         // ANINDA durur/başlar. Abonelik kablajı MotionGate'te.
         _motion.Changed += OnAnimationsEnabledChanged;
         Unloaded += OnUnloadedReleaseClocks;
+        // [perf A7] Sonsuz saatler (beads, seçim kenarı akışı) yalnız görünürken döner (§14.5): pencere tepsiye inince
+        // Unloaded ATEŞLENMEZ, graf ağaçta kalır — saatler görünürlük değişiminde durdurulur / geri kurulur.
+        IsVisibleChanged += (_, _) => ReapplyMotion();
 
         ShowEmptyState(true);
     }
@@ -332,14 +335,30 @@ public partial class GraphView : UserControl
 
     private void OnAnimationsEnabledChanged(object? sender, EventArgs e) => ReapplyMotion();
 
-    /// <summary>Motion sinyali canlı değiştiğinde sürmekte olan sonsuz animasyonları yeni sinyale göre
+    /// <summary>Motion sinyali VEYA görünürlük canlı değiştiğinde sürmekte olan sonsuz animasyonları yeni duruma göre
     /// yeniden kurar.</summary>
     internal void ReapplyMotion()
     {
+        // [perf A7] Motion sinyali VEYA görünürlük değişince sonsuz saatler yeni duruma göre yeniden değerlendirilir:
+        // başlatıcılar (EnsureBeadsClock / EnsureEdgeFlowClock) kapıdır — görünür ve motion açıkken kurar, aksi halde
+        // bırakır. Yörünge ve solma SONLU animasyondur ve gizliyken de kurulur; yalnız SONSUZ saat kapılıdır.
+        bool beadsLive = false;
         foreach (var slot in _slotOrder)
+        {
             ApplyBeads(slot.Visual);
-        if (!AnimationsEnabledProvider()) ReleaseBeadsClock();
+            beadsLive |= slot.Visual.BeadsVisible;
+        }
+        if (beadsLive || _beadsClock is not null) EnsureBeadsClock();
+        EnsureEdgeFlowClock();
     }
+
+    /// <summary>[perf A7] Sonsuz dekoratif saatlerin (beads, seçim kenarı akışı) TEK kapısı: motion açık VE görünür
+    /// (ARCHITECTURE §14.5). Sonlu geçişler (kamera, açılış dalgası, işaretleme) bunu OKUMAZ — onlar gizliyken de
+    /// bitmelidir. Kapı başlatıcıların İÇİNDEDİR, çağıranlarda değil: statü itişi ve seçim yeniden kurulumu tepsideyken
+    /// de koşar; yalnız IsVisibleChanged'de durduran bir kapı saati bir sonraki olayda geri kurardı (bkz.
+    /// HiddenDecorativeClockTests). <c>OnPropertyChanged</c>'daki <c>Visibility</c> bekletmesinden AYRIDIR ve ona
+    /// dokunulmaz; bu kapı headless'ta (bağlı olmayan ağaçta IsVisible hep false) bilerek kapalıdır.</summary>
+    private bool InfiniteClocksAllowed => IsVisible && AnimationsEnabledProvider();
 
     /// <summary>Seçili düğüm (null = seçim yok). Değişince: halka + sönme + kamera güncellenir.</summary>
     public string? SelectedNode
@@ -1167,6 +1186,9 @@ public partial class GraphView : UserControl
     /// <summary>Paylaşımlı saati kurar (yoksa) ve mevcut TÜM yörüngelere bağlar.</summary>
     private void EnsureBeadsClock()
     {
+        // [perf A7] Başlatıcı aynı zamanda KAPIDIR (ConsoleView.StartBlink deseni): görünmezken ya da motion kapalıyken
+        // saat kurulmaz, varsa bırakılır.
+        if (!InfiniteClocksAllowed) { ReleaseBeadsClock(); return; }
         if (_beadsClock is not null) return;
 
         var spin = new DoubleAnimation
@@ -1413,7 +1435,7 @@ public partial class GraphView : UserControl
         if (_dependents.TryGetValue(selected, out var dependents))
             foreach (string id in dependents) AddSelectionEdge(id, centre, dependencyAbove: false);
 
-        if (_selectionEdges.Count > 0 && AnimationsEnabledProvider()) EnsureEdgeFlowClock();
+        EnsureEdgeFlowClock(); // başlatıcı kapıdır: kenar yoksa / motion kapalıysa / görünmezse kurmaz
     }
 
     private void AddSelectionEdge(string otherId, Point selectedCentre, bool dependencyAbove)
@@ -1442,6 +1464,11 @@ public partial class GraphView : UserControl
     /// animasyon kurulmaz). Desen tek olduğu için tek saat hepsini faz-kilitli sürer.</summary>
     private void EnsureEdgeFlowClock()
     {
+        // [perf A7] Başlatıcı aynı zamanda KAPIDIR (bkz. EnsureBeadsClock): kenar yoksa, motion kapalıysa ya da görünmezse
+        // saat kurulmaz, varsa bırakılır; zaten dönen saat yeniden başlatılmaz.
+        if (_selectionEdges.Count == 0 || !InfiniteClocksAllowed) { ReleaseEdgeFlowClock(); return; }
+        if (_edgeFlowClock is not null) return;
+
         var flow = new DoubleAnimation
         {
             From = 0,
