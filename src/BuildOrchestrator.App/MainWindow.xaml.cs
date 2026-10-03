@@ -549,7 +549,9 @@ public partial class MainWindow : Window
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
-    /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
+    /// Stop kendi komutundan geçer: ilk Esc graceful, durdurma sürerken ikinci Esc hard stop gönderir
+    /// ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve üçüncü Esc'i kendi içinde yutar
+    /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir).</summary>
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
@@ -562,8 +564,8 @@ public partial class MainWindow : Window
                 break;
             case EscAction.ClosePopovers: CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
-            case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
-            case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;
+            case EscAction.StopRun:
+            case EscAction.StopNow: _vm.StopCommand.Execute(null); break;
             case EscAction.ExplainUnstoppable: _vm.NoteEscCannotStop(); break;
         }
     }

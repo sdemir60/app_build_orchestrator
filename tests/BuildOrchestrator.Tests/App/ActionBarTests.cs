@@ -887,13 +887,18 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton
-    /// <b>görünür kalır</b> (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build
-    /// sunulmuş olurdu), etiketi "Stopping…" olur ve <c>StopCommand</c> pasifleştiği için buton disable
-    /// olur — ikinci bir tıklama ikinci bir stopRun üretmez. Faz doğrudan set edilir: buraya NASIL
-    /// girildiği (StopCommand → gerçek Supervisor) kardeş süitte pinli, burada sürülen GÖRÜNÜM.</summary>
+    /// <summary>[Stop now] Graceful stop uçuştaki child'ların bitmesini bekler. O pencerede buton <b>görünür kalır</b>
+    /// (split-button geri gelirse kullanıcı hâlâ koşan bir run'a yeniden Build sunulmuş olurdu) ve ÜÇ hâli vardır: "Stop"
+    /// (istenmedi) → "Stop now" (graceful gitti; buton ETKİN, ikinci basış hard stop'tur) → "Terminating…" (hard gitti;
+    /// buton pasif, başka bir basış gerekmez). Faz ve hard bayrağı doğrudan set edilir: buraya NASIL girildiği (StopCommand →
+    /// gerçek Supervisor) <c>StopNowTests</c>'te pinli, burada sürülen GÖRÜNÜM.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: Stopping'de etiket "Stopping…" ve buton disable —
+    /// ikinci bir tıklama ikinci bir stopRun üretmez. GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir;
+    /// beklemek istemeyen kullanıcı bunu söyleyebilmelidir. İkinci basış hard stop olur (uçuştakiler öldürülür, sonraki Build
+    /// onları baştan derler); "duyuldu" geri bildirimini düğmenin kendi hâli taşır.</para></summary>
     [StaFact]
-    public void The_stop_button_reads_stopping_and_goes_disabled_while_the_run_drains()
+    public void The_stop_button_reads_Stop_now_and_is_enabled_while_stopping_until_the_hard_stop_is_sent()
     {
         var vm = NewVm();
         var (bar, window) = Realize(vm);
@@ -901,11 +906,16 @@ public partial class ActionBarTests
         Assert.Equal("Stop", StopLabel(bar));      // ön-koşul
         Assert.True(bar.StopButton.IsEnabled);
 
-        vm.Phase = AppPhase.Stopping;
+        vm.Phase = AppPhase.Stopping;              // graceful gitti
 
         Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
         Assert.Equal(Visibility.Collapsed, bar.Split.Visibility);
-        Assert.Equal("Stopping…", StopLabel(bar));
+        Assert.Equal("Stop now", StopLabel(bar));
+        Assert.True(bar.StopButton.IsEnabled);
+
+        vm.HardStopRequested = true;               // hard gitti
+
+        Assert.Equal("Terminating…", StopLabel(bar));
         Assert.False(bar.StopButton.IsEnabled);
         GC.KeepAlive(window);
     }

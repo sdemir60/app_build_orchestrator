@@ -3,19 +3,22 @@ using BuildOrchestrator.App.Shell;
 namespace BuildOrchestrator.App.ViewModels;
 
 /// <summary>
-/// [kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanının VM yüzü: zincirin girdisi (<see cref="EscRunState"/>)
-/// ve iki geri bildirim — durdurma sürerken tekrar basılan Esc'in şerit sinyali (<see cref="StopRequestAcknowledged"/>)
-/// ve durdurulamayan bir işte konsola düşen tek satır (<see cref="NoteEscCannotStop"/>). Karar SAF
-/// <see cref="KeyboardShortcuts.ResolveEsc"/>'tedir; burada yalnız girdi ve etkiler durur.
+/// [kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanının VM yüzü: zincirin girdisi (<see cref="EscRunState"/>) ve
+/// durdurulamayan bir işte konsola düşen tek satır (<see cref="NoteEscCannotStop"/>). Karar SAF
+/// <see cref="KeyboardShortcuts.ResolveEsc"/>'tedir; burada yalnız girdi ve etkiler durur. Durdurma sürerken tekrar basılan
+/// Esc'in etkisi (hard stop) Stop komutunun kendisindedir (<c>StopAsync</c>'in <c>Stopping</c> dalı) — burada ayrı bir
+/// geri bildirim yoktur.
 /// </summary>
 public partial class RunViewModel
 {
-    /// <summary>Esc zincirinin koşu katmanı için o anki durum. Stop'un kapısı açıksa (koşu uçuşta ya da işaretleniyor,
-    /// henüz durdurulmadı) <see cref="EscRunState.Stoppable"/>; Stop zaten istendiyse <see cref="EscRunState.Stopping"/>;
-    /// kullanıcıya görünen, durdurulamayan bir workspace işi sürüyorsa <see cref="EscRunState.Unstoppable"/>.</summary>
+    /// <summary>Esc zincirinin koşu katmanı için o anki durum. Faz ÖNCE sorulur: Stop zaten istendiyse (Stopping) durum
+    /// <see cref="EscRunState.Stopping"/>'tir — kapı hard stop'a kadar AÇIK olsa da ikinci Esc "yeniden Stop" değil hard
+    /// stop'tur. Stop'un kapısı açıksa (koşu uçuşta ya da işaretleniyor, henüz durdurulmadı)
+    /// <see cref="EscRunState.Stoppable"/>; kullanıcıya görünen, durdurulamayan bir workspace işi sürüyorsa
+    /// <see cref="EscRunState.Unstoppable"/>.</summary>
     internal EscRunState EscRunState =>
-        StopCommand.CanExecute(null) ? EscRunState.Stoppable
-        : Phase == AppPhase.Stopping ? EscRunState.Stopping
+        Phase == AppPhase.Stopping ? EscRunState.Stopping
+        : StopCommand.CanExecute(null) ? EscRunState.Stoppable
         : UnstoppableOperation is not null ? EscRunState.Unstoppable
         : EscRunState.Idle;
 
@@ -30,12 +33,6 @@ public partial class RunViewModel
         : PullBusy ? OperationLabel.Sync
         : SyncBusy && _syncMode.IsVisible() ? OperationLabel.Sync
         : null;
-
-    /// <summary>Durdurma sürerken tekrar Esc: şerit satırı kısa bir vurgu yapar ("duyuldu, zaten duruyor"). Konsola
-    /// satır YAZILMAZ — her basış bir satır bırakırdı.</summary>
-    public event EventHandler? StopRequestAcknowledged;
-
-    internal void AcknowledgeStopRequest() => StopRequestAcknowledged?.Invoke(this, EventArgs.Empty);
 
     /// <summary>Bu meşguliyet döneminde "durdurulamaz" satırı yazıldı mı — workspace boşalınca
     /// (<see cref="ResetEscNoteWhenIdle"/>) sıfırlanır, yani satır aynı işte yalnız ilk basışta düşer.</summary>

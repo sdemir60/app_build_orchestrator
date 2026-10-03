@@ -367,9 +367,11 @@ version's notes as its text. Installed copies pick it up on their next check.
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
    post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
-   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press
-   *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
-   The elapsed clock starts from zero — it is a new run.
+   reads *Stop now* and the ribbon reports how many are still finishing. Pressing *Stop now* — or `Esc` once
+   more — does not wait: the in-flight compiles are terminated at once, the console says how many, and the button
+   reads *Terminating…* and is disabled. Those projects count as failed, so the next Build compiles them again.
+   To carry on, press *Build* again: everything that already succeeded is skipped as up to date, so only the
+   remaining work runs. The elapsed clock starts from zero — it is a new run.
 
 **Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
 glyph and the graph node all carry the same status, so there is nothing to cross-reference. Green does not
@@ -572,9 +574,9 @@ tray icon still restores the window, and the About screen marks that row *unavai
 rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
-carries on from there. Pressing it again while the stop drains sends nothing; the ribbon line dips once to say
-the key was heard. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped; `Esc` during one writes
-a single console line saying so.
+carries on from there. Pressing it again while the stop drains is *Stop now*: the in-flight compiles are terminated
+at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped;
+`Esc` during one writes a single console line saying so.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost

@@ -52,7 +52,8 @@ public sealed partial class RunViewModel
     /// Tam çıkış iste. Sıra: (1) ikinci istek hiçbir şey yapmaz; (2) kendiliğinden Sync kapanır; (3) uçuşta iş yoksa
     /// <see cref="ExitReady"/> hemen — bekleyiş açılmaz, satır yazılmaz, komut gitmez; (4) varsa bekleyiş açılır,
     /// konsola <see cref="ExitPendingLine"/> düşer ve Stop yapılabiliyorsa yapılır (marking fazında isteği geri alır,
-    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — <see cref="CanStop"/>); (5) koşul
+    /// aksi hâlde graceful <c>stopRun</c>; Stop zaten istendiyse ikincisi gitmez — çıkış kullanıcının ikinci basışı
+    /// DEĞİLDİR, hard stop'a tırmanmaz ve drain'i bekler); (5) koşul
     /// hemen yeniden değerlendirilir (motor zaten susmuş olabilir).
     /// </summary>
     public void RequestExit()
@@ -67,7 +68,9 @@ public sealed partial class RunViewModel
         }
         ExitPending = true;
         AppendRunLine(ExitPendingLine);
-        if (StopCommand.CanExecute(null)) StopCommand.Execute(null);
+        // [Stop now] Stop zaten istendiyse (Stopping) komutun ikinci basışı hard stop'tur — çıkış isteği kullanıcının beklemek
+        // istemediği anlamına GELMEZ: ikinci bir stop göndermez, drain'i bekler (hard yalnız kullanıcının kendi ikinci basışıdır).
+        if (Phase != AppPhase.Stopping && StopCommand.CanExecute(null)) StopCommand.Execute(null);
         EvaluateExit();
     }
 

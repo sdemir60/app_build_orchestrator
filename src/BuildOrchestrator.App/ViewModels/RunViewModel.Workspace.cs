@@ -21,11 +21,9 @@ public sealed partial class RunViewModel
     /// <summary>[design-v1 §3.1] Faz makinesi. A5 yalnız <c>Syncing</c> (syncStarted) ve <c>Idle</c>
     /// (syncCompleted) geçişlerini sürer; kalan geçişler (boot/running/stopping/done/stopped) sonraki UI
     /// task'larınındır.
-    /// <para>[Stopping] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUR (<c>Stopping</c>'te pasifleşir) —
-    /// bildirim olmadan buton, Stop'a basıldıktan sonra da tıklanabilir kalır ve her tıklama yeni bir
-    /// <c>stopRun</c> üretirdi.</para></summary>
+    /// <para>[Stop now] <see cref="StopCommand"/>'ın CanExecute'u fazı OKUMAZ — kapıyı <see cref="HardStopRequested"/>
+    /// kapatır; faz yalnız komutun ne göndereceğini seçer (<c>Stopping</c>'te hard, değilse graceful).</para></summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(StopCommand))]
     private AppPhase _phase = AppPhase.Empty;
 
     /// <summary>[Stopping] Koşmayan/dinlenen faz: elde topoloji varsa <c>Idle</c> (önceki Sync'in sonucu hâlâ

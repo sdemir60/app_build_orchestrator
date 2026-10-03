@@ -890,12 +890,16 @@ public class RunViewModelTests
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
-    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
-    /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
-    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration
-    /// açılmamalı ve split-button geri gelmemeli.</summary>
+    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve kilit
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration açılmamalı ve
+    /// split-button geri gelmemeli. <c>StopCommand</c> AÇIK kalır: ikinci basış hard stop'tur ("Stop now").
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: <c>StopCommand</c> Stopping'de pasifleşir
+    /// (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ). GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi
+    /// kadar sürebilir; ikinci basış beklemek istemediğini söyler ve hard stop gönderir — kapı hard gidince kapanır
+    /// (<c>StopNowTests</c>).</para></summary>
     [Fact]
-    public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
+    public async Task Stop_moves_the_phase_to_stopping_and_keeps_the_stop_command_open_for_the_hard_stop_while_the_lock_holds()
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
@@ -908,7 +912,7 @@ public class RunViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.Equal(AppPhase.Stopping, vm.Phase);
-        Assert.False(vm.StopCommand.CanExecute(null));
+        Assert.True(vm.StopCommand.CanExecute(null)); // ikinci basış (hard) için AÇIK
         Assert.True(vm.IsMidRunLocked);
     }
 

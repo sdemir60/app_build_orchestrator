@@ -45,9 +45,13 @@ public sealed class TrayMenuTests
         Assert.False(StopItem(menu).IsEnabled);
     }
 
-    /// <summary>Madde koşu boyunca komutu TAKİP eder: run başlayınca etkinleşir, Stop'a basılmış gibi faz
-    /// <see cref="AppPhase.Stopping"/>'e alınınca (ikinci bir <c>stopRun</c> önlenir diye) yeniden pasifleşir —
-    /// ActionBar'ın Stop düğmesiyle AYNI kural (<c>CanStop = (IsRunning || IsStarting) && Phase != Stopping</c>).</summary>
+    /// <summary>Madde koşu boyunca komutu TAKİP eder: run başlayınca etkinleşir; Stop'a basılmış gibi faz
+    /// <see cref="AppPhase.Stopping"/>'e alınınca ETKİN KALIR (ikinci basış hard stop'tur) ve hard stop gidince pasifleşir —
+    /// ActionBar'ın Stop düğmesiyle AYNI kural (<c>CanStop = (IsRunning || IsStarting) &amp;&amp; !HardStopRequested</c>).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: Stopping'de madde pasifleşir (ikinci bir
+    /// <c>stopRun</c> önlenir). GEREKÇE: ikinci Stop artık hard stop'tur ve tepsiden de verilebilmelidir; madde ile düğme
+    /// komutun AYNI örneğini okur — iki yüzeyin kuralı ayrışmaz.</para></summary>
     [StaFact]
     public void Tray_stop_follows_the_stop_command_through_a_run()
     {
@@ -60,6 +64,10 @@ public sealed class TrayMenuTests
         Assert.True(stop.IsEnabled);
 
         vm.Phase = AppPhase.Stopping;
+
+        Assert.True(stop.IsEnabled);
+
+        vm.HardStopRequested = true;
 
         Assert.False(stop.IsEnabled);
     }

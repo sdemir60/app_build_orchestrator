@@ -52,10 +52,6 @@ public partial class StickyRibbon : UserControl
     private const double IndeterminateFromFactor = -1.10;
     private const double IndeterminateToFactor = 3.20;
 
-    // [kullanıcı kararı 2026-09-29] Tekrar Esc'in "duyuldu" vurgusunun dip opaklığı — metin kaybolmaz, yalnız bir an
-    // geri çekilir (bileşenin kendi ölçüsü; token DEĞİL).
-    private const double AcknowledgePulseOpacity = 0.4;
-
     private readonly SolidColorBrush _indicatorBrush = new(Colors.Transparent); // per-instance (A13.2)
     private RunViewModel? _vm;
     private bool _isIndeterminate;
@@ -162,30 +158,12 @@ public partial class StickyRibbon : UserControl
         vm.PropertyChanged += OnVmPropertyChanged;
         vm.Projects.CollectionChanged -= OnProjectsChanged;
         vm.Projects.CollectionChanged += OnProjectsChanged;
-        vm.StopRequestAcknowledged -= OnStopRequestAcknowledged;
-        vm.StopRequestAcknowledged += OnStopRequestAcknowledged;
     }
 
     private void UnsubscribeVm(RunViewModel vm)
     {
         vm.PropertyChanged -= OnVmPropertyChanged;
         vm.Projects.CollectionChanged -= OnProjectsChanged;
-        vm.StopRequestAcknowledged -= OnStopRequestAcknowledged;
-    }
-
-    /// <summary>[kullanıcı kararı 2026-09-29] Durdurma sürerken tekrar Esc: şerit satırı kısa bir vurgu yapar — "duyuldu,
-    /// zaten duruyor". Opaklık 1 → <see cref="AcknowledgePulseOpacity"/> → 1, her yarı <c>Duration.Base</c> +
-    /// <c>KeySpline.EaseStandard</c>; süre/eğri ve AnimationsEnabled BAŞLATMA ANINDA taze okunur, reduced-motion'da
-    /// saat HİÇ kurulmaz (vurgu yok — satırın kendisi "Stopping"i zaten söyler).</summary>
-    private void OnStopRequestAcknowledged(object? sender, EventArgs e)
-    {
-        var half = MotionTokens.ResolveDuration(this, "Duration.Base", 180);
-        if (!AnimationsEnabledProvider() || half.TimeSpan <= TimeSpan.Zero) return;
-        var spline = MotionTokens.ResolveKeySpline(this, "KeySpline.EaseStandard", new KeySpline(0.4, 0, 0.2, 1));
-        var pulse = new DoubleAnimationUsingKeyFrames();
-        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(AcknowledgePulseOpacity, KeyTime.FromTimeSpan(half.TimeSpan), spline));
-        pulse.KeyFrames.Add(new SplineDoubleKeyFrame(1, KeyTime.FromTimeSpan(half.TimeSpan + half.TimeSpan), spline));
-        PART_PhaseText.BeginAnimation(OpacityProperty, pulse, HandoffBehavior.SnapshotAndReplace);
     }
 
     /// <summary>[perf Faz A · A5] Yüzey gizliyken şerit modele dokunmaz: VM bildirimleri yalnız "şerit modelin gerisinde"

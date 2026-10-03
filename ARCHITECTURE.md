@@ -210,7 +210,7 @@ measured bound is under two seconds with no orphan.
 
 ### 4.5 Stop semantics
 
-**Graceful stop** is what the Stop button and `Esc` request, and what a full exit of the application requests
+**Graceful stop** is what the first press of the Stop button or of `Esc` requests, and what a full exit of the application requests
 for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
 *including their post-build copy events*. A compiler server living *outside* the job would break this
 promise: its emit would run where a stop cannot see it, and a DLL could be caught mid-write. The
@@ -218,8 +218,11 @@ shared-compilation flags stay off today for a different reason — the measured 
 server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
 this guarantee.
 
-**Hard stop** terminates the inner job outright. It exists in the contract and in the engine, but the App
-never sends it.
+**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: a stop is already
+draining and the user asks again — a second press of the Stop button, or a second `Esc`. The first press is the polite
+request; the second says the user would rather not wait, and it is honoured. It goes out once: after it the Stop button is
+disabled and a further press or `Esc` does nothing. A full exit of the application never escalates — closing the window
+while a stop drains waits for the drain like any other exit (§12.3).
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -227,23 +230,33 @@ project is reported `failed("stopped")`, which invalidates its stored state, so 
 again from scratch — up to `parallelism` half-finished compiles discarded, and a row the user's own Stop
 turned red. Draining costs the remaining time of the slowest in-flight project and banks the work; terminating
 returns the machine sooner and bills the difference to the next Build. Since a stopped run is resumed by
-pressing *Build* — there is no separate resume — banking the work is the cheaper trade.
+pressing *Build* — there is no separate resume — banking the work is the cheaper trade, which is why the hard stop
+waits for the user's second press instead of being what the first press does.
 
 `runStopped` and `runCompleted` each fire exactly once; the stopped run's elapsed time is reported in
 `runCompleted` (the next Build counts from zero).
 
 Because a drain can take as long as the slowest in-flight project, the App has to show that the click landed.
 Requesting a stop moves the phase to `stopping` **before the command is even sent** — waiting on a slow engine
-would leave the button reading *Stop* and invite a second click. The button stays visible but reads
-*Stopping…* and goes disabled, the ribbon drops its ETA and reports how many projects are still finishing, and
-a line goes into the run document. The mid-run lock is deliberately *not* released: the engine is still
-working, so the branch chip and the configuration stay locked and the Build split-button does not come back.
+would leave the button reading *Stop*, and the next press is no longer harmless: it is the hard stop. The button
+stays visible and follows the stop: *Stop* until one is requested, then *Stop now* — still enabled, because pressing
+it again is the hard stop — and *Terminating…*, disabled, once the hard stop has been sent. The ribbon drops its ETA
+and reports how many projects are still finishing, and a line goes into the run document for each request: the
+graceful one, then the hard one, which also says the compiles in flight will be terminated. The mid-run lock is
+deliberately *not* released: the engine is still working, so the branch chip and the configuration stay locked and
+the Build split-button does not come back.
 
 Leaving `stopping` cannot deadlock, because `runStopped` settles it unconditionally: phase `stopped`, run
 state released. The coordinator only writes that event once every in-flight result has been reported, so by
 the time the App sees it nothing is running — there is no ordering assumption left to violate. A trailing
 `runCompleted` writes the same phase. A run-ending error and an engine death settle it too, and if the command
 cannot even be sent the phase is put back.
+
+A hard stop leaves the same kind of trace when it ends: `runStopped` arrives marked as hard and the run document says
+how many in-flight compiles were terminated. That count is taken when the hard stop is requested — by the time the
+engine writes `runStopped` it has already reported every in-flight project, so the live counter has dropped to zero.
+The terminated projects are `failed("stopped")`: their stored state is invalidated and the next Build compiles them
+again from scratch, as described above.
 
 Once a drain begins the CPU cap is removed for the rest of that run, and the priority class can no longer be
 lowered past the Balanced floor. The "no torn DLL" guarantee is not negotiated against a resource setting.
@@ -2652,9 +2665,9 @@ for never moves the phase to `stopping`, and a close that left the ribbon unchan
 rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
-A second `Esc` while a stop drains sends nothing; instead the phase line dips once — opacity down to 0.4 and back,
-each half `Duration.Base` on `KeySpline.EaseStandard` — so the key reads as heard. The console gets no line for
-it, because each press would add one. Under reduced motion there is no dip: the line already says `Stopping`.
+A second `Esc` while a stop drains is the hard stop (§4.5): it runs the same command as a second press of the Stop
+button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
+A third `Esc` does nothing.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -4403,7 +4416,9 @@ selection.
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
 title bar's update card) → selection → the running build.
 With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
-dropped by the first Esc and the build stopped by the second. A Sync, a Deep Clean, an Optimize, a checkout or a
+dropped by the first Esc and the build stopped by the second. While that stop drains, one more Esc is the hard
+stop — the same step a second press of the Stop button takes (§4.5) — and after that Esc does nothing. A Sync, a Deep
+Clean, an Optimize, a checkout or a
 pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
 finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
@@ -5780,7 +5795,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
-| …Esc's run layer on the view model (stoppable state, the can't-be-stopped line, the heard signal) | `App/ViewModels/RunViewModel.Esc.cs` |
+| …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
 | Shortcut display text, descriptions and About groups (single source) | `App/Shell/ShortcutCatalog.cs` |
 | Product identity (name, version, copyright, tagline, About overview) and the grouped diagnostics model | `App/Services/AppIdentity.cs`, `DiagnosticsReport.cs` |
 | Layer row placeholders (Settings, by row index) | `App/Shell/LayerPlaceholders.cs` |
