@@ -291,7 +291,11 @@ public partial class MainWindow : Window
         // silinen satırları EventStreamView CollectionChanged ile düşürür.
         _vm.ConsoleCleared += (_, _) =>
         {
-            if (_vm.ActiveProjectId is null) Shell.ConsoleViewControl.ClearRunDocument();
+            if (_vm.ActiveProjectId is not null) return;
+            // [perf Faz A · A2] Gizli pencerede belgeye dokunulmaz: temizlik de dönüşteki tek kurulumun işidir
+            // (ResyncAfterShow belgeyi modelin o anki tam metninden kurar).
+            if (IsSurfaceHidden) _consoleStaleWhileHidden = true;
+            else Shell.ConsoleViewControl.ClearRunDocument();
         };
         // [design v1.8.0 §3.1 · kullanıcı kararı 2026-09-29] Workspace yokken paneller boş durumdadır: başlıklar sayaç ve
         // liste araçları taşımaz, konsolun prompt satırı "Waiting for a workspace" der — ilk açılışta da, kök boş
@@ -601,9 +605,18 @@ public partial class MainWindow : Window
     /// BAYATTIR ve ATILIR — Solution B'nin senkron doküman-set'inin ardından koşan bir bayat flush'ın taze
     /// dokümana sızmasını (dup/cross-doc) kapatır. Aksi halde: anlatı (null) →
     /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
-    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).</summary>
-    private void AppendConsoleBatch(string text, long batchGen)
+    /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli pencerede belgeye yazılmaz:</b> metin VM tamponunda zaten durur; batch atılır,
+    /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
+    /// tam metinden bir kez kurar. Kapı nesil kararından ÖNCEDİR (bayat batch de aynı bayrağı kaldırır; zararsız:
+    /// dönüşteki kurulum zaten tam metindir). <c>internal</c> = test yüzeyi: pompa tick etmeyen fixture'da testler
+    /// batch'i pompanın yaptığı gibi (<see cref="ConsoleReseedGen"/> damgasıyla) doğrudan verir.</para></summary>
+    internal void AppendConsoleBatch(string text, long batchGen)
     {
+        // [perf Faz A · A2] Gizli pencerede belgeye yazılmaz (kapı nesil kararından ÖNCE): metin VM tamponunda zaten
+        // durur, dönüşte ResyncAfterShow belgeyi tam metinden bir kez kurar.
+        if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
         switch (ConsoleBatchRouter.Decide(batchGen, _console.CurrentReseedGen, _vm.ActiveProjectId))
         {
             case ConsoleBatchRouter.Route.Drop: return; // aradan reseed geçti → bayat batch, at

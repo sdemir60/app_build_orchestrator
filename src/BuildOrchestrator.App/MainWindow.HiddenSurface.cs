@@ -10,7 +10,8 @@ namespace BuildOrchestrator.App;
 /// sinyal vardır: kalıtsal attached DP <see cref="HiddenSurface.IsHiddenProperty"/>. Yalnız
 /// <see cref="SetSurfaceHidden"/> yazar (pencerenin kendisine); torunlar miras alır, görünümler
 /// <see cref="HiddenSurface.GetIsHidden"/> okur. Bu sinyali okuyan yüzeyler: açılış koreografisi ve adım
-/// bekletmesi (<see cref="ChoreographyMayPlay"/>) ile bitiş finali.</para>
+/// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali ve konsol belgesi (batch'ler gizliyken yazılmaz;
+/// dönüşte <see cref="ResyncAfterShow"/> kurar).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -64,11 +65,35 @@ public partial class MainWindow
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
     }
 
+    /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler
+    /// bir batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir.</summary>
+    internal long ConsoleReseedGen => _console.CurrentReseedGen;
+
+    /// <summary>Gizliyken konsol belgesine yazılmayan bir batch (ya da temizlik) oldu: ekrandaki belge modelin
+    /// (<c>RunViewModel</c> tamponu) gerisinde. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
+    private bool _consoleStaleWhileHidden;
+
     /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
     /// (<see cref="DispatcherPriority.Loaded"/>). Gizliyken biriken ekran işi burada tek seferde kurulur;
-    /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için bugün dönüşte
-    /// kurulacak bir şey yoktur.</summary>
+    /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için onlardan kurulacak bir
+    /// şey yoktur.
+    ///
+    /// <para><b>Konsol:</b> gizliyken batch'ler ve temizlik belgeye yazılmadı (<see cref="_consoleStaleWhileHidden"/>);
+    /// belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — anlatı için <c>RunViewModel.SeedRunDocument</c>,
+    /// proje logu açıksa <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat
+    /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Model boşsa idle "ready"
+    /// satırı geri gelir.</para></summary>
     internal void ResyncAfterShow()
     {
+        if (_consoleStaleWhileHidden)
+        {
+            _consoleStaleWhileHidden = false;
+            var activeProjectId = _vm.ActiveProjectId;
+            if (activeProjectId is null)
+                _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ReplaceRunDocument(text));
+            else
+                _vm.SeedProjectDocument(activeProjectId, text => Shell.ConsoleViewControl.ReplaceProjectDocument(SplitLogLines(text)));
+            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+        }
     }
 }

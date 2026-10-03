@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
@@ -142,6 +143,86 @@ public class HiddenSurfaceTests
 
         FinishRun(vm, "A", "B");
         Assert.False(window.Shell.GraphHost.IsFilterSuspended); // koşu bitti (final atlandı): filtre döner
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A2] <b>Gizli pencerede konsol belgesine yazılmaz.</b> Tepsideyken derlenen bir koşunun satırları
+    /// kimsenin görmediği AvalonEdit belgesine basılıyor ve her basış görünmeyen bir düzen işini zorluyordu. Metin VM
+    /// tamponunda zaten durur (<c>OnProjectLog</c> run metnine yazar); pencere dönünce belge o TAM metinden BİR kez
+    /// kurulur. Pompa bu fixture'da hiç tick etmez (<see cref="MainWindowHost.NeverTickingBatcher"/>): batch
+    /// üretimdeki hedefe (<c>MainWindow.AppendConsoleBatch</c>) pompanın yaptığı gibi test tarafından verilir.
+    /// </summary>
+    [StaFact]
+    public void Console_batches_are_not_applied_while_hidden_and_the_document_is_rebuilt_once_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        window.SetSurfaceHidden(true);
+        int docChanges = 0; console.EditorControl.Document.Changed += (_, _) => docChanges++;
+        for (int i = 0; i < 200; i++) vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), i + 1, $"line {i}"));
+        // pompa hiç tick etmez (NeverTickingBatcher) — batch'i üretimdeki hedefe test verir (internal test yüzeyi):
+        window.AppendConsoleBatch(string.Join("", Enumerable.Range(0, 200).Select(i => $"line {i}\n")), window.ConsoleReseedGen);
+        Assert.Equal(0, docChanges);                     // KIRMIZI: bugün batch gizli belgeye basılır
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 1, TimeSpan.FromSeconds(2)); // internal sayaç: ReplaceRunDocument çağrıları
+        Assert.EndsWith("line 199", console.EditorControl.Document.Text.TrimEnd());
+        Assert.Equal(1, console.RunDocumentReplacedCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Boşta açılışta overlay'de "ready" durur ve belgeye gelen İLK anlatı satırı onu siler
+    /// (<c>AppendNarrativeBatch</c> → <c>ClearReadyText</c>). Gizliyken batch'ler belgeye hiç girmediği için o yol
+    /// çalışmaz; dönüşte belgeyi tam metinle kuran yol "ready"yi kendisi silmezse tepsiden başlatılan İLK derleme dolu
+    /// bir konsolun altında "ready" gösterirdi.
+    /// </summary>
+    [StaFact]
+    public void The_rebuild_on_show_removes_the_idle_ready_prompt_once_the_document_has_lines()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        console.ShowReady();
+        Assert.Equal(ConsoleEmptyState.Idle, console.ActiveLineText.Text); // ön-koşul: boşta "ready" görünüyor
+        window.SetSurfaceHidden(true);
+        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "first line"));
+        window.AppendConsoleBatch("first line\n", window.ConsoleReseedGen);
+
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 1, TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, console.RunDocumentReplacedCount);                   // ön-koşul: belge dönüşte kuruldu
+        Assert.EndsWith("first line", console.EditorControl.Document.Text.TrimEnd());
+        Assert.Equal("", console.ActiveLineText.Text);                       // içerik varken "ready" görünmez
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Yeni işlem konsolu temizler (<c>ConsoleCleared</c> → <c>ClearRunDocument</c>); gizli pencerede belgeye
+    /// dokunulmaz — temizlik de dönüşteki tek kurulumun işidir ve belge modelin o anki hâlinden kurulur.
+    /// </summary>
+    [StaFact]
+    public void A_console_clear_while_hidden_leaves_the_document_alone_until_the_rebuild_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.AcceptSends(vm);
+        var console = window.Shell.ConsoleViewControl;
+        console.ShowRunDocument("Build succeeded\n"); // önceki işlemin satırı ekranda (OperationConsoleClearTests deseni)
+        Assert.Contains("Build succeeded", console.EditorControl.Document.Text); // ön-koşul
+        window.SetSurfaceHidden(true);
+        int replacedBefore = console.RunDocumentReplacedCount;
+
+        _ = vm.BuildCommand.ExecuteAsync(null); // temizlik ilk await'ten ÖNCE, senkron
+
+        Assert.Contains("Build succeeded", console.EditorControl.Document.Text); // gizliyken belgeye dokunulmadı
+        Assert.Equal(replacedBefore, console.RunDocumentReplacedCount);
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
+        Assert.DoesNotContain("Build succeeded", console.EditorControl.Document.Text); // dönüşte model neyse o: temiz
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);
         GC.KeepAlive(window);
     }
 }

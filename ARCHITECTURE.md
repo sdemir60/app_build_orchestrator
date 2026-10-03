@@ -2352,7 +2352,9 @@ in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
 and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
 while the main window is hidden, so it cannot be a popup inside it. No choreography plays on the hidden window:
-the opening wave is skipped, the run command goes out at once and the end finale never starts (§14.5).
+the opening wave is skipped, the run command goes out at once and the end finale never starts (§14.5). The console
+document is left alone too: the narrative stays complete in the view model, and the document is built from that full
+text once, without the tilt, when the window comes back (§13.5).
 
 Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -3956,6 +3958,16 @@ lines.
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
   by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
+- **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining the
+  view-model's buffer, but the shell drops each batch instead of applying it, and a clear that arrives meanwhile is
+  held back the same way: the narrative is still complete in the view model, and a document nobody can see is not
+  worth the layout work its insertions cause. When the window returns, one rebuild puts the screen right — the
+  document is built from the model's full text **without the tilt**, once the first layout pass has run (the bottom
+  pin reads layout). It is the same tilt-less rebuild a new section uses; the tilt still belongs to a change of
+  mode. The rebuild seeds with the reseed generation like any other, so a batch that was already in flight when the
+  window returns is dropped rather than landing twice, and a run with no lines shows the idle `ready` line again.
+  A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
+  when it is opened. Nothing is replayed line by line: the console jumps to the present state of the run (§12.3).
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
