@@ -2327,8 +2327,9 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><b>Neden tek yerde:</b> aynı arama beş yerde inline kopyalanmıştı ve ikisi (satır tamamlanması
     /// ile satır yaratımı) düz <c>==</c> ile, yani HARF-DUYARLI kalmıştı. Ayrışmanın bedeli sessizdir:
     /// tamamlanma satırı bulamaz (savunmacı no-op) ve satır sonsuza dek "building" görünür; satır yaratımı
-    /// ise aynı projeye ikinci bir satır açar. Yeni bir çağıran da buradan geçmelidir.</para></summary>
-    private ProjectRowViewModel? FindRow(string id) =>
+    /// ise aynı projeye ikinci bir satır açar. Yeni bir çağıran da buradan geçmelidir.
+    /// <c>MainWindow</c> (konsol seçimi, dönüş kurulumu) da buradan geçer — bu yüzden <c>internal</c>.</para></summary>
+    internal ProjectRowViewModel? FindRow(string id) =>
         Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
 
     private ProjectRowViewModel EnsureRow(string id, string name, ProjectRowState initialState)

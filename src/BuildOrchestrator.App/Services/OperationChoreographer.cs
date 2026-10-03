@@ -56,12 +56,6 @@ public sealed class OperationChoreographer
     public Action<MarkStep, IReadOnlySet<string>, IReadOnlyDictionary<string, int>>? PushToGraph { get; set; }
 
     /// <summary>
-    /// Koreografiyi baştan oynatır. Kapsam BOŞSA (ya da kapı kapalıysa: reduced-motion, gizli pencere) hiç oynamaz: satırlar yalnız
-    /// işaretlenir ve koşu görünümüne doğrudan geçilir.
-    /// </summary>
-    /// <param name="allRows">Listenin TÜM satırları — kapsam dışındakiler "örtüşen veda"nın gri yarısıdır.</param>
-    /// <param name="scope">Bu işlemin kapsamı (dalgada amber'a yanan küme).</param>
-    /// <summary>
     /// <see cref="Play"/>'in bekleyen biçimi: dönen Task koreografi BİTTİĞİNDE (ya da kesildiğinde) tamamlanır.
     /// Koşu komutunu bu Task'a bağlayan <c>RunViewModel</c>'dir — dizi böylece HER SEFERİNDE baştan sona oynar.
     /// Koreografi hiç oynamayacaksa (reduced-motion, gizli pencere ya da boş kapsam) tamamlanmış bir Task döner: bekleme yok.
@@ -74,6 +68,12 @@ public sealed class OperationChoreographer
         return _completion.Task;
     }
 
+    /// <summary>
+    /// Koreografiyi baştan oynatır. Kapsam BOŞSA (ya da kapı kapalıysa: reduced-motion, gizli pencere) hiç oynamaz: satırlar yalnız
+    /// işaretlenir ve koşu görünümüne doğrudan geçilir.
+    /// </summary>
+    /// <param name="allRows">Listenin TÜM satırları — kapsam dışındakiler "örtüşen veda"nın gri yarısıdır.</param>
+    /// <param name="scope">Bu işlemin kapsamı (dalgada amber'a yanan küme).</param>
     public void Play(IReadOnlyList<ProjectRowViewModel> allRows, IReadOnlyList<ProjectRowViewModel> scope)
     {
         ArgumentNullException.ThrowIfNull(allRows);

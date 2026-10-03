@@ -67,8 +67,7 @@ public partial class BuildMenu : UserControl
         if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as RunViewModel;
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
-        _lastTotal = null;         // yeni VM: ilk kurulum toplam eşit görünse de satırları kurar
-        _staleWhileHidden = false; // ...ve bayat işaretini de tazeler
+        _staleWhileHidden = false; // yeni VM: RefreshRows (koşulsuz) menüyü modelin O ANKİ hâlinden kurar; bayat işareti de tazelenir
         RefreshRows();
     }
 

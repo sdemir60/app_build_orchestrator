@@ -156,7 +156,7 @@ public sealed class TrayIndicatorBinderTests
         // B UÇUŞTA kalır: Stop anında derlenmekteydi ve sonucu hiç gelmedi. Bu satır önemlidir — koşu
         // serbest bırakılınca (IsRunning=false) o satır "derlenen"den "derlenmemiş"e geçer ve bu geçiş
         // fazdan SONRA yayınlanır.
-        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("B"), "B"));
+        MainWindowHost.StartProject(vm, "B");
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 1, 0, 0, 1, 900, 0));
         view.FinishExit();

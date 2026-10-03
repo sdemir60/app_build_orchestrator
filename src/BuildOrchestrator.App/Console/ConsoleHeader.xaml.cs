@@ -146,12 +146,17 @@ public partial class ConsoleHeader : UserControl
     public void SetHasWorkspace(bool hasWorkspace) =>
         LinesText.Visibility = hasWorkspace ? Visibility.Visible : Visibility.Collapsed;
 
+    /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="SetLineCount"/> çağrı sayacı — gizliyken 200 ms'lik tikin sayacı
+    /// yazmadığını, dönüşte TEK kez yenilediğini pinler.</summary>
+    internal int SetLineCountCalls { get; private set; }
+
     /// <summary>Sağdaki mono "N lines" sayacı — TAM tampon uzunluğu (render dilimi DEĞİL, Ek A #23). [3b M-3]
     /// Proje-log modunda copy-log görünürlüğü de burada (satır sayısıyla birlikte) yeniden değerlendirilir:
     /// seçim anında boş olan bir log akış başlayınca (~200ms sayaç tazelemesi) copy butonu görünür olur — yalnız
     /// <c>ShowProjectLog</c>'ta bir kez değil.</summary>
     public void SetLineCount(int lineCount)
     {
+        SetLineCountCalls++;
         // [M-4] Global Constraint: kullanıcıya gösterilen sayı biçimlemesi InvariantCulture (locale'e göre
         // basamak gruplama/rakam değişmesin).
         //

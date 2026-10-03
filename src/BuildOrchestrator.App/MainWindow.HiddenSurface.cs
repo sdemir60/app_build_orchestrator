@@ -4,16 +4,20 @@ using BuildOrchestrator.App.Controls;
 namespace BuildOrchestrator.App;
 
 /// <summary>
-/// [perf Faz A · A1] Pencerenin <b>"yüzey gizli" sinyali</b>: tek yazar, tek okuma noktası.
+/// [perf Faz A · A1] Pencerenin <b>"yüzey gizli" sinyali</b>: tek tanım (<see cref="HiddenSurface"/>), pencere için tek yazar,
+/// tek okuma kuralı.
 ///
-/// <para>Pencere tepsideyken (ya da hiç gösterilmemişken) kimsenin görmediği ekran işi yapılmaz. Bunun için TEK
-/// sinyal vardır: kalıtsal attached DP <see cref="HiddenSurface.IsHiddenProperty"/>. Yalnız
-/// <see cref="SetSurfaceHidden"/> yazar (pencerenin kendisine); torunlar miras alır, görünümler
-/// <see cref="HiddenSurface.GetIsHidden"/> okur. Bu sinyali okuyan yüzeyler: açılış koreografisi ve adım
-/// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali, grafa statü/faz/seçim itişleri
-/// (<see cref="_graphStaleWhileHidden"/>), olay akışı satırları (<c>EventStreamView</c> sinyali kendisi okur) ve konsol
-/// belgesi (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar), sticky şerit, Build menüsü ve proje
-/// satırları (her biri kendi bayrağıyla dönüşte tek geçişte yetişir), proje listesi (<see cref="_listStaleWhileHidden"/>) ve 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik bekçisi hariç — o gizliyken de koşar).</para>
+/// <para>Pencere tepsideyken (ya da hiç gösterilmemişken) kimsenin görmediği ekran işi yapılmaz. Sinyal kalıtsal attached DP
+/// <see cref="HiddenSurface.IsHiddenProperty"/>'dir. Pencerenin KENDİSİNE yalnız <see cref="SetSurfaceHidden"/> yazar; torunlar
+/// miras alır, görünümler <see cref="HiddenSurface.GetIsHidden"/> okur. Tek aktarım: Build menüsü ActionBar'ın popup'ında durur
+/// ve popup içeriği görsel ağacın parçası DEĞİLDİR (kalıtım ona inmez) — <c>ActionBar</c> değişimi menüye açıkça yazar.</para>
+///
+/// <para><b>Sinyali okuyan yüzeyler:</b> açılış koreografisi ve adım bekletmesi (<see cref="ChoreographyMayPlay"/>) ile bitiş
+/// finali · grafa statü/faz/seçim itişleri ve filtre yenilemesi (<see cref="_graphStaleWhileHidden"/>) · konsol belgesi
+/// (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar) · proje listesi
+/// (<see cref="_listStaleWhileHidden"/>) · 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik
+/// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, proje satırları ve olay akışı satırları (her biri kendi
+/// bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte yetişir).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -67,8 +71,9 @@ public partial class MainWindow
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
     }
 
-    /// <summary>Gizliyken konsol belgesine yazılmayan bir batch (ya da temizlik) oldu: ekrandaki belge modelin
-    /// (<c>RunViewModel</c> tamponu) gerisinde. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
+    /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:
+    /// <c>ShowRunConsole</c>, <c>OnSelectedProjectChangedAsync</c>): ekrandaki belge modelin (<c>RunViewModel</c> tamponu)
+    /// gerisinde. Başlık ve VM tarafı yine güncellenir; belgeyi <see cref="ResyncAfterShow"/> kurar ve bayrağı sıfırlar.</summary>
     private bool _consoleStaleWhileHidden;
 
     /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı, seçim ya da filtre yenilemesi oldu
@@ -100,18 +105,19 @@ public partial class MainWindow
     /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için onlardan kurulacak bir
     /// şey yoktur.
     ///
-    /// <para><b>Konsol:</b> gizliyken batch'ler ve temizlik belgeye yazılmadı (<see cref="_consoleStaleWhileHidden"/>);
-    /// belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — anlatı için <c>RunViewModel.SeedRunDocument</c>,
-    /// proje logu açıksa <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat
-    /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready"
-    /// satırı geri gelir; boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin
-    /// boş-durum metnini gösterir.</para>
+    /// <para><b>Konsol:</b> gizliyken batch'ler, temizlik ve mod geçişi (kart seçimi: <c>ShowRunConsole</c>,
+    /// <c>OnSelectedProjectChangedAsync</c>) belgeye yazılmadı (<see cref="_consoleStaleWhileHidden"/>); başlık ve VM tarafı
+    /// yine güncellendi. Belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — hangi belgenin kurulacağını o anki
+    /// <c>ActiveProjectId</c> söyler: anlatı için <c>RunViewModel.SeedRunDocument</c>, proje logu açıksa
+    /// <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat batch'ler
+    /// <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready" satırı geri gelir;
+    /// boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin boş-durum metnini gösterir.</para>
     ///
     /// <para><b>Graf:</b> gizliyken statü, faz, seçim itişleri ve filtre yenilemesi yalnız bayrağı kaldırdı
     /// (<see cref="_graphStaleWhileHidden"/>); dönüşte dördü TEK seferde, üretimdeki sırayla uygulanır: koşu fazı,
-    /// statüler, seçim, filtre. Topoloji bu yola girmez: gizliyken de kurulmuştu ve dönüşte tekrarlanmaz. Koşu gizliyken
-    /// başladıysa graf soluklaşma geçişini (<c>GraphView.HoldStatusesUntilDimmed</c>) dönüşte oynar — kabul edilen tek,
-    /// kısa geçiş.</para>
+    /// statüler, seçim, filtre. Topoloji bu yola girmez: gizliyken de kurulmuştu ve dönüşte tekrarlanmaz. Dönüşte oynayan iki
+    /// kısa geçiş KABUL edilmiştir: koşu gizliyken başladıysa graf soluklaşma geçişi (<c>GraphView.HoldStatusesUntilDimmed</c>)
+    /// ve etkin bir filtre varsa filtre yeniden uygulanırken düğümlerin süzülme geçişi (<c>GraphView.FilterMatches</c>).</para>
     ///
     /// <para><b>Liste:</b> gizliyken topoloji ve görünür-küme değişimleri listeye yazılmadı (<see cref="_listStaleWhileHidden"/>);
     /// dönüşte liste modelden TEK geçişte, <b>reveal'siz</b> kurulur (<c>ApplyProjectGroups(reveal: false)</c>) — gizlilikte olan bir
@@ -130,9 +136,7 @@ public partial class MainWindow
     /// kuyruklar.</para></summary>
     internal void ResyncAfterShow()
     {
-        // Göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir: gizli bir ağaca kurmak boşa iş olur ve
-        // "ekran bayat" bayraklarını erken siler (sonraki gerçek gösterim bayat bir ekranla açılırdı).
-        if (IsSurfaceHidden) return;
+        if (IsSurfaceHidden) return; // gerekçe: özetteki "Gizliyken koşmaz" paragrafı
         if (_consoleStaleWhileHidden)
         {
             _consoleStaleWhileHidden = false;
@@ -144,8 +148,7 @@ public partial class MainWindow
             }
             else
             {
-                var row = _vm.Projects.FirstOrDefault(
-                    p => string.Equals(p.Id, activeProjectId, StringComparison.OrdinalIgnoreCase));
+                var row = _vm.FindRow(activeProjectId);
                 _vm.SeedProjectDocument(activeProjectId,
                     text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentLines(row, text)));
             }

@@ -477,6 +477,12 @@ public class HiddenSurfaceTests
 
         Assert.Equal(rebuilt, console.EditorControl.Document.Text);  // KIRMIZI ayrı batcher'larda: belgeye ikinci kez iner
         Assert.True(window.ConsoleReseedGen > staleGen, "dönüş kurulumu reseed nesli ilerletmeli (sentinel)");
+
+        // Pozitif kontrol: dönüşten sonra GÜNCEL damgalı bir batch hâlâ eklenir — yukarıdaki iddia batch'lerin hiç
+        // inemeyişinden değil, bayat damgadan geçer.
+        window.AppendConsoleBatch("fresh\n", window.ConsoleReseedGen);
+        DispatcherPump.PumpUntil(() => console.EditorControl.Document.Text.Contains("fresh"), TimeSpan.FromSeconds(2));
+        Assert.Contains("fresh", console.EditorControl.Document.Text);
         GC.KeepAlive(window);
     }
 
@@ -580,7 +586,7 @@ public class HiddenSurfaceTests
 
         MainWindowHost.PreviewBuild(vm, names);
         MainWindowHost.StartBuild(vm, names);
-        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(names[0]), names[0])); // bir proje derleniyor: building chip'i
+        MainWindowHost.StartProject(vm, names[0]); // bir proje derleniyor: building chip'i
         int compiling = vm.Projects.Count(p => p.IsCompiling);
 
         Assert.NotEqual(textBefore, vm.RibbonLine.Text);   // ön-koşul: model şerit metnini değiştirdi
@@ -772,6 +778,42 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [perf Faz A · A5] <b>Gizlilikte gelen hata dönüşte shake oynatmaz.</b> Shake yalnız hata ANINDAKİ geçişin tepkisidir
+    /// (<c>ApplyStateTransition</c>); dönüş kurulumu durumu doğrudan modelden alır ve geçiş görmez. Kontrol: AYNI hata görünür
+    /// pencerede shake'i oynatır — yani test shake'in hiç oynayamamasından değil, gizli sinyalden geçer. Satırların hareketi AÇIK
+    /// kurulur (headless varsayılanı reduced-motion).
+    /// </summary>
+    [StaFact]
+    public void A_failure_that_arrives_while_hidden_plays_no_shake_on_show_but_a_visible_one_does()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        MainWindowHost.Realize(window);
+        var hiddenVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
+        var visibleVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P2"));
+        var hiddenRow = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, hiddenVm));
+        var visibleRow = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, visibleVm));
+        hiddenRow.AnimationsEnabledProvider = () => true;
+        visibleRow.AnimationsEnabledProvider = () => true;
+        MainWindowHost.PreviewBuild(vm, "P1", "P2");
+        MainWindowHost.StartBuild(vm, "P1", "P2");
+        MainWindowHost.StartProject(vm, "P1");                  // iki satır derleniyor: Failed geçişinin kaynağı
+        MainWindowHost.StartProject(vm, "P2");
+        window.SetSurfaceHidden(true);
+
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("P1"), 100, "exit 1"));   // hata gizliyken geldi
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(ProjectRowState.Failed, hiddenVm.State);         // ön-koşul: model hatayı yazdı
+        Assert.False(hiddenRow.ShakeTranslate.HasAnimatedProperties); // dönüşte shake YOK
+
+        vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("P2"), 100, "exit 1"));   // aynı hata görünürken
+        Assert.True(visibleRow.ShakeTranslate.HasAnimatedProperties); // kontrol: shake oynar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A5] <b>Gizli pencerede proje listesi kurulmaz.</b> Topoloji (Sync'in getirdiği yeni proje kümesi) modelde
     /// zaten durur; liste gizliyken yalnız "liste bayat" bayrağını kaldırır, dönüşte <c>ResyncAfterShow</c> onu TEK geçişte ve
     /// <b>reveal'siz</b> kurar — gizlilikte olan bir değişimin kademeli belirişi geriye dönük oynanmaz. Grafın yeniden
@@ -801,7 +843,7 @@ public class HiddenSurfaceTests
         window.ResyncAfterShow();                               // Loaded-öncelikli kurulum pompasız koşsun (A4 testlerinin deseni)
         DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(400)); // beliriş verilseydi burada oynardı
 
-        Assert.True(rebuilds > 0);                              // liste dönüşte kuruldu
+        Assert.Equal(1, rebuilds);                              // liste dönüşte TAM bir kez kuruldu (kuyruktaki ResyncAfterShow bayrağı artık bulmaz)
         Assert.NotEqual(itemsBefore, list.RowFlow.Items.Count); // ...ve yeni topolojiyi gösteriyor
         Assert.Equal(revealBefore, list.RevealGeneration);      // reveal OYNAMADI
         GC.KeepAlive(window);
@@ -915,9 +957,9 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, ProjectPairs(names));
         MainWindowHost.PreviewBuild(vm, names);
         MainWindowHost.StartBuild(vm, names);
-        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("P1"), "P1"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("P1"), 60_000)); // uzun ortalama: ETA her tikte gözle görülür azalır
-        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("P0"), "P0"));
+        MainWindowHost.StartProject(vm, "P1");
+        MainWindowHost.SucceedProject(vm, "P1", 60_000); // uzun ortalama: ETA her tikte gözle görülür azalır
+        MainWindowHost.StartProject(vm, "P0");
         return (window, vm);
     }
 
@@ -936,6 +978,8 @@ public class HiddenSurfaceTests
         var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
         Assert.Equal(ProjectRowState.Started, row.State); // ön-koşul: satırın canlı süresi var
         long startedAtMs = now;                           // koşunun da satırın da başladığı an
+        var header = window.Shell.ConsoleHeaderControl;
+        int lineWritesBefore = header.SetLineCountCalls;
         var writes = new List<string>();
         vm.PropertyChanged += (_, e) =>
         {
@@ -950,6 +994,8 @@ public class HiddenSurfaceTests
         for (int i = 0; i < 15; i++) { now += 200; window.OnElapsedTick(); }
 
         Assert.Empty(writes); // KIRMIZI kapısız: bugün her tik ElapsedMs'i, building satırın DurationMs'ini ve ETA'yı yazar
+        Assert.Equal(lineWritesBefore, header.SetLineCountCalls); // satır sayacı yazılmadı
+        Assert.Equal(0, window.FrontierFollowCount);              // frontier takibi koşmadı
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow(); // Loaded-öncelikli kurulum pompasız koşsun (A4 testlerinin deseni)
 
@@ -957,6 +1003,8 @@ public class HiddenSurfaceTests
         Assert.Equal(now - startedAtMs, row.DurationMs);
         Assert.Equal(1, writes.Count(n => n == nameof(vm.ElapsedMs))); // ...TEK tikle
         Assert.Equal(1, writes.Count(n => n == nameof(row.DurationMs)));
+        Assert.Equal(lineWritesBefore + 1, header.SetLineCountCalls); // satır sayacı dönüşte TEK kez yenilendi
+        Assert.Equal(0, window.FrontierFollowCount);                  // dönüş kurulumu frontier takibi yapmaz
         GC.KeepAlive(window);
     }
 
@@ -969,12 +1017,16 @@ public class HiddenSurfaceTests
         long now = 1_000;
         var (window, vm) = NewRunningWindow(dir, () => now);
         var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
+        var header = window.Shell.ConsoleHeaderControl;
+        int lineWritesBefore = header.SetLineCountCalls;
         now += 200;
 
         window.OnElapsedTick();
 
         Assert.Equal(200, vm.ElapsedMs);
         Assert.Equal(200, row.DurationMs);
+        Assert.Equal(lineWritesBefore + 1, header.SetLineCountCalls); // satır sayacı her tikte yenilenir
+        Assert.Equal(1, window.FrontierFollowCount);                  // koşan derlemede frontier takibi koşar
         GC.KeepAlive(window);
     }
 
@@ -994,8 +1046,11 @@ public class HiddenSurfaceTests
         MainWindowHost.AcceptSends(vm);
         int ready = 0;
         vm.ExitReady += (_, _) => ready++;
+        int shutdowns = 0;
+        window.ShutdownApplication = () => shutdowns++; // gerçek uygulama kapanmasın: sayaçlı sahte (CloseToTrayTests deseni)
         MainWindowHost.StartBuild(vm, "P0", "P1");
         window.SetSurfaceHidden(true); // koşu sürerken tepsiye iner
+        Assert.True(window.IsSurfaceHidden); // ön-koşul: gizli sinyal gerçekten yazıldı
         vm.RequestExit();              // tepsiden Exit: graceful stop, drain beklenir
         Assert.True(vm.ExitPending);   // ön-koşul: çıkış drain'i bekliyor — bekçinin penceresi
         Assert.Equal(0, ready);
@@ -1010,6 +1065,8 @@ public class HiddenSurfaceTests
 
         Assert.NotNull(vm.EngineOverdueMessage); // bekçi gizliyken de uyardı
         Assert.Equal(1, ready);                  // ...ve bekleyen çıkışı serbest bıraktı
+        DispatcherPump.PumpUntil(() => shutdowns > 0, TimeSpan.FromSeconds(2));
+        Assert.Equal(1, shutdowns);              // ...ve uygulama TAM bir kez kapatıldı
         GC.KeepAlive(window);
     }
 }

@@ -622,7 +622,11 @@ public partial class MainWindow : Window
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
     /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
     /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
-    /// run modunda kalınır.</summary>
+    /// run modunda kalınır.
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz:</b> başlık ve VM tarafı yine güncellenir; belge yerine
+    /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
+    /// <c>ActiveProjectId</c>'ye bakarak tilt'siz kurar.</para></summary>
     private async Task OnSelectedProjectChangedAsync()
     {
         try
@@ -635,7 +639,7 @@ public partial class MainWindow : Window
             // projedeyse (guard2, arada select→deselect/başka-id olmadı) gösterilir; aksi halde run modunda kal
             // (§2 donma: deselect-mid-load'da ActiveProjectId zaten null kaldığından burada erken dönülür).
             if (!_vm.ShouldShowLoadedProject(id!)) return;
-            var row = _vm.Projects.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+            var row = _vm.FindRow(id!);
             if (row is null) return;
 
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
@@ -657,7 +661,11 @@ public partial class MainWindow : Window
     }
 
     /// <summary>[3b → D4/Solution B] Run belgesine döner; başlık anlatı moduna ActiveProjectId=null
-    /// PropertyChanged'ı üzerinden döner (bkz. constructor). Doküman SENKRON kurulur (reseed flicker YOK).</summary>
+    /// PropertyChanged'ı üzerinden döner (bkz. constructor). Doküman SENKRON kurulur (reseed flicker YOK).
+    ///
+    /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz</b> (tepsiden başlayan koşu proje seçimini düşürünce buraya
+    /// gelinir): başlık ve VM tarafı güncellenir, belge yerine "ekran bayat" bayrağı kalkar ve <see cref="ResyncAfterShow"/>
+    /// dönüşte belgeyi <c>ActiveProjectId</c>'ye bakarak kurar.</para></summary>
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
@@ -832,10 +840,9 @@ public partial class MainWindow : Window
     /// </summary>
     internal void OnElapsedTick()
     {
-        // [perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar (canlı süreler yazılmaz); satır sayacı, graf itişi ve
-        // frontier takibi yalnız görünürken. Zamanlayıcı DURDURULMAZ: bekçinin uyarısı bekleyen çıkışı serbest bırakır.
-        _vm.TickElapsed(!IsSurfaceHidden);
-        if (IsSurfaceHidden) { _tickStaleWhileHidden = true; return; }
+        bool visible = !IsSurfaceHidden;
+        _vm.TickElapsed(visible);
+        if (!visible) { _tickStaleWhileHidden = true; return; }
         // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
         // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
         Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
@@ -846,11 +853,16 @@ public partial class MainWindow : Window
         if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
     }
 
+    /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="FollowFrontier"/> çağrı sayacı — gizliyken tikin frontier takibine
+    /// girmediğini, görünürken koşan derlemede girdiğini pinler.</summary>
+    internal int FrontierFollowCount { get; private set; }
+
     /// <summary>[E4/T48] Koşarken frontier'i (ilk <c>Started</c> satır) yumuşak takip et — arbiter seçim aktifken
     /// bunu reddeder (seçim &gt; follow, <c>BuildApp.jsx:1388</c>). Bölgesel wheel-suppress + throttle/dead-band
     /// kararı <see cref="Controls.FollowScrollController"/>'a aittir (StickyLayerList.FollowRow onu uygular).</summary>
     private void FollowFrontier()
     {
+        FrontierFollowCount++;
         // [E4 fix] Arbiter'ın CANLI frontier gate'i: seçim YOK **ve** frontier bölgesel wheel-suppress YOK. Böylece
         // arbiter'ın _suppressed[Frontier] bit'i yalnız yazılan değil OKUNAN olur — kullanıcı kaydırması onu kurar
         // (NotifyUserScroll), yalnız boşta penceresi temizler (StickyLayerList.ResumeFrontierIfIdle → Resume).

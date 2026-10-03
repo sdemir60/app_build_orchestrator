@@ -199,9 +199,27 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(names);
         foreach (var name in names)
         {
-            vm.OnEvent(new ProjectStartedEvent("r1", IdOf(name), name));
-            vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), 100));
+            StartProject(vm, name);
+            SucceedProject(vm, name);
         }
+    }
+
+    /// <summary>[perf Faz A temizlik] Motor bir projenin derlemesine başladı (<c>projectStarted</c>): satır "building". Olayın
+    /// kimlik/ad çifti (<see cref="IdOf"/>) tek yerde durur; <see cref="BuildProjects"/> ve tek bir projeyi süren testler bunu çağırır.</summary>
+    public static void StartProject(RunViewModel vm, string name)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        vm.OnEvent(new ProjectStartedEvent("r1", IdOf(name), name));
+    }
+
+    /// <summary>[perf Faz A temizlik] <paramref name="name"/> projesinin derlemesi başarıyla bitti (<c>projectSucceeded</c>).
+    /// <paramref name="durationMs"/> ETA'nın ortalamasını besler; uzun bir ortalama isteyen testler (canlı süre/ETA) kendisi verir.</summary>
+    public static void SucceedProject(RunViewModel vm, string name, int durationMs = 100)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), durationMs));
     }
 
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç

@@ -10,6 +10,10 @@ namespace BuildOrchestrator.App.Controls;
 /// <see cref="GetIsHidden"/> okur ve değişimini <c>OnPropertyChanged(DependencyPropertyChangedEventArgs)</c>
 /// override'ında yakalar (GraphView'ün <c>Visibility</c> bekletmesiyle aynı idiom).
 ///
+/// <para><b>Kalıtımın dışında kalan tek yüzey: popup içeriği.</b> Build menüsü ActionBar'ın popup'ında durur ve popup
+/// görsel ağacın parçası DEĞİLDİR — pencereden miras almaz. <c>ActionBar</c> kalıtsal değişimi kendi
+/// <c>OnPropertyChanged</c>'inde yakalayıp menüye açıkça yazar; sinyali yazan yer pencerenin kendisi ve bu aktarımdır.</para>
+///
 /// <para><b>Neden <c>IsVisible</c> değil:</b> headless süitte pencere hiç <c>Show()</c> edilmez (tepsi ikonu ve
 /// kısayol kaydı kurulamaz) ve bağlı olmayan ağaçta <c>IsVisible</c> her zaman <c>false</c>'tur — ona bağlanan bir
 /// kapı bütün mevcut kabuk testlerini "gizli" sanırdı. Varsayılan <c>false</c> (görünür) olduğundan mevcut
