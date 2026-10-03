@@ -529,7 +529,7 @@ brings it up to date in a single pass. When the run finishes the mark plays out 
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
 you open the window again. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
-result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when a Sync
+result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when something
 keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
 the corner mark is not a notification and still appears.
 
@@ -553,7 +553,7 @@ brings a fresh engine up.
 |---|---|---|
 | `Shift+Space` | anywhere | Show or hide the window |
 | `Ctrl+Shift+Space` | anywhere | Build without bringing the window up |
-| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F5` | window | Build — only starts; while a run is in flight or a Sync, Clean, Optimize, branch switch or pull runs, it does nothing |
 | `F6` | window | Rebuild |
 | `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
@@ -563,8 +563,8 @@ brings a fresh engine up.
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
 forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight or while
-a Sync or a maintenance job runs (with the window hidden in the tray, a balloon says why) — and with the window
-hidden the tray indicator and the result balloon report a build it does start.
+a Sync, Clean, Optimize, branch switch or pull runs (with the window hidden in the tray, a balloon says why) — and
+with the window hidden the tray indicator and the result balloon report a build it does start.
 Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
 (Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
 If one cannot be registered — another application already owns that combination — it is silently disabled; the

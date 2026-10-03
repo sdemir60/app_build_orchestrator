@@ -1891,8 +1891,8 @@ Optimize, pull, the branch chip, the configuration segment) stay locked and the 
 state, exactly as for any other Sync — no pill, no ribbon change and no console clear come with it. The run
 commands close with it as they do for any other Sync (§13.2): *Build*, *Rebuild*, *Resolve cycles*, the row
 actions, `F5` and the global Build hotkey stay closed until it ends and nothing queues behind it; with the window
-hidden in the tray, a Build hotkey pressed meanwhile is answered by a balloon instead (§12.3). Its one
-stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
+hidden in the tray, a Build hotkey pressed meanwhile is answered by a balloon instead (§12.3). A silent Sync's
+one stream line is `synced after commit` for a commit, and `synced · N projects changed` otherwise — written only
 when N, counted as the rows whose output status or decision label moved between the request and the answer, is
 above zero.
 
@@ -2413,16 +2413,10 @@ minimized or behind another window (`WindowToggle`), because hiding a visible wi
 would lose it. Hiding goes straight to the tray, without the first-close balloon, which explains `X`.
 `Ctrl+Shift+Space` builds without bringing the window up; it is the view model's own `BuildCommand`, so it
 honours the same gate as the Build button: it does nothing while a run is in flight or being planned, and nothing
-while a Sync or a maintenance job runs (§13.2) — the press is not held back for later. With the window hidden in the
-tray a refused press is not silent: a balloon says why (`Build not started — a Sync is in progress.`). The reason is
-the gate's own answer (`RunViewModel.WhyRunCannotStart`), so it cannot drift from the refusal, and the sentence is
-built in one place (`AppTrayIcon.BuildIgnoredBody`). A visible window gets no balloon —
-the Sync button and the ribbon already say it — and neither does a minimized one or one behind another window: the
-condition is the hidden-surface signal, not whether anyone is looking. Like every balloon it answers to
-*Show notifications* (above). Each gesture is
-read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value falls back to the default.
-An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote it — is ignored and dropped
-on the next save, so a stored `Alt+B` does not bring the old shortcut back.
+while a Sync, a Clean, an Optimize, a branch switch or a pull runs (§13.2) — the press is not held back for later.
+Each gesture is read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`) and an unreadable value falls back to the
+default. An older file's single `Hotkey` field — its default was `Alt+B`, and every save wrote it — is ignored and
+dropped on the next save, so a stored `Alt+B` does not bring the old shortcut back.
 
 The gestures follow the author's Turkish Q keyboard. AltGr reaches Windows as `Ctrl+Alt`, so a `Ctrl+Alt`
 global would fire when `{`, `[` or `@` is followed by a space before AltGr is released — and Visual Studio already
@@ -2431,6 +2425,17 @@ binds `Ctrl+Alt` with every letter. `Shift+Space` can fire when a space follows 
 which the hotkey takes over. A conflict disables a hotkey silently; the tray icon still restores the window.
 There is no UI for changing them yet, but the loss is not invisible: the About screen marks the affected
 shortcut row *unavailable*.
+
+**A Build press the gate refuses explains itself when the window is hidden.** With the window in the tray there is no
+screen to say why a press did nothing, so a balloon does (`Build not started — a Sync is in progress.`). The reason
+is the gate's own answer: `CanRequestRun` is `RunViewModel.WhyRunCannotStart` returning `null`, so the reason cannot
+drift from the refusal — a workspace job that has no sentence of its own yet still closes the gate (`WorkspaceBusy`)
+and is reported as *a workspace task is in progress*. The sentence is built in one place (`AppTrayIcon.BuildIgnoredBody`)
+and says the reason and no more: some reasons, such as an engine that is gone or a missing project list, never end by
+themselves, so it never tells the user to try again. A visible window gets no balloon — the screen already says it —
+and neither does a minimized one or one behind another window: the condition is the window being hidden, the signal
+behind *A hidden window does no screen work* (above; `HiddenSurface.IsHidden`, written from the window's own
+visibility), not whether anyone is looking. Like every balloon it answers to *Show notifications* (above).
 
 **Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
 no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
@@ -3265,7 +3270,8 @@ the Sync's answer, or a job together with the Sync it hands over to — the gate
 the next press starts a run exactly as a click at that moment would. A press is refused rather than held because a
 held press would act later, on a screen the user was not looking at; the refusal is made visible instead of silent:
 the commands are dim, the Sync button shows its work, and a Build hotkey pressed with the window hidden in the tray
-is answered by a balloon that names what is in the way (§12.3).
+is answered by a balloon that names what is in the way (§12.3). A Build menu that is open when the gate closes
+closes with it, so no row is left to click over a closed command.
 
 A second Sync is no loss to refuse — it re-runs the whole analysis, scan through incremental, and every press
 sends three commands, so the ribbon walks `Syncing → Idle → Syncing` while the console prints the same
@@ -4519,7 +4525,7 @@ active set appears as a removable chip in the panel header.
 |---|---|---|
 | `Shift+Space` | anywhere | Show or hide the window (§12.3) |
 | `Ctrl+Shift+Space` | anywhere | Build without bringing the window up (§12.3) |
-| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F5` | window | Build — only starts; while a run is in flight or a Sync, Clean, Optimize, branch switch or pull runs, it does nothing |
 | `F6` | window | Rebuild |
 | `F7` | window | Clean — the Build menu's `-t:Clean`, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
@@ -6005,6 +6011,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Choreography driver (rows + graph) | `App/Services/OperationChoreographer.cs` |
 | Gate the run command waits on while the opening choreography plays | `App/ViewModels/RunViewModel.cs` (`OperationChoreography`), `MainWindow.xaml.cs` |
 | The run commands' one gate — closed while workspace work is in flight — and the reason it gives; the take-back of a run still in its opening choreography | `App/ViewModels/RunViewModel.cs` (`CanRequestRun`, `WhyRunCannotStart`, `CancelPendingRun`) |
+| An open Build menu closes when the run gate closes | `App/Views/ActionBar.xaml.cs` (`CloseBuildMenuWhenGateCloses`) |
 | Wave repaint of the graph (marking step + node colours in one push) | `MainWindow.xaml.cs` (`ApplyMarkingToGraph`) |
 | Colour transition onto a token brush (the wave's amber) | `App/Controls/MotionTokens.cs` (`TransitionTokenBrush`) |
 | Letter-spaced caps text | `App/Controls/TrackedTextBlock.cs`, `TrackedGlyphs.cs` |

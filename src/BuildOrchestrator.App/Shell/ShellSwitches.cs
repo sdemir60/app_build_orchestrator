@@ -92,8 +92,8 @@ internal static class ShellSwitches
     /// tam çıkış.</summary>
     public static bool CloseToTray(UiState state) => IsOn(state, GeneralSetting.CloseToTray);
 
-    /// <summary>[P3] Üç tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı) TEK kapısı;
-    /// üçü de bunu balonun TAM gösterileceği anda TAZE okur.</summary>
+    /// <summary>[P3] Dört tray-balloon yolunun (ilk-× bilgilendirmesi, koşu bitişi, ikinci-instance uyarısı, yok sayılan
+    /// Build kısayolunun notu) TEK kapısı; dördü de bunu balonun TAM gösterileceği anda TAZE okur.</summary>
     public static bool ShowNotifications(UiState state) => IsOn(state, GeneralSetting.ShowNotifications);
 
     /// <summary>Save: <see cref="All"/>'daki HER anahtarı <paramref name="state"/>'e yazar (değişmemiş olsa bile) ve

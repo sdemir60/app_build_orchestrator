@@ -128,7 +128,8 @@ public sealed class UiState
     public bool? CloseToTray { get; set; }
 
     /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
-    /// mi — koşu bitişi, ilk-× bilgilendirmesi ve ikinci-instance uyarısı; kapalıyken hiçbiri gösterilmez.
+    /// mi — koşu bitişi, ilk-× bilgilendirmesi, ikinci-instance uyarısı ve yok sayılan Build kısayolunun notu;
+    /// kapalıyken hiçbiri gösterilmez.
     /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
     /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı dört balon yolu verir.</summary>
     public bool? ShowNotifications { get; set; }

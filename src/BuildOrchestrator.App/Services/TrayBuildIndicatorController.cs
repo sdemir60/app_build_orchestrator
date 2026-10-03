@@ -24,8 +24,8 @@ public interface ITrayBuildIndicatorView
     void HideNow();
 }
 
-/// <summary>[K-5] Koşu bitişinin BİLDİRİM yüzeyi — gerçek uygulaması OS tray balloon'udur (uygulama-içi
-/// toast design §8'de YASAK).</summary>
+/// <summary>[K-5] Tepsinin BİLDİRİM yüzeyi: koşu bitişi ve [perf B2] tepsideyken yok sayılan Build kısayolunun
+/// nedeni — gerçek uygulaması OS tray balloon'udur (uygulama-içi toast design §8'de YASAK).</summary>
 public interface ITrayRunNotifier
 {
     /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
