@@ -110,6 +110,13 @@ public partial class MainWindow : Window
         // SetMainWindowVisible aboneliğiyle birleşmez — o göstergenin denetleyicisini sürer, bu DP'yi yazar. Hiç
         // gösterilmeyen pencerede olay ateşlenmez: StartInTray sinyali kendisi kurar.
         IsVisibleChanged += (_, _) => SetSurfaceHidden(!IsVisible);
+        // [perf B4 · karar 4] İmleçler pencere AKTİFKEN kırpar (Windows geleneği); başka pencere öne gelince, simge
+        // durumuna küçültülünce ve tepsiye inince ikisi de sabit durur. Sinyalin TEK kaynağı bu pencerenin kendi
+        // Activated/Deactivated olaylarıdır: görünümler aktifliği kendileri OKUMAZ (başsız test pencereleri etkin
+        // olmayabilir). Saat pencere başınadır — konsol ve event stream aynı pencerede aynı saati bulur.
+        var cursorClock = global::BuildOrchestrator.App.Controls.CursorClock.For(this);
+        Activated += (_, _) => cursorClock.SetWindowActive(true);
+        Deactivated += (_, _) => cursorClock.SetWindowActive(false);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);

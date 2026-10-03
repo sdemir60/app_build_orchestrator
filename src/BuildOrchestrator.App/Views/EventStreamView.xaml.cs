@@ -463,30 +463,30 @@ public partial class EventStreamView : UserControl
         if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink();
     }
 
-    // [D3 §3] aktif imleç blink'i — ortak MotionTokens.CreateBlinkAnimation (1.0→0.1, 0.55s, SineEase in/out,
-    // 30fps, sonsuz). Reduced-motion'da hiç oynamaz (imleç steady 1.0).
+    // [D3 §3 · perf B4] aktif imleç blink'i — kırpma (MotionTokens.CreateBlinkAnimation: 1.0→0.1, 0.55s, SineEase
+    // in/out, 30fps, sonsuz) ve renk turu pencerenin ORTAK imleç saatinden gelir (CursorClock): konsol prompt'uyla
+    // aynı fazda döner, pencere aktif değilken sabit durur. Reduced-motion'da hiç bağlanmaz (imleç steady 1.0).
     private void StartCursorBlink()
     {
         // Görünmezken saat KURULMAZ: bu metot her olayda çağrılır (UpdateActiveLine), tepsideyken de — kapı
         // çağıranlarda olsaydı bir sonraki olay saati geri kurardı (bkz. HiddenCursorClockTests).
         if (!IsVisible) { StopCursorBlink(); return; }
-        if (!AnimationsEnabledProvider()) { PART_ActiveCursor.BeginAnimation(OpacityProperty, null); PART_ActiveCursor.Opacity = 1.0; return; }
-        PART_ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
-        // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı renk turunu döner.
-        // Tur zaten dönüyorsa YENİDEN kurulmaz (CursorHop.Start): bu metot her olayda çağrılır.
-        CursorHop.Start(this, PART_ActiveCursor);
+        if (!AnimationsEnabledProvider()) { StopCursorBlink(); return; }
+        // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı saatte, aynı renk turunu döner.
+        // Bağlı imleç YENİDEN kurulmaz (CursorClock.Attach idempotent): bu metot her olayda çağrılır.
+        CursorClock.Attach(PART_ActiveCursor, this, CursorRestKey);
     }
 
     /// <summary>Görünüm ağaçtan çıkarken tazelik saatini bırakır: tek atımlık bir <c>DispatcherTimer</c>'ı
     /// dispatcher köklendirir, durdurulmazsa görünüm gitse de tick atmaya devam eder.</summary>
     private void StopCursorRest() => RestCursorTone();
 
-    private void StopCursorBlink()
-    {
-        PART_ActiveCursor.BeginAnimation(OpacityProperty, null);
-        PART_ActiveCursor.Opacity = 1.0;
-        CursorHop.Stop(PART_ActiveCursor, _cursorToneKey ?? WaitingToneKey); // tur sökülür, ton kanalı devralır
-    }
+    /// <summary>İmlecin dinlenme rengi (ton kanalı): saat imleci bıraktığında (pencere aktif değil, görünmez, hareket
+    /// kapalı) imleç bu anahtarın rengine döner. Saat bunu bırakma ANINDA okur — ton, bağlıyken de değişir.</summary>
+    private string CursorRestKey() => _cursorToneKey ?? WaitingToneKey;
+
+    private void StopCursorBlink() =>
+        CursorClock.Detach(PART_ActiveCursor, CursorRestKey()); // saat sökülür, ton kanalı devralır
 
     // ---------------------------------------------------------------- alta-yapışma
     /// <summary>[E4/T48] Stream'in bottom-anchor'ının merkezi arbiter'a bölgesel suppress bildirimi + pill görünürlüğü
