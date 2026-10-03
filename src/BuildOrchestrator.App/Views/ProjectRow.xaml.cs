@@ -227,18 +227,28 @@ public partial class ProjectRow : UserControl
         _vm = e.NewValue as ProjectRowViewModel;
         _prevState = null;
         _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
-        // [design v1.12.0] Geri dönüştürülen container YENİ verisinin hâline ANINDA oturur: çapraz-sönüm bir
-        // durum değişimini anlatır, veri değişimini değil (gerekçe StartMode.ShouldCrossFade'de).
+        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
+        ApplyAllFresh(); // geri dönüştürülen container YENİ verisinin hâline ANINDA oturur
+    }
+
+    /// <summary>[perf Faz A · A5] Satırı modelin O ANKİ hâlinden, <b>geçişsiz</b> kurar: nokta ve şeridin çapraz-sönüm mandalı
+    /// sıfırlanır, çizim hedefe ANINDA oturur. Çapraz-sönüm bir durum değişimini anlatır; ne yeni bir veriye bağlanmayı
+    /// (geri dönüştürülen container) ne de gizlilikte kaçırılmış bir değişimi anlatır (gerekçe
+    /// <see cref="Controls.StartMode.ShouldCrossFade"/>'de). <see cref="OnDataContextChanged"/> ve gizlilikten dönüş kurulumu
+    /// (<see cref="OnPropertyChanged"/>) AYNI yoldan geçer — aksi halde gizliyken gelen karar dönüşte 380 ms'lik halka→dolu
+    /// geçişi oynatırdı.</summary>
+    private void ApplyAllFresh()
+    {
         _stripeWasStartMode = null;
         PART_Dot.ResetTransitionLatch();
-        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         ApplyAll();
     }
 
     /// <summary>[perf Faz A · A5] Yüzey gizliyken satır kendini yazmaz: görünmeyen bir satırın glyph, şerit, süre ve sağ blok
     /// yazımı boşa iştir. VM bildirimleri yalnız "satır modelin gerisinde" bayrağını kaldırır; yüzey görünür olunca
-    /// <see cref="ApplyAll"/> tek geçişte modelden kurar. DataContext değişimi (yeni model) bu kapıdan GEÇMEZ: o yapısal bir
-    /// yeniden kurulumdur ve bayat satır bırakmaz.</summary>
+    /// <see cref="ApplyAllFresh"/> tek geçişte modelden kurar. Bayrağı tam kurulum (<see cref="ApplyAll"/>) düşürür: DataContext
+    /// değişimi (yeni model) bu kapıdan GEÇMEZ — o yapısal bir yeniden kurulumdur, bayat satır bırakmaz ve bayrağı düşürdüğü için
+    /// dönüş aynı kurulumu ikinci kez koşmaz.</summary>
     private bool _staleWhileHidden;
 
     /// <summary>Kalıtsal <see cref="Controls.HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
@@ -247,8 +257,7 @@ public partial class ProjectRow : UserControl
     {
         base.OnPropertyChanged(e);
         if (e.Property != Controls.HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
-        _staleWhileHidden = false;
-        ApplyAll();
+        ApplyAllFresh();
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -343,6 +352,7 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- toplu tazeleme
     private void ApplyAll()
     {
+        _staleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "satır bayat" işareti de tazelenir
         _applied = true;
         ApplyAllCount++;
         _prevState = _vm?.State;

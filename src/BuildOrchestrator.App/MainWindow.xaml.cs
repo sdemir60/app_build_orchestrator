@@ -761,6 +761,9 @@ public partial class MainWindow : Window
     /// davet kararında onlardan önce gelir (<see cref="ListInvite.Resolve"/>).</para></summary>
     private void BlankPlanSurface()
     {
+        // [perf Faz A · A5] Liste şimdi BOŞ yazıldı: gizlilikten kalma "liste bayat" bayrağı düşer — yoksa bekleyen dönüş
+        // kurulumu modeldeki eski topolojiyi boşaltılmış listeye geri yazardı (geri getiren tek şey bir sonraki TopologyChanged).
+        _listStaleWhileHidden = false;
         Shell.ProjectsList.SetGroups([], reveal: false);
         _orderedRows = [];
         _visibleRowSignature = "";
@@ -773,6 +776,9 @@ public partial class MainWindow : Window
     /// alt kümesi) — gerekçe <see cref="StickyLayerList.SetGroups(IReadOnlyList{StickyLayerList.LayerGroup}, bool)"/>'ta.</summary>
     private void ApplyProjectGroups(bool reveal)
     {
+        // [perf Faz A · A5] Listeyi YAZAN yol "liste bayat" bayrağını düşürür: dönüş ile Loaded-öncelikli ResyncAfterShow
+        // arasında görünür bir kurulum olduysa dönüş kurulumu listeyi ikinci kez (reveal'siz) kurmaz.
+        _listStaleWhileHidden = false;
         var groups = _vm.BuildLayerGroups()
             .Select(g => new StickyLayerList.LayerGroup(g.Name ?? "", g.Rows.Cast<object>().ToList()))
             .ToList();

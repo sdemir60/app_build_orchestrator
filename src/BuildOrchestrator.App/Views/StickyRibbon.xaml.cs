@@ -189,7 +189,8 @@ public partial class StickyRibbon : UserControl
     }
 
     /// <summary>[perf Faz A · A5] Yüzey gizliyken şerit modele dokunmaz: VM bildirimleri yalnız "şerit modelin gerisinde"
-    /// bayrağını kaldırır (metin, ilerleme, chip'ler ve ekran okuyucu duyurusu hiç yazılmaz).</summary>
+    /// bayrağını kaldırır (metin, ilerleme, chip'ler ve ekran okuyucu duyurusu hiç yazılmaz). Bayrağı tam kurulum
+    /// (<see cref="RefreshAll"/>) düşürür: DataContext değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.</summary>
     private bool _staleWhileHidden;
 
     /// <summary>Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
@@ -199,7 +200,6 @@ public partial class StickyRibbon : UserControl
     {
         base.OnPropertyChanged(e);
         if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
-        _staleWhileHidden = false;
         RefreshAll();
         AnnouncePhaseIfChanged();
     }
@@ -262,6 +262,7 @@ public partial class StickyRibbon : UserControl
 
     private void RefreshAll()
     {
+        _staleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "şerit bayat" işareti de tazelenir
         RebuildCount++;
         RefreshText();
         RefreshProgress();

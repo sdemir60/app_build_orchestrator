@@ -81,8 +81,13 @@ public partial class MainWindow
 
     /// <summary>Gizliyken proje listesi kurulmadı ve kurulması GEREKİYORDU: topoloji değişti (<c>RefreshProjectGroups</c>) ya da
     /// görünür satır kümesinin imzası değişti (<c>RefreshVisibleRows</c>; imza aynıysa bayrak kalkmaz — koşu olayları listeyi
-    /// kirletmez). <see cref="ResyncAfterShow"/> listeyi TEK geçişte, reveal'siz kurar ve sıfırlar. Satırların kendi görünümü
-    /// bundan bağımsızdır: her <c>ProjectRow</c> kendi bayrağıyla yetişir.</summary>
+    /// kirletmez). <see cref="ResyncAfterShow"/> listeyi TEK geçişte, reveal'siz kurar. Satırların kendi görünümü bundan
+    /// bağımsızdır: her <c>ProjectRow</c> kendi bayrağıyla yetişir.
+    ///
+    /// <para>Bayrağı listeyi YAZAN her yol düşürür (<c>ApplyProjectGroups</c>, <c>BlankPlanSurface</c>), yalnız
+    /// <see cref="ResyncAfterShow"/> değil: dönüş ile Loaded-öncelikli kurulum arasında görünür bir topoloji kurulumu olduysa dönüş
+    /// kurulumu listeyi ikinci kez (reveal'siz, ilkinin belirişini keserek) kurmaz; Sync ekranı baştan başlatırken de boşaltılmış
+    /// listeye eski topoloji geri yazılmaz.</para></summary>
     private bool _listStaleWhileHidden;
 
     /// <summary>Gizliyken 200 ms'lik tikin gövdesi atlandı (<c>OnElapsedTick</c>): canlı süreler (koşu süresi, building
@@ -147,7 +152,6 @@ public partial class MainWindow
         }
         if (_listStaleWhileHidden)
         {
-            _listStaleWhileHidden = false;
             // Reveal OYNAMAZ (gizlilikte olan bir değişim geriye dönük oynanmaz). Graf gizliyken zaten yeniden kurulmuştu
             // (RebuildGraph kapısızdır) ve burada tekrarlanmaz — tekrarı dönüşte görünür bir reveal oynatırdı.
             ApplyProjectGroups(reveal: false);

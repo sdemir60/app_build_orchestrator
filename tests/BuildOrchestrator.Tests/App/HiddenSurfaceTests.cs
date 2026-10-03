@@ -598,6 +598,30 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [perf Faz A · A5 · M3] Şerit için <see cref="A_row_that_is_rebound_while_hidden_is_not_applied_a_second_time_on_show"/>'un
+    /// eşi: gizliyken bayrağı bir bildirim kaldırır, sonra şeridin DataContext'i yeniden bağlanır (<c>RefreshAll</c> tam kurulum);
+    /// bayrak yerinde kalsaydı dönüş şeridi bir kez daha kurardı.
+    /// </summary>
+    [StaFact]
+    public void A_ribbon_that_is_rebound_while_hidden_is_not_rebuilt_a_second_time_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var ribbon = window.Shell.Ribbon;
+        window.SetSurfaceHidden(true);
+        MainWindowHost.PreviewBuild(vm, names);                  // şerit bayat: bildirim bayrağı kaldırdı
+        ribbon.DataContext = null;                               // yeniden bağlama: DataContextChanged tam kurulumu (RefreshAll) koşar
+        ribbon.DataContext = vm;
+        int passesAfterRebind = ribbon.RebuildCount;
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(passesAfterRebind, ribbon.RebuildCount);    // KIRMIZI: bayrak düşmediği için dönüş RefreshAll'u bir kez daha koşar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A5] <b>Gizli pencerede Build menüsü kurulmaz.</b> Menü içeriğinin tek girdisi toplam proje sayısıdır
     /// (Rebuild'in açıklaması: "All N projects"); <c>Counters</c> ise koşu boyunca her statü değişiminde yayınlanır. Gizliyken
     /// bildirim yalnız bayrağı kaldırır; dönüşte tek karşılaştırma yapılır: toplam değiştiyse TEK kurulum, değişmediyse hiçbiri.
@@ -694,6 +718,60 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [perf Faz A · A5 · M1] <b>Gizlilikte gelen karar dönüşte çapraz-sönümle oynamaz.</b> Satırın son çizilen hâli başlangıç
+    /// modundaysa (halka) ve karar gizliyken geldiyse, dönüş kurulumu noktayı halkadan dolu daireye 380 ms'lik geçişle çizerdi:
+    /// çapraz-sönüm bir durum değişimini anlatır, gizlilikte kaçırılmış bir değişimi değil (<c>StartMode.ShouldCrossFade</c>).
+    /// Satırın hareketi AÇIK kurulur ki sönüm oynayabilsin; dönüşte iki eleman da animasyonsuz ve hedef opaklıkta durmalıdır.
+    /// </summary>
+    [StaFact]
+    public void A_decision_that_arrives_while_hidden_settles_the_status_dot_on_show_without_the_cross_fade()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        MainWindowHost.Realize(window);
+        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
+        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        row.AnimationsEnabledProvider = () => true;                 // sönüm oynayabilsin (headless varsayılanı reduced-motion)
+        Assert.Equal(StartMode.RingOpacity, row.Dot.Ring.Opacity);  // ön-koşul: son çizilen hâl başlangıç modu (halka)
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, names);                         // karar gizliyken geldi: halka → dolu daire
+        window.SetSurfaceHidden(false);                             // satır dönüş kurulumunu kalıtsal sinyalin değişiminde yapar
+
+        Assert.False(row.Dot.Ring.HasAnimatedProperties);           // KIRMIZI: bugün halka 380 ms'de sönümlenir
+        Assert.False(row.Dot.Fill.HasAnimatedProperties);           //          ve dolu daire belirir
+        Assert.Equal(0.0, row.Dot.Ring.Opacity);                    // hedefte, geçişsiz
+        Assert.Equal(1.0, row.Dot.Fill.Opacity);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5 · M3] <b>Tam kurulum "satır bayat" bayrağını düşürür.</b> Gizliyken bir VM bildirimi bayrağı kaldırır; sonra
+    /// satır yeni bir modele bağlanırsa (geri dönüştürülen container) <c>ApplyAll</c> modelin O ANKİ hâlini zaten kurar. Bayrak
+    /// yerinde kalsaydı dönüş aynı kurulumu ikinci kez koşardı.
+    /// </summary>
+    [StaFact]
+    public void A_row_that_is_rebound_while_hidden_is_not_applied_a_second_time_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        MainWindowHost.Realize(window);
+        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
+        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        window.SetSurfaceHidden(true);
+        MainWindowHost.RunBuild(vm, names);                                            // satır bayat: bildirim bayrağı kaldırdı
+        row.DataContext = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P2"));  // container yeniden kullanımı: yeni model, ApplyAll tam kurulum
+        int appliesAfterRebind = row.ApplyAllCount;
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(appliesAfterRebind, row.ApplyAllCount);                           // KIRMIZI: bayrak düşmediği için dönüş ApplyAll'u bir kez daha koşar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A5] <b>Gizli pencerede proje listesi kurulmaz.</b> Topoloji (Sync'in getirdiği yeni proje kümesi) modelde
     /// zaten durur; liste gizliyken yalnız "liste bayat" bayrağını kaldırır, dönüşte <c>ResyncAfterShow</c> onu TEK geçişte ve
     /// <b>reveal'siz</b> kurar — gizlilikte olan bir değişimin kademeli belirişi geriye dönük oynanmaz. Grafın yeniden
@@ -771,6 +849,58 @@ public class HiddenSurfaceTests
         window.ResyncAfterShow();
 
         Assert.Equal(0, rebuilds);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5 · M2] <b>Listeyi yazan yol "liste bayat" bayrağını düşürür.</b> Dönüş (<c>SetSurfaceHidden(false)</c>) ile
+    /// Loaded-öncelikli <c>ResyncAfterShow</c> arasında görünür bir topoloji değişimi listeyi (reveal'li) zaten kurar; bayrak
+    /// yerinde kalsaydı ardından gelen dönüş kurulumu listeyi ikinci kez, bu kez reveal'siz kurar ve ilkinin belirişini keserdi.
+    /// </summary>
+    [StaFact]
+    public void A_visible_topology_change_between_the_show_and_the_resync_leaves_the_resync_nothing_to_rebuild()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        MainWindowHost.Realize(window);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken topoloji: liste bayat
+        window.SetSurfaceHidden(false);                         // Loaded-öncelikli ResyncAfterShow kuyrukta (pompa yok)
+        int rebuilds = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
+
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(5)));   // dönüş ile Loaded arasında GÖRÜNÜR topoloji kurulumu
+        int rebuildsAfterVisible = rebuilds;
+        Assert.True(rebuildsAfterVisible > 0, "ön-koşul: görünür topoloji listeyi kurdu");
+
+        window.ResyncAfterShow();                               // kuyruktaki dönüş kurulumu (A4 testlerinin deseni)
+
+        Assert.Equal(rebuildsAfterVisible, rebuilds);           // KIRMIZI: bayat bayrak listeyi ikinci kez (reveal'siz) kurdururdu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5 · M2] Sync ekranı baştan başlatırken (<c>BlankPlanSurface</c>) liste boşalır ve yeni topoloji gelene dek
+    /// BOŞ kalır. Gizlilikte kalmış bir "liste bayat" bayrağı yerinde dursaydı, bekleyen dönüş kurulumu modeldeki ESKİ topolojiyi
+    /// boşaltılmış listeye geri yazardı.
+    /// </summary>
+    [StaFact]
+    public async Task A_sync_restart_between_the_show_and_the_resync_keeps_the_blanked_list_empty()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        MainWindowHost.Realize(window);
+        MainWindowHost.AcceptSends(vm);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken topoloji: liste bayat
+        window.SetSurfaceHidden(false);                         // Loaded-öncelikli ResyncAfterShow kuyrukta (pompa yok)
+
+        await MainWindowHost.StartSync(vm, SyncMode.Manual);    // Sync düğmesi: ekran baştan başlar, liste boşalır
+        Assert.True(vm.PlanSurfaceRestarting);                  // ön-koşul: ekran gerçekten boşaldı
+        Assert.Empty(list.RowFlow.Items);                       // ön-koşul: liste boş
+        window.ResyncAfterShow();                               // kuyruktaki dönüş kurulumu (A4 testlerinin deseni)
+
+        Assert.Empty(list.RowFlow.Items);                       // KIRMIZI: bayat bayrak eski topolojiyi boş listeye geri yazardı
         GC.KeepAlive(window);
     }
 
