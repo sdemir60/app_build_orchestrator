@@ -49,22 +49,6 @@ public sealed class TrayIndicatorBinderTests
         }
     }
 
-    private sealed class SpyNotifier : ITrayRunNotifier
-    {
-        public int Count;
-        public RibbonLine? LastLine;
-
-        public void ShowRunFinished(RibbonLine line)
-        {
-            Count++;
-            LastLine = line;
-        }
-
-        /// <summary>[perf B2] Bu sınıfın konusu VM ↔ gösterge kablajı; yok sayılan kısayol balonu burada sınanmaz
-        /// (<c>TrayHotkeyBalloonTests</c>) — arayüzün yeni üyesi için boş uygulama.</summary>
-        public void ShowBuildIgnored(string reason) { }
-    }
-
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));
 
     private static RunViewModel NewVm() =>
@@ -73,11 +57,11 @@ public sealed class TrayIndicatorBinderTests
 
     /// <summary>Bağlanmış bir üçlü: VM + controller + iki casus. Pencere TEPSİDE (gizli) kabul edilir —
     /// göstergenin var olma koşulunun yarısı budur.</summary>
-    private static (RunViewModel Vm, SpyView View, SpyNotifier Notifier, TrayBuildIndicatorController Controller) Bound()
+    private static (RunViewModel Vm, SpyView View, RecordingTrayNotifier Notifier, TrayBuildIndicatorController Controller) Bound()
     {
         var vm = NewVm();
         var view = new SpyView();
-        var notifier = new SpyNotifier();
+        var notifier = new RecordingTrayNotifier();
         var controller = new TrayBuildIndicatorController(view, notifier, () => true);
         controller.SetMainWindowVisible(false);
         TrayIndicatorBinder.Attach(vm, controller);
@@ -205,7 +189,7 @@ public sealed class TrayIndicatorBinderTests
     {
         var vm = NewVm();
         var view = new SpyView();
-        var controller = new TrayBuildIndicatorController(view, new SpyNotifier(), () => true);
+        var controller = new TrayBuildIndicatorController(view, new RecordingTrayNotifier(), () => true);
         TrayIndicatorBinder.Attach(vm, controller);   // pencere GÖRÜNÜR (varsayılan)
 
         StartRun(vm);

@@ -52,23 +52,6 @@ public sealed class TrayBuildIndicatorControllerTests
         }
     }
 
-    private sealed class FakeNotifier(Recorder r) : ITrayRunNotifier
-    {
-        public int Count;
-        public RibbonLine? LastLine;
-
-        public void ShowRunFinished(RibbonLine line)
-        {
-            Count++;
-            LastLine = line;
-            r.Log.Add($"Notify:{line.Text}");
-        }
-
-        /// <summary>[perf B2] Bu sınıfın konusu koşu bitişi; yok sayılan kısayol balonu burada sınanmaz
-        /// (<c>TrayHotkeyBalloonTests</c>) — arayüzün yeni üyesi için boş uygulama.</summary>
-        public void ShowBuildIgnored(string reason) { }
-    }
-
     /// <summary>Şeridin BAŞARILI biten bir satırını taklit eder — statü ayrı bir bayrak değil, satırın kendi
     /// glyph'idir (<c>RibbonText.Compose</c> da öyle yazar).</summary>
     private static RibbonLine Succeeded(string text) => new(text, "Brush.StatusSuccessText", "succeeded");
@@ -82,7 +65,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         public readonly Recorder Recorder = new();
         public readonly FakeView View;
-        public readonly FakeNotifier Notifier;
+        public readonly RecordingTrayNotifier Notifier;
         public readonly TrayBuildIndicatorController Controller;
 
         /// <summary>[P3 · Task 4] Controller'ın <c>notificationsOn</c> dikişi — varsayılan AÇIK (üretimin
@@ -93,7 +76,7 @@ public sealed class TrayBuildIndicatorControllerTests
         public Fixture()
         {
             View = new FakeView(Recorder);
-            Notifier = new FakeNotifier(Recorder);
+            Notifier = new RecordingTrayNotifier(Recorder.Log.Add);
             Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn);
         }
 

@@ -635,7 +635,8 @@ Clicking the pill opens a card: the installed and incoming versions with the dow
 highlights from its release notes grouped like What's new — at most five, with a `+N more in What's new after
 restart` line when there are more — and *Later* / *Restart to update*. While a build, a Sync or a maintenance task
 is running, *Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it`
-for a build; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
+for a build, `Esc stops it now` once a stop is already draining (the next Esc is the hard stop), and no key once the
+hard stop has gone; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
 Esc or opening a dialog closes the card; the pill stays.
 
 *Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:

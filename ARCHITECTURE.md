@@ -2448,12 +2448,13 @@ shortcut row *unavailable*.
 screen to say why a press did nothing, so a balloon does (`Build not started — a Sync is in progress.`). The reason
 is the gate's own answer: `CanRequestRun` is `RunViewModel.WhyRunCannotStart` returning `null`, so the reason cannot
 drift from the refusal — a workspace job that has no sentence of its own yet still closes the gate (`WorkspaceBusy`)
-and is reported as *a workspace task is in progress*. The sentence is built in one place (`AppTrayIcon.BuildIgnoredBody`)
-and says the reason and no more: some reasons, such as an engine that is gone or a missing project list, never end by
-themselves, so it never tells the user to try again. A visible window gets no balloon — the screen already says it —
-and neither does a minimized one or one behind another window: the condition is the window being hidden, the signal
-behind *A hidden window does no screen work* (above; `HiddenSurface.IsHidden`, written from the window's own
-visibility), not whether anyone is looking. Like every balloon it answers to *Show notifications* (above).
+and is reported as *a workspace task is in progress*. The reasons' wording lives in one class (`RunGateText`) and the
+sentence is built in one place (`AppTrayIcon.BuildIgnoredBody`); it says the reason and no more: some reasons, such as
+an engine that is gone, a missing workspace or a missing project list, never end by themselves, so it never tells the
+user to try again. A visible window gets no balloon — the screen already says it — and neither does a minimized one or
+one behind another window: the condition is the window being hidden, the signal behind *A hidden window does no screen
+work* (above; `HiddenSurface.IsHidden`, written from the window's own visibility), not whether anyone is looking. Like
+every balloon it answers to *Show notifications* (above).
 
 **Start with Windows** is one value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` — no admin rights,
 no HKLM, no service. It is named `BuildOrchestrator` and holds the quoted path of the running executable followed
@@ -3080,7 +3081,8 @@ reason (§10.3). A checkout that is in flight holds every one of those gates for
 answers, Sync, the maintenance jobs and the pull are closed, because a pull would advance the wrong branch, and no
 run starts, because one started on the new tree would have its console cleared by the checkout's section — *Build*
 and the other run commands stay closed until the checkout and the Sync it hands over to have ended, and a switch
-that is refused or fails reopens them at once.
+that is refused or fails reopens them once it has settled — at once, or, when the stash had already changed the tree,
+after the silent Sync that refreshes the decisions.
 
 **The configuration segment starts a Sync, and it is gated like one.** Switching between `Debug` and `Release`
 runs the Sync button's process with the new configuration — a ConfigurationChange Sync (§10.2): the console and
@@ -3358,11 +3360,14 @@ disabled and the line names what it waits for, in a fixed order — a Clean, Opt
 (`Available once the running task finishes.`), then any Sync, the silent one included
 (`Available once Sync finishes.`), then a build that is running or being marked
 (`Available once the build finishes — Esc stops it.`; the design says F5, but F5 only builds — the key's name is
-read from the shortcut catalog). The reason is one computed property of the view model; its task bucket takes the
-workspace work other than Sync from the same list the workspace-busy question reads, so the two cannot drift. It is
-re-evaluated at the workspace-busy notification — which every change of the Sync, Clean, Optimize, checkout and
-pull flags and of the run lock reaches, and so does the end of a run — and when a run starts, since a Resolve
-reads as a task; it is announced only when it changes, so the button comes back on its own when the work ends.
+read from the shortcut catalog). That line follows the Stop button's stage (§4.5): once a stop has been requested the
+next Esc is the hard stop, so it says `Available once the build stops — Esc stops it now.`, and once the hard stop has
+gone Esc does nothing, so it drops the key (`Available once the build stops.`). The reason is one computed property
+of the view model; its task bucket takes the workspace work other than Sync from the same list the workspace-busy
+question reads, so the two cannot drift. It is re-evaluated at the workspace-busy notification — which every change
+of the Sync, Clean, Optimize, checkout and pull flags and of the run lock reaches, and so does the end of a run — when
+a run starts, since a Resolve reads as a task, and when the stop stage changes; it is announced only when it changes,
+so the button comes back on its own when the work ends.
 *Later*, Esc inside the card, a second press on the pill, an outside click, Esc from the window's popover layer
 (§13.7) and the opening of any dialog close the card; *Later* never hides the pill. The dialog rule exists
 because a popup is a window of its own: it cannot sit under a modal, so it goes away when one opens.
@@ -5818,7 +5823,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Safe full exit: the wait for work in flight, the graceful stop, the release on engine silence or death, `ExitReady` | `App/ViewModels/RunViewModel.Exit.cs`; no Sync while it waits: `RunViewModel.cs` (`SyncCoreAsync`) |
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
-| The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
+| The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
 | Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |

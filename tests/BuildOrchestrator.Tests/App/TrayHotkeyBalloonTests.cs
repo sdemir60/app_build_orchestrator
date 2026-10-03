@@ -30,23 +30,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class TrayHotkeyBalloonTests
 {
-    /// <summary>Tepsi bildirim yüzeyinin sahtesi: yok sayılan kısayolun nedenlerini sırayla toplar. Koşu sonucu bu
-    /// sınıfın konusu değil (<c>TrayBuildIndicatorControllerTests</c>) — boş uygulama.</summary>
-    private sealed class RecordingTray : ITrayRunNotifier
-    {
-        public readonly List<string> IgnoredReasons = [];
-
-        public void ShowRunFinished(RibbonLine line) { }
-
-        public void ShowBuildIgnored(string reason) => IgnoredReasons.Add(reason);
-    }
-
     /// <summary>Topolojisi olan, sahte tepsili kabuk. Pencere görünür başlar (üretimin açılışı); tepsi senaryoları
     /// <c>SetSurfaceHidden(true)</c>'yu kendisi çağırır ki her testte durum okunur olsun.</summary>
-    private static (MainWindow window, RunViewModel vm, RecordingTray tray) NewShell(TempDir dir)
+    private static (MainWindow window, RunViewModel vm, RecordingTrayNotifier tray) NewShell(TempDir dir)
     {
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(2));
-        var tray = new RecordingTray();
+        var tray = new RecordingTrayNotifier();
         window.TrayNotifierForTest = tray;
         return (window, vm, tray);
     }
@@ -79,7 +68,7 @@ public class TrayHotkeyBalloonTests
 
         window.OnGlobalHotkey(GlobalHotkeyAction.Build);
 
-        Assert.Equal("a Sync is in progress", Assert.Single(tray.IgnoredReasons));
+        Assert.Equal(RunGateText.SyncInProgress, Assert.Single(tray.IgnoredReasons));
         Assert.False(vm.IsStarting); // kısayol yok sayıldı: komut çalışmadı, kuyruğa da girmedi
         GC.KeepAlive(window);
     }
@@ -114,7 +103,7 @@ public class TrayHotkeyBalloonTests
 
         store.Save(new UiState { ShowNotifications = true }); // anahtar uygulama çalışırken açıldı: taze okunur
         window.OnGlobalHotkey(GlobalHotkeyAction.Build);
-        Assert.Equal("a Sync is in progress", Assert.Single(tray.IgnoredReasons));
+        Assert.Equal(RunGateText.SyncInProgress, Assert.Single(tray.IgnoredReasons));
         GC.KeepAlive(window);
     }
 
@@ -150,7 +139,7 @@ public class TrayHotkeyBalloonTests
 
         window.OnGlobalHotkey(GlobalHotkeyAction.Build); // kapı kapandı: ikinci basış yok sayılır
 
-        Assert.Equal("a run is already in flight", Assert.Single(tray.IgnoredReasons));
+        Assert.Equal(RunGateText.RunInFlight, Assert.Single(tray.IgnoredReasons));
         GC.KeepAlive(window);
     }
 
@@ -192,7 +181,7 @@ public class TrayHotkeyBalloonTests
         var (window, vm, _) = NewShell(dir);
         SyncIsRunning(vm);
 
-        AssertReasonMatchesGate(vm, "a Sync is in progress");
+        AssertReasonMatchesGate(vm, RunGateText.SyncInProgress);
         GC.KeepAlive(window);
     }
 
@@ -206,17 +195,38 @@ public class TrayHotkeyBalloonTests
         vm.BuildCommand.Execute(null); // kilit tıkta başlar, runStarted'ı beklemez
         Assert.True(vm.IsStarting);
 
-        AssertReasonMatchesGate(vm, "a run is already in flight");
+        AssertReasonMatchesGate(vm, RunGateText.RunInFlight);
         GC.KeepAlive(window);
     }
 
+    /// <summary>Workspace var ama proje listesi yok (henüz Sync olmadı): neden Sync'e yönlendirir ve kapı kapalıdır.
+    /// <para><b>[DEĞİŞEN KURAL — son toparlama · F-M2]</b> ESKİ İDDİA (vaka workspace'siz bir VM ile kurulurdu): kök
+    /// boşken de neden <c>no project list yet — Sync first</c>. GEREKÇE: workspace yokken Sync de kapalıdır (ActionBar'da
+    /// Sync düğmesi workspace'e bağlı) — yönlendirme çıkmaz sokaktı. Vaka artık gerçekten bir workspace kurar;
+    /// workspace'siz durum kendi vakasındadır (aşağıda).</para></summary>
     [StaFact]
-    public void Without_a_project_list_the_reason_points_to_Sync_and_the_gate_is_closed()
+    public void With_a_workspace_but_no_project_list_the_reason_points_to_Sync_and_the_gate_is_closed()
     {
         using var dir = new TempDir();
         var (window, vm) = MainWindowHost.New(dir);
+        MainWindowHost.AcceptSends(vm);
+        vm.RootPath = @"D:\repo"; // workspace var, Sync henüz yok → topoloji yok
+        Assert.True(vm.HasWorkspace); // ön-koşul
 
-        AssertReasonMatchesGate(vm, "no project list yet — Sync first");
+        AssertReasonMatchesGate(vm, RunGateText.NoProjectList);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[F-M2] Workspace yokken neden "Sync first" DEMEZ: Sync de kapalıdır, doğru yol Settings'ten bir kök seçmektir
+    /// (konsolun aynı durum için metni "Waiting for a workspace"). Kapı yine kapalıdır ve neden onunla aynı kararı verir.</summary>
+    [StaFact]
+    public void Without_a_workspace_the_reason_is_the_missing_workspace_not_a_Sync()
+    {
+        using var dir = new TempDir();
+        var (window, vm) = MainWindowHost.New(dir);
+        Assert.False(vm.HasWorkspace); // ön-koşul: kök boş
+
+        AssertReasonMatchesGate(vm, RunGateText.NoWorkspace);
         GC.KeepAlive(window);
     }
 }

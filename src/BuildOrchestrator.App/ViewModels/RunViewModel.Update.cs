@@ -14,8 +14,8 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para><b>Kilit (U3):</b> bir iş sürerken Restart kapalıdır ve kartın açıklama satırı nedeni söyler
 /// (<see cref="UpdateRestartBlockedReason"/>). Karar meşguliyet bildiriminin tek noktasında
-/// (<see cref="OnWorkspaceBusyChanged"/>) ve Resolve'un kendi bildiriminde yeniden sorulur, yalnız DEĞİŞTİĞİNDE
-/// duyurulur.</para>
+/// (<see cref="OnWorkspaceBusyChanged"/>), Resolve'un kendi bildiriminde ve Stop'un aşaması değiştiğinde
+/// (<see cref="RefreshStopStage"/>) yeniden sorulur, yalnız DEĞİŞTİĞİNDE duyurulur.</para>
 /// </summary>
 public sealed partial class RunViewModel
 {
@@ -27,14 +27,16 @@ public sealed partial class RunViewModel
     /// <summary>
     /// <c>Restart to update</c> neden kapalı — <c>null</c> = açık. Sıra (plan U3): (1) Clean / Optimize / Resolve /
     /// checkout / pull → görev, (2) herhangi bir Sync (sessizi dahil: kurulum onu da yarıda keserdi) → Sync, (3) koşu
-    /// kilidi (<see cref="IsMidRunLocked"/> — koşu ya da işaretleme koreografisi) → koşu. Resolve bir
+    /// kilidi (<see cref="IsMidRunLocked"/> — koşu ya da işaretleme koreografisi) → koşu; koşu cümlesi Stop'un aşamasını
+    /// izler (<see cref="StopStage"/>: Stopping'de bir sonraki Esc hard stop'tur ve kart bunu söyler). Resolve bir
     /// koşudur ama görev gibi okunur, bu yüzden koşu kilidinden ÖNCE sorulur. Metin ve sıra <see cref="UpdateText"/>'tedir.
     /// Görev kovasının workspace üyeliği <see cref="NonSyncWorkspaceBusy"/>'dir (<see cref="WorkspaceBusy"/> ile tek liste).
     /// </summary>
     public string? UpdateRestartBlockedReason => UpdateText.RestartBlockedReason(
         taskRunning: NonSyncWorkspaceBusy || IsResolvingCycles,
         syncRunning: SyncBusy,
-        buildRunning: IsMidRunLocked);
+        buildRunning: IsMidRunLocked,
+        stopStage: StopStage);
 
     /// <summary>Son duyurulan neden — bildirim yalnız değişimde gider (meşguliyet noktası sık tetiklenir).</summary>
     private string? _announcedRestartBlockedReason;
@@ -58,8 +60,8 @@ public sealed partial class RunViewModel
     private bool CanRestartToUpdate() => AvailableUpdate is not null && UpdateRestartBlockedReason is null;
 
     /// <summary>Kilidi yeniden sorar; neden değiştiyse duyurur ve komutun kapısını tazeler. Çağıranlar:
-    /// <see cref="OnWorkspaceBusyChanged"/> (Sync/Clean/Optimize/checkout/pull bayrakları ve koşu kilidi) ve
-    /// <c>runStarted</c>'ın Resolve bildirimi.</summary>
+    /// <see cref="OnWorkspaceBusyChanged"/> (Sync/Clean/Optimize/checkout/pull bayrakları ve koşu kilidi),
+    /// <c>runStarted</c>'ın Resolve bildirimi ve <see cref="RefreshStopStage"/> (Stop'un aşaması değişince).</summary>
     private void NotifyUpdateRestartGate()
     {
         string? reason = UpdateRestartBlockedReason;

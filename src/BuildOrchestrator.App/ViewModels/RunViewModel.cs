@@ -1156,7 +1156,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>null</c>) — tepsideyken yok sayılan Build kısayolunun balonu bu cümleyi taşır
     /// (<c>MainWindow.OnGlobalHotkey</c>). Sıra kapının kendi önceliğidir: önce hiç başlayamayacak durumlar (motor yok,
     /// çıkış bekleniyor), sonra uçuştaki koşu, sonra workspace işleri ("ne bitince?" sorusunun cevabı), en sonda
-    /// proje listesinin yokluğu.
+    /// proje listesinin yokluğu — nedeni workspace'in (repository root) yokluğu ya da henüz Sync olmaması olabilir; Sync
+    /// yalnız workspace varken açık olduğundan "Sync first" yalnız ikincisinde söylenir. Cümleler <see cref="RunGateText"/>'tedir.
     /// <para>Koşullar ve sıraları BURADA tek yerde durur: <see cref="CanRequestRun"/> bu metodun <c>null</c> dönmesidir, yani
     /// kapı ile neden ayrışamaz (ayrışsa yok sayılan bir kısayol sessiz kalırdı) — <c>TrayHotkeyBalloonTests</c> ikisinin aynı
     /// durumlarda aynı kararı verdiğini pinler. Workspace işleri tek tek anılır ki her biri kendi cümlesini taşısın;
@@ -1164,16 +1165,16 @@ public sealed partial class RunViewModel : ObservableObject
     /// sonunda <see cref="WorkspaceBusy"/>'nin kendisi de sorulur.</para>
     /// </summary>
     internal string? WhyRunCannotStart() =>
-        IsEngineUnavailable ? "the engine is not available"
-        : ExitPending       ? "the application is closing"
-        : IsMidRunLocked    ? "a run is already in flight"
-        : SyncBusy          ? "a Sync is in progress"
-        : CleanBusy         ? "a Clean is in progress"
-        : OptimizeBusy      ? "an Optimize is in progress"
-        : CheckoutBusy      ? "a branch switch is in progress"
-        : PullBusy          ? "a pull is in progress"
-        : WorkspaceBusy     ? "a workspace task is in progress"
-        : !HasTopology      ? "no project list yet — Sync first"
+        IsEngineUnavailable ? RunGateText.EngineUnavailable
+        : ExitPending       ? RunGateText.ApplicationClosing
+        : IsMidRunLocked    ? RunGateText.RunInFlight
+        : SyncBusy          ? RunGateText.SyncInProgress
+        : CleanBusy         ? RunGateText.CleanInProgress
+        : OptimizeBusy      ? RunGateText.OptimizeInProgress
+        : CheckoutBusy      ? RunGateText.BranchSwitchInProgress
+        : PullBusy          ? RunGateText.PullInProgress
+        : WorkspaceBusy     ? RunGateText.WorkspaceTaskInProgress
+        : !HasTopology      ? (HasWorkspace ? RunGateText.NoProjectList : RunGateText.NoWorkspace)
         : null;
 
     [RelayCommand(CanExecute = nameof(CanRequestRun))]
@@ -1582,6 +1583,7 @@ public sealed partial class RunViewModel : ObservableObject
         StopStage = next;
         OnPropertyChanged(nameof(StopStage));
         OnPropertyChanged(nameof(StopLabel));
+        NotifyUpdateRestartGate(); // güncelleme kartının koşu cümlesi aşamayı izler (UpdateText.WaitForBuildAt)
     }
 
     partial void OnHardStopRequestedChanged(bool value) => RefreshStopStage();

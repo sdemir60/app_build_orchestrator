@@ -20,6 +20,13 @@ namespace BuildOrchestrator.Tests.App;
 /// <para><b>Tasarımdan sapma (plan U3):</b> tasarım "— F5 stops it." der; uygulamada F5 koşuyu durdurmaz, Esc
 /// durdurur. Tuşun adı kısayol kataloğundan okunur (<see cref="ShortcutCatalog"/>).</para>
 ///
+/// <para><b>[DEĞİŞEN KURAL — perf Faz B son toparlama · F-M1]</b> ESKİ İDDİA: koşu nedeni, Stop'un hangi aşamada olduğuna
+/// bakmadan hep <c>Available once the build finishes — Esc stops it.</c> der. GEREKÇE: Stopping'de bir sonraki Esc hard
+/// stop'tur (ARCHITECTURE §4.5: hiçbir yüzey, bir sonraki basış hard stop iken "Stop" demez) ve Terminating'de Esc hiçbir
+/// şey yapmaz — ipucu orada düpedüz yanlıştı. Cümle artık <see cref="StopStage"/>'i izler: istenmedi → eski cümle (aşağıdaki
+/// vakalar değişmedi), graceful gitti → <c>… Esc stops it now.</c>, hard gitti → Esc'siz
+/// <c>Available once the build stops.</c> (<see cref="UpdateText.WaitForBuildAt"/>).</para>
+///
 /// <para>Harness: gönderimler sahte ama canlı bir motora gider (<see cref="RunViewModel.DebugSendOverride"/>), tıklama
 /// WPF'in yaptığı gibi kapıdan geçer (<see cref="CommandPress"/>).</para>
 /// </summary>
@@ -141,13 +148,28 @@ public class UpdateRestartLockTests
     [InlineData(false, false, true, "build")]
     public void The_reason_follows_task_then_sync_then_build(bool task, bool sync, bool build, string expected)
     {
-        Assert.Equal(ExpectedReason(expected), UpdateText.RestartBlockedReason(task, sync, build));
+        Assert.Equal(ExpectedReason(expected), UpdateText.RestartBlockedReason(task, sync, build, StopStage.Stop));
     }
 
     [Fact]
     public void Nothing_in_flight_gives_no_reason()
     {
-        Assert.Null(UpdateText.RestartBlockedReason(taskRunning: false, syncRunning: false, buildRunning: false));
+        Assert.Null(UpdateText.RestartBlockedReason(taskRunning: false, syncRunning: false, buildRunning: false,
+            stopStage: StopStage.Stop));
+    }
+
+    /// <summary>[F-M1] Aşama yalnız KOŞU cümlesini değiştirir: görev ve Sync, Stop'un hangi aşamada olduğuna bakmadan
+    /// önce gelir; iş yoksa hiçbir aşama neden üretmez.</summary>
+    [Theory]
+    [InlineData(StopStage.Stop)]
+    [InlineData(StopStage.StopNow)]
+    [InlineData(StopStage.Terminating)]
+    public void The_stop_stage_only_changes_the_build_sentence(StopStage stage)
+    {
+        Assert.Equal(UpdateText.WaitForTask, UpdateText.RestartBlockedReason(true, true, true, stage));
+        Assert.Equal(UpdateText.WaitForSync, UpdateText.RestartBlockedReason(false, true, true, stage));
+        Assert.Equal(UpdateText.WaitForBuildAt(stage), UpdateText.RestartBlockedReason(false, false, true, stage));
+        Assert.Null(UpdateText.RestartBlockedReason(false, false, false, stage));
     }
 
     /// <summary>Metinler birebir (tasarım §2.12 · §9); koşu nedeni durduran tuşu kataloğun jestiyle yazar — tasarımın
@@ -160,6 +182,49 @@ public class UpdateRestartLockTests
         Assert.Equal("Available once the build finishes — Esc stops it.", UpdateText.WaitForBuild);
         Assert.Contains(ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0] + " stops it.", UpdateText.WaitForBuild,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>[F-M1] Koşu nedeninin metni Stop'un aşamasını izler: istenmeden önce eski cümle, graceful gittikten sonra bir
+    /// sonraki Esc'in hard olduğunu söyleyen cümle, hard gittikten sonra Esc'siz cümle. Her geçiş duyurulur (kart satırı ve
+    /// komut kapısı tazelenir) — aşama değişimi, iş kilidinin değişimi kadar bir tetikleyicidir.</summary>
+    [Fact]
+    public async Task The_build_reason_follows_the_stop_stage_and_each_step_is_announced()
+    {
+        var vm = NewVm();
+        int reasonChanges = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.UpdateRestartBlockedReason)) reasonChanges++;
+        };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal(StopStage.Stop, vm.StopStage); // ön-koşul
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.Stop), vm.UpdateRestartBlockedReason);
+        int afterStart = reasonChanges;
+
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(StopStage.StopNow, vm.StopStage); // ön-koşul: graceful gitti
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.StopNow), vm.UpdateRestartBlockedReason);
+        Assert.Equal(afterStart + 1, reasonChanges);
+
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(StopStage.Terminating, vm.StopStage); // ön-koşul: hard gitti
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.Terminating), vm.UpdateRestartBlockedReason);
+        Assert.Equal(afterStart + 2, reasonChanges);
+        Assert.False(vm.RestartToUpdateCommand.CanExecute(null)); // koşu bitmedi: kilit sürer
+    }
+
+    /// <summary>[F-M1] Aşama metinleri birebir; durduran tuşun adı kataloğun jestiyle yazılır. Terminating'de tuşa HİÇ
+    /// değinilmez: o aşamada Esc hiçbir şey yapmaz.</summary>
+    [Fact]
+    public void The_stop_stage_texts_are_verbatim_and_the_terminating_one_names_no_key()
+    {
+        string esc = ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0];
+
+        Assert.Equal(UpdateText.WaitForBuild, UpdateText.WaitForBuildAt(StopStage.Stop));
+        Assert.Equal("Available once the build stops — Esc stops it now.", UpdateText.WaitForBuildAt(StopStage.StopNow));
+        Assert.Contains(esc + " stops it now.", UpdateText.WaitForBuildStopping, StringComparison.Ordinal);
+        Assert.Equal("Available once the build stops.", UpdateText.WaitForBuildAt(StopStage.Terminating));
+        Assert.DoesNotContain(esc, UpdateText.WaitForBuildTerminating, StringComparison.Ordinal);
     }
 
     /// <summary>İş bitince düğme kendiliğinden açılır: neden düşer ve yalnız DEĞİŞTİĞİNDE duyurulur (koşunun başı ve
