@@ -1279,4 +1279,152 @@ public class HiddenSurfaceTests
         AssertConsoleMatchesModel();
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] <b>Gizli Sync: boşaltma ve yeni topoloji dönüşte tek ekranda buluşur.</b> Sync düğmesi ekranı baştan
+    /// başlatır (<c>BlankPlanSurface</c> kapısızdır: liste gizliyken de boşalır ve "liste bayat" bayrağı düşer); motor yeni topolojiyi yine
+    /// gizliyken getirir (bayrak yeniden kalkar, liste kurulmaz). Dönüşte liste modeldeki YENİ topolojinin tamamını gösterir: ne eski
+    /// topoloji geri yazılır ne liste boş kalır. Sıranın tersi (boşaltma GÖSTERİMDEN sonra) için bkz.
+    /// <see cref="A_sync_restart_between_the_show_and_the_resync_keeps_the_blanked_list_empty"/>.
+    /// </summary>
+    [StaFact]
+    public async Task A_sync_that_blanks_the_screen_and_brings_a_new_topology_while_hidden_shows_only_the_new_topology_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
+        MainWindowHost.Realize(window);
+        MainWindowHost.AcceptSends(vm);
+        int itemsBefore = list.RowFlow.Items.Count;
+        Assert.True(itemsBefore > 0);                                   // ön-koşul: liste dolu
+        window.SetSurfaceHidden(true);
+
+        await MainWindowHost.StartSync(vm, SyncMode.Manual);            // gizliyken Sync düğmesi: ekran baştan başlar
+        Assert.True(vm.PlanSurfaceRestarting);                          // ön-koşul: ekran gerçekten boşaltıldı
+        Assert.Empty(list.RowFlow.Items);                               // ön-koşul: liste gizliyken de boşaldı
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(5));   // motor yeni topolojiyi gizliyken getirdi: 3 -> 5
+
+        Assert.Equal(5, vm.Projects.Count);                             // ön-koşul: model yeni topolojiyi tutuyor
+        Assert.Empty(list.RowFlow.Items);                               // gizliyken liste kurulmadı
+
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();                                       // Loaded-öncelikli dönüş kurulumu pompasız koşsun (A4 testlerinin deseni)
+
+        Assert.Equal(itemsBefore + 2, list.RowFlow.Items.Count);        // yeni topolojinin TAMAMI: eski liste ne geri geldi ne liste boş kaldı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] <b>Gizlilikte gelen karar dönüşte ŞERİDİ de çapraz-sönümle oynatmaz.</b> Satırın dönüş kurulumu
+    /// (<c>ApplyAllFresh</c>) noktanın mandalıyla birlikte şeridin mandalını da (<c>_stripeWasStartMode</c>) sıfırlar: şerit başlangıç modunda
+    /// soluktur (<c>StartMode.FaintOpacity</c>) ve karar gizliyken geldiyse dönüş onu tama çapraz-sönümle çıkarırdı (saydamlık geçişi; ölçü
+    /// değil). Nokta için aynı kural <see cref="A_decision_that_arrives_while_hidden_settles_the_status_dot_on_show_without_the_cross_fade"/>'de
+    /// pinlidir ama şerit mandalı ayrı bir alandır ve o test onu görmez. Satırın hareketi AÇIK kurulur ki sönüm oynayabilsin.
+    /// </summary>
+    [StaFact]
+    public void A_decision_that_arrives_while_hidden_settles_the_stripe_on_show_without_the_cross_fade()
+    {
+        using var dir = new TempDir();
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
+        MainWindowHost.Realize(window);
+        var row = RowViewOf(list, ProjectOf(vm, "P1"));
+        row.AnimationsEnabledProvider = () => true;                     // sönüm oynayabilsin (headless varsayılanı reduced-motion)
+        Assert.Equal(StartMode.FaintOpacity, row.Stripe.Opacity);       // ön-koşul: son çizilen hâl başlangıç modu (soluk şerit)
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, names);                             // karar gizliyken geldi: soluk şerit → tam
+        window.SetSurfaceHidden(false);                                 // satır dönüş kurulumunu kalıtsal sinyalin değişiminde yapar
+
+        Assert.False(row.Stripe.HasAnimatedProperties);                 // mandal sıfırlanmazsa şerit tama çapraz-sönümle çıkar
+        Assert.Equal(1.0, row.Stripe.Opacity);                          // hedefte, geçişsiz
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] <b>Gizliyken filtre değişimi alt çubuğun chip'lerini yenilemez.</b> A9'un chip testi yalnız
+    /// <c>Counters</c> yolunu sürer; <c>ActiveFilters</c> aynı kapıdan geçer ama ayrı bildirimdir (<c>RunViewModel.ToggleFilter</c>).
+    /// Gizliyken filtre açılır: chip'in işaretliliği yazılmaz ("chip'ler bayat" bayrağı kalkar); dönüşte chip'ler filtreyi yansıtır.
+    /// Chip'ler <c>Loaded</c>'da kurulduğu için kabuk ekran dışı gerçek bir pencereye taşınır (<see cref="MainWindowHost.HostOffscreen"/>).
+    /// </summary>
+    [StaFact]
+    public void The_action_bar_filter_chips_are_not_refreshed_while_hidden_and_reflect_the_filter_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(5));
+        var host = MainWindowHost.HostOffscreen(window);
+        try
+        {
+            var bar = DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
+            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
+            Assert.False(bar.BuildingChip.IsChecked);                              // ön-koşul: chip kurulu, filtre yok
+            HiddenSurface.SetIsHidden(host, true);
+
+            vm.ToggleFilter(ProjectFilter.Building);                               // gizliyken filtre açıldı
+
+            Assert.True(vm.ActiveFilters.Contains(ProjectFilter.Building));        // ön-koşul: model filtreyi tuttu
+            Assert.False(bar.BuildingChip.IsChecked);                              // kapısız: filtre değişimi chip'i hemen işaretlerdi
+
+            HiddenSurface.SetIsHidden(host, false);
+
+            Assert.True(bar.BuildingChip.IsChecked);                               // dönüşte chip filtreyi yansıtır
+        }
+        finally
+        {
+            host.Close();
+        }
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · temizlik 2b] <b>Tepside başlayan çubuk chip'lerini ilk gösterimde güncel sayaçla BİR kez kurar.</b> Tepside başlayan
+    /// pencerenin içeriği hiç yüklenmemiştir: chip'ler <c>Loaded</c>'da kurulur ve ondan önce gelen sayaç değişimleri "chip'ler bayat"
+    /// bayrağını kaldırır (kurulacak chip yoktur). İlk gösterimdeki dönüş kurulumu kurulu olmayan chip'lere yazamaz
+    /// (<c>RefreshChips</c> erken döner, bayrak yerinde kalır); ardından gelen <c>Loaded</c> chip'leri modelin O ANKİ sayacıyla kurar ve
+    /// bayrağı düşürür — sonraki gizle/göster modele dokunulmadıkça chip'leri bir daha yazmaz. "Yazılmadı" kanıtı için chip değeri elle
+    /// bozulur (model aynı değeri yeniden yazsaydı gözlenemezdi): bozuk değer yerinde kalmalıdır.
+    ///
+    /// <para><b>Kurulum:</b> bu testte gerçek bir "tepside başla" yolu yok (<c>MainWindow</c> hiç <c>Show()</c> edilmez) ve
+    /// <c>HostOffscreen</c> içeriği ekran dışı pencereye alırken <c>Loaded</c>'ı kendi içinde teslim eder — ondan ÖNCE gizleyip sonra
+    /// göstermek mümkün değildir. Eşdeğeri: pencere headless ağaçta (<c>Loaded</c> hiç gelmez) gizli işaretlenir ve sayaç gizliyken
+    /// değişir; <c>HostOffscreen</c> ilk gösterimdir (içerik gerçek pencereye girer, gizli sinyal pencereden kalkar, <c>Loaded</c> chip'leri
+    /// kurar). Üretimdeki sıra budur: görünürlük sinyali, ardından <c>Loaded</c>.</para>
+    /// </summary>
+    [StaFact]
+    public void An_action_bar_that_starts_hidden_builds_its_chips_once_from_the_current_counters_on_first_show()
+    {
+        using var dir = new TempDir();
+        string[] names = MainWindowHost.ProjectNames(5);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
+        var bar = DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
+        Assert.False(bar.IsLoaded);                                     // ön-koşul: headless ağaçta çubuk hiç yüklenmez
+        Assert.Null(bar.BuildingChip);                                  // ön-koşul: chip'ler henüz kurulmadı (Loaded'da kurulurlar)
+        window.SetSurfaceHidden(true);                                  // tepside başlama: içerik gizli işaretli ve yüklenmemiş
+        MainWindowHost.PreviewBuild(vm, names);
+        MainWindowHost.StartBuild(vm, names);
+        MainWindowHost.StartProject(vm, names[0]);                      // gizliyken sayaç değişti: bildirim yalnız bayrağı kaldırdı
+        Assert.Equal(1, vm.Counters.Building);                          // ön-koşul: model sayacı değişti
+
+        var host = MainWindowHost.HostOffscreen(window);                // ilk gösterim: gizli sinyal pencereden kalkar, Loaded chip'leri kurar
+        try
+        {
+            DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5));
+            var building = ActionBarTests.ChipValue(bar.BuildingChip);
+            var spinner = ActionBarTests.ChipSpinner(bar.BuildingChip);
+
+            Assert.Equal("1", building.Text);                           // chip'ler modelin O ANKİ sayacıyla kuruldu
+            Assert.Equal(Visibility.Visible, spinner.Visibility);
+            Assert.Equal($"{vm.Counters.Total}", ActionBarTests.ChipValue(bar.SigmaChip).Text);
+
+            building.Text = "unchanged-sentinel";                       // yeniden yazıldı mı gözlenebilsin: model "1"i yazardı
+            HiddenSurface.SetIsHidden(host, true);
+            HiddenSurface.SetIsHidden(host, false);                     // model değişmedi: dönüş chip'leri yeniden yazmaz
+
+            Assert.Equal("unchanged-sentinel", building.Text);          // bayat kalan bayrak dönüşte ikinci bir tam kurulum koşturur
+        }
+        finally
+        {
+            host.Close();
+        }
+        GC.KeepAlive(window);
+    }
 }
