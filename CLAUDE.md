@@ -72,8 +72,9 @@ dotnet test  tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filt
 dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
-Süit **filtrelidir**: `Category=Acceptance` üç test gerçek OSYS reposunu derler (~2 dk), ayrı koşulur
-(`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor kendi binary'lerini kilitler.
+Süit **filtrelidir**: `Category=Acceptance` testleri gerçek MSBuild ister — OSYS reposunu uçtan uca derleyenler
+~2 dk sürer — ayrı koşulur (`--filter "Category=Acceptance"`). Uygulama açıkken build alma — çalışan Supervisor
+kendi binary'lerini kilitler.
 
 - **CI (`ci.yml`) aynı süiti windows-2025 runner'ında koşar;** runner'da koşamayan/kararsız test
   **`Category=LocalOnly`** alır ve yalnız CI filtresinde dışlanır — eşik gevşetilmez, test silinmez; lokal tam

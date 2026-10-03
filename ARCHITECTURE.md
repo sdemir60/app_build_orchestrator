@@ -5821,7 +5821,6 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
-
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
 | Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
 
