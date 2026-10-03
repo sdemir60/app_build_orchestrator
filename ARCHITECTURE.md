@@ -2351,12 +2351,25 @@ ends closes the application at once, with neither the wait nor the tray — Wind
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
 and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
-while the main window is hidden, so it cannot be a popup inside it. No choreography plays on the hidden window:
-the opening wave is skipped, the run command goes out at once and the end finale never starts (§14.5). The console
-document is left alone too: the narrative stays complete in the view model, and the document is built from that full
-text once, without the tilt, when the window comes back (§13.5).
+while the main window is hidden, so it cannot be a popup inside it.
 
-Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
+**A hidden window does no screen work.** No choreography plays on it: the opening wave is skipped, the run command
+goes out at once and the end finale never starts (§14.5). The signal behind that rule gates every other surface the
+run's events would otherwise redraw: the event stream's rows, the graph's status, phase and selection pushes and its
+filter refresh, the ribbon, the Build menu, the project rows and their list, the action bar's counter chips and the
+body of the 200 ms tick (live durations, the console header's line counter, following the frontier — only the
+engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
+the view model, and the document is built from that full text once, without the tilt, when the window comes back
+(§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
+none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
+a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
+cross-fade of a row's dot. The graph settles on the present state with its own short transitions rather than a replay
+of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
+does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
+fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
+enough to be felt.
+
+Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
 restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
 around it pass through to whatever is underneath — that separation is free, because a layered window is
@@ -4869,7 +4882,9 @@ them, and it can dump any size as ASCII so the judgement can be re-made against 
 
 Durations 80 / 120 / 180 / 280 ms; three easings — ease-out for entrances, ease-standard for state changes,
 ease-in-out for displacement. All three CSS curves are reproduced exactly as `KeySpline`s. No bounce, no
-overshoot; only transform and opacity are animated, never layout.
+overshoot. What animates is what a frame can redraw without a layout pass — opacity, colour, transforms (the
+console's tilt is a 3D one), a stroke's dash offset and a clip — plus the finite exceptions below that do touch
+layout.
 
 Five contract rules, each enforced by a test:
 
@@ -4902,9 +4917,11 @@ Five contract rules, each enforced by a test:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
 
-**One deliberate exception to "never layout".** The row's status stripe and the ribbon's progress indicator
+**Deliberate exceptions to "never layout".** The row's status stripe and the ribbon's progress indicator
 animate `Width`. Both are short, finite transitions on a single element, so their layout cost is a bounded burst that
-ends with the transition rather than a continuous stream.
+ends with the transition rather than a continuous stream. Two more animations share that bound: the scrollbar pill's
+inset on hover (`Padding`, on the pill alone — the rail and the content beside it do not move, §13.8) and the scroll
+glides, which step a `ScrollViewer`'s or the console editor's offset each frame until the glide ends.
 
 **Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
