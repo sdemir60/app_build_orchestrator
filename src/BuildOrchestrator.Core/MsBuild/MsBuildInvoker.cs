@@ -8,9 +8,12 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// <param name="Target">[tek proje · design §3.8] Bu çağrının MSBuild hedefi — varsayılan
 /// <see cref="MsBuildTarget.Build"/>; alanı hiç vermeyen her çağrı yeri (tam koşu, SCC turları) birebir aynı
 /// komut satırını üretmeye devam eder.</param>
+/// <param name="CustomBeforeTargets">[WPF geçici assembly] <c>-p:CustomBeforeMicrosoftCommonTargets=</c> olarak build
+/// listesine giren targets dosyasının tam yolu (bkz. <see cref="WpfTemporaryAssemblyTargets"/>); null ⇒ argüman hiç
+/// girmez ve komut satırı bugünküyle birebir aynıdır. Restore listesine girmez.</param>
 public sealed record MsBuildInvokeRequest(
     string ProjectId, string Configuration, string SolutionDir, bool NeedsRestore,
-    MsBuildTarget Target = MsBuildTarget.Build);
+    MsBuildTarget Target = MsBuildTarget.Build, string? CustomBeforeTargets = null);
 
 /// <summary>
 /// [optimize] Tek proje RESTORE isteği — <see cref="MsBuildInvokeRequest"/>'ten ayrı bir tiptir çünkü restore

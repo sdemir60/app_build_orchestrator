@@ -1,0 +1,9 @@
+<UserControl x:Class="Mini.View"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Mini">
+    <StackPanel>
+        <local:MyControl Title="a" />
+        <local:InternalControl Title="b" />
+    </StackPanel>
+</UserControl>

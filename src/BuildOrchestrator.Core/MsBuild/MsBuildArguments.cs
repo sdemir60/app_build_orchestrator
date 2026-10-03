@@ -19,13 +19,27 @@ public static class MsBuildArguments
 {
     /// [D9 + SPIKE S2] v1 flag'leri SABİT; BuildProjectReferences=false ZORUNLU (bağımlılıklar ayrı node olarak derlenir).
     /// Her proje kendi (VS-parity) obj'inde derlenir; obj yönlendirmesi yoktur.
+    /// <para>[WPF geçici assembly] <paramref name="customBeforeTargets"/> verilirse listenin SONUNA tek bir
+    /// <c>-p:CustomBeforeMicrosoftCommonTargets=&lt;yol&gt;</c> eklenir: WPF'in yerel tipli XAML için derlediği
+    /// geçici assembly gövdesiz derlenir (<see cref="WpfTemporaryAssemblyTargets"/>). Yol tırnaklanmaz — liste
+    /// <c>ArgumentList</c> üzerinden geçer, <c>WindowsCommandLine</c> kaçışlar. Null ise liste targets'sız hâliyle
+    /// aynıdır. Restore listesine HİÇ girmez.</para>
     public static IReadOnlyList<string> Build(string projectPath, string configuration,
-        MsBuildTarget target = MsBuildTarget.Build) =>
-    [
-        projectPath, TargetArg(target), $"-p:Configuration={configuration}",
-        "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
-        "-clp:Summary", "-nologo",
-    ];
+        MsBuildTarget target = MsBuildTarget.Build, string? customBeforeTargets = null)
+    {
+        List<string> args =
+        [
+            projectPath, TargetArg(target), $"-p:Configuration={configuration}",
+            "-p:UseSharedCompilation=false", "-nodeReuse:false", "-p:BuildProjectReferences=false",
+            "-clp:Summary", "-nologo",
+        ];
+        if (customBeforeTargets is not null)
+            args.Add(CustomBeforeTargetsSwitch + customBeforeTargets);
+        return args.AsReadOnly(); // salt-okunur: sözleşmeyi çağıran yerinde değiştiremez
+    }
+
+    /// <summary>Targets argümanının TEK yazıldığı yer: global property adı ve <c>=</c>.</summary>
+    private const string CustomBeforeTargetsSwitch = "-p:CustomBeforeMicrosoftCommonTargets=";
 
     /// [SPIKE S2 şart-1] packages.config restore sln bağlamı İSTER; [S1] nuget.exe YOK.
     /// Optimize SDK-style projeleri de BU listeyle restore eder; orada <c>RestorePackagesConfig</c> etkisizdir.
@@ -53,8 +67,9 @@ public static class MsBuildArguments
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Targets YALNIZ build listesine girer: restore derlemez, geçici WPF assembly'si orada doğmaz.
         return (request.NeedsRestore ? RestorePackagesConfig(request.ProjectId, request.SolutionDir) : null,
-                Build(request.ProjectId, request.Configuration, request.Target));
+                Build(request.ProjectId, request.Configuration, request.Target, request.CustomBeforeTargets));
     }
 
     /// <summary>Hedefin komut satırı karşılığı — TEK yer; <c>-t:</c> argümanını başka hiçbir yol yazmaz.</summary>

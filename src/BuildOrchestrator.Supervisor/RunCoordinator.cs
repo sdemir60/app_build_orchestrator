@@ -65,7 +65,11 @@ public sealed record IncrementalPlan(
 /// Retry sarmalamasını (<see cref="RetryingMsBuildInvoker"/>) koordinatör yapar: <c>onRetry</c> run'a özgü
 /// <c>decision.log</c>'a yazar, o log ise ancak run başlarken var olur.
 /// </summary>
-public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePath);
+/// <param name="CustomBeforeTargetsPath">[WPF geçici assembly] Targets dosyasının tam yolu
+/// (<see cref="WpfTemporaryAssemblyTargets.EnsureWritten"/>); her derleme isteğine
+/// <see cref="MsBuildInvokeRequest.CustomBeforeTargets"/> olarak taşınır. null ⇒ argüman girmez (dosya yazılamadı ya
+/// da testlerdeki sahte takım): derleme bugünkü komut satırıyla sürer.</param>
+public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePath, string? CustomBeforeTargetsPath = null);
 
 /// <summary>
 /// [T4/T55] Run'ın yürütme kalbi: plan → N paralel worker → proje-başına <c>MSBuild.exe</c> shell-out →
@@ -1000,7 +1004,9 @@ public sealed class RunCoordinator(
                     RunMode.Clean => MsBuildTarget.Clean,
                     RunMode.Rebuild when cmd.ScopeProjectId is not null => MsBuildTarget.Rebuild,
                     _ => MsBuildTarget.Build,
-                });
+                },
+                // [WPF geçici assembly] Motorun açılışta yazdığı targets dosyası: her derleme isteğine taşınır.
+                CustomBeforeTargetsPath: toolset.CustomBeforeTargetsPath);
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -2048,7 +2054,9 @@ public sealed class RunCoordinator(
             // aynı no-op restore'u her turda yeniden ödemek 7 üyeli gerçek bir grupta tur başına dakikalar
             // ölçüyordu. Başarısız üye yeniden restore ALIR (patlayan şey restore'un kendisi olabilir).
             NeedsRestore: !suppressRestore && run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(projectId),
-            Target: run.MsBuildTarget);
+            Target: run.MsBuildTarget,
+            // [WPF geçici assembly] Targets yolu koşuya toolset'ten gelir; komut satırı ve invoker AYNI isteği okur.
+            CustomBeforeTargets: run.CustomBeforeTargetsPath);
 
         // [Kısıt 1] Proje logunu bu metot AÇMAZ ve KAPATMAZ — ömrü çağıranındır: OpenProjectLog
         // FileMode.Create ile truncate ettiği için, log'u burada açmak tur döngüsünde önceki turların
@@ -2135,11 +2143,12 @@ public sealed class RunCoordinator(
 
     private static IEnumerable<string> CommandLines(MsBuildInvokeRequest request, string msbuildExePath)
     {
-        if (request.NeedsRestore) // restore ÖNCE koşar (bkz. MsBuildInvoker) — komut satırı da o sırada yazılır
-            yield return WindowsCommandLine.Build(msbuildExePath,
-                [.. MsBuildArguments.RestorePackagesConfig(request.ProjectId, request.SolutionDir)]);
-        yield return WindowsCommandLine.Build(msbuildExePath,
-            [.. MsBuildArguments.Build(request.ProjectId, request.Configuration, request.Target)]);
+        // Liste invoker'ın koşturduğuyla AYNI kaynaktan gelir (PlanFor): ilk log satırı gerçek komut satırıdır.
+        // Argümanı burada ayrıca seçmek, yeni bir argümanda (ör. WPF targets'ı) log ile gerçek komutu ayrıştırırdı.
+        var (restoreArgs, buildArgs) = MsBuildArguments.PlanFor(request);
+        if (restoreArgs is not null) // restore ÖNCE koşar (bkz. MsBuildInvoker) — komut satırı da o sırada yazılır
+            yield return WindowsCommandLine.Build(msbuildExePath, [.. restoreArgs]);
+        yield return WindowsCommandLine.Build(msbuildExePath, [.. buildArgs]);
     }
 
     /// <summary>
@@ -2375,7 +2384,9 @@ public sealed class RunCoordinator(
         // hedef için dolu; null ⇒ tam koşu). ComputeDepIssues bunu DepIssueTracker'a geçirir.
         IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? StaleDependenciesById = null,
         // [tek proje] Bu koşunun MSBuild hedefi — yalnız satır menüsünün Rebuild'i Build'den ayrılır (§3.8).
-        MsBuildTarget MsBuildTarget = MsBuildTarget.Build);
+        MsBuildTarget MsBuildTarget = MsBuildTarget.Build,
+        // [WPF geçici assembly] Targets dosyasının tam yolu (toolset'ten); null ⇒ build komut satırına girmez.
+        string? CustomBeforeTargetsPath = null);
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

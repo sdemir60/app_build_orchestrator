@@ -185,12 +185,14 @@ public class RunCoordinatorTests
         public Harness(RunPlan plan, FakeInvoker invoker, Func<StartRunCommand, Action<string>, RunPlan>? planner = null,
             BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
-            Func<string, string?>? apiSurface = null)
+            Func<string, string?>? apiSurface = null,
+            string? customBeforeTargetsPath = null)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
                 planner: planner ?? ((_, _) => plan),
-                msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe)),
+                // [WPF geçici assembly] null ⇒ yol taşımayan sahte takım: komut satırı bugünküyle birebir aynıdır.
+                msbuildFactory: _ => Task.FromResult(new MsBuildToolset(invoker, FakeMsBuildExe, customBeforeTargetsPath)),
                 logFactory: startedAt =>
                 {
                     var w = new RunLogWriter(LogsRoot, startedAt);
@@ -930,6 +932,41 @@ public class RunCoordinatorTests
     }
 
     // ---------------------------------------------------------------- 7) stdout yalnız NDJSON + log ilk satırı
+
+    /// <summary>
+    /// [Faz 2 · WPF geçici assembly] Motor bağlantısının DAVRANIŞ pini: toolset'in taşıdığı targets yolu
+    /// (<see cref="MsBuildToolset.CustomBeforeTargetsPath"/>) koşuya, oradan HER derleme isteğine
+    /// (<see cref="MsBuildInvokeRequest.CustomBeforeTargets"/>) ve proje logunun İLK satırına — gerçek komut satırına —
+    /// aynen taşınır. Zincirin iki halkası var (toolset → koşu bağlamı, koşu bağlamı → istek) ve ikisi de ayrı ayrı
+    /// kopartılarak bu testin kırmızı verdiği gösterildi. Koparsa optimizasyon SESSİZCE kapanırdı: yol taşımayan her
+    /// çağrı zaten bugünkü komut satırını üretir ve başka hiçbir test yolun kaybolduğunu görmezdi.
+    ///
+    /// <para>Yol taşımayan sahte takımın karşılığı hemen aşağıdaki log-ilk-satırı testidir
+    /// (<see cref="hostile_build_output_stays_ndjson_and_project_log_starts_with_the_real_msbuild_command_line"/>):
+    /// yol yoksa komut satırı eskisiyle birebir aynıdır.</para>
+    /// </summary>
+    [Fact]
+    public async Task the_toolset_targets_path_reaches_every_request_and_the_first_log_line()
+    {
+        const string targetsPath = @"C:\state\msbuild\wpf-temporary-assembly.targets";
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, customBeforeTargetsPath: targetsPath);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        // (ii) her derleme isteği yolu taşır
+        Assert.Equal(2, invoker.Requests.Count());
+        Assert.All(invoker.Requests, r => Assert.Equal(targetsPath, r.CustomBeforeTargets));
+
+        // (i) her projenin logunun ilk satırı, yolu taşıyan gerçek komut satırıdır
+        foreach (string name in new[] { "A", "B" })
+            Assert.Equal(
+                WindowsCommandLine.Build(FakeMsBuildExe,
+                    [.. MsBuildArguments.Build(Id(name), "Debug", customBeforeTargets: targetsPath)]),
+                File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id(name)))[0]);
+    }
 
     [Fact]
     public async Task hostile_build_output_stays_ndjson_and_project_log_starts_with_the_real_msbuild_command_line()

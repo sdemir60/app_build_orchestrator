@@ -59,7 +59,8 @@ Key consequences of that layout:
   closes and the whole tree dies with it. There is no managed parent-watcher and no PID heuristics.
 - Builds are **shelled out**, never done in-process. `MSBuild.exe` is located through `vswhere` (VS or Build
   Tools), and every project is invoked with `-p:UseSharedCompilation=false -nodeReuse:false` so that no
-  compiler server survives outside the job.
+  compiler server survives outside the job. The temporary assembly WPF compiles for a project's own XAML types is
+  built as metadata only, which shortens WPF compiles and leaves the output unchanged.
 - No output path is ever changed: no `-p:OutDir` / `-p:OutputPath` and no intermediate-path redirect is passed,
   so output — and `obj` — lands exactly where Visual Studio would put it.
 - "Did it change?" is answered from the **content of the source files on disk** — the project file, the items
@@ -117,8 +118,9 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
-The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
-build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
+The test suite is expected to be fully green. The filter above excludes the acceptance tests — some build a real
+large repository (about two minutes), the others run the real MSBuild on small throw-away projects — which are
+run separately with `--filter "Category=Acceptance"`.
 Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
 their environment variable is set (ARCHITECTURE.md §17.5).
 
