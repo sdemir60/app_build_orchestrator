@@ -14,7 +14,7 @@ namespace BuildOrchestrator.Tests.App;
 /// <summary>
 /// [ui gap cleanup/Task 3] Tepsi menüsündeki Stop maddesi <see cref="RunViewModel.StopCommand"/>'a bağlıdır —
 /// etkinliği doğrudan <c>CanExecute</c>'tan gelir, ActionBar'daki Stop düğmesiyle AYNI kaynak (bkz.
-/// <c>ActionBarTests.The_stop_button_reads_stopping_and_goes_disabled_while_the_run_drains</c>). Eskiden madde
+/// <c>ActionBarTests.The_stop_button_reads_Stop_now_and_is_enabled_while_stopping_until_the_hard_stop_is_sent</c>). Eskiden madde
 /// HER ZAMAN etkindi ve tıklamada <c>MainWindow</c>'un kendi kapısı <c>CanExecute</c>'u sorardı — durdurulacak
 /// bir derleme yokken madde tıklanabilir GÖRÜNÜYORDU, yalnız tıklama sessizce hiçbir şey yapmıyordu.
 ///

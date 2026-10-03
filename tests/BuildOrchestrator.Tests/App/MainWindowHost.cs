@@ -201,6 +201,11 @@ internal static class MainWindowHost
         return (window, vm, sent);
     }
 
+    /// <summary>[perf Faz B · B3 takip] <paramref name="text"/>'in kaç SATIRI <paramref name="line"/>'ı içerir — konsol satırı
+    /// sayan testlerin TEK sayım yeri (<c>EscStopTests</c> ile <c>StopNowTests</c> aynı işi ayrı ayrı yazmıştı).</summary>
+    public static int Occurrences(string text, string line) =>
+        text.Split('\n').Count(l => l.Contains(line, StringComparison.Ordinal));
+
     /// <summary>[perf A1 fix 1] Motorun planı (<c>buildPreview</c>): bu projeler derlenecek.
     /// <see cref="RunViewModel.ScopeFor"/> kapsamı bu bayraktan (<c>WillBuild</c>) türer — plansız bir fixture'da kapsam
     /// BOŞTUR ve açılış koreografisi görünür pencerede bile hiç oynamaz (<c>OperationChoreographer.Play</c>, n == 0);

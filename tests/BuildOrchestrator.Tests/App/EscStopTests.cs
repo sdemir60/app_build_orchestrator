@@ -1,8 +1,6 @@
 using System.Windows.Input;
 using BuildOrchestrator.App;
-using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
 
@@ -26,8 +24,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EscStopTests
 {
-    private static int Occurrences(string text, string line) =>
-        text.Split('\n').Count(l => l.Contains(line, StringComparison.Ordinal));
 
     // ---------------------------------------------------------------- durdur
 
@@ -73,12 +69,36 @@ public class EscStopTests
         MainWindowHost.PressEscape(window);
         Assert.Equal(AppPhase.Stopping, vm.Phase); // ön-koşul: ilk Esc graceful gitti
 
-        MainWindowHost.PressEscape(window);
-        MainWindowHost.PressEscape(window);
+        MainWindowHost.PressEscape(window); // ikinci Esc: hard
+        string afterHard = vm.GetRunDocumentText();
+        MainWindowHost.PressEscape(window); // üçüncü Esc
 
         StopRunCommand[] expected = [new("r1", StopKind.Graceful), new("r1", StopKind.Hard)];
         Assert.Equal(expected, sent.OfType<StopRunCommand>().ToArray());
-        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.StopNowRequestedLine));
+        Assert.Equal(1, MainWindowHost.Occurrences(afterHard, RunViewModel.StopNowRequestedLine));
+        Assert.Equal(afterHard, vm.GetRunDocumentText()); // üçüncü Esc konsola hiçbir satır eklemedi — konsolun TAMAMI aynı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now · M6] Branch değişiminin kesmesi de durdurmayı Stopping'e çeker (<c>RequestInterruptAsync</c> →
+    /// <see cref="StopKind.Interrupt"/>): kullanıcı O drain sürerken İLK kez Esc'e bastığında bu hard stop'tur — "ikinci basış"
+    /// anlatısı yalnız kullanıcının kendi Stop'u içindir — ve aşama baştan "Stop now"dur (tüm yüzler bunu okur).</summary>
+    [StaFact]
+    public async Task Escape_during_a_branch_interrupt_drain_sends_the_hard_stop_at_once()
+    {
+        using var temp = new TempDir();
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
+        MainWindowHost.StartBuild(vm);
+
+        await vm.RequestInterruptAsync(); // branch değişti: kesme gitti, drain başladı
+        Assert.Equal(AppPhase.Stopping, vm.Phase); // ön-koşul
+        Assert.Equal(StopStage.StopNow, vm.StopStage);
+
+        MainWindowHost.PressEscape(window);
+
+        StopRunCommand[] expected = [new("r1", StopKind.Interrupt), new("r1", StopKind.Hard)];
+        Assert.Equal(expected, sent.OfType<StopRunCommand>().ToArray());
+        Assert.Equal(StopStage.Terminating, vm.StopStage);
         GC.KeepAlive(window);
     }
 
@@ -95,7 +115,7 @@ public class EscStopTests
         MainWindowHost.PressEscape(window);
         MainWindowHost.PressEscape(window);
 
-        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.Sync)));
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.Sync)));
         GC.KeepAlive(window);
     }
 
@@ -114,7 +134,7 @@ public class EscStopTests
         Assert.True(vm.CleanBusy); // ön-koşul
         MainWindowHost.PressEscape(window);
 
-        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
         GC.KeepAlive(window);
     }
 

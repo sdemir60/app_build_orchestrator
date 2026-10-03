@@ -1433,6 +1433,20 @@ public sealed partial class RunViewModel : ObservableObject
     /// taramasını yapar). Uçuştaki bir run/Sync/Clean/Optimize kapıyı kapatır.</summary>
     private bool CanOptimize() => HasWorkspace && WorkspaceGateOpen;
 
+    /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
+    /// durdurulacak bir şey de yoktur — uygulama kendi isteğini geri alır. Motora ne <c>startRun</c> ne
+    /// <c>stopRun</c> gider; koreografiyi ve işaretleri kabuk <see cref="IsStarting"/> düşüşünde temizler.</summary>
+    internal static string RunCancelledLine => "Cancelled — build not started";
+
+    private void CancelPendingRun()
+    {
+        _pendingRunId = null;
+        IsStarting = false;
+        // Faz yalnız koşunun kendi açılışının yazdığı Starting ise bırakılır; başka bir kaynak fazı çoktan değiştirdiyse ezilmez.
+        if (Phase == AppPhase.Starting) Phase = AppPhase.Idle;
+        AppendRunLine(RunCancelledLine);
+    }
+
     /// <summary>Graceful stop: yeni proje dispatch EDİLMEZ, uçuştaki <c>MSBuild.exe</c> child'ları post-build
     /// copy dahil kendi tamamlanmalarını yapar (ortak çıktı dizininde yarım yazılmış DLL kalmaz — ARCHITECTURE
     /// §4.5).
@@ -1441,13 +1455,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// bankaya girer ve bir sonraki Build onları ATLAR — yani Stop'un bedeli SIFIRDIR. Hard kill ise uçuştaki
     /// projeleri <c>failed("stopped")</c> yapıp stored state'lerini geçersizleştirir: paralellik kadar yarım
     /// derleme çöpe gider, kullanıcının kendi Stop'u listede KIRMIZI satırlar bırakır ve o projeler bir sonraki
-    /// Build'de baştan derlenir. Bu bedeli kullanıcı yalnız KENDİ ikinci basışıyla öder: hard stop yalnız
-    /// <see cref="AppPhase.Stopping"/> sürerken gelen ikinci basıştan gider (<see cref="StopAsync"/>'in <c>Stopping</c>
-    /// dalı).</para>
+    /// Build'de baştan derlenir. Bu bedeli kullanıcı yalnız KENDİ basışıyla öder: hard stop yalnız bir durdurma sürerken
+    /// (<see cref="StopStage.StopNow"/> — kullanıcının kendi Stop'u ya da branch kesmesi başlattı) gelen basıştan gider
+    /// (<see cref="StopAsync"/>'in <c>StopNow</c> aşaması).</para>
     /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03 · "Stop now"]</b> ESKİ İDDİA: hard yolu kontratta/motorda
     /// durur, App'ten GÖNDERİLMEZ; Stopping'de Stop pasiftir ve ikinci basış hiçbir şey üretmez. GEREKÇE: drain, uçuştaki en
-    /// yavaş projenin kalan süresi kadar sürebilir; beklemek istemeyen kullanıcı bunu söyleyebilmelidir. İkinci basış (ya da
-    /// ikinci Esc) <see cref="StopKind.Hard"/> gönderir — inner job terminate edilir, uçuştakiler <c>failed("stopped")</c>
+    /// yavaş projenin kalan süresi kadar sürebilir; beklemek istemeyen kullanıcı bunu söyleyebilmelidir. Durdurma sürerken gelen basış (ya da
+    /// Esc) <see cref="StopKind.Hard"/> gönderir — inner job terminate edilir, uçuştakiler <c>failed("stopped")</c>
     /// olur — ve BİR KEZ gider (<see cref="HardStopRequested"/>); konsola <see cref="StopNowRequestedLine"/> düşer, bitişte
     /// <see cref="HardStoppedLine"/> (yalnız bir şey sonlandırıldıysa). Basışın ne göndereceğini TEK durum seçer
     /// (<see cref="StopStage"/>: Stop → Stop now → Terminating…); Stop düğmesi, tepsi maddesi ve satırdaki ikon da aynı durumu
@@ -1463,20 +1477,6 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="IsMidRunLocked"/> sürer (branch/configuration kilidi kalkmaz, split-button geri
     /// gelmez). Fazdan çıkış motorun sonucuna aittir — bkz. <see cref="OnRunCompleted"/>/
     /// <see cref="OnRunStopped"/>/<see cref="OnError"/>/<see cref="OnEngineExited"/>.</para></summary>
-    /// <summary>[design v1.11.0 §3.1 "Stop"] Marking fazında Stop: komut henüz gönderilmediği için
-    /// durdurulacak bir şey de yoktur — uygulama kendi isteğini geri alır. Motora ne <c>startRun</c> ne
-    /// <c>stopRun</c> gider; koreografiyi ve işaretleri kabuk <see cref="IsStarting"/> düşüşünde temizler.</summary>
-    internal static string RunCancelledLine => "Cancelled — build not started";
-
-    private void CancelPendingRun()
-    {
-        _pendingRunId = null;
-        IsStarting = false;
-        // Faz yalnız koşunun kendi açılışının yazdığı Starting ise bırakılır; başka bir kaynak fazı çoktan değiştirdiyse ezilmez.
-        if (Phase == AppPhase.Starting) Phase = AppPhase.Idle;
-        AppendRunLine(RunCancelledLine);
-    }
-
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
     {

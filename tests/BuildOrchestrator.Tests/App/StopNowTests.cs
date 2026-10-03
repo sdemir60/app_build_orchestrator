@@ -75,8 +75,7 @@ public class StopNowTests
         await vm.StopCommand.ExecuteAsync(null);
         await vm.StopCommand.ExecuteAsync(null);
 
-        Assert.Single(vm.GetRunDocumentText().Split('\n'),
-            line => line.Contains(RunViewModel.StopNowRequestedLine, StringComparison.Ordinal));
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.StopNowRequestedLine));
         GC.KeepAlive(window);
     }
 
@@ -107,7 +106,9 @@ public class StopNowTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Graceful bitiş konsola "sonlandırıldı" satırı eklemez: o satır yalnız hard stop'a aittir.</summary>
+    /// <summary>Graceful bitiş konsola "sonlandırıldı" satırı eklemez: o satır yalnız hard stop'a aittir — <c>runStopped</c>
+    /// konsolu olduğu gibi bırakır. İddia KESİNDİR (metin birebir aynı): tek bir sözcüğe bakan negatif iddia, satırın metni
+    /// değişince ve graceful bitiş yanlışlıkla o satırı yazınca sessizce geçerdi.</summary>
     [StaFact]
     public async Task A_graceful_stop_ending_says_nothing_about_terminated_compiles()
     {
@@ -116,10 +117,12 @@ public class StopNowTests
         MainWindowHost.StartBuild(vm);
         await vm.StopCommand.ExecuteAsync(null);
 
+        string beforeEnd = vm.GetRunDocumentText();
+
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
 
         Assert.Equal(AppPhase.Stopped, vm.Phase); // ön-koşul
-        Assert.DoesNotContain("terminated", vm.GetRunDocumentText());
+        Assert.Equal(beforeEnd, vm.GetRunDocumentText());
         GC.KeepAlive(window);
     }
 

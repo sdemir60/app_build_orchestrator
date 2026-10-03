@@ -218,11 +218,12 @@ shared-compilation flags stay off today for a different reason — the measured 
 server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
 this guarantee.
 
-**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: a stop is already
-draining and the user asks again — a second press of the Stop button, or a second `Esc`. The first press is the polite
-request; the second says the user would rather not wait, and it is honoured. It goes out once: after it the Stop button is
-disabled and a further press or `Esc` does nothing. A full exit of the application never escalates — closing the window
-while a stop drains waits for the drain like any other exit (§12.3).
+**Hard stop** terminates the inner job outright. The App sends it in exactly one situation: the user presses the Stop
+button, or `Esc`, while a stop is already draining — one the user asked for, or the interrupt a branch switch sends. The
+first press of a run is the polite request; a press during a drain says the user would rather not wait, and it is
+honoured. It goes out once: after it the Stop button is disabled and a further press or `Esc` does nothing. A full exit
+of the application never escalates — closing the window while a stop drains waits for the drain like any other exit
+(§12.3).
 
 The choice between them is not about the wait — it is about how much work a stop throws away. A drained
 project *succeeds*, so its `BuildState` is persisted and the next Build skips it as up to date. A terminated
@@ -2668,9 +2669,9 @@ for never moves the phase to `stopping`, and a close that left the ribbon unchan
 rejected request is not a failure and does not take this path — declining a request leaves the `stopped` line
 standing, because that line is still true.
 
-A second `Esc` while a stop drains is the hard stop (§4.5): it runs the same command as a second press of the Stop
+An `Esc` while a stop already drains is the hard stop (§4.5): it runs the same command as a press of the *Stop now*
 button, so the console gets one line for it and the button reads *Terminating…*; the phase line itself does not animate.
-A third `Esc` does nothing.
+A further `Esc` does nothing.
 
 **Projects list.** 36 px rows: a 2 px status stripe (3 px when selected) running the row's full height, the
 8 px **status dot** — the same colour as the stripe — the project name with the solution name beside it, then
@@ -4421,10 +4422,10 @@ selection.
 Esc is a chain and only ever closes the topmost layer: dialog → popover/menu (the action bar's popovers and the
 title bar's update card) → selection → the running build.
 With nothing else open, Esc stops a Build, Rebuild or Clean gracefully (§4.5) — so a selection made mid-run is
-dropped by the first Esc and the build stopped by the second. While that stop drains, one more Esc is the hard
-stop — the same step a second press of the Stop button takes (§4.5) — and after that Esc does nothing. A Sync, a Deep
-Clean, an Optimize, a checkout or a
-pull cannot be stopped; Esc during one writes a single console line saying so (`sync can't be stopped — it will
+dropped by the first Esc and the build stopped by the second. While a stop drains — the user's own or a branch switch's —
+Esc is the hard stop, the same step pressing *Stop now* takes (§4.5), and after that Esc does nothing. A Sync, a Deep
+Clean, an Optimize, a checkout or a pull cannot be stopped; Esc during one writes a single console line saying so
+(`sync can't be stopped — it will
 finish on its own`), once per job. A silent Sync is invisible, and Esc says nothing about it. Right-clicking a
 row is not a selection gesture — it opens the row menu and leaves the selection alone.
 

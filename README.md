@@ -366,10 +366,11 @@ version's notes as its text. Installed copies pick it up on their next check.
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
-   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
-   reads *Stop now* and the ribbon reports how many are still finishing. Pressing *Stop now* — or `Esc` once
-   more — does not wait: the in-flight compiles are terminated at once, the console says how many, and the button
-   reads *Terminating…* and is disabled. Those projects count as failed, so the next Build compiles them again.
+   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button — and
+   the tray menu's Stop item — reads *Stop now* and the ribbon reports how many are still finishing. Pressing
+   *Stop now* — or `Esc` — does not wait, whether you asked for the stop or a branch switch did: the in-flight
+   compiles are terminated at once, the console says how many, and the button reads *Terminating…* and is
+   disabled. Those projects count as failed, so the next Build compiles them again.
    To carry on, press *Build* again: everything that already succeeded is skipped as up to date, so only the
    remaining work runs. The elapsed clock starts from zero — it is a new run.
 
@@ -574,8 +575,9 @@ tray icon still restores the window, and the About screen marks that row *unavai
 rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
-carries on from there. Pressing it again while the stop drains is *Stop now*: the in-flight compiles are terminated
-at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped;
+carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
+in-flight compiles are terminated at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch
+switch or pull cannot be stopped;
 `Esc` during one writes a single console line saying so.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
