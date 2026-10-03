@@ -222,6 +222,17 @@ internal static class MainWindowHost
         vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), durationMs));
     }
 
+    /// <summary>[perf Faz A · A8] Motor bir projenin çıktısından bir satır yazdı (<c>projectLog</c>): VM'in konsol modeline (koşu
+    /// anlatısı ve proje logu) düşer. Olayın kimlik/ad çifti (<see cref="IdOf"/>) tek yerde durur; <paramref name="lineNumber"/>
+    /// motorun projeye özgü satır sayacıdır.</summary>
+    public static void LogLine(RunViewModel vm, string name, int lineNumber, string text)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(text);
+        vm.OnEvent(new ProjectLogEvent("r1", IdOf(name), lineNumber, text));
+    }
+
     /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
     /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri
     /// akışın bütününü tek çağrıyla sürer.</summary>

@@ -5314,10 +5314,11 @@ than failed: only a build the targets break turns the test red.
 
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
-file picker lands, UI latency and memory under each perf profile, and the content-decision timings. The filter
-above does **not** exclude them (`!=` admits every other category value). The tray, file-picker and perf probes
-open real windows and dialogs, show balloons or saturate every core, so each is gated on an environment variable —
-`BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_PERF` — and reports itself as skipped
+file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
+window is hidden, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every
+other category value). The tray, file-picker, hidden-window and perf probes open real windows and dialogs, show
+balloons or saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`,
+`BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`, `BO_MEASURE_PERF` — and reports itself as skipped
 unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default

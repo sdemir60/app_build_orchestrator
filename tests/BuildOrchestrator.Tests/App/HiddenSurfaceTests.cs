@@ -288,10 +288,10 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>[perf Faz A · A3/A4] <c>P0..P{count-1}</c> proje adları — hem fixture'a hem koşu sürücülerine gider.</summary>
-    private static string[] Names(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
+    internal static string[] Names(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
 
     /// <summary><c>MainWindowHost.NewWithProjects</c>'in beklediği (ad, içerik) çiftleri; içerik yok.</summary>
-    private static (string, string?)[] ProjectPairs(string[] names) => [.. names.Select(n => (n, (string?)null))];
+    internal static (string, string?)[] ProjectPairs(string[] names) => [.. names.Select(n => (n, (string?)null))];
 
     /// <summary>
     /// [perf Faz A · A3] <b>Gizli pencerede olay akışı satır kurmaz.</b> Tepsideyken derlenen bir koşunun her olayı
@@ -1067,6 +1067,138 @@ public class HiddenSurfaceTests
         Assert.Equal(1, ready);                  // ...ve bekleyen çıkışı serbest bıraktı
         DispatcherPump.PumpUntil(() => shutdowns > 0, TimeSpan.FromSeconds(2));
         Assert.Equal(1, shutdowns);              // ...ve uygulama TAM bir kez kapatıldı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A8] Düzeni geçerli (ölçülmüş VE yerleştirilmiş) görsel ağaç öğeleri: <paramref name="roots"/>'un kendileri ve
+    /// tüm görsel torunları. Bir layout geçişi ancak bir öğenin ölçümü ya da yerleşimi geçersizlendiğinde çıkar; "hiçbir ölçüm
+    /// geçersizlenmedi" iddiası bu kümenin SONRADAN da geçerli kalmasıdır. Başta geçersiz olanlar (hiç ölçülmemiş, çökük alt
+    /// ağaçlar) kümede değildir ve iddiaya girmez.
+    /// </summary>
+    private static HashSet<UIElement> LayoutValid(params UIElement[] roots) =>
+    [
+        .. roots.SelectMany(root => DsResources.Descendants(root).Prepend(root)).OfType<UIElement>()
+            .Where(e => e.IsMeasureValid && e.IsArrangeValid),
+    ];
+
+    /// <summary>Hata iletisinde bir öğeyi tanıtır: tipi ve en yakın adlı atası (satır container'ları adsızdır).</summary>
+    private static string Describe(UIElement element)
+    {
+        var named = DsResources.SelfAndAncestors(element).OfType<FrameworkElement>().FirstOrDefault(f => f.Name.Length > 0);
+        return named is null ? element.GetType().Name
+            : ReferenceEquals(named, element) ? $"{element.GetType().Name}#{named.Name}"
+            : $"{element.GetType().Name} in #{named.Name}";
+    }
+
+    /// <summary>
+    /// [perf Faz A · A8] <b>Kalıcı pin: pencere gizliyken koşu olayları hiçbir görünümün ölçümünü geçersizlemez.</b> Faz A'nın amacı
+    /// tepsideki derlemede UI thread'ine layout geçişi yaptırmamaktır ve bir layout geçişi ancak bir öğenin ölçümü ya da yerleşimi
+    /// geçersizlendiğinde çıkar. Test 177 projelik bir derlemenin olay akışını gizliyken sürer — plan, başlangıç, derlenen bir satır,
+    /// 300 log satırı, 3 sn'lik tikler (gerçek kabuğun tik gövdesi), bir konsol batch'i, her projenin başlayıp bitmesi ve koşunun
+    /// bitişi — ve kabuğun kapılı yüzeylerinin (şerit, proje listesi ve satırları, olay akışı, konsol ve başlığı, graf) başta
+    /// geçerli olan HER öğesinin sonda da geçerli kaldığını, konsol belgesinin hiç yeniden kurulmadığını sınar. Bir yüzeyin kapısı
+    /// kalkarsa o yüzeyin metni/chip'i/satırı yazılır, öğeleri geçersizlenir ve test kırmızıdır (şerit, proje satırları, olay akışı
+    /// ve konsol kapıları için kırmızısı gösterildi).
+    ///
+    /// <para>Pin yalnız headless ağaçta, dispatcher pompalanmadan görünen geçersizlemeyi yakalar: orada layout turu koşmaz ve
+    /// ölçüm "geçersizlenmedi"dir. Bu pinin görmediği işleri (ör. grafa statü itişi) ilgili kapının kendi testi sınar;
+    /// dispatcher'ın sonradan koşturduğu işlerin layout geçişlerini ve thread döngüsünü gerçek bir pencerede kapılı ölçüm testi
+    /// okur (<see cref="HiddenSurfaceMeasurementTests"/>).</para>
+    /// </summary>
+    [StaFact]
+    public void Run_events_and_console_batches_leave_the_realized_shell_measure_valid_while_the_surface_is_hidden()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(177);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var content = MainWindowHost.Realize(window); // satır container'ları üretilir; ağaç ölçülmüş ve yerleştirilmiş
+        var shell = window.Shell;
+        window.SetSurfaceHidden(true);
+        var gated = LayoutValid(shell.Ribbon, shell.ProjectsList, shell.EventStreamControl,
+            shell.ConsoleViewControl, shell.ConsoleHeaderControl, shell.GraphHost);
+        Assert.True(content.IsMeasureValid && content.IsArrangeValid);     // ön-koşul: realize edilmiş ağaç geçerli
+        Assert.True(gated.Contains(shell.Ribbon), "ön-koşul: şerit ölçülmüş");
+        Assert.True(list.RevealRows.Any(row => gated.Contains(row)), "ön-koşul: gerçekleşmiş proje satırları ölçülmüş");
+
+        MainWindowHost.PreviewBuild(vm, names);                            // motorun planı
+        MainWindowHost.StartBuild(vm, names);                              // runStarted
+        MainWindowHost.StartProject(vm, names[0]);                         // derlenen bir satır: canlı süre ve chip'in işi olsun
+        for (int i = 0; i < 300; i++) MainWindowHost.LogLine(vm, names[0], i + 1, $"line {i}");
+        for (int i = 0; i < 15; i++) window.OnElapsedTick();               // 3 sn'lik 200 ms tikler (üretimdeki tik gövdesi)
+        window.AppendConsoleBatch(string.Join("", Enumerable.Range(0, 300).Select(i => $"line {i}\n")), window.ConsoleReseedGen);
+        MainWindowHost.FinishBuild(vm, names);                             // 177 x projectStarted + projectSucceeded, runCompleted
+
+        Assert.True(vm.StreamEvents.Count > 0 && vm.GetActiveLineCount() >= 300, "ön-koşul: olaylar ve log satırları modele ulaştı");
+        Assert.True(content.IsMeasureValid && content.IsArrangeValid);
+        Assert.True(shell.Ribbon.IsMeasureValid);
+        Assert.Empty(gated.Where(e => !e.IsMeasureValid || !e.IsArrangeValid).Select(Describe)); // hiçbir kapılı öğe geçersizlenmedi
+        Assert.Equal(0, shell.ConsoleViewControl.RunDocumentReplacedCount);                        // konsol belgesi hiç kurulmadı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A8 · Review Focus 1] <b>Gizle → göster → gizle → göster konsolu çiftlemez.</b> Her gösterimde konsol belgesi
+    /// modelin O ANKİ tam metninden BİR kez kurulur; gizliyken gelen batch'ler belgeye hiç inmez (model zaten tutar), görünürken
+    /// gelenler bir kez eklenir ve kurulumdan önce okunmuş uçuştaki bayat batch kurulumdan sonra gelse de düşer. Her geçişte
+    /// belgenin satır sayısı modelinkine eşittir, hiçbir satır iki kez ya da eksik durmaz. (Bayat batch'in düşme kuralının kendisi
+    /// <see cref="A_batch_stamped_before_the_rebuild_on_show_is_dropped_instead_of_landing_twice"/>'ta pinlidir.)
+    /// </summary>
+    [StaFact]
+    public void A_hide_show_hide_show_sequence_rebuilds_the_console_once_per_show_and_never_duplicates_a_line()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        int emitted = 0;
+        // Motor n satır daha yazar: model alır; dönen metin pompanın bu satırlar için üreteceği batch'tir (pompa bu fixture'da
+        // hiç tick etmez, batch'i üretimdeki hedefe test verir).
+        string Emit(int count)
+        {
+            var batch = new System.Text.StringBuilder();
+            for (int i = 0; i < count; i++)
+            {
+                emitted++;
+                MainWindowHost.LogLine(vm, "A", emitted, $"line {emitted}");
+                batch.Append($"line {emitted}\n");
+            }
+            return batch.ToString();
+        }
+        List<string> DocumentLines() => [.. console.EditorControl.Document.Text.TrimEnd().Split('\n').Select(l => l.TrimEnd('\r'))];
+        void AssertConsoleMatchesModel()
+        {
+            var lines = DocumentLines();
+            Assert.Equal(vm.GetActiveLineCount(), lines.Count);   // konsol satır sayısı modelle eşit
+            Assert.Equal(lines.Count, lines.Distinct().Count());  // çift satır yok
+            for (int n = 1; n <= emitted; n++)
+                Assert.Single(lines, l => l.EndsWith($"line {n}", StringComparison.Ordinal)); // her satır tam bir kez durur
+        }
+
+        window.SetSurfaceHidden(true);
+        window.AppendConsoleBatch(Emit(20), window.ConsoleReseedGen); // gizli 1: batch belgeye inmez, model tutar
+        long inFlightGen = window.ConsoleReseedGen;                   // pompa bir batch'i bu nesilde okudu ...
+        string inFlight = Emit(5);                                    // ... ve henüz teslim etmedi
+        Assert.Equal(0, console.RunDocumentReplacedCount);
+
+        window.SetSurfaceHidden(false);                               // gösterim 1
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 1, TimeSpan.FromSeconds(2));
+        Assert.Equal(1, console.RunDocumentReplacedCount);
+        AssertConsoleMatchesModel();                                  // belge modelin tam metninden bir kez kuruldu
+        window.AppendConsoleBatch(inFlight, inFlightGen);             // uçuştaki bayat batch kurulumdan SONRA gelir
+        AssertConsoleMatchesModel();                                  // ikinci kez inmez
+
+        window.AppendConsoleBatch(Emit(10), window.ConsoleReseedGen); // görünür: yeni satırlar bir kez eklenir
+        DispatcherPump.PumpUntil(() => DocumentLines().Count == vm.GetActiveLineCount(), TimeSpan.FromSeconds(2));
+        AssertConsoleMatchesModel();
+
+        window.SetSurfaceHidden(true);                                // gizli 2
+        window.AppendConsoleBatch(Emit(20), window.ConsoleReseedGen);
+        Assert.Equal(1, console.RunDocumentReplacedCount);            // gizliyken yeni kurulum yok
+
+        window.SetSurfaceHidden(false);                               // gösterim 2
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount == 2, TimeSpan.FromSeconds(2));
+        Assert.Equal(2, console.RunDocumentReplacedCount);            // gösterim başına TAM bir kurulum
+        AssertConsoleMatchesModel();
         GC.KeepAlive(window);
     }
 }
