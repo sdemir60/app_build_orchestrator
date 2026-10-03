@@ -375,3 +375,20 @@ python $W/snap.py restore <ad> && python $W/snap.py verify <ad>   # SONRA geri y
   etkilemez). Akşam oturumunda: dosya kaldırıldı, akşam deneylerinden önce alınan yedek geri yüklendi ve
   doğrulandı, kaynak dosya (`OSYS.UI.General\Properties\AssemblyInfo.cs`) özgün baytları ve özgün zaman
   damgasıyla yerinde, yedekler silindi.
+
+## Ek — 2026-10-03: açık kalan testler
+
+- **Ö2 diğer toolset'te:** VS 2022 (MSBuild 17.14) ile deney projeleri: eski-stil projede metadata-only geçici
+  assembly aynı BAML ve aynı DLL boyutunu veriyor (public ve internal üye kullanan iki XAML). net10 SDK-style
+  deney projesi VS 2022 ile zaten derlenmiyor (taban da MSB4276) — ayar kaynaklı değil.
+- **Ö2 döngü dışı projelerde (Rebuild A/B, 154 proje, Balanced, aynı yedekten):** taban 84,4 sn →
+  metadata-only 75,3 sn (−%11); job CPU 333 → 298 sn; geçici derleme görevi 24,1 → 9,9 sn. Her iki koşuda da
+  aynı tek proje başarısız (`OSYS.Orchestration.Accounting.Common`, sizin açık değişikliğiniz), yeni hata yok.
+  Bu koşu + S3 koşusu birlikte 187 projenin tamamını kapsıyor: OSYS'teki her WPF projesi üç öğeli targets ile
+  en az bir kez hatasız derlendi.
+- **ARCHITECTURE §4.5 / §9.2 / §20 ve README:** paylaşılan derleme gerekçesi ölçüme göre yeniden yazıldı
+  (commit `docs: paylasilan derleme gerekcesi olcumle yeniden yazildi`).
+- **Yapılamayanlar:** Defender A/B (yönetici yetkisi ister: yönetici PowerShell'de
+  `Add-MpPreference -ExclusionPath 'D:\Projects\Delta','C:\OSYS'`, aynı harness ile bir koşu, sonra
+  `Remove-MpPreference`); Ö1'in ek kuralları (uygulamada kırmızı testlerle); 17:15 koşunuzdaki gerçek yükün ne
+  olduğu; R3 koşusunda yüzey kanıtının neden kapandığı.
