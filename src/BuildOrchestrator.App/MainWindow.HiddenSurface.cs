@@ -158,7 +158,7 @@ public partial class MainWindow
         {
             // Reveal OYNAMAZ (gizlilikte olan bir değişim geriye dönük oynanmaz). Graf gizliyken zaten yeniden kurulmuştu
             // (RebuildGraph kapısızdır) ve burada tekrarlanmaz — tekrarı dönüşte görünür bir reveal oynatırdı.
-            // Bayrağı ApplyProjectGroups düşürür (BlankPlanSurface de düşürür): diğer bloklardaki gibi burada ayrıca sıfırlanmaz.
+            // Diğer blokların aksine bayrak burada elle sıfırlanmaz: onu listeyi yazan ApplyProjectGroups düşürür (BlankPlanSurface de düşürür).
             ApplyProjectGroups(reveal: false);
         }
         if (_graphStaleWhileHidden)

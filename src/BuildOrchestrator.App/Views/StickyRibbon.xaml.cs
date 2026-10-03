@@ -193,9 +193,12 @@ public partial class StickyRibbon : UserControl
     /// (<see cref="RefreshAll"/>) düşürür: DataContext değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.
     ///
     /// <para><b>Bilinen sınır:</b> <see cref="RefreshAll"/> faz duyurusunu yapmaz, yalnız bayrağı düşürür. Gizliyken bir
-    /// <c>Loaded</c> ya da DataContext tam kurulumu koşarsa dönüşte <see cref="AnnouncePhaseIfChanged"/> de koşmaz: bayrakla birlikte
-    /// gizlilikte değişen fazın duyuru borcu da silinir. Yol dardır (DataContext bir kez bağlanır; ilk gösterimde
-    /// <c>IsVisibleChanged</c>, <c>Loaded</c>'dan önce gelir, yani o kurulum yüzey görünürken koşar) ve bilinçli olarak değiştirilmedi.</para></summary>
+    /// <c>Loaded</c> ya da DataContext tam kurulumu koşarsa bayrak düşer ve dönüşteki <see cref="AnnouncePhaseIfChanged"/> çağrısı
+    /// hiç yapılmaz: <c>_lastAnnouncedPhase</c> bayat kalır, yani gizlilikte değişen fazın duyurusu dönüşte ÖDENMEZ — bir sonraki
+    /// faz bildirimine (<see cref="AnnouncePhaseIfChanged"/>'e giren sonraki şerit bildirimi, tipik olarak sonraki faz değişimi)
+    /// kalır. Yol dardır (DataContext bir kez bağlanır; ilk gösterimde <c>IsVisibleChanged</c>'in <c>Loaded</c>'dan önce geldiği
+    /// varsayılır, yani o kurulum yüzey görünürken koşar — bu sıra WPF davranışıdır, depoda bir testle pinli DEĞİLDİR) ve bilinçli
+    /// olarak değiştirilmedi.</para></summary>
     private bool _staleWhileHidden;
 
     /// <summary>Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir

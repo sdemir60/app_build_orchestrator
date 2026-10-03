@@ -670,7 +670,7 @@ public class HiddenSurfaceTests
         int countersNotifications = 0;
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(BuildOrchestrator.App.ViewModels.RunViewModel.Counters)) countersNotifications++;
+            if (e.PropertyName == nameof(RunViewModel.Counters)) countersNotifications++;
         };
 
         MainWindowHost.RunBuild(vm, names);                      // toplam sabit: her proje olayı Counters yayınlar
@@ -1204,9 +1204,10 @@ public class HiddenSurfaceTests
         Assert.True(gated.Contains(shell.Ribbon), "ön-koşul: şerit ölçülmüş");
         Assert.True(list.RevealRows.Any(row => gated.Contains(row)), "ön-koşul: gerçekleşmiş proje satırları ölçülmüş");
         // Her yüzey ayrı kanıtlanır: kümede o yüzeyden hiç öğe yoksa (headless'ta çökük ya da ölçülmemiş) iddia o yüzey için boşta
-        // yeşil kalırdı. Kökün kendisi yetmez: kök ölçülmüş olsa da içinin ölçüldüğünü göstermez, oysa kapısı unutulmuş bir yazım
-        // içteki bir öğeyi (metin, satır) geçersizler — bu yüzden kökün DIŞINDA en az bir torun kümede olmalıdır. Eksik
-        // yüzeylerin adları tek iddiada hepsiyle birlikte bildirilir.
+        // yeşil kalırdı. Şerit ve satır ön-koşulları (yukarıda) kökün kendisiyle yetinir; aşağıdaki dört yüzey (olay akışı, konsol,
+        // konsol başlığı, graf) için kökün kendisi yetmez: kök ölçülmüş olsa da içinin ölçüldüğünü göstermez, oysa kapısı
+        // unutulmuş bir yazım içteki bir öğeyi (metin, satır) geçersizler — bu yüzden bu dört yüzeyde kökün DIŞINDA en az bir torun
+        // kümede olmalıdır. Eksik yüzeylerin adları tek iddiada hepsiyle birlikte bildirilir.
         var surfaces = new (string Name, UIElement Root)[]
         {
             ("event stream", shell.EventStreamControl), ("console", shell.ConsoleViewControl),
