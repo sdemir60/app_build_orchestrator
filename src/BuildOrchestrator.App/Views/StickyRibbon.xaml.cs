@@ -111,6 +111,9 @@ public partial class StickyRibbon : UserControl
     internal TextBlock OpText => PART_OpText;
     internal StatusGlyph OpGlyph => PART_OpGlyph;
     internal BuildingSpinner OpSpinner => PART_OpSpinner;
+    /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="RefreshAll"/> çağrı sayacı — yüzey gizliyken şeridin modele
+    /// dokunmadığını, görününce TEK geçişin koştuğunu pinler.</summary>
+    internal int RebuildCount { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // testler hatalı chip'leri buradan pinler
     internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
@@ -181,10 +184,31 @@ public partial class StickyRibbon : UserControl
         PART_PhaseText.BeginAnimation(OpacityProperty, pulse, HandoffBehavior.SnapshotAndReplace);
     }
 
-    private void OnProjectsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildChipsIfChanged();
+    /// <summary>[perf Faz A · A5] Yüzey gizliyken şerit modele dokunmaz: VM bildirimleri yalnız "şerit modelin gerisinde"
+    /// bayrağını kaldırır (metin, ilerleme, chip'ler ve ekran okuyucu duyurusu hiç yazılmaz).</summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
+    /// (<see cref="HiddenSurface"/>). Yüzey görünür olunca ve bayat kalındıysa şerit modele TEK geçişte yetişir:
+    /// <see cref="RefreshAll"/> (metin, ilerleme, chip'ler) + faz duyurusu.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        _staleWhileHidden = false;
+        RefreshAll();
+        AnnouncePhaseIfChanged();
+    }
+
+    private void OnProjectsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
+        RebuildChipsIfChanged();
+    }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Phase):
@@ -234,6 +258,7 @@ public partial class StickyRibbon : UserControl
 
     private void RefreshAll()
     {
+        RebuildCount++;
         RefreshText();
         RefreshProgress();
         _lastBuildingSig = _lastFailedSig = null;

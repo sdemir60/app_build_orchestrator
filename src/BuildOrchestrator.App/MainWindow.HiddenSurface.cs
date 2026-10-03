@@ -12,7 +12,8 @@ namespace BuildOrchestrator.App;
 /// <see cref="HiddenSurface.GetIsHidden"/> okur. Bu sinyali okuyan yüzeyler: açılış koreografisi ve adım
 /// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali, grafa statü/faz/seçim itişleri
 /// (<see cref="_graphStaleWhileHidden"/>), olay akışı satırları (<c>EventStreamView</c> sinyali kendisi okur) ve konsol
-/// belgesi (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar).</para>
+/// belgesi (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar), sticky şerit, Build menüsü ve proje
+/// satırları (her biri kendi bayrağıyla dönüşte tek geçişte yetişir) ve proje listesi (<see cref="_listStaleWhileHidden"/>).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -78,6 +79,12 @@ public partial class MainWindow
     /// graf panelini gizlediğinde), pencerenin gizliliğine değil.</summary>
     private bool _graphStaleWhileHidden;
 
+    /// <summary>Gizliyken proje listesi kurulmadı ve kurulması GEREKİYORDU: topoloji değişti (<c>RefreshProjectGroups</c>) ya da
+    /// görünür satır kümesinin imzası değişti (<c>RefreshVisibleRows</c>; imza aynıysa bayrak kalkmaz — koşu olayları listeyi
+    /// kirletmez). <see cref="ResyncAfterShow"/> listeyi TEK geçişte, reveal'siz kurar ve sıfırlar. Satırların kendi görünümü
+    /// bundan bağımsızdır: her <c>ProjectRow</c> kendi bayrağıyla yetişir.</summary>
+    private bool _listStaleWhileHidden;
+
     /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
     /// (<see cref="DispatcherPriority.Loaded"/>). Gizliyken biriken ekran işi burada tek seferde kurulur;
     /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için onlardan kurulacak bir
@@ -95,6 +102,12 @@ public partial class MainWindow
     /// statüler, seçim, filtre. Topoloji bu yola girmez: gizliyken de kurulmuştu ve dönüşte tekrarlanmaz. Koşu gizliyken
     /// başladıysa graf soluklaşma geçişini (<c>GraphView.HoldStatusesUntilDimmed</c>) dönüşte oynar — kabul edilen tek,
     /// kısa geçiş.</para>
+    ///
+    /// <para><b>Liste:</b> gizliyken topoloji ve görünür-küme değişimleri listeye yazılmadı (<see cref="_listStaleWhileHidden"/>);
+    /// dönüşte liste modelden TEK geçişte, <b>reveal'siz</b> kurulur (<c>ApplyProjectGroups(reveal: false)</c>) — gizlilikte olan bir
+    /// değişimin kademeli belirişi geriye dönük oynanmaz. İmza <c>ApplyProjectGroups</c>'ta yazıldığı için ardından
+    /// <c>RefreshVisibleRows</c> çağırmak boş bir karşılaştırma olurdu. Sticky şerit, Build menüsü ve satırlar burada DEĞİL:
+    /// kalıtsal sinyalin kendi değişiminde (<c>OnPropertyChanged</c>) her biri kendi bayrağıyla yetişir.</para>
     ///
     /// <para><b>Gizliyken koşmaz:</b> göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir (kullanıcı
     /// pencereyi hemen geri indirir). O durumda burası hiçbir şey yapmaz ve "ekran bayat" bayrakları yerinde kalır:
@@ -121,6 +134,13 @@ public partial class MainWindow
                 _vm.SeedProjectDocument(activeProjectId,
                     text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentLines(row, text)));
             }
+        }
+        if (_listStaleWhileHidden)
+        {
+            _listStaleWhileHidden = false;
+            // Reveal OYNAMAZ (gizlilikte olan bir değişim geriye dönük oynanmaz). Graf gizliyken zaten yeniden kurulmuştu
+            // (RebuildGraph kapısızdır) ve burada tekrarlanmaz — tekrarı dönüşte görünür bir reveal oynatırdı.
+            ApplyProjectGroups(reveal: false);
         }
         if (_graphStaleWhileHidden)
         {

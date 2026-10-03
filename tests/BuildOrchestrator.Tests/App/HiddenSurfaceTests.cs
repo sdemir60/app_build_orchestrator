@@ -558,4 +558,218 @@ public class HiddenSurfaceTests
         Assert.Equal("", console.ActiveLineText.Text);                   // proje modunda "ready" yok
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [perf Faz A · A5] <b>Gizli pencerede sticky şerit modele dokunmaz.</b> Tepsideyken derlenen bir koşunun her statü
+    /// değişimi şeridin metnini, ilerleme çubuğunu ve chip'lerini yeniden yazıyordu. Kaynak model zaten tam durur: görünüm
+    /// gizliyken yalnız "şerit modelin gerisinde" bayrağını kaldırır, görününce TEK geçişte (<c>RefreshAll</c>) modele yetişir.
+    /// Test GERÇEK kabuğun şeridini sürer (<c>Shell.Ribbon</c>): sinyal pencereye yazılır ve kalıtımla şeride iner; dönüş
+    /// kurulumu DP değişiminde eşzamanlıdır (pompa gerekmez).
+    /// </summary>
+    [StaFact]
+    public void The_ribbon_is_not_refreshed_while_hidden_and_catches_up_in_one_pass_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(5);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var ribbon = window.Shell.Ribbon;
+        string textBefore = ribbon.PhaseText.Text;
+        int passesBefore = ribbon.RebuildCount;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.PreviewBuild(vm, names);
+        MainWindowHost.StartBuild(vm, names);
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(names[0]), names[0])); // bir proje derleniyor: building chip'i
+        int compiling = vm.Projects.Count(p => p.IsCompiling);
+
+        Assert.NotEqual(textBefore, vm.RibbonLine.Text);   // ön-koşul: model şerit metnini değiştirdi
+        Assert.True(compiling > 0, "ön-koşul: derlenen bir proje var — yoksa chip iddiası boşta yeşil olurdu");
+        Assert.Equal(textBefore, ribbon.PhaseText.Text);   // KIRMIZI kapısız: bugün her bildirim metni yeniden yazar
+        Assert.Empty(ribbon.BuildingChips);                //                   ve chip'leri kurar
+        Assert.Equal(passesBefore, ribbon.RebuildCount);
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(vm.RibbonLine.Text, ribbon.PhaseText.Text);   // dönüşte şerit modele eşit
+        Assert.Equal(compiling, ribbon.BuildingChips.Count);       // chip'ler modelle eşit
+        Assert.Equal(passesBefore + 1, ribbon.RebuildCount);       // RefreshAll TAM bir kez
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5] <b>Gizli pencerede Build menüsü kurulmaz.</b> Menü içeriğinin tek girdisi toplam proje sayısıdır
+    /// (Rebuild'in açıklaması: "All N projects"); <c>Counters</c> ise koşu boyunca her statü değişiminde yayınlanır. Gizliyken
+    /// bildirim yalnız bayrağı kaldırır; dönüşte tek karşılaştırma yapılır: toplam değiştiyse TEK kurulum, değişmediyse hiçbiri.
+    /// Test toplamı gizliyken değiştirir (Sync yeni bir proje getirir) ki dönüş kurulumu gözlenebilsin. Menü ActionBar'ın
+    /// popup'ında durur: kalıtsal sinyal oraya da inmelidir.
+    /// </summary>
+    [StaFact]
+    public void The_build_menu_is_not_rebuilt_while_hidden_and_follows_a_changed_total_once_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var menu = window.Shell.BuildMenuControl;
+        int rebuildsBefore = menu.RefreshRowsCount;
+        Assert.Contains("All 3 projects", menu.Items[1].Desc);   // ön-koşul: menü modelin toplamını gösteriyor
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));    // gizliyken Sync yeni bir proje getirdi: toplam 3 -> 4
+
+        Assert.Equal(4, vm.Counters.Total);                      // ön-koşul: model toplamı değişti
+        Assert.Equal(rebuildsBefore, menu.RefreshRowsCount);     // KIRMIZI kapısız: bugün her Counters bildirimi menüyü yeniden kurar
+        Assert.Contains("All 3 projects", menu.Items[1].Desc);   // ekran hâlâ eski toplamda
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(rebuildsBefore + 1, menu.RefreshRowsCount); // dönüşte TAM bir kurulum
+        Assert.Contains("All 4 projects", menu.Items[1].Desc);   // toplam modele eşit
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5 · eski B5 (1)] Build menüsü YALNIZ toplam proje sayısı değişince yeniden kurulur. <c>Counters</c> bir
+    /// koşuda her proje olayında yayınlanır ama menü yalnız toplamı okur: toplam aynıyken menüyü her seferinde sökmek boşa
+    /// iştir. Bu kural pencere görünürken de geçerlidir (gizli kapıdan bağımsız).
+    /// </summary>
+    [StaFact]
+    public void The_build_menu_is_rebuilt_only_when_the_total_changes()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var menu = window.Shell.BuildMenuControl;
+        int rebuildsBefore = menu.RefreshRowsCount;
+        int countersNotifications = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(BuildOrchestrator.App.ViewModels.RunViewModel.Counters)) countersNotifications++;
+        };
+
+        MainWindowHost.RunBuild(vm, names);                      // toplam sabit: her proje olayı Counters yayınlar
+
+        Assert.True(countersNotifications > 0, "ön-koşul: koşu Counters yayınladı — yoksa 'yeniden kurulmadı' iddiası boşta yeşil olurdu");
+        Assert.Equal(rebuildsBefore, menu.RefreshRowsCount);     // KIRMIZI: bugün her Counters bildirimi menüyü yeniden kurar
+
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));    // toplam 3 -> 4
+
+        Assert.Equal(rebuildsBefore + 1, menu.RefreshRowsCount); // toplam değişince TEK kurulum
+        Assert.Contains("All 4 projects", menu.Items[1].Desc);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5] <b>Gizli pencerede proje satırı kendini yazmaz.</b> Tepsideyken derlenen bir koşunun her statü, süre ve
+    /// seçim bildirimi görünmeyen satırın glyph'ini, şeridini, süre metnini ve sağ bloğunu yeniden yazıyordu. Satır gizliyken
+    /// yalnız "satır modelin gerisinde" bayrağını kaldırır; görününce <c>ApplyAll</c> tek geçişte modelden kurar (süre de onun
+    /// içinden bir kez yazılır). Satır GERÇEK kabuğun listesinden alınır: sinyal pencereden satıra kalıtımla iner.
+    /// </summary>
+    [StaFact]
+    public void A_project_row_applies_nothing_while_hidden_and_applies_once_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(5);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        MainWindowHost.Realize(window); // satır container'ları üretilir (liste topolojiden SONRA doldu)
+        Assert.NotEmpty(list.RevealRows);   // ön-koşul: satırlar gerçek ağaçta kuruldu
+        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
+        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        int allBefore = row.ApplyAllCount, durationBefore = row.ApplyDurationCount;
+        var glyphBefore = row.Glyph.Status;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, names);
+
+        Assert.NotEqual(rowVm.VisualStatus, glyphBefore);           // ön-koşul: model satırın statüsünü değiştirdi
+        Assert.Equal(allBefore, row.ApplyAllCount);
+        Assert.Equal(durationBefore, row.ApplyDurationCount);       // KIRMIZI kapısız: bugün her durum/süre bildirimi süreyi yeniden yazar
+        Assert.Equal(glyphBefore, row.Glyph.Status);                //                   ve glyph'i günceller
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(allBefore + 1, row.ApplyAllCount);             // ApplyAll TAM bir kez
+        Assert.Equal(durationBefore + 1, row.ApplyDurationCount);   // süre onun içinden bir kez yazıldı
+        Assert.Equal(rowVm.VisualStatus, row.Glyph.Status);         // satır modelle eşit
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5] <b>Gizli pencerede proje listesi kurulmaz.</b> Topoloji (Sync'in getirdiği yeni proje kümesi) modelde
+    /// zaten durur; liste gizliyken yalnız "liste bayat" bayrağını kaldırır, dönüşte <c>ResyncAfterShow</c> onu TEK geçişte ve
+    /// <b>reveal'siz</b> kurar — gizlilikte olan bir değişimin kademeli belirişi geriye dönük oynanmaz. Grafın yeniden
+    /// kurulması (<c>RebuildGraph</c>) bu kapının dışındadır ve dönüşte tekrarlanmaz. Listenin yeniden kurulması
+    /// <c>ItemContainerGenerator.ItemsChanged</c> ile sayılır; reveal oynaması <c>RevealGeneration</c> ile.
+    /// </summary>
+    [StaFact]
+    public void The_project_list_is_not_rebuilt_while_hidden_and_is_built_once_without_reveal_on_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        MainWindowHost.Realize(window);
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3)); // ilk topolojinin belirişi oynadı
+        int revealBefore = list.RevealGeneration;
+        int itemsBefore = list.RowFlow.Items.Count;
+        int rebuilds = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken Sync yeni bir proje getirdi
+
+        Assert.Equal(4, vm.Projects.Count);                     // ön-koşul: model topolojisi değişti
+        Assert.Equal(0, rebuilds);                              // KIRMIZI kapısız: bugün topoloji listeyi hemen yeniden kurar
+        Assert.Equal(itemsBefore, list.RowFlow.Items.Count);
+
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();                               // Loaded-öncelikli kurulum pompasız koşsun (A4 testlerinin deseni)
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(400)); // beliriş verilseydi burada oynardı
+
+        Assert.True(rebuilds > 0);                              // liste dönüşte kuruldu
+        Assert.NotEqual(itemsBefore, list.RowFlow.Items.Count); // ...ve yeni topolojiyi gösteriyor
+        Assert.Equal(revealBefore, list.RevealGeneration);      // reveal OYNAMADI
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kontrol: AYNI topoloji değişimi görünür pencerede listeyi hemen kurar ve belirişi oynatır — yani yukarıdaki test
+    /// belirişin hiç oynayamamasından değil, gizli sinyalden geçer.</summary>
+    [StaFact]
+    public void A_topology_change_while_visible_rebuilds_the_list_at_once_and_plays_the_reveal()
+    {
+        using var dir = new TempDir();
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        MainWindowHost.Realize(window);
+        DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
+        int revealBefore = list.RevealGeneration;
+        int itemsBefore = list.RowFlow.Items.Count;
+
+        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));
+
+        Assert.NotEqual(itemsBefore, list.RowFlow.Items.Count);   // liste hemen kuruldu
+        DispatcherPump.PumpUntil(() => list.RevealGeneration != revealBefore, TimeSpan.FromSeconds(3));
+        Assert.NotEqual(revealBefore, list.RevealGeneration);     // ve beliriş oynadı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A5] Gizliyken yalnız koşu olayları gelirse (topoloji ve filtre aynı) liste dönüşte yeniden KURULMAZ. Bayrak
+    /// "kurulum gerçekten gerekiyor"u söyler: görünür satır kümesinin imzası değişmedikçe <c>RefreshVisibleRows</c> bayrağı
+    /// kaldırmaz — aksi halde tepsideki her derleme, pencere gelince listenin tamamen yeniden kurulmasına (container üretimi,
+    /// kaydırma konumu) yol açardı. Satırların kendi görünümü ayrı kapıdan yetişir (<c>ProjectRow</c>).
+    /// </summary>
+    [StaFact]
+    public void A_hidden_run_that_changes_neither_topology_nor_filter_leaves_the_list_alone_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(5);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        MainWindowHost.Realize(window);
+        int rebuilds = 0;
+        list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, names);
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+
+        Assert.Equal(0, rebuilds);
+        GC.KeepAlive(window);
+    }
 }

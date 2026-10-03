@@ -85,6 +85,15 @@ public partial class ActionBar : UserControl
         DsChrome.WireHoverProxy((Border)PART_Sync.Parent, PART_Sync);
     }
 
+    /// <summary>[perf Faz A · A5] Build menüsü <c>SplitButton.MenuContent</c>'tir: popup kapalıyken (gizli pencerede hep) pencerenin
+    /// ağacında DEĞİLDİR ve kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> ona inmez. Sinyali ağaçtaki bu çubuk menüye
+    /// açıkça aktarır; böylece menünün gizli kapısı (<see cref="BuildMenu"/>) popup'tan bağımsız çalışır.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property == HiddenSurface.IsHiddenProperty) HiddenSurface.SetIsHidden(PART_BuildMenu, (bool)e.NewValue);
+    }
+
     // ---------------------------------------------------------------- test yüzeyi
     internal ToggleButton SigmaChip => _sigmaChip;
     internal ToggleButton BuildingChip => _buildingChip;

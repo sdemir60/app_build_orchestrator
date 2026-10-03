@@ -735,7 +735,13 @@ public partial class MainWindow : Window
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te
     /// başlıksızdır.</summary>
-    private void RefreshProjectGroups() => ApplyProjectGroups(reveal: true);
+    private void RefreshProjectGroups()
+    {
+        // [perf Faz A · A5] Gizli yüzeyde liste kurulmaz: topoloji modelde zaten durur ve dönüşte ResyncAfterShow listeyi TEK
+        // geçişte (reveal'siz) kurar. Graf bu kapının dışındadır: RebuildGraph gizliyken de koşar (A4).
+        if (IsSurfaceHidden) { _listStaleWhileHidden = true; return; }
+        ApplyProjectGroups(reveal: true);
+    }
 
     /// <summary>[A13/T2 · 2.5] Filtre/sorgu (ya da bir satırın statüsü) yüzünden GÖRÜNÜR küme değişti → listeyi
     /// tazele, ama kademeli belirişi (bo-reveal) OYNATMA.
@@ -750,6 +756,10 @@ public partial class MainWindow : Window
         // yeniden doldurmasın — geri dönüş reveal'li TopologyChanged yolundandır.
         if (_vm.PlanSurfaceRestarting) return;
         if (VisibleRowSignature() == _visibleRowSignature) return;
+        // [perf Faz A · A5] Kurulum GERÇEKTEN gerekiyorken yüzey gizliyse ertelenir (ResyncAfterShow tek geçişte kurar). Kapı iki
+        // "yapacak iş yok" korumasının ARKASINDADIR: imza aynıyken bayrak kalksaydı tepsideki her derleme, pencere gelince
+        // listeyi boşuna baştan kurdururdu.
+        if (IsSurfaceHidden) { _listStaleWhileHidden = true; return; }
         ApplyProjectGroups(reveal: false);
     }
 

@@ -158,6 +158,9 @@ public partial class ProjectRow : UserControl
     internal ProjectRowActions? Actions => _actions;
     /// <summary>[L1] <see cref="ApplyAll"/> çağrı sayacı — satır başına BİR kez koştuğunu pinleyen test seam'i.</summary>
     internal int ApplyAllCount { get; private set; }
+    /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="ApplyDuration"/> çağrı sayacı — süre metninin gizliyken yazılmadığını,
+    /// görününce <see cref="ApplyAll"/> içinden TEK kez yazıldığını pinler.</summary>
+    internal int ApplyDurationCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
     /// <summary>[design v1.11.0 §2.4-6] Uyarı slotundaki TEK üçgen — HER ZAMAN amber.</summary>
@@ -229,8 +232,25 @@ public partial class ProjectRow : UserControl
         ApplyAll();
     }
 
+    /// <summary>[perf Faz A · A5] Yüzey gizliyken satır kendini yazmaz: görünmeyen bir satırın glyph, şerit, süre ve sağ blok
+    /// yazımı boşa iştir. VM bildirimleri yalnız "satır modelin gerisinde" bayrağını kaldırır; yüzey görünür olunca
+    /// <see cref="ApplyAll"/> tek geçişte modelden kurar. DataContext değişimi (yeni model) bu kapıdan GEÇMEZ: o yapısal bir
+    /// yeniden kurulumdur ve bayat satır bırakmaz.</summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>Kalıtsal <see cref="Controls.HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
+    /// (<see cref="Controls.HiddenSurface"/>). Görünür olunca ve bayat kalındıysa satır TEK geçişte yetişir.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != Controls.HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        _staleWhileHidden = false;
+        ApplyAll();
+    }
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (Controls.HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.PropertyName)
         {
             case nameof(ProjectRowViewModel.State):
@@ -441,6 +461,7 @@ public partial class ProjectRow : UserControl
 
     private void ApplyDuration()
     {
+        ApplyDurationCount++;
         var state = _vm?.State ?? ProjectRowState.Pending;
         long ms = _vm?.DurationMs ?? 0;
         // Canlı elapsed yalnız GERÇEKTEN derlenen satırda; grubunun sırasını bekleyen üye (Started ama
