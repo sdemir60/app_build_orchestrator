@@ -625,6 +625,11 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler bir
+    /// batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir (pompanın batch'i okuduğu
+    /// andaki nesil; reseed-drop sentinel'i onu ilerletir).</summary>
+    internal long ConsoleReseedGen => _console.CurrentReseedGen;
+
     /// <summary>[D4/Solution B] Kart seçimi değişince konsol modunu senkron sürer. Seçim varsa: proje logunu
     /// (dikişli) YÜKLE, sonra başlık + gövde AYNI UI turunda proje-loguna geçir (reseed flicker YOK). Seçim
     /// kalkınca (null): run anlatısına dön. logNotFound/skipped gibi durumlarda ActiveProjectId kurulmaz →
@@ -647,11 +652,13 @@ public partial class MainWindow : Window
             Shell.ConsoleHeaderControl.LogTextProvider = () => _vm.GetProjectDocumentText(id!);
             Shell.ConsoleHeaderControl.ShowProjectLog(row, _vm.GetActiveLineCount());
             TrackHeaderRow(row); // [R1 finding 2] seçim SABİT kalsa da satırın kendi değişimi başlığı tazeler
+            // [perf Faz A · A2] Gizli pencerede belge kurulmaz (bkz. ShowRunConsole): yükleme sürerken pencere tepsiye
+            // indiyse belgeyi dönüş kurulumu AYNI satır kuralıyla (ProjectDocumentLines) kurar. Başlık yukarıda güncellendi.
+            if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
-            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(
-                text.Length == 0 ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text)));
+            _vm.SeedProjectDocument(id!, text => Shell.ConsoleViewControl.PlayCascade(ProjectDocumentLines(row, text)));
         }
         catch (Exception ex)
         {
@@ -666,6 +673,10 @@ public partial class MainWindow : Window
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
         TrackHeaderRow(null); // [R1 finding 2] anlatıya dönüldü — eski satırın aboneliği bırakılır
+        // [perf Faz A · A2] Gizli pencerede belge kurulmaz: yeniden kurulum + layout + 340 ms'lik tilt kimsenin
+        // görmeyeceği iş (tepsiden başlayan koşu proje seçimini düşürünce buraya gelinir). Başlık/VM tarafı yukarıda
+        // güncellendi; belgeyi dönüşteki tek kurulum (ResyncAfterShow) ActiveProjectId'ye bakarak kurar.
+        if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }
@@ -713,6 +724,13 @@ public partial class MainWindow : Window
     /// (boş-durum metni ileride buradan gelebilir).</summary>
     private static IReadOnlyList<string> SplitLogLines(string text) =>
         text.Length == 0 ? [] : text.TrimEnd('\n').Split('\n');
+
+    /// <summary>Proje-log belgesinin satırları: log BOŞSA sayfa boş bırakılmaz — o projenin O ANKİ durumunu anlatan
+    /// metin (<see cref="ConsoleEmptyState"/>, saf karar); aksi halde dikilmiş log satırları. Kart seçimi
+    /// (<see cref="OnSelectedProjectChangedAsync"/>) ile gizli pencere dönüşü (<see cref="ResyncAfterShow"/>) AYNI
+    /// kuralı kullanır (kopya YASAK). <paramref name="row"/> yoksa (proje topolojiden düşmüş) yalnız log satırları.</summary>
+    private static IReadOnlyList<string> ProjectDocumentLines(ProjectRowViewModel? row, string text) =>
+        text.Length == 0 && row is not null ? ConsoleEmptyState.ForEmptyLog(row) : SplitLogLines(text);
 
     /// <summary>[D1] VM'in katman gruplarını (topolojiden — App'te regex YOK) StickyLayerList'e verir.
     /// <see cref="ProjectRowViewModel"/> nesneleri satır olarak akar; isimsiz grup (null) StickyLayerList'te

@@ -47,14 +47,18 @@ internal static class MainWindowHost
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        // Üretimde pencere ile VM AYNI ConsoleBatcher'ı paylaşır (App.xaml.cs: tek singleton). Fixture de paylaşır: ayrı
+        // örneklerle pencerenin reseed nesli VM'in SeedRunDocument sentinel'ini hiç göremez, uçuştaki bayat batch'in
+        // düşmesi sınanamazdı.
+        var batcher = NeverTickingBatcher();
+        var vm = new RunViewModel(engine, batcher, () => "r1")
         {
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
         beforeVm?.Invoke(vm);
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
-        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
+        return (new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart), vm);
     }
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):

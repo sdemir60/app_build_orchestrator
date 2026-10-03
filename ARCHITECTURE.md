@@ -3961,13 +3961,16 @@ lines.
 - **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining the
   view-model's buffer, but the shell drops each batch instead of applying it, and a clear that arrives meanwhile is
   held back the same way: the narrative is still complete in the view model, and a document nobody can see is not
-  worth the layout work its insertions cause. When the window returns, one rebuild puts the screen right — the
+  worth the layout work its insertions cause. So is a switch between the narrative and a project log: a run started
+  from the tray drops the open project's selection, the header follows at once and the document waits. When the
+  window returns, one rebuild puts the screen right — the
   document is built from the model's full text **without the tilt**, once the first layout pass has run (the bottom
   pin reads layout). It is the same tilt-less rebuild a new section uses; the tilt still belongs to a change of
   mode. The rebuild seeds with the reseed generation like any other, so a batch that was already in flight when the
   window returns is dropped rather than landing twice, and a run with no lines shows the idle `ready` line again.
   A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
-  when it is opened. Nothing is replayed line by line: the console jumps to the present state of the run (§12.3).
+  when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
+  line: the console jumps to the present state of the run (§12.3).
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every

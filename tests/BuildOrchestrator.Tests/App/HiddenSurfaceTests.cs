@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.Contracts.Ipc;
@@ -387,6 +388,115 @@ public class HiddenSurfaceTests
 
         Assert.True(graph.UpdateStatusesCallCount > pushesBefore);
         Assert.Equal("Running", graph.RunPhase.ToString());
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [A2 fix 1 · M1] <b>Uçuştaki bayat batch.</b> Pompa bir batch'i okuyup UI thread'ine kuyruklarken (damga = o anki
+    /// reseed nesli) pencere dönüp belgeyi yeniden kurabilir. Dönüş kurulumu reseed-drop sentinel'ini yazar
+    /// (<c>SeedRunDocument</c>); eski damgalı batch kurulumdan SONRA gelse de belgeye ikinci kez inmez. Üretimde pencere
+    /// ile VM AYNI <c>ConsoleBatcher</c>'ı paylaşır; fixture de paylaşır — ayrı örneklerle pencerenin nesli VM'in
+    /// sentinel'ini hiç göremez ve bu kural sınanamazdı.
+    /// </summary>
+    [StaFact]
+    public void A_batch_stamped_before_the_rebuild_on_show_is_dropped_instead_of_landing_twice()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        window.SetSurfaceHidden(true);
+        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "line 0"));
+        long staleGen = window.ConsoleReseedGen;           // pompanın bu batch'i okuduğu andaki nesil
+        window.AppendConsoleBatch("line 0\n", staleGen);   // gizliyken: belgeye basılmaz, "ekran bayat" bayrağı kalkar
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();                          // dönüşte belge modelden BİR kez kurulur (sentinel yazılır)
+        Assert.Equal(1, console.RunDocumentReplacedCount); // ön-koşul: kurulum oldu
+        string rebuilt = console.EditorControl.Document.Text;
+
+        window.AppendConsoleBatch("line 0\n", staleGen);   // uçuştaki bayat batch, kurulumdan SONRA gelir
+
+        Assert.Equal(rebuilt, console.EditorControl.Document.Text);  // KIRMIZI ayrı batcher'larda: belgeye ikinci kez iner
+        Assert.True(window.ConsoleReseedGen > staleGen, "dönüş kurulumu reseed nesli ilerletmeli (sentinel)");
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [A2 fix 1 · M6] Konsol belgesine yazan HER yol kapılıdır — mod geçişi dahil. Tepsiden başlatılan bir koşu, proje
+    /// kartı seçiliyken seçimi düşürür (<c>SelectedProjectId = null</c> → <c>ShowRunConsole</c>); belge o anda kurulsaydı
+    /// gizli pencerede yeniden kurulum + layout + 340 ms'lik tilt oynardı ve dönüşteki kurulum onu bir kez daha yapardı.
+    /// Başlık/VM tarafı yerinde kalır (<c>ShowRun</c>); belgeyi dönüşteki tek kurulum <c>ActiveProjectId</c>'ye bakarak kurar.
+    /// </summary>
+    [StaFact]
+    public void A_run_that_drops_the_project_selection_while_hidden_builds_no_document_until_the_surface_returns()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        console.AnimationsEnabledProvider = () => true;  // tilt oynayabilsin: tek engel gizli sinyal olsun
+        vm.SelectProject(MainWindowHost.IdOf("A"));      // proje kartı seçili
+        Assert.NotNull(vm.SelectedProjectId);            // ön-koşul
+        MainWindowHost.AcceptSends(vm);
+        window.SetSurfaceHidden(true);
+        int replacedBefore = console.RunDocumentReplacedCount;
+
+        _ = vm.BuildCommand.ExecuteAsync(null);          // koşu başlar: konsol temizlenir, SONRA seçim düşer
+
+        Assert.Null(vm.SelectedProjectId);                                  // ön-koşul: seçim gerçekten düştü
+        Assert.Equal(replacedBefore, console.RunDocumentReplacedCount);     // KIRMIZI: bugün ShowRunDocument gizliyken kurar
+        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);      // tilt başlamadı
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount); // dönüşte TAM bir kurulum
+        Assert.Equal(Visibility.Collapsed, console.Tilt3D.Visibility);      // dönüş de tilt'siz
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kontrol: AYNI akış görünür pencerede belgeyi hemen ve tilt'le kurar — yani yukarıdaki test tilt'in hiç
+    /// başlayamamasından değil, gizli sinyalden geçer.</summary>
+    [StaFact]
+    public void A_run_that_drops_the_project_selection_while_visible_still_rebuilds_the_narrative_with_the_tilt()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        console.AnimationsEnabledProvider = () => true;
+        vm.SelectProject(MainWindowHost.IdOf("A"));
+        Assert.NotNull(vm.SelectedProjectId);
+        MainWindowHost.AcceptSends(vm);
+        int replacedBefore = console.RunDocumentReplacedCount;
+
+        _ = vm.BuildCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.SelectedProjectId);
+        Assert.True(console.RunDocumentReplacedCount > replacedBefore);    // belge hemen kuruldu
+        Assert.Equal(Visibility.Visible, console.Tilt3D.Visibility);       // tilt oynuyor
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [A2 fix 1 · M6] Açık proje logunun dönüş kurulumu kart seçimiyle AYNI satır kuralını kullanır: log BOŞSA sayfa boş
+    /// bırakılmaz, o projenin O ANKİ durumunu anlatan metin (<c>ConsoleEmptyState.ForEmptyLog</c>) gösterilir ve proje
+    /// modunda boşta "ready" satırı çıkmaz (o yalnız anlatının boş hâli içindir).
+    /// </summary>
+    [StaFact]
+    public void The_rebuild_on_show_of_an_open_project_log_shows_the_empty_state_text_when_the_log_is_empty()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("A"));
+        var emptyState = ConsoleEmptyState.ForEmptyLog(row);
+        Assert.NotEmpty(emptyState);                      // ön-koşul: boş log sayfayı boş bırakmaz
+        vm.ActiveProjectId = row.Id;                      // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        window.SetSurfaceHidden(true);
+        window.AppendConsoleBatch("noise\n", window.ConsoleReseedGen);   // gizliyken bir batch geldi: belge bayat
+
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+
+        string text = console.EditorControl.Document.Text;
+        Assert.All(emptyState, line => Assert.Contains(line, text));     // KIRMIZI: bugün boş sayfa
+        Assert.Equal("", console.ActiveLineText.Text);                   // proje modunda "ready" yok
         GC.KeepAlive(window);
     }
 }

@@ -457,7 +457,9 @@ public partial class ConsoleView : UserControl
     /// <summary>[design v1.7.0 §2.5] Boşta (idle/boot) tek prompt satırı: <b>yanıp sönen blok imleç + "ready"
     /// (dim)</b>. Duvar-saati damgası kaldırıldı (§2.5: konsolda saat sütunu yok) — prompt satırı imleçle
     /// başlar ve konsolun geri kalanıyla aynı sol hizadadır. Doküman satırı DEĞİLdir: overlay'de canlı
-    /// gösterilir, içerik gelince (<see cref="AppendNarrativeBatch"/> / <see cref="PlayCascade"/>) temizlenir.
+    /// gösterilir, içerik gelince temizlenir: ilk anlatı satırı (<see cref="AppendNarrativeBatch"/>), satır taşıyan bir
+    /// belge kurulumu (<see cref="ReplaceRunDocument"/>) ya da proje logu kurulumu (<see cref="ReplaceProjectDocument"/>,
+    /// <see cref="PlayCascade"/>).
     /// Reduced-motion iken imleç statiktir.</summary>
     public void ShowReady()
     {

@@ -66,10 +66,6 @@ public partial class MainWindow
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
     }
 
-    /// <summary>[test yüzeyi] Konsol pompasının şu anki reseed nesli: pompa tick etmeyen bir fixture'da testler
-    /// bir batch'i <see cref="AppendConsoleBatch"/>'e pompanın yaptığı gibi bu damgayla verir.</summary>
-    internal long ConsoleReseedGen => _console.CurrentReseedGen;
-
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch (ya da temizlik) oldu: ekrandaki belge modelin
     /// (<c>RunViewModel</c> tamponu) gerisinde. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
     private bool _consoleStaleWhileHidden;
@@ -88,8 +84,9 @@ public partial class MainWindow
     /// <para><b>Konsol:</b> gizliyken batch'ler ve temizlik belgeye yazılmadı (<see cref="_consoleStaleWhileHidden"/>);
     /// belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — anlatı için <c>RunViewModel.SeedRunDocument</c>,
     /// proje logu açıksa <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat
-    /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Model boşsa idle "ready"
-    /// satırı geri gelir.</para>
+    /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready"
+    /// satırı geri gelir; boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin
+    /// boş-durum metnini gösterir.</para>
     ///
     /// <para><b>Gizliyken koşmaz:</b> göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir (kullanıcı
     /// pencereyi hemen geri indirir). O durumda burası hiçbir şey yapmaz ve "ekran bayat" bayrakları yerinde kalır:
@@ -105,10 +102,17 @@ public partial class MainWindow
             _consoleStaleWhileHidden = false;
             var activeProjectId = _vm.ActiveProjectId;
             if (activeProjectId is null)
+            {
                 _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ReplaceRunDocument(text));
+                if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+            }
             else
-                _vm.SeedProjectDocument(activeProjectId, text => Shell.ConsoleViewControl.ReplaceProjectDocument(SplitLogLines(text)));
-            if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady();
+            {
+                var row = _vm.Projects.FirstOrDefault(
+                    p => string.Equals(p.Id, activeProjectId, StringComparison.OrdinalIgnoreCase));
+                _vm.SeedProjectDocument(activeProjectId,
+                    text => Shell.ConsoleViewControl.ReplaceProjectDocument(ProjectDocumentLines(row, text)));
+            }
         }
         if (_graphStaleWhileHidden)
         {
