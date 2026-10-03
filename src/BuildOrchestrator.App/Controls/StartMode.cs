@@ -69,13 +69,15 @@ public static class StartMode
     /// <b>Çapraz-sönüm NE ZAMAN oynar.</b> Yalnız başlangıç modu GERÇEKTEN değiştiğinde — yani bir işlem
     /// başladığında ya da Sync başlangıç moduna geri döndüğünde. Şerit ve nokta bu tek kuralı paylaşır.
     ///
-    /// <para><b>İki durum bilinçle DIŞARIDA:</b> (a) <paramref name="previous"/> <c>null</c> ise bu, kontrolün
+    /// <para><b>Üç durum bilinçle DIŞARIDA:</b> (a) <paramref name="previous"/> <c>null</c> ise bu, kontrolün
     /// bu veri için İLK çizimidir — açılışta ya da geri dönüştürülmüş bir container'da (liste sanallaştırılmış
     /// ve <c>VirtualizationMode.Recycling</c> kullanır) sönüm oynatmak "az önce bir işlem oldu" derdi; oysa
     /// olan yalnızca satırın başka bir projeye bağlanmasıdır. (b) Mod DEĞİŞMEDİYSE oynatacak bir geçiş yoktur:
     /// koşarken statü saniyede birkaç kez itilir ve her tikte hedefi aynı olan bir animasyonu yeniden arm
     /// etmek hem boşunadır hem de opaklığı kalıcı olarak bir saatin altında bırakır — bir sonraki GERÇEK
-    /// geçiş o zaman anında oturamaz.</para>
+    /// geçiş o zaman anında oturamaz. (c) Değişim yüzey GİZLİYKEN (pencere tepsideyken) olduysa: kimse görmediği için geriye
+    /// dönük oynanmaz — dönüş kurulumu mandalı sıfırlar (<c>ProjectRow.ApplyAllFresh</c>), böylece dönüşteki ilk çizimde
+    /// <paramref name="previous"/> yine <c>null</c> gelir ve çizim modelin O ANKİ hâline animasyonsuz oturur.</para>
     /// </summary>
     public static bool ShouldCrossFade(bool? previous, bool current) => previous is { } was && was != current;
 

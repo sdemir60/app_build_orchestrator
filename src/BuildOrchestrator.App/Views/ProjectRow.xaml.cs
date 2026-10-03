@@ -225,10 +225,8 @@ public partial class ProjectRow : UserControl
     {
         if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as ProjectRowViewModel;
-        _prevState = null;
-        _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
-        ApplyAllFresh(); // geri dönüştürülen container YENİ verisinin hâline ANINDA oturur
+        ApplyAllFresh(); // geri dönüştürülen container YENİ verisinin hâline ANINDA oturur (_prevState ve _applied'ı ApplyAll yazar)
     }
 
     /// <summary>[perf Faz A · A5] Satırı modelin O ANKİ hâlinden, <b>geçişsiz</b> kurar: nokta ve şeridin çapraz-sönüm mandalı

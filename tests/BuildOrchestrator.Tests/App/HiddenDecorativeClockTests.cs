@@ -25,7 +25,10 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Görünümler GERÇEK host pencerede kurulur</b> (<c>DsResources.Realize</c> / <see cref="GraphTestView.Shown"/>):
 /// bağlı olmayan bir ağaçta <c>IsVisible</c> her zaman false'tur, yani HWND'siz bir görünümde bu saatler artık hiç
-/// kurulmaz. Saat OLMADIĞINI bekleyen testler (reduced-motion) etkilenmez.</para>
+/// kurulmaz. Saat OLMADIĞINI bekleyen reduced-motion testleri de (<c>GraphRenderTests</c>, <c>GraphSelectionFocusTests</c>,
+/// <c>ReducedMotionCoverageTests</c>) aynı nedenle gösterilen host'ta kurulur: HWND'siz görünümde "saat yok" iddiası
+/// reduced-motion'ı değil görünmezliği ölçerdi. Görünmezliğin kendisini bilerek HWND'siz görünümde pinleyen test bu sınıftaki
+/// <c>A_never_shown_graph_builds_no_infinite_clock_even_while_a_node_builds</c>'dir.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class HiddenDecorativeClockTests

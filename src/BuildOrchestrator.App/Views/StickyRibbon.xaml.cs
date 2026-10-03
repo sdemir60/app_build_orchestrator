@@ -190,7 +190,12 @@ public partial class StickyRibbon : UserControl
 
     /// <summary>[perf Faz A · A5] Yüzey gizliyken şerit modele dokunmaz: VM bildirimleri yalnız "şerit modelin gerisinde"
     /// bayrağını kaldırır (metin, ilerleme, chip'ler ve ekran okuyucu duyurusu hiç yazılmaz). Bayrağı tam kurulum
-    /// (<see cref="RefreshAll"/>) düşürür: DataContext değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.</summary>
+    /// (<see cref="RefreshAll"/>) düşürür: DataContext değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.
+    ///
+    /// <para><b>Bilinen sınır:</b> <see cref="RefreshAll"/> faz duyurusunu yapmaz, yalnız bayrağı düşürür. Gizliyken bir
+    /// <c>Loaded</c> ya da DataContext tam kurulumu koşarsa dönüşte <see cref="AnnouncePhaseIfChanged"/> de koşmaz: bayrakla birlikte
+    /// gizlilikte değişen fazın duyuru borcu da silinir. Yol dardır (DataContext bir kez bağlanır; ilk gösterimde
+    /// <c>IsVisibleChanged</c>, <c>Loaded</c>'dan önce gelir, yani o kurulum yüzey görünürken koşar) ve bilinçli olarak değiştirilmedi.</para></summary>
     private bool _staleWhileHidden;
 
     /// <summary>Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir

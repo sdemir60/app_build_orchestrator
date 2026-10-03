@@ -109,8 +109,8 @@ public sealed class TrayIndicatorBinderTests
     {
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("A"), 10));
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("B"), 12));
+        MainWindowHost.SucceedProject(vm, "A", 10);
+        MainWindowHost.SucceedProject(vm, "B", 12);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 2, 0, 0, 0, 1234, 0));
         view.FinishExit();
@@ -135,7 +135,7 @@ public sealed class TrayIndicatorBinderTests
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
         vm.OnEvent(new ProjectFailedEvent("r1", MainWindowHost.IdOf("A"), 10, "compile error"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("B"), 12));
+        MainWindowHost.SucceedProject(vm, "B", 12);
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 1, 0, 0, 1234, 0));
         view.FinishExit();
@@ -152,7 +152,7 @@ public sealed class TrayIndicatorBinderTests
     {
         var (vm, view, notifier, _) = Bound();
         StartRun(vm);
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("A"), 10));
+        MainWindowHost.SucceedProject(vm, "A", 10);
         // B UÇUŞTA kalır: Stop anında derlenmekteydi ve sonucu hiç gelmedi. Bu satır önemlidir — koşu
         // serbest bırakılınca (IsRunning=false) o satır "derlenen"den "derlenmemiş"e geçer ve bu geçiş
         // fazdan SONRA yayınlanır.

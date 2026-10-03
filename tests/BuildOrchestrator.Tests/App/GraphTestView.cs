@@ -91,8 +91,11 @@ internal static class GraphTestView
     /// pencere tepsiye inince <c>Unloaded</c> ateşlenmez ve bu saatler görünmeden dönmeye devam ediyordu
     /// (maliyet imleç saatlerinde ölçüldü, bkz. <c>HiddenCursorClockTests</c>). Bağlı olmayan ağaçta
     /// <c>IsVisible</c> her zaman false'tur — saat HWND'siz görünümde artık hiç kurulmaz. Saati bekleyen testler
-    /// iddialarını AYNEN korur, yalnız görünümü bu yardımcıyla gösterilen bir pencerede kurar; saat OLMADIĞINI
-    /// bekleyen testler (reduced-motion) HWND'siz görünümde değişmeden kalır.</para>
+    /// iddialarını AYNEN korur, yalnız görünümü bu yardımcıyla gösterilen bir pencerede kurar. Saat OLMADIĞINI
+    /// bekleyen reduced-motion testleri de aynı yardımcıyı kullanır (<c>GraphRenderTests</c>, <c>GraphSelectionFocusTests</c>,
+    /// <c>ReducedMotionCoverageTests</c>): HWND'siz görünümde "saat yok" iddiası reduced-motion'ı değil görünmezliği ölçerdi ve
+    /// motion'ın engellemesi kalksa da yeşil kalırdı. HWND'siz görünümde yalnız saatten bağımsız iddialar ile "hiç gösterilmediyse
+    /// saat yok" pini kalır (<c>HiddenDecorativeClockTests</c>).</para>
     /// </summary>
     public static GraphView Shown(
         Size size,

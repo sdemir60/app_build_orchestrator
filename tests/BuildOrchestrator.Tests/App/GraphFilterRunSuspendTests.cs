@@ -245,7 +245,7 @@ public class GraphFilterRunSuspendTests
         Assert.Equal("Alpha", vm.ProjectQuery);
         Assert.Equal(GraphNodeOpacity.Full, VisualOf(window, "Beta").OpacityTarget, 6);     // graf filtreyi yok sayar
 
-        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("Beta"), 100));
+        MainWindowHost.SucceedProject(vm, "Beta");
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 100));
 
         Assert.Equal(GraphNodeOpacity.Unfocused, VisualOf(window, "Beta").OpacityTarget, 6); // koşu bitti → filtre
