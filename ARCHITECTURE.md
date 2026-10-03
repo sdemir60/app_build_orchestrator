@@ -212,9 +212,11 @@ measured bound is under two seconds with no orphan.
 
 **Graceful stop** is what the Stop button and `Esc` request, and what a full exit of the application requests
 for a run still in flight (§12.3). Nothing new is dispatched; the in-flight `MSBuild.exe` children finish,
-*including their post-build copy events*. This is also why the
-shared-compilation flags stay off (§9.2): with a compiler server the emit happens in a long-lived process
-outside the job, where a stop could catch a DLL mid-write.
+*including their post-build copy events*. A compiler server living *outside* the job would break this
+promise: its emit would run where a stop cannot see it, and a DLL could be caught mid-write. The
+shared-compilation flags stay off today for a different reason — the measured gain does not pay for the
+server's memory (§9.2) — but if they are ever turned on, the server has to be born inside the job for exactly
+this guarantee.
 
 **Hard stop** terminates the inner job outright. It exists in the contract and in the engine, but the App
 never sends it.
@@ -1650,17 +1652,18 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 - `-p:BuildProjectReferences=false` is **mandatory**. The orchestrator already builds every dependency as its
   own node; letting MSBuild walk the `ProjectReference` chain again re-enters sibling projects and hits their
   `obj` state.
-- The two v1 flags cost real time — measurements put the flags-off build at roughly **2.9×** the flags-on
-  build, essentially all of it from shared compilation (node reuse alone measures at ~0, because per-project
-  shell-out does not spawn extra nodes). They stay on because with a compiler server the emit happens in a
-  long-lived `VBCSCompiler` **outside** the job, which reintroduces the torn-DLL risk that §4.5 exists to
-  eliminate. Correctness was chosen over the 2.9×; revisiting it requires a mechanism that closes the emit
-  window, not just a faster number. That mechanism was looked for and does not exist on the current toolset:
-  the server's pipe name is derived from the user and the compiler directory with no external override
-  anywhere in the toolset (task assembly, `csc.exe`, `VBCSCompiler.exe` — verified on VS 18), and the client
-  uses the server only for the built-in tool path, so a private toolset copy cannot create a private pipe
-  either. A per-run server therefore cannot be isolated from Visual Studio's in either direction — ours would
-  serve VS's builds and die with the run's job, or VS's would emit outside the job.
+- The two v1 flags stay on, and the reason is cost against benefit, not impossibility. A compiler server
+  *can* be given a private pipe: the compiler targets hand the `Csc` task a `SharedCompilationId`, and with
+  `UseSharedCompilation=true` the first `MSBuild.exe` that needs the server starts `VBCSCompiler` as its own
+  child — inside the inner job, so it dies with the run like any other child, Visual Studio's builds never
+  find it, and a stop cannot catch an emit outside the job (§4.5). Measured on the real repository, though,
+  such a server takes about a tenth off a `Cycles` run — the compiler's own start-up is already cheap, and
+  the time is genuine compile work — while holding two to four gigabytes of memory for as long as the engine
+  lives. That trade is declined. Node reuse alone measures at ~0, because per-project shell-out does not
+  spawn extra nodes. An earlier figure of roughly 2.9× for shared compilation was not reproduced on this
+  repository. Should the flags ever be turned on, the server must be born inside the job
+  under a per-engine pipe name; a server outside the job would reintroduce the torn-DLL risk §4.5 exists to
+  eliminate.
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
 - No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
   Studio would (§9.4).
@@ -5478,7 +5481,8 @@ do, and how the interface works around each — useful to know before attempting
   window-activation Sync covers changes in the meantime.
 - **An automatic Sync does not fetch.** Its `N behind` distance is measured against the last remote state the
   repository already has; the Sync button and a pull refresh it from the network.
-- **The shared-compilation flags cost ~2.9×** and stay off for correctness (§9.2).
+- **The shared-compilation flags stay off.** A private-pipe compiler server inside the job is possible, but its
+  measured gain — about a tenth of a run — does not pay for the memory it holds (§9.2).
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
