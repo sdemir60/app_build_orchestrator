@@ -46,7 +46,7 @@ public static class Program
         var writer = new NdjsonWriter(stdout);
         using var coordinator = new RunCoordinator(
             planner: BuildRunPlan,
-            msbuildFactory: ct => ResolveMsBuildAsync(innerJob, ct),
+            msbuildFactory: ct => ResolveMsBuildAsync(innerJob, cacheRoot, ct),
             logFactory: startedAt => new RunLogWriter(logsRoot, startedAt),
             writer: writer,
             innerJob: innerJob,
@@ -58,7 +58,7 @@ public static class Program
             // [A5/T69] sync/branch komutları · [optimize] restore invoker'ı koordinatörle AYNI memoize
             // edilmiş toolset çözümünden gelir (ikinci bir vswhere araması yok).
             WorkspaceServices.Default(cacheRoot,
-                async ct => (await ResolveMsBuildAsync(innerJob, ct)).Invoker),
+                async ct => (await ResolveMsBuildAsync(innerJob, cacheRoot, ct)).Invoker),
             debugHooks, // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
             interruptedProjects);
         return await host.RunAsync();
@@ -220,13 +220,31 @@ public static class Program
     // startRun'da error(msbuildNotFound) olarak bildirilir. Tek seferde tek run (A6) → bu lazy init yarışsızdır.
     private static MsBuildToolset? _toolset;
 
-    private static async Task<MsBuildToolset> ResolveMsBuildAsync(JobObject innerJob, CancellationToken ct)
+    private static async Task<MsBuildToolset> ResolveMsBuildAsync(JobObject innerJob, string cacheRoot, CancellationToken ct)
     {
         if (_toolset is not null) return _toolset;
         var location = await new MsBuildResolver(new ProcessRunner()).ResolveAsync(ct: ct);
         // [D10] dotnet build DEĞİL, MSBuild.exe; child'lar JobProcessLauncher ile inner Job içinde doğar.
         // Ham (retry'siz) invoker verilir — retry sarmalaması run'a özgü decision.log'a yazdığı için koordinatörün işi.
-        return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath);
+        // [WPF geçici assembly] Targets dosyası toolset'le birlikte memoize edilir: motor başına TEK yazım.
+        return _toolset = new MsBuildToolset(new MsBuildInvoker(innerJob, location.MsBuildExePath), location.MsBuildExePath,
+            EnsureWpfTemporaryAssemblyTargets(cacheRoot));
+    }
+
+    /// <summary>
+    /// WPF geçici assembly targets'ını önbellek köküne yazar ve yolunu döner. Yazılamazsa (kilitli ya da salt-okunur
+    /// klasör, dolu disk) MSBuild çözümünü ve motoru DÜŞÜRMEZ: bu bir OPTİMİZASYONDUR — stderr'e tek satır uyarı
+    /// düşer (stdout YALNIZ NDJSON [D4]) ve null döner; derleme targets'sız, bugünkü komut satırıyla sürer.
+    /// </summary>
+    private static string? EnsureWpfTemporaryAssemblyTargets(string cacheRoot)
+    {
+        try { return WpfTemporaryAssemblyTargets.EnsureWritten(cacheRoot); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("warning: WPF temporary assembly targets could not be written under " + cacheRoot
+                + " (builds continue without them): " + ex.Message);
+            return null;
+        }
     }
 
     /// <summary>

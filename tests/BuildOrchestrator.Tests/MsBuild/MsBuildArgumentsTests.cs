@@ -173,4 +173,79 @@ public class MsBuildArgumentsTests
     [InlineData(@"c:\x", @"c:\x\")] [InlineData(@"c:\x\", @"c:\x\")] [InlineData("c:/x/", "c:/x/")]
     public void EnsureTrailingBackslash(string input, string expected)
         => Assert.Equal(expected, MsBuildArguments.EnsureTrailingBackslash(input));
+
+    /// <summary>
+    /// [Faz 2 · WPF geçici assembly] Build listesi, verilirse WPF geçici assembly targets'ını TEK bir
+    /// <c>-p:CustomBeforeMicrosoftCommonTargets=</c> argümanıyla taşır; yol tırnaklanmaz (liste
+    /// <c>ArgumentList</c> üzerinden geçer, <c>WindowsCommandLine</c> kaçışlar).
+    ///
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden Build listesi YALNIZ sabit bayraklardan oluşurdu; hiçbir çağrı
+    /// derleme davranışını bir targets dosyasıyla değiştirmezdi (yukarıdaki testler bayrakların varlığını
+    /// <c>Contains</c> ile pinler, listenin tamamını eşitlikle pinleyen test yoktu — o yüzden hiçbiri
+    /// gevşetilmedi ya da silinmedi). Artık motor, WPF'in yerel tipli XAML için derlediği geçici assembly'yi
+    /// gövdesiz derleyen küçük bir targets dosyasını Build listesine ekler. Gerekçe ölçümdür: WPF geçici assembly
+    /// derlemesi −%18…−24, BAML ve DLL çıktısı eşdeğer. Sabit bayrakların hiçbiri DEĞİŞMEZ.</para>
+    /// </summary>
+    [Fact]
+    public void the_build_list_carries_the_wpf_temporary_assembly_targets_when_given()
+    {
+        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug",
+            customBeforeTargets: @"C:\state\msbuild\wpf-temporary-assembly.targets");
+
+        Assert.Contains(@"-p:CustomBeforeMicrosoftCommonTargets=C:\state\msbuild\wpf-temporary-assembly.targets", args);
+        Assert.Equal(1, args.Count(a => a.StartsWith("-p:CustomBeforeMicrosoftCommonTargets=", StringComparison.Ordinal)));
+    }
+
+    /// <summary>Yol verilmezse liste targets'sız hâliyle aynıdır: yalıtılmış/sahte motorlar ve targets'ı
+    /// yazılamayan motor derlemeyi bugünkü komut satırıyla sürdürür.</summary>
+    [Fact]
+    public void without_a_targets_path_the_list_is_unchanged()
+        => Assert.DoesNotContain(MsBuildArguments.Build(@"c:\r\p.csproj", "Debug"),
+            a => a.Contains("CustomBeforeMicrosoftCommonTargets"));
+
+    /// <summary>Restore derlemez, geçici WPF assembly'si orada doğmaz: targets restore listesine HİÇ girmez
+    /// (yalnız Build listesine — bkz. <see cref="MsBuildArguments.PlanFor"/>).</summary>
+    [Fact]
+    public void restore_never_carries_the_targets()
+        => Assert.DoesNotContain(MsBuildArguments.RestorePackagesConfig(@"c:\r\p.csproj", @"c:\r\"),
+            a => a.Contains("CustomBeforeMicrosoftCommonTargets"));
+
+    /// <summary>
+    /// [Faz 2 · WPF geçici assembly] Argüman seçiminin TEK kaynağı <see cref="MsBuildArguments.PlanFor"/>'dur:
+    /// istekteki targets yolu Build listesine girer, aynı istekten çıkan Restore listesine girmez.
+    /// </summary>
+    [Fact]
+    public void the_plan_gives_the_targets_to_the_build_list_only()
+    {
+        var request = new MsBuildInvokeRequest(@"c:\r\p.csproj", "Debug", @"c:\r\", NeedsRestore: true,
+            CustomBeforeTargets: @"C:\state\msbuild\wpf-temporary-assembly.targets");
+
+        var (restore, build) = MsBuildArguments.PlanFor(request);
+
+        Assert.Contains(@"-p:CustomBeforeMicrosoftCommonTargets=C:\state\msbuild\wpf-temporary-assembly.targets", build);
+        Assert.NotNull(restore); // NeedsRestore: Restore listesi var — ve targets'sız
+        Assert.DoesNotContain(restore!, a => a.Contains("CustomBeforeMicrosoftCommonTargets"));
+    }
+
+    /// <summary>
+    /// [Faz 2 · WPF geçici assembly] Proje logunun İLK satırı invoker'ın koşturduğu listenin AYNISIDIR: koordinatör
+    /// komut satırını <see cref="MsBuildArguments.PlanFor"/>'dan kurar, <c>Build</c>/<c>RestorePackagesConfig</c>'i
+    /// kendisi seçmez (ikinci bir seçim yeri, yeni bir argümanda log ile gerçek komutu sessizce ayrıştırırdı) ve
+    /// istek, koşuya taşınan targets yolunu verir.
+    ///
+    /// <para>Guard bilinçlidir ve <see cref="The_invoker_never_picks_the_build_target_itself"/> ile aynı gerekçedendir:
+    /// invoker'ın ürettiği komut satırını gözleyen bir dikiş yoktur, yani yolun unutulması (optimizasyonun sessizce
+    /// kapanması) hiçbir davranış testini kırmızı yapmazdı.</para>
+    /// </summary>
+    [Fact]
+    public void the_run_coordinator_logs_the_command_line_of_the_same_plan_the_invoker_runs()
+    {
+        string text = File.ReadAllText(
+            Path.Combine(RepoPaths.SrcRoot, "BuildOrchestrator.Supervisor", "RunCoordinator.cs"));
+
+        Assert.Contains("MsBuildArguments.PlanFor(", text);                     // log satırı tek kaynaktan
+        Assert.DoesNotContain("MsBuildArguments.Build(", text);                 // ...build listesini kendisi seçmiyor
+        Assert.DoesNotContain("MsBuildArguments.RestorePackagesConfig(", text); // ...restore listesini de
+        Assert.Contains("CustomBeforeTargets: run.CustomBeforeTargetsPath", text); // istek yolu koşudan alıyor
+    }
 }
