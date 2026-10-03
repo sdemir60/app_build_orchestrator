@@ -145,6 +145,63 @@ public class EventStreamTypingTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Pencere tepsiye inip döner: gizliyken bir olay gelir (satır kurulmaz, ekran bayat işaretlenir), görününce görünüm satırları
+    /// modelden yeniden kurar (<c>EventStreamView.OnPropertyChanged</c> → <c>RebuildRows</c>). Görünümün yeniden kurulumunu tetikleyen
+    /// üretim yolu budur; pompa yoktur, yani ağaçtan <c>Unloaded</c> gelmeden ve daktilo hiç tik atmadan sonuç okunur.</summary>
+    private void RebuildThroughHideAndShow(RunViewModel vm, EventStreamView view)
+    {
+        BuildOrchestrator.App.Controls.HiddenSurface.SetIsHidden(view, true);
+        _clock += 10_000;
+        vm.OnEvent(new ProjectSkippedEvent("r1", B, SkipReasons.UpToDate)); // gizliyken gelen olay
+        BuildOrchestrator.App.Controls.HiddenSurface.SetIsHidden(view, false);
+    }
+
+    /// <summary>
+    /// <b>Satırları yeniden kuran görünüm atılan satırın daktilo saatini durdurur.</b> Yeniden kurulum satırlarını atarken DataContext'lerini
+    /// koparır; yazmakta olan satır bunların arasındaysa kopuş saati yarıda bırakır: <c>OnTypeTick</c> VM'i göremeyince erken döner ve
+    /// <c>FinishTyping</c>'e hiç ulaşmaz, saat yalnız <c>Unloaded</c> ile durur — ağaçtan <c>Unloaded</c> gelmeyen (hiç yüklenmemiş) satırda
+    /// Render önceliğinde sonsuza dek tıklar. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki <c>FinishTyping</c> ile
+    /// kapatılır): yeniden kurulum da atılan satırın yazımını DataContext'ten ÖNCE kapatır ve yazan satır referansını bırakır.
+    /// </summary>
+    [StaFact]
+    public void Rebuilding_the_rows_stops_the_typewriter_clock_of_the_discarded_row()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+        var written = WrittenRow(vm, view);
+        Assert.True(written.IsTyping);               // ön-koşul: animasyonlar açık, en yeni satır yazıyor
+        Assert.Same(written, view.TypingRow);        // ön-koşul: görünüm onu yazan satır olarak tutuyor
+
+        RebuildThroughHideAndShow(vm, view);
+
+        Assert.DoesNotContain(written, view.Rows);   // ön-koşul: satır gerçekten atıldı (yeniden kurulumdan geçildi)
+        Assert.False(written.IsTyping, "atılan satırın daktilo saati durmalı");
+        Assert.Null(view.TypingRow);                 // görünüm atılan satırı yazan satır olarak tutmaz
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Atılan satır prompt satırında YAZILIYORKEN yeniden kurulum prompt satırını göstergeye döndürür. Yazı yüzeyi alttaki imleç satırıdır:
+    /// yazılan satır tamponda gizlidir ve prompt metni onu aynalar; yazımın bitişi (<c>TypingEnded</c> → <c>ReleaseToBuffer</c>) satırı
+    /// bırakır ve göstergeyi geri getirir. Yeniden kurulum yazımı kapatmazsa atılan satır yazı yüzeyi olarak ASILI kalır
+    /// (<c>_writingRow</c>): dönüşteki <c>UpdateActiveLine</c> "yazı yüzeyi kullanımda" diye göstergeyi yazmadan döner ve prompt satırı
+    /// atılmış satırın yarım metnini taşır. Yazımı kapatmanın <c>TypingEnded</c> yan etkisi atılan satır için tam da gereken şeydir.
+    /// </summary>
+    [StaFact]
+    public void Rebuilding_the_rows_returns_the_prompt_line_to_the_indicator_when_the_discarded_row_was_being_written()
+    {
+        var vm = NewVm();
+        var (view, window) = Realize(vm);
+        WrittenRow(vm, view);
+        Assert.Equal(vm.StreamEvents[^1].Text.Length, view.ActiveText.Text.Length); // ön-koşul: prompt satırı yazılan metni aynalıyor
+        Assert.NotEqual(vm.ActiveLineText ?? "", view.ActiveText.Text);             // ön-koşul: ...ve bu gösterge metni DEĞİL
+
+        RebuildThroughHideAndShow(vm, view);
+
+        Assert.Equal(vm.ActiveLineText ?? "", view.ActiveText.Text); // prompt göstergeye döndü: atılan satırın yarım metni kalmadı
+        GC.KeepAlive(window);
+    }
+
     /// <summary>
     /// <b>[DEĞİŞEN KURAL] İmleç olay TAZE iken onun ikon rengini taşır, pencere kapanınca amber'a döner.</b>
     ///

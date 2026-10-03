@@ -263,6 +263,13 @@ public partial class EventStreamView : UserControl
 
     private void RebuildRows()
     {
+        // Yazan satır atılacaklar arasındadır: DataContext'i kopunca OnTypeTick (VM yok) erken döner ve yazımı hiç bitirmez —
+        // saat yalnız Unloaded ile durur; ağaçtan Unloaded gelmeyen (hiç yüklenmemiş) satırda Render önceliğinde sonsuza dek
+        // tıklardı. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki FinishTyping ile kapatılır) ve DataContext'ten
+        // ÖNCE koşar: TypingEnded satırı bırakır ve prompt satırını göstergeye döndürür (ReleaseToBuffer) — yoksa atılan satır
+        // yazı yüzeyi olarak asılı kalır ve dönüşteki UpdateActiveLine atılmış satırın yarım metnini bırakmazdı.
+        _typingRow?.FinishTyping();
+        _typingRow = null;
         // Atılan satırlar kendi öğe VM'lerinin PropertyChanged'ine abone kalmasın (her gösterimde biriken, sınırlı bir sızıntı
         // olurdu): bağ Clear'dan ÖNCE koparılır.
         foreach (var old in PART_Rows.Children.OfType<EventStreamRow>()) old.DataContext = null;
