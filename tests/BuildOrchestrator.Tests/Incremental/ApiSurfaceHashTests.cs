@@ -18,20 +18,53 @@ namespace BuildOrchestrator.Tests.Incremental;
 public class ApiSurfaceHashTests
 {
     private static byte[] Assembly(Action<TypeBuilder>? shape = null, Version? version = null,
-        byte[]? publicKey = null, CustomAttributeBuilder[]? typeAttributes = null)
+        byte[]? publicKey = null, CustomAttributeBuilder[]? typeAttributes = null,
+        bool valueType = false, int size = 0)
     {
         var name = new AssemblyName("Surface.Probe");
         if (version is not null) name.Version = version;
         if (publicKey is not null) name.SetPublicKey(publicKey);
         var builder = new PersistedAssemblyBuilder(name, typeof(object).Assembly);
-        var type = builder.DefineDynamicModule("M").DefineType("N.C", TypeAttributes.Public | TypeAttributes.Class);
+        // Struct'ın tabanı ValueType'tır; size > 0 ise ClassLayout tablosuna yazılır (StructLayout(Size = …)).
+        var type = builder.DefineDynamicModule("M").DefineType("N.C",
+            valueType
+                ? TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.SequentialLayout
+                : TypeAttributes.Public | TypeAttributes.Class,
+            valueType ? typeof(ValueType) : null);
         foreach (var attribute in typeAttributes ?? []) type.SetCustomAttribute(attribute);
         shape?.Invoke(type);
         type.CreateType();
+        // DefineType(packsize, typesize) persisted çıktıda YOK SAYILIR (ölçüldü: ClassLayout satırı yazılmaz).
+        if (size > 0) return SaveWithClassLayout(builder, size);
         using var stream = new MemoryStream();
         builder.Save(stream);
         return stream.ToArray();
     }
+
+    /// <summary><see cref="PersistedAssemblyBuilder"/>'ın ürettiği metadata'ya <c>N.C</c> için elle bir ClassLayout
+    /// satırı (<c>StructLayout(Size = …)</c>) ekleyip PE'yi yeniden kurar. <c>N.C</c> ikinci TypeDef'tir
+    /// (<c>&lt;Module&gt;</c> birincidir).</summary>
+    private static byte[] SaveWithClassLayout(PersistedAssemblyBuilder builder, int size)
+    {
+        var metadata = builder.GenerateMetadata(out System.Reflection.Metadata.BlobBuilder il,
+            out System.Reflection.Metadata.BlobBuilder fieldData);
+        metadata.AddTypeLayout(System.Reflection.Metadata.Ecma335.MetadataTokens.TypeDefinitionHandle(2), 0, (uint)size);
+        var pe = new System.Reflection.PortableExecutable.ManagedPEBuilder(
+            System.Reflection.PortableExecutable.PEHeaderBuilder.CreateLibraryHeader(),
+            new System.Reflection.Metadata.Ecma335.MetadataRootBuilder(metadata), il, mappedFieldData: fieldData);
+        var blob = new System.Reflection.Metadata.BlobBuilder();
+        pe.Serialize(blob);
+        return blob.ToArray();
+    }
+
+    /// <summary>Public bir int alanı olan struct (<c>N.C</c>); <paramref name="shape"/> ek üye ekler,
+    /// <paramref name="size"/> sıfırdan büyükse açık layout boyutudur. Struct testlerinin TEK kaynağı.</summary>
+    private static byte[] ValueTypeAssembly(Action<TypeBuilder>? shape = null, int size = 0) =>
+        Assembly(t =>
+        {
+            t.DefineField("Amount", typeof(int), FieldAttributes.Public);
+            shape?.Invoke(t);
+        }, valueType: true, size: size);
 
     /// <summary>Sabit dönen bir metot — gövde, döndürdüğü sabitten ibarettir: aynı imza + farklı sabit =
     /// "yalnız gövdesi değişti"nin en küçük gerçek örneği.</summary>
@@ -223,6 +256,32 @@ public class ApiSurfaceHashTests
             decorateReturnValue: r => r.SetCustomAttribute(Attribute<NotNullAttribute>()))));
 
         Assert.NotEqual(plain, annotated);
+    }
+
+    [Fact]
+    public void a_private_field_of_a_struct_changes_the_hash()
+    {
+        // Kesin atama ve `unmanaged` kuralı struct'ın BÜTÜN alanlarına bakar — Roslyn reference assembly'leri de bu
+        // yüzden struct alanlarını atmaz.
+        static byte[] Money(Type padType) =>
+            ValueTypeAssembly(t => t.DefineField("_pad", padType, FieldAttributes.Private));
+
+        Assert.NotEqual(HashOf(Money(typeof(int))), HashOf(Money(typeof(object))));
+    }
+
+    [Fact] // Sınıfta private alana kimse bağlanamaz: değer tipi genişlemesi sınıfa SIZMAMALI.
+    public void a_private_field_of_a_class_still_does_not_change_the_hash()
+    {
+        string? a = HashOf(Assembly(t => t.DefineField("_pad", typeof(int), FieldAttributes.Private)));
+        string? b = HashOf(Assembly(t => t.DefineField("_pad", typeof(object), FieldAttributes.Private)));
+
+        Assert.Equal(a, b);
+    }
+
+    [Fact] // StructLayout(Size = …) ClassLayout tablosuna yazılır; unsafe tüketicide sizeof değişir.
+    public void an_explicit_struct_layout_size_changes_the_hash()
+    {
+        Assert.NotEqual(HashOf(ValueTypeAssembly(size: 8)), HashOf(ValueTypeAssembly(size: 16)));
     }
 
     [Fact]

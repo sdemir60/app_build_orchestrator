@@ -11,7 +11,9 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <summary>
 /// [cycle rounds — API kısa devresi] Bir derleme çıktısının (DLL/EXE) DIŞA GÖRÜNÜR yüzeyinin özeti: assembly
 /// kimliği + private OLMAYAN tipler ve üyeler (imzaları ÇÖZÜLMÜŞ hâlde — ham blob DEĞİL, çünkü blob'lar
-/// TypeRef satır numarası taşır ve gövde değişimi o tabloyu yeniden numaralandırabilir) + öznitelikleri.
+/// TypeRef satır numarası taşır ve gövde değişimi o tabloyu yeniden numaralandırabilir) + öznitelikleri
+/// (parametre, dönüş değeri ve generic parametre öznitelikleri dahil: <c>params</c>, <c>decimal</c> varsayılanı,
+/// <c>Caller*</c> gibi olanlar çağrı biçimini belirler) + açık tip layout'u (<c>StructLayout</c> Size/Pack).
 /// GÖVDE (IL), MVID, timestamp ve tablo sırası özete GİRMEZ — yalnız gövdesi değişen bir yeniden derleme AYNI
 /// özeti üretir. SCC tur döngüsü bunu "bu üyenin bağlandığı API sonradan değişti mi" sorusuna kanıt yapar
 /// (<see cref="Core.Planning.CycleRoundPolicy"/>'nin <c>staleNow</c> girdisi).
@@ -22,10 +24,15 @@ namespace BuildOrchestrator.Core.Incremental;
 /// Strong-named'de ise sürüm bağlamanın parçasıdır ve değişimi yüzey değişimidir.</para>
 ///
 /// <para><b>Internal üyeler DAHİLDİR</b> (muhafazakâr yön): <c>InternalsVisibleTo</c> ile bir kardeş, internal
-/// yüzeye bağlanabilir. Private üyeler ve derleyici üretimi adlar (<c>&lt;</c> içeren) hariçtir — gövde
+/// yüzeye bağlanabilir. Private üyeler (değer tipinin alanları hariç — aşağıdaki paragraf) ve derleyici üretimi
+/// adlar (<c>&lt;</c> içeren) hariçtir — gövde
 /// değişiminde derleyicinin ürettiği state-machine/closure adları kayar ve özet boşuna oynardı; aynı nedenle
 /// üretilmiş tip ADI taşıyan <c>AsyncStateMachine</c>/<c>IteratorStateMachine</c> öznitelikleri ile
 /// <c>CompilerGenerated</c> ve (derleme kipine bağlı) <c>Debuggable</c> da sayılmaz.</para>
+///
+/// <para><b>Değer tipinin private alanları DAHİLDİR:</b> kesin atama ve <c>unmanaged</c> kuralı struct'ın BÜTÜN
+/// alanlarına bakar (Roslyn reference assembly'leri de bu yüzden struct alanlarını atmaz); alanların tipi
+/// <c>sizeof</c>'u ve layout'u belirler. SINIFTA private alan yüzey değildir — ona kimse bağlanamaz.</para>
 ///
 /// <para>Yanılma yönü BİLİNÇLİDİR: kuşkuda "değişti" demek fazladan bir tur satın alır (doğruluk bozulmaz),
 /// "değişmedi" demek ise eski API'ye bağlı bir çıktıyı persist ettirirdi — bu yüzden dahil etme kuralları
@@ -127,19 +134,36 @@ public static class ApiSurfaceHash
         return (type.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPrivate;
     }
 
+    /// <summary>Struct <c>System.ValueType</c>'tan, enum <c>System.Enum</c>'dan türer.</summary>
+    private static readonly string[] ValueTypeBases = ["System.ValueType", "System.Enum"];
+
+    /// <summary>Taban tip adı (<see cref="RenderTypeHandle"/> çıktısı) değer tipi tabanı mı? Ad ya olduğu gibi
+    /// (core assembly'nin kendi tipleri) ya da <c>[assembly]ad</c> biçiminde (TypeRef) gelir; köşeli parantezli sonek
+    /// eşlemesi <c>MySystem.ValueType</c> gibi bir adı yanlışlıkla yakalamaz.</summary>
+    private static bool IsValueTypeBase(string baseName)
+    {
+        foreach (string known in ValueTypeBases)
+            if (baseName == known || baseName.EndsWith("]" + known, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
     private static string RenderType(MetadataReader reader, TypeDefinition type)
     {
         var provider = new NameProvider();
         var text = new StringBuilder();
+        string baseName = RenderTypeHandle(reader, type.BaseType, provider);
         text.Append("type ").Append(FullNameOf(reader, type))
             .Append(" attrs=").Append((int)type.Attributes)
-            .Append(" base=").Append(RenderTypeHandle(reader, type.BaseType, provider));
+            .Append(" base=").Append(baseName);
 
         var interfaces = new List<string>();
         foreach (var handle in type.GetInterfaceImplementations())
             interfaces.Add(RenderTypeHandle(reader, reader.GetInterfaceImplementation(handle).Interface, provider));
         interfaces.Sort(StringComparer.Ordinal);
         if (interfaces.Count > 0) text.Append(" impl=").Append(string.Join(",", interfaces));
+        // Açık layout (StructLayout Size/Pack) ClassLayout tablosundadır; unsafe tüketicide sizeof'u değiştirir.
+        var layout = type.GetLayout();
+        if (!layout.IsDefault) text.Append(" layout=").Append(layout.Size).Append('/').Append(layout.PackingSize);
 
         // Generic parametre öznitelikleri ([DynamicallyAccessedMembers], nullable...) ana satırdan SONRA, ayrı satırlardır.
         var genericParameterAttributes = new StringBuilder();
@@ -149,12 +173,15 @@ public static class ApiSurfaceHash
         AppendAttributes(reader, type.GetCustomAttributes(), text);
 
         var members = new List<string>();
+        bool isValueType = IsValueTypeBase(baseName);
         foreach (var handle in type.GetFields())
         {
             var field = reader.GetFieldDefinition(handle);
             string name = reader.GetString(field.Name);
             if (name.Contains('<')) continue;
-            if ((field.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private) continue;
+            var access = field.Attributes & FieldAttributes.FieldAccessMask;
+            // Değer tipinde private alan da yüzeydir (kesin atama, unmanaged, layout); sınıfta değildir.
+            if (access == FieldAttributes.Private && !isValueType) continue;
             var line = new StringBuilder();
             line.Append("  field ").Append(name)
                 .Append(':').Append(field.DecodeSignature(provider, null))

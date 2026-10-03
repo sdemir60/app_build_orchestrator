@@ -1498,7 +1498,9 @@ Both of its early exits rest on one fact: the source does not change between rou
 only change if the **API surface** of a sibling output it compiled against changes. Before each invoke the
 engine records the surface state of every intra-group dependency the member is about to read — the
 dependency's evidence path *and* its fed copies (§7.6), each file hashed over declarations alone
-(`ApiSurfaceHash`: no IL, no MVID, no compiler-generated names, signatures resolved to type names rather than
+(`ApiSurfaceHash`: declarations with their attributes — parameter, return-value and generic-parameter
+attributes included — every field of a value type (private ones too), explicit type layout; no IL, no MVID,
+no compiler-generated names, signatures resolved to type names rather than
 raw blobs so a renumbered ref table cannot masquerade as change; the assembly version counts only under a
 strong name, so a wildcard `AssemblyVersion` does not defeat the proof). When the compile ends, the record
 keeps only the file the member really read. The compiler says which one: MSBuild prints the compiler's command
