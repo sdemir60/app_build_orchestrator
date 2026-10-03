@@ -1681,9 +1681,10 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   `CS8308`; and one source file, compiled into the temporary assembly alone, that grants it
   `InternalsVisibleTo` — a metadata-only build drops internal members, and XAML that sets an internal member of
   a local type would then fail with `MC3072`. What the file does **not** change is the result: no path is
-  touched (`OutDir` and `obj` stay where §9.4 says), and the final assembly and the compiled markup are the same
-  with and without it, which an acceptance test pins with the real `MSBuild.exe` on a legacy-style and an
-  SDK-style WPF project (§17.5). The argument goes on every build call whatever its target and never on the
+  touched (`OutDir` and `obj` stay where §9.4 says), and the final assembly and the compiled markup are
+  equivalent with and without it — the same markup bytes and the same assembly size, not bit identity — which
+  an acceptance test pins with the real `MSBuild.exe` on a legacy-style and an SDK-style WPF project (§17.5).
+  The argument goes on every build call whatever its target and never on the
   restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
   `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
   project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
@@ -5097,7 +5098,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). The engine writes them when it starts and resolves `MSBuild.exe`, and only when the content on disk differs from its own — the path carries no version, and a missing or edited file is repaired at the next start | rewritten from the engine's own copy at the next start; if they cannot be written, builds run without the argument |
+| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
@@ -5267,11 +5268,15 @@ dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filte
 projects under `Fixtures\WpfMini` into a temporary folder and builds each variant twice with the real
 `MSBuild.exe`, through the engine's own argument plan: without and with the WPF temporary-assembly targets
 (§9.2). The variants are an SDK-style project and a legacy-style project whose XAML binds public members, plus the
-legacy-style project with XAML that sets an internal member of a local type. Both builds of a variant must
-succeed, the compiled markup must be byte-identical, the output assembly must have the same size, and it must
-carry neither a reference-assembly marker nor the targets' friend assembly name. The test needs `MSBuild.exe`
-to resolve — and skips when it cannot — plus what the mini projects themselves build against: the .NET
-Framework 4.6 targeting pack for the legacy-style project, a .NET SDK for the SDK-style one.
+legacy-style project with XAML that sets an internal member of a local type. The test first shows that the
+targets take effect — MSBuild's own output must show a compiler command line with `/refonly` with them, and none
+without — and then that they do no harm: the with-targets build must succeed, the compiled markup must be
+byte-identical, the output assembly must have the same size, and it must carry neither a reference-assembly
+marker nor the targets' friend assembly name. The test needs `MSBuild.exe` to resolve and skips when it cannot.
+Each variant also needs what it builds against — the .NET Framework 4.6 targeting pack for the legacy-style
+project, an MSBuild that can host the .NET 10 SDK (Visual Studio 18 or Build Tools 18; Visual Studio 2022 cannot)
+for the SDK-style one — and a variant whose build *without* the targets fails on the machine is skipped rather
+than failed: only a build the targets break turns the test red.
 
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real

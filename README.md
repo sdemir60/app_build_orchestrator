@@ -118,8 +118,9 @@ dotnet run   --project src/BuildOrchestrator.App/BuildOrchestrator.App.csproj
 ```
 
 Close any running instance of the app before building — a running Supervisor keeps its own binaries locked.
-The test suite is expected to be fully green. The filter above excludes the three acceptance tests, which
-build a real large repository (~2 min) and are run separately with `--filter "Category=Acceptance"`.
+The test suite is expected to be fully green. The filter above excludes the acceptance tests — some build a real
+large repository (about two minutes), the others run the real MSBuild on small throw-away projects — which are
+run separately with `--filter "Category=Acceptance"`.
 Measurement tests are part of the run; the ones that open windows or load the machine report as skipped unless
 their environment variable is set (ARCHITECTURE.md §17.5).
 

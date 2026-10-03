@@ -58,9 +58,10 @@ public static class WpfTemporaryAssemblyTargets
 
     /// <summary>
     /// <c>&lt;cacheRoot&gt;\msbuild\</c> altına iki dosyayı yazar ve targets dosyasının TAM yolunu döner. İçerik
-    /// aynıysa dosyaya dokunmaz (mtime korunur); farklıysa ya da yoksa yazar, yani bozulan ya da eski bir dosya her
-    /// açılışta onarılır. Atomik yazım yoktur: motor tek yazıcıdır. G/Ç hatasında FIRLATIR — çağıran bunun bir
-    /// optimizasyon olduğunu bilir ve derlemeyi targets'sız sürdürür.
+    /// aynıysa dosyaya dokunmaz (mtime korunur); farklıysa ya da yoksa yazar, yani bozulan ya da eski bir dosya,
+    /// bir motorun MSBuild'i ilk çözdüğü anda (ilk koşu ya da ilk Optimize) onarılır; çözüm motor başına bir kez
+    /// yapıldığından sonraki onarım yeni bir motoru bekler. Atomik yazım yoktur: motor tek yazıcıdır. G/Ç
+    /// hatasında FIRLATIR — çağıran bunun bir optimizasyon olduğunu bilir ve derlemeyi targets'sız sürdürür.
     /// </summary>
     public static string EnsureWritten(string cacheRoot)
     {
