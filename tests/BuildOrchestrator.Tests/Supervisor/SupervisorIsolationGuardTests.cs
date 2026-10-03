@@ -35,6 +35,10 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// <para><b>Kör noktalar (bilinçli):</b> private alanın bir yerel değişkene/takma ada kopyalanıp ya da onu taşıyan bir
 /// nesne (ör. VM'in <c>RestartEngineCommand</c>'ı) üzerinden başlatılması; başka dosyadaki bir partial sınıf parçasının
 /// başlatması; konağın alana başlatıcı dışında (ör. yapıcıda) atanması ya da başlatıcısının sonraki satıra taşması;
+/// erişim belirteci taşımayan bir üyenin (ör. başka bir üyenin ardına yazılmış <c>static EngineHost Make() =&gt; ...</c>)
+/// üye sınırı sayılmaması, yani (b) kuralının onu görememesi (<c>Member</c> bilerek genişletilmez: yerel fonksiyonların
+/// birim sınırı değişirdi); bir ctor çağrısının satıra bölünmesi (<c>new EngineHost(</c> / sonraki satırda
+/// <c>TestPaths.SupervisorExe, ...</c>): ek argüman kuralı onu görmez, <c>"--logs"</c> taşımayan satırı 1. madde yakalar;
 /// exe yolunu başka bir ifadeyle türetmek (ör. bir değişkene alıp oradan kurmak); <c>MainWindow</c>'un <c>Loaded</c>'da
 /// motoru kendiliğinden başlatması (bugün <c>MainWindowHost</c> var olmayan bir exe verir); <c>Process.Start</c>'a elle
 /// kurulmuş bir <c>ProcessStartInfo</c> vermek. Guard çağrının BİÇİMİNE bakar, niyetine değil — gerisi review'ın işidir.
@@ -49,7 +53,10 @@ public sealed class SupervisorIsolationGuardTests
         Path.Combine("BuildOrchestrator.Tests", "Supervisor", "SupervisorIsolationGuardTests.cs"),
     ];
 
-    private static readonly Regex UnstartedHost = new(@"EngineHost\(TestPaths\.SupervisorExe");
+    /// <summary>Exe yolu üzerinde kurulan konağın ortak çapası (<c>EngineHost(TestPaths.SupervisorExe</c>, kapanış
+    /// parantezi yok): aşağıdaki üç regex bu tek metinden türer.</summary>
+    private const string HostOnRealExe = @"EngineHost\(TestPaths\.SupervisorExe";
+    private static readonly Regex UnstartedHost = new(HostOnRealExe);
     /// <summary>Bir üye bildiriminin başı (erişim belirteciyle başlayan metot/özellik) — taramanın birimi. Erişim
     /// belirteci taşımayan yerel fonksiyonlar bölmez, yani test gövdesindeki yardımcılar testin parçası sayılır.</summary>
     private static readonly Regex Member = new(@"^\s*(public|private|internal|protected)\b[^=;]*\(");
@@ -58,7 +65,7 @@ public sealed class SupervisorIsolationGuardTests
     private static readonly Regex StartsEngine = new($@"\.{StartCalls}|{RestartCommand}");
     /// <summary>Konak kurulurken exe yolunun hemen ardından <c>)</c> gelmiyor: ek argüman (zaman aşımı, argüman listesi,
     /// kill stratejisi) taşıyan konak BAŞLATILMAK için kurulmuştur.</summary>
-    private static readonly Regex ExtraArgsHost = new(@"EngineHost\(TestPaths\.SupervisorExe(?!\))");
+    private static readonly Regex ExtraArgsHost = new(HostOnRealExe + @"(?!\))");
     /// <summary>Üye bildiriminin dönüş tipi bir konak: <c>EngineHost</c>, <c>Task&lt;EngineHost&gt;</c> ya da
     /// <c>ValueTask&lt;EngineHost&gt;</c>. Tip, metot adının ve '(' nin hemen önündedir; parametre tipi sayılmaz.</summary>
     private static readonly Regex ReturnsHost = new(@"\bEngineHost>?\s+\w+\s*\(");
@@ -67,7 +74,7 @@ public sealed class SupervisorIsolationGuardTests
     /// yoktur (metot değil) ve en az bir belirteç (<c>mods</c>) taşır: belirteçsiz <c>EngineHost x = new ...</c> bir yerel de
     /// olabilir, onu üye kuralı görür.</summary>
     private static readonly Regex HostField = new(
-        @"^\s*(?<mods>(?:(?:public|private|internal|protected|static|readonly)\s+)+)[^;(=]*?\b(?<name>\w+)\s*(?:\{[^}]*\}\s*)?=>?\s*new\s+(?:\w+\.)*EngineHost\(TestPaths\.SupervisorExe");
+        @"^\s*(?<mods>(?:(?:public|private|internal|protected|static|readonly)\s+)+)[^;(=]*?\b(?<name>\w+)\s*(?:\{[^}]*\}\s*)?=>?\s*new\s+(?:\w+\.)*" + HostOnRealExe);
     /// <summary>Alan/özelliğin sınıf dışına çıkabilen erişimi: başka dosyadaki bir test onu başlatabilir.</summary>
     private static readonly Regex ExposedAccess = new(@"\b(?:public|internal|protected)\b");
 
@@ -179,8 +186,10 @@ public sealed class SupervisorIsolationGuardTests
             "        await vm.RestartEngineCommand.ExecuteAsync(null);",
             "    }");
 
-    /// <summary>Kurulup VM'e verilen ve dispose edilen ama hiç başlatılmayan private alan serbesttir
-    /// (<c>StartWithWindowsTests.SaveBench</c> biçimi); adını anmayan bir üyedeki restart komutu onu başlatmış sayılmaz.</summary>
+    /// <summary>Hiç başlatılmayan private alan serbesttir: kurulup VM'e verilen ve dispose edilen alan
+    /// (<c>StartWithWindowsTests.SaveBench</c> biçimi); adını anmayan bir üyedeki restart komutu; restart komutu taşıyan
+    /// bir üyenin ALTINDA bildirilen alan (bildirim satırı o üyenin birimine düşer, ama alanın kendi bildirimi onu
+    /// "anmış" yapmaz); tek <c>.StartAsync(</c> çağrısı bir yorum satırında.</summary>
     [Fact]
     public void A_private_host_field_nobody_starts_is_allowed()
     {
@@ -196,6 +205,18 @@ public sealed class SupervisorIsolationGuardTests
             "    public async Task Other_member()",
             "    {",
             "        await sandboxVm.RestartEngineCommand.ExecuteAsync(null);",
+            "    }");
+        AssertAllowed(
+            "    public async Task Restarting_member()",
+            "    {",
+            "        await sandboxVm.RestartEngineCommand.ExecuteAsync(null);",
+            "    }",
+            PrivateHostField);
+        AssertAllowed(
+            PrivateHostField,
+            "    public async Task A_test()",
+            "    {",
+            "        // await _engine.StartAsync();",
             "    }");
     }
 
