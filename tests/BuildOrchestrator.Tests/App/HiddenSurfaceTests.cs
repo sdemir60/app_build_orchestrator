@@ -283,4 +283,42 @@ public class HiddenSurfaceTests
         Assert.EndsWith("line 0", console.EditorControl.Document.Text.TrimEnd());
         GC.KeepAlive(window);
     }
+
+    /// <summary>
+    /// [perf Faz A · A3] <b>Gizli pencerede olay akışı satır kurmaz.</b> Tepsideyken derlenen bir koşunun her olayı
+    /// kimsenin görmediği akışa satır ekliyor, sayacı yazıyor ve en yeni satırın daktilosunu başlatıyordu. Satırların
+    /// kaynağı model (<c>RunViewModel.StreamEvents</c>; 150 kırpma kuralı da onda) zaten tam durur: görünüm gizliyken
+    /// yalnız "ekran modelin gerisinde" bayrağını kaldırır, görününce satırları, sayacı ve aktif satırı modelden TEK
+    /// geçişte kurar. Satırlar yazılmış hâliyle konur: gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya
+    /// kalkmaz (daktilo geriye dönük oynamaz). Sinyal tek görünümde doğrudan yazılır
+    /// (<c>HiddenSurface.SetIsHidden</c>); kalıtımı <c>HiddenSurfacePropertyTests</c> pinler.
+    /// </summary>
+    [StaFact]
+    public void Event_stream_rows_are_not_built_while_hidden_and_are_rebuilt_in_one_pass_without_typing_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = [.. Enumerable.Range(0, 40).Select(i => $"P{i}")];
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
+        var view = new BuildOrchestrator.App.Views.EventStreamView { AnimationsEnabledProvider = () => true, DataContext = vm };
+        HiddenSurface.SetIsHidden(view, true);
+        int rowsBefore = view.Rows.Count;
+        string counterBefore = view.Counter.Text;
+
+        MainWindowHost.PreviewBuild(vm, names);
+        MainWindowHost.StartBuild(vm, names);
+        MainWindowHost.FinishBuild(vm, names);
+
+        Assert.True(vm.StreamEvents.Count > rowsBefore); // ön-koşul: model akışa satır üretti
+        Assert.Equal(rowsBefore, view.Rows.Count);       // KIRMIZI: bugün gizliyken de her olay satır kurar
+        Assert.Null(view.TypingRow);                     //          ve en yeni satırın daktilosunu başlatır
+        Assert.Equal(counterBefore, view.Counter.Text);  // sayaç da yazılmaz
+
+        HiddenSurface.SetIsHidden(view, false);
+
+        Assert.Equal(vm.StreamEvents.Count, view.Rows.Count); // tek geçişte modelden kuruldu
+        Assert.Equal($"{vm.StreamEventCount} events", view.Counter.Text);
+        Assert.All(view.Rows, row => Assert.False(row.IsTyping)); // daktilo geriye dönük oynamaz
+        Assert.Null(view.TypingRow);
+        GC.KeepAlive(window);
+    }
 }

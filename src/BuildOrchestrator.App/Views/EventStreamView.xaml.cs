@@ -153,8 +153,38 @@ public partial class EventStreamView : UserControl
         UpdateActiveLine();
     }
 
+    /// <summary>
+    /// [perf Faz A · A3] Yüzey gizliyken (<see cref="HiddenSurface"/>: tepside derleme) tampon, sayaç ve aktif satır
+    /// bildirimleri görünüme ÇEVRİLMEZ — satır kurulmaz, daktilo başlamaz, ölçüm geçersizlenmez. Kaynak model
+    /// (<see cref="RunViewModel.StreamEvents"/>; 150 kırpma kuralı da onda) zaten tam durur: bayrak yalnız "ekran
+    /// modelin gerisinde" der ve <see cref="OnPropertyChanged"/> yüzey görününce ekranı modelden tek geçişte kurar.
+    /// </summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>
+    /// Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir. Yüzey görünür olunca ve
+    /// gizliyken bildirim kaçırıldıysa satırlar, sayaç ve aktif satır modelden bir kez kurulur. <see cref="RebuildRows"/>
+    /// satırları YAZILMIŞ hâliyle koyar (yazımın tek başlatıcısı <see cref="OnStreamEventsChanged"/>'in Add dalıdır),
+    /// yani gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya kalkmaz: daktilo geriye dönük oynamaz.
+    /// </summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        _staleWhileHidden = false;
+        RebuildRows();
+        RefreshCounter();
+        UpdateActiveLine();
+    }
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // [perf Faz A · A3] Sayaç ve aktif satır da gizliyken yazılmaz (bkz. _staleWhileHidden).
+        if (HiddenSurface.GetIsHidden(this) && e.PropertyName is nameof(RunViewModel.StreamEventCount) or nameof(RunViewModel.ActiveLineGeneration))
+        {
+            _staleWhileHidden = true;
+            return;
+        }
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.StreamEventCount):
@@ -169,6 +199,8 @@ public partial class EventStreamView : UserControl
     // ---------------------------------------------------------------- tampon satırları
     private void OnStreamEventsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        // [perf Faz A · A3] Gizliyken satır eklenmez/çıkarılmaz ve daktilo başlamaz: yalnız "ekran bayat" işaretlenir.
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add when e.NewItems is not null:
