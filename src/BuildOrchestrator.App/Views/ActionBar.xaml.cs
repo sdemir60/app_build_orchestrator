@@ -85,6 +85,24 @@ public partial class ActionBar : UserControl
         DsChrome.WireHoverProxy((Border)PART_Sync.Parent, PART_Sync);
     }
 
+    /// <summary>[perf Faz A · A9] Yüzey gizliyken sayaç chip'leri modele dokunmaz: <c>Counters</c>/<c>ActiveFilters</c> bildirimleri
+    /// yalnız "chip'ler modelin gerisinde" bayrağını kaldırır (değerler ve building ikonu yazılmaz; yazılsalardı her proje olayı bir
+    /// layout geçişi çıkarırdı). Bayrağı chip'lerin tam kurulumu (<see cref="RefreshChips"/>) düşürür: <c>Loaded</c> ve DataContext
+    /// değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.</summary>
+    private bool _chipsStaleWhileHidden;
+
+    /// <summary>[perf Faz A · A5] Build menüsü <c>SplitButton.MenuContent</c>'tir: popup kapalıyken (gizli pencerede hep) pencerenin
+    /// ağacında DEĞİLDİR ve kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> ona inmez. Sinyali ağaçtaki bu çubuk menüye
+    /// açıkça aktarır; böylece menünün gizli kapısı (<see cref="BuildMenu"/>) popup'tan bağımsız çalışır.
+    /// [perf Faz A · A9] Yüzey görünür olunca ve chip'ler bayat kalındıysa TEK geçişte modele yetişir (<see cref="RefreshChips"/>).</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != HiddenSurface.IsHiddenProperty) return;
+        HiddenSurface.SetIsHidden(PART_BuildMenu, (bool)e.NewValue);
+        if (HiddenSurface.BecameVisible(e) && _chipsStaleWhileHidden) RefreshChips();
+    }
+
     // ---------------------------------------------------------------- test yüzeyi
     internal ToggleButton SigmaChip => _sigmaChip;
     internal ToggleButton BuildingChip => _buildingChip;
@@ -191,6 +209,8 @@ public partial class ActionBar : UserControl
         {
             case nameof(RunViewModel.Counters):
             case nameof(RunViewModel.ActiveFilters):
+                // [perf Faz A · A9] Gizliyken yalnız bayrak; dönüşte OnPropertyChanged chip'leri tek geçişte kurar.
+                if (HiddenSurface.GetIsHidden(this)) { _chipsStaleWhileHidden = true; break; }
                 RefreshChips();
                 break;
             case nameof(RunViewModel.HasWorkspace):
@@ -357,6 +377,7 @@ public partial class ActionBar : UserControl
     private void RefreshChips()
     {
         if (!_built) return;
+        _chipsStaleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "chip'ler bayat" işareti de tazelenir
         var c = _vm?.Counters ?? default;
         _sigmaValue.Text = Inv(c.Total);
         _buildingValue.Text = Inv(c.Building);

@@ -153,8 +153,45 @@ public partial class EventStreamView : UserControl
         UpdateActiveLine();
     }
 
+    /// <summary>
+    /// [perf Faz A · A3] Yüzey gizliyken (<see cref="HiddenSurface"/>: tepside derleme) tampon, sayaç ve aktif satır
+    /// bildirimleri görünüme ÇEVRİLMEZ — satır kurulmaz, daktilo başlamaz, ölçüm geçersizlenmez. Kaynak model
+    /// (<see cref="RunViewModel.StreamEvents"/>; 150 kırpma kuralı da onda) zaten tam durur: bayrak yalnız "ekran
+    /// modelin gerisinde" der ve <see cref="OnPropertyChanged"/> yüzey görününce ekranı modelden tek geçişte kurar.
+    /// </summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>
+    /// Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir. Yüzey görünür olunca ve
+    /// gizliyken bildirim kaçırıldıysa satırlar, sayaç ve aktif satır modelden bir kez kurulur. <see cref="RebuildRows"/>
+    /// satırları YAZILMIŞ hâliyle koyar (yazımın tek başlatıcısı <see cref="OnStreamEventsChanged"/>'in Add dalıdır),
+    /// yani gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya kalkmaz. Kurulumdan önce modeldeki TÜM olaylar
+    /// "oynandı" işaretlenir (<c>GlowPlayed</c>, <c>TypePlayed</c>): gizliyken akanlar hiçbir görünümde oynamadı ve dönüşte
+    /// kurulan satırlar GEÇMİŞTİR — işaretlenmezse her yeşil "done" satırı yüklenirken 1,1 sn'lik parıltısını başlatırdı
+    /// (en çok 150 satır aynı anda; karar 15: tepsideyken animasyon yok, pencere gelince ekran tek seferde kurulur).
+    /// Bayrağı tam kurulum (<see cref="RebuildRows"/>) düşürür: gizliyken DataContext yeniden bağlandıysa satırlar o anda
+    /// modelden kurulmuştur ve dönüş onları ikinci kez kurmaz.
+    /// </summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
+        // Bayrağı RebuildRows düşürür (tam kurulum kendi bayrağını kendisi sıfırlar).
+        if (_vm is not null)
+            foreach (var item in _vm.StreamEvents) { item.GlowPlayed = true; item.TypePlayed = true; }
+        RebuildRows();
+        RefreshCounter();
+        UpdateActiveLine();
+    }
+
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // [perf Faz A · A3] Sayaç ve aktif satır da gizliyken yazılmaz (bkz. _staleWhileHidden).
+        if (HiddenSurface.GetIsHidden(this) && e.PropertyName is nameof(RunViewModel.StreamEventCount) or nameof(RunViewModel.ActiveLineGeneration))
+        {
+            _staleWhileHidden = true;
+            return;
+        }
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.StreamEventCount):
@@ -169,6 +206,8 @@ public partial class EventStreamView : UserControl
     // ---------------------------------------------------------------- tampon satırları
     private void OnStreamEventsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        // [perf Faz A · A3] Gizliyken satır eklenmez/çıkarılmaz ve daktilo başlamaz: yalnız "ekran bayat" işaretlenir.
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.Action)
         {
             case NotifyCollectionChangedAction.Add when e.NewItems is not null:
@@ -226,6 +265,20 @@ public partial class EventStreamView : UserControl
 
     private void RebuildRows()
     {
+        // Tam kurulum bayrağı kendisi düşürür (liste, şerit, satır, menü ve chip idiomu): gizliyken DataContext yeniden
+        // bağlandıysa satırlar burada modelden kurulur ve dönüş (OnPropertyChanged) onları ikinci kez kurmaz.
+        _staleWhileHidden = false;
+        // Yazan satır atılacaklar arasındadır: DataContext'i kopunca OnTypeTick (VM yok) erken döner ve yazımı hiç bitirmez —
+        // saat yalnız Unloaded ile durur; ağaçtan Unloaded gelmeyen (hiç yüklenmemiş) satırda Render önceliğinde sonsuza dek
+        // tıklardı. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki FinishTyping ile kapatılır) ve DataContext'ten
+        // ÖNCE koşar: TypingEnded satırı bırakır ve prompt satırını göstergeye döndürür (ReleaseToBuffer) — yoksa atılan satır
+        // yazı yüzeyi olarak asılı kalır (_writingRow dolu) ve dönüşteki UpdateActiveLine göstergeyi yazmadan döner: prompt satırı
+        // atılmış satırın yarım metnini taşımaya devam ederdi.
+        _typingRow?.FinishTyping();
+        _typingRow = null;
+        // Atılan satırlar kendi öğe VM'lerinin PropertyChanged'ine abone kalmasın (her gösterimde biriken, sınırlı bir sızıntı
+        // olurdu): bağ Clear'dan ÖNCE koparılır.
+        foreach (var old in PART_Rows.Children.OfType<EventStreamRow>()) old.DataContext = null;
         PART_Rows.Children.Clear();
         if (_vm is null) return;
         foreach (var item in _vm.StreamEvents) PART_Rows.Children.Add(CreateRow(item));

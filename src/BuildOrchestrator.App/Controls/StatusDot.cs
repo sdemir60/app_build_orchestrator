@@ -80,9 +80,10 @@ public class StatusDot : Control
         _lighting = false;
     }
 
-    /// <summary>[sanallaştırma] Container geri dönüştürüldü: bir sonraki çizim YENİ verinin hâline anında
-    /// oturur, geçiş oynamaz (<see cref="StartMode.ShouldCrossFade"/>). <c>ProjectRow</c> yeni bir
-    /// <c>DataContext</c> aldığında çağırır — kontrol kendi başına "veri değişti"yi göremez.</summary>
+    /// <summary>[sanallaştırma · perf Faz A · A5] Bir sonraki çizim verinin O ANKİ hâline anında oturur, geçiş oynamaz
+    /// (<see cref="StartMode.ShouldCrossFade"/>): container geri dönüştürüldü ya da yüzey gizliyken bir değişim kaçırıldı.
+    /// <c>ProjectRow.ApplyAllFresh</c> iki durumda da çağırır — yeni bir <c>DataContext</c> aldığında ve gizlilikten dönüşte;
+    /// kontrol kendi başına "veri değişti"yi göremez.</summary>
     internal void ResetTransitionLatch() => _wasStartMode = null;
 
     public override void OnApplyTemplate()

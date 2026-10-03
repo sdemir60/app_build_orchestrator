@@ -357,7 +357,7 @@ public sealed partial class RunViewModel
     }
 
     private string ResolveName(string projectId) =>
-        Projects.FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase))?.Name
+        FindRow(projectId)?.Name
             ?? Path.GetFileNameWithoutExtension(projectId);
 
     /// <summary>[Selection deseni] Seçim değişince her stream satırının <see cref="StreamEventViewModel.IsSelected"/>'ını

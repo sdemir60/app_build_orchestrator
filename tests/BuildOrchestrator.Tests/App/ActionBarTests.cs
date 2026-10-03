@@ -568,8 +568,13 @@ public partial class ActionBarTests
     private static UIElement ChipIcon(ToggleButton chip) => ((StackPanel)chip.Content).Children[0];
 
     /// <summary>Bir sayaç chip'inin İKİNCİ çocuğu (StackPanel[icon, value]) — <see cref="ChipIcon"/>'ın simetriği,
-    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu.</summary>
-    private static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+    /// değer <see cref="TextBlock"/>'unu okumanın TEK yolu. <c>internal</c>: <c>HiddenSurfaceTests</c> de aynı okumayı kullanır.</summary>
+    internal static TextBlock ChipValue(ToggleButton chip) => (TextBlock)((StackPanel)chip.Content).Children[1];
+
+    /// <summary>Building chip'inin spinner'ı: ikon <see cref="Grid"/>'inin ikinci çocuğu (Grid[nokta, spinner]) — spinner'ı okumanın
+    /// TEK yolu. <see cref="ChipValue"/> gibi <c>internal</c>: <c>HiddenSurfaceTests</c> de aynı okumayı kullanır.</summary>
+    internal static BuildingSpinner ChipSpinner(ToggleButton buildingChip) =>
+        Assert.IsType<BuildingSpinner>(Assert.IsType<Grid>(ChipIcon(buildingChip)).Children[1]);
 
     /// <summary>[design v1.20.0 §2.7] ✓ · ✗ rozetleri DURUM kovalarını okur (<see cref="RunCounters.Current"/> ·
     /// <see cref="RunCounters.Broken"/>) — koşu tablosunun succeeded/failed/skipped kovalarını DEĞİL (onlar
@@ -634,7 +639,7 @@ public partial class ActionBarTests
 
         var buildingIcon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
         Assert.IsType<Ellipse>(buildingIcon.Children[0]);
-        Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
+        _ = ChipSpinner(bar.BuildingChip); // ikinci çocuk spinner: tür iddiası okuma yolunda (ChipSpinner)
 
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4] Eski glyph'ler Succeeded ✓ · Failed ✗ · Skipped — idi.
         // Chip'ler artık durum yüzeyidir: güncel ✓, derlenecek kesikli daire ○, bozuk ✗. — yalnız run-story
@@ -675,7 +680,7 @@ public partial class ActionBarTests
 
         var icon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
         var dot = Assert.IsType<Ellipse>(icon.Children[0]);
-        var spinner = Assert.IsType<BuildingSpinner>(icon.Children[1]);
+        var spinner = ChipSpinner(bar.BuildingChip);
 
         // Boşken: gri nokta görünür, spinner gizli.
         Assert.Equal(0, vm.Counters.Building); // ön-koşul: gerçekten kimse derlenmiyor

@@ -527,7 +527,8 @@ You do not have to keep the window open to watch a build — or to start one: `C
 anywhere and `Shift+Space` shows or hides the window (see *Keyboard shortcuts*). With *Close to tray* on (the
 default), closing it with `X` drops the app to the tray, and if a build is running the product mark animates in the bottom-right corner of
 the screen — click it to bring the window back, or click straight through the empty space around it to whatever
-is underneath. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
+is underneath. While it is in the tray the window does not redraw itself as the run progresses, and bringing it back
+brings it up to date in a single pass. When the run finishes the mark plays out its last turn, fades, and Windows shows a notification
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
 you open the window again. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the

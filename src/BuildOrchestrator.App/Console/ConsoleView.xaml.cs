@@ -457,7 +457,9 @@ public partial class ConsoleView : UserControl
     /// <summary>[design v1.7.0 §2.5] Boşta (idle/boot) tek prompt satırı: <b>yanıp sönen blok imleç + "ready"
     /// (dim)</b>. Duvar-saati damgası kaldırıldı (§2.5: konsolda saat sütunu yok) — prompt satırı imleçle
     /// başlar ve konsolun geri kalanıyla aynı sol hizadadır. Doküman satırı DEĞİLdir: overlay'de canlı
-    /// gösterilir, içerik gelince (<see cref="AppendNarrativeBatch"/> / <see cref="PlayCascade"/>) temizlenir.
+    /// gösterilir, içerik gelince temizlenir: ilk anlatı satırı (<see cref="AppendNarrativeBatch"/>), satır taşıyan bir
+    /// belge kurulumu (<see cref="ReplaceRunDocument"/>) ya da proje logu kurulumu (<see cref="ReplaceProjectDocument"/>,
+    /// <see cref="PlayCascade"/>).
     /// Reduced-motion iken imleç statiktir.</summary>
     public void ShowReady()
     {
@@ -609,7 +611,7 @@ public partial class ConsoleView : UserControl
     /// <para>[design v1.7.0 §2.5] Geçiş animasyonu İKİ YÖNDE de aynıdır (<see cref="PlayTiltIn"/>).</para></summary>
     public void ShowRunDocument(string fullRunText)
     {
-        ResetRunDocument(fullRunText);
+        ReplaceRunDocument(fullRunText);
         PlayTiltIn(fromAbove: true); // dönüş açılışın TAM AYNASI
     }
 
@@ -620,19 +622,28 @@ public partial class ConsoleView : UserControl
     /// onu BU çağrıyla izler (kablo <c>MainWindow</c>'da, <c>RunViewModel.ConsoleCleared</c>).
     ///
     /// <para><b>Tilt YOK:</b> <see cref="PlayTiltIn"/> yalnız panel GEÇİŞİNDE (proje logu ↔ anlatı) oynar; bu
-    /// ise aynı panelin sıfırlanmasıdır — <see cref="ShowRunDocument"/>'ın tilt'siz çekirdeği. "ready" satırına
+    /// ise aynı panelin sıfırlanmasıdır — tilt'siz çekirdek <see cref="ReplaceRunDocument"/>'tır. "ready" satırına
     /// dokunulmaz: ilk anlatı satırı gelince metni zaten boşalır (<see cref="ClearReadyText"/>).</para>
     ///
     /// <para><b>[DEĞİŞEN KURAL — ölçüldü]</b> Eskiden işlem başlangıcında ekrana hiç dokunulmuyordu: VM
     /// tamponu silinse de AvalonEdit belgesi yalnız mod geçişinde yeniden kuruluyordu, yeni işlemin satırları
     /// bir öncekinin ALTINA ekleniyordu — Build ve Sync'te konsol "hiç temizlenmiyor" diye görülen buydu.</para>
     /// </summary>
-    public void ClearRunDocument() => ResetRunDocument("");
+    public void ClearRunDocument() => ReplaceRunDocument("");
 
-    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini +
-    /// takip): <see cref="ShowRunDocument"/> ile <see cref="ClearRunDocument"/>'ın ORTAK gövdesi (kopya YASAK).</summary>
-    private void ResetRunDocument(string fullRunText)
+    /// <summary>[test yüzeyi] <see cref="ReplaceRunDocument"/> çağrı sayısı: gizli pencere dönüşünde belgenin TEK
+    /// seferde kurulduğunu (gizliyken hiç kurulmadığını) sayıyla sınar. Üretimde zararsız bir sayaçtır.</summary>
+    internal int RunDocumentReplacedCount { get; private set; }
+
+    /// <summary>Anlatı belgesini verilen metinle yeniden kurar (render dilimi + chunk loader + dip pini + takip) —
+    /// <b>tilt'siz</b>. Üç yol bu TEK gövdeyi paylaşır (kopya YASAK): <see cref="ShowRunDocument"/> (mod geçişi; ardına
+    /// <see cref="PlayTiltIn"/> ekler), <see cref="ClearRunDocument"/> (boş metin) ve gizli pencere dönüşü
+    /// (<c>MainWindow.ResyncAfterShow</c>: tepsideyken belgeye yazılmadı, dönüşte modelin tam metninden bir kez kurulur).
+    /// Belge satır taşıyorsa boşta "ready" satırı da gider: gizliyken ilk anlatı satırı belgeye hiç girmediği için onu
+    /// silen <see cref="AppendNarrativeBatch"/> yolu çalışmamıştır.</summary>
+    public void ReplaceRunDocument(string fullRunText)
     {
+        RunDocumentReplacedCount++;
         _projectMode = false;
         _armedForChunk = false; // ilk layout'ta spurious prepend olmasın (kullanıcı henüz kaydırmadı)
         _backlogLines = SplitLines(fullRunText ?? "");
@@ -648,6 +659,9 @@ public partial class ConsoleView : UserControl
         // beliriyor, pin bitince kayboluyordu — sahada "geri diyorsun latest çıkıyor kayboluyor" diye görülen
         // buydu. Pin'den SONRA geometri doğrudur: uzaklık sıfır, pill hiç çıkmaz.
         _bottomAnchor.ForceStuck(true);
+        // Belge satır taşıyorsa boşta "ready" gider: gizliyken ilk anlatı satırı belgeye girmediği için onu silen
+        // AppendNarrativeBatch (ClearReadyText) koşmadı. Boş metinde (ClearRunDocument) "ready"ye dokunulmaz.
+        if (_backlogLines.Count > 0) ClearReadyText();
         RefreshPrompt(); // anlatıya dönüldü → prompt satırı geri gelir
     }
 
@@ -671,6 +685,17 @@ public partial class ConsoleView : UserControl
     /// </summary>
     public void PlayCascade(IReadOnlyList<string> allLines)
     {
+        ReplaceProjectDocument(allLines);
+        PlayTiltIn(fromAbove: false);
+    }
+
+    /// <summary>[perf Faz A · A2] Proje-log belgesini kurar — <see cref="PlayCascade"/>'in <b>tilt'siz</b> çekirdeği:
+    /// mod, prompt, backlog, render dilimi ve tepe pini; takip KAPALI (proje logu baştan okunur — ayrıntı
+    /// <see cref="PlayCascade"/>'te). <see cref="PlayCascade"/> bunun ardına <see cref="PlayTiltIn"/> ekler; gizli
+    /// pencere dönüşü (<c>MainWindow.ResyncAfterShow</c>) onu tilt'siz çağırır: panel geçişi değil, aynı proje logunun
+    /// modelin tam metninden yeniden kurulmasıdır.</summary>
+    public void ReplaceProjectDocument(IReadOnlyList<string> allLines)
+    {
         EnsureColorizer();
         _bottomAnchor.ForceStuck(false); // proje logu baştan okunur — dibe çekilmez
         allLines ??= [];
@@ -685,8 +710,6 @@ public partial class ConsoleView : UserControl
         _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
         EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: false);
-
-        PlayTiltIn(fromAbove: false);
     }
 
     /// <summary>

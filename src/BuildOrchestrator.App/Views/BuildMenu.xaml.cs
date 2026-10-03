@@ -35,6 +35,8 @@ public partial class BuildMenu : UserControl
     private const double TitleIconSize = 14;
 
     private RunViewModel? _vm;
+    private int? _lastTotal;        // son kurulan menünün toplam proje sayısı; null = bu VM için henüz kurulmadı
+    private bool _staleWhileHidden; // gizliyken bir Counters bildirimi geldi (bkz. OnPropertyChanged)
 
     /// <summary>Bir madde seçildiğinde (komut çalıştıktan sonra) — ActionBar menüyü kapatır.</summary>
     public event Action? ItemInvoked;
@@ -49,6 +51,10 @@ public partial class BuildMenu : UserControl
     /// <summary>[test yüzeyi] O anki menü modeli — her fazda aynı üç madde + F5 rozetinin yeri (tek değişken: Rebuild açıklamasındaki toplam proje sayısı).</summary>
     internal IReadOnlyList<BuildMenuItem> Items { get; private set; } = [];
 
+    /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="RefreshRows"/> çağrı sayacı — gizliyken ve toplam aynıyken menünün
+    /// yeniden kurulmadığını, toplam değişince TEK kurulumun koştuğunu pinler.</summary>
+    internal int RefreshRowsCount { get; private set; }
+
     /// <summary>[test yüzeyi] Çizilmiş satırlar — enable/hover/tooltip durumu buradan okunur, tıklama kablajı
     /// buradan sınanır.</summary>
     internal IEnumerable<Border> Rows => PART_Rows.Children.Cast<Border>();
@@ -61,14 +67,38 @@ public partial class BuildMenu : UserControl
         if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as RunViewModel;
         if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
+        _staleWhileHidden = false; // yeni VM: RefreshRows (koşulsuz) menüyü modelin O ANKİ hâlinden kurar; bayat işareti de tazelenir
         RefreshRows();
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // Menü içeriğini etkileyen TEK sinyal kaldı: toplam proje sayısı (Rebuild'in açıklaması).
-        if (e.PropertyName is nameof(RunViewModel.Counters)) RefreshRows();
+        // Menü içeriğini etkileyen TEK sinyal: toplam proje sayısı (Rebuild'in açıklaması).
+        if (e.PropertyName is not nameof(RunViewModel.Counters)) return;
+        // [perf Faz A · A5] Gizliyken menüye dokunulmaz: bildirim yalnız bayrağı kaldırır, dönüşte tek karşılaştırma yapılır.
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
+        RefreshRowsIfTotalChanged();
     }
+
+    /// <summary>[perf Faz A · A5] Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
+    /// (<see cref="HiddenSurface"/>). Yüzey görünür olunca ve gizliyken bir <c>Counters</c> bildirimi geldiyse menü TEK
+    /// karşılaştırmayla yetişir: toplam değiştiyse tek kurulum, değişmediyse hiçbiri.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
+        _staleWhileHidden = false;
+        RefreshRowsIfTotalChanged();
+    }
+
+    /// <summary>[perf Faz A · A5 · eski B5 (1)] Menü yalnız TOPLAM proje sayısını okur (Rebuild'in açıklaması); <c>Counters</c>
+    /// ise koşu boyunca her statü değişiminde yayınlanır. Toplam aynıysa satırlar da aynıdır — yeniden kurmak boşa iştir.</summary>
+    private void RefreshRowsIfTotalChanged()
+    {
+        if (CurrentTotal != _lastTotal) RefreshRows();
+    }
+
+    private int CurrentTotal => _vm?.Counters.Total ?? 0;
 
     /// <summary>[T40] VM durumundan menü modelini kurar.
     /// <para>[B4] <c>continue</c> maddesi kaldırılmıştı; [design v1.7.0 §2.7-11] <c>retry</c> de kaldırıldı —
@@ -97,7 +127,9 @@ public partial class BuildMenu : UserControl
 
     private void RefreshRows()
     {
-        int total = _vm?.Counters.Total ?? 0;
+        RefreshRowsCount++;
+        int total = CurrentTotal;
+        _lastTotal = total;
 
         Items = ComposeItems(total);
 

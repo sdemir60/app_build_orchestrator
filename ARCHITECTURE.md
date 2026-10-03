@@ -2353,7 +2353,23 @@ animates in the bottom-right corner of the primary work area. It appears if the 
 and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
 while the main window is hidden, so it cannot be a popup inside it.
 
-Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
+**A hidden window does no screen work.** No choreography plays on it: the opening wave is skipped, the run command
+goes out at once and the end finale never starts (§14.5). The signal behind that rule gates every other surface the
+run's events would otherwise redraw: the event stream's rows, the graph's status, phase and selection pushes and its
+filter refresh, the ribbon, the Build menu, the project rows and their list, the action bar's counter chips and the
+body of the 200 ms tick (live durations, the console header's line counter, following the frontier — only the
+engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
+the view model, and the document is built from that full text once, without the tilt, when the window comes back
+(§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
+none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
+a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
+cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
+their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
+does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
+fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
+enough to be felt.
+
+Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
 restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
 around it pass through to whatever is underneath — that separation is free, because a layered window is
@@ -3150,7 +3166,7 @@ ends the step, waits the short beat, and only then starts the Sync. The rule it 
 choreography already established: a choreography either always plays or never, because a step that appears only
 when the engine happens to be slow makes the same click feel different every time. The timing lives in the
 shell, as it does for the choreography: the view model says how long to wait, a dispatcher timer counts it, and
-under reduced motion nothing is waited at all.
+under reduced motion, or while the window is hidden, nothing is waited at all.
 
 **The Sync is chained, not asked for.** `cleanCompleted` starts a Sync with the console preserved — the same
 shape as the `N behind` chip's pull — because the engine's own analysis is the only thing that can put real
@@ -3955,6 +3971,19 @@ lines.
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
   by the same reseed generation a mode switch uses, so nothing from before the clear can land after it.
+- **A hidden window does not write to the document.** While the window is in the tray the pump keeps draining the
+  view-model's buffer, but the shell drops each batch instead of applying it, and a clear that arrives meanwhile is
+  held back the same way: the narrative is still complete in the view model, and a document nobody can see is not
+  worth the layout work its insertions cause. So is a switch between the narrative and a project log: a run started
+  from the tray drops the open project's selection, the header follows at once and the document waits. When the
+  window returns, one rebuild puts the screen right — the
+  document is built from the model's full text **without the tilt**, once the first layout pass has run (the bottom
+  pin reads layout). It is the same tilt-less rebuild a new section uses; the tilt still belongs to a change of
+  mode. The rebuild seeds with the reseed generation like any other, so a batch that was already in flight when the
+  window returns is dropped rather than landing twice, and a run with no lines shows the idle `ready` line again.
+  A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
+  when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
+  line: the console jumps to the present state of the run (§12.3).
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -4184,8 +4213,8 @@ the neon play in their standard form. Once the finale has played the graph holds
 short beat (`EndFinale.FilterReturnAtMs`, the finale's length plus the design's short `LightMs`) and then
 fades back to the filtered look at the filter's own 420 ms. A stop and the engine dying end the run in the
 `Stopped` phase, which plays the finale too when something was built, so they follow the same rule. When there
-is no finale — nothing was built, reduced motion, a stop during the opening sequence, a command that never went
-out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
+is no finale — nothing was built, reduced motion, a hidden window, a stop during the opening sequence, a command that
+never went out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
 change, §10.2) cuts a finale still playing and brings the filter back at once (`GraphView.CancelEndFinale`), so
 the new graph's reveal plays with the filtered look. The two end signals — the phase that starts the finale
 and the run lock falling — arrive in different orders on different paths, and either order lands on the same
@@ -4853,7 +4882,9 @@ them, and it can dump any size as ASCII so the judgement can be re-made against 
 
 Durations 80 / 120 / 180 / 280 ms; three easings — ease-out for entrances, ease-standard for state changes,
 ease-in-out for displacement. All three CSS curves are reproduced exactly as `KeySpline`s. No bounce, no
-overshoot; only transform and opacity are animated, never layout.
+overshoot. What animates is what a frame can redraw without a layout pass — opacity, colour, transforms (the
+console's tilt is a 3D one), a stroke's dash offset and a clip — plus the finite exceptions below that do touch
+layout.
 
 Five contract rules, each enforced by a test:
 
@@ -4885,6 +4916,12 @@ Five contract rules, each enforced by a test:
    the easing curve's own parameter, since that path is not a single keyframe. Equal alphas are left alone:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
+
+**Deliberate exceptions: finite animations that touch layout.** The row's status stripe and the ribbon's progress indicator
+animate `Width`. Both are short, finite transitions on a single element, so their layout cost is a bounded burst that
+ends with the transition rather than a continuous stream. Two more animations share that bound: the scrollbar pill's
+inset on hover (`Padding`, on the pill alone — the rail and the content beside it do not move, §13.8) and the scroll
+glides, which step a `ScrollViewer`'s or the console editor's offset each frame until the glide ends.
 
 **Overlay entrances are one body.** `PopIn` plays them all, and they differ only in numbers: popovers and the
 Build menu rise 4 px from below at scale .985 over 140 ms; the modals rise 6 px over `Duration.Base` without
@@ -4948,6 +4985,20 @@ either always plays or never does. The operation itself still begins on the firs
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
 
+**Choreographies play only on a visible window.** On a hidden one — a build started from the tray with the global
+hotkey, or one that drops to the tray mid-run — the scope is marked in a single step and the command goes out at
+once: the very branch reduced motion takes, and the step holds between a sequence's operations are skipped the
+same way. Hiding the window cuts whatever is playing: the opening choreography releases the waiting command on
+the spot (the marks stay, so the run still takes over from them), and a running end finale stops and hands the
+filter back. While the window stays hidden nothing new starts, and a run that ends there skips its finale and
+returns the filter at once. The whole rule hangs on one signal, the inherited attached property
+`HiddenSurface.IsHidden`, which the window writes from its own visibility (`IsVisibleChanged`, and at start-up when
+it begins in the tray). It is deliberately a signal of its own rather than `IsVisible`: the window sets it
+explicitly, so a tree that was never shown — every headless test — is not mistaken for a hidden window. The
+measurement behind the rule: started from the tray with the hotkey, most of the wait before the engine began was
+an opening animation nobody could see. "Either always plays or never does" is a rule about a *visible* window —
+there it still holds.
+
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
 releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the
 run's own opacity system gives a queued node, and 0.18 on the rest — stay on the graph while the engine plans.
@@ -4967,8 +5018,8 @@ The wait is also why `queued` is derived from a run that is *live*, not from one
 requested. Were the request counted as a run, every project in the plan would turn queued-amber on the click
 itself and the neutral moment and the wave would both be invisible. No information is lost by waiting: the
 wave lights exactly the set the queue would have, only progressively — and when the choreography is skipped
-(reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at once. If
-the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
+(reduced motion, a hidden window, or an empty scope) the scope is marked in one step, so the amber still appears at
+once. If the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
 operation that did not happen may not leave its colour behind.
 
 **The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
@@ -5280,10 +5331,11 @@ than failed: only a build the targets break turns the test red.
 
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
-file picker lands, UI latency and memory under each perf profile, and the content-decision timings. The filter
-above does **not** exclude them (`!=` admits every other category value). The tray, file-picker and perf probes
-open real windows and dialogs, show balloons or saturate every core, so each is gated on an environment variable —
-`BO_PROBE_TRAY`, `BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_PERF` — and reports itself as skipped
+file picker lands, UI latency and memory under each perf profile, the UI thread cost of a build's events while the
+window is hidden, and the content-decision timings. The filter above does **not** exclude them (`!=` admits every
+other category value). The tray, file-picker, hidden-window and perf probes open real windows and dialogs, show
+balloons or saturate every core, so each is gated on an environment variable — `BO_PROBE_TRAY`,
+`BO_PROBE_FILE_DIALOG`, `BO_MEASURE_OVERLAY`, `BO_MEASURE_HIDDEN`, `BO_MEASURE_PERF` — and reports itself as skipped
 unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
@@ -5932,7 +5984,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
 | Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
-| Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
+| Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
 | Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |

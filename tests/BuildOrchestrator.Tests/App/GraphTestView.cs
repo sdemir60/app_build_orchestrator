@@ -80,4 +80,31 @@ internal static class GraphTestView
         view.UpdateLayout();
         return view;
     }
+
+    /// <summary>
+    /// [perf A7] Görünümü GÖSTERİLEN (ekran dışı, gerçek HWND'li) bir host penceresinde kurar — sonsuz saat
+    /// bekleyen testlerin TEK yolu. Dönen pencere canlı tutulmalıdır (çağıran <c>GC.KeepAlive(window)</c> der).
+    ///
+    /// <para><b>Eski iddia:</b> beads saati ve seçim kenarı akışı, HWND'siz <see cref="Sized"/> /
+    /// <see cref="Realized"/> görünümde de kurulurdu (<c>IsVisible</c> okunmazdı). <b>Değişme gerekçesi:</b>
+    /// ARCHITECTURE §14.5 kuralı ("every infinite animation is gated on IsVisible") bu sahiplere de uygulandı:
+    /// pencere tepsiye inince <c>Unloaded</c> ateşlenmez ve bu saatler görünmeden dönmeye devam ediyordu
+    /// (maliyet imleç saatlerinde ölçüldü, bkz. <c>HiddenCursorClockTests</c>). Bağlı olmayan ağaçta
+    /// <c>IsVisible</c> her zaman false'tur — saat HWND'siz görünümde artık hiç kurulmaz. Saati bekleyen testler
+    /// iddialarını AYNEN korur, yalnız görünümü bu yardımcıyla gösterilen bir pencerede kurar. Saat OLMADIĞINI
+    /// bekleyen reduced-motion testleri de aynı yardımcıyı kullanır (<c>GraphRenderTests</c>, <c>GraphSelectionFocusTests</c>,
+    /// <c>ReducedMotionCoverageTests</c>): HWND'siz görünümde "saat yok" iddiası reduced-motion'ı değil görünmezliği ölçerdi ve
+    /// motion'ın engellemesi kalksa da yeşil kalırdı. HWND'siz görünümde yalnız saatten bağımsız iddialar ile "hiç gösterilmediyse
+    /// saat yok" pini kalır (<c>HiddenDecorativeClockTests</c>).</para>
+    /// </summary>
+    public static GraphView Shown(
+        Size size,
+        out Window window,
+        Func<bool>? animationsEnabled = null,
+        IMotionSettings? motion = null)
+    {
+        var view = New(animationsEnabled, motion);
+        window = DsResources.Realize(DsResources.NewHost(), view, size.Width, size.Height);
+        return view;
+    }
 }

@@ -313,7 +313,7 @@ public class GraphWillBuildFeedTests
         ProjectRow? cycListRow = null;
         foreach (string name in new[] { "Ok", "Bad", "Flaky", "Cyc" })
         {
-            var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf(name));
+            var row = MainWindowHost.ProjectOf(vm, name);
             var node = VisualOf(window, name);
             var listRow = ListRowOf(content, row.Id);
             if (name == "Cyc") cycListRow = listRow;
@@ -329,12 +329,12 @@ public class GraphWillBuildFeedTests
         }
 
         // Kanıtsız hata (Flaky) KIRMIZI DEĞİL — bayat/gri ailesinde kalır.
-        var flaky = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("Flaky"));
+        var flaky = MainWindowHost.ProjectOf(vm, "Flaky");
         Assert.Equal(VisualStatus.Stale, flaky.VisualStatus);
         Assert.NotEqual(VisualStatus.Failed, flaky.VisualStatus);
 
         // Döngü üyesinin küpü HER DURUMDA amber; şeridi KENDİ gerçek (bayat) rengini korur — ikisi KARIŞMAZ.
-        var cyc = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("Cyc"));
+        var cyc = MainWindowHost.ProjectOf(vm, "Cyc");
         Assert.True(cyc.InCycle);
         Assert.Equal(VisualStatus.Stale, cyc.VisualStatus);
         Assert.Equal(DsResources.TokenColor(window, "Brush.AmberText"), CoreColour(window, "Cyc"));

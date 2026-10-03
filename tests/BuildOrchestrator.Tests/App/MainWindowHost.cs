@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -42,28 +43,35 @@ internal static class MainWindowHost
     /// gibidir.</param>
     /// <param name="autostart">[P4] Pencerenin Windows başlangıç kaydı servisi (üretimde DI verir). Verilmezse
     /// <c>null</c> — Windows yüzeyi yok; gerçek registry'ye giden bir servis testte ASLA kurulmaz.</param>
+    /// <param name="nowMs">[perf Faz A · A6] VM'in elapsed/bekçi saati (<c>RunViewModel</c> ctor'unun <c>nowMs</c>'i). Verilmezse
+    /// üretimdeki <c>Environment.TickCount64</c>; canlı süreleri ve motor sessizlik bekçisini saati ileri alarak sınayan
+    /// testler saati kendisi sürer.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
-        UiState? saved = null, AutostartService? autostart = null)
+        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        // Üretimde pencere ile VM AYNI ConsoleBatcher'ı paylaşır (App.xaml.cs: tek singleton). Fixture de paylaşır: ayrı
+        // örneklerle pencerenin reseed nesli VM'in SeedRunDocument sentinel'ini hiç göremez, uçuştaki bayat batch'in
+        // düşmesi sınanamazdı.
+        var batcher = NeverTickingBatcher();
+        var vm = new RunViewModel(engine, batcher, () => "r1", nowMs)
         {
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
         beforeVm?.Invoke(vm);
         var store = UiStateStore(uiStateDir);
         if (saved is not null) store.Save(saved);
-        return (new MainWindow(engine, vm, NeverTickingBatcher(), DsResources.NewScope(), store, autostart), vm);
+        return (new MainWindow(engine, vm, batcher, DsResources.NewScope(), store, autostart), vm);
     }
 
     /// <summary>[design v1.23/v1.24 review C13] <see cref="New"/> + <see cref="Realize"/> (üretimin açılış boyutunda):
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
     /// <see cref="NewWithProjects"/> da buradan başlar.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir)
+    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null)
     {
-        var (window, vm) = New(uiStateDir);
+        var (window, vm) = New(uiStateDir, nowMs: nowMs);
         Realize(window);
         return (window, vm);
     }
@@ -105,16 +113,45 @@ internal static class MainWindowHost
     /// </summary>
     /// <param name="nodes">Proje adı + (varsa) katman adı, build-order sırasında.</param>
     public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjects(
-        TempDir uiStateDir, params (string Name, string? Layer)[] nodes)
+        TempDir uiStateDir, params (string Name, string? Layer)[] nodes) =>
+        NewWithProjectsAndClock(uiStateDir, null, nodes);
+
+    /// <summary>[perf Faz A · A6] <see cref="NewWithProjects"/> + VM'in elapsed/bekçi saati ENJEKTE: canlı süreleri ve motor
+    /// sessizlik bekçisini saati ileri alarak sınayan testler içindir (<see cref="New"/>'ün <c>nowMs</c>'i; <c>null</c> ⇒ üretim
+    /// saati). Gövde TEK yerdedir: <see cref="NewWithProjects"/> buna devreder.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
+        TempDir uiStateDir, Func<long>? nowMs, params (string Name, string? Layer)[] nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
-        var (window, vm) = NewRealized(uiStateDir);
+        var (window, vm) = NewRealized(uiStateDir, nowMs);
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, projectNodes.Count, 0)); // → Idle
         return (window, vm, window.Shell.ProjectsList);
     }
+
+    /// <summary>Gerçek OSYS çözümünün proje sayısı: ölçek isteyen testler (graf itişi, olay akışı/konsol yükü, kapılı ölçüm rig'i)
+    /// bu büyüklükte bir çözüm kurar. TEK tanım — pin, graf itiş testi ve ölçüm testi aynı sayıyı ayrı ayrı yazmıştı.</summary>
+    public const int OsysProjectCount = 177;
+
+    /// <summary><c>P0..P{count-1}</c> proje adları — hem fixture'a (<c>NewWithProjects</c> ve <c>ReplySync</c>'in adları alan
+    /// aşırı yüklemeleri) hem koşu sürücülerine (<see cref="PreviewBuild"/>, <see cref="StartBuild"/>, <see cref="FinishBuild"/>)
+    /// aynı dizi gider.</summary>
+    public static string[] ProjectNames(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
+
+    /// <summary>Yalnız adları olan (katmansız) topoloji: <c>NewWithProjects</c>'in adları alan aşırı yüklemesi. Gövde TEK yerdedir —
+    /// <c>(Name, Layer)</c> çiftli hâl buna değil, bu ona devreder.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjects(TempDir uiStateDir, string[] names) =>
+        NewWithProjects(uiStateDir, Unlayered(names));
+
+    /// <summary>[perf Faz A · A6] Saat enjekte + yalnız adlar: <c>NewWithProjectsAndClock</c>'un adları alan aşırı yüklemesi.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
+        TempDir uiStateDir, Func<long>? nowMs, string[] names) =>
+        NewWithProjectsAndClock(uiStateDir, nowMs, Unlayered(names));
+
+    /// <summary>(ad, katman) çiftleri; katman yok — adları alan aşırı yüklemelerin TEK dönüştürücüsü.</summary>
+    private static (string, string?)[] Unlayered(string[] names) => [.. names.Select(n => (n, (string?)null))];
 
     /// <summary>Test topolojisi düğümü — <c>Id</c> = kanonik csproj yolu (üretimdeki gibi tam yol).</summary>
     public static ProjectNode Node(string name, int order, string? layer = null) =>
@@ -123,6 +160,11 @@ internal static class MainWindowHost
 
     /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
     public static string IdOf(string name) => $@"C:\p\{name}.csproj";
+
+    /// <summary>Bir test projesinin satır modeli (<c>vm.Projects</c> öğesi; kimlik <see cref="IdOf"/>) — testlerin
+    /// <c>vm.Projects.Single(p => p.Id == IdOf(name))</c> deyimi tek yerde durur.</summary>
+    public static ProjectRowViewModel ProjectOf(RunViewModel vm, string name) =>
+        vm.Projects.Single(p => p.Id == IdOf(name));
 
     /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar: pencere düzeyindeki Esc
     /// bağlamasının komutu, üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa
@@ -141,14 +183,102 @@ internal static class MainWindowHost
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
 
+    /// <summary>[perf A1 fix 1] Motorun planı (<c>buildPreview</c>): bu projeler derlenecek.
+    /// <see cref="RunViewModel.ScopeFor"/> kapsamı bu bayraktan (<c>WillBuild</c>) türer — plansız bir fixture'da kapsam
+    /// BOŞTUR ve açılış koreografisi görünür pencerede bile hiç oynamaz (<c>OperationChoreographer.Play</c>, n == 0);
+    /// koreografiyi sınayan testler önce bunu verir. Bir koşuyu sürmenin ÜÇ adımı: <see cref="PreviewBuild"/> →
+    /// <see cref="StartBuild"/> → <see cref="FinishBuild"/> (aynı proje adlarıyla).</summary>
+    public static void PreviewBuild(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
+        vm.OnEvent(new BuildPreviewEvent([.. names.Select(n => new BuildPreviewItem(IdOf(n), n, true))]));
+    }
+
     /// <summary>[P3 · final review O5] Motor bir derlemeye başladı (<c>runStarted</c>, <see cref="New"/>'ün koşu
     /// kimliğiyle): koşu kilidi (<see cref="RunViewModel.IsMidRunLocked"/>) açık, Stop yapılabilir. Güvenli çıkışın VM
     /// (<see cref="SafeExitTests"/>) ve kabuk (<see cref="CloseToTrayTests"/>) testlerinin ORTAK başlangıcı — iki
-    /// harness'ta ayrı ayrı yazılıyordu.</summary>
-    public static void StartBuild(RunViewModel vm)
+    /// harness'ta ayrı ayrı yazılıyordu. <paramref name="names"/> koşunun proje adlarıdır (toplam proje = adet);
+    /// verilmezse tek projelik koşu (eski davranış birebir). Aynı adlar <see cref="FinishBuild"/>'e verilir.</summary>
+    public static void StartBuild(RunViewModel vm, params string[] names)
     {
         ArgumentNullException.ThrowIfNull(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        ArgumentNullException.ThrowIfNull(names);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0));
+    }
+
+    /// <summary>[perf A1 fix 1] Koşu biter: her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>) ve
+    /// <c>runCompleted</c> gelir. Bitiş finali grafa bu akıştaki <c>Phase</c> değişiminden gelir
+    /// (<c>MainWindow.OnVmPropertyChangedForGraph</c>); derlenen proje yoksa final zaten oynamaz.</summary>
+    public static void FinishBuild(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
+        BuildProjects(vm, names);
+        CompleteRun(vm, names.Length);
+    }
+
+    /// <summary>[perf Faz A temizlik] Koşu biter (<c>runCompleted</c>, tümü başarılı): <paramref name="succeeded"/> koşunun başarılı
+    /// proje sayısıdır ve olay akışının "Done" satırı ("N succeeded") onu okur — sayı koşunun gerçek toplamını taşımalıdır.
+    /// <see cref="FinishBuild"/> bunu çağırır; koşunun bir kısmını <see cref="StartProject"/>/<see cref="SucceedProject"/> ile ayrı
+    /// süren testler (gizli pencere pini) koşuyu bununla kapatır.</summary>
+    public static void CompleteRun(RunViewModel vm, int succeeded)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, succeeded, 0, 0, 0, 100));
+    }
+
+    /// <summary>[perf A3/A4 fix] Her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>); koşu BİTMEZ
+    /// (<c>runCompleted</c> yok). <see cref="FinishBuild"/> bunu çağırıp koşuyu bitirir; koşu sürerken proje olayları
+    /// gereken testler (gizli pencerede graf itişleri) doğrudan bunu kullanır — olay çifti tek yerde durur.</summary>
+    public static void BuildProjects(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
+        foreach (var name in names)
+        {
+            StartProject(vm, name);
+            SucceedProject(vm, name);
+        }
+    }
+
+    /// <summary>[perf Faz A temizlik] Motor bir projenin derlemesine başladı (<c>projectStarted</c>): satır "building". Olayın
+    /// kimlik/ad çifti (<see cref="IdOf"/>) tek yerde durur; <see cref="BuildProjects"/> ve tek bir projeyi süren testler bunu çağırır.</summary>
+    public static void StartProject(RunViewModel vm, string name)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        vm.OnEvent(new ProjectStartedEvent("r1", IdOf(name), name));
+    }
+
+    /// <summary>[perf Faz A temizlik] <paramref name="name"/> projesinin derlemesi başarıyla bitti (<c>projectSucceeded</c>).
+    /// <paramref name="durationMs"/> ETA'nın ortalamasını besler; uzun bir ortalama isteyen testler (canlı süre/ETA) kendisi verir.</summary>
+    public static void SucceedProject(RunViewModel vm, string name, int durationMs = 100)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), durationMs));
+    }
+
+    /// <summary>[perf Faz A · A8] Motor bir projenin çıktısından bir satır yazdı (<c>projectLog</c>): VM'in konsol modeline (koşu
+    /// anlatısı ve proje logu) düşer. Olayın kimlik/ad çifti (<see cref="IdOf"/>) tek yerde durur; <paramref name="lineNumber"/>
+    /// motorun projeye özgü satır sayacıdır.</summary>
+    public static void LogLine(RunViewModel vm, string name, int lineNumber, string text)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(text);
+        vm.OnEvent(new ProjectLogEvent("r1", IdOf(name), lineNumber, text));
+    }
+
+    /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
+    /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri
+    /// akışın bütününü tek çağrıyla sürer.</summary>
+    public static void RunBuild(RunViewModel vm, params string[] names)
+    {
+        PreviewBuild(vm, names);
+        StartBuild(vm, names);
+        FinishBuild(vm, names);
     }
 
     /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),
@@ -181,6 +311,10 @@ internal static class MainWindowHost
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0));
     }
 
+    /// <summary>[perf Faz A temizlik] <c>ReplySync</c>'in yalnız adları alan hâli: <c>NewWithProjects</c>'in adlı aşırı yüklemesiyle
+    /// AYNI topoloji.</summary>
+    public static void ReplySync(RunViewModel vm, string[] names) => ReplySync(vm, Unlayered(names));
+
     /// <summary>
     /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>
     /// gerçek bir <c>PresentationSource</c> (HWND) olmadan içeriğe HİÇ İNMEZ; caption butonlarının şablonları
@@ -201,5 +335,24 @@ internal static class MainWindowHost
         content.Arrange(new Rect(0, 0, width, height));
         content.UpdateLayout();
         return content;
+    }
+
+    /// <summary>
+    /// [perf Faz A · A8/A9] Pencerenin kabuk içeriğini ekran dışı GERÇEK bir pencereye taşır; <see cref="MainWindow"/> kurulu kalır
+    /// (tik, VM kablajı, kapılar) ama içeriği barındırmaz. <see cref="Realize"/>'ın headless ağacında <c>Loaded</c> hiç ateşlenmez;
+    /// görünümünü <c>Loaded</c>'da kuran yüzeyler (ör. <c>ActionBar</c>'ın sayaç chip'leri) ancak burada kurulur — <c>Loaded</c>
+    /// dispatcher'dan gelir, çağıran pompalar. <c>DataContext</c> pencereden miras alınıyordu, açıkça taşınır.
+    /// <c>ContentPresenter</c> görsel çocuğunu ancak bir şablon/ölçüm turunda bırakır; yeni ebeveyn onu ancak bundan sonra alabilir.
+    /// Dönen pencereyi çağıran kapatır.
+    /// </summary>
+    public static Window HostOffscreen(MainWindow window, double width = 1400, double height = 800)
+    {
+        ArgumentNullException.ThrowIfNull(window);
+        var content = (FrameworkElement)window.Content;
+        var context = window.DataContext;
+        window.Content = null;
+        if (VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
+        content.DataContext = context;
+        return DsResources.Realize(DsResources.NewHost(), content, width, height);
     }
 }

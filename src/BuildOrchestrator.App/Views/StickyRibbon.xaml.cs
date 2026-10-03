@@ -92,6 +92,10 @@ public partial class StickyRibbon : UserControl
         _motion.Changed += OnAnimationsEnabledChanged;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        // [perf A7] Süpürme saati yalnız görünürken döner (§14.5): pencere tepsiye inince Unloaded ATEŞLENMEZ, şerit
+        // ağaçta kalır. Belirsiz mod (_isIndeterminate) korunur; saat görünürlük değişiminde durdurulur / geri kurulur
+        // (kapının kendisi ApplyIndeterminate'dedir).
+        IsVisibleChanged += (_, _) => { if (_isIndeterminate) ApplyIndeterminate(); };
     }
 
     // ---------------------------------------------------------------- test yüzeyi
@@ -111,6 +115,9 @@ public partial class StickyRibbon : UserControl
     internal TextBlock OpText => PART_OpText;
     internal StatusGlyph OpGlyph => PART_OpGlyph;
     internal BuildingSpinner OpSpinner => PART_OpSpinner;
+    /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="RefreshAll"/> çağrı sayacı — yüzey gizliyken şeridin modele
+    /// dokunmadığını, görününce TEK geçişin koştuğunu pinler.</summary>
+    internal int RebuildCount { get; private set; }
     internal StackPanel FailureCluster => PART_FailureCluster; // testler hatalı chip'leri buradan pinler
     internal Button RestartEngineAction => PART_RestartEngine;  // [D1] kalıcı hata modunun aksiyonu (görünür/gizli)
 
@@ -181,10 +188,39 @@ public partial class StickyRibbon : UserControl
         PART_PhaseText.BeginAnimation(OpacityProperty, pulse, HandoffBehavior.SnapshotAndReplace);
     }
 
-    private void OnProjectsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildChipsIfChanged();
+    /// <summary>[perf Faz A · A5] Yüzey gizliyken şerit modele dokunmaz: VM bildirimleri yalnız "şerit modelin gerisinde"
+    /// bayrağını kaldırır (metin, ilerleme, chip'ler ve ekran okuyucu duyurusu hiç yazılmaz). Bayrağı tam kurulum
+    /// (<see cref="RefreshAll"/>) düşürür: DataContext değişimi de aynı kurulumu yaptığı için dönüş onu ikinci kez koşmaz.
+    ///
+    /// <para><b>Bilinen sınır:</b> <see cref="RefreshAll"/> faz duyurusunu yapmaz, yalnız bayrağı düşürür. Gizliyken bir
+    /// <c>Loaded</c> ya da DataContext tam kurulumu koşarsa bayrak düşer ve dönüşteki <see cref="AnnouncePhaseIfChanged"/> çağrısı
+    /// hiç yapılmaz: <c>_lastAnnouncedPhase</c> bayat kalır, yani gizlilikte değişen fazın duyurusu dönüşte ÖDENMEZ — bir sonraki
+    /// faz bildirimine (<see cref="AnnouncePhaseIfChanged"/>'e giren sonraki şerit bildirimi, tipik olarak sonraki faz değişimi)
+    /// kalır. Yol dardır (DataContext bir kez bağlanır; ilk gösterimde <c>IsVisibleChanged</c>'in <c>Loaded</c>'dan önce geldiği
+    /// varsayılır, yani o kurulum yüzey görünürken koşar — bu sıra WPF davranışıdır, depoda bir testle pinli DEĞİLDİR) ve bilinçli
+    /// olarak değiştirilmedi.</para></summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
+    /// (<see cref="HiddenSurface"/>). Yüzey görünür olunca ve bayat kalındıysa şerit modele TEK geçişte yetişir:
+    /// <see cref="RefreshAll"/> (metin, ilerleme, chip'ler) + faz duyurusu.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
+        RefreshAll();
+        AnnouncePhaseIfChanged();
+    }
+
+    private void OnProjectsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
+        RebuildChipsIfChanged();
+    }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.PropertyName)
         {
             case nameof(RunViewModel.Phase):
@@ -234,6 +270,8 @@ public partial class StickyRibbon : UserControl
 
     private void RefreshAll()
     {
+        _staleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "şerit bayat" işareti de tazelenir
+        RebuildCount++;
         RefreshText();
         RefreshProgress();
         _lastBuildingSig = _lastFailedSig = null;
@@ -387,7 +425,8 @@ public partial class StickyRibbon : UserControl
     }
 
     /// <summary>[Belirsiz mod] 35% genişlikte amber bir indikatörü TranslateX -110%→320% ile 1.4s EaseInOut,
-    /// 30fps, sonsuz süpürür (yalnız Syncing). Reduced-motion'da sweep kurulmaz — statik 35% bar kalır.</summary>
+    /// 30fps, sonsuz süpürür (yalnız Syncing). Reduced-motion'da ve görünmezken (ARCHITECTURE §14.5) sweep kurulmaz —
+    /// statik 35% bar kalır.</summary>
     private void ApplyIndeterminate()
     {
         double trackW = PART_ProgressTrack.ActualWidth;
@@ -398,10 +437,12 @@ public partial class StickyRibbon : UserControl
         PART_ProgressIndicator.Width = indW;
         SetIndicatorColor("Brush.Amber"); // FILL.building (_ds_bundle.js:499)
 
-        if (!AnimationsEnabledProvider())
+        // [perf A7] Görünmezken süpürme KURULMAZ. Kapı burada, çağıranlarda değil: RefreshProgress ve OnTrackSizeChanged
+        // tepsideyken de çağırır — yalnız IsVisibleChanged'de durdurmak saati bir sonraki çağrıda geri kurardı
+        // (bkz. HiddenDecorativeClockTests). Reduced-motion ile AYNI dal: statik çubuk kalır.
+        if (!AnimationsEnabledProvider() || !IsVisible)
         {
-            PART_IndicatorTranslate.BeginAnimation(TranslateTransform.XProperty, null);
-            PART_IndicatorTranslate.X = 0;
+            StopIndeterminate();
             return;
         }
 

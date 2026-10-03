@@ -97,6 +97,9 @@ public partial class ProjectRow : UserControl
         PART_Dot.AnimationsEnabledProvider = () => _motion.Enabled;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        // [perf A7] Nefes saati yalnız görünürken döner (§14.5): pencere tepsiye inince Unloaded ATEŞLENMEZ, satır
+        // ağaçta kalır — saat görünürlük değişiminde yeniden değerlendirilir (kapının kendisi ApplyBreathing'dedir).
+        IsVisibleChanged += (_, _) => ApplyBreathing();
         // [L1] Hover ikonlarının kablajı ctor'dan EnsureActions'a taşındı — ikonlar artık ilk hover'da doğuyor.
     }
 
@@ -158,6 +161,9 @@ public partial class ProjectRow : UserControl
     internal ProjectRowActions? Actions => _actions;
     /// <summary>[L1] <see cref="ApplyAll"/> çağrı sayacı — satır başına BİR kez koştuğunu pinleyen test seam'i.</summary>
     internal int ApplyAllCount { get; private set; }
+    /// <summary>[perf Faz A · A5 test yüzeyi] <see cref="ApplyDuration"/> çağrı sayacı — süre metninin gizliyken yazılmadığını,
+    /// görününce <see cref="ApplyAll"/> içinden TEK kez yazıldığını pinler.</summary>
+    internal int ApplyDurationCount { get; private set; }
     internal FrameworkElement DepSlot => PART_DepSlot;
     internal FrameworkElement DepIcon => PART_DepIcon;
     /// <summary>[design v1.11.0 §2.4-6] Uyarı slotundaki TEK üçgen — HER ZAMAN amber.</summary>
@@ -219,18 +225,42 @@ public partial class ProjectRow : UserControl
     {
         if (_vm is not null) _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm = e.NewValue as ProjectRowViewModel;
-        _prevState = null;
-        _applied = false; // yeni VM → tam tazeleme yeniden gerekir (container yeniden kullanımı dahil)
-        // [design v1.12.0] Geri dönüştürülen container YENİ verisinin hâline ANINDA oturur: çapraz-sönüm bir
-        // durum değişimini anlatır, veri değişimini değil (gerekçe StartMode.ShouldCrossFade'de).
+        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
+        ApplyAllFresh(); // geri dönüştürülen container YENİ verisinin hâline ANINDA oturur (_prevState ve _applied'ı ApplyAll yazar)
+    }
+
+    /// <summary>[perf Faz A · A5] Satırı modelin O ANKİ hâlinden, <b>geçişsiz</b> kurar: nokta ve şeridin çapraz-sönüm mandalı
+    /// sıfırlanır, çizim hedefe ANINDA oturur. Çapraz-sönüm bir durum değişimini anlatır; ne yeni bir veriye bağlanmayı
+    /// (geri dönüştürülen container) ne de gizlilikte kaçırılmış bir değişimi anlatır (gerekçe
+    /// <see cref="Controls.StartMode.ShouldCrossFade"/>'de). <see cref="OnDataContextChanged"/> ve gizlilikten dönüş kurulumu
+    /// (<see cref="OnPropertyChanged"/>) AYNI yoldan geçer — aksi halde gizliyken gelen karar dönüşte 380 ms'lik halka→dolu
+    /// geçişi oynatırdı.</summary>
+    private void ApplyAllFresh()
+    {
         _stripeWasStartMode = null;
         PART_Dot.ResetTransitionLatch();
-        if (_vm is not null) _vm.PropertyChanged += OnVmPropertyChanged;
         ApplyAll();
+    }
+
+    /// <summary>[perf Faz A · A5] Yüzey gizliyken satır kendini yazmaz: görünmeyen bir satırın glyph, şerit, süre ve sağ blok
+    /// yazımı boşa iştir. VM bildirimleri yalnız "satır modelin gerisinde" bayrağını kaldırır; yüzey görünür olunca
+    /// <see cref="ApplyAllFresh"/> tek geçişte modelden kurar. Bayrağı tam kurulum (<see cref="ApplyAll"/>) düşürür: DataContext
+    /// değişimi (yeni model) bu kapıdan GEÇMEZ — o yapısal bir yeniden kurulumdur, bayat satır bırakmaz ve bayrağı düşürdüğü için
+    /// dönüş aynı kurulumu ikinci kez koşmaz.</summary>
+    private bool _staleWhileHidden;
+
+    /// <summary>Kalıtsal <see cref="Controls.HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir
+    /// (<see cref="Controls.HiddenSurface"/>). Görünür olunca ve bayat kalındıysa satır TEK geçişte yetişir.</summary>
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!Controls.HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
+        ApplyAllFresh();
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (Controls.HiddenSurface.GetIsHidden(this)) { _staleWhileHidden = true; return; }
         switch (e.PropertyName)
         {
             case nameof(ProjectRowViewModel.State):
@@ -320,6 +350,7 @@ public partial class ProjectRow : UserControl
     // ---------------------------------------------------------------- toplu tazeleme
     private void ApplyAll()
     {
+        _staleWhileHidden = false; // tam kurulum modelin O ANKİ hâlini yazar: "satır bayat" işareti de tazelenir
         _applied = true;
         ApplyAllCount++;
         _prevState = _vm?.State;
@@ -441,6 +472,7 @@ public partial class ProjectRow : UserControl
 
     private void ApplyDuration()
     {
+        ApplyDurationCount++;
         var state = _vm?.State ?? ProjectRowState.Pending;
         long ms = _vm?.DurationMs ?? 0;
         // Canlı elapsed yalnız GERÇEKTEN derlenen satırda; grubunun sırasını bekleyen üye (Started ama
@@ -622,10 +654,13 @@ public partial class ProjectRow : UserControl
     {
         bool building = _vm?.IsCompiling ?? false;
         // Katman "yalnız building'de var": görünürlük motion'dan BAĞIMSIZ (reduced-motion'da da building satırda
-        // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken döner.
+        // katman durur ama opaklık 0 kalır = görünmez). Animasyon yalnız motion açıkken VE görünürken döner.
         PART_Breath.Visibility = building ? Visibility.Visible : Visibility.Collapsed;
 
-        bool shouldBreathe = building && AnimationsEnabledProvider();
+        // [perf A7] Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: ApplyBreathing her VM değişiminde koşar
+        // ve tepsideyken de koşar — yalnız IsVisibleChanged'de durdurmak saati bir sonraki olayda geri kurardı
+        // (ConsoleView.StartBlink ile aynı gerekçe; bkz. HiddenDecorativeClockTests).
+        bool shouldBreathe = building && IsVisible && AnimationsEnabledProvider();
         if (shouldBreathe == _isBreathing) return; // zaten dönen nabız baştan almaz (StatusGlyph deseni)
         _isBreathing = shouldBreathe;
         if (!shouldBreathe) { StopBreathing(); return; }
