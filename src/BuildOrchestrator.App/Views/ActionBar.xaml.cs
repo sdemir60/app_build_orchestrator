@@ -693,11 +693,10 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
-        // Build split-button: yalnız repo; gerisini primary komutun kapısı söyler (chevron onu izler).
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eskiden Sync sürerken de sönerdi (hasWs && !syncing,
-        // BuildApp.jsx:1594). Artık bir iş sürerken basılan Build bekler ve iş bitince koşar — sönük düğme o
-        // basışı yutuyordu.
-        PART_Split.IsEnabled = hasWs;
+        // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar. Sync sürerken
+        // (faz Syncing) tümden söner: iş sürerken koşu komutları kapalıdır, basış kuyruğa alınmaz.
+        bool syncing = _vm?.Phase == AppPhase.Syncing;
+        PART_Split.IsEnabled = hasWs && !syncing;
     }
 
     private static string Inv(int n) => n.ToString(CultureInfo.InvariantCulture);

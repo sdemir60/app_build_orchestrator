@@ -337,58 +337,17 @@ public partial class ActionBarTests
         GC.KeepAlive(window);
     }
 
-    // ---------------------------------------------------------------- [kullanıcı bildirimi 2026-09-29] iş sürerken Build
-
-    private const string WindowReturnSha = "1111111111111111111111111111111111111111";
+    // ---------------------------------------------------------------- [kullanıcı kararı 2026-10-02] iş sürerken Build kapalı
 
     /// <summary>
-    /// [kullanıcı bildirimi 2026-09-29] Arka plandaki pencereye Build'e tıklayarak dönmek: tıklama önce pencereyi
-    /// etkinleştirir, etkinleşme kendiliğinden bir Sync ister, tıklama ANCAK SONRA işlenir. Ölçülen kusur: o anda
-    /// Build'in komutu kapanmıştı ama düğme bundan habersiz parlak kalıyordu — tıklama iz bırakmadan yutuluyordu;
-    /// Sync sürerken ikinci tık da (düğme sönük) yutuluyor, ancak Sync bitince üçüncü tık çalışıyordu. Tıklama
-    /// gerçek yoldan yapılır: UI Automation Invoke → <c>ButtonBase.OnClick</c> → komutun <c>CanExecute</c>'u.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>The_build_button_stays_live_while_a_visible_sync_runs</c>,
+    /// kullanıcı bildirimi 2026-09-29): Build düğmesi Sync sürerken canlı kalır — basış bekler ve Sync bitince koşar. Kuyruk
+    /// kaldırıldı: iş sürerken koşu komutları kapalıdır, basış kuyruğa alınmaz; asıl kural geri geldi — Build split-button'ı
+    /// bir Sync sürerken (faz <c>Syncing</c>) tümden söner, <c>hasWs &amp;&amp; !syncing</c> (<c>BuildApp.jsx:1594</c>); komutun
+    /// kapısı da kapalıdır.
     /// </summary>
     [StaFact]
-    public void A_click_on_build_that_brings_the_window_back_is_kept_and_builds_after_the_automatic_sync()
-    {
-        long now = 1_000;
-        var vm = new RunViewModel(new EngineHost(TestPaths.SupervisorExe), NeverTickingBatcher(), () => "r1", () => now)
-            { RootPath = @"D:\repo" };
-        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: Sync gerçekten sürer
-        VmTopology.Seed(vm);
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, HeadSha: WindowReturnSha, ActiveBranch: "main"));
-        vm.EnableAutoSync(_ => { }, _ => new Core.Git.HeadState("main", WindowReturnSha), () => new FakeHeadWatcher());
-        var (bar, window) = Realize(vm);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-
-        now += 60_000;
-        vm.OnWindowActivated();                              // tıklama pencereyi etkinleştirdi…
-        Assert.Single(sent.OfType<SyncWorkspaceCommand>());  // …kendiliğinden Sync istendi (ön-koşul)
-        CommandPress.Invoke((Button)bar.Split.PrimaryHalf!); // …ve aynı tıklama Build'e iner
-        DispatcherPump.PumpUntil(() => vm.IsStarting, TimeSpan.FromSeconds(2));
-
-        Assert.True(vm.IsStarting);                          // tık tutuldu
-        Assert.Equal(Visibility.Visible, bar.StopButton.Visibility);
-        Assert.Empty(sent.OfType<StartRunCommand>());        // Sync bitmeden koşu gitmez
-
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-        VmTopology.Seed(vm);
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0, HeadSha: WindowReturnSha, ActiveBranch: "main"));
-
-        Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
-        GC.KeepAlive(window);
-    }
-
-    /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski kural: Build split-button'ı bir Sync sürerken
-    /// (faz <c>Syncing</c>) tümden sönerdi — <c>hasWs &amp;&amp; !syncing</c> (<c>BuildApp.jsx:1594</c>), komutun kapısı
-    /// da zaten kapalıydı. Değişme gerekçesi (ölçüm): kapalı düğmeye basılan Build kayboluyordu; Clean ya da Optimize'ın
-    /// ardından gelen Sync'te kullanıcı Build'e basıp hiçbir şey olmadığını görüyordu. Artık Sync sürerken basılan Build
-    /// bekler ve Sync bitince koşar, yani düğme basılabilir kalır; kapıyı yalnız komut söyler.
-    /// </summary>
-    [StaFact]
-    public void The_build_button_stays_live_while_a_visible_sync_runs()
+    public void The_build_button_dims_as_a_whole_while_a_visible_sync_runs()
     {
         var vm = NewVm();
         VmTopology.Seed(vm);
@@ -397,8 +356,8 @@ public partial class ActionBarTests
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // Sync düğmesinin Sync'i
         Assert.Equal(AppPhase.Syncing, vm.Phase);             // ön-koşul
 
-        Assert.True(bar.Split.PrimaryHalf!.IsEnabled);
-        Assert.True(bar.Split.MenuToggle!.IsEnabled);
+        Assert.False(bar.Split.PrimaryHalf!.IsEnabled);
+        Assert.False(bar.Split.MenuToggle!.IsEnabled);
         GC.KeepAlive(window);
     }
 

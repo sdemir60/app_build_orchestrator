@@ -7,6 +7,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.Shell;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.Tests.App;
 
@@ -103,6 +104,30 @@ public class MainWindowInputTests
 
         Assert.Equal(phase, vm.Phase);
         Assert.NotEqual(AppPhase.Stopping, vm.Phase);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[kullanıcı kararı 2026-10-02] Bir Sync sürerken F5 HİÇBİR ŞEY yapmaz: koşu başlamaz, konsola satır düşmez,
+    /// faz değişmez. Pencerenin kendi F5 bağlaması kullanılır (Build'in kapısı iş sürerken kapalıdır). Eski kuralda
+    /// ([kullanıcı bildirimi 2026-09-29]) basış kuyruğa alınırdı: düğme Stop olur, Build Sync bitince başlardı.</summary>
+    [StaFact]
+    public void F5_during_a_sync_does_nothing()
+    {
+        using var temp = new TempDir();
+        var (window, vm) = NewMainWindow(temp);
+        MainWindowHost.AcceptSends(vm);
+        vm.OnEvent(new SyncStartedEvent(@"C:\src\OSYS", "main")); // Sync sürüyor
+        Assert.True(vm.SyncBusy); // ön-koşul: kapı kapalı olmalı
+        string console = vm.GetRunDocumentText();
+        var phase = vm.Phase;
+
+        var f5 = KeyBindingsOf(window).Single(b => b.Key == Key.F5 && b.Modifiers == ModifierKeys.None);
+        Assert.False(f5.Command.CanExecute(null)); // WPF kapalı bir komutu tuşla ÇALIŞTIRMAZ
+        if (f5.Command.CanExecute(null)) f5.Command.Execute(null);
+
+        Assert.False(vm.IsStarting);
+        Assert.Equal(phase, vm.Phase);
+        Assert.Equal(console, vm.GetRunDocumentText());
         GC.KeepAlive(window);
     }
 

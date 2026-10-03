@@ -441,30 +441,6 @@ public class StickyRibbonTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[kullanıcı bildirimi 2026-09-29] Bir iş sürerken basılıp bekleyen Build henüz bir koşu değildir: önceki
-    /// işlemin pill'i "çalışıyor" gibi canlanmaz (amber zemin, spinner). Ölçülen kusur: istek <c>IsStarting</c>'i
-    /// taşıdığı için pill kendini canlı sanıyordu — pencereye dönüşün sessiz Sync'inde bir sonraki yenilemede (burada
-    /// Sync'in önizlemesi) biten Clean'in etiketi spinner'la dönüyordu.</summary>
-    [StaFact]
-    public async Task The_pill_of_the_last_operation_does_not_come_alive_while_a_build_waits()
-    {
-        var vm = NewVm();
-        var (ribbon, window) = Realize(vm);
-        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: Sync gerçekten sürer
-        SetTopology(vm, (@"C:\p\a.csproj", "A"));
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
-        vm.CurrentOperation = OperationLabel.Clean;                       // son işlem: biten bir Clean koşusu
-        Assert.True(await vm.SyncSilentlyAsync(SilentSyncReason.Refresh)); // pencereye dönüşün sessiz Sync'i
-
-        Assert.True(CommandPress.Press(vm.BuildCommand));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)])); // şerit tazelenir
-
-        Assert.Equal(OperationLabel.Clean, ribbon.OpText.Text);
-        Assert.Equal(Visibility.Collapsed, ribbon.OpSpinner.Visibility);
-        Assert.Null(ribbon.OpPill.Background);
-        GC.KeepAlive(window);
-    }
-
     /// <summary>Pill koşarken AMBER yanar (amber-soft zemin, amber-border, amber-text) ve içinde spinner
     /// döner; koşu bitince NÖTRLEŞİR (zemin yok, border-strong, text-dim) ama <b>KALIR</b> — "ne yapmıştım?"
     /// sorusu bir sonraki işleme kadar cevaplı durur.</summary>

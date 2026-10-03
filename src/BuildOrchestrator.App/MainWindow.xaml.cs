@@ -858,7 +858,7 @@ public partial class MainWindow : Window
         // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
         // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
         // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
-        if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
+        if (_vm.IsMidRunLocked) { PushGraphStatuses(); FollowFrontier(); }
     }
 
     /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="FollowFrontier"/> çağrı sayacı — gizliyken tikin frontier takibine
@@ -934,13 +934,12 @@ public partial class MainWindow : Window
 
     /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
     /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
-    /// Kaynak koşunun gerçekten yolda olmasıdır (<see cref="RunViewModel.IsRunUnderway"/>) — [kullanıcı bildirimi
-    /// 2026-09-29] bir işin bitmesini bekleyen istek kilidi taşır ama grafı söndürmez: o sırada graf süren işi ve önceki
-    /// sonucu gösterir. (Eskiden kilidin kendisiydi, <see cref="RunViewModel.IsMidRunLocked"/>.)</summary>
+    /// Kaynak koşu kilididir (<see cref="RunViewModel.IsMidRunLocked"/>): koşu açılırken (planlama dahil) ve koşarken Running.
+    /// Bir workspace işi (Sync, Clean, ...) sürerken kilit kapalıdır — graf o sırada süren işi ve önceki sonucu gösterir.</summary>
     private void PushGraphRunPhase()
     {
         if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
-        Shell.GraphHost.RunPhase = _vm.IsRunUnderway ? GraphRunPhase.Running : GraphRunPhase.Idle;
+        Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
     }
 
     /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
@@ -1025,12 +1024,6 @@ public partial class MainWindow : Window
                 // düşen gönderim, koreografide iptal — hepsi kilidi düşürür): graf filtreye döner — final
                 // oynuyorsa dönüşü finalin kendisi yapar (GraphView.EndOperation).
                 if (!_vm.IsMidRunLocked) Shell.GraphHost.EndOperation();
-                break;
-            case nameof(RunViewModel.IsRunUnderway):
-                // [kullanıcı bildirimi 2026-09-29] Bir işin bitmesini bekleyen istek başladı: kilit (IsStarting) zaten
-                // açıktı, dolayısıyla koşu fazına giriş bu bildirimle gelir — tıklamayla hemen başlayan koşunun aynısı.
-                PushGraphRunPhase();
-                PushGraphStatuses();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.

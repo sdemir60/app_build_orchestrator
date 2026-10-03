@@ -236,7 +236,7 @@ public partial class StickyRibbon : UserControl
             case nameof(RunViewModel.SyncErrorMessage):
             case nameof(RunViewModel.RunErrorMessage): // [runFailed] aynı öncelik zincirinin üçüncü halkası
             case nameof(RunViewModel.CurrentOperation):
-            case nameof(RunViewModel.IsRunUnderway): // pill'in canlılığı koşunun gerçekten yolda olmasına bakar
+            case nameof(RunViewModel.IsMidRunLocked): // pill'in canlılığı koşu kilidine bakar
             case nameof(RunViewModel.EngineOverdueMessage): // motor sustu: amber satır + "Restart engine" kapısı
             case nameof(RunViewModel.ExitPending): // [P3 · Task 2] çıkış işi bekliyor: faz değişmese de satır Stopping olur
                 RefreshText();
@@ -322,10 +322,8 @@ public partial class StickyRibbon : UserControl
 
         if (hasPill)
         {
-            // Canlı = motor bu işlem için çalışıyor (Sync dahil; koşunun açılışı ve kendisi IsRunUnderway'dir).
-            // [kullanıcı bildirimi 2026-09-29] Bir işin bitmesini bekleyen istek bir koşu değildir: pill önceki işlemin
-            // etiketini taşırken onu "çalışıyor" gibi canlandırmaz (eskiden kaynak kilidin kendisiydi, IsMidRunLocked).
-            bool live = (_vm?.IsRunUnderway ?? false) || _vm?.Phase == AppPhase.Syncing;
+            // Canlı = motor bu işlem için çalışıyor (Sync dahil; koşunun açılışı ve kendisi IsMidRunLocked'tır).
+            bool live = (_vm?.IsMidRunLocked ?? false) || _vm?.Phase == AppPhase.Syncing;
             PART_OpText.Text = op;
             // Nötr hâlde zemin YOKTUR (prototip: `background: transparent`) — bir token değil, dolgusuzluk.
             if (live) PART_OpPill.SetResourceReference(Border.BackgroundProperty, "Brush.AmberSoft");
