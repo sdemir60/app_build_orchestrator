@@ -231,13 +231,10 @@ version's notes as its text. Installed copies pick it up on their next check.
    in the project list.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
    first Sync runs by itself when the application starts. No build starts before it has run: a run before the
-   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running*, *Sync*
-   itself is disabled — the engine handles one thing at a time — but *Build* and *Rebuild* (and *Resolve cycles*,
-   once the graph has a cycle) stay pressable: a press made then waits for the Sync — the button turns into *Stop*
-   at once (pressing it takes the request back) — and the run starts the moment the Sync finishes. *Build*
-   pressed during a Clean, an Optimize, a branch switch or a pull waits the same way, so a click on *Build* is
-   never lost — not even the one that brings the window back. If the work it waits for fails — a Sync or a job
-   errors, a branch switch or a pull is refused — the request is taken back and the console keeps the reason.
+   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running* — the
+   one the application starts by itself included — the engine handles one thing at a time: *Sync* shows its busy
+   state and *Build*, *Rebuild*, *Resolve cycles*, the row actions and `F5` are disabled until it finishes, so
+   nothing waits behind it. A Clean, an Optimize, a branch switch or a pull closes them the same way.
 
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
@@ -532,8 +529,9 @@ brings it up to date in a single pass. When the run finishes the mark plays out 
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
 you open the window again. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
-result, not the one-time *still running in the tray* note, not the warning a second copy of the app gives when
-it cannot bring the window forward; the corner mark is not a notification and still appears.
+result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when a Sync
+keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
+the corner mark is not a notification and still appears.
 
 To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
 Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
@@ -564,9 +562,9 @@ brings a fresh engine up.
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
-forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight, and
-pressed during a Sync or a maintenance job it waits for that work and builds when it ends — and with the window
-hidden the tray indicator and the result balloon report it.
+forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight or while
+a Sync or a maintenance job runs (with the window hidden in the tray, a balloon says why) — and with the window
+hidden the tray indicator and the result balloon report a build it does start.
 Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
 (Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
 If one cannot be registered — another application already owns that combination — it is silently disabled; the
