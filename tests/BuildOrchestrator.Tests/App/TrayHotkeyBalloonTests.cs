@@ -156,11 +156,21 @@ public class TrayHotkeyBalloonTests
 
     // ---------------------------------------------------------------- balon metni (tek yer)
 
+    /// <summary>Balon gövdesi nedeni söyler ve orada BİTER: çerçeve nedenin arkasına kendi cümlesini eklemez. Beklenen
+    /// metin üretim cümlesinin kopyası DEĞİLDİR — gövde <see cref="AppTrayIcon.BuildIgnoredBody"/> ile kurulur, yalnız
+    /// nedenin metni iddia edilir.
+    /// <para><b>[DEĞİŞEN KURAL — B2 incelemesi · I1, 2026-10-03]</b> ESKİ iddia: gövde nedenden sonra "Try again when it
+    /// finishes." diye sürer (cümle literal pinliydi). Gerekçe: nedenlerin bir kısmı kendiliğinden BİTMEZ — motor
+    /// erişilemiyor, uygulama kapanıyor, proje listesi yok — ve "no project list yet — Sync first. Try again when it
+    /// finishes." kendisiyle çelişiyordu (bitecek iş yokken beklemeyi söylüyordu). Bitişi söyleyen neden ("a Sync is in
+    /// progress") bunu kendi cümlesinde taşır; çerçeve ipucu taşımaz. Test yeni kuralı pinler: neden gövdenin SON
+    /// sözüdür.</para></summary>
     [Fact]
-    public void The_balloon_body_names_the_reason_and_says_what_to_do()
+    public void The_balloon_body_ends_with_the_reason_and_adds_no_hint_of_its_own()
     {
-        Assert.Equal("Build not started — a Sync is in progress. Try again when it finishes.",
-            AppTrayIcon.BuildIgnoredBody("a Sync is in progress"));
+        const string reason = "whatever the gate answers"; // yalnız biçim sınanır: gerçek bir neden cümlesinin kopyası değil
+
+        Assert.EndsWith($"{reason}.", AppTrayIcon.BuildIgnoredBody(reason));
     }
 
     // ---------------------------------------------------------------- neden = kapının kendi sorusu

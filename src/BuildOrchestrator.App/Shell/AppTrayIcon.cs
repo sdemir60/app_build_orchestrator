@@ -180,9 +180,11 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
         icon: NotificationIcon.Info);
 
     /// <summary>Yok sayılan Build kısayolunun balon gövdesi — metin TEK yerde (kopya YASAK; testler de buradan okur).
-    /// <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa cümlesidir. Ayrı ve saf: gerçek
-    /// bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
-    internal static string BuildIgnoredBody(string reason) => $"Build not started — {reason}. Try again when it finishes.";
+    /// <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa cümlesidir. Gövde nedeni söyler ve
+    /// orada biter: "tekrar dene" ipucu YOKTUR — nedenlerin bir kısmı kendiliğinden bitmez (motor erişilemiyor, proje
+    /// listesi yok) ve ipucu orada yanlış yönlendirirdi; bitişi söyleyen neden bunu kendi cümlesinde taşır. Ayrı ve saf:
+    /// gerçek bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
+    internal static string BuildIgnoredBody(string reason) => $"Build not started — {reason}.";
 
     public void Dispose()
     {

@@ -2414,9 +2414,9 @@ would lose it. Hiding goes straight to the tray, without the first-close balloon
 `Ctrl+Shift+Space` builds without bringing the window up; it is the view model's own `BuildCommand`, so it
 honours the same gate as the Build button: it does nothing while a run is in flight or being planned, and nothing
 while a Sync or a maintenance job runs (§13.2) — the press is not held back for later. With the window hidden in the
-tray a refused press is not silent: a balloon says why (`Build not started — a Sync is in progress. Try again when
-it finishes.`). The reason is the gate's own answer (`RunViewModel.WhyRunCannotStart`), so it cannot drift from the
-refusal, and the sentence is built in one place (`AppTrayIcon.BuildIgnoredBody`). A visible window gets no balloon —
+tray a refused press is not silent: a balloon says why (`Build not started — a Sync is in progress.`). The reason is
+the gate's own answer (`RunViewModel.WhyRunCannotStart`), so it cannot drift from the refusal, and the sentence is
+built in one place (`AppTrayIcon.BuildIgnoredBody`). A visible window gets no balloon —
 the Sync button and the ribbon already say it — and neither does a minimized one or one behind another window: the
 condition is the hidden-surface signal, not whether anyone is looking. Like every balloon it answers to
 *Show notifications* (above). Each gesture is
