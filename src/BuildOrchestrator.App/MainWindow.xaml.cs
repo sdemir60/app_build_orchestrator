@@ -1156,6 +1156,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshGraphFilter()
     {
+        // [perf Faz A · A4] Gizliyken atlanır: etkin filtrede her proje olayı (VisibleProjects) yeni bir eşleşme kümesi kurar ve
+        // tüm düğümlerin opaklığını yeniden hesaplatırdı. Üç graf itişiyle AYNI bayrak; dönüşte ResyncAfterShow bir kez uygular.
+        if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; }
         bool filtering = _vm.ActiveFilters.Count > 0 || !string.IsNullOrWhiteSpace(_vm.ProjectQuery);
         Shell.GraphHost.FilterMatches = filtering
             ? _vm.VisibleProjects.Select(p => p.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)

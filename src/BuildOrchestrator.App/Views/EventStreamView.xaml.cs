@@ -165,13 +165,18 @@ public partial class EventStreamView : UserControl
     /// Kalıtsal <see cref="HiddenSurface.IsHiddenProperty"/> değişimi torunlara buradan gelir. Yüzey görünür olunca ve
     /// gizliyken bildirim kaçırıldıysa satırlar, sayaç ve aktif satır modelden bir kez kurulur. <see cref="RebuildRows"/>
     /// satırları YAZILMIŞ hâliyle koyar (yazımın tek başlatıcısı <see cref="OnStreamEventsChanged"/>'in Add dalıdır),
-    /// yani gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya kalkmaz: daktilo geriye dönük oynamaz.
+    /// yani gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya kalkmaz. Kurulumdan önce modeldeki TÜM olaylar
+    /// "oynandı" işaretlenir (<c>GlowPlayed</c>, <c>TypePlayed</c>): gizliyken akanlar hiçbir görünümde oynamadı ve dönüşte
+    /// kurulan satırlar GEÇMİŞTİR — işaretlenmezse her yeşil "done" satırı yüklenirken 1,1 sn'lik parıltısını başlatırdı
+    /// (en çok 150 satır aynı anda; karar 15: tepsideyken animasyon yok, pencere gelince ekran tek seferde kurulur).
     /// </summary>
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
         if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
         _staleWhileHidden = false;
+        if (_vm is not null)
+            foreach (var item in _vm.StreamEvents) { item.GlowPlayed = true; item.TypePlayed = true; }
         RebuildRows();
         RefreshCounter();
         UpdateActiveLine();
@@ -258,6 +263,9 @@ public partial class EventStreamView : UserControl
 
     private void RebuildRows()
     {
+        // Atılan satırlar kendi öğe VM'lerinin PropertyChanged'ine abone kalmasın (her gösterimde biriken, sınırlı bir sızıntı
+        // olurdu): bağ Clear'dan ÖNCE koparılır.
+        foreach (var old in PART_Rows.Children.OfType<EventStreamRow>()) old.DataContext = null;
         PART_Rows.Children.Clear();
         if (_vm is null) return;
         foreach (var item in _vm.StreamEvents) PART_Rows.Children.Add(CreateRow(item));

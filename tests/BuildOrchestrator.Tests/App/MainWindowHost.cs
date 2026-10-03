@@ -176,12 +176,32 @@ internal static class MainWindowHost
     {
         ArgumentNullException.ThrowIfNull(vm);
         ArgumentNullException.ThrowIfNull(names);
+        BuildProjects(vm, names);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, names.Length, 0, 0, 0, 100));
+    }
+
+    /// <summary>[perf A3/A4 fix] Her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>); koşu BİTMEZ
+    /// (<c>runCompleted</c> yok). <see cref="FinishBuild"/> bunu çağırıp koşuyu bitirir; koşu sürerken proje olayları
+    /// gereken testler (gizli pencerede graf itişleri) doğrudan bunu kullanır — olay çifti tek yerde durur.</summary>
+    public static void BuildProjects(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
         foreach (var name in names)
         {
             vm.OnEvent(new ProjectStartedEvent("r1", IdOf(name), name));
             vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), 100));
         }
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, names.Length, 0, 0, 0, 100));
+    }
+
+    /// <summary>[perf A3/A4 fix] Bir derlemenin TÜM olay akışı: plan (<see cref="PreviewBuild"/>), başlangıç
+    /// (<see cref="StartBuild"/>), her projenin derlenmesi ve bitiş (<see cref="FinishBuild"/>). Gizli-pencere testleri
+    /// akışın bütününü tek çağrıyla sürer.</summary>
+    public static void RunBuild(RunViewModel vm, params string[] names)
+    {
+        PreviewBuild(vm, names);
+        StartBuild(vm, names);
+        FinishBuild(vm, names);
     }
 
     /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),

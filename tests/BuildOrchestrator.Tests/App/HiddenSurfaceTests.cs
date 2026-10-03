@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
+using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -285,41 +286,80 @@ public class HiddenSurfaceTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>[perf Faz A · A3/A4] <c>P0..P{count-1}</c> proje adları — hem fixture'a hem koşu sürücülerine gider.</summary>
+    private static string[] Names(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
+
+    /// <summary><c>MainWindowHost.NewWithProjects</c>'in beklediği (ad, içerik) çiftleri; içerik yok.</summary>
+    private static (string, string?)[] ProjectPairs(string[] names) => [.. names.Select(n => (n, (string?)null))];
+
     /// <summary>
     /// [perf Faz A · A3] <b>Gizli pencerede olay akışı satır kurmaz.</b> Tepsideyken derlenen bir koşunun her olayı
     /// kimsenin görmediği akışa satır ekliyor, sayacı yazıyor ve en yeni satırın daktilosunu başlatıyordu. Satırların
     /// kaynağı model (<c>RunViewModel.StreamEvents</c>; 150 kırpma kuralı da onda) zaten tam durur: görünüm gizliyken
     /// yalnız "ekran modelin gerisinde" bayrağını kaldırır, görününce satırları, sayacı ve aktif satırı modelden TEK
-    /// geçişte kurar. Satırlar yazılmış hâliyle konur: gizliyken gelmiş olaylar pencere gelince sırayla yazılmaya
-    /// kalkmaz (daktilo geriye dönük oynamaz). Sinyal tek görünümde doğrudan yazılır
-    /// (<c>HiddenSurface.SetIsHidden</c>); kalıtımı <c>HiddenSurfacePropertyTests</c> pinler.
+    /// geçişte kurar.
+    ///
+    /// <para>Test GERÇEK kabuğun kendi görünümünü sürer (<c>Shell.EventStreamControl</c>): sinyal pencereye yazılır ve
+    /// kalıtımla torunlara iner — yani kapı ile kalıtım → <c>OnPropertyChanged</c> yolu uçtan uca sınanır. Dönüş
+    /// kurulumu DP değişiminde eşzamanlıdır (pompa gerekmez). Atılan eski satırlar kendi öğe VM'lerinin
+    /// <c>PropertyChanged</c>'ine abone kalmaz (<c>DataContext</c> kopar): her gösterimde birikecek sınırlı bir
+    /// sızıntı olurdu.</para>
     /// </summary>
     [StaFact]
-    public void Event_stream_rows_are_not_built_while_hidden_and_are_rebuilt_in_one_pass_without_typing_on_show()
+    public void Event_stream_rows_are_not_built_while_the_window_is_hidden_and_are_rebuilt_in_one_pass_on_show()
     {
         using var dir = new TempDir();
-        string[] names = [.. Enumerable.Range(0, 40).Select(i => $"P{i}")];
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
-        var view = new BuildOrchestrator.App.Views.EventStreamView { AnimationsEnabledProvider = () => true, DataContext = vm };
-        HiddenSurface.SetIsHidden(view, true);
-        int rowsBefore = view.Rows.Count;
+        string[] names = Names(40);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var view = window.Shell.EventStreamControl;
+        var rowsBefore = view.Rows;
         string counterBefore = view.Counter.Text;
+        var typingBefore = view.TypingRow;
+        Assert.NotEmpty(rowsBefore); // ön-koşul: gizlenmeden önce kurulmuş satırlar var — dönüşte bırakılmaları sınanabilsin
 
-        MainWindowHost.PreviewBuild(vm, names);
-        MainWindowHost.StartBuild(vm, names);
-        MainWindowHost.FinishBuild(vm, names);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.RunBuild(vm, names);
 
-        Assert.True(vm.StreamEvents.Count > rowsBefore); // ön-koşul: model akışa satır üretti
-        Assert.Equal(rowsBefore, view.Rows.Count);       // KIRMIZI: bugün gizliyken de her olay satır kurar
-        Assert.Null(view.TypingRow);                     //          ve en yeni satırın daktilosunu başlatır
-        Assert.Equal(counterBefore, view.Counter.Text);  // sayaç da yazılmaz
+        Assert.True(vm.StreamEvents.Count > rowsBefore.Count); // ön-koşul: model akışa satır üretti
+        Assert.Equal(rowsBefore.Count, view.Rows.Count);       // KIRMIZI kapısız: bugün gizliyken de her olay satır kurar
+        Assert.Same(typingBefore, view.TypingRow);             //                   ve en yeni satırın daktilosunu başlatır
+        Assert.Equal(counterBefore, view.Counter.Text);        // sayaç da yazılmaz
 
-        HiddenSurface.SetIsHidden(view, false);
+        window.SetSurfaceHidden(false);
 
-        Assert.Equal(vm.StreamEvents.Count, view.Rows.Count); // tek geçişte modelden kuruldu
+        Assert.Equal(vm.StreamEvents.Count, view.Rows.Count);  // tek geçişte modelden kuruldu
         Assert.Equal($"{vm.StreamEventCount} events", view.Counter.Text);
-        Assert.All(view.Rows, row => Assert.False(row.IsTyping)); // daktilo geriye dönük oynamaz
-        Assert.Null(view.TypingRow);
+        Assert.All(rowsBefore, row => Assert.Null(row.DataContext)); // atılan satırlar öğe VM'lerinden ayrıldı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A3] Dönüşte kurulan satırlar GEÇMİŞTİR. Gizliyken akan olaylar hiçbir görünümde oynanmadı
+    /// (<c>GlowPlayed</c> / <c>TypePlayed</c> false); dönüş kurulumu onları işaretlemezse her yeşil "done" satırı
+    /// yüklenirken 1,1 sn'lik parıltısını başlatır (en çok 150 satır aynı anda) ve daktilo geriye dönük oynayabilirdi —
+    /// karar 15: tepsideyken animasyon yok, pencere gelince ekran tek seferde kurulur.
+    ///
+    /// <para>İddialar belirtiye değil NEDENE pinlenir: satırın yazımı <c>TypePlayed</c>'e, parıltısı <c>GlowPlayed</c>'e
+    /// bakar. Belirtiyi (<c>IsTyping</c>) sınamak bu fixture'da sahte-yeşil olurdu: olay patlamasında (fırtına penceresi)
+    /// satırlar anında basılır, yazılabilir satır üretmek zaman ayrımlı bir fixture ister
+    /// (<c>EventStreamTypingTests.WrittenRow</c>) ve satırlar görünürken kabuğun kendi görünümü onları zaten erken
+    /// "oynandı" işaretler. Bayraklar ise gizliyken akan her satırda dönüşten ÖNCE false'tur — iddia gerçekten düşebilir.</para>
+    /// </summary>
+    [StaFact]
+    public void Rows_rebuilt_on_show_are_history_and_never_replay_the_glow_or_the_typewriter()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(40);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        window.SetSurfaceHidden(true);
+        MainWindowHost.RunBuild(vm, names);
+        Assert.NotEmpty(vm.StreamEvents.Where(e => e.GlowEligible));            // ön-koşul: parıldayacak (done + hatasız) satır var
+        Assert.Contains(vm.StreamEvents, e => !e.GlowPlayed && !e.TypePlayed);  // ön-koşul: gizliyken akanlar hiçbir görünümde oynanmadı
+
+        window.SetSurfaceHidden(false);
+
+        Assert.All(vm.StreamEvents, e => Assert.True(e.GlowPlayed)); // KIRMIZI: bugün dönüşte kurulan her yeşil satır parıldar
+        Assert.All(vm.StreamEvents, e => Assert.True(e.TypePlayed)); //          ve yazılabilir satır geriye dönük yazılır
         GC.KeepAlive(window);
     }
 
@@ -339,31 +379,27 @@ public class HiddenSurfaceTests
     public void Graph_pushes_are_skipped_while_hidden_and_one_sync_brings_the_graph_up_to_date_on_show()
     {
         using var dir = new TempDir();
-        string[] names = [.. Enumerable.Range(0, 177).Select(i => $"P{i}")];
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
+        string[] names = Names(177);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
         var graph = window.Shell.GraphHost;
         window.SetSurfaceHidden(true);
         int pushesBefore = graph.UpdateStatusesCallCount;
 
-        MainWindowHost.StartBuild(vm, names); // koşu fazı: model Running olur, graf Idle'da kalmalı
-        foreach (var name in names)           // 177 proje x started/succeeded: her biri bir statü itişi isterdi
-        {
-            vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(name), name));
-            vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf(name), 100));
-        }
+        MainWindowHost.StartBuild(vm, names);    // koşu fazı: model Running olur, graf Idle'da kalmalı
+        MainWindowHost.BuildProjects(vm, names); // 177 proje x started/succeeded: her biri bir statü itişi isterdi
         string selected = MainWindowHost.IdOf("P5");
         vm.SelectProject(selected);
 
         Assert.True(vm.IsRunUnderway);                                // ön-koşul: koşu sürüyor — model Running
         Assert.Equal(pushesBefore, graph.UpdateStatusesCallCount);    // KIRMIZI: bugün her olay grafa itilir
-        Assert.Equal("Idle", graph.RunPhase.ToString());              // faz itilmedi
+        Assert.Equal(GraphRunPhase.Idle, graph.RunPhase);             // faz itilmedi
         Assert.Null(graph.SelectedNode);                              // seçim itilmedi
 
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow();
 
         Assert.Equal(pushesBefore + 1, graph.UpdateStatusesCallCount); // TAM bir statü itişi
-        Assert.Equal("Running", graph.RunPhase.ToString());            // faz modele eşit
+        Assert.Equal(GraphRunPhase.Running, graph.RunPhase);           // faz modele eşit
         Assert.Equal(selected, graph.SelectedNode);                    // seçim modele eşit
         GC.KeepAlive(window);
     }
@@ -374,20 +410,43 @@ public class HiddenSurfaceTests
     public void Graph_pushes_still_reach_the_graph_while_the_surface_is_visible()
     {
         using var dir = new TempDir();
-        string[] names = ["A", "B", "C"];
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names.Select(n => (n, (string?)null)).ToArray());
+        string[] names = Names(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
         var graph = window.Shell.GraphHost;
         int pushesBefore = graph.UpdateStatusesCallCount;
 
         MainWindowHost.StartBuild(vm, names);
-        foreach (var name in names)
-        {
-            vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(name), name));
-            vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf(name), 100));
-        }
+        MainWindowHost.BuildProjects(vm, names);
 
         Assert.True(graph.UpdateStatusesCallCount > pushesBefore);
-        Assert.Equal("Running", graph.RunPhase.ToString());
+        Assert.Equal(GraphRunPhase.Running, graph.RunPhase);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A4] <b>Gizli pencerede graf filtresi yenilenmez.</b> Etkin bir filtre/arama varken her proje olayı
+    /// (<c>VisibleProjects</c> bildirimi) <c>RefreshGraphFilter</c>'ı çağırır ve her çağrı YENİ bir eşleşme kümesi kurup
+    /// TÜM düğümlerin opaklığını yeniden hesaplatır — A4'ün kaldırdığı gizli işin ta kendisi. Kapı üç graf itişiyle AYNI
+    /// bayrağı kullanır; dönüşte <c>ResyncAfterShow</c> filtreyi bir kez uygular.
+    /// </summary>
+    [StaFact]
+    public void The_graph_filter_is_not_refreshed_while_hidden_and_is_applied_once_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = Names(20);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        var graph = window.Shell.GraphHost;
+        vm.ProjectQuery = "P1";                     // etkin arama: graf filtreyi uygular
+        int appliedBefore = graph.FilterAppliedCount;
+        Assert.True(appliedBefore > 0);             // ön-koşul: filtre görünürken uygulanıyor
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, names);         // her proje olayı VisibleProjects bildirir
+
+        Assert.Equal(appliedBefore, graph.FilterAppliedCount); // KIRMIZI: bugün her olay yeni küme kurup tüm düğümleri yeniden stiller
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow();
+        Assert.Equal(appliedBefore + 1, graph.FilterAppliedCount); // dönüşte TAM bir uygulama
         GC.KeepAlive(window);
     }
 

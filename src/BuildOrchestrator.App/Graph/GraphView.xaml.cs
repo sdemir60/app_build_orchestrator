@@ -375,10 +375,16 @@ public partial class GraphView : UserControl
         set
         {
             if (ReferenceEquals(_filterMatches, value)) return;
+            FilterAppliedCount++;
             _filterMatches = value;
             ApplyAllOpacities(GraphNodeOpacity.FilterFadeMs); // kullanıcı hareketi — koşu tikinden uzun
         }
     }
+
+    /// <summary>[test yüzeyi · perf Faz A · A4] <see cref="FilterMatches"/>'in kaç kez UYGULANDIĞI (aynı küme yeniden
+    /// verilince saymaz): her uygulama TÜM düğümlerin opaklığını yeniden hesaplatır. Gizli pencerede filtre
+    /// yenilemesinin yapılmadığını sınar.</summary>
+    internal int FilterAppliedCount { get; private set; }
 
     /// <summary>
     /// [quiet] Koşu fazı (§2.3 "Koşu yaşam döngüsü"). Değişince TÜM düğümlerin opaklığı yeniden uygulanır:

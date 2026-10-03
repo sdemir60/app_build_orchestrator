@@ -70,10 +70,12 @@ public partial class MainWindow
     /// (<c>RunViewModel</c> tamponu) gerisinde. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
     private bool _consoleStaleWhileHidden;
 
-    /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı ya da seçim oldu (<c>PushGraphStatuses</c>,
-    /// <c>PushGraphRunPhase</c> ve <c>PushGraphSelection</c> gizliyken yalnız bunu kaldırır): graf modelin gerisinde.
-    /// <see cref="ResyncAfterShow"/> üç itişi tek seferde yapar ve sıfırlar. Topoloji (<c>RebuildGraph</c>) bu bayrağa
-    /// bağlı değildir: gizliyken de kurulur, grafın kendi <c>Visibility</c> bekletmesi vardır.</summary>
+    /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı, seçim ya da filtre yenilemesi oldu
+    /// (<c>PushGraphStatuses</c>, <c>PushGraphRunPhase</c>, <c>PushGraphSelection</c> ve <c>RefreshGraphFilter</c> gizliyken
+    /// yalnız bunu kaldırır): graf modelin gerisinde. <see cref="ResyncAfterShow"/> dördünü tek seferde yapar ve sıfırlar.
+    /// Topoloji (<c>RebuildGraph</c>) bu bayrağa bağlı değildir: gizliyken de kurulur ve dönüşte tekrarlanmaz. Grafın kendi
+    /// bekletmesi (<c>GraphView.SetGraph</c> / <c>UpdateStatuses</c>) PANELİN <c>Visibility</c>'sine bağlıdır (yerleşim kipi
+    /// graf panelini gizlediğinde), pencerenin gizliliğine değil.</summary>
     private bool _graphStaleWhileHidden;
 
     /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
@@ -87,6 +89,12 @@ public partial class MainWindow
     /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Anlatı boşsa idle "ready"
     /// satırı geri gelir; boş bir proje logu, kart seçimiyle AYNI kuralla (<c>ProjectDocumentLines</c>) o projenin
     /// boş-durum metnini gösterir.</para>
+    ///
+    /// <para><b>Graf:</b> gizliyken statü, faz, seçim itişleri ve filtre yenilemesi yalnız bayrağı kaldırdı
+    /// (<see cref="_graphStaleWhileHidden"/>); dönüşte dördü TEK seferde, üretimdeki sırayla uygulanır: koşu fazı,
+    /// statüler, seçim, filtre. Topoloji bu yola girmez: gizliyken de kurulmuştu ve dönüşte tekrarlanmaz. Koşu gizliyken
+    /// başladıysa graf soluklaşma geçişini (<c>GraphView.HoldStatusesUntilDimmed</c>) dönüşte oynar — kabul edilen tek,
+    /// kısa geçiş.</para>
     ///
     /// <para><b>Gizliyken koşmaz:</b> göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir (kullanıcı
     /// pencereyi hemen geri indirir). O durumda burası hiçbir şey yapmaz ve "ekran bayat" bayrakları yerinde kalır:
@@ -117,10 +125,11 @@ public partial class MainWindow
         if (_graphStaleWhileHidden)
         {
             _graphStaleWhileHidden = false;
-            // Sıra üretimdekiyle aynıdır (OnVmPropertyChangedForGraph, RebuildGraph): koşu fazı, statüler, seçim.
+            // Sıra üretimdekiyle aynıdır (OnVmPropertyChangedForGraph, RebuildGraph): koşu fazı, statüler, seçim; filtre en sonda.
             PushGraphRunPhase();
             PushGraphStatuses();
             PushGraphSelection();
+            RefreshGraphFilter();
         }
     }
 }
