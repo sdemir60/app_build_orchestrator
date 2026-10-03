@@ -42,8 +42,9 @@ internal sealed record ShellSwitch(
 /// <para><b>Tablo yalnız DEĞERİ taşır</b>, davranışı kendisi BAĞLAMAZ — okuyucular değeri her soruda kalıcı durumdan
 /// TAZE okur (<see cref="IsOn"/>), arada kopya yok: <see cref="StartWithWindows"/>'u açılışın Windows kaydı hizalaması,
 /// <see cref="StartMinimizedToTray"/>'ı açılış yolu kararı, <see cref="CloseToTray"/>'ı pencere kapanışı
-/// (<c>MainWindow.OnClosing</c> → <see cref="WindowCloseRule"/>), <see cref="ShowNotifications"/>'ı üç tray-balloon
-/// yolu (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>) okur.</para>
+/// (<c>MainWindow.OnClosing</c> → <see cref="WindowCloseRule"/>), <see cref="ShowNotifications"/>'ı dört tray-balloon
+/// yolu (<c>FirstCloseBalloonGate</c>, <c>TrayBuildIndicatorController</c>, <c>SecondInstanceGate</c>,
+/// <c>MainWindow.OnGlobalHotkey</c>) okur.</para>
 /// </summary>
 internal static class ShellSwitches
 {

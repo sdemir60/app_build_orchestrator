@@ -130,7 +130,7 @@ public sealed class UiState
     /// <summary>[P3] Settings → General → NOTIFICATIONS → <c>Show notifications</c>: tepsinin OS balonları gösterilsin
     /// mi — koşu bitişi, ilk-× bilgilendirmesi ve ikinci-instance uyarısı; kapalıyken hiçbiri gösterilmez.
     /// <see cref="Autostart"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ katalog varsayılanı (açık). Okuma yalnız
-    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı üç balon yolu verir.</summary>
+    /// <see cref="ShellSwitches.ShowNotifications"/> üzerindendir; kararı dört balon yolu verir.</summary>
     public bool? ShowNotifications { get; set; }
 }
 

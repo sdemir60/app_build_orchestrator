@@ -166,6 +166,24 @@ internal sealed class AppTrayIcon : IDisposable, ITrayRunNotifier
     /// <c>null</c>'dır. Kutu eskiden <c>""</c> ile başlıyordu; imza değişirken taban düşmez.</para></summary>
     internal static string RunFinishedBody(RibbonLine line) => line.Detail ?? line.Text ?? "";
 
+    /// <summary>
+    /// [perf B2] Uygulama TEPSİDEYKEN basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
+    /// NEDENİ. İş sürerken koşu komutları kapalıdır ve kısayol kuyruğa girmez; pencere gizliyken ekran da yoktur,
+    /// yani kısayol sessizce hiçbir şey yapmazsa kullanıcı neden başlamadığını bilemez — balon tek yüzeydir.
+    /// Pencere görünürken balon YOKTUR (ekran zaten söylüyor: Sync düğmesi meşgul, şerit). İkon Info: hata değil,
+    /// durum bilgisi; başlık ürünün adı.
+    /// <para>Kapı: <c>MainWindow.OnGlobalHotkey</c>, balonun TAM gösterileceği anda Show notifications'ı TAZE okur
+    /// ve yalnız açıksa buraya gelir (<see cref="ShowClosedToTrayNotification"/> ile aynı kural).</para></summary>
+    public void ShowBuildIgnored(string reason) => _icon.ShowNotification(
+        title: AppIdentity.Product,
+        message: BuildIgnoredBody(reason),
+        icon: NotificationIcon.Info);
+
+    /// <summary>Yok sayılan Build kısayolunun balon gövdesi — metin TEK yerde (kopya YASAK; testler de buradan okur).
+    /// <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa cümlesidir. Ayrı ve saf: gerçek
+    /// bir tepsi ikonu kurmadan sınanabilsin diye (<c>TaskbarIcon</c> headless süitte kurulamaz).</summary>
+    internal static string BuildIgnoredBody(string reason) => $"Build not started — {reason}. Try again when it finishes.";
+
     public void Dispose()
     {
         _icon.Dispose();

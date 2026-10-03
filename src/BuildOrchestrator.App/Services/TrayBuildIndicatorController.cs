@@ -32,6 +32,12 @@ public interface ITrayRunNotifier
     /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
     /// doğar; statü de satırın kendi glyph'indedir.</summary>
     void ShowRunFinished(RibbonLine line);
+
+    /// <summary>[perf B2] Tepsideyken basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
+    /// AÇIKLAMASI. Pencere gizliyken ekran yoktur; kısayol sessizce hiçbir şey yapmazsa kullanıcı neden başlamadığını
+    /// bilemez, balon tek yüzeydir. <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa
+    /// cümlesidir; balonun metni TEK yerde kurulur (<c>AppTrayIcon.BuildIgnoredBody</c>).</summary>
+    void ShowBuildIgnored(string reason);
 }
 
 /// <summary>

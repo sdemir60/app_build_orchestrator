@@ -1147,6 +1147,27 @@ public sealed partial class RunViewModel : ObservableObject
     private bool CanRequestRun() =>
         !IsRunning && !IsStarting && !IsEngineUnavailable && !ExitPending && HasTopology && !WorkspaceBusy;
 
+    /// <summary>
+    /// [perf B2] <see cref="CanRequestRun"/> kapalıyken NEDEN kapalı olduğunu tek kısa cümleyle söyler (kapı açıksa
+    /// <c>null</c>) — tepsideyken yok sayılan Build kısayolunun balonu bu cümleyi taşır
+    /// (<c>MainWindow.OnGlobalHotkey</c>). Sıra kapının kendi önceliğidir: önce hiç başlayamayacak durumlar (motor yok,
+    /// çıkış bekleniyor), sonra uçuştaki koşu, sonra workspace işleri ("ne bitince?" sorusunun cevabı), en sonda
+    /// proje listesinin yokluğu.
+    /// <para>Koşullar <see cref="CanRequestRun"/> ile AYNI kümedir; ayrışmaları yok sayılan bir kısayolun sessiz
+    /// kalması demektir — <c>TrayHotkeyBalloonTests</c> iki tarafın aynı durumlarda aynı kararı verdiğini pinler.</para>
+    /// </summary>
+    internal string? WhyRunCannotStart() =>
+        IsEngineUnavailable ? "the engine is not available"
+        : ExitPending       ? "the application is closing"
+        : IsMidRunLocked    ? "a run is already in flight"
+        : SyncBusy          ? "a Sync is in progress"
+        : CleanBusy         ? "a Clean is in progress"
+        : OptimizeBusy      ? "an Optimize is in progress"
+        : CheckoutBusy      ? "a branch switch is in progress"
+        : PullBusy          ? "a pull is in progress"
+        : !HasTopology      ? "no project list yet — Sync first"
+        : null;
+
     [RelayCommand(CanExecute = nameof(CanRequestRun))]
     private Task BuildAsync() => BeginRunAsync(RunMode.Build); // seçim orada düşer (filtre korunur)
 

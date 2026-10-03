@@ -13,7 +13,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// (<see cref="StartWithWindows"/>, <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/>,
 /// <see cref="ShowNotifications"/>) yalnız diyalog taslağında yaşardı — kaydedilmez, dosyaya yazılmaz, hiçbir davranışı
 /// sürmezdi. Artık Windows ile başlama, Windows ile açılışta tepside başlama, pencere kapanışı
-/// (<c>MainWindow.OnClosing</c>) ve üç tray-balloon yolu bu değerleri okur.</para></summary>
+/// (<c>MainWindow.OnClosing</c>) ve dört tray-balloon yolu bu değerleri okur.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartWithWindows"/>) — Windows'un başlangıç

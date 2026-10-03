@@ -63,6 +63,10 @@ public sealed class TrayBuildIndicatorControllerTests
             LastLine = line;
             r.Log.Add($"Notify:{line.Text}");
         }
+
+        /// <summary>[perf B2] Bu sınıfın konusu koşu bitişi; yok sayılan kısayol balonu burada sınanmaz
+        /// (<c>TrayHotkeyBalloonTests</c>) — arayüzün yeni üyesi için boş uygulama.</summary>
+        public void ShowBuildIgnored(string reason) { }
     }
 
     /// <summary>Şeridin BAŞARILI biten bir satırını taklit eder — statü ayrı bir bayrak değil, satırın kendi

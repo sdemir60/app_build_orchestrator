@@ -59,6 +59,10 @@ public sealed class TrayIndicatorBinderTests
             Count++;
             LastLine = line;
         }
+
+        /// <summary>[perf B2] Bu sınıfın konusu VM ↔ gösterge kablajı; yok sayılan kısayol balonu burada sınanmaz
+        /// (<c>TrayHotkeyBalloonTests</c>) — arayüzün yeni üyesi için boş uygulama.</summary>
+        public void ShowBuildIgnored(string reason) { }
     }
 
     private static ConsoleBatcher NeverTickingBatcher() => new(_ => Task.Delay(Timeout.Infinite));

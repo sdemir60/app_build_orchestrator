@@ -1395,9 +1395,19 @@ public partial class MainWindow : Window
         return 0;
     }
 
+    /// <summary>[perf B2] Tepsi bildirim yüzeyi: üretimde tepsi ikonunun kendisi (<c>_tray</c>), testte sahte bir
+    /// notifier. <c>OnSourceInitialized</c> headless süitte koşmaz, yani gerçek <c>TaskbarIcon</c> kurulmaz ve
+    /// <c>_tray</c> orada <c>null</c>'dır — bu seam olmadan "tepsideyken yok sayılan kısayol balon gösterir" sınanamazdı.</summary>
+    internal ITrayRunNotifier? TrayNotifierForTest { get; set; }
+
+    private ITrayRunNotifier? TrayNotifier => TrayNotifierForTest ?? _tray;
+
     /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
     /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
     /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).
+    /// <para>[perf B2] Kapı kapalıysa (iş sürüyor) kısayol hiçbir şey yapmaz — kuyruk yoktur. Pencere GİZLİYKEN bunu
+    /// söyleyen tek yüzey bir balondur (<see cref="ITrayRunNotifier.ShowBuildIgnored"/>); pencere görünürken ekran
+    /// zaten söyler. Her balon gibi Show notifications'a bağlıdır ve sorulduğu anda TAZE okunur.</para>
     /// <para>[design v1.23.0 §2.12] Restart ekranı görünürken hiçbir global kısayol çalışmaz
     /// (<see cref="InputSuspended"/>). internal: test yüzeyi — <c>WM_HOTKEY</c> gösterilmeyen pencerede üretilemez.</para></summary>
     internal void OnGlobalHotkey(GlobalHotkeyAction action)
@@ -1412,6 +1422,9 @@ public partial class MainWindow : Window
         }
         var command = GlobalHotkeys.CommandFor(action, _vm);
         if (command is not null && command.CanExecute(null)) command.Execute(null);
+        else if (action == GlobalHotkeyAction.Build && IsSurfaceHidden
+            && _vm.WhyRunCannotStart() is { } reason && ShellSwitches.ShowNotifications(_uiState.Load()))
+            TrayNotifier?.ShowBuildIgnored(reason);
     }
 
     private void ToggleMaximizeRestore()
