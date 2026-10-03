@@ -40,4 +40,14 @@
     <Content Include="..\..\src\BuildOrchestrator.App\App.xaml" Link="TestAssets\App.xaml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Mini WPF projeleri (WpfTemporaryAssemblyAcceptanceTests) test derlemesine GİRMEZ: SDK'nın varsayılan glob'ları
+       onları Compile/Page olarak toplardı. Yalnız çıktı klasörüne kopyalanırlar; test her koşuda geçici bir klasöre
+       alıp orada gerçek MSBuild ile derler (fixture yerinde derlenmez, bin/obj kopyalanmaz). -->
+  <ItemGroup>
+    <Compile Remove="Fixtures/WpfMini/**" />
+    <Page Remove="Fixtures/WpfMini/**" />
+    <None Remove="Fixtures/WpfMini/**" />
+    <None Include="Fixtures/WpfMini/**" Exclude="Fixtures/WpfMini/**/bin/**;Fixtures/WpfMini/**/obj/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
