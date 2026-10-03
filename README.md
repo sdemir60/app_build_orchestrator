@@ -710,9 +710,10 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   *Sync* or pull to refresh it.
 - **A brand-new repository is not watched until its first commit.** The HEAD watcher needs git's reflog, which
   appears with the first commit; until then, switching back to the window keeps the list current.
-- **`UseSharedCompilation=false` and `nodeReuse:false` are kept**, and they cost real time — roughly 2.9× the
-  flags-on build, essentially all of it from shared compilation. They stay because with a compiler server the
-  emit happens outside the job, which brings back the risk of a torn DLL when a run is stopped.
+- **`UseSharedCompilation=false` and `nodeReuse:false` are kept.** A compiler server with a private pipe could
+  live inside the job, but measured on a real repository it saves about a tenth of a run while holding
+  gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a
+  torn DLL when a run is stopped.
 - **Filling a viewport of project rows costs what it costs.** The list is virtualized, so the work is bounded
   by the visible window rather than by the size of the repository — but that window is still built from
   scratch whenever the entries are replaced, which a topology change or a filter change both do.
