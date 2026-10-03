@@ -596,16 +596,20 @@ public partial class MainWindow : Window
     /// <see cref="ConsoleView.AppendNarrativeBatch"/> (en yeni satır T34 hibrit daktilo); proje-log → ham MSBuild
     /// <see cref="ConsoleView.AppendBatch"/> instant (ham çıktı ASLA harf-harf — DD2).
     ///
-    /// <para>[perf Faz A · A2] <b>Gizli pencerede belgeye yazılmaz:</b> metin VM tamponunda zaten durur; batch atılır,
+    /// <para>[perf Faz A · A2] <b>Gizli ya da bayat konsolda belgeye yazılmaz:</b> metin VM tamponunda zaten durur; batch atılır,
     /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
-    /// tam metinden bir kez kurar. Kapı nesil kararından ÖNCEDİR (bayat batch de aynı bayrağı kaldırır; zararsız:
-    /// dönüşteki kurulum zaten tam metindir). <c>internal</c> = test yüzeyi: pompa tick etmeyen fixture'da testler
-    /// batch'i pompanın yaptığı gibi (<see cref="ConsoleReseedGen"/> damgasıyla) doğrudan verir.</para></summary>
+    /// tam metinden bir kez kurar. Kapı yalnız <see cref="IsSurfaceHidden"/>'a bakmaz, bayrağa da bakar: gösterimden sonra
+    /// ama Loaded-öncelikli dönüş kurulumu koşmadan Normal-öncelikli bir pompa batch'i araya girebilir; bayat belgeye
+    /// basılsaydı kurulum onu boşa çıkarır, belge kısa süre aradaki satırlar eksik kalırdı. Kapı nesil kararından ÖNCEDİR
+    /// (bayat batch de aynı bayrağı kaldırır; zararsız: dönüşteki kurulum zaten tam metindir). <c>internal</c> = test
+    /// yüzeyi: pompa tick etmeyen fixture'da testler batch'i pompanın yaptığı gibi (<see cref="ConsoleReseedGen"/>
+    /// damgasıyla) doğrudan verir.</para></summary>
     internal void AppendConsoleBatch(string text, long batchGen)
     {
-        // [perf Faz A · A2] Gizli pencerede belgeye yazılmaz (kapı nesil kararından ÖNCE): metin VM tamponunda zaten
-        // durur, dönüşte ResyncAfterShow belgeyi tam metinden bir kez kurar.
-        if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
+        // [perf Faz A · A2] Gizli ya da bayat konsolda belgeye yazılmaz (kapı nesil kararından ÖNCE): metin VM tamponunda
+        // zaten durur; belgeyi ResyncAfterShow tam metinden bir kez kurar. Bayrak gösterimden o kurulumun koştuğu ana dek de
+        // kalkık kalır: araya giren batch bayat belgeye basılmaz.
+        if (IsSurfaceHidden || _consoleStaleWhileHidden) { _consoleStaleWhileHidden = true; return; }
         switch (ConsoleBatchRouter.Decide(batchGen, _console.CurrentReseedGen, _vm.ActiveProjectId))
         {
             case ConsoleBatchRouter.Route.Drop: return; // aradan reseed geçti → bayat batch, at
@@ -626,7 +630,8 @@ public partial class MainWindow : Window
     ///
     /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz:</b> başlık ve VM tarafı yine güncellenir; belge yerine
     /// "ekran bayat" bayrağı kalkar (<c>_consoleStaleWhileHidden</c>) ve <see cref="ResyncAfterShow"/> dönüşte belgeyi
-    /// <c>ActiveProjectId</c>'ye bakarak tilt'siz kurar.</para></summary>
+    /// <c>ActiveProjectId</c>'ye bakarak tilt'siz kurar. Görünür kurulum (gösterimden sonra, dönüş kurulumundan önce bile)
+    /// belgeyi kendisi kurar ve bayrağı düşürür: dönüş kurulumu o belgeyi ikinci kez kurmaz.</para></summary>
     private async Task OnSelectedProjectChangedAsync()
     {
         try
@@ -648,6 +653,7 @@ public partial class MainWindow : Window
             // [perf Faz A · A2] Gizli pencerede belge kurulmaz (bkz. ShowRunConsole): yükleme sürerken pencere tepsiye
             // indiyse belgeyi dönüş kurulumu AYNI satır kuralıyla (ProjectDocumentLines) kurar. Başlık yukarıda güncellendi.
             if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
+            _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
             // [Solution B] Doküman TIKLAMA (yükleme tamamlanma) ANINDA senkron kurulur — pump'a bağlı DEĞİL.
             // [her projenin sayfası var] Log BOŞSA sayfa boş bırakılmaz: o projenin O ANKİ durumunu anlatan
             // metin gösterilir. Karar Console.ConsoleEmptyState'te (saf, test edilebilir); pencere yalnız uygular.
@@ -665,7 +671,8 @@ public partial class MainWindow : Window
     ///
     /// <para>[perf Faz A · A2] <b>Gizli pencerede belge kurulmaz</b> (tepsiden başlayan koşu proje seçimini düşürünce buraya
     /// gelinir): başlık ve VM tarafı güncellenir, belge yerine "ekran bayat" bayrağı kalkar ve <see cref="ResyncAfterShow"/>
-    /// dönüşte belgeyi <c>ActiveProjectId</c>'ye bakarak kurar.</para></summary>
+    /// dönüşte belgeyi <c>ActiveProjectId</c>'ye bakarak kurar. Görünür kurulum (gösterimden sonra, dönüş kurulumundan önce
+    /// bile) belgeyi modelin tam metninden kendisi kurar ve bayrağı düşürür: dönüş kurulumu ikinci kez kurmaz.</para></summary>
     private void ShowRunConsole()
     {
         _vm.ShowRun(); // ActiveProjectId=null → PropertyChanged → ShowNarrative (başlık, aynı tur)
@@ -674,6 +681,7 @@ public partial class MainWindow : Window
         // görmeyeceği iş (tepsiden başlayan koşu proje seçimini düşürünce buraya gelinir). Başlık/VM tarafı yukarıda
         // güncellendi; belgeyi dönüşteki tek kurulum (ResyncAfterShow) ActiveProjectId'ye bakarak kurar.
         if (IsSurfaceHidden) { _consoleStaleWhileHidden = true; return; }
+        _consoleStaleWhileHidden = false; // görünür TAM kurulum: belge modelden kurulur, dönüş kurulumunun yapacağı iş kalmaz
         _vm.SeedRunDocument(text => Shell.ConsoleViewControl.ShowRunDocument(text));
         if (_vm.GetActiveLineCount() == 0) Shell.ConsoleViewControl.ShowReady(); // boş run → idle "ready"
     }

@@ -74,7 +74,14 @@ public partial class MainWindow
 
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:
     /// <c>ShowRunConsole</c>, <c>OnSelectedProjectChangedAsync</c>): ekrandaki belge modelin (<c>RunViewModel</c> tamponu)
-    /// gerisinde. Başlık ve VM tarafı yine güncellenir; belgeyi <see cref="ResyncAfterShow"/> kurar ve bayrağı sıfırlar.</summary>
+    /// gerisinde. Başlık ve VM tarafı yine güncellenir; belgeyi <see cref="ResyncAfterShow"/> kurar ve bayrağı sıfırlar.
+    ///
+    /// <para>Bayrak kalkık kaldıkça batch'ler belgeye YAZILMAZ: gösterim ile Loaded-öncelikli dönüş kurulumu arasındaki aralık
+    /// dahil (<c>AppendConsoleBatch</c> kapısı: gizli YA DA bayrak kalkık) — bayat belgeye basılan bir batch, dönüş kurulumu
+    /// belgeyi tam metinden yeniden kurunca boşa giderdi. Belgeyi modelin tam metninden kuran görünür yollar, mod geçişi
+    /// (<c>ShowRunConsole</c>) ve proje belgesi (<c>OnSelectedProjectChangedAsync</c>), bayrağı da düşürür: dönüş kurulumu o
+    /// belgeyi ikinci kez kurmaz. Temizlik (<c>ConsoleCleared</c>) düşürmez: belgeyi boşaltır ama boş anlatının "ready"
+    /// satırını kurmaz, onu dönüş kurulumu kurar.</para></summary>
     private bool _consoleStaleWhileHidden;
 
     /// <summary>Gizliyken grafa itilmeyen bir statü, koşu fazı, seçim ya da filtre yenilemesi oldu

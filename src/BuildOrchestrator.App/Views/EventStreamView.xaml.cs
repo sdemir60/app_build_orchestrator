@@ -169,12 +169,14 @@ public partial class EventStreamView : UserControl
     /// "oynandı" işaretlenir (<c>GlowPlayed</c>, <c>TypePlayed</c>): gizliyken akanlar hiçbir görünümde oynamadı ve dönüşte
     /// kurulan satırlar GEÇMİŞTİR — işaretlenmezse her yeşil "done" satırı yüklenirken 1,1 sn'lik parıltısını başlatırdı
     /// (en çok 150 satır aynı anda; karar 15: tepsideyken animasyon yok, pencere gelince ekran tek seferde kurulur).
+    /// Bayrağı tam kurulum (<see cref="RebuildRows"/>) düşürür: gizliyken DataContext yeniden bağlandıysa satırlar o anda
+    /// modelden kurulmuştur ve dönüş onları ikinci kez kurmaz.
     /// </summary>
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
         if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
-        _staleWhileHidden = false;
+        // Bayrağı RebuildRows düşürür (tam kurulum kendi bayrağını kendisi sıfırlar).
         if (_vm is not null)
             foreach (var item in _vm.StreamEvents) { item.GlowPlayed = true; item.TypePlayed = true; }
         RebuildRows();
@@ -263,6 +265,9 @@ public partial class EventStreamView : UserControl
 
     private void RebuildRows()
     {
+        // Tam kurulum bayrağı kendisi düşürür (liste, şerit, satır, menü ve chip idiomu): gizliyken DataContext yeniden
+        // bağlandıysa satırlar burada modelden kurulur ve dönüş (OnPropertyChanged) onları ikinci kez kurmaz.
+        _staleWhileHidden = false;
         // Yazan satır atılacaklar arasındadır: DataContext'i kopunca OnTypeTick (VM yok) erken döner ve yazımı hiç bitirmez —
         // saat yalnız Unloaded ile durur; ağaçtan Unloaded gelmeyen (hiç yüklenmemiş) satırda Render önceliğinde sonsuza dek
         // tıklardı. Kural Add dalındakinin AYNISIDIR (yeni satır gelince önceki FinishTyping ile kapatılır) ve DataContext'ten

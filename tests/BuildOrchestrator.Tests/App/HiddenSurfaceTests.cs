@@ -291,6 +291,103 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// [perf Faz A · final · M2] <b>Gösterim ile dönüş kurulumu arasında gelen batch bayat belgeye basılmaz.</b> Dönüş
+    /// kurulumu (<c>ResyncAfterShow</c>) Loaded önceliğiyle kuyruklanır; pompanın Normal öncelikli batch'i ondan ÖNCE
+    /// koşabilir. O anda belge hâlâ gizlenmeden önceki hâlindedir: batch ona basılsaydı boşa giderdi (dönüş kurulumu belgeyi
+    /// tam metinden yeniden kurar) ve belge kısa süre aradaki satırlar eksik kalırdı. Kapı bu yüzden yalnız pencerenin
+    /// gizliliğine değil ekranın bayatlığına da bakar: bayrak kalkık kaldıkça batch yalnız modelde (<c>RunViewModel</c>
+    /// tamponu) durur ve dönüş kurulumu hepsini TEK seferde yazar.
+    /// </summary>
+    [StaFact]
+    public void A_console_batch_that_arrives_between_the_show_and_the_resync_is_left_for_the_single_rebuild()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        window.SetSurfaceHidden(true);
+        MainWindowHost.LogLine(vm, "A", 1, "line 0");
+        window.AppendConsoleBatch("line 0\n", window.ConsoleReseedGen);      // gizliyken batch: belge bayat işaretlendi
+        int replacedBefore = console.RunDocumentReplacedCount;
+        string textBefore = console.EditorControl.Document.Text;
+        int docChanges = 0; console.EditorControl.Document.Changed += (_, _) => docChanges++;
+
+        window.SetSurfaceHidden(false);                                      // dönüş kurulumu Loaded önceliğiyle kuyrukta: POMPALANMADI
+        MainWindowHost.LogLine(vm, "A", 2, "line 1");
+        window.AppendConsoleBatch("line 1\n", window.ConsoleReseedGen);      // pompanın batch'i kurulumdan ÖNCE gelir
+
+        Assert.Equal(0, docChanges);                                         // KIRMIZI: bugün batch bayat belgeye basılır
+        Assert.Equal(textBefore, console.EditorControl.Document.Text);
+        Assert.Equal(replacedBefore, console.RunDocumentReplacedCount);
+
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
+
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);  // TEK yeniden kurulum
+        string[] lines = console.EditorControl.Document.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.TrimEnd('\r')).ToArray();
+        Assert.Single(lines, l => l.EndsWith("line 0"));                     // belge == model: ne çift ne kayıp satır
+        Assert.Single(lines, l => l.EndsWith("line 1"));
+        Assert.True(Array.FindIndex(lines, l => l.EndsWith("line 0")) < Array.FindIndex(lines, l => l.EndsWith("line 1")));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · final · O1] Belgeyi modelin tam metninden kuran görünür bir yol bayrağı da düşürür. Gösterimden sonra
+    /// ama dönüş kurulumundan önce bir mod geçişi (proje kartı kalkar → <c>ShowRunConsole</c>) belgeyi zaten kurar; bayrak
+    /// yerinde kalsaydı dönüş kurulumu belgeyi tilt sürerken ikinci kez, tilt'siz kurardı.
+    /// </summary>
+    [StaFact]
+    public void A_mode_switch_between_the_show_and_the_resync_leaves_the_resync_nothing_to_rebuild()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        vm.SelectProject(MainWindowHost.IdOf("A"));                          // proje kartı seçili: mod geçişinin kaynağı
+        Assert.NotNull(vm.SelectedProjectId);                                // ön-koşul
+        window.SetSurfaceHidden(true);
+        MainWindowHost.LogLine(vm, "A", 1, "line 0");
+        window.AppendConsoleBatch("line 0\n", window.ConsoleReseedGen);      // gizliyken batch: belge bayat işaretlendi
+        window.SetSurfaceHidden(false);                                      // dönüş kurulumu kuyrukta: POMPALANMADI
+        int replacedBefore = console.RunDocumentReplacedCount;
+
+        vm.SelectProject(null);                                              // kart kalktı → ShowRunConsole: görünür TAM kurulum
+
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);  // ön-koşul: mod geçişi belgeyi kurdu
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200));              // Loaded-öncelikli dönüş kurulumu koşar
+
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);  // KIRMIZI: bugün dönüş belgeyi ikinci kez kurar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · final · O1] Proje belgesi için <see cref="A_mode_switch_between_the_show_and_the_resync_leaves_the_resync_nothing_to_rebuild"/>
+    /// testinin eşi: gösterimden sonra ama dönüş kurulumundan önce bir proje kartı seçilir (<c>OnSelectedProjectChangedAsync</c>
+    /// → <c>PlayCascade</c>); belge o anda kurulduğu için dönüş kurulumunun yapacağı bir şey kalmaz. Belge örneği
+    /// (<c>ReplaceProjectDocument</c> her kurulumda yeni bir <c>TextDocument</c> koyar) ikinci kurulumun belirtisidir.
+    /// </summary>
+    [StaFact]
+    public void A_project_log_opened_between_the_show_and_the_resync_leaves_the_resync_nothing_to_rebuild()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        var row = MainWindowHost.ProjectOf(vm, "A");
+        vm.ActiveProjectId = row.Id;                                         // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
+        window.SetSurfaceHidden(true);
+        window.AppendConsoleBatch("noise\n", window.ConsoleReseedGen);       // gizliyken batch: belge bayat işaretlendi
+        window.SetSurfaceHidden(false);                                      // dönüş kurulumu kuyrukta: POMPALANMADI
+        var documentBefore = console.EditorControl.Document;
+
+        vm.SelectProject(row.Id);                                            // kart seçildi → görünür TAM kurulum (PlayCascade)
+
+        var documentAfterSelect = console.EditorControl.Document;
+        Assert.NotSame(documentBefore, documentAfterSelect);                 // ön-koşul: seçim yolu proje belgesini kurdu
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200));              // Loaded-öncelikli dönüş kurulumu koşar
+
+        Assert.Same(documentAfterSelect, console.EditorControl.Document);    // KIRMIZI: bugün dönüş proje belgesini ikinci kez kurar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A3] <b>Gizli pencerede olay akışı satır kurmaz.</b> Tepsideyken derlenen bir koşunun her olayı
     /// kimsenin görmediği akışa satır ekliyor, sayacı yazıyor ve en yeni satırın daktilosunu başlatıyordu. Satırların
     /// kaynağı model (<c>RunViewModel.StreamEvents</c>; 150 kırpma kuralı da onda) zaten tam durur: görünüm gizliyken
@@ -328,6 +425,36 @@ public class HiddenSurfaceTests
         Assert.Equal(vm.StreamEvents.Count, view.Rows.Count);  // tek geçişte modelden kuruldu
         Assert.Equal($"{vm.StreamEventCount} events", view.Counter.Text);
         Assert.All(rowsBefore, row => Assert.Null(row.DataContext)); // atılan satırlar öğe VM'lerinden ayrıldı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · final · O1] Olay akışı için <see cref="A_ribbon_that_is_rebound_while_hidden_is_not_rebuilt_a_second_time_on_show"/>
+    /// testinin eşi: gizliyken bayrağı bir olay kaldırır, sonra görünümün DataContext'i yeniden bağlanır
+    /// (<c>RebuildRows</c> tam kurulum: satırlar modelden kurulur). Bayrak yerinde kalsaydı dönüş satırları bir kez daha
+    /// kurardı ve ilk kurulumu boşa çıkarırdı.
+    /// </summary>
+    [StaFact]
+    public void An_event_stream_that_is_rebound_while_hidden_is_not_rebuilt_a_second_time_on_show()
+    {
+        using var dir = new TempDir();
+        string[] names = MainWindowHost.ProjectNames(40);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
+        var view = window.Shell.EventStreamControl;
+        window.SetSurfaceHidden(true);
+        MainWindowHost.RunBuild(vm, names);                                  // gizliyken olaylar akar: akış bayat işaretlendi
+        Assert.NotEmpty(vm.StreamEvents);                                    // ön-koşul: model akışa satır üretti
+        view.DataContext = null;                                             // yeniden bağlama: DataContextChanged tam kurulumu (RebuildRows) koşar
+        view.DataContext = vm;
+        var rowsAfterRebind = view.Rows;
+        Assert.Equal(vm.StreamEvents.Count, rowsAfterRebind.Count);          // ön-koşul: yeniden bağlama satırları modelden kurdu
+
+        window.SetSurfaceHidden(false);
+
+        Assert.Equal(rowsAfterRebind.Count, view.Rows.Count);
+        Assert.All(view.Rows.Zip(rowsAfterRebind),                           // KIRMIZI: bayrak düşmediği için dönüş satırları bir kez daha kurar
+            pair => Assert.Same(pair.Second, pair.First));
+        Assert.All(rowsAfterRebind, row => Assert.NotNull(row.DataContext)); // ilk kurulum boşa çıkarılmadı
         GC.KeepAlive(window);
     }
 
