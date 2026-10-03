@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -140,8 +141,11 @@ public static class ApiSurfaceHash
         interfaces.Sort(StringComparer.Ordinal);
         if (interfaces.Count > 0) text.Append(" impl=").Append(string.Join(",", interfaces));
 
-        AppendGenericParameters(reader, type.GetGenericParameters(), provider, text);
-        text.Append('\n');
+        // Generic parametre öznitelikleri ([DynamicallyAccessedMembers], nullable...) ana satırdan SONRA, ayrı satırlardır.
+        var genericParameterAttributes = new StringBuilder();
+        AppendGenericParameters(reader, type.GetGenericParameters(), provider, text, genericParameterAttributes,
+            indent: "");
+        text.Append('\n').Append(genericParameterAttributes);
         AppendAttributes(reader, type.GetCustomAttributes(), text);
 
         var members = new List<string>();
@@ -220,6 +224,10 @@ public static class ApiSurfaceHash
             .Append(" attrs=").Append((int)method.Attributes);
 
         // Parametre ADLARI ve varsayılanları yüzeydir: named argument ve optional çağrılar onlara bağlanır.
+        // Öznitelikleri de (params, decimal/DateTime varsayılanı — Constant tablosunda DEĞİL öznitelikte durur —,
+        // Caller*, Dynamic, tuple adları, nullable...) çağrı biçimini belirler; ana satırdan SONRA ayrı satırlardır.
+        // Dönüş değeri SequenceNumber 0'lı satırdır ve aynı döngüden geçer.
+        var parameterAttributes = new StringBuilder();
         foreach (var handle in method.GetParameters())
         {
             var parameter = reader.GetParameter(handle);
@@ -227,9 +235,13 @@ public static class ApiSurfaceHash
                 .Append(reader.GetString(parameter.Name))
                 .Append('/').Append((int)parameter.Attributes)
                 .Append(RenderConstant(reader, parameter.GetDefaultValue()));
+            AppendAttributes(reader, parameter.GetCustomAttributes(), parameterAttributes,
+                indent: "  p" + parameter.SequenceNumber.ToString(CultureInfo.InvariantCulture) + " ");
         }
-        AppendGenericParameters(reader, method.GetGenericParameters(), provider, line);
-        line.Append('\n');
+        var genericParameterAttributes = new StringBuilder();
+        AppendGenericParameters(reader, method.GetGenericParameters(), provider, line, genericParameterAttributes,
+            indent: "  ");
+        line.Append('\n').Append(parameterAttributes).Append(genericParameterAttributes);
         AppendAttributes(reader, method.GetCustomAttributes(), line, indent: "  ");
         return line.ToString();
     }
@@ -244,8 +256,11 @@ public static class ApiSurfaceHash
         return false;
     }
 
+    /// <summary>Generic parametrenin adı, bayrakları ve kısıtları <paramref name="text"/>'e (üyenin ana satırına)
+    /// yazılır; ÖZNİTELİKLERİ <paramref name="attributeLines"/>'a ayrı satırlar olarak — çağıran bunları ana satırın
+    /// satır sonundan SONRA ekler. <paramref name="indent"/> o üyenin öznitelik satırı girintisidir.</summary>
     private static void AppendGenericParameters(MetadataReader reader, GenericParameterHandleCollection handles,
-        NameProvider provider, StringBuilder text)
+        NameProvider provider, StringBuilder text, StringBuilder attributeLines, string indent)
     {
         foreach (var handle in handles)
         {
@@ -258,6 +273,8 @@ public static class ApiSurfaceHash
                     reader.GetGenericParameterConstraint(constraintHandle).Type, provider));
             constraints.Sort(StringComparer.Ordinal);
             if (constraints.Count > 0) text.Append(':').Append(string.Join("&", constraints));
+            AppendAttributes(reader, parameter.GetCustomAttributes(), attributeLines,
+                indent: indent + "gp" + parameter.Index.ToString(CultureInfo.InvariantCulture) + " ");
         }
     }
 

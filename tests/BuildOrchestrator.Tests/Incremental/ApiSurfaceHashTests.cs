@@ -1,6 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using BuildOrchestrator.Core.Incremental;
 
 namespace BuildOrchestrator.Tests.Incremental;
@@ -50,6 +52,36 @@ public class ApiSurfaceHashTests
 
     // Strong-name işareti: içerik değil VARLIĞI önemli — metadata'ya public key blob'u olarak yazılır.
     private static byte[] FakePublicKey() => [.. Enumerable.Range(1, 160).Select(i => (byte)i)];
+
+    /// <summary>Gövdesi yalnız <c>ret</c> olan public static void metot; çağıran dönen builder'a parametre ya da
+    /// generic parametre ekleyip öznitelik yazabilir.</summary>
+    private static MethodBuilder StaticVoid(TypeBuilder type, string name, params Type[] parameterTypes)
+    {
+        var method = type.DefineMethod(name, MethodAttributes.Public | MethodAttributes.Static, typeof(void), parameterTypes);
+        method.GetILGenerator().Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>Tek parametreli metot: <paramref name="decorate"/> parametreye (SequenceNumber 1),
+    /// <paramref name="decorateReturnValue"/> dönüş değerine (SequenceNumber 0) öznitelik yazar. Dönüş değeri satırı
+    /// HER ZAMAN tanımlanır: iki varyantın tek farkı öznitelik olsun — satırın varlığı (zaten özetlenen ad/bayrak
+    /// metni) olmasın, yoksa test düzeltmeden ÖNCE de geçerdi.</summary>
+    private static void MethodWithParameter(TypeBuilder type, string name, Type parameterType,
+        Action<ParameterBuilder>? decorate = null, Action<ParameterBuilder>? decorateReturnValue = null)
+    {
+        var method = StaticVoid(type, name, parameterType);
+        var returnValue = method.DefineParameter(0, ParameterAttributes.None, null);
+        var parameter = method.DefineParameter(1, ParameterAttributes.None, "value");
+        decorateReturnValue?.Invoke(returnValue);
+        decorate?.Invoke(parameter);
+    }
+
+    private static CustomAttributeBuilder Attribute<T>(params object[] args) where T : Attribute =>
+        new(typeof(T).GetConstructor(args.Select(a => a.GetType()).ToArray())!, args);
+
+    /// <summary>Generic parametrede gerçekte görülen bir öznitelik (<c>[DynamicallyAccessedMembers]</c> T).</summary>
+    private static CustomAttributeBuilder GenericParameterAnnotation() =>
+        Attribute<DynamicallyAccessedMembersAttribute>(DynamicallyAccessedMemberTypes.PublicConstructors);
 
     [Fact]
     public void same_declarations_with_different_bodies_hash_identically()
@@ -126,6 +158,71 @@ public class ApiSurfaceHashTests
         string? with = HashOf(Assembly(t => Method(t, "M", 1), typeAttributes: [obsolete]));
 
         Assert.NotEqual(without, with);
+    }
+
+    [Fact] // params → ParamArrayAttribute: çağrı biçimi (genişletilmiş form) değişir.
+    public void a_params_modifier_changes_the_hash()
+    {
+        string? plain = HashOf(Assembly(t => MethodWithParameter(t, "Sum", typeof(int[]))));
+        string? withParams = HashOf(Assembly(t => MethodWithParameter(t, "Sum", typeof(int[]),
+            p => p.SetCustomAttribute(Attribute<ParamArrayAttribute>()))));
+
+        Assert.NotEqual(plain, withParams);
+    }
+
+    [Fact] // decimal varsayılanı Constant tablosunda DEĞİL, parametredeki DecimalConstantAttribute'tadır.
+    public void a_decimal_default_value_changes_the_hash()
+    {
+        static byte[] Rate(uint low) => Assembly(t => MethodWithParameter(t, "Rate", typeof(decimal),
+            p => p.SetCustomAttribute(Attribute<DecimalConstantAttribute>((byte)2, (byte)0, (uint)0, (uint)0, low))));
+
+        Assert.NotEqual(HashOf(Rate(18)), HashOf(Rate(20)));
+        // Aynı varsayılan iki AYRI emit'te aynı özeti verir: yeni satırlar MVID/sıra gibi oynak bir şey taşımaz.
+        Assert.Equal(HashOf(Rate(18)), HashOf(Rate(18)));
+    }
+
+    [Fact] // [CallerMemberName] çağıranın derleyicisine ne dolduracağını söyler — yüzeydir.
+    public void a_caller_info_attribute_changes_the_hash()
+    {
+        string? plain = HashOf(Assembly(t => MethodWithParameter(t, "Who", typeof(string))));
+        string? caller = HashOf(Assembly(t => MethodWithParameter(t, "Who", typeof(string),
+            p => p.SetCustomAttribute(Attribute<CallerMemberNameAttribute>()))));
+
+        Assert.NotEqual(plain, caller);
+    }
+
+    [Fact] // Tip generic parametresi: [DynamicallyAccessedMembers] T gibi — RenderType yolu.
+    public void a_generic_parameter_attribute_changes_the_hash()
+    {
+        static byte[] Generic(bool annotated) => Assembly(t =>
+        {
+            var parameter = t.DefineGenericParameters("T")[0];
+            if (annotated) parameter.SetCustomAttribute(GenericParameterAnnotation());
+        });
+
+        Assert.NotEqual(HashOf(Generic(annotated: false)), HashOf(Generic(annotated: true)));
+    }
+
+    [Fact] // Metot generic parametresi ayrı yoldan (RenderMethod) yazılır — tip yolundan bağımsız sınanır.
+    public void a_method_generic_parameter_attribute_changes_the_hash()
+    {
+        static byte[] Generic(bool annotated) => Assembly(t =>
+        {
+            var parameter = StaticVoid(t, "Create").DefineGenericParameters("T")[0];
+            if (annotated) parameter.SetCustomAttribute(GenericParameterAnnotation());
+        });
+
+        Assert.NotEqual(HashOf(Generic(annotated: false)), HashOf(Generic(annotated: true)));
+    }
+
+    [Fact] // [return: ...] parametre tablosunda SequenceNumber 0 satırına yazılır; satır iki varyantta da var.
+    public void a_return_value_attribute_changes_the_hash()
+    {
+        string? plain = HashOf(Assembly(t => MethodWithParameter(t, "Get", typeof(int))));
+        string? annotated = HashOf(Assembly(t => MethodWithParameter(t, "Get", typeof(int),
+            decorateReturnValue: r => r.SetCustomAttribute(Attribute<NotNullAttribute>()))));
+
+        Assert.NotEqual(plain, annotated);
     }
 
     [Fact]
