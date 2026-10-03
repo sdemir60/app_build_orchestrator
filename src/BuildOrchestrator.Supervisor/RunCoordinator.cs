@@ -1172,7 +1172,7 @@ public sealed class RunCoordinator(
         }
         catch (OperationCanceledException)
         {
-            failReason = "stopped";
+            failReason = FailureReasons.Stopped;
             failLogTail = " (cancelled)"; // decision.log metni korunur: süre değil, iptal edildiği yazılır
         }
         catch (Exception ex)
@@ -1563,7 +1563,7 @@ public sealed class RunCoordinator(
         var decision = CycleRoundDecision.Continue;
         // Kesilme gerekçesi: stop/iptal "stopped", beklenmeyen hata kendi metnini taşır — ikisi AYIRT EDİLİR
         // kalır (tekil proje yolundaki failReason ayrımıyla aynı).
-        string interruptedReason = "stopped";
+        string interruptedReason = FailureReasons.Stopped;
         // [Task 3] finally'deki RecordCycleOutcome çağrısına geçecek — try içinde tanımlanırsa scope dışına
         // taşmazlardı, decision'la AYNI kapsamda dururlar.
         int roundsRun = 0;
@@ -2317,10 +2317,10 @@ public sealed class RunCoordinator(
         // (OperationCanceledException DEĞİL) — bu, kullanıcının bilinçli Stop'udur, projenin hatası değil.
         lock (_gate)
         {
-            if (_stopKind == StopKind.Hard) return "stopped";
+            if (_stopKind == StopKind.Hard) return FailureReasons.Stopped;
         }
         if (invoke.TimedOut) return "timeout";
-        if (invoke.Killed) return "stopped";
+        if (invoke.Killed) return FailureReasons.Stopped;
         // [spec 2026-09-18 §1-14] Önek TEK kaynaktan: FailureClassification.IsCompilerFailure aynı sabiti okur —
         // literal iki yerde tanımlanmaz (kopya YASAK, CLAUDE.md).
         return string.Format(CultureInfo.InvariantCulture, "{0}{1}", FailureClassification.ExitPrefix, invoke.ExitCode);

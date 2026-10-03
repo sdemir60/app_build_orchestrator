@@ -5847,6 +5847,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Command/event records, JSON options | `Contracts/Ipc/IpcMessages.cs` |
 | Skip reason literals — single source read by Core, Supervisor and App | `Contracts/Ipc/SkipReasons.cs` |
+| The *stopped* failure reason (the user's own Stop) — single source the Supervisor writes and the App reads | `Contracts/Ipc/FailureReasons.cs` |
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |

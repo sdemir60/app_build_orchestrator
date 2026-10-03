@@ -1550,17 +1550,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// <see cref="HardStoppedLine"/>'ın girdisi; her hard talebinde sıfırlanır.</summary>
     private int _hardTerminated;
 
-    /// <summary>Motorun "kullanıcı durdurdu" nedeni (<c>projectFailed.Reason</c>): hard stop'ta uçuştaki her projenin ve kill
-    /// edilen bir child'ın nedeni. Sözleşmede bu değer için bir sabit yoktur (neden serbest metindir: "exit N" · "timeout" ·
-    /// "stopped"); App'te okunduğu TEK yer burasıdır.</summary>
-    private const string StoppedReason = "stopped";
-
     /// <summary>[Stop now · M1] Hard stop istendikten SONRA gelen <c>failed("stopped")</c> sonucu sonlandırılmış bir derlemedir ve
     /// sayılır. Talep anındaki uçuş sayısı yanlış sayıdır: motor hard'ı sahiplenmeden önce biten bir proje (ya da drain'in
     /// son projesi) başarıyla ya da kendi hatasıyla döner ve sonlandırılmış sayılmaz.</summary>
     private void NoteTerminated(string reason)
     {
-        if (HardStopRequested && string.Equals(reason, StoppedReason, StringComparison.Ordinal)) _hardTerminated++;
+        if (HardStopRequested && string.Equals(reason, FailureReasons.Stopped, StringComparison.Ordinal)) _hardTerminated++;
     }
 
     // [Stop now] Kapı hard stop'a kadar açıktır: Stopping'de ikinci basış hard stop'tur ("Stop now") ve hard gidince

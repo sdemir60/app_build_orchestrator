@@ -712,13 +712,12 @@ public partial class ActionBar : UserControl
 
         // Sync: buton IsEnabled=hasWs, komut CanExecute'i ButtonBase AND'ler → hasWs && !running.
         PART_Sync.IsEnabled = hasWs;
-        // Build split-button: repo + !syncing (BuildApp.jsx:1594); primary komut running'i ayrıca kısar. Sync sürerken
-        // (faz Syncing) tümden söner. Fazı Syncing olmayan işlerde (görünmeyen Sync, Clean, Optimize, checkout, pull) kapıyı
-        // komut kurar: birincil yarı CanExecute'u AND'ler, chevron birincil yarıyı izler (şablon: PART_Menu.IsEnabled ←
-        // PART_Primary.IsEnabled); açık menüyü OnBuildGateChanged kapatır. İş sürerken koşu komutları kapalıdır, basış
-        // kuyruğa alınmaz.
-        bool syncing = _vm?.Phase == AppPhase.Syncing;
-        PART_Split.IsEnabled = hasWs && !syncing;
+        // Build split-button: yalnız workspace (BuildApp.jsx:1594). İş sürerken (görünür ya da görünmeyen Sync, Clean,
+        // Optimize, checkout, pull, koşu) kapıyı komut kurar: birincil yarı BuildCommand.CanExecute'u AND'ler, chevron
+        // birincil yarıyı izler (şablon: PART_Menu.IsEnabled ← PART_Primary.IsEnabled); açık menüyü OnBuildGateChanged
+        // kapatır. Görünür Sync'i (faz Syncing) ayrıca okumak gerekmez: kapı onu da kapatır. İş sürerken koşu komutları
+        // kapalıdır, basış kuyruğa alınmaz.
+        PART_Split.IsEnabled = hasWs;
     }
 
     private static string Inv(int n) => n.ToString(CultureInfo.InvariantCulture);
