@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Text;
 using System.Windows;
+using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -545,7 +547,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
-        var row = ProjectOf(vm, "A");
+        var row = MainWindowHost.ProjectOf(vm, "A");
         var emptyState = ConsoleEmptyState.ForEmptyLog(row);
         Assert.NotEmpty(emptyState);                      // ön-koşul: boş log sayfayı boş bırakmaz
         vm.ActiveProjectId = row.Id;                      // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
@@ -683,10 +685,6 @@ public class HiddenSurfaceTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>[perf Faz A temizlik] <paramref name="name"/> projesinin modeli (<c>vm.Projects</c> öğesi; kimlik <see cref="MainWindowHost.IdOf"/>).</summary>
-    private static ProjectRowViewModel ProjectOf(RunViewModel vm, string name) =>
-        vm.Projects.Single(p => p.Id == MainWindowHost.IdOf(name));
-
     /// <summary>[perf Faz A temizlik] <paramref name="model"/>'in gerçek kabuğun listesindeki satır görünümü. Container'lar üretilmiş
     /// olmalıdır (<c>MainWindowHost.Realize</c>); satır, DataContext'i modelle eşlenerek bulunur.</summary>
     private static ProjectRow RowViewOf(StickyLayerList list, ProjectRowViewModel model) =>
@@ -706,7 +704,7 @@ public class HiddenSurfaceTests
         var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window); // satır container'ları üretilir (liste topolojiden SONRA doldu)
         Assert.NotEmpty(list.RevealRows);   // ön-koşul: satırlar gerçek ağaçta kuruldu
-        var rowVm = ProjectOf(vm, "P1");
+        var rowVm = MainWindowHost.ProjectOf(vm, "P1");
         var row = RowViewOf(list, rowVm);
         int allBefore = row.ApplyAllCount, durationBefore = row.ApplyDurationCount;
         var glyphBefore = row.Glyph.Status;
@@ -740,7 +738,7 @@ public class HiddenSurfaceTests
         string[] names = MainWindowHost.ProjectNames(3);
         var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var row = RowViewOf(list, ProjectOf(vm, "P1"));
+        var row = RowViewOf(list, MainWindowHost.ProjectOf(vm, "P1"));
         row.AnimationsEnabledProvider = () => true;                 // sönüm oynayabilsin (headless varsayılanı reduced-motion)
         Assert.Equal(StartMode.RingOpacity, row.Dot.Ring.Opacity);  // ön-koşul: son çizilen hâl başlangıç modu (halka)
         window.SetSurfaceHidden(true);
@@ -767,10 +765,10 @@ public class HiddenSurfaceTests
         string[] names = MainWindowHost.ProjectNames(3);
         var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var row = RowViewOf(list, ProjectOf(vm, "P1"));
+        var row = RowViewOf(list, MainWindowHost.ProjectOf(vm, "P1"));
         window.SetSurfaceHidden(true);
         MainWindowHost.RunBuild(vm, names);                                            // satır bayat: bildirim bayrağı kaldırdı
-        row.DataContext = ProjectOf(vm, "P2");                                         // container yeniden kullanımı: yeni model, ApplyAll tam kurulum
+        row.DataContext = MainWindowHost.ProjectOf(vm, "P2");                          // container yeniden kullanımı: yeni model, ApplyAll tam kurulum
         int appliesAfterRebind = row.ApplyAllCount;
 
         window.SetSurfaceHidden(false);
@@ -792,9 +790,9 @@ public class HiddenSurfaceTests
         string[] names = MainWindowHost.ProjectNames(3);
         var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var hiddenVm = ProjectOf(vm, "P1");
+        var hiddenVm = MainWindowHost.ProjectOf(vm, "P1");
         var hiddenRow = RowViewOf(list, hiddenVm);
-        var visibleRow = RowViewOf(list, ProjectOf(vm, "P2"));
+        var visibleRow = RowViewOf(list, MainWindowHost.ProjectOf(vm, "P2"));
         hiddenRow.AnimationsEnabledProvider = () => true;
         visibleRow.AnimationsEnabledProvider = () => true;
         MainWindowHost.PreviewBuild(vm, "P1", "P2");
@@ -952,7 +950,7 @@ public class HiddenSurfaceTests
     /// ortalaması var), <c>P0</c> derleniyor (satırın canlı süresi var), kalanlar sırada. Saat bu kurulumda
     /// <b>kımıldamaz</b>: koşunun da satırın da başlangıcı aynı andır; ilerlemesini <paramref name="nowMs"/>'i süren test belirler.
     /// </summary>
-    private static (BuildOrchestrator.App.MainWindow Window, RunViewModel Vm) NewRunningWindow(TempDir dir, Func<long> nowMs)
+    private static (MainWindow Window, RunViewModel Vm) NewRunningWindow(TempDir dir, Func<long> nowMs)
     {
         string[] names = MainWindowHost.ProjectNames(4);
         var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, names);
@@ -976,7 +974,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm) = NewRunningWindow(dir, () => now);
-        var row = ProjectOf(vm, "P0");
+        var row = MainWindowHost.ProjectOf(vm, "P0");
         Assert.Equal(ProjectRowState.Started, row.State); // ön-koşul: satırın canlı süresi var
         long startedAtMs = now;                           // koşunun da satırın da başladığı an
         var header = window.Shell.ConsoleHeaderControl;
@@ -1018,7 +1016,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm) = NewRunningWindow(dir, () => now);
-        var row = ProjectOf(vm, "P0");
+        var row = MainWindowHost.ProjectOf(vm, "P0");
         var header = window.Shell.ConsoleHeaderControl;
         int lineWritesBefore = header.SetLineCountCalls;
         int frontierBefore = window.FrontierFollowCount;
@@ -1155,11 +1153,10 @@ public class HiddenSurfaceTests
     /// 300 log satırı, 3 sn'lik tikler (gerçek kabuğun tik gövdesi), bir konsol batch'i, her projenin başlayıp bitmesi ve koşunun
     /// bitişi — ve gerçekleşmiş kabuk içeriğinin TÜM görsel ağacında başta geçerli olan HER öğenin sonda da geçerli kaldığını,
     /// konsol belgesinin gizlendikten sonra hiç yeniden kurulmadığını sınar. İzlenen küme elle seçilmiş köklerden değil ağacın
-    /// tamamından türer: kapısı unutulmuş yeni bir yüzey de yakalanır. Yüzeyler ayrıca tek tek kanıtlanır (şerit, proje satırları,
-    /// olay akışı, konsol, konsol başlığı ve graf kümeye öğe katar): bir yüzey kümede hiç yoksa iddia o yüzey için boşta yeşil kalırdı.
-    /// Bir yüzeyin kapısı
-    /// kalkarsa o yüzeyin metni/chip'i/satırı yazılır, öğeleri geçersizlenir ve test kırmızıdır (şerit, proje satırları, olay akışı
-    /// ve konsol kapıları için kırmızısı gösterildi).
+    /// tamamından türer: kapısı unutulmuş yeni bir yüzey de yakalanır. Yüzeyler ayrıca tek tek kanıtlanır (şerit ve proje satırları
+    /// kümeye girer; olay akışı, konsol, konsol başlığı ve graf kökün kendisi dışında en az bir torunla girer): bir yüzey kümede hiç
+    /// yoksa iddia o yüzey için boşta yeşil kalırdı. Bir yüzeyin kapısı kalkarsa o yüzeyin metni/chip'i/satırı yazılır, öğeleri
+    /// geçersizlenir ve test kırmızıdır (şerit, proje satırları, olay akışı ve konsol kapıları için kırmızısı gösterildi).
     ///
     /// <para>Pin yalnız headless ağaçta, dispatcher pompalanmadan görünen geçersizlemeyi yakalar: orada layout turu koşmaz ve
     /// ölçüm "geçersizlenmedi"dir. Bu pinin görmediği işleri (ör. grafa statü itişi) ilgili kapının kendi testi sınar;
@@ -1168,7 +1165,10 @@ public class HiddenSurfaceTests
     ///
     /// <para><b>Pin dışı yüzeyler:</b> headless <c>Realize</c>'da <c>Loaded</c> ateşlenmez; görünümünü <c>Loaded</c>'da kuran
     /// yüzeyler (alt çubuğun sayaç chip'leri) bu ağaçta hiç kurulmaz ve burada boşta yeşil kalırdı. Onları gerçek bir ekran dışı
-    /// pencerede <see cref="The_action_bar_counter_chips_are_not_refreshed_while_hidden_and_catch_up_on_show"/> pinler.</para>
+    /// pencerede <see cref="The_action_bar_counter_chips_are_not_refreshed_while_hidden_and_catch_up_on_show"/> pinler. Popup içeriği
+    /// de pin dışıdır: Build menüsü <c>SplitButton.MenuContent</c>'tir ve popup kapalıyken (gizli pencerede hep) pencerenin görsel
+    /// ağacında değildir — kalıtsal sinyal ona inmez (<c>ActionBar</c> değeri menüye açıkça aktarır) ve içeriği izlenen kümeye hiç
+    /// girmez. Onu <see cref="The_build_menu_is_not_rebuilt_while_hidden_and_follows_a_changed_total_once_on_show"/> pinler.</para>
     /// </summary>
     [StaFact]
     public void Run_events_and_console_batches_leave_the_realized_shell_measure_valid_while_the_surface_is_hidden()
@@ -1185,13 +1185,16 @@ public class HiddenSurfaceTests
         Assert.True(gated.Contains(shell.Ribbon), "ön-koşul: şerit ölçülmüş");
         Assert.True(list.RevealRows.Any(row => gated.Contains(row)), "ön-koşul: gerçekleşmiş proje satırları ölçülmüş");
         // Her yüzey ayrı kanıtlanır: kümede o yüzeyden hiç öğe yoksa (headless'ta çökük ya da ölçülmemiş) iddia o yüzey için boşta
-        // yeşil kalırdı. Eksik yüzeylerin adları tek iddiada hepsiyle birlikte bildirilir.
+        // yeşil kalırdı. Kökün kendisi yetmez: kök ölçülmüş olsa da içinin ölçüldüğünü göstermez, oysa kapısı unutulmuş bir yazım
+        // içteki bir öğeyi (metin, satır) geçersizler — bu yüzden kökün DIŞINDA en az bir torun kümede olmalıdır. Eksik
+        // yüzeylerin adları tek iddiada hepsiyle birlikte bildirilir.
         var surfaces = new (string Name, UIElement Root)[]
         {
             ("event stream", shell.EventStreamControl), ("console", shell.ConsoleViewControl),
             ("console header", shell.ConsoleHeaderControl), ("graph", shell.GraphHost),
         };
-        Assert.Empty(surfaces.Where(s => !gated.Any(e => DsResources.IsSelfOrDescendantOf(e, s.Root))).Select(s => s.Name));
+        Assert.Empty(surfaces.Where(s => !gated.Any(e => !ReferenceEquals(e, s.Root) && DsResources.IsSelfOrDescendantOf(e, s.Root)))
+            .Select(s => s.Name));
 
         MainWindowHost.PreviewBuild(vm, names);                            // motorun planı
         MainWindowHost.StartBuild(vm, names);                              // runStarted
@@ -1200,7 +1203,8 @@ public class HiddenSurfaceTests
         for (int i = 0; i < 15; i++) window.OnElapsedTick();               // 3 sn'lik 200 ms tikler (üretimdeki tik gövdesi)
         window.AppendConsoleBatch(string.Join("", Enumerable.Range(0, 300).Select(i => $"line {i}\n")), window.ConsoleReseedGen);
         MainWindowHost.SucceedProject(vm, names[0]);                       // derlenen satır biter: projectStarted ikinci kez gelmez
-        MainWindowHost.FinishBuild(vm, names[1..]);                        // kalan her proje BİR kez başlar ve biter; runCompleted
+        MainWindowHost.BuildProjects(vm, names[1..]);                      // kalan her proje BİR kez başlar ve biter
+        MainWindowHost.CompleteRun(vm, names.Length);                      // runCompleted: tüm projeler başarılı — Done satırı gerçek toplamı okur
 
         Assert.True(vm.StreamEvents.Count > 0 && vm.GetActiveLineCount() >= 300, "ön-koşul: olaylar ve log satırları modele ulaştı");
         Assert.True(content.IsMeasureValid && content.IsArrangeValid);
@@ -1228,7 +1232,7 @@ public class HiddenSurfaceTests
         // hiç tick etmez, batch'i üretimdeki hedefe test verir).
         string Emit(int count)
         {
-            var batch = new System.Text.StringBuilder();
+            var batch = new StringBuilder();
             for (int i = 0; i < count; i++)
             {
                 emitted++;
@@ -1327,7 +1331,7 @@ public class HiddenSurfaceTests
         string[] names = MainWindowHost.ProjectNames(3);
         var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var row = RowViewOf(list, ProjectOf(vm, "P1"));
+        var row = RowViewOf(list, MainWindowHost.ProjectOf(vm, "P1"));
         row.AnimationsEnabledProvider = () => true;                     // sönüm oynayabilsin (headless varsayılanı reduced-motion)
         Assert.Equal(StartMode.FaintOpacity, row.Stripe.Opacity);       // ön-koşul: son çizilen hâl başlangıç modu (soluk şerit)
         window.SetSurfaceHidden(true);

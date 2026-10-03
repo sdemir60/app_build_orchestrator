@@ -77,7 +77,7 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
     }
 
     [SkippableFact]
-    public async Task A_177_project_run_costs_this_much_UI_thread_time_hidden_and_visible()
+    public async Task An_OSYS_sized_project_run_costs_this_much_UI_thread_time_hidden_and_visible()
     {
         Skip.IfNot(Environment.GetEnvironmentVariable("BO_MEASURE_HIDDEN") == "1",
             "Opens a real offscreen window and pumps it for about 60 seconds — opt in with BO_MEASURE_HIDDEN=1.");

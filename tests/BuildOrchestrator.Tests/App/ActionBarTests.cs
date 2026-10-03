@@ -639,7 +639,7 @@ public partial class ActionBarTests
 
         var buildingIcon = Assert.IsType<Grid>(ChipIcon(bar.BuildingChip));
         Assert.IsType<Ellipse>(buildingIcon.Children[0]);
-        Assert.IsType<BuildingSpinner>(buildingIcon.Children[1]);
+        _ = ChipSpinner(bar.BuildingChip); // ikinci çocuk spinner: tür iddiası okuma yolunda (ChipSpinner)
 
         // [DEĞİŞEN KURAL — design v1.20.0 §2.7 · §1.4] Eski glyph'ler Succeeded ✓ · Failed ✗ · Skipped — idi.
         // Chip'ler artık durum yüzeyidir: güncel ✓, derlenecek kesikli daire ○, bozuk ✗. — yalnız run-story

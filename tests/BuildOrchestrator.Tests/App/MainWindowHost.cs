@@ -161,6 +161,11 @@ internal static class MainWindowHost
     /// <summary>Bir test projesinin <c>Id</c>'si (<see cref="Node"/> ile BİREBİR aynı kural).</summary>
     public static string IdOf(string name) => $@"C:\p\{name}.csproj";
 
+    /// <summary>Bir test projesinin satır modeli (<c>vm.Projects</c> öğesi; kimlik <see cref="IdOf"/>) — testlerin
+    /// <c>vm.Projects.Single(p => p.Id == IdOf(name))</c> deyimi tek yerde durur.</summary>
+    public static ProjectRowViewModel ProjectOf(RunViewModel vm, string name) =>
+        vm.Projects.Single(p => p.Id == IdOf(name));
+
     /// <summary>[design v1.23/v1.24 review C12] Pencerenin Esc'ine kullanıcı gibi basar: pencere düzeyindeki Esc
     /// bağlamasının komutu, üretimdeki yolun AYNISIYLA sürülür (<see cref="CommandPress.Press"/> — kapı kapalıysa
     /// hiçbir şey olmaz). WPF olay yönlendirmesi gerçek bir HWND olmadan güvenilir değildir, bu yüzden tuş olayı değil
@@ -210,7 +215,17 @@ internal static class MainWindowHost
         ArgumentNullException.ThrowIfNull(vm);
         ArgumentNullException.ThrowIfNull(names);
         BuildProjects(vm, names);
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, names.Length, 0, 0, 0, 100));
+        CompleteRun(vm, names.Length);
+    }
+
+    /// <summary>[perf Faz A temizlik] Koşu biter (<c>runCompleted</c>, tümü başarılı): <paramref name="succeeded"/> koşunun başarılı
+    /// proje sayısıdır ve olay akışının "Done" satırı ("N succeeded") onu okur — sayı koşunun gerçek toplamını taşımalıdır.
+    /// <see cref="FinishBuild"/> bunu çağırır; koşunun bir kısmını <see cref="StartProject"/>/<see cref="SucceedProject"/> ile ayrı
+    /// süren testler (gizli pencere pini) koşuyu bununla kapatır.</summary>
+    public static void CompleteRun(RunViewModel vm, int succeeded)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, succeeded, 0, 0, 0, 100));
     }
 
     /// <summary>[perf A3/A4 fix] Her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>); koşu BİTMEZ
