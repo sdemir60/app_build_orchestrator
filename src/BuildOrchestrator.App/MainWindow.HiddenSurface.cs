@@ -13,7 +13,7 @@ namespace BuildOrchestrator.App;
 /// bekletmesi (<see cref="ChoreographyMayPlay"/>), bitiş finali, grafa statü/faz/seçim itişleri
 /// (<see cref="_graphStaleWhileHidden"/>), olay akışı satırları (<c>EventStreamView</c> sinyali kendisi okur) ve konsol
 /// belgesi (batch'ler gizliyken yazılmaz; dönüşte <see cref="ResyncAfterShow"/> kurar), sticky şerit, Build menüsü ve proje
-/// satırları (her biri kendi bayrağıyla dönüşte tek geçişte yetişir) ve proje listesi (<see cref="_listStaleWhileHidden"/>).</para>
+/// satırları (her biri kendi bayrağıyla dönüşte tek geçişte yetişir), proje listesi (<see cref="_listStaleWhileHidden"/>) ve 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik bekçisi hariç — o gizliyken de koşar).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
@@ -85,6 +85,11 @@ public partial class MainWindow
     /// bundan bağımsızdır: her <c>ProjectRow</c> kendi bayrağıyla yetişir.</summary>
     private bool _listStaleWhileHidden;
 
+    /// <summary>Gizliyken 200 ms'lik tikin gövdesi atlandı (<c>OnElapsedTick</c>): canlı süreler (koşu süresi, building
+    /// satırların süresi, ETA) ve konsol başlığının satır sayacı modelin gerisinde. Motor sessizlik bekçisi bu bayrağa bağlı
+    /// DEĞİLDİR: gizliyken de her tikte koşar. <see cref="ResyncAfterShow"/> sıfırlar.</summary>
+    private bool _tickStaleWhileHidden;
+
     /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
     /// (<see cref="DispatcherPriority.Loaded"/>). Gizliyken biriken ekran işi burada tek seferde kurulur;
     /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için onlardan kurulacak bir
@@ -108,6 +113,11 @@ public partial class MainWindow
     /// değişimin kademeli belirişi geriye dönük oynanmaz. İmza <c>ApplyProjectGroups</c>'ta yazıldığı için ardından
     /// <c>RefreshVisibleRows</c> çağırmak boş bir karşılaştırma olurdu. Sticky şerit, Build menüsü ve satırlar burada DEĞİL:
     /// kalıtsal sinyalin kendi değişiminde (<c>OnPropertyChanged</c>) her biri kendi bayrağıyla yetişir.</para>
+    ///
+    /// <para><b>Tik:</b> gizliyken 200 ms'lik tik yalnız motor sessizlik bekçisini koşturdu
+    /// (<c>RunViewModel.TickElapsed(false)</c>); canlı süreler ve konsol başlığının satır sayacı yazılmadı
+    /// (<see cref="_tickStaleWhileHidden"/>). Dönüşte tek <c>TickElapsed(true)</c> hepsini yetiştirir ve sayaç yenilenir —
+    /// kullanıcı bir sonraki tiki beklemeden güncel süreyi görür.</para>
     ///
     /// <para><b>Gizliyken koşmaz:</b> göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir (kullanıcı
     /// pencereyi hemen geri indirir). O durumda burası hiçbir şey yapmaz ve "ekran bayat" bayrakları yerinde kalır:
@@ -150,6 +160,13 @@ public partial class MainWindow
             PushGraphStatuses();
             PushGraphSelection();
             RefreshGraphFilter();
+        }
+        if (_tickStaleWhileHidden)
+        {
+            _tickStaleWhileHidden = false;
+            // Gizliyken tik yalnız bekçiyi koşturdu: canlı süreler ve satır sayacı bir sonraki tiki beklemeden modele yetişir.
+            _vm.TickElapsed(true);
+            Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
         }
     }
 }

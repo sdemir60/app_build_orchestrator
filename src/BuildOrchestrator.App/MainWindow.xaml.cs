@@ -360,18 +360,7 @@ public partial class MainWindow : Window
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
         Activated += (_, _) => _vm.OnWindowActivated();
 
-        _elapsedTimer.Tick += (_, _) =>
-        {
-            _vm.TickElapsed();
-            // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
-            // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
-            Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
-            // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
-            // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
-            // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
-            // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
-            if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
-        };
+        _elapsedTimer.Tick += (_, _) => OnElapsedTick();
         _elapsedTimer.Start();
 
         // [T56/3a] Konsol modu ActiveProjectId'yi izler: null → anlatı başlığı. (Proje-loguna geçiş başlığı
@@ -821,6 +810,34 @@ public partial class MainWindow : Window
         _scrollArbiter.Resume(ScrollPanel.Frontier);
         int row = FrontierRowIndex(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
         if (row >= 0) Shell.ProjectsList.SelectRow(row);
+    }
+
+    /// <summary>
+    /// 200 ms'lik <c>_elapsedTimer</c> tikinin gövdesi (zamanlayıcı tek satırla buraya devreder). <c>internal</c>: tik
+    /// üretimde yalnız gerçek zamanlayıcıdan gelir; testler gövdeyi doğrudan sürer (<see cref="OnGlobalHotkey"/> deseni) —
+    /// enjekte saatle 3 sn'lik bir tik dizisini gerçek zamanı beklemeden ancak bu yüzeyle sınayabilirler.
+    ///
+    /// <para><b>[perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar.</b> Canlı süreler (koşu süresi, building
+    /// satırların süresi, ETA), konsol başlığının satır sayacı, grafın statü itişi ve frontier takibi görünmeyen bir ekranı
+    /// yeniden yazardı: hepsi yalnız görünürken koşar. Gizliyken <c>_tickStaleWhileHidden</c> kalkar ve dönüşte
+    /// <see cref="ResyncAfterShow"/> süreleri ve sayacı bir kez yeniler. Bekçi gizliyken de koşar — tepsiden Exit + susmuş
+    /// motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>) — bu yüzden zamanlayıcı
+    /// <b>durdurulmaz</b>.</para>
+    /// </summary>
+    internal void OnElapsedTick()
+    {
+        // [perf Faz A · A6] Gizliyken yalnız motor sessizlik bekçisi koşar (canlı süreler yazılmaz); satır sayacı, graf itişi ve
+        // frontier takibi yalnız görünürken. Zamanlayıcı DURDURULMAZ: bekçinin uyarısı bekleyen çıkışı serbest bırakır.
+        _vm.TickElapsed(!IsSurfaceHidden);
+        if (IsSurfaceHidden) { _tickStaleWhileHidden = true; return; }
+        // [T56/3a] "N lines" TAM tampon sayacı — 200ms'de bir aktif tampondan tazelenir (marshal-free log
+        // yolundan ObservableProperty tetiklemek yerine; render dilimi DEĞİL, Ek A #23).
+        Shell.ConsoleHeaderControl.SetLineCount(_vm.GetActiveLineCount());
+        // [D5] Koşarken grafı düzenli besle: kamera frontier'i yumuşak takip etsin, queued→building→done
+        // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
+        // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
+        // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
+        if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
     }
 
     /// <summary>[E4/T48] Koşarken frontier'i (ilk <c>Started</c> satır) yumuşak takip et — arbiter seçim aktifken

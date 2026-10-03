@@ -42,8 +42,11 @@ internal static class MainWindowHost
     /// gibidir.</param>
     /// <param name="autostart">[P4] Pencerenin Windows başlangıç kaydı servisi (üretimde DI verir). Verilmezse
     /// <c>null</c> — Windows yüzeyi yok; gerçek registry'ye giden bir servis testte ASLA kurulmaz.</param>
+    /// <param name="nowMs">[perf Faz A · A6] VM'in elapsed/bekçi saati (<c>RunViewModel</c> ctor'unun <c>nowMs</c>'i). Verilmezse
+    /// üretimdeki <c>Environment.TickCount64</c>; canlı süreleri ve motor sessizlik bekçisini saati ileri alarak sınayan
+    /// testler saati kendisi sürer.</param>
     public static (MainWindow window, RunViewModel vm) New(TempDir uiStateDir, Action<RunViewModel>? beforeVm = null,
-        UiState? saved = null, AutostartService? autostart = null)
+        UiState? saved = null, AutostartService? autostart = null, Func<long>? nowMs = null)
     {
         ArgumentNullException.ThrowIfNull(uiStateDir);
         var engine = new EngineHost(Path.Combine(AppContext.BaseDirectory, "no-such-supervisor.exe"));
@@ -51,7 +54,7 @@ internal static class MainWindowHost
         // örneklerle pencerenin reseed nesli VM'in SeedRunDocument sentinel'ini hiç göremez, uçuştaki bayat batch'in
         // düşmesi sınanamazdı.
         var batcher = NeverTickingBatcher();
-        var vm = new RunViewModel(engine, batcher, () => "r1")
+        var vm = new RunViewModel(engine, batcher, () => "r1", nowMs)
         {
             LegacyWorktreePoolRoot = BuildOrchestrator.Tests.Supervisor.TestPaths.MissingLegacyPoolRoot, // [final review M8]
         };
@@ -65,9 +68,9 @@ internal static class MainWindowHost
     /// realize edilmiş kabuk ve VM'i, veri akmadan. Böyle bir kabukla başlayan testlerin TEK kurulumu —
     /// <c>UpdatePillTests.Realized</c> ile <c>UpdateCardTests.Shell</c> aynı iki satırı ayrı ayrı yazmıştı;
     /// <see cref="NewWithProjects"/> da buradan başlar.</summary>
-    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir)
+    public static (MainWindow window, RunViewModel vm) NewRealized(TempDir uiStateDir, Func<long>? nowMs = null)
     {
-        var (window, vm) = New(uiStateDir);
+        var (window, vm) = New(uiStateDir, nowMs: nowMs);
         Realize(window);
         return (window, vm);
     }
@@ -109,10 +112,17 @@ internal static class MainWindowHost
     /// </summary>
     /// <param name="nodes">Proje adı + (varsa) katman adı, build-order sırasında.</param>
     public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjects(
-        TempDir uiStateDir, params (string Name, string? Layer)[] nodes)
+        TempDir uiStateDir, params (string Name, string? Layer)[] nodes) =>
+        NewWithProjectsAndClock(uiStateDir, null, nodes);
+
+    /// <summary>[perf Faz A · A6] <see cref="NewWithProjects"/> + VM'in elapsed/bekçi saati ENJEKTE: canlı süreleri ve motor
+    /// sessizlik bekçisini saati ileri alarak sınayan testler içindir (<see cref="New"/>'ün <c>nowMs</c>'i; <c>null</c> ⇒ üretim
+    /// saati). Gövde TEK yerdedir: <see cref="NewWithProjects"/> buna devreder.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
+        TempDir uiStateDir, Func<long>? nowMs, params (string Name, string? Layer)[] nodes)
     {
         ArgumentNullException.ThrowIfNull(nodes);
-        var (window, vm) = NewRealized(uiStateDir);
+        var (window, vm) = NewRealized(uiStateDir, nowMs);
         vm.RootPath = @"C:\src\OSYS";
         var projectNodes = nodes.Select((n, i) => Node(n.Name, i, n.Layer)).ToList();
         vm.OnEvent(new WorkspaceTopologyEvent(projectNodes, [], [], []));

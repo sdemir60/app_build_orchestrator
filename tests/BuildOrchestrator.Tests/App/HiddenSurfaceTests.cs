@@ -3,6 +3,7 @@ using System.Windows;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
+using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -770,6 +771,115 @@ public class HiddenSurfaceTests
         window.ResyncAfterShow();
 
         Assert.Equal(0, rebuilds);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A6] <b>Koşan bir derleme için kurulmuş gerçek kabuk, saat enjekte.</b> <c>P1</c> bitmiş (ETA'nın
+    /// ortalaması var), <c>P0</c> derleniyor (satırın canlı süresi var), kalanlar sırada. Saat bu kurulumda
+    /// <b>kımıldamaz</b>: koşunun da satırın da başlangıcı aynı andır; ilerlemesini <paramref name="nowMs"/>'i süren test belirler.
+    /// </summary>
+    private static (BuildOrchestrator.App.MainWindow Window, RunViewModel Vm) NewRunningWindow(TempDir dir, Func<long> nowMs)
+    {
+        string[] names = Names(4);
+        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, ProjectPairs(names));
+        MainWindowHost.PreviewBuild(vm, names);
+        MainWindowHost.StartBuild(vm, names);
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("P1"), "P1"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf("P1"), 60_000)); // uzun ortalama: ETA her tikte gözle görülür azalır
+        vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf("P0"), "P0"));
+        return (window, vm);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A6] <b>Gizli pencerede 200 ms'lik tik canlı süreleri yazmaz.</b> Tepsideyken derlenen bir koşuda her tik koşu
+    /// süresini, building satırların süresini ve ETA'yı yeniden yazıyordu — her biri bir <c>PropertyChanged</c> ve görünmeyen
+    /// ekranın yeniden yazımı. Saat enjekte edilir ve 15 tik (3 sn) gerçek kabuğun tik gövdesiyle sürülür: gizliyken hiçbir
+    /// canlı süre yazılmaz; dönüşte <c>ResyncAfterShow</c> hepsini TEK tikle modelden yetiştirir.
+    /// </summary>
+    [StaFact]
+    public void The_elapsed_tick_writes_no_live_clock_while_hidden_and_the_clock_catches_up_once_on_show()
+    {
+        using var dir = new TempDir();
+        long now = 1_000;
+        var (window, vm) = NewRunningWindow(dir, () => now);
+        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
+        Assert.Equal(ProjectRowState.Started, row.State); // ön-koşul: satırın canlı süresi var
+        long startedAtMs = now;                           // koşunun da satırın da başladığı an
+        var writes = new List<string>();
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(vm.ElapsedMs) or nameof(vm.EtaMs) or nameof(vm.EtaText)) writes.Add(e.PropertyName);
+        };
+        row.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName is nameof(row.DurationMs)) writes.Add(e.PropertyName);
+        };
+        window.SetSurfaceHidden(true);
+
+        for (int i = 0; i < 15; i++) { now += 200; window.OnElapsedTick(); }
+
+        Assert.Empty(writes); // KIRMIZI kapısız: bugün her tik ElapsedMs'i, building satırın DurationMs'ini ve ETA'yı yazar
+        window.SetSurfaceHidden(false);
+        window.ResyncAfterShow(); // Loaded-öncelikli kurulum pompasız koşsun (A4 testlerinin deseni)
+
+        Assert.Equal(now - startedAtMs, vm.ElapsedMs);                 // dönüşte süreler modele yetişti
+        Assert.Equal(now - startedAtMs, row.DurationMs);
+        Assert.Equal(1, writes.Count(n => n == nameof(vm.ElapsedMs))); // ...TEK tikle
+        Assert.Equal(1, writes.Count(n => n == nameof(row.DurationMs)));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kontrol: AYNI saat ilerlemesi görünür pencerede canlı süreleri yazar — yani yukarıdaki test saatin hiç
+    /// yazılamamasından değil, gizli sinyalden geçer.</summary>
+    [StaFact]
+    public void The_elapsed_tick_still_writes_the_live_clock_while_visible()
+    {
+        using var dir = new TempDir();
+        long now = 1_000;
+        var (window, vm) = NewRunningWindow(dir, () => now);
+        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
+        now += 200;
+
+        window.OnElapsedTick();
+
+        Assert.Equal(200, vm.ElapsedMs);
+        Assert.Equal(200, row.DurationMs);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz A · A6] <b>Gizli pencerede motor bekçisi çalışır</b> (Review Focus 2). Tik gövdesi gizliyken kapanır, bekçi
+    /// kapanmaz: tepsiden Exit + susmuş motorda bekleyen çıkışı bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>),
+    /// yani çıkış ancak tik sürdükçe gelir. Bu bir REGRESYON pinidir: bekçi kapıdan önce de koşulsuz koşar ve test kapısız
+    /// da yeşildir. <c>SafeExitTests.A_silent_engine_does_not_hold_the_exit</c> ile aynı senaryo — bu kez gerçek kabuğun tikiyle
+    /// ve pencere gizliyken.
+    /// </summary>
+    [StaFact]
+    public void A_silent_engine_still_frees_a_pending_exit_while_the_surface_is_hidden()
+    {
+        using var dir = new TempDir();
+        long now = 1_000;
+        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, () => now, ProjectPairs(Names(2)));
+        MainWindowHost.AcceptSends(vm);
+        int ready = 0;
+        vm.ExitReady += (_, _) => ready++;
+        MainWindowHost.StartBuild(vm, "P0", "P1");
+        window.SetSurfaceHidden(true); // koşu sürerken tepsiye iner
+        vm.RequestExit();              // tepsiden Exit: graceful stop, drain beklenir
+        Assert.True(vm.ExitPending);   // ön-koşul: çıkış drain'i bekliyor — bekçinin penceresi
+        Assert.Equal(0, ready);
+
+        now += RunViewModel.EngineSilenceThresholdMs - 1;
+        window.OnElapsedTick();
+        Assert.Null(vm.EngineOverdueMessage); // eşiğin ALTI: meşru drain
+        Assert.Equal(0, ready);
+
+        now += 1;
+        window.OnElapsedTick();
+
+        Assert.NotNull(vm.EngineOverdueMessage); // bekçi gizliyken de uyardı
+        Assert.Equal(1, ready);                  // ...ve bekleyen çıkışı serbest bıraktı
         GC.KeepAlive(window);
     }
 }

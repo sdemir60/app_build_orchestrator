@@ -1846,10 +1846,18 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>MainWindow'un DispatcherTimer'ı UI thread'inde periyodik çağırır. VM Dispatcher/Timer TÜRÜ
     /// TAŞIMAZ — test edilebilirlik için saat kaynağı enjekte edilen <see cref="_nowMs"/> (constructor'da
     /// verilmezse <c>Environment.TickCount64</c>; testte deterministik bir <c>Func&lt;long&gt;</c> geçilir,
-    /// D8: sleep/poll yok) [Minor/Fix wave 1].</summary>
-    public void TickElapsed()
+    /// D8: sleep/poll yok) [Minor/Fix wave 1].
+    ///
+    /// <para><b>[perf Faz A · A6] Yüzey gizliyken</b> (<paramref name="surfaceVisible"/> <c>false</c>: pencere tepside) canlı
+    /// süreleri kimse görmez ve yazılmaz — koşu süresi, building satırların süresi ve ETA. Her biri bir
+    /// <c>PropertyChanged</c>'dir ve görünmeyen ekranı yeniden yazdırırdı. Motor sessizlik bekçisi
+    /// (<see cref="EvaluateEngineSilence"/>) <b>gizliyken de koşar</b>: tepsiden Exit + susmuş motorda bekleyen çıkışı
+    /// bekçinin uyarısı serbest bırakır (<c>RunViewModel.Exit.cs</c>), yani bu tik durursa uygulama kapanmaz. Bu yüzden
+    /// zamanlayıcı durdurulmaz; bu bayrak kullanılır.</para></summary>
+    /// <param name="surfaceVisible">Yüzey görünür mü. Varsayılan <c>true</c>: mevcut çağıranlar değişmez.</param>
+    public void TickElapsed(bool surfaceVisible = true)
     {
-        if (IsRunning && _elapsedStartMs is { } startMs)
+        if (surfaceVisible && IsRunning && _elapsedStartMs is { } startMs)
         {
             ElapsedMs = _nowMs() - startMs;
             // [T53-UI] Building satırların CANLI süresi (kart süre kolonu + glyph tooltip) — done olunca
