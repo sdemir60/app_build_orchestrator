@@ -1,0 +1,74 @@
+using System.Windows.Threading;
+using BuildOrchestrator.App.Controls;
+
+namespace BuildOrchestrator.App;
+
+/// <summary>
+/// [perf Faz A · A1] Pencerenin <b>"yüzey gizli" sinyali</b>: tek yazar, tek okuma noktası.
+///
+/// <para>Pencere tepsideyken (ya da hiç gösterilmemişken) kimsenin görmediği ekran işi yapılmaz. Bunun için TEK
+/// sinyal vardır: kalıtsal attached DP <see cref="HiddenSurface.IsHiddenProperty"/>. Yalnız
+/// <see cref="SetSurfaceHidden"/> yazar (pencerenin kendisine); torunlar miras alır, görünümler
+/// <see cref="HiddenSurface.GetIsHidden"/> okur. Bu sinyali okuyan yüzeyler: açılış koreografisi ve adım
+/// bekletmesi (<see cref="ChoreographyMayPlay"/>) ile bitiş finali.</para>
+///
+/// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
+/// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır
+/// (<see cref="OnGlobalHotkey"/> deseni: headless'ta pencere gösterilemez).</para>
+/// </summary>
+public partial class MainWindow
+{
+    /// <summary>Yüzey şu an gizli mi — pencerenin KENDİ değeri (<see cref="HiddenSurface.IsHiddenProperty"/>).</summary>
+    internal bool IsSurfaceHidden => HiddenSurface.GetIsHidden(this);
+
+    /// <summary>[test yüzeyi] Koreografi ve adım bekletmesinin motion girdisini ÖRNEK BAŞINA zorlar
+    /// (<c>null</c> ⇒ üretim sinyali). Headless'ta <c>App.Motion</c> null'dur (= reduced-motion) ve koreografi hiç
+    /// oynamaz; "gizli pencerede oynamaz" kuralı ancak koreografinin OYNAYABİLDİĞİ bir pencerede sınanabilir.
+    /// <b>Neden <c>MotionScope</c> değil:</b> o statik <c>App.Motion</c>'ı değiştirir ve paralel koşan test
+    /// sınıflarına sızar; örnek-başına seam sızmaz. Bu seam YALNIZ <c>_choreographer</c>/<c>_stepHold</c>
+    /// girdisidir: grafın kendi kapısı (<c>GraphView.AnimationsEnabledProvider</c>) ve tepsi göstergesi (ham
+    /// <see cref="MotionGate.StaticAnimationsEnabled"/> okur, gizli modda DURMAZ) etkilenmez.</summary>
+    internal bool? AnimationsForTest { get; set; }
+
+    /// <summary>Koreografinin motion girdisi: test seam'i, yoksa üretimdeki statik sinyal. Statik sinyalin TEK
+    /// ifadesi <see cref="MotionGate.StaticAnimationsEnabled"/>'tır; ikinci bir kopyası yazılmaz.</summary>
+    private bool AnimationsEnabledForChoreography() => AnimationsForTest ?? MotionGate.StaticAnimationsEnabled;
+
+    /// <summary>Açılış koreografisinin VE adım bekletmesinin TEK kapısı (ikisi de bu delegeyi alır): hareket açık
+    /// ve yüzey görünür. Kapalıyken koreografi hiç oynamaz — kapsam tek adımda işaretlenir ve koşu komutu hemen
+    /// gider (azaltılmış-hareket ile AYNI dal); bekletme anında biter.</summary>
+    private bool ChoreographyMayPlay() => AnimationsEnabledForChoreography() && !IsSurfaceHidden;
+
+    /// <summary>
+    /// Sinyali yazar. Üretimde <c>IsVisibleChanged</c> ve <see cref="StartInTray"/> çağırır; testler doğrudan
+    /// çağırır. Aynı değere ikinci yazım no-op'tur.
+    ///
+    /// <para><b>Gizlenince</b> oynayan açılış koreografisi kesilir — bekleyen koşu komutu
+    /// (<c>OperationChoreographer.Finish</c>) o anda serbest kalır, işaretler (<c>Marked</c>) KORUNUR, koşu başlayınca
+    /// statü kanalı onları devralır — ve oynayan bitiş finali kesilir. Finali yalnız OYNUYORSA keser:
+    /// <c>CancelEndFinale</c> filtre askısını da kaldırır ve askı <c>BeginOperation</c>'dan koşunun bitişine dek
+    /// sürmelidir; koşu ortasında çağrılsaydı pencere geri geldiğinde graf filtreyi koşu sürerken uygulamış olurdu.</para>
+    ///
+    /// <para><b>Görününce</b> dönüş kurulumu (<see cref="ResyncAfterShow"/>) ilk layout turundan SONRA koşar.</para>
+    /// </summary>
+    internal void SetSurfaceHidden(bool hidden)
+    {
+        if (IsSurfaceHidden == hidden) return;
+        HiddenSurface.SetIsHidden(this, hidden);
+        if (!hidden)
+        {
+            Dispatcher.InvokeAsync(ResyncAfterShow, DispatcherPriority.Loaded);
+            return;
+        }
+        _choreographer.Cancel(_vm.Projects);
+        if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
+    }
+
+    /// <summary>Pencere gizlilikten dönünce, ilk layout turundan SONRA bir kez koşar
+    /// (<see cref="DispatcherPriority.Loaded"/>). Gizliyken biriken ekran işi burada tek seferde kurulur;
+    /// koreografi ve final gizliyken zaten oynamadığı ve görününce yeniden başlamadığı için bugün dönüşte
+    /// kurulacak bir şey yoktur.</summary>
+    internal void ResyncAfterShow()
+    {
+    }
+}

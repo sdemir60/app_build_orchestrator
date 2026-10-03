@@ -2351,7 +2351,8 @@ ends closes the application at once, with neither the wait nor the tray — Wind
 in flight (`Starting` / `Running` / `Stopping` — `Syncing` is deliberately out of scope), the product mark
 animates in the bottom-right corner of the primary work area. It appears if the user drops to the tray mid-run
 and disappears the instant the window comes back. The surface is its own top-level window: it must stay visible
-while the main window is hidden, so it cannot be a popup inside it.
+while the main window is hidden, so it cannot be a popup inside it. No choreography plays on the hidden window:
+the opening wave is skipped, the run command goes out at once and the end finale never starts (§14.5).
 
 Three properties make it a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -3150,7 +3151,7 @@ ends the step, waits the short beat, and only then starts the Sync. The rule it 
 choreography already established: a choreography either always plays or never, because a step that appears only
 when the engine happens to be slow makes the same click feel different every time. The timing lives in the
 shell, as it does for the choreography: the view model says how long to wait, a dispatcher timer counts it, and
-under reduced motion nothing is waited at all.
+under reduced motion, or while the window is hidden, nothing is waited at all.
 
 **The Sync is chained, not asked for.** `cleanCompleted` starts a Sync with the console preserved — the same
 shape as the `N behind` chip's pull — because the engine's own analysis is the only thing that can put real
@@ -4947,6 +4948,20 @@ cold, and it did not. The same click was sometimes animated and sometimes instan
 either always plays or never does. The operation itself still begins on the first frame — the pill lights,
 the button becomes *Stop*, the console records the request — and only the command waits. The view-model owns
 the scope and awaits a gate; the shell owns the timing and closes it.
+
+**Choreographies play only on a visible window.** On a hidden one — a build started from the tray with the global
+hotkey, or one that drops to the tray mid-run — the scope is marked in a single step and the command goes out at
+once: the very branch reduced motion takes, and the step holds between a sequence's operations are skipped the
+same way. Hiding the window cuts whatever is playing: the opening choreography releases the waiting command on
+the spot (the marks stay, so the run still takes over from them), and a running end finale stops and hands the
+filter back. While the window stays hidden nothing new starts, and a run that ends there skips its finale and
+returns the filter at once. The whole rule hangs on one signal, the inherited attached property
+`HiddenSurface.IsHidden`, which the window writes from its own visibility (`IsVisibleChanged`, and at start-up when
+it begins in the tray). It is deliberately a signal of its own rather than `IsVisible`: the window sets it
+explicitly, so a tree that was never shown — every headless test — is not mistaken for a hidden window. The
+measurement behind the rule: started from the tray with the hotkey, most of the wait before the engine began was
+an opening animation nobody could see. "Either always plays or never does" is a rule about a *visible* window —
+there it still holds.
 
 **The choreography's last frame holds until the run takes over.** When the sequence ends on its own the driver
 releases the gate but keeps its final step: the settled opacities — 0.13 on the scope, the very value the

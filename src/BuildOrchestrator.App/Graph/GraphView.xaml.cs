@@ -448,6 +448,11 @@ public partial class GraphView : UserControl
     /// </summary>
     internal bool IsFilterSuspended => _filterSuspended;
 
+    /// <summary>Bitiş koreografisi (neon tutuşma) şu an oynuyor mu. Kabuk gizlenirken yalnız OYNAYAN finali keser
+    /// (<see cref="CancelEndFinale"/> filtre askısını da kaldırır; koşu sürerken çağrılmamalı); testler de
+    /// gizli pencerede finalin oynamadığını bununla sınar.</summary>
+    internal bool IsEndFinalePlaying => _endPlayer.IsPlaying;
+
     /// <summary>Opaklık kararının gördüğü filtre — askıdayken <c>null</c>. <see cref="ApplyNodeOpacity"/>
     /// <see cref="_filterMatches"/> yerine BUNU okur (tek kaynak).</summary>
     private IReadOnlySet<string>? EffectiveFilter => _filterSuspended ? null : _filterMatches;

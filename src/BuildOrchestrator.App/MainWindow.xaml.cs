@@ -62,13 +62,12 @@ public partial class MainWindow : Window
     // paneller bölgesel suppress'lerini buna bildirir — bir panelde kaydırmak diğerlerini duraklatmaz).
     private readonly ScrollArbiter _scrollArbiter = new();
     /// <summary>[design v1.11.0 §9-4] Açılış koreografisinin sürücüsü — motion sinyalini TAZE okur
-    /// (reduced-motion'da koreografi hiç oynamaz).</summary>
-    private readonly Services.OperationChoreographer _choreographer =
-        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// (reduced-motion'da koreografi hiç oynamaz; [perf A1] gizli pencerede de oynamaz). Kapı
+    /// <see cref="ChoreographyMayPlay"/>'dir ve ctor'da kurulur: alan başlatıcısındaki lambda `this`'i yakalayamaz.</summary>
+    private readonly Services.OperationChoreographer _choreographer;
     /// <summary>[clean] Adımlar arası bekletme — motion sinyalini AYNI kaynaktan, taze okur (azaltılmış
-    /// harekette hiç beklenmez).</summary>
-    private readonly Services.StepHold _stepHold =
-        new(() => App.Motion?.AnimationsEnabled ?? false);
+    /// harekette ve gizli pencerede hiç beklenmez; kapı <see cref="ChoreographyMayPlay"/>).</summary>
+    private readonly Services.StepHold _stepHold;
     /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
     /// koşuya farklı bir sıra oynasın diye artar.</summary>
     private int _endFinaleRun;
@@ -103,6 +102,14 @@ public partial class MainWindow : Window
     public MainWindow(EngineHost engine, RunViewModel vm, ConsoleBatcher console,
         ResourceDictionary? resourceScope = null, IUiStateStore? uiState = null, AutostartService? autostart = null)
     {
+        // [perf A1] Koreografi ve bekletme kapısı ctor'un ilk işidir: ilk kullanımlardan (koreografi kablajı,
+        // ImportHold) ÖNCE kurulmalı ve kapı pencerenin kendi durumunu (IsSurfaceHidden) okur.
+        _choreographer = new(ChoreographyMayPlay);
+        _stepHold = new(ChoreographyMayPlay);
+        // [perf A1] Gizli yüzey sinyali: pencere gizlenince/gösterilince DP yazılır (tek abonelik). Tepsi göstergesinin
+        // SetMainWindowVisible aboneliğiyle birleşmez — o göstergenin denetleyicisini sürer, bu DP'yi yazar. Hiç
+        // gösterilmeyen pencerede olay ateşlenmez: StartInTray sinyali kendisi kurar.
+        IsVisibleChanged += (_, _) => SetSurfaceHidden(!IsVisible);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
@@ -937,8 +944,13 @@ public partial class MainWindow : Window
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
+                // [perf A1] ...ve yalnız GÖRÜNÜR pencerede. Gizliyken final hiç oynamaz: CancelEndFinale, PlayEndFinale'in
+                // "final yok" dalıyla aynı sonucu verir (filtre askısı kalkar) — koşu bitti, askı da bitmeli.
                 if (_vm.Phase is AppPhase.Done or AppPhase.Stopped)
-                    Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
+                {
+                    if (IsSurfaceHidden) Shell.GraphHost.CancelEndFinale();
+                    else Shell.GraphHost.PlayEndFinale(_vm.BuiltInThisRun(), _endFinaleRun++);
+                }
                 break;
             case nameof(RunViewModel.SelectedProjectId):
                 PushGraphSelection();
@@ -1338,7 +1350,12 @@ public partial class MainWindow : Window
     /// tetikler → tepsi ikonu kurulur; pencere hiç <c>Show()</c> edilmediğinden görünmez. Kullanıcı tepsi ikonundan
     /// (ya da getir/gizle global kısayolu) <see cref="ShowFromTray"/> ile getirir. Açılışın Sync'i normal açılıştaki gibi motor hazır
     /// olunca koşar (<c>RunViewModel.OnEngineReady</c>); RepositoryRoot'un seed'i ([D7 M3]) kendisi komut göndermez.</summary>
-    public void StartInTray() => new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+    public void StartInTray()
+    {
+        new System.Windows.Interop.WindowInteropHelper(this).EnsureHandle();
+        // [perf A1] Pencere hiç gösterilmeyecek: IsVisibleChanged ateşlenmez, gizli yüzey sinyali burada kurulur.
+        SetSurfaceHidden(true);
+    }
 
     /// <summary>Tepsiden/kısayoldan/ikinci instance'tan pencereyi geri getirir.</summary>
     public void ShowFromTray()
