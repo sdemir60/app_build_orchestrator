@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
@@ -129,6 +130,28 @@ internal static class MainWindowHost
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, projectNodes.Count, 0)); // → Idle
         return (window, vm, window.Shell.ProjectsList);
     }
+
+    /// <summary>Gerçek OSYS çözümünün proje sayısı: ölçek isteyen testler (graf itişi, olay akışı/konsol yükü, kapılı ölçüm rig'i)
+    /// bu büyüklükte bir çözüm kurar. TEK tanım — pin, graf itiş testi ve ölçüm testi aynı sayıyı ayrı ayrı yazmıştı.</summary>
+    public const int OsysProjectCount = 177;
+
+    /// <summary><c>P0..P{count-1}</c> proje adları — hem fixture'a (<c>NewWithProjects</c> ve <c>ReplySync</c>'in adları alan
+    /// aşırı yüklemeleri) hem koşu sürücülerine (<see cref="PreviewBuild"/>, <see cref="StartBuild"/>, <see cref="FinishBuild"/>)
+    /// aynı dizi gider.</summary>
+    public static string[] ProjectNames(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
+
+    /// <summary>Yalnız adları olan (katmansız) topoloji: <c>NewWithProjects</c>'in adları alan aşırı yüklemesi. Gövde TEK yerdedir —
+    /// <c>(Name, Layer)</c> çiftli hâl buna değil, bu ona devreder.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjects(TempDir uiStateDir, string[] names) =>
+        NewWithProjects(uiStateDir, Unlayered(names));
+
+    /// <summary>[perf Faz A · A6] Saat enjekte + yalnız adlar: <c>NewWithProjectsAndClock</c>'un adları alan aşırı yüklemesi.</summary>
+    public static (MainWindow window, RunViewModel vm, StickyLayerList list) NewWithProjectsAndClock(
+        TempDir uiStateDir, Func<long>? nowMs, string[] names) =>
+        NewWithProjectsAndClock(uiStateDir, nowMs, Unlayered(names));
+
+    /// <summary>(ad, katman) çiftleri; katman yok — adları alan aşırı yüklemelerin TEK dönüştürücüsü.</summary>
+    private static (string, string?)[] Unlayered(string[] names) => [.. names.Select(n => (n, (string?)null))];
 
     /// <summary>Test topolojisi düğümü — <c>Id</c> = kanonik csproj yolu (üretimdeki gibi tam yol).</summary>
     public static ProjectNode Node(string name, int order, string? layer = null) =>
@@ -273,6 +296,10 @@ internal static class MainWindowHost
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, nodes.Length, 0));
     }
 
+    /// <summary>[perf Faz A temizlik] <c>ReplySync</c>'in yalnız adları alan hâli: <c>NewWithProjects</c>'in adlı aşırı yüklemesiyle
+    /// AYNI topoloji.</summary>
+    public static void ReplySync(RunViewModel vm, string[] names) => ReplySync(vm, Unlayered(names));
+
     /// <summary>
     /// [fix round 1 · A1] Pencerenin İÇERİĞİNİ realize eder — <b>ölçüldü:</b> <c>Window.Measure/Arrange</c>
     /// gerçek bir <c>PresentationSource</c> (HWND) olmadan içeriğe HİÇ İNMEZ; caption butonlarının şablonları
@@ -309,7 +336,7 @@ internal static class MainWindowHost
         var content = (FrameworkElement)window.Content;
         var context = window.DataContext;
         window.Content = null;
-        if (System.Windows.Media.VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
+        if (VisualTreeHelper.GetParent(content) is FrameworkElement presenter) presenter.Measure(new Size(width, height));
         content.DataContext = context;
         return DsResources.Realize(DsResources.NewHost(), content, width, height);
     }

@@ -35,7 +35,8 @@ namespace BuildOrchestrator.Tests.App;
 /// yerinde kalır; kabuğun içeriği ise ekran dışı gerçek bir pencereye (<c>DsResources.Realize</c>) taşınır ki layout
 /// gerçek bir <c>PresentationSource</c> altında koşsun. Gizli okumada o pencere <c>Hide()</c> edilir ve sinyal iki yere yazılır:
 /// kabuğun görünümleri kalıtsal sinyali barındıran pencereden, <c>MainWindow</c>'un kendi kapıları kendi DP'sinden okur
-/// (üretimde ikisi aynı pencere). Sentetik akış 177 projeyi ~10 sn'ye yayar: her proje başlar, birkaç log satırı yazar ve biter;
+/// (üretimde ikisi aynı pencere). Sentetik akış OSYS büyüklüğündeki (<see cref="MainWindowHost.OsysProjectCount"/>)
+/// projeyi ~10 sn'ye yayar: her proje başlar, birkaç log satırı yazar ve biter;
 /// konsol batch'leri pompanın yapacağı gibi <c>AppendConsoleBatch</c>'e verilir. Okunan: UI thread'in döngü sayacı
 /// (<c>QueryThreadCycleTime</c>, saniyede milyon döngü) ve pencerenin <c>LayoutUpdated</c> sayısı (layout geçişi).</para>
 ///
@@ -53,7 +54,6 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")]
 public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
 {
-    private const int ProjectCount = 177;
     private const int LogLinesPerProject = 6;
     private static readonly TimeSpan StreamWindow = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan FeedInterval = TimeSpan.FromMilliseconds(20);
@@ -105,8 +105,8 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
     private static Reading Measure(bool hidden, bool withEvents)
     {
         using var dir = new TempDir();
-        string[] names = HiddenSurfaceTests.Names(ProjectCount);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, HiddenSurfaceTests.ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(MainWindowHost.OsysProjectCount);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var host = MainWindowHost.HostOffscreen(window);
         try
         {
@@ -135,7 +135,7 @@ public sealed class HiddenSurfaceMeasurementTests(ITestOutputHelper output)
                 try
                 {
                     // Projeler akış süresine eşit yayılır: o ana kadar "vadesi gelen" her proje başlar, log yazar ve biter.
-                    int due = Math.Min(ProjectCount, (int)(clock.Elapsed.TotalSeconds / StreamWindow.TotalSeconds * ProjectCount));
+                    int due = Math.Min(names.Length, (int)(clock.Elapsed.TotalSeconds / StreamWindow.TotalSeconds * names.Length));
                     var batch = new StringBuilder();
                     for (; started < due; started++)
                     {

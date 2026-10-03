@@ -4,6 +4,7 @@ using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
 using BuildOrchestrator.App.ViewModels;
+using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -192,7 +193,7 @@ public class HiddenSurfaceTests
         var console = window.Shell.ConsoleViewControl;
         window.SetSurfaceHidden(true);
         int docChanges = 0; console.EditorControl.Document.Changed += (_, _) => docChanges++;
-        for (int i = 0; i < 200; i++) vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), i + 1, $"line {i}"));
+        for (int i = 0; i < 200; i++) MainWindowHost.LogLine(vm, "A", i + 1, $"line {i}");
         // pompa hiç tick etmez (NeverTickingBatcher) — batch'i üretimdeki hedefe test verir (internal test yüzeyi):
         window.AppendConsoleBatch(string.Join("", Enumerable.Range(0, 200).Select(i => $"line {i}\n")), window.ConsoleReseedGen);
         Assert.Equal(0, docChanges);                     // KIRMIZI: bugün batch gizli belgeye basılır
@@ -218,7 +219,7 @@ public class HiddenSurfaceTests
         console.ShowReady();
         Assert.Equal(ConsoleEmptyState.Idle, console.ActiveLineText.Text); // ön-koşul: boşta "ready" görünüyor
         window.SetSurfaceHidden(true);
-        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "first line"));
+        MainWindowHost.LogLine(vm, "A", 1, "first line");
         window.AppendConsoleBatch("first line\n", window.ConsoleReseedGen);
 
         window.SetSurfaceHidden(false);
@@ -269,7 +270,7 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
         window.SetSurfaceHidden(true);
-        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "line 0"));
+        MainWindowHost.LogLine(vm, "A", 1, "line 0");
         window.AppendConsoleBatch("line 0\n", window.ConsoleReseedGen); // gizliyken batch: konsol bayat işaretlenir
         int replacedBefore = console.RunDocumentReplacedCount;
 
@@ -286,12 +287,6 @@ public class HiddenSurfaceTests
         Assert.EndsWith("line 0", console.EditorControl.Document.Text.TrimEnd());
         GC.KeepAlive(window);
     }
-
-    /// <summary>[perf Faz A · A3/A4] <c>P0..P{count-1}</c> proje adları — hem fixture'a hem koşu sürücülerine gider.</summary>
-    internal static string[] Names(int count) => [.. Enumerable.Range(0, count).Select(i => $"P{i}")];
-
-    /// <summary><c>MainWindowHost.NewWithProjects</c>'in beklediği (ad, içerik) çiftleri; içerik yok.</summary>
-    internal static (string, string?)[] ProjectPairs(string[] names) => [.. names.Select(n => (n, (string?)null))];
 
     /// <summary>
     /// [perf Faz A · A3] <b>Gizli pencerede olay akışı satır kurmaz.</b> Tepsideyken derlenen bir koşunun her olayı
@@ -310,8 +305,8 @@ public class HiddenSurfaceTests
     public void Event_stream_rows_are_not_built_while_the_window_is_hidden_and_are_rebuilt_in_one_pass_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(40);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(40);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var view = window.Shell.EventStreamControl;
         var rowsBefore = view.Rows;
         string counterBefore = view.Counter.Text;
@@ -350,8 +345,8 @@ public class HiddenSurfaceTests
     public void Rows_rebuilt_on_show_are_history_and_never_replay_the_glow_or_the_typewriter()
     {
         using var dir = new TempDir();
-        string[] names = Names(40);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(40);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         window.SetSurfaceHidden(true);
         MainWindowHost.RunBuild(vm, names);
         Assert.Contains(vm.StreamEvents, e => e.GlowEligible);                  // ön-koşul: parıldayacak (done + hatasız) satır var
@@ -380,14 +375,14 @@ public class HiddenSurfaceTests
     public void Graph_pushes_are_skipped_while_hidden_and_one_sync_brings_the_graph_up_to_date_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(177);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(MainWindowHost.OsysProjectCount);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var graph = window.Shell.GraphHost;
         window.SetSurfaceHidden(true);
         int pushesBefore = graph.UpdateStatusesCallCount;
 
         MainWindowHost.StartBuild(vm, names);    // koşu fazı: model Running olur, graf Idle'da kalmalı
-        MainWindowHost.BuildProjects(vm, names); // 177 proje x started/succeeded: her biri bir statü itişi isterdi
+        MainWindowHost.BuildProjects(vm, names); // OSYS büyüklüğünde proje x started/succeeded: her biri bir statü itişi isterdi
         string selected = MainWindowHost.IdOf("P5");
         vm.SelectProject(selected);
 
@@ -411,8 +406,8 @@ public class HiddenSurfaceTests
     public void Graph_pushes_still_reach_the_graph_while_the_surface_is_visible()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var graph = window.Shell.GraphHost;
         int pushesBefore = graph.UpdateStatusesCallCount;
 
@@ -434,8 +429,8 @@ public class HiddenSurfaceTests
     public void The_graph_filter_is_not_refreshed_while_hidden_and_is_applied_once_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(20);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(20);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var graph = window.Shell.GraphHost;
         vm.ProjectQuery = "P1";                     // etkin arama: graf filtreyi uygular
         int appliedBefore = graph.FilterAppliedCount;
@@ -465,7 +460,7 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
         window.SetSurfaceHidden(true);
-        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "line 0"));
+        MainWindowHost.LogLine(vm, "A", 1, "line 0");
         long staleGen = window.ConsoleReseedGen;           // pompanın bu batch'i okuduğu andaki nesil
         window.AppendConsoleBatch("line 0\n", staleGen);   // gizliyken: belgeye basılmaz, "ekran bayat" bayrağı kalkar
         window.SetSurfaceHidden(false);
@@ -550,7 +545,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
         var console = window.Shell.ConsoleViewControl;
-        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("A"));
+        var row = ProjectOf(vm, "A");
         var emptyState = ConsoleEmptyState.ForEmptyLog(row);
         Assert.NotEmpty(emptyState);                      // ön-koşul: boş log sayfayı boş bırakmaz
         vm.ActiveProjectId = row.Id;                      // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
@@ -577,8 +572,8 @@ public class HiddenSurfaceTests
     public void The_ribbon_is_not_refreshed_while_hidden_and_catches_up_in_one_pass_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(5);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(5);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var ribbon = window.Shell.Ribbon;
         string textBefore = ribbon.PhaseText.Text;
         int passesBefore = ribbon.RebuildCount;
@@ -612,8 +607,8 @@ public class HiddenSurfaceTests
     public void A_ribbon_that_is_rebound_while_hidden_is_not_rebuilt_a_second_time_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var ribbon = window.Shell.Ribbon;
         window.SetSurfaceHidden(true);
         MainWindowHost.PreviewBuild(vm, names);                  // şerit bayat: bildirim bayrağı kaldırdı
@@ -638,13 +633,13 @@ public class HiddenSurfaceTests
     public void The_build_menu_is_not_rebuilt_while_hidden_and_follows_a_changed_total_once_on_show()
     {
         using var dir = new TempDir();
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
         var menu = window.Shell.BuildMenuControl;
         int rebuildsBefore = menu.RefreshRowsCount;
         Assert.Contains("All 3 projects", menu.Items[1].Desc);   // ön-koşul: menü modelin toplamını gösteriyor
         window.SetSurfaceHidden(true);
 
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));    // gizliyken Sync yeni bir proje getirdi: toplam 3 -> 4
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));    // gizliyken Sync yeni bir proje getirdi: toplam 3 -> 4
 
         Assert.Equal(4, vm.Counters.Total);                      // ön-koşul: model toplamı değişti
         Assert.Equal(rebuildsBefore, menu.RefreshRowsCount);     // KIRMIZI kapısız: bugün her Counters bildirimi menüyü yeniden kurar
@@ -666,8 +661,8 @@ public class HiddenSurfaceTests
     public void The_build_menu_is_rebuilt_only_when_the_total_changes()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var menu = window.Shell.BuildMenuControl;
         int rebuildsBefore = menu.RefreshRowsCount;
         int countersNotifications = 0;
@@ -681,12 +676,21 @@ public class HiddenSurfaceTests
         Assert.True(countersNotifications > 0, "ön-koşul: koşu Counters yayınladı — yoksa 'yeniden kurulmadı' iddiası boşta yeşil olurdu");
         Assert.Equal(rebuildsBefore, menu.RefreshRowsCount);     // KIRMIZI: bugün her Counters bildirimi menüyü yeniden kurar
 
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));    // toplam 3 -> 4
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));    // toplam 3 -> 4
 
         Assert.Equal(rebuildsBefore + 1, menu.RefreshRowsCount); // toplam değişince TEK kurulum
         Assert.Contains("All 4 projects", menu.Items[1].Desc);
         GC.KeepAlive(window);
     }
+
+    /// <summary>[perf Faz A temizlik] <paramref name="name"/> projesinin modeli (<c>vm.Projects</c> öğesi; kimlik <see cref="MainWindowHost.IdOf"/>).</summary>
+    private static ProjectRowViewModel ProjectOf(RunViewModel vm, string name) =>
+        vm.Projects.Single(p => p.Id == MainWindowHost.IdOf(name));
+
+    /// <summary>[perf Faz A temizlik] <paramref name="model"/>'in gerçek kabuğun listesindeki satır görünümü. Container'lar üretilmiş
+    /// olmalıdır (<c>MainWindowHost.Realize</c>); satır, DataContext'i modelle eşlenerek bulunur.</summary>
+    private static ProjectRow RowViewOf(StickyLayerList list, ProjectRowViewModel model) =>
+        list.RevealRows.Single(r => ReferenceEquals(r.DataContext, model));
 
     /// <summary>
     /// [perf Faz A · A5] <b>Gizli pencerede proje satırı kendini yazmaz.</b> Tepsideyken derlenen bir koşunun her statü, süre ve
@@ -698,12 +702,12 @@ public class HiddenSurfaceTests
     public void A_project_row_applies_nothing_while_hidden_and_applies_once_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(5);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(5);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window); // satır container'ları üretilir (liste topolojiden SONRA doldu)
         Assert.NotEmpty(list.RevealRows);   // ön-koşul: satırlar gerçek ağaçta kuruldu
-        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
-        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        var rowVm = ProjectOf(vm, "P1");
+        var row = RowViewOf(list, rowVm);
         int allBefore = row.ApplyAllCount, durationBefore = row.ApplyDurationCount;
         var glyphBefore = row.Glyph.Status;
         window.SetSurfaceHidden(true);
@@ -733,11 +737,10 @@ public class HiddenSurfaceTests
     public void A_decision_that_arrives_while_hidden_settles_the_status_dot_on_show_without_the_cross_fade()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
-        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        var row = RowViewOf(list, ProjectOf(vm, "P1"));
         row.AnimationsEnabledProvider = () => true;                 // sönüm oynayabilsin (headless varsayılanı reduced-motion)
         Assert.Equal(StartMode.RingOpacity, row.Dot.Ring.Opacity);  // ön-koşul: son çizilen hâl başlangıç modu (halka)
         window.SetSurfaceHidden(true);
@@ -761,14 +764,13 @@ public class HiddenSurfaceTests
     public void A_row_that_is_rebound_while_hidden_is_not_applied_a_second_time_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var rowVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
-        var row = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, rowVm));
+        var row = RowViewOf(list, ProjectOf(vm, "P1"));
         window.SetSurfaceHidden(true);
         MainWindowHost.RunBuild(vm, names);                                            // satır bayat: bildirim bayrağı kaldırdı
-        row.DataContext = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P2"));  // container yeniden kullanımı: yeni model, ApplyAll tam kurulum
+        row.DataContext = ProjectOf(vm, "P2");                                         // container yeniden kullanımı: yeni model, ApplyAll tam kurulum
         int appliesAfterRebind = row.ApplyAllCount;
 
         window.SetSurfaceHidden(false);
@@ -787,13 +789,12 @@ public class HiddenSurfaceTests
     public void A_failure_that_arrives_while_hidden_plays_no_shake_on_show_but_a_visible_one_does()
     {
         using var dir = new TempDir();
-        string[] names = Names(3);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(3);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
-        var hiddenVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P1"));
-        var visibleVm = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P2"));
-        var hiddenRow = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, hiddenVm));
-        var visibleRow = list.RevealRows.Single(r => ReferenceEquals(r.DataContext, visibleVm));
+        var hiddenVm = ProjectOf(vm, "P1");
+        var hiddenRow = RowViewOf(list, hiddenVm);
+        var visibleRow = RowViewOf(list, ProjectOf(vm, "P2"));
         hiddenRow.AnimationsEnabledProvider = () => true;
         visibleRow.AnimationsEnabledProvider = () => true;
         MainWindowHost.PreviewBuild(vm, "P1", "P2");
@@ -824,7 +825,7 @@ public class HiddenSurfaceTests
     public void The_project_list_is_not_rebuilt_while_hidden_and_is_built_once_without_reveal_on_show()
     {
         using var dir = new TempDir();
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
         MainWindowHost.Realize(window);
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3)); // ilk topolojinin belirişi oynadı
         int revealBefore = list.RevealGeneration;
@@ -833,7 +834,7 @@ public class HiddenSurfaceTests
         list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
         window.SetSurfaceHidden(true);
 
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken Sync yeni bir proje getirdi
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));   // gizliyken Sync yeni bir proje getirdi
 
         Assert.Equal(4, vm.Projects.Count);                     // ön-koşul: model topolojisi değişti
         Assert.Equal(0, rebuilds);                              // KIRMIZI kapısız: bugün topoloji listeyi hemen yeniden kurar
@@ -855,13 +856,13 @@ public class HiddenSurfaceTests
     public void A_topology_change_while_visible_rebuilds_the_list_at_once_and_plays_the_reveal()
     {
         using var dir = new TempDir();
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
         MainWindowHost.Realize(window);
         DispatcherPump.PumpUntil(() => list.RevealGeneration > 0, TimeSpan.FromSeconds(3));
         int revealBefore = list.RevealGeneration;
         int itemsBefore = list.RowFlow.Items.Count;
 
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));
 
         Assert.NotEqual(itemsBefore, list.RowFlow.Items.Count);   // liste hemen kuruldu
         DispatcherPump.PumpUntil(() => list.RevealGeneration != revealBefore, TimeSpan.FromSeconds(3));
@@ -879,8 +880,8 @@ public class HiddenSurfaceTests
     public void A_hidden_run_that_changes_neither_topology_nor_filter_leaves_the_list_alone_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(5);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(5);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         MainWindowHost.Realize(window);
         int rebuilds = 0;
         list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
@@ -903,15 +904,15 @@ public class HiddenSurfaceTests
     public void A_visible_topology_change_between_the_show_and_the_resync_leaves_the_resync_nothing_to_rebuild()
     {
         using var dir = new TempDir();
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
         MainWindowHost.Realize(window);
         window.SetSurfaceHidden(true);
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken topoloji: liste bayat
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));   // gizliyken topoloji: liste bayat
         window.SetSurfaceHidden(false);                         // Loaded-öncelikli ResyncAfterShow kuyrukta (pompa yok)
         int rebuilds = 0;
         list.RowFlow.ItemContainerGenerator.ItemsChanged += (_, _) => rebuilds++;
 
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(5)));   // dönüş ile Loaded arasında GÖRÜNÜR topoloji kurulumu
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(5));   // dönüş ile Loaded arasında GÖRÜNÜR topoloji kurulumu
         int rebuildsAfterVisible = rebuilds;
         Assert.True(rebuildsAfterVisible > 0, "ön-koşul: görünür topoloji listeyi kurdu");
 
@@ -930,11 +931,11 @@ public class HiddenSurfaceTests
     public async Task A_sync_restart_between_the_show_and_the_resync_keeps_the_blanked_list_empty()
     {
         using var dir = new TempDir();
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(Names(3)));
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, MainWindowHost.ProjectNames(3));
         MainWindowHost.Realize(window);
         MainWindowHost.AcceptSends(vm);
         window.SetSurfaceHidden(true);
-        MainWindowHost.ReplySync(vm, ProjectPairs(Names(4)));   // gizliyken topoloji: liste bayat
+        MainWindowHost.ReplySync(vm, MainWindowHost.ProjectNames(4));   // gizliyken topoloji: liste bayat
         window.SetSurfaceHidden(false);                         // Loaded-öncelikli ResyncAfterShow kuyrukta (pompa yok)
 
         await MainWindowHost.StartSync(vm, SyncMode.Manual);    // Sync düğmesi: ekran baştan başlar, liste boşalır
@@ -953,8 +954,8 @@ public class HiddenSurfaceTests
     /// </summary>
     private static (BuildOrchestrator.App.MainWindow Window, RunViewModel Vm) NewRunningWindow(TempDir dir, Func<long> nowMs)
     {
-        string[] names = Names(4);
-        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(4);
+        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, nowMs, names);
         MainWindowHost.PreviewBuild(vm, names);
         MainWindowHost.StartBuild(vm, names);
         MainWindowHost.StartProject(vm, "P1");
@@ -975,7 +976,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm) = NewRunningWindow(dir, () => now);
-        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
+        var row = ProjectOf(vm, "P0");
         Assert.Equal(ProjectRowState.Started, row.State); // ön-koşul: satırın canlı süresi var
         long startedAtMs = now;                           // koşunun da satırın da başladığı an
         var header = window.Shell.ConsoleHeaderControl;
@@ -1017,7 +1018,7 @@ public class HiddenSurfaceTests
         using var dir = new TempDir();
         long now = 1_000;
         var (window, vm) = NewRunningWindow(dir, () => now);
-        var row = vm.Projects.Single(p => p.Id == MainWindowHost.IdOf("P0"));
+        var row = ProjectOf(vm, "P0");
         var header = window.Shell.ConsoleHeaderControl;
         int lineWritesBefore = header.SetLineCountCalls;
         int frontierBefore = window.FrontierFollowCount;
@@ -1044,7 +1045,7 @@ public class HiddenSurfaceTests
     {
         using var dir = new TempDir();
         long now = 1_000;
-        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, () => now, ProjectPairs(Names(2)));
+        var (window, vm, _) = MainWindowHost.NewWithProjectsAndClock(dir, () => now, MainWindowHost.ProjectNames(2));
         MainWindowHost.AcceptSends(vm);
         int ready = 0;
         vm.ExitReady += (_, _) => ready++;
@@ -1089,16 +1090,15 @@ public class HiddenSurfaceTests
     public void The_action_bar_counter_chips_are_not_refreshed_while_hidden_and_catch_up_on_show()
     {
         using var dir = new TempDir();
-        string[] names = Names(5);
-        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(5);
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, names);
         var host = MainWindowHost.HostOffscreen(window);
         try
         {
-            var bar = DsResources.Descendants(window.Shell).OfType<BuildOrchestrator.App.Views.ActionBar>().Single();
+            var bar = DsResources.Descendants(window.Shell).OfType<ActionBar>().Single();
             DispatcherPump.PumpUntil(() => bar.IsLoaded, TimeSpan.FromSeconds(5)); // chip'ler Loaded'da kurulur
-            var building = ((System.Windows.Controls.StackPanel)bar.BuildingChip.Content).Children
-                .OfType<System.Windows.Controls.TextBlock>().Single();
-            var spinner = DsResources.Descendants(bar.BuildingChip).OfType<BuildingSpinner>().First();
+            var building = ActionBarTests.ChipValue(bar.BuildingChip);      // chip değeri ve spinner: ActionBarTests'in TEK okuma yolları
+            var spinner = ActionBarTests.ChipSpinner(bar.BuildingChip);
             MainWindowHost.PreviewBuild(vm, names);
             MainWindowHost.StartBuild(vm, names);
             window.Shell.UpdateLayout();                                // koşu görünürken başladı, ağaç yerleşti
@@ -1151,7 +1151,7 @@ public class HiddenSurfaceTests
     /// <summary>
     /// [perf Faz A · A8] <b>Kalıcı pin: pencere gizliyken koşu olayları hiçbir görünümün ölçümünü geçersizlemez.</b> Faz A'nın amacı
     /// tepsideki derlemede UI thread'ine layout geçişi yaptırmamaktır ve bir layout geçişi ancak bir öğenin ölçümü ya da yerleşimi
-    /// geçersizlendiğinde çıkar. Test 177 projelik bir derlemenin olay akışını gizliyken sürer — plan, başlangıç, derlenen bir satır,
+    /// geçersizlendiğinde çıkar. Test OSYS büyüklüğünde bir derlemenin olay akışını gizliyken sürer — plan, başlangıç, derlenen bir satır,
     /// 300 log satırı, 3 sn'lik tikler (gerçek kabuğun tik gövdesi), bir konsol batch'i, her projenin başlayıp bitmesi ve koşunun
     /// bitişi — ve gerçekleşmiş kabuk içeriğinin TÜM görsel ağacında başta geçerli olan HER öğenin sonda da geçerli kaldığını,
     /// konsol belgesinin gizlendikten sonra hiç yeniden kurulmadığını sınar. İzlenen küme elle seçilmiş köklerden değil ağacın
@@ -1174,8 +1174,8 @@ public class HiddenSurfaceTests
     public void Run_events_and_console_batches_leave_the_realized_shell_measure_valid_while_the_surface_is_hidden()
     {
         using var dir = new TempDir();
-        string[] names = Names(177);
-        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, ProjectPairs(names));
+        string[] names = MainWindowHost.ProjectNames(MainWindowHost.OsysProjectCount);
+        var (window, vm, list) = MainWindowHost.NewWithProjects(dir, names);
         var content = MainWindowHost.Realize(window); // satır container'ları üretilir; ağaç ölçülmüş ve yerleştirilmiş
         var shell = window.Shell;
         window.SetSurfaceHidden(true);
