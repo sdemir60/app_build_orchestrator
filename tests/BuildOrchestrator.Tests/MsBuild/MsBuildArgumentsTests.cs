@@ -174,6 +174,9 @@ public class MsBuildArgumentsTests
     public void EnsureTrailingBackslash(string input, string expected)
         => Assert.Equal(expected, MsBuildArguments.EnsureTrailingBackslash(input));
 
+    /// <summary>[Faz 2 · WPF geçici assembly] Aşağıdaki testlerin ortak targets yolu (diskte var olması gerekmez).</summary>
+    private const string TargetsPath = @"C:\state\msbuild\wpf-temporary-assembly.targets";
+
     /// <summary>
     /// [Faz 2 · WPF geçici assembly] Build listesi, verilirse WPF geçici assembly targets'ını TEK bir
     /// <c>-p:CustomBeforeMicrosoftCommonTargets=</c> argümanıyla taşır; yol tırnaklanmaz (liste
@@ -189,11 +192,46 @@ public class MsBuildArgumentsTests
     [Fact]
     public void the_build_list_carries_the_wpf_temporary_assembly_targets_when_given()
     {
-        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug",
-            customBeforeTargets: @"C:\state\msbuild\wpf-temporary-assembly.targets");
+        var args = MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", customBeforeTargets: TargetsPath);
 
-        Assert.Contains(@"-p:CustomBeforeMicrosoftCommonTargets=C:\state\msbuild\wpf-temporary-assembly.targets", args);
+        Assert.Contains("-p:CustomBeforeMicrosoftCommonTargets=" + TargetsPath, args);
         Assert.Equal(1, args.Count(a => a.StartsWith("-p:CustomBeforeMicrosoftCommonTargets=", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// Karar 9: targets argümanı Build, Rebuild ve Clean'in ÜÇÜNDE de girer — Clean'de geçici proje doğmaz, zararsızdır
+    /// ve sözleşme hedef başına ayrı bir liste olmadan tek kalır.
+    /// </summary>
+    [Theory]
+    [InlineData(MsBuildTarget.Build)]
+    [InlineData(MsBuildTarget.Rebuild)]
+    [InlineData(MsBuildTarget.Clean)]
+    public void every_build_target_carries_the_wpf_temporary_assembly_targets(MsBuildTarget target)
+        => Assert.Contains("-p:CustomBeforeMicrosoftCommonTargets=" + TargetsPath,
+            MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", target, TargetsPath));
+
+    /// <summary>
+    /// Build listesi SALT-OKUNUR döner (targets argümanı eklenmeden önce de böyleydi): argüman sözleşmesini çağıran
+    /// yerinde değiştiremez.
+    /// </summary>
+    [Fact]
+    public void the_build_list_is_read_only()
+        => Assert.Throws<NotSupportedException>(() =>
+            ((IList<string>)MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", customBeforeTargets: TargetsPath)).Add("-x"));
+
+    /// <summary>
+    /// Boşluklu bir kullanıcı profili yolu (<c>C:\Users\Ad Soyad\...</c>) komut satırına TEK tırnaklı token olarak
+    /// çıkar: MSBuild <c>-p:Ad=Değer</c> değerini bölünmeden alır.
+    /// </summary>
+    [Fact]
+    public void a_targets_path_with_a_space_is_one_quoted_token_on_the_command_line()
+    {
+        const string spaced = @"C:\Users\Ad Soyad\AppData\Local\BuildOrchestrator\msbuild\wpf-temporary-assembly.targets";
+
+        string line = BuildOrchestrator.Core.Processes.WindowsCommandLine.Build(@"C:\msbuild\MSBuild.exe",
+            [.. MsBuildArguments.Build(@"c:\r\p.csproj", "Debug", customBeforeTargets: spaced)]);
+
+        Assert.Contains("\"-p:CustomBeforeMicrosoftCommonTargets=" + spaced + "\"", line);
     }
 
     /// <summary>Yol verilmezse liste targets'sız hâliyle aynıdır: yalıtılmış/sahte motorlar ve targets'ı
@@ -218,27 +256,27 @@ public class MsBuildArgumentsTests
     public void the_plan_gives_the_targets_to_the_build_list_only()
     {
         var request = new MsBuildInvokeRequest(@"c:\r\p.csproj", "Debug", @"c:\r\", NeedsRestore: true,
-            CustomBeforeTargets: @"C:\state\msbuild\wpf-temporary-assembly.targets");
+            CustomBeforeTargets: TargetsPath);
 
         var (restore, build) = MsBuildArguments.PlanFor(request);
 
-        Assert.Contains(@"-p:CustomBeforeMicrosoftCommonTargets=C:\state\msbuild\wpf-temporary-assembly.targets", build);
+        Assert.Contains("-p:CustomBeforeMicrosoftCommonTargets=" + TargetsPath, build);
         Assert.NotNull(restore); // NeedsRestore: Restore listesi var — ve targets'sız
         Assert.DoesNotContain(restore!, a => a.Contains("CustomBeforeMicrosoftCommonTargets"));
     }
 
     /// <summary>
-    /// [Faz 2 · WPF geçici assembly] Proje logunun İLK satırı invoker'ın koşturduğu listenin AYNISIDIR: koordinatör
-    /// komut satırını <see cref="MsBuildArguments.PlanFor"/>'dan kurar, <c>Build</c>/<c>RestorePackagesConfig</c>'i
-    /// kendisi seçmez (ikinci bir seçim yeri, yeni bir argümanda log ile gerçek komutu sessizce ayrıştırırdı) ve
-    /// istek, koşuya taşınan targets yolunu verir.
+    /// [Faz 2 · WPF geçici assembly] Koordinatör komut satırının argümanlarını KENDİSİ seçmez: proje logunun ilk satırı
+    /// invoker'ın koşturduğu listenin AYNISI olsun diye liste <see cref="MsBuildArguments.PlanFor"/>'dan gelir,
+    /// <c>Build</c>/<c>RestorePackagesConfig</c> doğrudan çağrılmaz (ikinci bir seçim yeri, yeni bir argümanda log ile
+    /// gerçek komutu sessizce ayrıştırırdı).
     ///
-    /// <para>Guard bilinçlidir ve <see cref="The_invoker_never_picks_the_build_target_itself"/> ile aynı gerekçedendir:
-    /// invoker'ın ürettiği komut satırını gözleyen bir dikiş yoktur, yani yolun unutulması (optimizasyonun sessizce
-    /// kapanması) hiçbir davranış testini kırmızı yapmazdı.</para>
+    /// <para>Guard bilinçlidir ve <see cref="The_invoker_never_picks_the_build_target_itself"/> ile aynı kalıptadır.
+    /// Targets yolunun koşudan isteğe ve log satırına TAŞINMASI ise metin taramasıyla değil davranışla pinlidir
+    /// (<c>RunCoordinatorTests.the_toolset_targets_path_reaches_every_request_and_the_first_log_line</c>).</para>
     /// </summary>
     [Fact]
-    public void the_run_coordinator_logs_the_command_line_of_the_same_plan_the_invoker_runs()
+    public void The_run_coordinator_never_picks_the_command_line_arguments_itself()
     {
         string text = File.ReadAllText(
             Path.Combine(RepoPaths.SrcRoot, "BuildOrchestrator.Supervisor", "RunCoordinator.cs"));
@@ -246,6 +284,5 @@ public class MsBuildArgumentsTests
         Assert.Contains("MsBuildArguments.PlanFor(", text);                     // log satırı tek kaynaktan
         Assert.DoesNotContain("MsBuildArguments.Build(", text);                 // ...build listesini kendisi seçmiyor
         Assert.DoesNotContain("MsBuildArguments.RestorePackagesConfig(", text); // ...restore listesini de
-        Assert.Contains("CustomBeforeTargets: run.CustomBeforeTargetsPath", text); // istek yolu koşudan alıyor
     }
 }

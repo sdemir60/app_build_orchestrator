@@ -35,7 +35,7 @@ public static class MsBuildArguments
         ];
         if (customBeforeTargets is not null)
             args.Add(CustomBeforeTargetsSwitch + customBeforeTargets);
-        return args;
+        return args.AsReadOnly(); // salt-okunur: sözleşmeyi çağıran yerinde değiştiremez
     }
 
     /// <summary>Targets argümanının TEK yazıldığı yer: global property adı ve <c>=</c>.</summary>

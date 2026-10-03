@@ -52,6 +52,50 @@ public class WpfTemporaryAssemblyTargetsTests
     }
 
     /// <summary>
+    /// Göreli bir önbellek kökü (ör. göreli <c>--logs</c>) MSBuild'in ÇALIŞMA DİZİNİNE göre çözülürdü: <c>-p:</c> yolu
+    /// proje klasöründen bakılarak <c>Exists</c> ile sınanır, dosya bulunamayınca optimizasyon HİÇBİR UYARI vermeden
+    /// düşerdi. Bu yüzden dönen yol her zaman tam yoldur. (Göreli kök, test çalışma dizini altında benzersiz bir
+    /// klasördür ve iş bitince silinir.)
+    /// </summary>
+    [Fact]
+    public void a_relative_cache_root_yields_an_absolute_targets_path()
+    {
+        string relativeRoot = "bo-relative-root-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            string path = WpfTemporaryAssemblyTargets.EnsureWritten(relativeRoot);
+
+            Assert.True(Path.IsPathRooted(path));
+            Assert.Equal(Path.GetFullPath(
+                Path.Combine(relativeRoot, "msbuild", WpfTemporaryAssemblyTargets.TargetsFileName)), path);
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            string full = Path.GetFullPath(relativeRoot);
+            if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// "Targets var ⇒ friend var": friend dosyası targets'tan ÖNCE yazılır. Targets yazımı patlarsa (burada yolunu bir
+    /// klasör işgal eder) friend yerindedir; ters sırada, targets'ı gören bir MSBuild olmayan bir kaynak dosyasına
+    /// bağlanır ve geçici assembly derlemesi dosya bulunamadı hatasıyla düşerdi.
+    /// </summary>
+    [Fact]
+    public void the_friend_file_is_written_before_the_targets_file()
+    {
+        using var dir = new TempDir();
+        string msbuildDir = Path.Combine(dir.Path, "msbuild");
+        Directory.CreateDirectory(Path.Combine(msbuildDir, WpfTemporaryAssemblyTargets.TargetsFileName)); // targets yazımı patlar
+
+        Assert.ThrowsAny<Exception>(() => WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path));
+
+        Assert.Equal(WpfTemporaryAssemblyTargets.FriendContent,
+            File.ReadAllText(Path.Combine(msbuildDir, WpfTemporaryAssemblyTargets.FriendFileName)));
+    }
+
+    /// <summary>
     /// Motor her açılışta yazar: içerik aynıysa dosyaya DOKUNMAZ (mtime korunur), bozulmuş ya da eski bir içerik
     /// onarılır. Atomik yazım yoktur — motor tek yazıcıdır.
     /// </summary>

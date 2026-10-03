@@ -66,12 +66,16 @@ public static class WpfTemporaryAssemblyTargets
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(cacheRoot);
 
-        string directory = Path.Combine(cacheRoot, FolderName);
+        // Tam yol: göreli bir kök (ör. göreli --logs) MSBuild'in çalışma dizinine göre çözülür ve targets'ın Exists
+        // koşulu sessizce düşer — optimizasyon hiçbir uyarı vermeden kapanırdı.
+        string directory = Path.Combine(Path.GetFullPath(cacheRoot), FolderName);
         Directory.CreateDirectory(directory);
 
+        // Friend ÖNCE: "targets var ⇒ friend var". Yazım targets'tan önce yarıda kalsa bile targets'ı gören bir
+        // MSBuild olmayan bir kaynak dosyasına bağlanmaz.
+        WriteIfDifferent(Path.Combine(directory, FriendFileName), FriendContent);
         string targetsPath = Path.Combine(directory, TargetsFileName);
         WriteIfDifferent(targetsPath, TargetsContent);
-        WriteIfDifferent(Path.Combine(directory, FriendFileName), FriendContent);
         return targetsPath;
     }
 
