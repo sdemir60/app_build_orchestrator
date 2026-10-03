@@ -28,8 +28,8 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Pencere aktifliği nasıl sınanır:</b> başsız test pencereleri etkin olmayabilir; bu yüzden görünümler
 /// <c>Window.IsActive</c>'i kendileri OKUMAZ. Sinyal yalnız <see cref="CursorClock.SetWindowActive"/> ile gelir
-/// (üretimde <c>MainWindow</c>'un Activated/Deactivated olayları; ilk durumu da <c>MainWindow</c> ilk gösterimde bir
-/// kez kendi <c>IsActive</c>'inden bildirir) ve hiç sinyal gelmemiş saat "aktif"tir. Saat pencere başınadır: her test
+/// (üretimde <c>MainWindow</c>'un Activated/Deactivated olayları; ilk durumu da <c>MainWindow</c> ilk gösterimde
+/// kendi <c>IsActive</c>'inden bildirir) ve hiç sinyal gelmemiş saat "aktif"tir. Saat pencere başınadır: her test
 /// kendi pencerelerini kurduğu için testler birbirinin saatine sızmaz.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
@@ -64,6 +64,15 @@ public class CursorClockTests
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\a.csproj", "A"));
     }
 
+    /// <summary>Görünümü ağaçtan çıkarır ve <c>Unloaded</c>'ı yükseltir. WPF'in kendi <c>Unloaded</c>'ı başsız ağaçta
+    /// dispatcher turuna bağlı olabilir; olay doğrudan yükseltilir (başlatıcıların <c>Unloaded</c> işleyicileri
+    /// idempotenttir, ağaçtan çıkış zaten <c>IsVisibleChanged</c> ile de ayırır).</summary>
+    private static void RemoveFromTree(FrameworkElement view)
+    {
+        ((Panel)view.Parent).Children.Remove(view);
+        view.RaiseEvent(new RoutedEventArgs(FrameworkElement.UnloadedEvent, view));
+    }
+
     // ---------------------------------------------------------------- tek saat
 
     [StaFact]
@@ -76,6 +85,26 @@ public class CursorClockTests
         Assert.True(Blinking(stream.ActiveCursorGlyph), "ön-koşul: stream imleci GERÇEKTEN kırpmalı");
         Assert.Equal(2, clock.AttachedCount); // iki imleç, TEK saat
         Assert.NotNull(clock.ActiveBlinkClock);
+        Assert.NotNull(clock.ActiveColorClock); // renk turu da ORTAK: imleç başına bir renk saati kurulmaz
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Kabuktaki görünümler saati <c>Window.GetWindow</c> ile bulur; <c>MainWindow</c> ise onu ctor'da, henüz
+    /// gösterilmemişken <c>For(this)</c> ile alır. İkisi AYNI saat olmalıdır: <c>GetWindow</c>'un döndürdüğü şey, saatin
+    /// anahtarı olan pencere nesnesinin kendisidir. Gerçek <c>MainWindow</c> burada kullanılamaz: kabuk testlerinde
+    /// pencere hiç <c>Show()</c> edilmez (tepsi ikonu, global kısayol kaydı ve motor gösterimde kurulur) ve
+    /// <c>HostOffscreen</c> içeriği başka bir pencereye taşıdığı için görünümler orada o pencerenin saatini bulur.
+    /// Eşdeğer: sıradan bir pencerede görünümlerin bulduğu saat, pencerenin <c>For</c> ile aldığı saattir.
+    /// </summary>
+    [StaFact]
+    public void The_views_of_a_window_find_the_clock_that_window_is_keyed_by()
+    {
+        var (console, stream, _, window) = RealizeBoth();
+
+        Assert.Same(window, Window.GetWindow(console)); // görünümler pencereyi bu nesne olarak çözer
+        Assert.Same(window, Window.GetWindow(stream));
+        Assert.Equal(2, CursorClock.For(window).AttachedCount); // ve imleçleri O pencerenin saatine bağlar
         GC.KeepAlive(window);
     }
 
@@ -85,12 +114,15 @@ public class CursorClockTests
         var (console, _, vm, window) = RealizeBoth();
         var clock = CursorClock.For(window);
         var shared = clock.ActiveBlinkClock;
+        var sharedColor = clock.ActiveColorClock;
         Assert.NotNull(shared); // non-vacuous: saat gerçekten kurulu
+        Assert.NotNull(sharedColor);
 
         console.ShowReady(); // konsolda her görsel-satır değişiminde koşan yol
         RaiseStreamEvents(vm); // stream'de her olayda koşan yol
 
         Assert.Same(shared, clock.ActiveBlinkClock); // saat sıfırlanmadı: ritim kesilmedi
+        Assert.Same(sharedColor, clock.ActiveColorClock); // renk turu da: imleç başına yeni renk saati kurulmadı
         Assert.Equal(2, clock.AttachedCount); // çiftlenmedi
         GC.KeepAlive(window);
     }
@@ -116,6 +148,36 @@ public class CursorClockTests
         Assert.NotNull(clock.ActiveBlinkClock);
         Assert.True(Blinking(console.ActiveCursorGlyph));
         Assert.True(Blinking(stream.ActiveCursorGlyph));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Görünüm ağaçtan çıkınca (<c>Unloaded</c>) YALNIZ kendi imleci ayrılır: pencere o an artık çözülemez, bu yüzden
+    /// ayrılma imleç→saat kaydından DOĞRU saati bulmak zorundadır. Konsol hâlâ bağlıyken ortak saat yaşar (yeniden
+    /// kurulmaz); son imleç de ayrılınca saat durur.
+    /// </summary>
+    [StaFact]
+    public void Removing_a_view_from_the_tree_detaches_only_its_own_cursor_and_the_last_one_stops_the_clock()
+    {
+        var (console, stream, _, window) = RealizeBoth();
+        var clock = CursorClock.For(window);
+        var shared = clock.ActiveBlinkClock;
+        Assert.Equal(2, clock.AttachedCount); // ön-koşul
+        Assert.NotNull(shared);
+
+        RemoveFromTree(stream);
+
+        Assert.Equal(1, clock.AttachedCount); // yalnız akışın imleci ayrıldı
+        Assert.Same(shared, clock.ActiveBlinkClock); // konsol bağlıyken ortak saat yaşar, yeniden kurulmadı
+        Assert.True(Blinking(console.ActiveCursorGlyph));
+        Assert.False(stream.ActiveCursorGlyph.HasAnimatedProperties);
+
+        RemoveFromTree(console);
+
+        Assert.Equal(0, clock.AttachedCount);
+        Assert.Null(clock.ActiveBlinkClock); // son imleç ayrıldı → saat yok
+        Assert.Null(clock.ActiveColorClock);
+        Assert.False(console.ActiveCursorGlyph.HasAnimatedProperties);
         GC.KeepAlive(window);
     }
 
@@ -218,6 +280,7 @@ public class CursorClockTests
 
         var blink = clock.ActiveBlinkClock;
         Assert.NotNull(blink); // ön-koşul: kırpma yine de döner
+        Assert.Null(clock.ActiveColorClock); // ön-koşul: palet çözülemedi, renk saati yok
         Assert.False(CursorHop.IsRunning(cursor), "ön-koşul: palet çözülemedi, renk turu yok");
         CursorClock.Attach(cursor, host, rest); // yeniden değerlendirme — palet HÂLÂ yok
         Assert.Same(blink, clock.ActiveBlinkClock); // kırpma sıfırlanmadı
@@ -226,6 +289,7 @@ public class CursorClockTests
         CursorClock.Attach(cursor, host, rest); // bir sonraki olay / konsol tazelemesi
 
         Assert.True(CursorHop.IsRunning(cursor)); // tur kuruldu
+        Assert.NotNull(clock.ActiveColorClock);
         Assert.NotSame(blink, clock.ActiveBlinkClock); // çift BİRLİKTE yeniden başladı (faz)
         Assert.Equal(1, clock.AttachedCount);
 
@@ -264,6 +328,15 @@ public class CursorClockTests
 
     // ---------------------------------------------------------------- reduced-motion
 
+    /// <summary>
+    /// Hareket koşu SIRASINDA kapanırsa event stream'in imleci saatten ayrılır ve saat serbest kalır (başka imleç
+    /// bağlı değilse durur).
+    ///
+    /// <para><b>Eski davranış:</b> motion-kapalı dalı yalnız opaklığı sıfırlardı; akışın renk turu dönmeye DEVAM
+    /// ederdi. <b>Değişme gerekçesi:</b> reduced-motion sözleşmesi hiçbir sonsuz animasyona izin vermez ve konsol imleci
+    /// zaten turu söküyordu (<c>ConsoleView.StopBlink</c>) — iki imleç aynı kuralı izlemeli. Tur sökülünce akıştaki ton
+    /// kanalı (<c>RefreshCursorTone</c>) rengi devralır.</para>
+    /// </summary>
     [StaFact]
     public void Turning_motion_off_detaches_the_cursor_and_releases_the_clock()
     {
@@ -306,7 +379,7 @@ public class CursorClockTests
     /// <summary>
     /// Pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken açılış, yeniden başlatma):
     /// <c>Deactivated</c> o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki pencerede kırpardı.
-    /// Pencere ilk gösterimde (içerik çizildiğinde) durumu KENDİ <c>IsActive</c>'inden bir kez bildirir; sonrası
+    /// Pencere ilk gösterimde (içerik çizildiğinde) durumu KENDİ <c>IsActive</c>'inden bildirir; sonrası
     /// Activated/Deactivated olaylarının işidir. Hiç aktifleşmemiş bir <c>MainWindow</c> (<c>IsActive == false</c>) bu
     /// durumun eşdeğeridir; <c>ContentRendered</c> gerçek olayın yöntemiyle ateşlenir (bkz. önceki test).
     ///

@@ -3888,16 +3888,15 @@ lines.
   the bottom: a 7 × 13 px rectangle blinking at 1.1 s (not a font glyph), stepping through the console's own
   line palette as it blinks (§14.3) on the one clock the event stream's caret shares, and only while the window
   is active — behind another window it stands still (§14.5) — with `ready` beside it while idle and
-  `Waiting for a workspace` while there
-  is no workspace (§13.2). Output empties `ready`, never the waiting text — on first run the engine prints its
-  own line at once, and a waiting text that output emptied would never be seen. The line is unconditional — output empties its text, not the line —
-  so the caret stays put and new lines pile up above it. The editor reserves one full line of bottom padding,
-  measured from the text view's own line height, so the caret sits below the last line instead of on top of
-  it; it hides while the reader is scrolled away from the bottom, alongside the `⌄ latest` pill, since it is
-  pinned to the panel rather than to the document. That prompt caret is the console's **only** live caret. The
-  editor is read-only but still takes keyboard focus when clicked, and its own thin text caret would then blink
-  beside the prompt's; it is painted with a transparent brush instead. Only its visibility goes — the editor stays
-  focusable, and text selection and Ctrl+C go through it as usual.
+  `Waiting for a workspace` while there is no workspace (§13.2). Output empties `ready`, never the waiting text — on
+  first run the engine prints its own line at once, and a waiting text that output emptied would never be seen. The
+  line is unconditional — output empties its text, not the line — so the caret stays put and new lines pile up above
+  it. The editor reserves one full line of bottom padding, measured from the text view's own line height, so the
+  caret sits below the last line instead of on top of it; it hides while the reader is scrolled away from the
+  bottom, alongside the `⌄ latest` pill, since it is pinned to the panel rather than to the document. That prompt
+  caret is the console's **only** live caret. The editor is read-only but still takes keyboard focus when clicked,
+  and its own thin text caret would then blink beside the prompt's; it is painted with a transparent brush instead.
+  Only its visibility goes — the editor stays focusable, and text selection and Ctrl+C go through it as usual.
 - **While you are scrolling, the panel is yours.** A user gesture takes the wheel for five seconds — the same
   idle window the list's frontier following uses, and the same constant — and during it arriving content
   never pulls the view down. The 48 px threshold alone was not enough: a small scroll stayed inside it, so
@@ -4176,8 +4175,10 @@ The wall-clock stamp stays dim, which keeps the waiting row quiet.
 channel is still visible: while an event is in hand the caret carries that event's *icon* colour — green for a
 success, red for a failure, grey for a skip — and it returns to amber, the resting tone, when the writing is
 over. An event that prints instantly is never written, so it holds the caret for a short window instead —
-420 ms, the same figure the prompt's own caret hold uses. When the colour cycle is running it takes precedence:
-the tone would otherwise cut the cycle short on the first event and freeze the caret on one colour.
+420 ms, the same figure the prompt's own caret hold uses. The tone shows wherever the colour cycle is not
+running, not only with reduced motion: a window that is not the active one (§14.5) stops the cycle, and the
+stream's caret rests in the tone there too. When the colour cycle is running it takes precedence: the tone
+would otherwise cut the cycle short on the first event and freeze the caret on one colour.
 
 Both extremes were tried and measured. Colouring only for the exact duration of the typing left the caret
 amber most of the time and green was almost never seen; holding the colour indefinitely left it stale — a run
@@ -5095,16 +5096,7 @@ Decorative infinite animations run at `DesiredFrameRate=30` — one shared const
 owner; all counters tick from one `DispatcherTimer`;
 timing-sensitive sequences (the event stream's typewriter) are `Stopwatch`-based rather than trusting the ~15.6 ms
 `DispatcherTimer` resolution. Resetting an observable collection is prohibited — it destroys running
-animations. The two carets — the console prompt's and the event stream's active line — are the one pair of
-infinite loops that is genuinely on screen for the whole life of the window, so a visibility gate alone cannot
-quiet them; with a blink and a colour tour each, they were the largest single share of the cost of an idle
-application in the foreground. They share one clock pair instead of owning four: both carets attach to their
-window's cursor clock, so they blink in phase and step through the palette together. That clock runs only
-while the window is active, the Windows convention for a caret — behind another window, minimised or in the
-tray, both carets stand still, fully opaque and in their resting colour, and they resume in phase on
-activation. The signal is the window's own `Activated`/`Deactivated`; the views never read it themselves, and a
-window that has not reported a change counts as active. Visibility and activity are independent gates and
-either one stops the clock. With reduced motion no clock is created at all.
+animations.
 
 **An infinite animation must stop being visible before it stops running.** WPF's timing engine keeps the whole
 render loop awake while *any* clock is active, so one forgotten `Forever` costs far more than itself: an idle
@@ -5122,6 +5114,22 @@ second, and the console's append pump opens its batching window only once a line
 a timer for the life of the application. Measured with CPU cycle counters on an idle application in the tray,
 the cursor gate and the sleeping pump together took the process from roughly 81 to 5 million cycles a second;
 either one alone removed barely a sixth of it.
+
+**The two carets share one clock, and it runs only while the window is active.** The console prompt's caret and
+the event stream's active-line caret are the one pair of infinite loops that is genuinely on screen for the whole
+life of the window, so the visibility gate alone cannot quiet them; with a blink and a colour tour each, they were
+the largest single share of the cost of an idle application in the foreground. They share one clock pair instead
+of owning four: both carets attach to their window's cursor clock, so they blink in phase and step through the
+palette together. Beside visibility the clock has a second gate, the Windows convention for a caret: it runs only
+while the window is active. Behind another window, minimised or in the tray, both carets stand still, fully opaque
+and in their resting colour, and they resume in phase on activation. The signal is the window's own `Activated`
+and `Deactivated`; the views never read it themselves. The window also reads its own state when its content is
+first rendered, because one that was never activated — a foreground lock, an application started behind another —
+never hears `Deactivated` and would otherwise keep blinking until the first click; a clock that has heard nothing
+at all counts as active. Visibility and activity are independent gates and either one stops the clock. If the
+palette cannot be resolved when the clock is created (the view is not yet in a resource scope) the caret blinks
+without its colour tour, and the pair is restarted together at the next re-evaluation once the palette resolves, so
+the two stay in phase. With reduced motion no clock is created at all.
 
 **One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
@@ -6034,7 +6042,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Visual status (the single colour channel) and its token table; the standing it is built on | `App/Controls/VisualStatus.cs`, `App/Controls/StandingStatus.cs` |
 | Start-mode drawing constants (stripe/ring opacity, four-arc ring, cross-fade) | `App/Controls/StartMode.cs` |
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
-| The carets' shared clock pair and the window-active rule | `App/Controls/CursorClock.cs` |
+| The carets' shared clock pair and the window-active rule; the window's side of it (Activated/Deactivated, first-show state) | `App/Controls/CursorClock.cs`, `App/MainWindow.xaml.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
 | Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
 | Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |

@@ -473,10 +473,12 @@ public partial class EventStreamView : UserControl
         // Görünmezken saat KURULMAZ: bu metot her olayda çağrılır (UpdateActiveLine), tepsideyken de — kapı
         // çağıranlarda olsaydı bir sonraki olay saati geri kurardı (bkz. HiddenCursorClockTests).
         if (!IsVisible) { StopCursorBlink(); return; }
+        // Hareket kapalı: Detach idempotent ve ucuzdur (bağlı değilse yalnız opaklığı ve dinlenme rengini yazar), bu yüzden
+        // olay başına "bağlı mı" diye ayrıca sorulmaz — o soru Detach'in kendi guard'ının kopyası olurdu.
         if (!AnimationsEnabledProvider()) { StopCursorBlink(); return; }
         // [design v1.12.1 §2.6] Stream'in imleci konsolunkiyle AYNI bileşendir → aynı saatte, aynı renk turunu döner.
         // Bağlı imleç YENİDEN kurulmaz (CursorClock.Attach idempotent): bu metot her olayda çağrılır.
-        CursorClock.Attach(PART_ActiveCursor, this, CursorRestKey);
+        CursorClock.Attach(PART_ActiveCursor, this, _cursorRestKeyProvider ??= CursorRestKey);
     }
 
     /// <summary>Görünüm ağaçtan çıkarken tazelik saatini bırakır: tek atımlık bir <c>DispatcherTimer</c>'ı
@@ -486,6 +488,10 @@ public partial class EventStreamView : UserControl
     /// <summary>İmlecin dinlenme rengi (ton kanalı): saat imleci bıraktığında (pencere aktif değil, görünmez, hareket
     /// kapalı) imleç bu anahtarın rengine döner. Saat bunu bırakma ANINDA okur — ton, bağlıyken de değişir.</summary>
     private string CursorRestKey() => _cursorToneKey ?? WaitingToneKey;
+
+    /// <summary><see cref="CursorRestKey"/>'in delegesi: <c>Attach</c> her olayda çağrılır ve örnek yöntemin method group
+    /// dönüşümü her seferinde yeni bir delege tahsis ederdi — bir kez kurulur.</summary>
+    private Func<string>? _cursorRestKeyProvider;
 
     private void StopCursorBlink() =>
         CursorClock.Detach(PART_ActiveCursor, CursorRestKey()); // saat sökülür, ton kanalı devralır

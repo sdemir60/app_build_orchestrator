@@ -114,7 +114,8 @@ public partial class MainWindow : Window
         // durumuna küçültülünce ve tepsiye inince ikisi de sabit durur. Sinyalin TEK kaynağı bu pencerenin kendi
         // Activated/Deactivated olaylarıdır: görünümler aktifliği kendileri OKUMAZ (başsız test pencereleri etkin
         // olmayabilir). Saat pencere başınadır — konsol ve event stream aynı pencerede aynı saati bulur.
-        var cursorClock = global::BuildOrchestrator.App.Controls.CursorClock.For(this);
+        // (Aynı Activated olayına bağlı öbür kanca, VM'in OnWindowActivated'ı, aşağıda VM kablajının yanındadır.)
+        var cursorClock = CursorClock.For(this);
         Activated += (_, _) => cursorClock.SetWindowActive(true);
         Deactivated += (_, _) => cursorClock.SetWindowActive(false);
         // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
@@ -370,6 +371,7 @@ public partial class MainWindow : Window
         // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
+        // (Aynı Activated olayına bağlı öbür kanca — imleç saatinin aktiflik kablajı — ctor'un başındadır: cursorClock.)
         Activated += (_, _) => _vm.OnWindowActivated();
 
         _elapsedTimer.Tick += (_, _) => OnElapsedTick();

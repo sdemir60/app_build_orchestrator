@@ -58,6 +58,11 @@ internal sealed class CursorClock
     /// <summary>[test yüzeyi] Bağlı imleçlerin opaklığını ŞU AN süren TEK kırpma saati; saat durmuşsa <c>null</c>.</summary>
     internal AnimationClock? ActiveBlinkClock => _blinkClock;
 
+    /// <summary>[test yüzeyi] Bağlı imleçlerin rengini ŞU AN süren TEK renk turu saati; saat durmuşsa ya da palet
+    /// çözülemediği için tur kurulamadıysa <c>null</c>. İki imleç aynı saati paylaşır: imleç başına bir renk saati kuran
+    /// bir gerileme burada görünür.</summary>
+    internal AnimationClock? ActiveColorClock => _colorClock;
+
     /// <summary>Pencerenin saati. Anahtar pencerenin KENDİSİDİR: <c>MainWindow</c> ctor'da (henüz gösterilmemişken) alır,
     /// kabuktaki görünümler gösterimden sonra <c>Window.GetWindow</c> ile bulur — ikisi aynı pencere nesnesidir, yani aynı
     /// saat. Pencere çözülemeyen öğe için saat YOKTUR (<see cref="Attach"/> bağlamayı erteler): öğenin kendisini anahtar
