@@ -80,6 +80,23 @@ public static class GraphBinder
     public static IReadOnlyDictionary<string, int> TopologicalDepths(IReadOnlyList<ProjectNode> topology)
     {
         ArgumentNullException.ThrowIfNull(topology);
+        return DepthMemo.GetValue(topology, static t => { _depthComputations++; return ComputeDepths(t); });
+    }
+
+    /// <summary>[perf Faz B · B5] Topoloji REFERANSI başına bir kez hesaplanan derinlikler (<see cref="TopologicalDepths"/> ve
+    /// <see cref="Nodes"/> aynı önbellekten geçer). Topoloji yalnız Sync'te değişir — VM yeni bir liste atar, eskisini değiştirmez —
+    /// ama graf her statü değişiminde <see cref="Nodes"/>'u çağırır; derinlik her çağrıda baştan hesaplanıyordu. Anahtar
+    /// zayıf tutulur: eski topoloji gidince girdisi de gider. Döndürülen sözlük PAYLAŞIMLIDIR — salt okunurdur.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<ProjectNode>, IReadOnlyDictionary<string, int>> DepthMemo = new();
+
+    /// <summary>[perf Faz B · B5 test yüzeyi] Derinliğin gerçekten HESAPLANDIĞI (önbellekten gelmediği) çağrı sayısı.
+    /// İş parçacığına özeldir: paralel koşan başka sınıfların graf çağrıları bir testin sayısını bozmaz.</summary>
+    [ThreadStatic] private static int _depthComputations;
+    internal static int DepthComputations => _depthComputations;
+
+    private static IReadOnlyDictionary<string, int> ComputeDepths(IReadOnlyList<ProjectNode> topology)
+    {
+        ArgumentNullException.ThrowIfNull(topology);
 
         var byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
         foreach (var node in topology) byId[node.Id] = node;

@@ -88,7 +88,11 @@ public class SearchInputTests
     /// (<c>box.Clear()</c> → iki-yönlü binding <c>ProjectQuery</c>'yi temizler, <c>ShellRoot.xaml.cs:86-95</c>).
     /// Kanıt kutunun kendi <c>Text</c>'i DEĞİL, VM'in sorgusu VE ondan türeyen görünür listedir — sorgu önce
     /// listeyi GERÇEKTEN daraltır (ön-koşul, aksi halde "tam listeye döndü" iddiası 0==0 üzerinde YALANCI-YEŞİL
-    /// olurdu), Esc sonra onu tam listeye geri döndürür.</summary>
+    /// olurdu), Esc sonra onu tam listeye geri döndürür.
+    /// <para><b>[DEĞİŞEN KURAL — perf Faz B · B5]</b> Eskiden kutudaki yazı <c>ProjectQuery</c>'ye ANINDA ulaşıyordu ve test ön-koşulu
+    /// ile sonucu hemen okuyordu. Kutunun bağlaması artık gecikmeli yazar (her tuş vuruşu bir liste yeniden kurulumuydu; bkz.
+    /// <c>ProjectListFilterTests.A_burst_of_keystrokes_in_the_filter_box_reaches_the_model_once</c>): yazı da Esc'in temizlemesi
+    /// de modele gecikme dolunca ulaşır. Test beklemeyi pompa ile AÇIKÇA yapar; iddialar aynıdır, hiçbir eşik gevşetilmedi.</para></summary>
     [StaFact]
     public void Escape_clears_the_bound_query_and_the_visible_list_returns_to_full()
     {
@@ -96,11 +100,13 @@ public class SearchInputTests
         var (box, _, vm, window) = RealizeFilterBoxWithVm(temp);
         box.Focus();
         box.Text = "Alpha";
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "Alpha", TimeSpan.FromSeconds(2)); // yazı modele gecikmeyle ulaşır (B5)
         Assert.Single(vm.VisibleProjects); // ön-koşul: sorgu listeyi GERÇEKTEN daraltıyor
 
         var esc = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(box)!, 0, Key.Escape)
         { RoutedEvent = Keyboard.PreviewKeyDownEvent };
         box.RaiseEvent(esc); // ShellRoot ctor'da box'a asılı GERÇEK OnFilterKeyDown handler'ı
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "", TimeSpan.FromSeconds(2)); // temizleme de aynı gecikmeli yoldan gider (B5)
 
         Assert.Equal("", vm.ProjectQuery);
         Assert.Equal(2, vm.VisibleProjects.Count);
@@ -109,7 +115,10 @@ public class SearchInputTests
 
     /// <summary>[T17 · 2] ✕ butonunun komutu (<see cref="DsChrome.ClearTextCommand"/>, <c>DsChrome.cs:57-68</c>):
     /// <c>box.Clear()</c> + <c>box.Focus()</c>. Temizleme VM'e ULAŞIR (binding) ve — ✕'in Esc'ten FARKI — odak
-    /// kutuda KALIR (Esc'in AKSİNE <c>Keyboard.ClearFocus()</c> hiç çağrılmaz).</summary>
+    /// kutuda KALIR (Esc'in AKSİNE <c>Keyboard.ClearFocus()</c> hiç çağrılmaz).
+    /// <para><b>[DEĞİŞEN KURAL — perf Faz B · B5]</b> Test eskiden yazıyı ve temizlemeyi anında okurdu; bağlama gecikmeli olunca
+    /// modele hiç ulaşmamış bir yazıyı temizlemek de "sorgu boş" iddiasını boş sorgu üzerinde YALANCI-YEŞİL yapar. Test önce yazının
+    /// modele ulaştığını ("Alpha") sınar, sonra temizlemenin de gecikmeyle ulaşmasını bekler; iddia aynıdır.</para></summary>
     [StaFact]
     public void The_clear_button_command_empties_the_bound_query_and_keeps_focus_in_the_box()
     {
@@ -119,7 +128,10 @@ public class SearchInputTests
         box.Text = "Alpha";
         DispatcherPump.PumpUntil(() => box.IsKeyboardFocused, TimeSpan.FromSeconds(2));
 
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "Alpha", TimeSpan.FromSeconds(2)); // ön-koşul: yazı modele ULAŞTI (B5)
+        Assert.Equal("Alpha", vm.ProjectQuery);
         DsChrome.ClearTextCommand.Execute(box);
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "", TimeSpan.FromSeconds(2)); // temizleme de aynı gecikmeli yoldan gider (B5)
 
         Assert.Equal("", vm.ProjectQuery);
         Assert.True(box.IsKeyboardFocused);
@@ -129,7 +141,11 @@ public class SearchInputTests
     /// <summary>[T17 · 3] <see cref="ClickAwayBlur"/> (<c>ClickAwayBlur.cs:40-52</c>) boş bir zemine tıklanınca
     /// odağı kutudan bırakır — ama SORGUYA DOKUNMAZ (mekanizma yalnız <c>Focus()</c>/<c>ClearFocus()</c> çağırır,
     /// metne hiç dokunmaz). Esc/✕'in AKSİNE burada temizleme YOKTUR: yalnız odak gider, VM'in
-    /// <c>ProjectQuery</c>'si aynı kalır.</summary>
+    /// <c>ProjectQuery</c>'si aynı kalır.
+    /// <para><b>[DEĞİŞEN KURAL — perf Faz B · B5]</b> Eskiden <c>box.Text</c> atanır atanmaz VM'in sorgusu da değişirdi; kutunun
+    /// bağlaması artık gecikmeli yazar (bkz. <c>ProjectListFilterTests.A_burst_of_keystrokes_in_the_filter_box_reaches_the_model_once</c>).
+    /// Bekleyen yazım odak kaybından SONRA da modele ulaşmalı — blur onu ne siler ne erkene çeker; test bunu pompa ile açıkça
+    /// bekler, iddia aynıdır.</para></summary>
     [StaFact]
     public void Clicking_away_blurs_the_box_but_keeps_the_bound_query()
     {
@@ -142,6 +158,7 @@ public class SearchInputTests
         RaiseMouseDown(background);
 
         Assert.False(box.IsKeyboardFocused);
+        DispatcherPump.PumpUntil(() => vm.ProjectQuery == "Alpha", TimeSpan.FromSeconds(2)); // bekleyen gecikmeli yazım blur'dan sonra da ulaşır (B5)
         Assert.Equal("Alpha", vm.ProjectQuery);
         GC.KeepAlive(window);
     }

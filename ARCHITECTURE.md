@@ -3057,6 +3057,8 @@ checks another one out (§10.3); the `N behind` chip (§10.5) — drawn whenever
 than zero; the `Debug | Release` segment;
 the perf chip; and the Build split-button, whose menu carries exactly three items in every phase: *Build — Only stale
 projects*, *Rebuild — All N projects — cache ignored* and *Clean — Remove build outputs — next build is full*.
+The menu has a single variable, the total in Rebuild's description, so it is rebuilt only when that total changes — not on
+every counters notification of a running build — and a window hidden in the tray leaves it alone until it is shown again.
 There is no *Continue* and no *Retry failed*: a stopped run is started again and a failed one is built again,
 and *Build* already covers both sets (§8.1). *Clean* here is Visual Studio's *Clean Solution*: `-t:Clean` on
 every project in the graph — external projects and cycle members included — with the caches untouched (§8.1).
@@ -4452,6 +4454,12 @@ route, handled events included: if the clicked element took focus itself, nothin
 a text box and the click landed outside it, focus goes to the nearest focusable ancestor of the click — which
 keeps it inside a modal's focus trap — or is cleared when there is none. Clicks inside a popup are left alone:
 their visual route never reaches the window, and the popup manages its own focus.
+
+**The filter box applies what it holds after a short pause, not on every keystroke.** Each change of the query
+rebuilds the list's groups and refreshes the graph's dimming, so the box's binding to `ProjectQuery` is delayed
+(`Binding.Delay`, with the source still updated on every change of the text): a burst of keystrokes publishes
+`VisibleProjects` once, with the text the burst ended on. Esc and the box's clear button take the same road, so the
+list follows them after the same pause.
 
 ### 13.8 Design-system control library
 

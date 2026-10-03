@@ -28,6 +28,32 @@ public class GraphBinderTests
         return dict;
     }
 
+    /// <summary>
+    /// [perf Faz B · B5] Topolojik derinlik topoloji REFERANSI başına bir kez hesaplanır. Graf her statü değişiminde
+    /// <see cref="GraphBinder.Nodes"/>'u yeniden çağırır; topoloji ise yalnız Sync'te değişir (VM yeni bir liste atar,
+    /// eskisini değiştirmez) — derinlik her çağrıda baştan hesaplanıyordu. <see cref="GraphBinder.TopologicalDepths"/>'i
+    /// DIŞARIDAN çağıran da aynı önbellekten geçer; aynı içerikli AMA yeni bir referans yeniden hesaplanır (içerik değil
+    /// referans anahtardır: topolojiyi yerinde değiştiren biri olmadığı için ucuz ve güvenli).
+    /// </summary>
+    [Fact]
+    public void The_topological_depths_are_computed_once_per_topology_reference()
+    {
+        var topology = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
+        var rows = RowsFor(topology);
+        int before = GraphBinder.DepthComputations;
+
+        GraphBinder.Nodes(topology, rows);
+        GraphBinder.Nodes(topology, rows);
+        GraphBinder.TopologicalDepths(topology);
+
+        Assert.Equal(before + 1, GraphBinder.DepthComputations); // KIRMIZI: bugün her çağrı yeniden hesaplar (üç kez)
+
+        var sameContentNewReference = new[] { Node("Base", []), Node("Data.Core", ["Base"]) };
+        GraphBinder.Nodes(sameContentNewReference, RowsFor(sameContentNewReference));
+
+        Assert.Equal(before + 2, GraphBinder.DepthComputations); // yeni referans → yeniden hesaplanır
+    }
+
     private static int IndexOf(IReadOnlyList<GraphNode> nodes, string name)
     {
         for (int i = 0; i < nodes.Count; i++) if (nodes[i].Name == name) return i;

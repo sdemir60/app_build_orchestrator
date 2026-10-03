@@ -25,7 +25,8 @@ namespace BuildOrchestrator.App.Views;
 /// İndikatör dolgusu per-instance brush (A13.2).</para>
 ///
 /// <para><b>Chip stratejisi (A13.2):</b> building (≤4) ve failed (≤3 + "+N more") şeritleri KÜÇÜK ve
-/// virtualization DIŞIdır; membership DEĞİŞTİĞİNDE (id-imzası) yeniden kurulur — canlı elapsed/ETA tick'inde
+/// virtualization DIŞIdır; membership DEĞİŞTİĞİNDE (id-imzası) YALNIZ FARK uygulanır (çıkan chip kalkar, gelen kurulur,
+/// kalanlar AYNI örnek olarak yerinde durur; tam kurulum yalnız <c>RefreshAll</c>'dadır) — canlı elapsed/ETA tick'inde
 /// (ElapsedMs/EtaMs) DEĞİL. Bu, "koleksiyon reset YASAK" (virtualized listeler için) kuralını ihlal etmez:
 /// panel minik, non-virtualized ve seçim şeritte tutulmaz (kartta tutulur).</para>
 /// </summary>
@@ -443,6 +444,19 @@ public partial class StickyRibbon : UserControl
     }
 
     // ---------------------------------------------------------------- chip'ler
+    /// <summary>[perf Faz B · B5 test yüzeyi] <see cref="RebuildChipsIfChanged"/>'in chip kümesini DEĞİŞMİŞ bulduğu çağrı
+    /// sayısı (building ya da failed kümesi; tam kurulum da bir geçiştir). Kümeyi değiştirmeyen bildirimler — tick, sayaç,
+    /// filtre sorgusu — artırmaz.</summary>
+    internal int ChipsRebuiltCount { get; private set; }
+
+    /// <summary>[perf Faz B · B5] Chip kümesi (building / failed id-imzası) DEĞİŞTİYSE ekrandakini modele yaklaştırır — YALNIZ
+    /// FARKI uygular: çıkanı kaldırır, geleni kurar, kalanı AYNI örnek olarak yerinde bırakır (spinner ve şablon kurmak ölçülen
+    /// maliyetti: 25 sn'lik bir koşuda 301 ms). Küme değişmediyse hiçbir şeye dokunmaz.
+    ///
+    /// <para><b>Tam kurulumla tutarlılık:</b> imza (<c>_lastBuildingSig</c>/<c>_lastFailedSig</c>) "ekrandaki küme"nin anahtarıdır ve
+    /// <c>null</c> = ekranda güvenilir bir küme YOK (ilk kurulum, DataContext değişimi, gizlilikten dönüş). <see cref="RefreshAll"/>
+    /// imzaları sıfırladığı için ilk geçiş paneli boşaltıp sıfırdan kurar; sonraki geçişler o kümenin üstüne yalnız farkı
+    /// uygular. Gizliyken hiç geçiş yapılmaz (A5) — bayat bir kümenin üstüne fark hesaplanmaz.</para></summary>
     private void RebuildChipsIfChanged()
     {
         if (_vm is null) return;
@@ -453,51 +467,83 @@ public partial class StickyRibbon : UserControl
         var building = _vm.Projects.Where(p => p.IsCompiling).ToList();
         var failed = _vm.Projects.Where(p => p.State == ProjectRowState.Failed).ToList();
         string bSig = string.Join("|", building.Select(p => p.Id));
-        string fSig = string.Join("|", failed.Select(p => p.Id)) + "#" + _vm.Counters.DepAffected;
+        // Hata kümesi sayaca (DepAffected) bağlı DEĞİL: küme onu çizmez (v1.11.0) — imzada olması boşa yeniden kurmaydı.
+        string fSig = string.Join("|", failed.Select(p => p.Id));
 
-        if (bSig != _lastBuildingSig) { _lastBuildingSig = bSig; BuildBuildingChips(building); }
-        if (fSig != _lastFailedSig) { _lastFailedSig = fSig; BuildFailureCluster(failed); }
+        bool changed = false;
+        if (bSig != _lastBuildingSig)
+        {
+            if (_lastBuildingSig is null) ResetBuildingChips();
+            _lastBuildingSig = bSig;
+            ReconcileBuildingChips(building);
+            changed = true;
+        }
+        if (fSig != _lastFailedSig)
+        {
+            if (_lastFailedSig is null) ResetFailureCluster();
+            _lastFailedSig = fSig;
+            ReconcileFailureCluster(failed);
+            changed = true;
+        }
+        if (changed) ChipsRebuiltCount++;
+    }
 
+    // "Son kurulan küme": ekrandaki chip'ler kimliğe göre. İmzayla birlikte sıfırlanırlar (bkz. RebuildChipsIfChanged).
+    private readonly Dictionary<string, ToggleButton> _buildingChipById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ToggleButton> _failureChipById = new(StringComparer.Ordinal);
+    private StackPanel? _failureStrip; // hata kümesinin tek şerit paneli (chip'ler + "+N more"); küme boşalınca atılır
+
+    private void ResetBuildingChips()
+    {
+        PART_BuildingChips.Children.Clear(); // minik non-virtualized şerit (A13.2 istisnası — bkz. sınıf notu)
+        _buildingChipById.Clear();
+        BuildingChips = [];
+        BuildingOverflow = null;
+    }
+
+    private void ResetFailureCluster()
+    {
+        PART_FailureCluster.Children.Clear();
+        _failureStrip = null;
+        _failureChipById.Clear();
+        FailureChips = [];
+        FailureMoreChip = null;
     }
 
     // [design v1.11.0 §2.2] Döngü kümesi (turuncu üçgen + "{n} in a dependency cycle" chip'i) KALDIRILDI.
     // Turuncu UI'dan tamamen çıktı; döngü bilgisi satırdaki TEK amber üçgende ve alt bardaki ⚠ filtresinde
     // yaşıyor. Şerit artık yalnız KOŞU sonuçlarını taşır — döngü bir koşu sonucu değildir.
 
-    private void BuildBuildingChips(IReadOnlyList<ProjectRowViewModel> building)
+    private void ReconcileBuildingChips(IReadOnlyList<ProjectRowViewModel> building)
     {
-        PART_BuildingChips.Children.Clear(); // minik non-virtualized şerit (A13.2 istisnası — bkz. sınıf notu)
-        var chips = new List<ToggleButton>();
-        foreach (var row in building.Take(MaxBuildingChips))
-        {
-            var content = new StackPanel { Orientation = Orientation.Horizontal };
-            content.Children.Add(new BuildingSpinner { Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
-            var chip = MakeChip(content, brushKey: null);
-            if (chips.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:783 flex gap:4 — ilk chip HARİÇ
-            string id = row.Id;
-            chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
-            PART_BuildingChips.Children.Add(chip);
-            chips.Add(chip);
-        }
-        BuildingChips = chips;
+        BuildingChips = ReconcileChips(PART_BuildingChips.Children, _buildingChipById, [.. building.Take(MaxBuildingChips)],
+            row => CreateRowChip(new BuildingSpinner { Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center }, row));
 
-        BuildingOverflow = null;
-        if (building.Count > MaxBuildingChips)
+        // Taşan: DÜZ metin "+N", tıklanamaz (BuildApp.jsx:788) — chip'lerin hemen arkasında; yalnız sayısı güncellenir.
+        int overflow = building.Count - MaxBuildingChips;
+        if (overflow <= 0)
         {
-            // Taşan: DÜZ metin "+N", tıklanamaz (BuildApp.jsx:788).
-            var overflow = new TextBlock
-            {
-                Text = "+" + (building.Count - MaxBuildingChips).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                Margin = new Thickness(4, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                FontFamily = AppFonts.Mono,
-            };
-            overflow.SetResourceReference(FontSizeProperty, "FontSize.2xs");
-            overflow.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
-            PART_BuildingChips.Children.Add(overflow);
-            BuildingOverflow = overflow;
+            if (BuildingOverflow is not null) PART_BuildingChips.Children.Remove(BuildingOverflow);
+            BuildingOverflow = null;
+            return;
         }
+        string text = "+" + overflow.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (BuildingOverflow is not null)
+        {
+            if (BuildingOverflow.Text != text) BuildingOverflow.Text = text;
+            return;
+        }
+        var overflowText = new TextBlock
+        {
+            Text = text,
+            Margin = new Thickness(4, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            FontFamily = AppFonts.Mono,
+        };
+        overflowText.SetResourceReference(FontSizeProperty, "FontSize.2xs");
+        overflowText.SetResourceReference(TextBlock.ForegroundProperty, "Brush.TextFaint");
+        PART_BuildingChips.Children.Add(overflowText);
+        BuildingOverflow = overflowText;
     }
 
     /// <summary>[design v1.11.0 §2.2] Hata kümesi: <b>yalnız</b> ilk 3 hatalı chip + <c>+N more</c>.
@@ -505,56 +551,111 @@ public partial class StickyRibbon : UserControl
     /// <c>· {n} dependency-affected</c> sayaç metinleriyle başlıyordu. v1.11.0 ikisini de kaldırdı: aynı
     /// sayılar faz metninin bitiş satırında zaten var (<c>Completed — 5 failed · 12 succeeded (4
     /// dependency-affected) · …</c>) ve şerit tek satırda iki kez sayı okuyordu. Kalan chip'ler bir SAYI
-    /// değil, tıklanabilir bir KISAYOL sunar.</para></summary>
-    private void BuildFailureCluster(IReadOnlyList<ProjectRowViewModel> failed)
+    /// değil, tıklanabilir bir KISAYOL sunar.</para>
+    /// <para>[perf Faz B · B5] Chip'ler kimliğe göre uzlaştırılır (<see cref="ReconcileChips"/>); "+N more" chip'i bir kez
+    /// kurulur, sonra yalnız metni güncellenir. Tek şerit paneli kümenin ömrü boyunca yerinde kalır.</para></summary>
+    private void ReconcileFailureCluster(IReadOnlyList<ProjectRowViewModel> failed)
     {
-        PART_FailureCluster.Children.Clear();
-        FailureChips = [];
-        FailureMoreChip = null;
-        if (failed.Count == 0) { PART_FailureCluster.Visibility = Visibility.Collapsed; return; }
+        if (failed.Count == 0)
+        {
+            ResetFailureCluster();
+            PART_FailureCluster.Visibility = Visibility.Collapsed;
+            return;
+        }
         PART_FailureCluster.Visibility = Visibility.Visible;
 
-        // İlk 3 hatalı chip (tıkla→seç) + varsa "+{n-3} more" (tıkla→Failed filtresi).
-        var chipStrip = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-        var chips = new List<ToggleButton>();
-        foreach (var row in failed.Take(MaxFailedChips))
+        // İlk 3 hatalı chip (tıkla→seç) + varsa "+{n-3} more" (tıkla→Failed filtresi); hepsi TEK şerit panelinde.
+        if (_failureStrip is null)
         {
-            var content = new StackPanel { Orientation = Orientation.Horizontal };
-            content.Children.Add(new StatusGlyph { Status = VisualStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center });
-            content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
-            var chip = MakeChip(content, brushKey: null);
-            if (chipStrip.Children.Count > 0) chip.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4 — ilk chip HARİÇ
-            string id = row.Id;
-            chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
-            chipStrip.Children.Add(chip);
-            chips.Add(chip);
+            _failureStrip = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            PART_FailureCluster.Children.Add(_failureStrip);
         }
-        FailureChips = chips;
+        FailureChips = ReconcileChips(_failureStrip.Children, _failureChipById, [.. failed.Take(MaxFailedChips)],
+            row => CreateRowChip(new StatusGlyph { Status = VisualStatus.Failed, Size = ChipIconSize, VerticalAlignment = VerticalAlignment.Center }, row));
 
-        if (failed.Count > MaxFailedChips)
+        int more = failed.Count - MaxFailedChips;
+        if (more <= 0)
         {
-            var moreText = new TextBlock
-            {
-                Text = "+" + (failed.Count - MaxFailedChips).ToString(System.Globalization.CultureInfo.InvariantCulture) + " more",
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            var more = MakeChip(moreText, brushKey: "Brush.StatusFailText"); // "+N more" StatusFailText renkli (BuildApp.jsx:803)
-            if (chipStrip.Children.Count > 0) more.Margin = new Thickness(RibbonChipGap, 0, 0, 0); // BuildApp.jsx:801 flex gap:4
-            // [design v1.11.0 §2.2] Tık → listede YALNIZ failed filtresi (çoklu küme bu tek chip'e indirgenir);
-            // seçim de düşer, ToggleFilter'ın kendi kuralıyla aynı (BuildApp.jsx:2222 onFilterFailed).
-            more.Click += (_, _) =>
-            {
-                if (_vm is not null)
-                {
-                    _vm.SelectedProjectId = null;
-                    _vm.ActiveFilters = new HashSet<string>(StringComparer.Ordinal) { ProjectFilter.Failed };
-                }
-                ResetChip(more);
-            };
-            chipStrip.Children.Add(more);
-            FailureMoreChip = more;
+            if (FailureMoreChip is not null) _failureStrip.Children.Remove(FailureMoreChip);
+            FailureMoreChip = null;
+            return;
         }
-        PART_FailureCluster.Children.Add(chipStrip);
+        string text = "+" + more.ToString(System.Globalization.CultureInfo.InvariantCulture) + " more";
+        if (FailureMoreChip?.Content is TextBlock moreText)
+        {
+            if (moreText.Text != text) moreText.Text = text;
+            return;
+        }
+        FailureMoreChip = CreateFailureMoreChip(text);
+        _failureStrip.Children.Add(FailureMoreChip);
+    }
+
+    /// <summary>Bir chip dizisini istenen kimlik sırasına getirir ve YALNIZ FARKI uygular: artık istenmeyenler çıkar, olmayanlar
+    /// <paramref name="create"/> ile kurulur, kalanlar AYNI örnek olarak yerinde durur (ya da gerekirse yer değiştirir).
+    /// İlk chip hariç hepsi gap marjini taşır (BuildApp.jsx:783/801 flex gap:4); ilk chip'in yerel marjini temizlenir
+    /// (önceden ikinci olan chip ilk olduysa gap'ini bırakır). Panelin chip'ten başka çocukları (taşan "+N" ya da
+    /// "+N more") yerinde kalır — chip'ler hep onların ÖNÜNE eklenir. Dönüş: görünen chip'ler, sırayla.</summary>
+    private static List<ToggleButton> ReconcileChips(
+        UIElementCollection panel, Dictionary<string, ToggleButton> shown,
+        IReadOnlyList<ProjectRowViewModel> wanted, Func<ProjectRowViewModel, ToggleButton> create)
+    {
+        var next = new List<ToggleButton>(wanted.Count);
+        var keep = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in wanted)
+        {
+            if (!shown.TryGetValue(row.Id, out var chip)) shown[row.Id] = chip = create(row);
+            keep.Add(row.Id);
+            next.Add(chip);
+        }
+        foreach (var stale in shown.Keys.Where(key => !keep.Contains(key)).ToList())
+        {
+            panel.Remove(shown[stale]);
+            shown.Remove(stale);
+        }
+        var gap = new Thickness(RibbonChipGap, 0, 0, 0);
+        for (int i = 0; i < next.Count; i++)
+        {
+            int at = panel.IndexOf(next[i]);
+            if (at != i)
+            {
+                if (at >= 0) panel.RemoveAt(at);
+                panel.Insert(i, next[i]);
+            }
+            if (i == 0) next[i].ClearValue(MarginProperty);
+            else if (next[i].Margin != gap) next[i].Margin = gap;
+        }
+        return next;
+    }
+
+    /// <summary>Satır chip'i: [ikon, kısa ad] içeriği + tıkla→seç (momentary). Building ve hata chip'leri yalnız ikonda ayrışır.</summary>
+    private ToggleButton CreateRowChip(UIElement icon, ProjectRowViewModel row)
+    {
+        var content = new StackPanel { Orientation = Orientation.Horizontal };
+        content.Children.Add(icon);
+        content.Children.Add(new TextBlock { Text = GraphNode.ShortLabel(row.Name, row.NamePrefix), Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        var chip = MakeChip(content, brushKey: null);
+        string id = row.Id;
+        chip.Click += (_, _) => { _vm?.SelectProject(id); ResetChip(chip); };
+        return chip;
+    }
+
+    private ToggleButton CreateFailureMoreChip(string text)
+    {
+        var moreText = new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center };
+        var more = MakeChip(moreText, brushKey: "Brush.StatusFailText"); // "+N more" StatusFailText renkli (BuildApp.jsx:803)
+        more.Margin = new Thickness(RibbonChipGap, 0, 0, 0);              // BuildApp.jsx:801 flex gap:4 — "more" daima üç chip'in ardından gelir
+        // [design v1.11.0 §2.2] Tık → listede YALNIZ failed filtresi (çoklu küme bu tek chip'e indirgenir);
+        // seçim de düşer, ToggleFilter'ın kendi kuralıyla aynı (BuildApp.jsx:2222 onFilterFailed).
+        more.Click += (_, _) =>
+        {
+            if (_vm is not null)
+            {
+                _vm.SelectedProjectId = null;
+                _vm.ActiveFilters = new HashSet<string>(StringComparer.Ordinal) { ProjectFilter.Failed };
+            }
+            ResetChip(more);
+        };
+        return more;
     }
 
     /// <summary>Ribbon chip'i: Ds.Chip stili + küçük-chip ölçü override'ları (BuildApp.jsx:786). ToggleButton
