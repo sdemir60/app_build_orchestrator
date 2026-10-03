@@ -2363,8 +2363,8 @@ the view model, and the document is built from that full text once, without the 
 (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
 none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
 a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
-cross-fade of a row's dot. The graph settles on the present state with its own short transitions rather than a replay
-of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
+cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
+their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
 does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
 fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
 enough to be felt.
@@ -4917,7 +4917,7 @@ Five contract rules, each enforced by a test:
    there the common factor cancels and straight interpolation is already the premultiplied one. This is why
    no consumer may hand-roll a colour keyframe.
 
-**Deliberate exceptions to "never layout".** The row's status stripe and the ribbon's progress indicator
+**Deliberate exceptions: finite animations that touch layout.** The row's status stripe and the ribbon's progress indicator
 animate `Width`. Both are short, finite transitions on a single element, so their layout cost is a bounded burst that
 ends with the transition rather than a continuous stream. Two more animations share that bound: the scrollbar pill's
 inset on hover (`Padding`, on the pill alone — the rail and the content beside it do not move, §13.8) and the scroll
