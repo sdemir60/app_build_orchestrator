@@ -4197,8 +4197,8 @@ the neon play in their standard form. Once the finale has played the graph holds
 short beat (`EndFinale.FilterReturnAtMs`, the finale's length plus the design's short `LightMs`) and then
 fades back to the filtered look at the filter's own 420 ms. A stop and the engine dying end the run in the
 `Stopped` phase, which plays the finale too when something was built, so they follow the same rule. When there
-is no finale — nothing was built, reduced motion, a stop during the opening sequence, a command that never went
-out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
+is no finale — nothing was built, reduced motion, a hidden window, a stop during the opening sequence, a command that
+never went out — the filter returns as soon as the run is over. A restart of the plan surface (a Sync click or a branch
 change, §10.2) cuts a finale still playing and brings the filter back at once (`GraphView.CancelEndFinale`), so
 the new graph's reveal plays with the filtered look. The two end signals — the phase that starts the finale
 and the run lock falling — arrive in different orders on different paths, and either order lands on the same
@@ -4994,8 +4994,8 @@ The wait is also why `queued` is derived from a run that is *live*, not from one
 requested. Were the request counted as a run, every project in the plan would turn queued-amber on the click
 itself and the neutral moment and the wave would both be invisible. No information is lost by waiting: the
 wave lights exactly the set the queue would have, only progressively — and when the choreography is skipped
-(reduced motion, or an empty scope) the scope is marked in one step, so the amber still appears at once. If
-the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
+(reduced motion, a hidden window, or an empty scope) the scope is marked in one step, so the amber still appears at
+once. If the run never starts — the command fails, or the engine never answers — the marks are cleared, because an
 operation that did not happen may not leave its colour behind.
 
 **The scope fades into amber; it does not snap.** Every surface the wave touches — the node's border, its
@@ -5959,7 +5959,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | No-workspace look of the panels (header counts, PROJECTS list tools, the console's waiting prompt) | `App/ShellRoot.xaml.cs` (`SetHasWorkspace`; the list tools' one gate `ApplyListTools` is shared with discovery), driven from `HasWorkspace` in `App/MainWindow.xaml.cs` |
 | Discovery blocks: the list's (a list state, the counter and its live region) and the graph's (body layers and header count behind one gate); their shared icon look and their centred column in the interface font | `App/ShellRoot.xaml(.cs)` (`PART_Discovering`, `SetDiscovering`, `SetDiscoveryCount`), `App/Graph/GraphView.xaml(.cs)` (`DiscoveryState`, `SetDiscovering`, `ApplyBodyState`), `App/Resources/Controls.xaml` (`Ds.DiscoveryIcon`, `Ds.DiscoveryBlock`), wired from the view model in `App/MainWindow.xaml.cs` (`ApplyDiscovery`) |
 | Import shortcut's wait before the file picker, and the picker centred over the window | `App/Views/SettingsDialog.xaml.cs` (`OpenForImportAsync`, `ImportPickerDelayMs`), `App/Shell/CenteredDialog.cs`, `App/Shell/DialogPlacement.cs`, `App/Shell/Win32.cs` |
-| Step hold between an operation and the next (dispatcher timer, zero under reduced motion) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
+| Step hold between an operation and the next (dispatcher timer, zero under reduced motion and while the window is hidden) | `App/Services/StepHold.cs`, `App/ViewModels/RunViewModel.cs` (`OperationHold`) |
 | Branch popover and its base (shared with the update card) | `App/Views/BranchPopover.xaml(.cs)`, `PopoverBase.cs` |
 | Update card (identity, highlights, decision; the drop-in; *Later*) | `App/Views/UpdateCard.xaml(.cs)` |
 | Update restart screen — the 232 px column, the frame timer and clock, the fade-in, the once-per-step announcement, `BarFilled` when the bar is full; its one step, duration and percentage | `App/Views/UpdateRestartScreen.xaml(.cs)`; timeline `App/ViewModels/UpdateRestartTimeline.cs`, texts `App/ViewModels/UpdateText.cs` |

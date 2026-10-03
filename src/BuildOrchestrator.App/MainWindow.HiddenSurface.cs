@@ -82,9 +82,17 @@ public partial class MainWindow
     /// belge modelin TAM metninden bir kez, <b>tilt'siz</b> kurulur — anlatı için <c>RunViewModel.SeedRunDocument</c>,
     /// proje logu açıksa <c>RunViewModel.SeedProjectDocument</c>. İkisi de reseed-drop sentinel'ini yazar: uçuştaki bayat
     /// batch'ler <c>ConsoleBatchRouter</c> kararıyla düşer, YENİ bir tampon yolu açılmaz. Model boşsa idle "ready"
-    /// satırı geri gelir.</para></summary>
+    /// satırı geri gelir.</para>
+    ///
+    /// <para><b>Gizliyken koşmaz:</b> göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir (kullanıcı
+    /// pencereyi hemen geri indirir). O durumda burası hiçbir şey yapmaz ve "ekran bayat" bayrakları yerinde kalır:
+    /// gizli bir ağaca kurmak boşa iş olur ve bayrakları erken silerdi — sonraki gerçek gösterim kendi çağrısını
+    /// kuyruklar.</para></summary>
     internal void ResyncAfterShow()
     {
+        // Göster → gizle, bu Loaded-öncelikli çağrıdan ÖNCE gelmiş olabilir: gizli bir ağaca kurmak boşa iş olur ve
+        // "ekran bayat" bayraklarını erken siler (sonraki gerçek gösterim bayat bir ekranla açılırdı).
+        if (IsSurfaceHidden) return;
         if (_consoleStaleWhileHidden)
         {
             _consoleStaleWhileHidden = false;

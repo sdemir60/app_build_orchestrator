@@ -12,7 +12,9 @@ namespace BuildOrchestrator.App.Services;
 /// (D8 guard'ı kaynak ağacını tarar).</para>
 ///
 /// <para><b>Azaltılmış hareket:</b> hiç beklenmez (§1.3 "tüm süreler 0") — adım anında biter ve dizi kesintisiz
-/// akar. Sinyal CANLI okunur, kurulumda dondurulmaz.</para>
+/// akar. Sinyal CANLI okunur, kurulumda dondurulmaz. Delege yalnız "motion sinyali" değil, kabuğun ÇALMA KAPISI'dır
+/// (<c>MainWindow.ChoreographyMayPlay</c>): hareket açık VE yüzey görünür — gizli (tepsideki) pencerede de hiç
+/// beklenmez.</para>
 ///
 /// <para>Üst üste gelen bir bekletme öncekini ASILI BIRAKMAZ: yeni istek eskisini tamamlar. Bir bekleyen
 /// <c>await</c>'in sonsuza kalması, kullanıcı için düğmenin kalıcı kilitlenmesi demek olurdu.</para>

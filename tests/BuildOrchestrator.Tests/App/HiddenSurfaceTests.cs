@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
-using BuildOrchestrator.App.ViewModels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 
@@ -11,8 +10,10 @@ namespace BuildOrchestrator.Tests.App;
 /// [perf Faz A · A1] <b>Gizli pencerede koreografi yok.</b> Pencere tepsideyken kısayolla başlatılan bir
 /// derlemede motor başlamadan önceki bekleyişin büyük kısmı kimsenin göremediği açılış koreografisiydi ve gizli
 /// pencere ekran işini sürdürüyordu. "Yüzey gizli" sinyali TEK yerdedir (<see cref="HiddenSurface"/>); bu dosya
-/// onu kullanan ilk iki yüzeyi pinler: açılış koreografisi (kapsam tek adımda işaretlenir, komut hemen gider)
-/// ve bitiş finali (hiç oynamaz, filtre askısı hemen döner).
+/// onu kullanan yüzeyleri pinler: açılış koreografisi (kapsam tek adımda işaretlenir, komut hemen gider), adım
+/// bekletmesi (beklemez), bitiş finali (hiç oynamaz, oynuyorsa kesilir, filtre askısı hemen döner) ve dönüş
+/// kurulumunun gizle-göster-gizle sırası. Koşuyu süren olay sürücüleri <c>MainWindowHost</c>'tadır
+/// (<c>PreviewBuild</c> → <c>StartBuild</c> → <c>FinishBuild</c>).
 ///
 /// <para><b>Test yüzeyleri:</b> <c>MainWindow.SetSurfaceHidden</c> sinyali doğrudan yazar — <c>MainWindowHost</c>
 /// pencereyi hiç <c>Show()</c> etmez, <c>IsVisibleChanged</c> ateşlenmez (<c>OnGlobalHotkey</c>'in internal test
@@ -29,32 +30,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class HiddenSurfaceTests
 {
-    /// <summary>Motorun planı: bu projeler derlenecek (<c>buildPreview</c>). Build kapsamı bu bayraktan türer.</summary>
-    private static void PreviewWillBuild(RunViewModel vm, params string[] names) =>
-        vm.OnEvent(new BuildPreviewEvent([.. names.Select(n => new BuildPreviewItem(MainWindowHost.IdOf(n), n, true))]));
-
-    /// <summary>Motor bir derlemeye başladı (<c>runStarted</c>).</summary>
-    private static void StartRun(RunViewModel vm, params string[] names) =>
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, names.Length, names.Length, "Debug"));
-
-    /// <summary>Her proje derlenir, koşu tamamlanır. Bitiş finali grafa bu akıştaki <c>Phase</c> değişiminden
-    /// gelir (<c>MainWindow.OnVmPropertyChangedForGraph</c>); derlenen proje yoksa final zaten oynamaz.</summary>
-    private static void FinishRun(RunViewModel vm, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            vm.OnEvent(new ProjectStartedEvent("r1", MainWindowHost.IdOf(name), name));
-            vm.OnEvent(new ProjectSucceededEvent("r1", MainWindowHost.IdOf(name), 100));
-        }
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, names.Length, 0, 0, 0, 100));
-    }
-
     [StaFact]
     public void A_run_started_while_the_surface_is_hidden_sends_the_command_without_playing_the_choreography()
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null), ("C", null));
-        PreviewWillBuild(vm, "A", "B", "C");
+        MainWindowHost.PreviewBuild(vm, "A", "B", "C");
         Assert.Equal(3, vm.ScopeFor(RunMode.Build).Count); // ön-koşul: kapsam dolu — boş kapsamda koreografi zaten oynamaz
         window.AnimationsForTest = true; // koreografi oynayabilsin: tek engel gizli sinyal olsun
         IpcCommand? sent = null; vm.DebugSendOverride = cmd => { sent = cmd; return Task.CompletedTask; };
@@ -76,8 +57,8 @@ public class HiddenSurfaceTests
         window.Shell.GraphHost.AnimationsEnabledProvider = () => true; // final grafın kendi kapısını okur: oynayabilsin
         window.SetSurfaceHidden(true);
 
-        StartRun(vm, "A", "B", "C");
-        FinishRun(vm, "A", "B", "C");
+        MainWindowHost.StartBuild(vm, "A", "B", "C");
+        MainWindowHost.FinishBuild(vm, "A", "B", "C");
 
         Assert.False(window.Shell.GraphHost.IsEndFinalePlaying);
         Assert.False(window.Shell.GraphHost.IsFilterSuspended);
@@ -93,11 +74,34 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null), ("C", null));
         window.Shell.GraphHost.AnimationsEnabledProvider = () => true;
 
-        StartRun(vm, "A", "B", "C");
-        FinishRun(vm, "A", "B", "C");
+        MainWindowHost.StartBuild(vm, "A", "B", "C");
+        MainWindowHost.FinishBuild(vm, "A", "B", "C");
 
         Assert.True(window.Shell.GraphHost.IsEndFinalePlaying);
         Assert.True(window.Shell.GraphHost.IsFilterSuspended); // final filtresiz oynar, dönüşü kendi son adımıdır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Gizleme OYNAYAN finali keser ve filtreyi geri verir: final filtresiz oynar ve filtrenin dönüşü finalin KENDİ son
+    /// adımıdır — adım düşerse kimse filtreyi geri getirmez ve pencere dönünce graf filtresiz asılı kalırdı. (Koşu
+    /// ORTASINDA gizleme finali kesmez, çünkü ortada oynayan final yoktur: bkz. aşağıdaki koşu-ortası testi.)
+    /// </summary>
+    [StaFact]
+    public void Hiding_the_surface_while_the_end_finale_plays_stops_it_and_returns_the_filter()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null), ("C", null));
+        window.Shell.GraphHost.AnimationsEnabledProvider = () => true; // final oynayabilsin
+        MainWindowHost.StartBuild(vm, "A", "B", "C");
+        MainWindowHost.FinishBuild(vm, "A", "B", "C");
+        Assert.True(window.Shell.GraphHost.IsEndFinalePlaying); // ön-koşul: pencere görünürken final oynuyor
+        Assert.True(window.Shell.GraphHost.IsFilterSuspended);  // ve filtre askıda (dönüşü finalin son adımı)
+
+        window.SetSurfaceHidden(true);
+
+        Assert.False(window.Shell.GraphHost.IsEndFinalePlaying);
+        Assert.False(window.Shell.GraphHost.IsFilterSuspended); // askı, düşen adıma bırakılmadı
         GC.KeepAlive(window);
     }
 
@@ -106,7 +110,7 @@ public class HiddenSurfaceTests
     {
         using var dir = new TempDir();
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null), ("C", null));
-        PreviewWillBuild(vm, "A", "B", "C");
+        MainWindowHost.PreviewBuild(vm, "A", "B", "C");
         Assert.Equal(3, vm.ScopeFor(RunMode.Build).Count); // ön-koşul: kapsam dolu
         window.AnimationsForTest = true;
         IpcCommand? sent = null; vm.DebugSendOverride = cmd => { sent = cmd; return Task.CompletedTask; };
@@ -123,6 +127,30 @@ public class HiddenSurfaceTests
     }
 
     /// <summary>
+    /// Adımlar arası bekletme (<c>RunViewModel.OperationHold</c> — Clean/Optimize adımı, Settings import) gizli
+    /// pencerede beklemez: kimsenin görmediği bir adımı sabit süre tutmak sıradaki işi boşuna geciktirir. Bekletmenin
+    /// kapısı koreografinin kapısıyla AYNI delegedir (<c>ChoreographyMayPlay</c>) ama AYRI bir alana
+    /// (<c>_stepHold</c>) bağlanır — koreografi testleri o bağı görmez; bağ kopsa tepsideki Clean→Sync zinciri her adımda
+    /// görünmez bir bekleme yerdi.
+    /// </summary>
+    [StaFact]
+    public void The_step_hold_between_operations_is_skipped_while_the_surface_is_hidden()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        window.AnimationsForTest = true; // bekletme bekleyebilsin: tek engel gizli sinyal olsun
+
+        var visibleHold = vm.OperationHold!(300);
+        Assert.False(visibleHold.IsCompleted); // ön-koşul: pencere görünürken bekletme gerçekten bekler
+
+        window.SetSurfaceHidden(true);
+        var hiddenHold = vm.OperationHold!(300);
+
+        Assert.True(hiddenHold.IsCompleted);   // gizliyken adım anında biter
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// Gizlemek koşuyu bitirmez: grafın filtre askısı <c>BeginOperation</c>'dan koşunun bitişine dek sürer ve
     /// "graf koşu boyunca filtreyi yok sayar" kuralı pencere gizlenip geri gelse de geçerlidir. Gizleme yalnız
     /// OYNAYAN finali keser (<c>CancelEndFinale</c> askıyı da kaldırır) — koşu sürerken çağrılsaydı pencere koşu
@@ -135,13 +163,13 @@ public class HiddenSurfaceTests
         var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null), ("B", null));
         MainWindowHost.AcceptSends(vm);
         await vm.BuildCommand.ExecuteAsync(null); // işlem başladı: graf filtreyi askıya aldı
-        StartRun(vm, "A", "B");
+        MainWindowHost.StartBuild(vm, "A", "B");
         Assert.True(window.Shell.GraphHost.IsFilterSuspended); // ön-koşul: koşu sürerken askıda
 
         window.SetSurfaceHidden(true);
         Assert.True(window.Shell.GraphHost.IsFilterSuspended); // gizlemek koşuyu bitirmez
 
-        FinishRun(vm, "A", "B");
+        MainWindowHost.FinishBuild(vm, "A", "B");
         Assert.False(window.Shell.GraphHost.IsFilterSuspended); // koşu bitti (final atlandı): filtre döner
         GC.KeepAlive(window);
     }
@@ -223,6 +251,36 @@ public class HiddenSurfaceTests
         DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
         Assert.DoesNotContain("Build succeeded", console.EditorControl.Document.Text); // dönüşte model neyse o: temiz
         Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Göster → gizle, Loaded-öncelikli dönüş kurulumu koşmadan ÖNCE gelebilir (kullanıcı pencereyi hemen geri indirir).
+    /// O koşu gizli bir ağaca kurmamalı ve "ekran bayat" bayraklarını silmemeli: bayrak erken silinirse sonraki GERÇEK
+    /// gösterim bayat bir ekranla açılırdı (kendi kuyruğundaki kurulum bayrağı boş bulurdu).
+    /// </summary>
+    [StaFact]
+    public void A_show_that_is_hidden_again_before_the_resync_runs_rebuilds_nothing_until_the_next_show()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var console = window.Shell.ConsoleViewControl;
+        window.SetSurfaceHidden(true);
+        vm.OnEvent(new ProjectLogEvent("r1", MainWindowHost.IdOf("A"), 1, "line 0"));
+        window.AppendConsoleBatch("line 0\n", window.ConsoleReseedGen); // gizliyken batch: konsol bayat işaretlenir
+        int replacedBefore = console.RunDocumentReplacedCount;
+
+        window.SetSurfaceHidden(false); // dönüş kurulumu Loaded önceliğiyle kuyrukta
+        window.SetSurfaceHidden(true);  // pompa koşmadan tekrar gizlendi
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
+
+        Assert.Equal(replacedBefore, console.RunDocumentReplacedCount); // gizli ağaca kurulmadı
+
+        window.SetSurfaceHidden(false);
+        DispatcherPump.PumpUntil(() => console.RunDocumentReplacedCount > replacedBefore, TimeSpan.FromSeconds(2));
+
+        Assert.Equal(replacedBefore + 1, console.RunDocumentReplacedCount); // bayrak korundu: gerçek gösterimde TAM BİR kurulum
+        Assert.EndsWith("line 0", console.EditorControl.Document.Text.TrimEnd());
         GC.KeepAlive(window);
     }
 }

@@ -141,14 +141,43 @@ internal static class MainWindowHost
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
 
+    /// <summary>[perf A1 fix 1] Motorun planı (<c>buildPreview</c>): bu projeler derlenecek.
+    /// <see cref="RunViewModel.ScopeFor"/> kapsamı bu bayraktan (<c>WillBuild</c>) türer — plansız bir fixture'da kapsam
+    /// BOŞTUR ve açılış koreografisi görünür pencerede bile hiç oynamaz (<c>OperationChoreographer.Play</c>, n == 0);
+    /// koreografiyi sınayan testler önce bunu verir. Bir koşuyu sürmenin ÜÇ adımı: <see cref="PreviewBuild"/> →
+    /// <see cref="StartBuild"/> → <see cref="FinishBuild"/> (aynı proje adlarıyla).</summary>
+    public static void PreviewBuild(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
+        vm.OnEvent(new BuildPreviewEvent([.. names.Select(n => new BuildPreviewItem(IdOf(n), n, true))]));
+    }
+
     /// <summary>[P3 · final review O5] Motor bir derlemeye başladı (<c>runStarted</c>, <see cref="New"/>'ün koşu
     /// kimliğiyle): koşu kilidi (<see cref="RunViewModel.IsMidRunLocked"/>) açık, Stop yapılabilir. Güvenli çıkışın VM
     /// (<see cref="SafeExitTests"/>) ve kabuk (<see cref="CloseToTrayTests"/>) testlerinin ORTAK başlangıcı — iki
-    /// harness'ta ayrı ayrı yazılıyordu.</summary>
-    public static void StartBuild(RunViewModel vm)
+    /// harness'ta ayrı ayrı yazılıyordu. <paramref name="names"/> koşunun proje adlarıdır (toplam proje = adet);
+    /// verilmezse tek projelik koşu (eski davranış birebir). Aynı adlar <see cref="FinishBuild"/>'e verilir.</summary>
+    public static void StartBuild(RunViewModel vm, params string[] names)
     {
         ArgumentNullException.ThrowIfNull(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        ArgumentNullException.ThrowIfNull(names);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, Math.Max(names.Length, 1), 1, "Debug", 0));
+    }
+
+    /// <summary>[perf A1 fix 1] Koşu biter: her proje derlenir (<c>projectStarted</c> + <c>projectSucceeded</c>) ve
+    /// <c>runCompleted</c> gelir. Bitiş finali grafa bu akıştaki <c>Phase</c> değişiminden gelir
+    /// (<c>MainWindow.OnVmPropertyChangedForGraph</c>); derlenen proje yoksa final zaten oynamaz.</summary>
+    public static void FinishBuild(RunViewModel vm, params string[] names)
+    {
+        ArgumentNullException.ThrowIfNull(vm);
+        ArgumentNullException.ThrowIfNull(names);
+        foreach (var name in names)
+        {
+            vm.OnEvent(new ProjectStartedEvent("r1", IdOf(name), name));
+            vm.OnEvent(new ProjectSucceededEvent("r1", IdOf(name), 100));
+        }
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, names.Length, 0, 0, 0, 100));
     }
 
     /// <summary>[task 3] Sync'i verilen kipte, o kipin ÜRETİMDEKİ girişinden başlatır: Sync düğmesi (Manual),
