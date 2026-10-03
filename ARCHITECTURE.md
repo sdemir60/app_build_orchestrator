@@ -1647,6 +1647,7 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 <project> -t:Build|-t:Rebuild -p:Configuration=<cfg>
           -p:UseSharedCompilation=false -nodeReuse:false -p:BuildProjectReferences=false
           -clp:Summary -nologo
+          -p:CustomBeforeMicrosoftCommonTargets=<cache>\msbuild\wpf-temporary-assembly.targets
 ```
 
 - The target is `-t:Build` everywhere except one case: *Rebuild* pressed in a **row menu** (§8.1), which runs
@@ -1669,6 +1670,26 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
 - No `-p:OutDir` and no `-p:OutputPath` is ever passed (§9.4).
 - No intermediate path is passed either: every project compiles into its own default `obj`, exactly as Visual
   Studio would (§9.4).
+- `-p:CustomBeforeMicrosoftCommonTargets=` names a small targets file the engine keeps in its state folder
+  (`<cache>`, §16). It changes how exactly one thing is compiled: the *temporary assembly* WPF builds when a
+  project's XAML uses types from the project itself (`<project>_<random>_wpftmp`). That assembly is only ever
+  read through reflection — it is thrown away once the markup is compiled — so it is built as metadata only,
+  with no method bodies, which takes roughly a fifth off the compile of a WPF project. The file acts on a
+  project whose name ends in `_wpftmp` and on nothing else, and carries three elements that only work together:
+  `ProduceOnlyReferenceAssembly=true`, which skips the bodies; `ProduceReferenceAssembly=false`, because an
+  SDK-style project would otherwise hand the compiler `/refout` together with `/refonly`, which fails with
+  `CS8308`; and one source file, compiled into the temporary assembly alone, that grants it
+  `InternalsVisibleTo` — a metadata-only build drops internal members, and XAML that sets an internal member of
+  a local type would then fail with `MC3072`. What the file does **not** change is the result: no path is
+  touched (`OutDir` and `obj` stay where §9.4 says), and the final assembly and the compiled markup are the same
+  with and without it, which an acceptance test pins with the real `MSBuild.exe` on a legacy-style and an
+  SDK-style WPF project (§17.5). The argument goes on every build call whatever its target and never on the
+  restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
+  `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
+  project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
+  written, the engine says so once on stderr and builds without the argument. The file has been checked against
+  the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the Visual Studio 2022 toolset
+  (legacy-style projects).
 - No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
   its `/reference:` list to learn which sibling file a member really compiled against (§8.8). Losing that line
   costs precision only: the round then judges the member on every copy.
@@ -5076,6 +5097,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
+| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). The engine writes them when it starts and resolves `MSBuild.exe`, and only when the content on disk differs from its own — the path carries no version, and a missing or edited file is repaired at the next start | rewritten from the engine's own copy at the next start; if they cannot be written, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
@@ -5232,13 +5254,24 @@ Animation behaviour is measured the same way: the harness can drive the live win
 
 ### 17.5 Acceptance
 
-Three tests carry the `Acceptance` category and build the user's real repository end to end (roughly two
-minutes). They are excluded from the normal verification run and executed separately:
+The tests in the `Acceptance` category run real tooling end to end rather than doubles. Some of them build the
+user's real repository (roughly two minutes). All of them are excluded from the normal verification run and
+executed separately:
 
 ```powershell
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category!=Acceptance"
 dotnet test tests/BuildOrchestrator.Tests/BuildOrchestrator.Tests.csproj --filter "Category=Acceptance"
 ```
+
+`WpfTemporaryAssemblyAcceptanceTests` needs neither the repository nor a long run. It copies the throw-away WPF
+projects under `Fixtures\WpfMini` into a temporary folder and builds each variant twice with the real
+`MSBuild.exe`, through the engine's own argument plan: without and with the WPF temporary-assembly targets
+(§9.2). The variants are an SDK-style project and a legacy-style project whose XAML binds public members, plus the
+legacy-style project with XAML that sets an internal member of a local type. Both builds of a variant must
+succeed, the compiled markup must be byte-identical, the output assembly must have the same size, and it must
+carry neither a reference-assembly marker nor the targets' friend assembly name. The test needs `MSBuild.exe`
+to resolve — and skips when it cannot — plus what the mini projects themselves build against: the .NET
+Framework 4.6 targeting pack for the legacy-style project, a .NET SDK for the SDK-style one.
 
 A second group carries the `Measurement` category: probes and measurements that read numbers rather than
 assert rules — the tray overlay's own cost, rendered frames of its loop, the notification call, where the real
@@ -5485,6 +5518,12 @@ do, and how the interface works around each — useful to know before attempting
   repository already has; the Sync button and a pull refresh it from the network.
 - **The shared-compilation flags stay off.** A private-pipe compiler server inside the job is possible, but its
   measured gain — about a tenth of a run — does not pay for the memory it holds (§9.2).
+- **A project's own `CustomBeforeMicrosoftCommonTargets` loses to the tool's.** The WPF temporary-assembly
+  targets (§9.2) travel as a global property, and a global property beats the same property set inside a
+  project. A project that points `CustomBeforeMicrosoftCommonTargets` at a file of its own therefore does not get
+  that file imported: whatever it adds to the build is missing, and the project may build differently or not at
+  all. The repository this tool is used on does not set the property, so there is no fallback and nothing
+  detects the clash.
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
@@ -5777,6 +5816,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
 | Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
+| The WPF temporary-assembly targets — their content, the friend source file and the write into the state folder | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
