@@ -28,8 +28,9 @@ namespace BuildOrchestrator.Tests.App;
 ///
 /// <para><b>Pencere aktifliği nasıl sınanır:</b> başsız test pencereleri etkin olmayabilir; bu yüzden görünümler
 /// <c>Window.IsActive</c>'i kendileri OKUMAZ. Sinyal yalnız <see cref="CursorClock.SetWindowActive"/> ile gelir
-/// (üretimde <c>MainWindow</c>'un Activated/Deactivated olayları) ve varsayılan "aktif"tir. Saat pencere başınadır:
-/// her test kendi pencerelerini kurduğu için testler birbirinin saatine sızmaz.</para>
+/// (üretimde <c>MainWindow</c>'un Activated/Deactivated olayları; ilk durumu da <c>MainWindow</c> ilk gösterimde bir
+/// kez kendi <c>IsActive</c>'inden bildirir) ve hiç sinyal gelmemiş saat "aktif"tir. Saat pencere başınadır: her test
+/// kendi pencerelerini kurduğu için testler birbirinin saatine sızmaz.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class CursorClockTests
@@ -194,6 +195,73 @@ public class CursorClockTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- palet sonradan çözülür
+
+    /// <summary>
+    /// Saat kurulurken palet çözülemezse (görünüm henüz bir kaynak sözlüğüne bağlı değil) renk turu o an YOKTUR ama
+    /// kırpma döner. Bu durum KALICI olmamalıdır: palet çözülür çözülmez ilk yeniden değerlendirmede tur kurulur ve
+    /// çift BİRLİKTE yeniden başlar (renk saatini tek başına sonradan kurmak fazı kaydırırdı). Palet çözülemedikçe
+    /// kırpma saati yeniden KURULMAZ — her olayda sıfırlamak imleci "takılı" gösterirdi.
+    ///
+    /// <para><b>Eski davranış:</b> ilk deneme boşa düşerse o çiftin ömrü boyunca renk turu hiç kurulmazdı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_color_tour_missed_for_want_of_a_palette_is_set_up_once_the_palette_resolves()
+    {
+        var host = new Border(); // kaynak sözlüğü YOK: palet çözülemez
+        var cursor = new Rectangle { Width = 6, Height = 12 };
+        var window = DsResources.Realize(host, cursor);
+        var clock = CursorClock.For(window);
+        Func<string> rest = () => "Brush.AmberText";
+
+        CursorClock.Attach(cursor, host, rest);
+
+        var blink = clock.ActiveBlinkClock;
+        Assert.NotNull(blink); // ön-koşul: kırpma yine de döner
+        Assert.False(CursorHop.IsRunning(cursor), "ön-koşul: palet çözülemedi, renk turu yok");
+        CursorClock.Attach(cursor, host, rest); // yeniden değerlendirme — palet HÂLÂ yok
+        Assert.Same(blink, clock.ActiveBlinkClock); // kırpma sıfırlanmadı
+
+        host.Resources.MergedDictionaries.Add(DsResources.NewScope()); // palet artık çözülür
+        CursorClock.Attach(cursor, host, rest); // bir sonraki olay / konsol tazelemesi
+
+        Assert.True(CursorHop.IsRunning(cursor)); // tur kuruldu
+        Assert.NotSame(blink, clock.ActiveBlinkClock); // çift BİRLİKTE yeniden başladı (faz)
+        Assert.Equal(1, clock.AttachedCount);
+
+        var restarted = clock.ActiveBlinkClock;
+        CursorClock.Attach(cursor, host, rest); // tur kurulduktan sonra yeniden başlamaz
+        Assert.Same(restarted, clock.ActiveBlinkClock);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- pencere çözülemeyen öğe
+
+    /// <summary>
+    /// Bir pencerede olmayan öğenin imleci hiçbir saate KALICI bağlanmaz: pencere çözülemezse bağlama ertelenir ve
+    /// öğe sonradan bir pencereye girince (sonraki görünürlük/olay) PENCERENİN saatine bağlanır.
+    ///
+    /// <para><b>Eski davranış:</b> pencere çözülemeyince öğenin kendisi anahtar olurdu ve imleç o yetim saate kalıcı
+    /// bağlanırdı — pencerenin aktiflik sinyali ona hiç ulaşmazdı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_cursor_attached_before_its_host_is_in_a_window_ends_up_on_the_window_clock()
+    {
+        var host = DsResources.NewHost();
+        var cursor = new Rectangle { Width = 6, Height = 12 };
+        host.Child = cursor;
+        CursorClock.Attach(cursor, host, () => "Brush.AmberText"); // henüz pencere yok: bağlanamaz, ertelenir
+        Assert.False(cursor.HasAnimatedProperties);
+
+        var window = DsResources.Realize(host, cursor); // öğe artık bir pencerede
+        CursorClock.Attach(cursor, host, () => "Brush.AmberText"); // sonraki görünürlük / olay
+
+        var clock = CursorClock.For(window);
+        Assert.Equal(1, clock.AttachedCount); // yetim bir saate DEĞİL, pencerenin saatine bağlı
+        Assert.True(Blinking(cursor));
+        GC.KeepAlive(window);
+    }
+
     // ---------------------------------------------------------------- reduced-motion
 
     [StaFact]
@@ -233,6 +301,32 @@ public class CursorClockTests
 
         RaiseWindowEvent(window, "OnActivated");
         Assert.True(clock.WindowActive);
+    }
+
+    /// <summary>
+    /// Pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken açılış, yeniden başlatma):
+    /// <c>Deactivated</c> o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki pencerede kırpardı.
+    /// Pencere ilk gösterimde (içerik çizildiğinde) durumu KENDİ <c>IsActive</c>'inden bir kez bildirir; sonrası
+    /// Activated/Deactivated olaylarının işidir. Hiç aktifleşmemiş bir <c>MainWindow</c> (<c>IsActive == false</c>) bu
+    /// durumun eşdeğeridir; <c>ContentRendered</c> gerçek olayın yöntemiyle ateşlenir (bkz. önceki test).
+    ///
+    /// <para><b>Eski davranış:</b> ilk durum hiç bildirilmezdi — pencere aktifleşene dek imleç kırpardı.</para>
+    /// </summary>
+    [StaFact]
+    public void A_window_shown_without_ever_being_activated_tells_its_cursor_clock_it_is_inactive()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        var clock = CursorClock.For(window);
+        Assert.False(window.IsActive); // ön-koşul: hiç aktifleşmedi
+        Assert.True(clock.WindowActive); // ön-koşul: henüz sinyal yok → varsayılan aktif
+
+        RaiseWindowEvent(window, "OnContentRendered"); // ilk gösterim
+
+        Assert.False(clock.WindowActive); // etkin olmayan pencerede imleçler sabit (bkz. inactive testleri)
+
+        RaiseWindowEvent(window, "OnActivated"); // kullanıcı tıkladı / foreground-lock kalktı
+        Assert.True(clock.WindowActive); // aktifleşince imleçler döner
     }
 
     private static void RaiseWindowEvent(Window window, string protectedRaiser) =>

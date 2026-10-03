@@ -23,8 +23,10 @@ namespace BuildOrchestrator.App.Controls;
 /// kırpmanın sönük karesinde donmaz.</para>
 ///
 /// <para><b>Pencere aktifliği nasıl gelir:</b> yalnız <see cref="SetWindowActive"/> ile (üretimde <c>MainWindow</c>'un
-/// Activated/Deactivated olayları). Görünümler <c>Window.IsActive</c>'i KENDİLERİ okumaz: başsız test pencereleri
-/// etkin olmayabilir ve imleç hiç kırpmazdı. Sinyal gelmemiş pencere "aktif" sayılır.</para>
+/// Activated/Deactivated olayları; ilk durumu da <c>MainWindow</c> ilk gösterimde kendi <c>IsActive</c>'inden bildirir —
+/// hiç aktifleşmeden gösterilen pencere, örn. foreground-lock, <c>Deactivated</c>'ı hiç duymaz). Görünümler
+/// <c>Window.IsActive</c>'i KENDİLERİ okumaz: başsız test pencereleri etkin olmayabilir ve imleç hiç kırpmazdı. Hiçbir
+/// şey duymamış saat "aktif" sayılır.</para>
 ///
 /// <para><b>Saat pencere BAŞINA tektir</b> (<see cref="For"/>): kabuktaki iki görünüm aynı pencerede olduğundan aynı
 /// saati bulur; her test kendi pencerelerini kurduğundan süreç geneli paylaşılan durum yoktur (WPF saatleri
@@ -36,7 +38,7 @@ namespace BuildOrchestrator.App.Controls;
 internal sealed class CursorClock
 {
     // Pencere → saat. Zayıf anahtar: pencere ölünce saat de gider.
-    private static readonly ConditionalWeakTable<DependencyObject, CursorClock> s_byWindow = new();
+    private static readonly ConditionalWeakTable<Window, CursorClock> s_byWindow = new();
 
     // İmleç → bağlı olduğu saat. Detach, görünüm ağaçtan çıkmışken (Unloaded) de DOĞRU saati bulmalıdır: o anda
     // pencere artık çözülemez ve For() imleci başka bir saatte arardı.
@@ -56,18 +58,22 @@ internal sealed class CursorClock
     /// <summary>[test yüzeyi] Bağlı imleçlerin opaklığını ŞU AN süren TEK kırpma saati; saat durmuşsa <c>null</c>.</summary>
     internal AnimationClock? ActiveBlinkClock => _blinkClock;
 
-    /// <summary>Öğenin penceresine ait saat. Henüz bir pencerede olmayan öğe (ör. ctor'daki pencerenin kendisi) kendi
-    /// anahtarıdır: pencere gösterilince <c>GetWindow</c> ona aynı pencereyi döndürür, yani anahtar değişmez.</summary>
-    internal static CursorClock For(DependencyObject element)
+    /// <summary>Pencerenin saati. Anahtar pencerenin KENDİSİDİR: <c>MainWindow</c> ctor'da (henüz gösterilmemişken) alır,
+    /// kabuktaki görünümler gösterimden sonra <c>Window.GetWindow</c> ile bulur — ikisi aynı pencere nesnesidir, yani aynı
+    /// saat. Pencere çözülemeyen öğe için saat YOKTUR (<see cref="Attach"/> bağlamayı erteler): öğenin kendisini anahtar
+    /// yapmak imleci görünüm anahtarlı, pencerenin aktiflik sinyalini hiç duymayan yetim bir saate KALICI bağlardı.</summary>
+    internal static CursorClock For(Window window)
     {
-        ArgumentNullException.ThrowIfNull(element);
-        return s_byWindow.GetValue(Window.GetWindow(element) ?? element, static _ => new CursorClock());
+        ArgumentNullException.ThrowIfNull(window);
+        return s_byWindow.GetValue(window, static _ => new CursorClock());
     }
 
     /// <summary>
     /// İmleci pencerenin saatine bağlar; saat koşmuyorsa (ilk imleç, ya da pencere az önce aktifleşti) başlatır.
     /// <b>İdempotenttir:</b> bu yol her stream olayında ve her konsol prompt tazelemesinde koşar — bağlı imleç için
     /// pencereyi yeniden çözmez, saati ve fırçayı yeniden kurmaz (ritim sıfırlanmaz, imleç ilk renkte takılmaz).
+    /// Öğe henüz bir pencerede değilse (pencere çözülemiyorsa) hiçbir şey bağlanmaz ve imleç KAYDEDİLMEZ: sonraki çağrı
+    /// (görünürlük, olay) öğe bir pencereye girmişken yeniden dener.
     /// </summary>
     /// <param name="restKey">İmlecin dinlenme rengi (token anahtarı). Saat imleci bıraktığında (pencere aktif değil,
     /// görünmez) imleç bu renge döner; event stream'in ton kanalı değiştiği için her seferinde TAZE okunur.</param>
@@ -77,7 +83,8 @@ internal sealed class CursorClock
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(restKey);
         if (s_byCursor.TryGetValue(cursor, out var owner)) { owner.Reconcile(); return; }
-        var clock = For(host);
+        if (Window.GetWindow(host) is not { } window) return; // pencere yok: yetim saate bağlanmak yerine ertelenir
+        var clock = For(window);
         s_byCursor.Add(cursor, clock);
         clock.Add(cursor, host, restKey);
     }
@@ -142,7 +149,8 @@ internal sealed class CursorClock
 
         if (_windowActive && visibleHost is not null)
         {
-            if (_blinkClock is null) StartClocks(visibleHost);
+            if (_blinkClock is null) StartClocks(CursorHop.CreateClock(visibleHost.TryFindResource));
+            else if (_colorClock is null) RetryColorTour(visibleHost);
             for (int i = 0; i < _attached.Count; i++)
                 if (!_attached[i].Applied) Apply(_attached[i]);
             return;
@@ -153,16 +161,33 @@ internal sealed class CursorClock
         StopClocks();
     }
 
-    private void StartClocks(FrameworkElement host)
+    /// <summary>Çifti kurar. <paramref name="colorClock"/> <c>null</c> ise (palet o an çözülemedi) renk turu YOKTUR ve
+    /// kırpma tek başına döner; bu durum kalıcı değildir — bkz. <see cref="RetryColorTour"/>.</summary>
+    private void StartClocks(AnimationClock? colorClock)
     {
         // Kırpma ve renk turu zaman çizelgeleri MotionTokens/CursorHop'ta kurulur (renk çizelgesinin tek kurucusu
-        // MotionTokens'tır); burada yalnız SAAT yaratılır. Palet çözülemezse renk turu kurulmaz, kırpma yine döner.
+        // MotionTokens'tır); burada yalnız SAAT yaratılır.
         _blinkClock = MotionTokens.CreateBlinkAnimation().CreateClock();
-        _colorClock = CursorHop.CreateClock(host.TryFindResource);
+        _colorClock = colorClock;
         // İkisi AYNI anda başlar: renk adımı sınırları kırpmanın dibine düşer (CursorHop.PhaseMs); ayrı anlarda
         // başlasalar faz kayardı.
         _blinkClock.Controller?.Begin();
         _colorClock?.Controller?.Begin();
+    }
+
+    /// <summary>
+    /// Renk saati kurulamadıysa (palet saat kurulurken çözülemedi: görünüm henüz bir kaynak sözlüğüne bağlı değildi) tur
+    /// yoktur ama kırpma döner. Bu durum KALICI değildir: palet çözülür çözülmez ÇİFT birlikte yeniden başlar — renk
+    /// saatini tek başına sonradan kurmak fazı kaydırırdı (adım sınırları kırpmanın dibine düşmezdi). Palet hâlâ
+    /// çözülemiyorsa hiçbir şey yapılmaz ve kırpma saati SIFIRLANMAZ: her olayda yeniden kurmak imleci "takılı" gösterirdi.
+    /// </summary>
+    private void RetryColorTour(FrameworkElement host)
+    {
+        var colorClock = CursorHop.CreateClock(host.TryFindResource);
+        if (colorClock is null) return;
+        StopClocks();
+        foreach (var attachment in _attached) attachment.Applied = false; // Apply, taze çifti her imlece yeniden bağlar
+        StartClocks(colorClock);
     }
 
     private void StopClocks()

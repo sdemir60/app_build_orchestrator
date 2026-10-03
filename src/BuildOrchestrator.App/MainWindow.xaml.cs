@@ -117,6 +117,11 @@ public partial class MainWindow : Window
         var cursorClock = global::BuildOrchestrator.App.Controls.CursorClock.For(this);
         Activated += (_, _) => cursorClock.SetWindowActive(true);
         Deactivated += (_, _) => cursorClock.SetWindowActive(false);
+        // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
+        // açılış, yeniden başlatma) — Deactivated o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki
+        // pencerede kırpardı. İçerik ilk çizildiğinde (Loaded'dan sonra; aktivasyon o ana dek işlenmiştir) durum pencerenin
+        // KENDİ IsActive'inden okunur, sonrası yukarıdaki olayların işidir. Pencerenin aktifliğini okuyan TEK yer burasıdır.
+        ContentRendered += (_, _) => cursorClock.SetWindowActive(IsActive);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);

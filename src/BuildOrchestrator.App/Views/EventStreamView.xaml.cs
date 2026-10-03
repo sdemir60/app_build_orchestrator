@@ -101,7 +101,9 @@ public partial class EventStreamView : UserControl
         // (aksi halde sonsuz clock unload'da terk edilirdi — StopActiveTypewriter yalnız type-timer'ı söküyordu).
         Unloaded += (_, _) => { StopCursorBlink(); StopCursorRest(); };
         // [design v1.12.1 §2.6] İmlecin renk turu PALETİ okur; DataContext ağaca girmeden yazılabildiği için
-        // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir. Yükleme, turun garanti kurulduğu andır.
+        // (o an kaynak sözlüğü YOKTUR) ilk deneme boşa düşebilir: o durumda kırpma tek başına döner. Palet çözülür
+        // çözülmez (Yükleme, ya da sonraki olay) CursorClock çifti birlikte yeniden başlatıp turu kurar — tur
+        // kaybolmaz, yalnız gecikir.
         Loaded += (_, _) => { if (PART_ActiveLine.Visibility == Visibility.Visible) StartCursorBlink(); };
         // Tepsiye inen pencere görünümü boşaltmaz, yalnız gizler — sonsuz saatler görünürlüğe bağlıdır (§14.5).
         IsVisibleChanged += (_, _) =>
