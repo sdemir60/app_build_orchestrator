@@ -388,7 +388,17 @@ python $W/snap.py restore <ad> && python $W/snap.py verify <ad>   # SONRA geri y
   en az bir kez hatasız derlendi.
 - **ARCHITECTURE §4.5 / §9.2 / §20 ve README:** paylaşılan derleme gerekçesi ölçüme göre yeniden yazıldı
   (commit `docs: paylasilan derleme gerekcesi olcumle yeniden yazildi`).
-- **Yapılamayanlar:** Defender A/B (yönetici yetkisi ister: yönetici PowerShell'de
-  `Add-MpPreference -ExclusionPath 'D:\Projects\Delta','C:\OSYS'`, aynı harness ile bir koşu, sonra
-  `Remove-MpPreference`); Ö1'in ek kuralları (uygulamada kırmızı testlerle); 17:15 koşunuzdaki gerçek yükün ne
+- **Defender A/B (aynı gün, aynı yedekten; dışlama `D:\Projects\Delta` + `C:\OSYS`, yalnız ölçüm süresince,
+  yükseltilmiş yardımcı kendisi kaldırdı — `defender-elevated.log`):**
+
+| Senaryo | Dışlamasız | Dışlamalı | Fark |
+|---|---|---|---|
+| Tek üye değişimi (17 üye) | 67,1 sn | 60,7 sn | −%9,5 |
+| Clean → Optimize → Resolve (83 proje) | 115,5 sn | 110,7 sn | −%4 |
+
+  Kazancın geldiği yer derleme değil, dosya kopyalama: post-build `copy` (Exec) görevi 6,4 → 1,6 sn ve
+  25,3 → 7,0 sn; taze DLL'in ilk açılışı (yüzey özeti) 3,1 → 0,4 sn; MsMpEng CPU'su 26 → 9 sn ve 73 → 36 sn.
+  Csc / MarkupCompile süreleri değişmedi. Yani Defender'ın payı koşunun %4–10'u; büyük kalemler (Ö1, Ö2, Ö3)
+  olduğu gibi duruyor.
+- **Yapılamayanlar:** Ö1'in ek kuralları (uygulamada kırmızı testlerle); 17:15 koşunuzdaki gerçek yükün ne
   olduğu; R3 koşusunda yüzey kanıtının neden kapandığı.
