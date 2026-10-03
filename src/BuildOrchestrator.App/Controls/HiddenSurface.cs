@@ -28,4 +28,12 @@ internal static class HiddenSurface
     public static bool GetIsHidden(DependencyObject d) => (bool)d.GetValue(IsHiddenProperty);
 
     public static void SetIsHidden(DependencyObject d, bool value) => d.SetValue(IsHiddenProperty, value);
+
+    /// <summary>
+    /// "Yüzey görünür oldu" yönü: bir <c>OnPropertyChanged</c> override'ında gelen değişim bu sinyalin gizliden görünüre
+    /// dönüşüdür. Görünümlerin dönüş yakalamasının (bayat kaldıysa tek geçişte modele yetişmek) TEK okuma kuralı: sinyalin
+    /// anlamı (kalıtsal DP + yön) burada durur, her görünüm yalnız kendi "bayat kaldım mı" bayrağını ayrıca sorar.
+    /// </summary>
+    public static bool BecameVisible(DependencyPropertyChangedEventArgs e) =>
+        e.Property == IsHiddenProperty && !(bool)e.NewValue;
 }

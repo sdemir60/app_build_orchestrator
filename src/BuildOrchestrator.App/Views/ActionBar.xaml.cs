@@ -99,9 +99,8 @@ public partial class ActionBar : UserControl
     {
         base.OnPropertyChanged(e);
         if (e.Property != HiddenSurface.IsHiddenProperty) return;
-        bool hidden = (bool)e.NewValue;
-        HiddenSurface.SetIsHidden(PART_BuildMenu, hidden);
-        if (!hidden && _chipsStaleWhileHidden) RefreshChips();
+        HiddenSurface.SetIsHidden(PART_BuildMenu, (bool)e.NewValue);
+        if (HiddenSurface.BecameVisible(e) && _chipsStaleWhileHidden) RefreshChips();
     }
 
     // ---------------------------------------------------------------- test yüzeyi

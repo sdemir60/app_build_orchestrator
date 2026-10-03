@@ -254,7 +254,7 @@ public partial class ProjectRow : UserControl
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if (e.Property != Controls.HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        if (!Controls.HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
         ApplyAllFresh();
     }
 

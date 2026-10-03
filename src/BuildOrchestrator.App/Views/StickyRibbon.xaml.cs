@@ -207,7 +207,7 @@ public partial class StickyRibbon : UserControl
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
         RefreshAll();
         AnnouncePhaseIfChanged();
     }

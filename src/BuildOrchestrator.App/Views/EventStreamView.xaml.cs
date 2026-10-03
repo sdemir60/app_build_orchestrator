@@ -175,7 +175,7 @@ public partial class EventStreamView : UserControl
     protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
-        if (e.Property != HiddenSurface.IsHiddenProperty || (bool)e.NewValue || !_staleWhileHidden) return;
+        if (!HiddenSurface.BecameVisible(e) || !_staleWhileHidden) return;
         // Bayrağı RebuildRows düşürür (tam kurulum kendi bayrağını kendisi sıfırlar).
         if (_vm is not null)
             foreach (var item in _vm.StreamEvents) { item.GlowPlayed = true; item.TypePlayed = true; }
