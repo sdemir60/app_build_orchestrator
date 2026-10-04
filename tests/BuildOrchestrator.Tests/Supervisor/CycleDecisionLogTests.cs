@@ -1,6 +1,9 @@
+using System.Globalization;
+using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.State;
 using static BuildOrchestrator.Tests.Supervisor.CycleRoundsTests;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
 
@@ -20,20 +23,58 @@ public class CycleDecisionLogTests
 {
     private const string MsHole = "{ms}";
 
-    /// <summary>Satırın decision.log'daki yeri; yoksa logun tamamıyla düşer. <c>{ms}</c> herhangi bir süreyi kabul eder.</summary>
-    private static int IndexOf(string log, string line)
+    /// <summary>[Fix round 1 — M3] decision.log satır eşleştiricisinin TEK hâli (CycleRoundsTests de bunu kullanır):
+    /// metin aynen eşleşir, her <c>{ms}</c> deliği bir süre yakalar; satır yoksa logun tamamıyla düşer.</summary>
+    private static Match FindLine(string log, string line)
     {
-        string pattern = Regex.Escape(line).Replace(Regex.Escape(MsHole), @"\d+", StringComparison.Ordinal) + @"\r?$";
+        string pattern = Regex.Escape(line).Replace(Regex.Escape(MsHole), @"(\d+)", StringComparison.Ordinal) + @"\r?$";
         var match = Regex.Match(log, pattern, RegexOptions.Multiline);
         Assert.True(match.Success, $"decision.log has no line '{line}'\n--- decision.log ---\n{log}");
-        return match.Index;
+        return match;
     }
+
+    /// <summary>Satırın decision.log'daki yeri.</summary>
+    internal static int IndexOf(string log, string line) => FindLine(log, line).Index;
+
+    /// <summary>Satırdaki İLK <c>{ms}</c> deliğinin yakaladığı süre.</summary>
+    internal static long MsOf(string log, string line) =>
+        long.Parse(FindLine(log, line).Groups[1].Value, CultureInfo.InvariantCulture);
 
     private static async Task<string> RunCyclesAsync(Harness h)
     {
         await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
         return h.DecisionLog;
+    }
+
+    /// <summary>
+    /// [Fix round 1 — I1] Bir grup decision.log'da TEK adla anılır: build-order'daki ilk üyenin adı. Retry satırı
+    /// eskiden grubu imza temsilcisinin (ordinal en küçük üye) dosya adıyla anardı; build-order'da önde olmayan üye
+    /// ordinal olarak en küçükse aynı grup başlıkta "B", retry satırında "A" diye geçerdi.
+    /// </summary>
+    [Fact]
+    public async Task the_retry_line_names_the_group_like_its_header()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            // B → A: build-order lideri B; imza temsilcisi (ordinal en küçük) A.
+            var plan = CyclePlanOf(["B", "A"], Node("B", deps: ["A"], inCycle: true), Node("A", deps: ["B"], inCycle: true))
+                with { Incremental = RunCoordinatorTests.Incremental("A", "B") };
+            var rec = new RoundRecorder();
+            using var h = new Harness(plan, rec.Invoker((name, _) => name == "A" ? Exit(1) : Ok()),
+                stateStore: new BuildStateStore(cacheRoot));
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default); // NoProgress ⇒ hafıza yazılır
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r2"), default); // aynı imza ⇒ retry satırı
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            string log = h.DecisionLog;
+            IndexOf(log, "cycle B: 2 members, 2 producers, evidence off, hash {ms} ms");
+            IndexOf(log, "cycle B: retrying — did not converge at this signature (sig) on an earlier run");
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
     [Fact] // tur 1'den ÖNCE grup başlığı: üye/üretici sayısı, kanıt durumu, grup başı hash süresi

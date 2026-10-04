@@ -796,6 +796,11 @@ public sealed class RunCoordinator(
                     if (stateStore is not null && runPlan.Incremental is { } inc)
                     {
                         var cycleState = stateStore.Load();
+                        // [Fix round 1 — I1] Retry satırı grubu başlık ve karar satırlarıyla AYNI adla anar
+                        // (CycleGroupName: build-order lideri); üyelik sırası scheduler'ın da okuduğu kuraldan
+                        // (CycleGroups) gelir. Bu örnek YALNIZ ad içindir, dispatch'e girmez.
+                        var membership = CycleGroups.From(runPlan.Plan);
+                        var planNodeById = runPlan.Plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
                         foreach (var cycle in runPlan.Plan.Cycles)
                         {
                             // [I4] Temsilci seçimi YAZAN tarafla (UpdateCycleNonConvergenceMemory) TEK yerdedir:
@@ -804,8 +809,10 @@ public sealed class RunCoordinator(
                             if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
                                 || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
                             if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
-                            Decide(logs, $"cycle {Path.GetFileNameWithoutExtension(representative)}: retrying — "
-                                       + $"did not converge at this signature ({signature}) on an earlier run");
+                            Decide(logs, CycleDecisionLines.Retrying(
+                                CycleGroupName(membership.IsMember(representative) ? membership.MembersOf(representative) : cycle,
+                                    id => NameOf(planNodeById, id)),
+                                signature));
                         }
                     }
                     // SCC'ler de incremental olur: Cycles modunda planlayıcı üyelere GERÇEK bir WillBuild verir
@@ -1398,8 +1405,17 @@ public sealed class RunCoordinator(
 
     /// <summary>Projenin görünen adı; id her zaman plan'dadır (scheduler aynı plan'dan sürülür) ama arama
     /// FIRLATMAYAN biçimde yapılır: buradan gelecek bir exception Complete'i atlatabilirdi.</summary>
-    private static string NameOf(RunContext run, string projectId) =>
-        run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+    private static string NameOf(RunContext run, string projectId) => NameOf(run.NodeById, projectId);
+
+    private static string NameOf(IReadOnlyDictionary<string, ProjectNode> nodeById, string projectId) =>
+        nodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+
+    /// <summary>[Fix round 1 — I1] decision.log'da bir SCC'yi ANAN ad: build-order'daki ilk üyenin adı. Başlık, tur,
+    /// kayıp, karar ve retry satırları grubu bu TEK kuraldan anar (CycleRoundStartedEvent'in lideri de aynı üyedir).
+    /// İmza temsilcisi (<see cref="CycleGroups.SignatureRepresentative"/>) ayrı bir sorudur: o "imza hangi üyeden
+    /// okunur", bu "kullanıcı grubu hangi adla görür".</summary>
+    private static string CycleGroupName(IReadOnlyList<string> buildOrderMembers, Func<string, string> nameOf) =>
+        nameOf(buildOrderMembers[0]);
 
     /// <summary>
     /// [grup koşullu atlama] Dispatch edilmiş bir SCC'yi, uygunsa DERLEMEDEN atlar ve <c>true</c> döner.
@@ -1539,9 +1555,9 @@ public sealed class RunCoordinator(
             id => run.NodeById.TryGetValue(id, out var node) ? node.Dependencies : []);
 
         var outputsById = run.Incremental?.OutputsById;
-        // [PERF Faz E1] decision.log'da grubu ANAN ad: RecordCycleOutcome'un lideriyle aynı (build-order'daki ilk
-        // üye) — aynı grup iki satırda iki farklı adla anılmaz. Satır metinlerinin sahibi CycleDecisionLines'tır.
-        string group = NameOf(run, members[0]);
+        // [PERF Faz E1] decision.log'da grubu ANAN ad (CycleGroupName: build-order'daki ilk üye) — başlık, tur, kayıp,
+        // karar ve retry satırları aynı grubu tek adla anar. Satır metinlerinin sahibi CycleDecisionLines'tır.
+        string group = CycleGroupName(members, id => NameOf(run, id));
         // Üreticinin bilinen dosyaları → dosya başına yüzey özeti; tek bir okunamayan dosya kanıt değildir (null).
         // [PERF Faz E1] null dönüşte HANGİ dosyanın NEDEN kanıt olamadığı da döner: kanıt kaybı decision.log'a
         // adıyla yazılır (yol türetilemedi ⇒ dosya yok; yüzey özeti okunamadı ⇒ kilitli ya da bozuk).
@@ -1937,11 +1953,9 @@ public sealed class RunCoordinator(
         // Logda grubu ANAN ad, CycleRoundStartedEvent'in lideriyle AYNI olmalıdır (build-order'daki ilk üye) —
         // yoksa aynı grup iki kanalda iki farklı adla anılırdı. Bu, aşağıdaki İMZA temsilcisinden ayrı bir
         // sorudur: o "hangi üyenin imzası okunacak", bu "kullanıcı grubu hangi adla görüyor".
-        string leader = NameOf(run, members[0]);
+        string leader = CycleGroupName(members, id => NameOf(run, id));
         string? remembered = UpdateCycleNonConvergenceMemory(run, allMembers, members, decision);
-        Decide(run.Logs, string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members){3}",
-            leader, CycleOutcomeText(decision), members.Count,
-            remembered is null ? "" : "; non-convergence remembered at " + remembered));
+        Decide(run.Logs, CycleDecisionLines.Verdict(leader, decision, members.Count, remembered));
 
         // ProjectId = members[0] (İD, ad DEĞİL) — CycleRoundStartedEvent'in lideriyle AYNI temsilci, satır
         // tıklanabilir kalsın diye.
@@ -1958,19 +1972,6 @@ public sealed class RunCoordinator(
         CycleRoundDecision.NoProgress => CycleOutcome.NoProgress,
         CycleRoundDecision.CapReached => CycleOutcome.CapReached,
         _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, "cycle decision cannot be Continue here"),
-    };
-
-    /// <summary>[Task 7] Tur kararının kullanıcıya dönük (İngilizce) karşılığı — tavan sayısı literal DEĞİL,
-    /// tek kaynak <see cref="CycleRoundPolicy"/>'dir.</summary>
-    private static string CycleOutcomeText(CycleRoundDecision decision) => decision switch
-    {
-        CycleRoundDecision.Converged => "converged",
-        // [suçlu kırmızı/metin] "the same members failed twice" idi; yüzey kanıtı NoProgress'i TEK turda da
-        // verebildiği için "twice" yanlışlanabilir bir iddiaya dönüştü — metin iki kanıt yolunu da kapsar.
-        CycleRoundDecision.NoProgress => "no progress — another round could not change the result",
-        CycleRoundDecision.CapReached => string.Format(CultureInfo.InvariantCulture,
-            "round cap reached ({0} rounds) — output may be one generation behind", CycleRoundPolicy.RoundCap),
-        _ => "interrupted",
     };
 
     /// <summary>

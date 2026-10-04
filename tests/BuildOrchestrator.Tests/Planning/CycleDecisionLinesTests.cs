@@ -52,13 +52,38 @@ public class CycleDecisionLinesTests
     public void every_decision_has_its_own_term(CycleRoundDecision decision, string term) =>
         Assert.Equal(term, CycleDecisionLines.DecisionTerm(decision));
 
+    [Fact] // [Fix round 1 — I1] karar satırı Supervisor'dan TAŞINDI: metin bayt bayt aynı kalır
+    public void the_verdict_names_the_outcome_the_member_count_and_the_remembered_signature()
+    {
+        Assert.Equal("cycle A: converged (2 members)",
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, 2, rememberedAt: null));
+        Assert.Equal("cycle A: no progress — another round could not change the result (2 members); non-convergence remembered at sig",
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.NoProgress, 2, rememberedAt: "sig"));
+        Assert.Equal($"cycle A: round cap reached ({CycleRoundPolicy.RoundCap} rounds) — output may be one generation behind (3 members)",
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.CapReached, 3, rememberedAt: null));
+    }
+
+    [Theory] // tek eşleme: karar satırının açıklaması tur satırındaki terimi taşır
+    [InlineData(CycleRoundDecision.Converged)]
+    [InlineData(CycleRoundDecision.NoProgress)]
+    [InlineData(CycleRoundDecision.CapReached)]
+    public void the_verdict_text_carries_the_round_decision_term(CycleRoundDecision decision) =>
+        Assert.Contains(CycleDecisionLines.DecisionTerm(decision), CycleDecisionLines.OutcomeText(decision), StringComparison.Ordinal);
+
+    [Fact] // [Fix round 1 — I1] retry satırı Supervisor'dan TAŞINDI
+    public void the_retry_line_names_the_group_and_the_remembered_signature() =>
+        Assert.Equal("cycle A: retrying — did not converge at this signature (sig) on an earlier run",
+            CycleDecisionLines.Retrying("A", "sig"));
+
     [Fact] // kayan dosya listesi sınırda kesilir; kalan SAYI olarak yazılır, satır uzayıp gitmez
     public void the_moved_files_beyond_the_limit_are_counted_not_listed()
     {
         string[] files = [.. Enumerable.Range(1, CycleDecisionLines.MovedFileLimit + 2).Select(i => $"f{i}.dll")];
-        string listed = string.Join(" ", files.Take(CycleDecisionLines.MovedFileLimit));
+        string listed = string.Join(", ", files.Take(CycleDecisionLines.MovedFileLimit));
 
         Assert.Equal(listed + " … (+2 more)", CycleDecisionLines.MovedTerm(files));
         Assert.Equal(listed, CycleDecisionLines.MovedTerm([.. files.Take(CycleDecisionLines.MovedFileLimit)]));
+        // [Fix round 1 — M4] ayırıcı bayat kümeninkiyle aynı: boşluklu tam yolun sınırı belirsizleşmez
+        Assert.Equal(@"X:\my libs\a.dll, X:\bin\b.dll", CycleDecisionLines.MovedTerm([@"X:\my libs\a.dll", @"X:\bin\b.dll"]));
     }
 }

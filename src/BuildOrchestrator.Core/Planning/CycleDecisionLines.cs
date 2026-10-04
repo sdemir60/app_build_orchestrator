@@ -27,6 +27,9 @@ public static class CycleDecisionLines
     /// <summary>Kanıt varken hiçbir dosya kaymadıysa kayan dosya alanının terimi.</summary>
     public const string NoneMoved = "none";
 
+    /// <summary>Tur satırındaki listelerin (bayat üyeler, kayan dosyalar) ortak ayırıcısı.</summary>
+    private const string ListSeparator = ", ";
+
     /// <summary>Tur satırında adıyla yazılan kayan dosya sayısının üst sınırı; fazlası sayı olarak eklenir.</summary>
     public const int MovedFileLimit = 3;
 
@@ -53,7 +56,34 @@ public static class CycleDecisionLines
             "cycle {0} round {1}: {2}; stale={3}; moved={4}; levels={5}; round {6} ms; hash {7} ms",
             group, round, DecisionTerm(decision), StaleTerm(staleNames), MovedTerm(movedFiles), levels, roundMs, hashMs);
 
-    /// <summary>Tur kararının terimi.</summary>
+    /// <summary>[Fix round 1 — I1] Grubun nihai kararı (Supervisor'dan taşındı, metin aynı):
+    /// <c>cycle A: converged (2 members)</c> · NoProgress hafızaya yazıldıysa <c>…; non-convergence remembered at sig</c>.</summary>
+    public static string Verdict(string group, CycleRoundDecision decision, int members, string? rememberedAt) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members){3}",
+            group, OutcomeText(decision), members,
+            rememberedAt is null ? "" : "; non-convergence remembered at " + rememberedAt);
+
+    /// <summary>Kararın kullanıcıya dönük açıklaması — baş terimi <see cref="DecisionTerm"/>'dür (enum→metin eşlemesi
+    /// tek yerde); tavan sayısı literal DEĞİL, tek kaynak <see cref="CycleRoundPolicy.RoundCap"/>.</summary>
+    public static string OutcomeText(CycleRoundDecision decision) => decision switch
+    {
+        CycleRoundDecision.Converged => DecisionTerm(decision),
+        // [suçlu kırmızı/metin] "the same members failed twice" idi; yüzey kanıtı NoProgress'i TEK turda da
+        // verebildiği için "twice" yanlışlanabilir bir iddiaya dönüştü — metin iki kanıt yolunu da kapsar.
+        CycleRoundDecision.NoProgress => DecisionTerm(decision) + " — another round could not change the result",
+        CycleRoundDecision.CapReached => string.Format(CultureInfo.InvariantCulture,
+            "round {0} ({1} rounds) — output may be one generation behind", DecisionTerm(decision), CycleRoundPolicy.RoundCap),
+        _ => "interrupted",
+    };
+
+    /// <summary>[Fix round 1 — I1] Bu imzada daha önce yakınsamamış grubun açık Resolve'da yeniden denenmesi
+    /// (Supervisor'dan taşındı, metin aynı): <c>cycle A: retrying — did not converge at this signature (sig) on an earlier run</c>.</summary>
+    public static string Retrying(string group, string signature) =>
+        string.Format(CultureInfo.InvariantCulture,
+            "cycle {0}: retrying — did not converge at this signature ({1}) on an earlier run", group, signature);
+
+    /// <summary>Tur kararının terimi — enum→metin eşlemesinin TEK yeri; karar açıklaması (<see cref="OutcomeText"/>)
+    /// bunun üstüne kurulur.</summary>
     public static string DecisionTerm(CycleRoundDecision decision) => decision switch
     {
         CycleRoundDecision.Continue => "continue",
@@ -66,14 +96,15 @@ public static class CycleDecisionLines
     /// <summary>Bayat küme: <c>2 [A, C]</c> · <c>0 []</c> · kanıt yoksa <c>n/a</c>.</summary>
     public static string StaleTerm(IReadOnlyList<string>? staleNames) => staleNames is null
         ? NotApplicable
-        : string.Format(CultureInfo.InvariantCulture, "{0} [{1}]", staleNames.Count, string.Join(", ", staleNames));
+        : string.Format(CultureInfo.InvariantCulture, "{0} [{1}]", staleNames.Count, string.Join(ListSeparator, staleNames));
 
-    /// <summary>Kayan dosyalar: <c>X:\a.dll X:\b.dll</c> · sınırı aşınca <c>… (+2 more)</c> · <c>none</c> · <c>n/a</c>.</summary>
+    /// <summary>Kayan dosyalar: <c>X:\a.dll, X:\b.dll</c> · sınırı aşınca <c>… (+2 more)</c> · <c>none</c> · <c>n/a</c>.
+    /// Ayırıcı bayat kümeninkiyle aynıdır: tam yol boşluk taşıyabilir, düz boşluk yol sınırını bulanıklaştırırdı.</summary>
     public static string MovedTerm(IReadOnlyList<string>? movedFiles)
     {
         if (movedFiles is null) return NotApplicable;
         if (movedFiles.Count == 0) return NoneMoved;
-        string shown = string.Join(" ", movedFiles.Take(MovedFileLimit));
+        string shown = string.Join(ListSeparator, movedFiles.Take(MovedFileLimit));
         return movedFiles.Count <= MovedFileLimit
             ? shown
             : string.Format(CultureInfo.InvariantCulture, "{0} … (+{1} more)", shown, movedFiles.Count - MovedFileLimit);

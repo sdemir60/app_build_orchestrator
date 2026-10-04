@@ -1421,11 +1421,11 @@ public class CycleRoundsTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.True(Volatile.Read(ref peak) > 1, "the group-start hash never read two producers at once");
-        var header = System.Text.RegularExpressions.Regex.Match(h.DecisionLog,
-            @"cycle P1: 8 members, 8 producers, evidence on, hash (\d+) ms");
-        Assert.True(header.Success, h.DecisionLog);
-        Assert.True(long.Parse(header.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
-                    < Producers * (long)ceiling.TotalMilliseconds, header.Value);
+        // Süre E1'in grup başlığından, testlerin TEK satır eşleştiricisiyle okunur (CycleDecisionLogTests.MsOf).
+        long groupStartHashMs = CycleDecisionLogTests.MsOf(h.DecisionLog,
+            "cycle P1: 8 members, 8 producers, evidence on, hash {ms} ms");
+        Assert.True(groupStartHashMs < Producers * (long)ceiling.TotalMilliseconds,
+            $"the group-start hash took {groupStartHashMs} ms");
     }
 
     /// <summary>
