@@ -1729,12 +1729,11 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
   `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
   project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
-  written, the engine says so once on stderr and builds without the argument. Both files carry a fixed, old
-  modification time however they were written, so rewriting them with new content never makes MSBuild see a
+  written or pinned, the engine says so once on stderr and builds without the argument. Both files carry a fixed,
+  old modification time however they were written, so rewriting them with new content never makes MSBuild see a
   newer import and rebuild every project once; the pin has to go if the file ever starts to change the output.
-  The file has been checked against
-  the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the Visual Studio 2022 toolset
-  (legacy-style projects).
+  The file has been checked against the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the
+  Visual Studio 2022 toolset (legacy-style projects).
 - No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
   its `/reference:` list to learn which sibling file a member really compiled against (§8.8). Losing that line
   costs precision only: the round then judges the member on every copy.
@@ -5247,7 +5246,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written, builds run without the argument |
+| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
@@ -5987,6 +5986,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
+| The engine's memory line: the line format, the process read and the sink that swallows its own errors; written to stderr after a sync (whatever its outcome) and after a run | `Core/Diagnostics/MemoryLine.cs`, `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`ReportMemory`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 
 **Build execution**
@@ -5997,7 +5997,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
 | Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
-| The WPF temporary-assembly targets — their content, the friend source file and the write into the state folder | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
+| The WPF temporary-assembly targets — their content, the friend source file, the write into the state folder and the fixed modification time of both files | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |

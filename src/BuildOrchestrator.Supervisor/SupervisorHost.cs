@@ -166,15 +166,19 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         try
         {
             await workspace.Sync(cmd.RootPath).RunAsync(cmd, Emit, ct);
-            // [PERF Faz C/C3] Sync bitti: bellek tanı satırı stderr'e (stdout YALNIZ NDJSON). Kanal koordinatörün
-            // console'udur — host ikinci bir stderr bağı kurmaz; tanı hata fırlatmaz, Sync'i bozmaz.
-            coordinator.ReportMemory();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Sync'in kendi kapıları bozuk girdiyi zaten planFailed'a çevirir; buraya yalnız GERÇEKTEN
             // beklenmeyen bir hata düşer. IPC sınırını exception ASLA geçmemeli — tanımlı bir event'e çevrilir.
             await writer.WriteAsync(new ErrorEvent("planFailed", ex.Message), ct);
+        }
+        finally
+        {
+            // [PERF Faz C/C3] Sync SONUCU NE OLURSA OLSUN (tamamlanma, planFailed, iptal) bitti: bellek tanı satırı stderr'e (stdout
+            // YALNIZ NDJSON) — koşu yolundaki gibi tek kez, finally'de. Kanal koordinatörün console'udur, host ikinci bir stderr bağı
+            // kurmaz; tanı hata fırlatmaz (MemoryLine.Report yutar), yani başarılı bir Sync'i planFailed'a çeviremez.
+            coordinator.ReportMemory();
         }
     }
 

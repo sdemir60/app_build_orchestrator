@@ -125,7 +125,7 @@ public class WpfTemporaryAssemblyTargetsTests
     /// <summary>
     /// [PERF Faz C/C6] İki dosya ilk yazımdan sonra sabit, ESKİ tarihi taşır — "şimdi"yi değil. MSBuild bu import'u her
     /// projenin girdileri arasında sayar; yeni tarihli bir targets dosyası motorun çağırdığı HER projeyi bir kez baştan
-    /// derletirdi (ölçüldü: Rebuild 46 → 78 sn), oysa import nihai çıktıyı değiştirmez.
+    /// derletirdi (ölçüm ve gerekçe: <see cref="WpfTemporaryAssemblyTargets.FixedTimestampUtc"/>), oysa import nihai çıktıyı değiştirmez.
     /// </summary>
     [Fact]
     public void both_files_carry_the_fixed_old_timestamp_after_the_first_write()
@@ -190,7 +190,7 @@ public class WpfTemporaryAssemblyTargetsTests
     /// <summary>İki dosyayı elle, verilen içerikle ve YENİ bir tarihle yerleştirir — önceki bir sürümün bıraktığı hâl.</summary>
     private static (string Targets, string Friend) Plant(string cacheRoot, string targetsContent, string friendContent, bool withBom)
     {
-        Directory.CreateDirectory(Path.Combine(cacheRoot, "msbuild"));
+        Directory.CreateDirectory(Path.GetDirectoryName(FileOf(cacheRoot, WpfTemporaryAssemblyTargets.TargetsFileName))!);
         string targets = FileOf(cacheRoot, WpfTemporaryAssemblyTargets.TargetsFileName);
         string friend = FileOf(cacheRoot, WpfTemporaryAssemblyTargets.FriendFileName);
         var encoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: withBom);

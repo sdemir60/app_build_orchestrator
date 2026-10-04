@@ -238,7 +238,7 @@ public static class Program
 
     /// <summary>
     /// WPF geçici assembly targets'ını önbellek köküne yazar ve yolunu döner. Yazılamazsa (kilitli ya da salt-okunur
-    /// klasör, dolu disk) MSBuild çözümünü ve motoru DÜŞÜRMEZ: bu bir OPTİMİZASYONDUR — stderr'e tek satır uyarı
+    /// klasör, dolu disk) ya da tarihi sabitlenemezse MSBuild çözümünü ve motoru DÜŞÜRMEZ: bu bir OPTİMİZASYONDUR — stderr'e tek satır uyarı
     /// düşer (stdout YALNIZ NDJSON [D4]) ve null döner; derleme targets'sız, bugünkü komut satırıyla sürer.
     /// </summary>
     private static string? EnsureWpfTemporaryAssemblyTargets(string cacheRoot)
@@ -246,7 +246,7 @@ public static class Program
         try { return WpfTemporaryAssemblyTargets.EnsureWritten(cacheRoot); }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("warning: WPF temporary assembly targets could not be written under " + cacheRoot
+            Console.Error.WriteLine("warning: WPF temporary assembly targets could not be written or pinned under " + cacheRoot
                 + " (builds continue without them): " + ex.Message);
             return null;
         }
