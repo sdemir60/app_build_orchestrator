@@ -2352,8 +2352,8 @@ public sealed class RunCoordinator(
     /// <see cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
     /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
     /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
-    /// dirty olurdu; (2) <c>LastDurationMs</c> ETA tahminini besler, bir başarısızlığın (çoğu zaman erken patlayan)
-    /// süresi İYİ bir ölçümün üzerine yazılmamalıdır.
+    /// dirty olurdu; (2) <c>LastDurationMs</c> son başarılı derlemenin tanı kaydıdır (ETA onu okumaz — ARCHITECTURE
+    /// §8.4, §7.5); bir başarısızlığın (çoğu zaman erken patlayan) süresi o kaydın üzerine yazılmamalıdır.
     /// </para>
     /// Persist I/O hatası run'ı ÖLDÜRMEZ (warn-only).
     /// <para>
