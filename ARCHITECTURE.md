@@ -380,7 +380,7 @@ flag existed keeps updating; when it is false the engine runs no version-control
 gate.
 
 `startRun` may also carry **`scopeProjectId`** — the identity of one project, sent when a run is started from
-a row (§13.2). It is the last field and defaults to null, so a full run writes the same line it always did.
+a row (§13.2). It defaults to null, so a full run writes the same line it always did.
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
 are not compiled and nothing outside the scope enters the run.
 
@@ -2397,12 +2397,15 @@ is the worker count a profile *asks for* — the engine fits the request to the 
 | Full | 6 | Normal | none |
 | Balanced (default) | 4 | BelowNormal | 70 % |
 | Light | 2 | Idle | 40 % |
-| Resolve cycles run (setting on) | the chosen mode's | Normal | none |
+
+A Resolve cycles run is not a fourth profile: with *Resolve cycles at full priority* on it keeps the chosen profile's
+parallelism and takes the Full row's priority and cap — Normal, none (below).
 
 Switching mid-run changes the cap and the priority live and writes a console note whose body is exactly
-`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full). **Parallelism does not change mid-run** — workers
-are created once at the start of a run — so the new worker count applies to the next run. The note text has a
-single owner in Core, called by both the App and the Supervisor.
+`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full); during a Resolve cycles run at full priority a switch to
+Balanced or Light writes the Resolve cycles note below instead, which adds the priority. **Parallelism does not
+change mid-run** — workers are created once at the start of a run — so the new worker count applies to the next run.
+The note text has a single owner in Core, called by both the App and the Supervisor.
 
 **A Resolve cycles run takes full priority.** A `Cycles` run (§8.1) keeps the worker count of the chosen profile but
 takes the cap and the priority of the Full row — no cap, Normal — whatever the profile. Measured on a machine with
@@ -2411,8 +2414,8 @@ difference was small; the run is short and the user is waiting for it. The rule 
 (`PerfProfile.ForRun`); the Supervisor applies it at the start of the run and to every mid-run switch, with the mode
 and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
 force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
-`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch writes
-during such a run. *Settings → General → Resolve cycles at full priority* (on by default, carried by every
+`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
+Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default, carried by every
 `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run. `Build`, `Rebuild` and
 `Clean` are never affected, and Full is uncapped at Normal already.
 
@@ -3815,8 +3818,9 @@ pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, startWithWi
 showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
 field order the file is written in, not just a key that happens to be present) and holding only cards with a
 non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
-card, and returns every General switch to its catalog default — *Pull before build*, *Close to tray* and *Show
-notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has
+card, and returns every General switch to its catalog default — *Pull before build*, *Resolve cycles at full
+priority*, *Close to tray* and *Show notifications* on, the rest off. Every General switch travels in the file, so
+saving an imported file that has
 *Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
@@ -6276,7 +6280,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
-| Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+| Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
 | File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the Resolve group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 

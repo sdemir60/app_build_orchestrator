@@ -692,7 +692,8 @@ One chip in the UI cycles three fixed profiles (default: Balanced):
 Switching **while a run is in flight** writes a console note and sends the new profile to the engine; switching
 while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
-(`cpu cap off` for Full).
+(`cpu cap off` for Full); during a *Resolve cycles* run at full priority, a switch to Balanced or Light writes the note
+below instead, which adds the priority.
 
 **Resolve cycles runs at full priority.** Whatever the profile, a *Resolve cycles* run keeps the profile's worker
 count but drops its CPU cap and runs at normal priority, so it finishes sooner on a busy machine — at the price that

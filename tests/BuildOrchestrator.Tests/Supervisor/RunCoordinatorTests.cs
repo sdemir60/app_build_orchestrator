@@ -2596,15 +2596,10 @@ public class RunCoordinatorTests
         var planningStarted = Signal();
         var releasePlanning = Signal();
         var plan = PlanOf(Node("A"));
-        RunPlan GatedPlanner(StartRunCommand _, Action<string> __)
-        {
-            planningStarted.TrySetResult();
-            releasePlanning.Task.GetAwaiter().GetResult(); // run task'ını bloklar, test thread'ini DEĞİL [D8]
-            return plan;
-        }
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         var governor = new RecordingGovernor();
-        using var h = new Harness(plan, invoker, planner: GatedPlanner, cpuGovernor: governor);
+        using var h = new Harness(plan, invoker, planner: GatedPlanner(plan, planningStarted, releasePlanning),
+            cpuGovernor: governor);
 
         await h.Sut.StartAsync(Start() with { PerfMode = "Full" }, default);
         await planningStarted.Task.WaitAsync(Limit);
@@ -2616,6 +2611,43 @@ public class RunCoordinatorTests
         Assert.Equal([.. Applied(PerfMode.Light), .. Released()], governor.Calls); // Full DEĞİL Light uygulandı
         Assert.Equal(PerfProfile.For(PerfMode.Light).CpuCapPercent,
             Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
+    }
+
+    /// <summary>[fix 1B — M2] Planlama penceresi testlerinin ORTAK planner'ı: plan kurulmaya başlayınca
+    /// <paramref name="started"/>'ı işaretler ve <paramref name="release"/> gelene kadar run task'ını bloklar (test
+    /// thread'ini DEĞİL [D8]).</summary>
+    private static Func<StartRunCommand, Action<string>, RunPlan> GatedPlanner(RunPlan plan, TaskCompletionSource started,
+        TaskCompletionSource release) => (_, _) =>
+    {
+        started.TrySetResult();
+        release.Task.GetAwaiter().GetResult();
+        return plan;
+    };
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M2] Üstteki testin Resolve aynası: planlama penceresinde gelen Light komuttaki
+    /// profili yine EZER, ama run başında AYNI dönüşümden geçer — yürürlüğe giren cap'siz + Normal'dir ve
+    /// <c>runStarted</c> cap'siz bildirir (ezme yolu dönüşümü atlayamaz). Anahtar açıkça verilir: test varsayılana
+    /// değil ezme yoluna bağlıdır.</summary>
+    [Fact]
+    public async Task A_perf_change_arriving_while_a_resolve_run_is_planned_still_runs_at_full_priority()
+    {
+        var planningStarted = Signal();
+        var releasePlanning = Signal();
+        var plan = ResolvePlan();
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        var governor = new RecordingGovernor();
+        using var h = new Harness(plan, invoker, planner: GatedPlanner(plan, planningStarted, releasePlanning),
+            cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Full", ResolveAtFullPriority = true }, default);
+        await planningStarted.Task.WaitAsync(Limit);
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // komuttaki Full'ü ezecek niyet
+        Assert.Empty(governor.Calls);
+        releasePlanning.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. Released()], governor.Calls); // Light'ın cap'i ve Idle'ı DEĞİL
+        Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).CpuCapPercent);
     }
 
     [Fact]
@@ -3057,5 +3089,34 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal([.. Applied(PerfMode.Balanced), CapOff, CapOff, FloorPrio, .. Released()], governor.Calls);
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M2] Üstteki testin Resolve aynası: drain sürerken gelen canlı Light, tam
+    /// öncelikteki Resolve koşusuna cap koyamaz, önceliğini ne Light'ın Idle'ına ne tabana indirebilir — canlı yol da aynı
+    /// dönüşümden geçer. Kaldırılacak cap olmadığından drain job'a hiç yazmaz. Anahtar açıkça verilir.</summary>
+    [Fact]
+    public async Task A_perf_change_during_the_graceful_drain_of_a_resolve_run_keeps_it_at_full_priority()
+    {
+        var inFlight = Signal();
+        var release = Signal();
+        var invoker = new FakeInvoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        var governor = new RecordingGovernor();
+        using var h = new Harness(ResolvePlan(), invoker, cpuGovernor: governor);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles) with { PerfMode = "Balanced", ResolveAtFullPriority = true }, default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Graceful));
+        Assert.Equal(FullPriority(), governor.Calls); // drain'in kaldıracağı cap yok
+
+        h.Sut.ApplyPerfMode(PerfProfile.For(PerfMode.Light)); // cap:40 + prio:Idle isterdi
+
+        Assert.Equal([.. FullPriority(), .. FullPriority()], governor.Calls); // cap yok, priority Normal kaldı
+        Assert.DoesNotContain(Prio(PerfMode.Light), governor.Calls);
+        Assert.DoesNotContain(FloorPrio, governor.Calls);
+
+        release.TrySetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal([.. FullPriority(), .. FullPriority(), .. Released()], governor.Calls);
     }
 }

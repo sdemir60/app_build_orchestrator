@@ -111,4 +111,15 @@ public class PerfProfileTests
         Assert.Null(PerfNoteText.ResolveNote(RunMode.Cycles, PerfProfile.For(PerfMode.Full), resolveAtFullPriority: true));
         Assert.Null(PerfNoteText.ResolveNote(RunMode.Build, balanced, resolveAtFullPriority: true));
     }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M6] Priority'nin değer terimi her sınıf için AÇIKÇA yazılıdır (KOPYA METİN bilerek
+    /// literal); tanımsız bir değer — ileride eklenen bir enum üyesi — sessizce <c>"idle"</c> diye etiketlenmez, fırlatır.</summary>
+    [Fact]
+    public void The_priority_value_names_every_class_and_rejects_an_unknown_one()
+    {
+        Assert.Equal("normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Normal));
+        Assert.Equal("below normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.BelowNormal));
+        Assert.Equal("idle", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Idle));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PerfNoteText.PriorityValue((ProcessPriorityClassKind)99));
+    }
 }

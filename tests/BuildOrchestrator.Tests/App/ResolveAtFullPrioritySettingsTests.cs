@@ -17,6 +17,7 @@ namespace BuildOrchestrator.Tests.App;
 /// <see cref="RunViewModel.ResolveAtFullPriority"/>) → <see cref="StartRunCommand.ResolveAtFullPriority"/>; kabuğun
 /// açılış seed'i ve kalıcılığı. Motorun bayrakla ne yaptığı <c>PerfProfileTests</c> ve <c>RunCoordinatorTests</c>'tedir.
 /// </summary>
+[Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ResolveAtFullPrioritySettingsTests
 {
     private const string Label = "Resolve cycles at full priority";
@@ -45,6 +46,35 @@ public class ResolveAtFullPrioritySettingsTests
         await run.BuildCommand.ExecuteAsync(null);
 
         Assert.False(Assert.Single(sent.OfType<StartRunCommand>()).ResolveAtFullPriority);
+    }
+
+    // ---------------------------------------------------------------- dosya biçimi
+
+    /// <summary>[fix 1B — I4] Export anahtarı yazar, Import geri okur (<see cref="StashOnBranchSwitchTests"/> deseni).
+    /// Varsayılan DIŞI değer (kapalı) kullanılır: bağlantı koparsa form varsayılanda (açık) kalır ve test kırmızı verir.</summary>
+    [Fact]
+    public void The_setting_round_trips_through_the_file()
+    {
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", resolveAtFullPriority: false);
+        string json = draft.ToFile().ToJson();
+        Assert.Contains("\"resolveAtFullPriority\": false", json, StringComparison.Ordinal);
+
+        var loaded = new SettingsDraftViewModel(null, @"D:\repo");
+        loaded.LoadFrom(SettingsFile.TryParse(json)!);
+
+        Assert.False(loaded.ResolveAtFullPriority);
+    }
+
+    /// <summary>[fix 1B — I4] Anahtarı taşımayan (eski) bir dosya formdaki değeri varsayılana döndürmez — pull/stash
+    /// bayraklarının kuralı.</summary>
+    [Fact]
+    public void A_file_without_the_setting_leaves_the_form_untouched()
+    {
+        var draft = new SettingsDraftViewModel(null, @"D:\repo", resolveAtFullPriority: false);
+
+        draft.LoadFrom(SettingsFile.From(@"D:\repo", []));
+
+        Assert.False(draft.ResolveAtFullPriority);
     }
 
     /// <summary>Değişen ayar konsola not düşer, değişmeyen sessiz kalır (<see cref="StashOnBranchSwitchTests"/> deseni).</summary>

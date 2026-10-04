@@ -40,8 +40,8 @@ public static class PerfNoteText
     /// [RESOLVE Faz 4 / karar 11] Resolve cycles'ın tam öncelik notu — chip notunun ailesinde, priority ve koşu adı
     /// eklenmiş TEK satır: <c>parallelism: 4 · cpu cap off · priority normal (Resolve cycles)</c>. Dönüşüm
     /// (<see cref="PerfProfile.ForRun"/>) profili DEĞİŞTİRMEDİYSE <c>null</c>: Build/Rebuild/Clean, kapalı anahtar ve
-    /// zaten tam öncelikli Full için söylenecek ek bir şey yoktur. Supervisor run-başı satırını (konsol +
-    /// decision.log) yalnız bu dolu iken yazar.
+    /// zaten tam öncelikli Full için söylenecek ek bir şey yoktur. Supervisor decision.log satırını, App kullanıcının
+    /// konsol satırını (<c>runStarted</c>) yalnız bu dolu iken yazar.
     /// </summary>
     public static string? ResolveNote(RunMode mode, PerfProfile profile, bool resolveAtFullPriority)
     {
@@ -50,12 +50,14 @@ public static class PerfNoteText
             "{0} · priority {1} (Resolve cycles)", Note(run), PriorityValue(run.Priority));
     }
 
-    /// <summary>Priority'nin değer terimi (<c>"normal"</c>) — perf konsol metninin sözlüğü bu sınıftadır.</summary>
-    private static string PriorityValue(ProcessPriorityClassKind kind) => kind switch
+    /// <summary>Priority'nin değer terimi (<c>"normal"</c>) — perf konsol metninin sözlüğü bu sınıftadır. Her sınıf AÇIKÇA
+    /// yazılıdır: tanımsız bir değer (ileride eklenen bir enum üyesi) sessizce yanlış etiketlenmez, fırlatır.</summary>
+    public static string PriorityValue(ProcessPriorityClassKind kind) => kind switch
     {
         ProcessPriorityClassKind.Normal => "normal",
         ProcessPriorityClassKind.BelowNormal => "below normal",
-        _ => "idle",
+        ProcessPriorityClassKind.Idle => "idle",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
     /// <summary>[RESOLVE Faz 4 / karar 11] Koşu içindeki chip notu: Resolve tam öncelikteyse <see cref="ResolveNote"/>,
