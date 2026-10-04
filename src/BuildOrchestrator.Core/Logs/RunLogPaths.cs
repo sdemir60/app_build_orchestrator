@@ -8,6 +8,10 @@ public static class RunLogPaths
     private const string RunDirPrefix = "run-";
     private const string RunDirStampFormat = "yyyyMMdd-HHmmss-fff";
 
+    /// <summary>Dizin listelemede koşu klasörlerini ön-süzen arama deseni (<c>run-*</c>). Ön ekten TÜRER — kalıp tek yerde
+    /// durur; asıl karar yine <see cref="TryParseRunDirName"/>'dedir, bu yalnız listeyi daraltır.</summary>
+    internal const string RunDirSearchPattern = RunDirPrefix + "*";
+
     public static string DefaultLogsRoot => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BuildOrchestrator", "logs");
 
@@ -16,7 +20,7 @@ public static class RunLogPaths
 
     /// <summary>
     /// [PERF Faz C/C2] <see cref="RunDirName"/>'in tersi: bir klasör ADININ (yol değil) koşu klasörü kalıbına TAM uyup
-    /// uymadığını söyler, uyuyorsa koşunun başladığı anı verir. Kalıp tek yerde durur (yukarıdaki iki sabit) — saklama
+    /// uymadığını söyler, uyuyorsa koşunun başladığı anı verir. Kalıp tek yerde durur (yukarıdaki sabitler) — saklama
     /// budaması neyin koşu klasörü olduğunu buradan öğrenir ve başka hiçbir klasöre dokunmaz.
     /// Damga, yazıcıya verilen anın DUVAR SAATİDİR; <c>RunCoordinator</c> onu yerel saatle (<c>DateTimeOffset.Now</c>)
     /// verdiği için yerel saat dilimi olarak yorumlanır.

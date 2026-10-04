@@ -11,7 +11,9 @@ namespace BuildOrchestrator.Core.Logs;
 /// <para><b>Silmenin sınırı</b> [değişmez: OutDir'e dokunulmaz — log kökü bir çıktı yolu değildir]: silme yalnız log
 /// kökünün DOĞRUDAN altındaki, adı <see cref="RunLogPaths.RunDirName"/> kalıbına TAM uyan klasörlerde olur. Başka bir
 /// klasör, adı kalıba uyan bir dosya ve yeniden-ayrıştırma noktaları (sembolik bağ, junction) hiçbir koşulda silinmez.
-/// Aktif koşunun klasörü de kendiliğinden güvendedir: damgası görülen en yeni damgadır ve pencerenin çok içindedir.</para>
+/// Silinen bir klasörün İÇİNDEKİ bağlantılar da izlenmez: yalnız bağlantının kendisi kaldırılır, hedefe dokunulmaz
+/// (<c>DeleteWithoutFollowingLinks</c>). Aktif koşunun klasörü de kendiliğinden güvendedir: damgası şimdiye yakındır,
+/// pencerenin çok içindedir.</para>
 /// </summary>
 public static class RunLogRetention
 {
@@ -26,8 +28,9 @@ public static class RunLogRetention
     /// <summary>
     /// Silinecek klasörler: adı <see cref="RunLogPaths.RunDirName"/> kalıbına TAM uyan, damgası <c>now - KeepFor</c>'dan
     /// KESİN eski olan ve EN YENİ koşu klasörü OLMAYAN her giriş, en eskiden başlayarak ve girişteki yazımıyla. Kalıba
-    /// uymayan ad ne seçilir ne de "en yeni"yi belirler. Damgası <paramref name="now"/>'dan yeni olan (etkin koşu, geri
-    /// alınmış saat) hiçbir koşulda seçilmez ve en yeni sayılır.
+    /// uymayan ad ne seçilir ne de "en yeni"yi belirler. "En yeni" yalnız BAŞLAMIŞ koşular (damga &lt;= <paramref name="now"/>)
+    /// arasından seçilir: damgası <paramref name="now"/>'dan yeni olan klasör (saati geri alınmış makine, elle verilmiş
+    /// ad) hiçbir koşulda seçilmez ve gerçek son koşunun korumasını da sökemez.
     /// </summary>
     /// <param name="runDirectories">Klasör yolları ya da yalnız adlar; damga son yol parçasından okunur.</param>
     public static IReadOnlyList<string> Select(IReadOnlyList<string> runDirectories, DateTimeOffset now)
@@ -38,7 +41,9 @@ public static class RunLogRetention
         foreach (string dir in runDirectories)
         {
             string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(dir));
-            if (RunLogPaths.TryParseRunDirName(name, out var startedAt)) runs.Add((dir, startedAt));
+            // Damgası now'dan yeni olan klasör ne silinir (eski değil) ne de "en yeni" olur: saati geri alınmış makinedeki ya da
+            // elle ileri tarihli verilmiş bir ad, gerçek son koşunun korumasını sökmesin.
+            if (RunLogPaths.TryParseRunDirName(name, out var startedAt) && startedAt <= now) runs.Add((dir, startedAt));
         }
         if (runs.Count == 0) return [];
 
@@ -71,7 +76,7 @@ public static class RunLogRetention
         {
             if (!Directory.Exists(logsRoot)) return 0;
             // Yalnız kökün DOĞRUDAN altındaki klasörler; yeniden-ayrıştırma noktasına (symlink/junction) hiç inilmez.
-            var candidates = new DirectoryInfo(logsRoot).EnumerateDirectories("run-*")
+            var candidates = new DirectoryInfo(logsRoot).EnumerateDirectories(RunLogPaths.RunDirSearchPattern)
                 .Where(d => (d.Attributes & FileAttributes.ReparsePoint) == 0)
                 .Select(d => d.FullName)
                 .ToList();
@@ -89,7 +94,7 @@ public static class RunLogRetention
         {
             try
             {
-                Directory.Delete(dir, recursive: true);
+                DeleteWithoutFollowingLinks(dir);
                 removed++;
             }
             catch (DirectoryNotFoundException)
@@ -105,6 +110,28 @@ public static class RunLogRetention
 
         if (removed + failed > 0) log(Summary(removed, failed, firstError));
         return removed;
+    }
+
+    /// <summary>
+    /// Koşu klasörünü içeriğiyle siler; içindeki bağlantılara (junction/symlink) İNMEZ: bağlantının KENDİSİ kaldırılır,
+    /// hedefin içeriğine dokunulmaz. <c>Directory.Delete(recursive)</c> da bağlantıyı izlemez ama bu makinede (Windows,
+    /// .NET 10) içinde junction olan bir klasörde bağlantıyı ve dosyaları kaldırdıktan sonra
+    /// <see cref="UnauthorizedAccessException"/> fırlatıp boş klasörü geride bırakıyor: yanlış bir "silinemedi" satırı ve
+    /// bir açılış gecikmesi. Clean'in ağaç silmesiyle (<c>CleanWorkspaceService.DeleteTree</c>) aynı ilke; burada sıkı:
+    /// ilk IO hatası fırlar ve klasör sonraki açılışa kalır (<see cref="Prune"/> yutar).
+    /// </summary>
+    private static void DeleteWithoutFollowingLinks(string dir)
+    {
+        foreach (string entry in Directory.GetFileSystemEntries(dir))
+        {
+            FileAttributes attributes = File.GetAttributes(entry);
+            // Dosya ya da dosya bağlantısı: File.Delete bağlantının KENDİSİNİ kaldırır. Dizin bağlantısı: yalnız bağlantı
+            // kaldırılır (özyineleme yok). Gerçek dizin: içine inilir.
+            if ((attributes & FileAttributes.Directory) == 0) File.Delete(entry);
+            else if ((attributes & FileAttributes.ReparsePoint) != 0) Directory.Delete(entry, recursive: false);
+            else DeleteWithoutFollowingLinks(entry);
+        }
+        Directory.Delete(dir, recursive: false);
     }
 
     private static string Summary(int removed, int failed, string? firstError)

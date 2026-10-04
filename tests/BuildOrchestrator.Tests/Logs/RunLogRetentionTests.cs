@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.Core.Logs;
+using BuildOrchestrator.Tests.App;
 using Xunit;
 
 namespace BuildOrchestrator.Tests.Logs;
@@ -10,13 +11,23 @@ namespace BuildOrchestrator.Tests.Logs;
 /// kadar eski olursa olsun kalır. Saat enjekte edilir (<c>now</c> parametresi) — gerçek zaman ve uyku yok; klasör adları
 /// <see cref="RunLogWriter"/>'ın kullandığı <see cref="RunLogPaths.RunDirName"/> ile üretilir (ad kalıbı tek yerde).
 /// Budama gerçek bir geçici klasörde sınanır; motor süreci başlatılmaz (Supervisor izolasyon guard'ı) — motorun
-/// budamayı çağırdığı yer kaynak guard'ıyla pinlenir.
+/// budamayı çağırdığı yer kaynak guard'ıyla pinlenir. Bağlantı (junction) güvenliği gerçek bir junction'la sınanır:
+/// kurulamazsa test atlanır (Clean'in emsaliyle aynı yardımcı, <see cref="TestJunction"/>).
 /// </summary>
 public sealed class RunLogRetentionTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("bo-retention-").FullName;
 
-    public void Dispose() { try { Directory.Delete(_root, recursive: true); } catch (IOException) { } }
+    // Log kökünün DIŞI: bağlantıların hedefi burada durur — "kök dışına asla çıkılmaz" iddiasının tanığı.
+    private readonly string _outside = Directory.CreateTempSubdirectory("bo-retention-outside-").FullName;
+
+    public void Dispose()
+    {
+        foreach (string dir in new[] { _root, _outside })
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
 
     // Sabit "şimdi" (temmuz ortası): damga YEREL saattir (RunCoordinator DateTimeOffset.Now verir) ve üç günlük pencere
     // hiçbir saat diliminin DST geçişini kesmez — testler hangi makinede koşarsa koşsun aynı sonucu verir.
@@ -43,6 +54,17 @@ public sealed class RunLogRetentionTests : IDisposable
         File.WriteAllText(Path.Combine(dir, "decision.log"), "decision");
         File.WriteAllText(Path.Combine(dir, "0123456789abcdef.log"), "project");
         return dir;
+    }
+
+    /// <summary>Log kökünün DIŞINDA bir bağlantı hedefi: içinde (iç içe klasör dahil) silinmemesi gereken dosyalar var.</summary>
+    private (string Target, string[] Precious) MakeLinkTarget()
+    {
+        string target = Directory.CreateDirectory(Path.Combine(_outside, "link-target")).FullName;
+        string top = Path.Combine(target, "precious.txt");
+        string deep = Path.Combine(Directory.CreateDirectory(Path.Combine(target, "deeper")).FullName, "deep.txt");
+        File.WriteAllText(top, "must survive");
+        File.WriteAllText(deep, "must survive too");
+        return (target, new[] { top, deep });
     }
 
     // karar 1: üç gün. README (State on disk) ile ARCHITECTURE (§8.5, §16) aynı süreyi anlatır — biri değişirse üçü birlikte değişir.
@@ -128,17 +150,48 @@ public sealed class RunLogRetentionTests : IDisposable
         Assert.Equal(new[] { justOver }, RunLogRetention.Select([atCutoff, justOver, newest], Now).ToArray());
     }
 
+    // [C2 düzeltme 1 · M-1] Üretimde now UTC gelir (Supervisor/Program.cs: DateTimeOffset.UtcNow) ama klasör damgaları YEREL
+    // duvar saatidir. Karşılaştırma duvar saati üzerinden yapılsaydı sınır ofset farkı kadar kayardı (UTC+3'te 3 saat) —
+    // ve yukarıdaki testler bunu GÖRMEZ: now'ı da yerel ofsetle verirler. Burada aynı an dört ofsetle verilir: UTC (Program'ın
+    // verdiği) ve yerelden farklı iki ofset (hangi saat diliminde koşarsa koşsun en az biri yerel ofsetten ayrışır).
     [Fact]
-    public void Select_never_picks_a_folder_stamped_after_now_and_counts_it_as_the_newest()
+    public void Select_gives_the_same_pick_whatever_offset_now_is_expressed_in()
     {
-        // Etkin koşunun klasörü ya da saati geri alınmış bir makine: damgası now'dan YENİ → silinmez, en yeni sayılır.
-        string future = At(Now + Hours(1));
-        string olderA = At(Now - Keep - Days(1));
+        string atCutoff = At(Now - Keep);
+        string justOver = At(Now - Keep - TimeSpan.FromMilliseconds(1));
+        string newest = At(Now);
+        DateTimeOffset[] sameInstant =
+        [
+            Now,
+            Now.ToUniversalTime(),
+            Now.ToOffset(TimeSpan.FromHours(-8)),
+            Now.ToOffset(TimeSpan.FromHours(8)),
+        ];
+
+        foreach (var now in sameInstant)
+        {
+            var picked = RunLogRetention.Select([atCutoff, justOver, newest], now);
+
+            Assert.True(new[] { justOver }.SequenceEqual(picked),
+                $"now expressed with offset {now.Offset} changed the pick: [{string.Join(", ", picked)}]");
+        }
+    }
+
+    // [C2 düzeltme 1 · M-2] ESKİ İDDİA (C2): damgası now'dan YENİ klasör "en yeni" sayılır — etkin koşu ya da geri alınmış
+    // saat için. GEREKÇE DEĞİŞTİ: etkin koşunun buna ihtiyacı yok (damgası zaten pencerenin içinde, seçilmez); ama saati
+    // geri alınmış bir makinede ya da elle ileri tarihli verilmiş bir adda o klasör GERÇEK son koşunun korumasını söküyordu
+    // ve gerçek son koşu 3 günden eskiyse silinirdi ("son koşunun logu her zaman kalır" bozulurdu). YENİ KURAL: "en yeni"
+    // yalnız başlamış koşular (damga <= now) arasından seçilir; ileri tarihli klasör ne silinir (eski değil) ne de kalkan olur.
+    [Fact]
+    public void Select_never_picks_a_folder_stamped_after_now_and_never_lets_it_shield_the_real_newest_run()
+    {
+        string[] future = [At(Now + Hours(1)), At(Now + Days(400))];
+        string olderA = At(Now - Keep - Days(1));   // başlamış koşuların EN YENİSİ: gerçek son koşu, korunur
         string olderB = At(Now - Keep - Days(2));
 
-        var picked = RunLogRetention.Select([olderA, future, olderB], Now);
+        var picked = RunLogRetention.Select([olderA, .. future, olderB], Now);
 
-        Assert.Equal(new[] { olderB, olderA }, picked.ToArray()); // en yeni gelecekteki olduğundan eski İKİSİ de gider
+        Assert.Equal(new[] { olderB }, picked.ToArray()); // gerçek son koşu (olderA) kalır; ileri tarihliler de kalır
     }
 
     // ---------------------------------------------------------------- Prune
@@ -214,12 +267,72 @@ public sealed class RunLogRetentionTests : IDisposable
         Assert.Empty(lines); // motor açılışı her seferinde bir satır basmaz
     }
 
+    // ---------------------------------------------------------------- bağlantı güvenliği (reparse point)
+
+    // [C2 düzeltme 1 · I1] "Bir bağlantı (junction/symlink) hiçbir koşulda silinmez" [değişmez: ARCHITECTURE §8.5]. Araç
+    // kendiliğinden (tıklamasız) silen TEK yüzey bu; Clean aynı garantiyi pinliyor (CleanWorkspaceServiceTests), burada da
+    // pinli olmalı. Kalıba UYAN, eski damgalı bir ADLA log kökünde duran bağlantı: reparse-point filtresi olmasa Select onu
+    // seçer (eski ve en yeni değil) ve süpürme bağlantıyı kaldırırdı.
+    [SkippableFact]
+    public void Prune_never_removes_a_link_that_carries_an_old_run_folder_name()
+    {
+        var (target, precious) = MakeLinkTarget();
+        string link = At(Now - Keep - Days(5));                  // log kökünde, kalıba UYAN, eski damgalı ad
+        Skip.IfNot(TestJunction.TryCreate(link, target), "junctions cannot be created here (mklink /J failed)");
+        try
+        {
+            string newest = MakeRun(Now - Hours(1));             // gerçek en yeni koşu: bağlantı "en yeni" olarak korunmasın
+            var lines = new List<string>();
+
+            int removed = RunLogRetention.Prune(_root, Now, lines.Add);
+
+            Assert.Equal(0, removed);
+            Assert.True(Directory.Exists(link), "a link carrying a run-folder name must stay: a link is never removed");
+            Assert.All(precious, p => Assert.True(File.Exists(p), "the link's target must not be touched"));
+            Assert.True(Directory.Exists(newest));
+            Assert.Empty(lines);                                 // yapacak iş yok: sessiz
+        }
+        finally { TestJunction.Remove(link); }                   // temizlik (bkz. TestJunction.Remove)
+    }
+
+    // [C2 düzeltme 1 · I1] Eski bir koşu klasörünün İÇİNDE log kökü dışına işaret eden bağlantı: klasör silinir ve bağlantının
+    // HEDEFİ (kök dışı) yerinde kalır; süpürme bunu başarısızlık saymaz. BCL'in Directory.Delete(recursive)'i bağlantıyı
+    // İZLEMEZ ama bu makinede (Windows, .NET 10) içinde junction olan klasörde bağlantıyı ve dosyaları kaldırdıktan sonra
+    // UnauthorizedAccessException fırlatıp boş klasörü geride bırakıyordu: "removed 0 of 1 folders" satırı ve klasör bir
+    // açılış gecikmesi (hedef yine sağlamdı). RunLogRetention bu yüzden kendi bağlantı-bilen silmesini kullanır.
+    [SkippableFact]
+    public void Prune_removes_an_old_run_folder_that_holds_a_link_without_following_it_out_of_the_logs_root()
+    {
+        var (target, precious) = MakeLinkTarget();
+        string old = MakeRun(Now - Keep - Days(2));
+        string link = Path.Combine(old, "linked");
+        Skip.IfNot(TestJunction.TryCreate(link, target), "junctions cannot be created here (mklink /J failed)");
+        try
+        {
+            string newest = MakeRun(Now - Hours(1));
+            var lines = new List<string>();
+
+            int removed = RunLogRetention.Prune(_root, Now, lines.Add);
+
+            Assert.True(removed == 1, $"the old folder must be removed; removed {removed}; log: {string.Join(" | ", lines)}");
+            Assert.False(Directory.Exists(old));                 // klasör, içindeki bağlantıyla birlikte gider
+            Assert.All(precious, p => Assert.True(File.Exists(p), "the link's target (outside the logs root) must not be touched"));
+            Assert.True(Directory.Exists(newest));
+            Assert.Equal($"run logs: removed 1 folder older than {Keep.TotalDays} days", Assert.Single(lines)); // başarısızlık satırı yok
+        }
+        finally { TestJunction.Remove(link); }                   // temizlik (bkz. TestJunction.Remove)
+    }
+
     // ---------------------------------------------------------------- motor bağlantısı
 
     [Fact]
     public void The_engine_prunes_run_logs_in_the_background_right_after_the_host_is_built()
     {
-        string source = File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, "BuildOrchestrator.Supervisor", "Program.cs"));
+        // [C2 düzeltme 1 · M-3] Yalnız KOD taranır: yorum ve string/char literalleri ayıklanır (diğer guard'ların kullandığı
+        // SourceLiterals.CodeOnly — sınır tespiti tek yerde). Ayıklanmasaydı Program.cs'e yorum olarak kopyalanmış bir çağrı,
+        // gerçek çağrı silinse de bu guard'ı tatmin ederdi.
+        string source = SourceLiterals.CodeOnly(
+            File.ReadAllText(Path.Combine(RepoPaths.SrcRoot, "BuildOrchestrator.Supervisor", "Program.cs")));
         int host = source.IndexOf("new SupervisorHost(", StringComparison.Ordinal);
         int prune = source.IndexOf("RunLogRetention.Prune(", StringComparison.Ordinal);
         int run = source.IndexOf("host.RunAsync()", StringComparison.Ordinal);

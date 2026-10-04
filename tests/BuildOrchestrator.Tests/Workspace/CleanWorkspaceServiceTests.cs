@@ -361,36 +361,11 @@ public class CleanWorkspaceServiceTests : IDisposable
         File.WriteAllText(precious, "must survive");
 
         string link = Path.Combine(a, "bin", "linked");
-        Skip.IfNot(TryCreateJunction(link, target), "bu ortamda junction oluşturulamıyor (mklink /J başarısız)");
+        Skip.IfNot(TestJunction.TryCreate(link, target), "bu ortamda junction oluşturulamıyor (mklink /J başarısız)");
 
         Run(NewService(), _root);
 
         Assert.False(Directory.Exists(Path.Combine(a, "bin")));
         Assert.True(File.Exists(precious), "junction hedefinin içeriğine DOKUNULMAMALI");
-    }
-
-    /// <summary>Junction (dizin bağlantısı) kurar. Symlink'in aksine yükseltilmiş hak gerektirmez ama yine de
-    /// her ortamda çalışmaz — başarısızlık testi atlatır, gizlice yeşile boyamaz.</summary>
-    private static bool TryCreateJunction(string link, string target)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
-            var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            using var process = Process.Start(psi);
-            if (process is null) return false;
-            process.WaitForExit(10_000);
-            return process.HasExited && process.ExitCode == 0 && Directory.Exists(link);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
-        {
-            return false;
-        }
     }
 }
