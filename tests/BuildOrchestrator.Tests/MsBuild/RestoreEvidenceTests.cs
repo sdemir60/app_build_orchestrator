@@ -4,8 +4,8 @@ using BuildOrchestrator.Core.MsBuild;
 namespace BuildOrchestrator.Tests.MsBuild;
 
 /// <summary>
-/// [PERF Faz E3] packages.config restore kanıtı: içerik özeti (SHA-256) + listelenen her paketin NuGet'in kendi
-/// "kurulu" işaretiyle yerinde olması — <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
+/// [PERF Faz E3] packages.config restore kanıtı: içerik özeti (SHA-256) + listelenen her paketin klasöründe .nupkg'sinin
+/// bulunması — <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
 /// Karar yalnız İÇERİĞE bakar — dosyanın tarihi değişse de özet aynı kalır; kanıt eksik kaldığında (özet farklı ya da
 /// kayıtsız, klasör ya da .nupkg eksik, XML bozuk ya da DTD taşıyor) cevap "tatmin edilmedi"dir ve restore koşar
 /// (güvenli taraf).
@@ -30,9 +30,9 @@ public sealed class RestoreEvidenceTests : IDisposable
         try { Directory.Delete(_solutionDir, recursive: true); } catch (IOException) { /* test temizliği */ }
     }
 
-    /// <summary>NuGet'in packages.config düzeninde KURULU bir paket: <c>packages\&lt;kimlik&gt;\&lt;kimlik&gt;.nupkg</c>
-    /// (kimlik = <c>id.version</c>; NuGet .nupkg'yi çıkarmanın EN SONUNDA yazar). .nupkg'nin yolunu döner — silinirse
-    /// geriye yarıda kesilmiş bir restore'un bıraktığı klasör kalır. Paket fixture'ının TEK yeri: RunCoordinatorTests de
+    /// <summary>packages.config düzeninde KURULU bir paket: <c>packages\&lt;kimlik&gt;\&lt;kimlik&gt;.nupkg</c>
+    /// (kimlik = <c>id.version</c>). .nupkg'nin yolunu döner — silinirse geriye .nupkg'siz bir klasör (yarıda kesilmiş
+    /// bir çıkarmanın bırakabileceği gibi) kalır. Paket fixture'ının TEK yeri: RunCoordinatorTests de
     /// bunu kullanır (kopya YASAK).</summary>
     internal static string InstallPackage(string solutionDir, string identity)
     {
@@ -86,8 +86,8 @@ public sealed class RestoreEvidenceTests : IDisposable
         Assert.False(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded));
     }
 
-    /// <summary>Yarıda kesilen restore (Stop, zaman aşımı, dosya kilidi) paket klasörünü açmış ama .nupkg'yi
-    /// yazamamıştır → tatmin edilmedi: NuGet de paketi kurulu saymaz; sonraki koşu restore eder.</summary>
+    /// <summary>Paket klasörü var ama .nupkg'si yok (yarıda kesilen bir çıkarmanın — Stop, zaman aşımı, dosya kilidi —
+    /// bırakabileceği gibi) → tatmin edilmedi; sonraki koşu restore eder.</summary>
     [Fact]
     public void A_package_folder_without_its_nupkg_is_not_satisfied()
     {

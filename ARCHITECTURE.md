@@ -1792,14 +1792,14 @@ the project's `packages.config` as the run read it when it made the restore deci
 or was skipped (§7.5). The next *Build* or *Resolve cycles* run hashes the file again and reads its
 `<package id version>` entries; when the hash equals the recorded one and every listed package is installed, the
 prologue is skipped and `decision.log` gives the reason
-(`<project>: restore skipped — packages.config unchanged, N packages present`). A package counts as installed by
-NuGet's own marker: its `<solutionDir>\packages\<id>.<version>\` folder holds `<id>.<version>.nupkg`, which NuGet
-writes last when it extracts a package. An extraction cut short — by *Stop*, a timeout or a locked file — leaves a
-folder without it, so the next run, or the next round of a cycle group, restores again. Content alone decides; no
-date enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a record that
+(`<project>: restore skipped — packages.config unchanged, N packages present`). A package counts as installed when
+its `<solutionDir>\packages\<id>.<version>\` folder holds `<id>.<version>.nupkg` — the file NuGet keeps beside every
+package it installs there. A folder without it, such as an extraction cut short by *Stop*, a timeout or a locked
+file can leave, counts as missing, so the next run, or the next round of a cycle group, restores again. Content
+alone decides; no date enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a record that
 predates the field), a changed file, a missing folder or `.nupkg`, or an unreadable or malformed `packages.config`.
 The witness is the solution's own `packages` folder, and `nuget.config` is not read: when NuGet's `repositoryPath`
-keeps the store elsewhere, a project with no copies in that folder restores on every run as before, but stale
+keeps the store elsewhere, a project with no copies in that folder restores on every run, but stale
 copies left behind there satisfy the evidence while the store NuGet would fill stays empty. *Rebuild* never
 consults the evidence and always restores, handing the decision back to NuGet — the way out of that case, as is
 Optimize when a `HintPath` target is missing. Optimize's repair below stands apart from this record: it restores an

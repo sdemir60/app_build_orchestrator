@@ -1316,7 +1316,10 @@ public class RunCoordinatorTests
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             var requests = invoker.Requests.Where(r => r.ProjectId == aId).ToList();
-            Assert.True(firstRunCount > 0 && requests.Count > firstRunCount, "A must be invoked in both runs");
+            // Döngüsüz plan: A her koşuda TAM bir kez (kesin pin). SCC'de istek sayısı tur politikasına bağlıdır — orada
+            // yalnız iki koşuda da çağrıldığı iddia edilir; karşılaştırılan, ikinci koşunun ilk isteğidir.
+            if (cycle) Assert.True(firstRunCount > 0 && requests.Count > firstRunCount, "A must be invoked in both runs");
+            else { Assert.Equal(1, firstRunCount); Assert.Equal(2, requests.Count); }
             assert(new RestoreScenario(requests[0], requests[firstRunCount], h.DecisionLog, recorded, packagesConfig));
         }
         finally

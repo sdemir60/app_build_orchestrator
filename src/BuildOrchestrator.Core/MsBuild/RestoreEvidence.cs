@@ -8,11 +8,11 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// <summary>
 /// [PERF Faz E3] Bir packages.config projesinin restore'u atlanabilir mi — kararın TEK sahibi (saf; UI ve process
 /// bağımsız test edilir). Kanıt yalnız İÇERİKTİR: <c>packages.config</c>'in SHA-256 özeti son başarıda deftere
-/// yazılan özetle (<c>BuildState.PackagesConfigHash</c>) aynı olmalı ve dosyanın listelediği her paket NuGet'in kendi
-/// "kurulu" işaretini taşımalıdır: <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
-/// NuGet packages.config düzeninde .nupkg'yi çıkarmanın EN SONUNDA yazar ve paketi onunla kurulu sayar; yarıda
-/// kesilen bir restore (Stop, zaman aşımı, dosya kilidi) .nupkg'siz bir klasör bırakır ve o klasör kanıt sayılmaz —
-/// sonraki koşu ya da tur yine restore eder. Tarih/mtime karara GİRMEZ. Kanıtın eksik kaldığı her durumda — özet
+/// yazılan özetle (<c>BuildState.PackagesConfigHash</c>) aynı olmalı ve dosyanın listelediği her paketin klasöründe
+/// .nupkg'si bulunmalıdır: <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
+/// NuGet packages.config düzeninde kurduğu her paketin klasöründe bu .nupkg'yi tutar (çalışma alanındaki gerçek paket
+/// klasörlerinin hepsinde var). .nupkg'siz bir klasör — yarıda kesilen bir çıkarmanın (Stop, zaman aşımı, dosya kilidi)
+/// bırakabileceği gibi — kanıt sayılmaz; sonraki koşu ya da tur yine restore eder. Tarih/mtime karara GİRMEZ. Kanıtın eksik kaldığı her durumda — özet
 /// kayıtsız ya da farklı, dosya okunamıyor, XML bozuk ya da DTD taşıyor, bir klasör ya da .nupkg eksik — cevap
 /// "tatmin edilmedi"dir ve restore koşar (güvenli taraf). Sınır: <c>nuget.config</c> okunmaz; <c>repositoryPath</c>
 /// depoyu başka yere taşıdıysa ve çözümün <c>packages</c> klasöründe eski kopyalar kaldıysa kanıt onları görür
@@ -63,7 +63,7 @@ public static class RestoreEvidence
             string? id = (string?)package.Attribute("id");
             string? version = (string?)package.Attribute("version");
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(version)) return false;
-            // Klasör ile .nupkg AYNI kimlikten adlanır; .nupkg yoksa paket kurulu değildir (NuGet de öyle sayar).
+            // Klasör ile .nupkg AYNI kimlikten adlanır; .nupkg yoksa paket kurulu sayılmaz.
             string identity = id + "." + version;
             if (!File.Exists(Path.Combine(solutionDir, "packages", identity, identity + ".nupkg"))) return false;
             present++;
