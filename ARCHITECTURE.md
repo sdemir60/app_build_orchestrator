@@ -5625,6 +5625,13 @@ root exists they run with the normal suite.
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
 command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
+The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
+single method when only that method depends on a clock the runner cannot keep steady. Two methods carry it that way,
+each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which waits for the live
+animation to bring the popover to full opacity and then checks how long that took, and the console's transition
+hand-back (`ConsoleTiltInTests`), which waits for the live transition to end and expects the real editor back at
+full opacity. Both wait on a real animation clock whose timing on a shared runner is not steady enough for the
+windows they allow; the local run still executes them, and it stays the gate.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
