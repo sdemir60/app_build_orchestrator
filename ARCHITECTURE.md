@@ -2415,9 +2415,9 @@ difference was small; the run is short and the user is waiting for it. The rule 
 and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
 force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
 `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
-Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default, carried by every
-`startRun`) turns the rule off, and a Resolve run then follows the profile like any other run. `Build`, `Rebuild` and
-`Clean` are never affected, and Full is uncapped at Normal already.
+Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
+carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
+`Build`, `Rebuild` and `Clean` are never affected, and Full is uncapped at Normal already.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -3820,8 +3820,8 @@ field order the file is written in, not just a key that happens to be present) a
 non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
 card, and returns every General switch to its catalog default — *Pull before build*, *Resolve cycles at full
 priority*, *Close to tray* and *Show notifications* on, the rest off. Every General switch travels in the file, so
-saving an imported file that has
-*Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
+saving an imported file that has *Start with Windows* on turns it on for that machine — deliberately. All three
+touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed

@@ -697,10 +697,10 @@ below instead, which adds the priority.
 
 **Resolve cycles runs at full priority.** Whatever the profile, a *Resolve cycles* run keeps the profile's worker
 count but drops its CPU cap and runs at normal priority, so it finishes sooner on a busy machine — at the price that
-other applications may slow down while it runs. The console says so when the run starts, and a switch during the run
-writes the same kind of note: `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`. *Settings → General
-→ Resolve cycles at full priority* (on by default) turns this off, and Resolve then follows the profile. Build, Rebuild
-and Clean always follow the profile.
+other applications may slow down while it runs. The console says so when the run starts, and a switch to Balanced or
+Light during the run writes the same kind of note: `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`.
+*Settings → General → Resolve cycles at full priority* (on by default) turns this off, and Resolve then follows the
+profile. Build, Rebuild and Clean always follow the profile.
 
 The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
 machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical

@@ -717,6 +717,37 @@ public class RunViewModelStateTests
         await start;
     }
 
+    /// <summary>
+    /// [RESOLVE Faz 4 · re-review N1] Koşu açılırken anahtar değişse de (Save koreografi sürerken) O koşu başlatıldığı
+    /// andaki değerle kalır: komutun bayrağı, açılıştaki chip notu ve <c>runStarted</c> notu AYNI yakalanan değeri okur.
+    /// Pinsizdi: üç okumadan biri canlı özelliğe dönse süit yeşil kalırdı — not cap'siz derken motor cap uygulardı ya da
+    /// tersi. Üç gerçek tek demette karşılaştırılır ki bir kırmızı hangisinin koptuğunu göstersin.
+    /// </summary>
+    [Fact]
+    public async Task A_setting_changed_while_a_resolve_run_opens_does_not_reach_that_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        var sent = new List<StartRunCommand>();
+        vm.DebugOnCommandSent = c => { if (c is StartRunCommand s) sent.Add(s); };
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Cycles);
+        Assert.True(vm.IsStarting);
+        vm.ResolveAtFullPriority = false; // Save koreografi sürerken anahtarı kapatır
+        await vm.CyclePerfAsync();        // Balanced → Light: not AÇILAN koşuyu anlatmalı
+        choreography.SetResult();
+        await start;
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 3, "Debug"));
+
+        string text = vm.GetRunDocumentText();
+        Assert.Equal((Flag: true, ChipNote: true, StartNote: true), (
+            Flag: Assert.Single(sent).ResolveAtFullPriority,
+            ChipNote: text.Contains("parallelism: 2 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal),
+            StartNote: text.Contains("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal)));
+    }
+
     // ---------------------------------------------------------------- [A13/T3a · a10/a11] K11 notunun Balanced varyantı + damgası
 
     /// <summary>

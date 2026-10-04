@@ -52,7 +52,7 @@ public static class PerfNoteText
 
     /// <summary>Priority'nin değer terimi (<c>"normal"</c>) — perf konsol metninin sözlüğü bu sınıftadır. Her sınıf AÇIKÇA
     /// yazılıdır: tanımsız bir değer (ileride eklenen bir enum üyesi) sessizce yanlış etiketlenmez, fırlatır.</summary>
-    public static string PriorityValue(ProcessPriorityClassKind kind) => kind switch
+    internal static string PriorityValue(ProcessPriorityClassKind kind) => kind switch
     {
         ProcessPriorityClassKind.Normal => "normal",
         ProcessPriorityClassKind.BelowNormal => "below normal",
@@ -61,8 +61,8 @@ public static class PerfNoteText
     };
 
     /// <summary>[RESOLVE Faz 4 / karar 11] Koşu içindeki chip notu: Resolve tam öncelikteyse <see cref="ResolveNote"/>,
-    /// değilse profilin kendi notu (<see cref="Note(PerfProfile)"/>). App koşu komutunun modu + anahtarıyla çağırır —
-    /// not, motorun o profile uyguladığını söyler.</summary>
+    /// değilse profilin kendi notu (<see cref="Note(PerfProfile)"/>). App koşunun başlatılırken yakalanan bağlamıyla
+    /// (mod + anahtar) çağırır — not, motorun o profile uyguladığını söyler.</summary>
     public static string Note(RunMode mode, PerfProfile profile, bool resolveAtFullPriority) =>
         ResolveNote(mode, profile, resolveAtFullPriority) ?? Note(profile);
 
