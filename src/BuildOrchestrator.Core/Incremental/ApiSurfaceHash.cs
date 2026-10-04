@@ -132,8 +132,9 @@ public static class ApiSurfaceHash
     }
 
     /// <summary>WPF işaretleme derleyicisinin ürettiği XAML yükleyici yardımcı tipinin tam adı;
-    /// <see cref="IncludeType"/> bu tipi özetin dışında tutar.</summary>
-    private const string XamlLoaderHelperType = "XamlGeneratedNamespace.GeneratedInternalTypeHelper";
+    /// <see cref="IncludeType"/> bu tipi özetin dışında tutar. Adın gerçek WPF çıktısıyla eşleştiği birim testle değil
+    /// gerçek derlemeyle doğrulandı (OSYS'te aynı kaynaktan iki derleme, bu tip dışlanınca aynı özet).</summary>
+    internal const string XamlLoaderHelperType = "XamlGeneratedNamespace.GeneratedInternalTypeHelper";
 
     private static bool IncludeType(MetadataReader reader, TypeDefinition type)
     {

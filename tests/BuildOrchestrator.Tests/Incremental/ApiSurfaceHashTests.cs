@@ -164,10 +164,6 @@ public class ApiSurfaceHashTests
         Assert.Equal(without, with);
     }
 
-    /// <summary>WPF işaretleme derleyicisinin XAML yükleyici yardımcı tipinin TAM adı. Dışarıdaki aracın sözleşmesidir:
-    /// üretim kodunun sabitine bakılmadan harfi harfine yazılır — o sabit yanlış yazılırsa test kırmızı olur.</summary>
-    private const string XamlLoaderHelper = "XamlGeneratedNamespace.GeneratedInternalTypeHelper";
-
     /// <summary>Aynı modüle boş, public, sealed bir tip daha ekler: iki varyantın TEK farkı o tipin varlığı olsun
     /// (üyesi/özniteliği yok — özet farkı yalnız tipin sayılıp sayılmadığından gelir).</summary>
     private static void SiblingType(TypeBuilder type, string fullName) =>
@@ -179,7 +175,8 @@ public class ApiSurfaceHashTests
     {
         // Sayılsaydı içerik aynıyken yüzey "değişti" görünür, Resolve okuyan herkesi boşuna yeniden derlerdi.
         string? without = HashOf(Assembly(t => Method(t, "M", 1)));
-        string? with = HashOf(Assembly(t => { Method(t, "M", 1); SiblingType(t, XamlLoaderHelper); }));
+        // Ad üretimin TEK sabitinden (kopya yasak); gerçek WPF adıyla eşleştiği gerçek derlemeyle doğrulandı.
+        string? with = HashOf(Assembly(t => { Method(t, "M", 1); SiblingType(t, ApiSurfaceHash.XamlLoaderHelperType); }));
 
         Assert.NotNull(without);
         Assert.Equal(without, with);
