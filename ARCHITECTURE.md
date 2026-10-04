@@ -345,8 +345,9 @@ the App never passes that flag. Every other command in the list executes in the 
 dependent-propagation mode, the layer patterns, the perf mode name and the external project list. It carries no
 branch: a run always builds the working tree at the repository root, whatever is checked out there (§10.3).
 Unknown fields on an incoming line are ignored. Parallelism and
-perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name but never
-recomputes the worker count, which the App has already resolved from the same table.
+perf mode are separate fields on purpose: the Supervisor derives cap and priority from the perf name, while
+`parallelism` is the worker count the profile *asks for* — the App resolves it from the same table and the engine
+fits it to the machine at the start of the run (§11.1).
 
 `stopRun` names one of three kinds: `graceful`, `hard` (§4.5) and `interrupt`. The App sends `interrupt` when
 the checked-out branch or HEAD moves under a run in flight (§8.8): the engine drains exactly as on a graceful
@@ -789,8 +790,8 @@ rewritten only when an entry changed (§16). Measured end to end on the real
 OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
-inputs, scanning the cache for misses, reading the misses — runs 16-way parallel; the values do not depend on
-thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
+inputs, scanning the cache for misses, reading the misses — runs `IoParallelism.Degree`-way parallel; the values do not
+depend on thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
 544 ms instead of 303.
 
 The first pass on a **cold** disk is the one-time exception: ~8.9 ms per file sequentially, ~1.9 ms with 16-way
@@ -1044,8 +1045,8 @@ preview, where a project this tool has since built successfully reports it empty
 tool's own.
 
 **Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
-only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
-as input collection does.
+only by a time check — a project in time mode, or a member of a group in time mode. Checks run
+`IoParallelism.Degree`-way parallel, as input collection does.
 
 ---
 
@@ -1523,8 +1524,8 @@ member buys a second round for few of its readers, if any. Build order inside a 
 the project path — so a plan that followed it would string the most-read members out one per level; on a real
 17-member group the most-read-first plan reaches the fewest levels its edges allow, about a third as many as
 the group has members. Level
-concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the perf
-profile's parallelism), so no combination of workers and level width ever exceeds the configured parallelism.
+concurrency draws from the same run-wide invoke budget as the workers (one semaphore sized by the run's actual
+worker count, §11.1), so no combination of workers and level width ever exceeds that count.
 A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
 held (§5.3): what the screen counts as compiling is exactly what holds a slot, and the members of a level still
 queued for one are announced nothing.
@@ -2222,7 +2223,8 @@ stash setting says.
 
 ### 11.1 Perf profiles
 
-One chip cycles three fixed profiles. This is the single source of truth for all three values:
+One chip cycles three fixed profiles. This is the single source of truth for all three values; the parallelism column
+is the worker count a profile *asks for* — the engine fits the request to the machine at the start of each run (below):
 
 | Mode | Parallelism | Priority class | Inner-job hard CPU cap |
 |---|---|---|---|
@@ -2237,6 +2239,23 @@ single owner in Core, called by both the App and the Supervisor.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
+
+**The profile asks; the engine fits the request to the machine.** At the start of every run the Supervisor reads the
+machine once — its logical processor count (which follows the process's affinity) and its free physical memory — and
+passes the profile's worker count through `WorkerBudget.Clamp`. The rule and every constant it uses live in Core
+(`WorkerBudget`, `MachineResources`); the Supervisor only applies the answer. The request is cut only when it exceeds a
+fixed multiple of the logical processors (`WorkersPerCore`) or what the free memory can carry once a reserve is left to
+the machine (`BytesPerWorker`, `ReserveBytes`), and the answer is never below one worker; when both limits bind equally
+the memory is the one named. The multiple is above one on purpose, though not by much: measured on the real
+workspace on machines restricted to two and to four logical processors, running fewer workers than processors cost
+time on both; on the smaller machine a third and a fourth worker still shaved a small but consistent amount off,
+and on the larger machine four workers were the fastest tried. Nothing beyond that was measured, so the
+ceiling stays a small multiple of the processors. The memory budget follows a full compile measured on the
+real workspace: beyond a fixed base for the engine and its first worker, each extra worker commits a few hundred
+megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
+on machines with little free memory. `runStarted` carries the **actual** count, so the App's flow line and its ETA show
+what is running, and when the request was reduced the console and `decision.log` both get the same line,
+`workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`).
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
@@ -6066,6 +6085,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
 | Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+| Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
+| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up and the output checks | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs` |
 
 **View models — the pure decision cores**
 

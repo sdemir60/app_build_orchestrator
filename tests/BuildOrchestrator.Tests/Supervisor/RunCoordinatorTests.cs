@@ -186,7 +186,8 @@ public class RunCoordinatorTests
             BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
             Func<string, string?>? apiSurface = null,
-            string? customBeforeTargetsPath = null)
+            string? customBeforeTargetsPath = null,
+            bool productionMachine = false)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -211,8 +212,19 @@ public class RunCoordinatorTests
                 inFlight: inFlight,
                 // [API kısa devresi] null ⇒ üretimdeki ApiSurfaceHash.OfFile — sahte planların yolları diskte
                 // olmadığından her dosya "absent" okunur; hash-mode testleri kendi sahte diskini enjekte eder.
-                apiSurface: apiSurface);
+                apiSurface: apiSurface,
+                // [PERF Faz D] Varsayılan makine BOLDUR: eski testler (paralellik tavanı, boşta bekleyen işçiler…) koşunun
+                // yapıldığı makinenin o anki boş belleğine/işlemcisine bağlı bir kırpmaya uğramasın. Kırpma testleri
+                // Machine'i kendisi verir. productionMachine: true ⇒ seam HİÇ verilmez (null): motor üretimdeki
+                // varsayılanı, yani gerçek makineyi okur.
+                machine: productionMachine ? null : () => Machine);
         }
+
+        /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>
+        public static readonly (int Cores, long FreeBytes) AmpleMachine = (Cores: 64, FreeBytes: 256L * 1024 * 1024 * 1024);
+
+        /// <summary>Koşunun başında motorun okuduğu makine görüntüsü; testler koşuyu başlatmadan ÖNCE değiştirebilir.</summary>
+        public (int Cores, long FreeBytes) Machine { get; set; } = AmpleMachine;
 
         /// <summary>Sahte monotonik saat — testler zamanı elle ilerletir (Thread.Sleep YOK [D8]).</summary>
         public void SetNow(long ms) => Volatile.Write(ref _now, ms);
@@ -241,6 +253,83 @@ public class RunCoordinatorTests
     }
 
     // ---------------------------------------------------------------- 1) paralellik tavanı
+
+    /// <summary>
+    /// [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; motor onu koşu başında makineye göre kırpar ve
+    /// <c>runStarted</c> FİİLİ sayıyı taşır (App'in akış satırı ve ETA'sı onu okur). Burada makinenin tek mantıksal
+    /// işlemcisi var (bellek bol): istenen dört işçi çekirdek kuralıyla ikiye iner; kırpma konsola VE decision.log'a yazılır.
+    /// <para><b>Plan hipotezi ve değişme gerekçesi:</b> planın varsayılan hipotezi "işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1"
+    /// idi; bu testin değerleri iki işlemcide tek işçi beklerdi. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve
+    /// 4 mantıksal işlemci, 1-4 işçi) hipotezi çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü,
+    /// dört işlemcide dört işçi üçten hızlıydı; küçük makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç
+    /// verdi, daha fazlası ölçülmedi. Kural bu yüzden "işçi, mantıksal işlemcinin <c>WorkerBudget.WorkersPerCore</c>
+    /// katını aşarsa kırpılır"dır; beklenen değerler buna göre yeniden hesaplandı (eşik gevşetilmedi, ölçüme uydu).</para>
+    /// </summary>
+    [Fact]
+    public async Task requested_workers_are_clamped_to_the_machine_and_runStarted_reports_the_actual_count()
+    {
+        var plan = PlanOf(Node("A"), Node("B"), Node("C"), Node("D"), Node("E"), Node("F"));
+        var pairInFlight = Signal();
+        int arrived = 0;
+        var invoker = new FakeInvoker(async (_, _, _) =>
+        {
+            // İlk İKİ invoke birbirini bekler: iki işçinin gerçekten eşzamanlı çalıştığı deterministik kanıtlanır [D8].
+            if (Interlocked.Increment(ref arrived) >= 2) pairInFlight.TrySetResult();
+            await pairInFlight.Task;
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker) { Machine = (Cores: 1, FreeBytes: Harness.AmpleMachine.FreeBytes) };
+
+        await h.Sut.StartAsync(Start(parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(2, started.Parallelism);                       // komut dört istedi, motor ikiye kırptı
+        Assert.Equal(2, invoker.MaxConcurrent);                     // iki işçi gerçekten koştu, tavan aşılmadı
+        const string note = "workers reduced to 2 (1 logical processor)";
+        Assert.Contains(note, h.ConsoleLines);                      // kullanıcının konsolunda
+        Assert.Contains(h.ConsoleLines, l => l.Contains(", 2 workers,", StringComparison.Ordinal)); // başlık fiili sayıyı yazar
+        Assert.Contains(note, h.DecisionLog);                       // decision.log'da AYNI metin
+        Assert.Contains("parallelism=2", h.DecisionLog);
+    }
+
+    /// <summary>[PERF Faz D / karar 10] Makine isteği taşıyorsa HİÇBİR şey değişmez: runStarted istenen sayıyı taşır ve
+    /// ne konsola ne decision.log'a kırpma satırı yazılır (kırpma gürültü olmamalı).</summary>
+    [Fact]
+    public async Task a_request_the_machine_can_carry_is_reported_unchanged_without_a_reduction_line()
+    {
+        var plan = PlanOf(Node("A"), Node("B"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker);   // varsayılan makine: bol işlemci ve bellek
+
+        await h.Sut.StartAsync(Start(parallelism: 4), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(4, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
+        Assert.DoesNotContain(h.ConsoleLines, l => l.StartsWith("workers reduced", StringComparison.Ordinal));
+        Assert.DoesNotContain("workers reduced", h.DecisionLog);
+    }
+
+    /// <summary>
+    /// [PERF Faz D fix1 / M4] ÜRETİM varsayılanı bağlıdır: <c>machine</c> seam'i verilmediğinde motor makineyi KENDİSİ okur
+    /// (<c>MachineResources.Snapshot</c>) ve işçi sayısını ona göre kırpar. Harness'in varsayılan "bol makinesi" bu yolu
+    /// gizler — varsayılan sabit bir değere ya da bol makineye çevrilse hiçbir test fark etmezdi. Burada seam verilmez ve
+    /// absürt bir istek (bin işçi) yapılır: bellek ne olursa olsun çekirdek kuralı sonucu mantıksal işlemcinin
+    /// <c>WorkersPerCore</c> katına bağlar (ve hiçbir koşulda 1'in altına inmez).
+    /// </summary>
+    [Fact]
+    public async Task without_a_machine_seam_the_engine_reads_the_real_machine_and_clamps()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, productionMachine: true);
+
+        await h.Sut.StartAsync(Start(parallelism: 1000), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.InRange(started.Parallelism, 1, WorkerBudget.WorkersPerCore * Environment.ProcessorCount);
+    }
 
     [Fact]
     public async Task parallelism_ceiling_is_respected_and_workers_really_run_concurrently()

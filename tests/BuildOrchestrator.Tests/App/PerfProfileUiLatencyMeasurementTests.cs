@@ -98,8 +98,8 @@ public sealed class PerfProfileUiLatencyMeasurementTests(ITestOutputHelper outpu
         {
             while (!stop.IsCancellationRequested)
             {
-                var m = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
-                GlobalMemoryStatusEx(ref m);
+                var m = new NativeMethods.MemoryStatusEx { dwLength = (uint)Marshal.SizeOf<NativeMethods.MemoryStatusEx>() };
+                NativeMethods.GlobalMemoryStatusEx(ref m);
                 minFreeGb = Math.Min(minFreeGb, m.ullAvailPhys / 1e9);
                 peakCommitGb = Math.Max(peakCommitGb, (m.ullTotalPageFile - m.ullAvailPageFile) / 1e9);
                 try { await Task.Delay(500, stop.Token); } catch (OperationCanceledException) { }
@@ -136,16 +136,6 @@ public sealed class PerfProfileUiLatencyMeasurementTests(ITestOutputHelper outpu
         }
         return sb.Append("}\n").ToString();
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MEMORYSTATUSEX
-    {
-        public uint dwLength, dwMemoryLoad;
-        public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile, ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX buffer);
 
     private static async Task<string> Sample(string label, PerfProfile? profile)
     {

@@ -127,6 +127,12 @@ public sealed record MsBuildToolset(IMsBuildInvoker Invoker, string MsBuildExePa
 /// <c>Add</c>, sonuç raporlanınca <c>Remove</c>, koşunun her çıkışında <c>Clear</c>. Null ⇒ defter tutulmaz.
 /// Defter I/O hatası koşuyu durdurmaz — konsol uyarısıdır.
 /// </param>
+/// <param name="machine">
+/// [PERF Faz D / karar 10] Koşu başında makinenin görüntüsü: (mantıksal işlemci sayısı, boş fiziksel bellek).
+/// <see cref="WorkerBudget.Clamp"/> profilin istediği işçi sayısını bu görüntüye göre kırpar. Üretimde (null)
+/// <see cref="MachineResources.Snapshot"/>; seam yalnız test içindir — kırpma kararı, testin koştuğu makinenin o anki
+/// boş belleğine bağlanmasın diye testler sabit bir makine verir.
+/// </param>
 public sealed class RunCoordinator(
     Func<StartRunCommand, Action<string>, RunPlan> planner,
     Func<CancellationToken, Task<MsBuildToolset>> msbuildFactory,
@@ -139,10 +145,14 @@ public sealed class RunCoordinator(
     ICpuGovernor? cpuGovernor = null,
     Func<TimeSpan, CancellationToken, Task>? retryDelay = null,
     InFlightLedger? inFlight = null,
-    Func<string, string?>? apiSurface = null) : IDisposable
+    Func<string, string?>? apiSurface = null,
+    Func<(int Cores, long FreeBytes)>? machine = null) : IDisposable
 {
     private readonly object _gate = new();
     private readonly ICpuGovernor _cpu = cpuGovernor ?? innerJob;
+
+    /// <summary>[PERF Faz D / karar 10] Koşu başında makinenin görüntüsü — üretimde <see cref="MachineResources.Snapshot"/>.</summary>
+    private readonly Func<(int Cores, long FreeBytes)> _machine = machine ?? MachineResources.Snapshot;
 
     /// <summary>[API kısa devresi] Bir çıktı dosyasının yüzey özeti — üretimde <see cref="ApiSurfaceHash.OfFile"/>.
     /// Seam yalnız test içindir: gerçek PE üretmeden tur döngüsünün bayatlık kararı kurulabilsin.</summary>
@@ -857,9 +867,21 @@ public sealed class RunCoordinator(
         // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
         StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
 
-        int parallelism = Math.Max(1, cmd.Parallelism);
-        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
-        // türetir). Buradan yalnız CPU cap + priority alınır.
+        // [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; fiili sayı koşu başında makineye göre BİR KEZ
+        // kırpılır (kural ve sabitler Core'da, WorkerBudget — burada yalnız uygulanır). runStarted, konsol başlığı,
+        // decision.log ve App'in akış satırı/ETA'sı hep bu FİİLİ sayıyı okur, komuttakini değil. Kırpma olduysa gerekçesi
+        // konsola VE decision.log'a AYNI metinle yazılır (tek sahip: PerfNoteText.WorkersReduced).
+        var (machineCores, machineFreeBytes) = _machine();
+        var workerBudget = WorkerBudget.Clamp(cmd.Parallelism, machineCores, machineFreeBytes);
+        int parallelism = workerBudget.Workers;
+        if (workerBudget.Reason is { } reductionReason)
+        {
+            string reductionNote = PerfNoteText.WorkersReduced(parallelism, reductionReason);
+            Decide(logs, reductionNote);
+            console(reductionNote);
+        }
+        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ. Buradan yalnız CPU cap + priority alınır; işçi sayısı
+        // yukarıdaki bütçeden (WorkerBudget) gelir: komutun İSTEDİĞİ sayı, makineye göre kırpılmış hâliyle.
         // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
         PerfProfile? perf = cmd.PerfMode is { } perfModeText ? PerfProfile.TryParse(perfModeText) : null;
         int? appliedCap = null;                 // GERÇEKTEN yürürlükte olan cap (runStarted + konsol bunu yazar)
@@ -983,8 +1005,9 @@ public sealed class RunCoordinator(
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
-            // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (perf profili) — koşu bitiminde
-            // hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using güvenlidir.
+            // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (kırpılmış FİİLİ sayı, yukarıdaki bütçe) —
+            // koşu bitiminde hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using
+            // güvenlidir.
             using var invokeSlots = new SemaphoreSlim(parallelism, parallelism);
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs,

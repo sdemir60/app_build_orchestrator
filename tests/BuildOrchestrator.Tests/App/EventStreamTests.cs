@@ -218,6 +218,30 @@ public class EventStreamTests
         Assert.Equal("Build started — 8 projects, parallelism 4", line.Text);
     }
 
+    /// <summary>
+    /// [PERF Faz D / karar 10] Komutun (profilin) istediği işçi sayısı ile motorun koşu başında kırptığı FİİLİ sayı
+    /// ayrışabilir. Akış satırı ve ETA <c>runStarted</c>'ın taşıdığı sayıyı okur (<c>_runParallelism</c>) — komuttaki
+    /// <c>Parallelism</c>'ı değil; yoksa akış "parallelism 4" derken motor iki işçiyle koşardı.
+    /// Bu test AKIŞ SATIRI yarısını pinler (kırpma App'e dokunmadan akar; test yeşil başlar). ETA yarısı mevcut
+    /// <c>RunViewModelTests.EtaText_reflects_the_calculator_estimate_after_a_completion_using_observed_durations</c>
+    /// testinde pinlidir: runStarted <c>Parallelism = 1</c> taşır, varsayılan profil dört olsa da beklenen
+    /// <c>~20s left</c> = (10s + 10s) / 1; ETA komuttaki <c>Parallelism</c>'ı okusaydı <c>~5s left</c> çıkardı.
+    /// </summary>
+    [Fact]
+    public void Run_started_carries_the_actual_worker_count_into_the_stream_line()
+    {
+        var vm = NewVm();
+        vm.Parallelism = 4;                                                   // profilin istediği (komut bunu taşır)
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 2, 2, "Debug"));  // motor ikiye kırptı → runStarted 2 taşır
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(@"C:\p\a.csproj", "A", true),
+            new BuildPreviewItem(@"C:\p\b.csproj", "B", true),
+        ]));
+
+        var line = Assert.Single(vm.StreamEvents, s => s.Text.StartsWith("Build started", StringComparison.Ordinal));
+        Assert.Equal("Build started — 2 projects, parallelism 2", line.Text);
+    }
+
     /// <summary>[Clean] Build menüsünün Clean'i akışı işin kendi fiiliyle açar — hiçbir şey derlemeyen bir koşu
     /// için "Build started" yalan olurdu. Satır Clean'i zaten <c>Clean started — a (single project)</c> diyor
     /// (<see cref="StreamText.SingleProjectStarted"/>): iki yol aynı fiili konuşur. Sayı, motorun Clean

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BuildOrchestrator.Core.Io;
 using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Incremental;
@@ -57,8 +58,9 @@ public sealed class SourceHashCache
     private readonly string _cachePath;
     private readonly ConcurrentDictionary<string, Entry> _entries;
 
-    /// <summary>Defter bellekte diskteki hâlinden farklı mı (1 = kirli). Birden çok thread özet ekler (Prefill 16
-    /// kanallı paraleldir) → bayrak <c>Volatile</c>/<c>Interlocked</c> ile yönetilir.</summary>
+    /// <summary>Defter bellekte diskteki hâlinden farklı mı (1 = kirli). Birden çok thread özet ekler (Prefill paralel
+    /// okur, derece <see cref="IoParallelism.Degree"/>) → bayrak <c>Volatile</c>/<c>Interlocked</c> ile
+    /// yönetilir.</summary>
     private int _dirty;
 
     public SourceHashCache(string cachePath)
@@ -162,7 +164,7 @@ public sealed class SourceHashCache
 
         // Eksik kümeyi bulmak 23 bin dosyalık bir stat geçişidir — o da IO'dur ve paralelleştirilebilir.
         var missing = paths.Distinct(StringComparer.OrdinalIgnoreCase)
-            .AsParallel().WithDegreeOfParallelism(16)
+            .AsParallel().WithDegreeOfParallelism(IoParallelism.Degree)
             .Where(p => !IsCached(p))
             .ToList();
         if (missing.Count == 0) return 0;
@@ -171,7 +173,7 @@ public sealed class SourceHashCache
 
         Parallel.ForEach(
             missing,
-            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree, CancellationToken = ct },
             path => HashOf(path));
 
         return missing.Count;

@@ -109,8 +109,10 @@ public enum DependentMode { Safe, Fast }
 /// bağımlılıklarından doğar, listedeki sıradan değil. null/boş ise akış bugünküyle bayt-bayt aynıdır.</param>
 /// <param name="PerfMode">[T20-b/K11] Perf profilinin ADI ("Full"/"Balanced"/"Light") — Supervisor bunu Core'daki
 /// <c>PerfProfile.TryParse</c> ile çözer ve run boyunca inner Job'a CPU cap + priority uygular.
-/// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>) ve
-/// App tarafında aynı tablodan türetilir — Supervisor worker sayısını burada YENİDEN hesaplamaz.
+/// <b>Yalnız cap/priority'nin kaynağıdır:</b> paralellik AYRI bir alandır (<paramref name="Parallelism"/>): App onu
+/// aynı tablodan türetir ve o, profilin İSTEDİĞİ işçi sayısıdır; motor onu koşu başında makineye göre kırpar
+/// (<c>WorkerBudget</c>, ARCHITECTURE §11.1) ve fiili sayıyı <c>runStarted</c>'da bildirir. İşçi sayısı PerfMode'dan
+/// türetilmez.
 /// <c>null</c> (varsayılan) ⇒ perf modu bildirilmemiş: cap/priority'ye HİÇ dokunulmaz. Bu alan nullable +
 /// varsayılan değerlidir; P2 öncesi yazılmış NDJSON satırları alansız çözülmeye devam eder.</param>
 /// <param name="UpdateExternals">[Harici projeler] Bu koşu, harici çalışma kopyalarını derlemeden ÖNCE kendi
