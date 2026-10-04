@@ -923,7 +923,9 @@ the project's **fed outputs** — the copies of its output in dependents'
 nothing could be learned (no derivable output path, the output file missing after the build, an older record),
 empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
 built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
-successful build" line is the only place a revision is shown. It is written by a single serialized writer,
+successful build" line is the only place a revision is shown. The last duration feeds none either: it is recorded
+after each success and read by nothing — the ETA (§8.4) averages the durations the current run has observed — so it
+stays in the file as a diagnostic record only. The file is written by a single serialized writer,
 atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
 `FileShare.Delete`, and because Windows refuses a rename over a file with an open handle even when the handle
 shares delete, a transient sharing violation is retried a bounded number of times. A corrupt file never throws —
@@ -1321,8 +1323,12 @@ were stored carries no roots and compiles on every `Build` as it always did.
 baseline round count. That term belongs to the run where rounds actually run: a Clean cleans a cycle member once,
 as an ordinary project (§8.1), so there it is plain queued work.
 The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
-replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
-no history the ribbon shows progress and elapsed time without an estimate.
+replaced by `· almost done` below 4 s. `parallelism` is the worker count `runStarted` reports — what the engine
+actually runs once it has fitted the profile to the machine (§11.1) — and it holds for the whole run. The
+per-project estimate is one figure for every project: the mean duration of the projects that have succeeded or
+failed so far in the current run. The persisted last duration (§7.5) plays no part, so every run starts without an
+estimate, not only the first one: until a project has succeeded or failed there is nothing to average, and the
+ribbon shows progress and elapsed time without one.
 
 Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
 whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
@@ -5961,6 +5967,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
+| The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
 | Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
 | Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
@@ -6023,7 +6030,6 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
-
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
