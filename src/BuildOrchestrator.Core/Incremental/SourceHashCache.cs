@@ -185,11 +185,17 @@ public sealed class SourceHashCache
 
         // Racy pencerenin kesimi, süpürme eşiğiyle AYNI saatten (UtcNow seam'i) okunur; üretimde null → gerçek saat.
         long cutoff = (UtcNow?.Invoke() ?? DateTime.UtcNow).Add(-RacyWindow).Ticks;
-        var snapshot = _entries.ToArray();
-        var persistable = snapshot
-            .Where(kv => kv.Value.MtimeTicks < cutoff)
-            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-        bool leftOutRacy = persistable.Count < snapshot.Length;
+        // Doğrudan numaralandırma — ToArray() anlık görüntüsü YOK: o, her kirli Flush'ta girdi sayısı kadar ek bir dizi (LOH)
+        // demekti. ConcurrentDictionary numaralandırması eşzamanlı yazımlara karşı güvenlidir ama anlık görüntü DEĞİLDİR; bu
+        // yazım için yeterli: girdiler değişmez kayıtlardır (her biri ya eski ya yeni hâliyle görülür) ve bayrak numaralandırmadan
+        // ÖNCE indi — numaralandırma sürerken gelen her değişiklik bayrağı yeniden kaldırır, sonraki Flush onu yazar.
+        var persistable = new Dictionary<string, Entry>(_entries.Count, StringComparer.OrdinalIgnoreCase);
+        bool leftOutRacy = false;
+        foreach (var (key, entry) in _entries)
+        {
+            if (entry.MtimeTicks < cutoff) persistable[key] = entry;
+            else leftOutRacy = true;
+        }
 
         try
         {

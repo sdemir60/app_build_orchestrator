@@ -318,8 +318,8 @@ public sealed class SourceHashCacheTests : IDisposable
         using var writersDone = new CancellationTokenSource();
 
         var flusher = Task.Run(() => { while (!writersDone.IsCancellationRequested) cache.Flush(); });
-        await Task.WhenAll(files.Chunk(50).Select(chunk => Task.Run(() => { foreach (string f in chunk) cache.HashOf(f); })));
-        writersDone.Cancel();
+        try { await Task.WhenAll(files.Chunk(50).Select(chunk => Task.Run(() => { foreach (string f in chunk) cache.HashOf(f); }))); }
+        finally { writersDone.Cancel(); }                                         // bir yazıcı hata verse de flusher durur
         await flusher;
 
         // Son Flush: kayıp işaret yoksa kalan her şeyi yazar. Geçici bir IO hatası bayrağı kirli bırakır, yeniden denemek

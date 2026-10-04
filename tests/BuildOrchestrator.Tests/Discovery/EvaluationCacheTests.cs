@@ -336,18 +336,26 @@ public class EvaluationCacheTests
             var a = SeededCache(root, cachePath);
             var b = SeededCache(root, cachePath);
 
+            // csproj'lar bariyerden ÖNCE kurulur: sıcak döngüde yalnız GetOrEvaluate + Flush kalır, iki örnek rename'de
+            // eskisi kadar sık çakışır (döngü içinde dosya yazmak çakışmayı seyreltirdi).
+            var projects = Enumerable.Range(0, 200).Select(i =>
+            {
+                string proj = Path.Combine(root, $"P{i}.csproj");
+                File.WriteAllText(proj, "<Project/>");
+                return proj;
+            }).ToList();
+
             // Sleep YOK [D8]: iki task aynı bariyerden çıkıp 200 kez yarışır — sabit .tmp adında çakışma kaçınılmaz.
             using var barrier = new Barrier(2);
             Task Hammer(EvaluationCache cache) => Task.Run(() =>
             {
                 barrier.SignalAndWait();
                 // [C1] Eski iddia: her Flush yazar, 200 çağrı 200 yazımı yarıştırır. Yeni kural: yalnız KİRLİ Flush yazar —
-                // bu yüzden her turda önce yeni bir proje değerlendirilip defter kirletilir; yazım yolu (temp + rename)
-                // yine her turda iki örnek arasında yarışır (eşzamanlılık güvencesi gevşemedi, yük aynı kaldı).
-                for (int i = 0; i < 200; i++)
+                // bu yüzden her turda henüz görülmemiş bir proje değerlendirilip defter kirletilir; yazım yolu (temp +
+                // rename) yine her turda iki örnek arasında yarışır. Yazım sayısı eskisiyle AYNI (200); tur başına tek
+                // fark bir GetOrEvaluate (mtime+size, hash) — yük o kadar fazla, yazım yoğunluğu korunur.
+                foreach (string proj in projects)
                 {
-                    string proj = Path.Combine(root, Guid.NewGuid().ToString("N") + ".csproj");
-                    File.WriteAllText(proj, "<Project/>");
                     cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "A", [], [], [], false));
                     cache.Flush();
                 }
