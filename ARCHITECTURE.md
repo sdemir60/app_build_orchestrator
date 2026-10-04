@@ -2271,6 +2271,14 @@ cannot drift apart.
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
 
+### 11.4 Memory line
+
+When a sync finishes and when a run ends, whatever its outcome, the engine writes one line to its stderr:
+`memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the managed heap's committed bytes
+as of the last collection, and the managed heap's current size. The line only reports: nothing is collected or
+released because of it, and stdout stays NDJSON. The App discards the engine's stderr (§4.3), so the line serves
+whoever reads that stream directly, such as a measurement harness.
+
 ---
 
 ## 12. Application shell

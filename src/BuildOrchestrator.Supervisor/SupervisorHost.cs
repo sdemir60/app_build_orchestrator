@@ -166,6 +166,9 @@ public sealed class SupervisorHost(NdjsonWriter writer, NdjsonReader reader, Job
         try
         {
             await workspace.Sync(cmd.RootPath).RunAsync(cmd, Emit, ct);
+            // [PERF Faz C/C3] Sync bitti: bellek tanı satırı stderr'e (stdout YALNIZ NDJSON). Kanal koordinatörün
+            // console'udur — host ikinci bir stderr bağı kurmaz; tanı hata fırlatmaz, Sync'i bozmaz.
+            coordinator.ReportMemory();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

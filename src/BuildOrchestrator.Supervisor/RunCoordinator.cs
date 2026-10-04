@@ -649,8 +649,18 @@ public sealed class RunCoordinator(
                 _copyFloorDepth = 0;
                 _capDrained = false;
             }
+            // [PERF Faz C/C3] Koşu bitti ve yuva bırakıldı: bellek tanı satırı. Yuvadan SONRA yazılır — tanı hiçbir
+            // koşulda yuvayı tutmaz; normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
+            ReportMemory();
         }
     }
+
+    /// <summary>
+    /// [PERF Faz C/C3] Motorun bellek tanı satırını konsol (stderr) kanalına yazar: Sync bitişinde host, koşu
+    /// bitişinde koordinatörün kendisi çağırır — kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
+    /// Hata fırlatmaz (<c>MemoryLine.Report</c> yutar).
+    /// </summary>
+    public void ReportMemory() => BuildOrchestrator.Core.Diagnostics.MemoryLine.Report(console);
 
     /// <summary>Tek FIFO kanal → tek yazıcı: event SIRASI korunur, çağıran thread'ler bloklanmaz.</summary>
     private async Task PumpEventsAsync(ChannelReader<IpcEvent> reader, CancellationToken ct)
