@@ -5900,9 +5900,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
+| Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
 | Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
-| Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
