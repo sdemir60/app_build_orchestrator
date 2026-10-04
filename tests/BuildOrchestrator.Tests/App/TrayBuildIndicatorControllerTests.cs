@@ -93,6 +93,77 @@ public sealed class TrayBuildIndicatorControllerTests
         }
     }
 
+    // ---------------------------------------------------------------- çıkış bildirimi ([perf Faz C · C4])
+
+    /// <summary>
+    /// [perf Faz C · C-1] <c>ExitCompleted</c> alıcısının hatası sonuç balonunu YUTMAZ. Alıcı (tepside biten koşunun bellek
+    /// toplaması) eskiden balondan ÖNCE, gözlenmeyen bir Task'in içinde koşuyordu: fırlatınca istisna orada kalıyor ve balon
+    /// sessizce kayboluyordu (<c>TrayBalloonProbeTests</c>'in daha önce teşhis ettiği tuzak). Bildirim artık balondan SONRA gelir.
+    /// </summary>
+    [Fact]
+    public void A_throwing_exit_receiver_does_not_swallow_the_run_result_balloon()
+    {
+        var f = new Fixture().RunningInTray();
+        f.Controller.ExitCompleted = () => throw new InvalidOperationException("receiver failed");
+
+        f.Controller.SetPhase(AppPhase.Done);
+        f.View.FinishExit();
+
+        Assert.Equal(1, f.Notifier.Count);   // KIRMIZI: alıcı balondan önce koşuyor, istisnası balonu yutuyordu
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] Bitiş koreografisinin tam sırası: çıkış evresi → gizlenme → nefes → balon → çıkış bildirimi
+    /// (<c>ExitCompleted</c>). Bildirim EN SONDA gelir: alıcının işi (bloklayan bellek toplaması) ne çıkış animasyonunu ne balonu
+    /// bekletir.
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_comes_after_the_indicator_hides_and_after_the_balloon()
+    {
+        var f = new Fixture().RunningInTray();
+        f.Controller.ExitBreath = () => { f.Log.Add("Breath"); return Task.CompletedTask; };
+        f.Controller.ExitCompleted = () => f.Log.Add("ExitCompleted");
+
+        f.Controller.SetPhase(AppPhase.Done);
+        Assert.DoesNotContain("ExitCompleted", f.Log);   // çıkış evresi sürerken bildirim yok
+        f.View.FinishExit();
+
+        Assert.Equal(
+            ["BeginExit", "HideNow", "Breath", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s", "ExitCompleted"],
+            f.Log);   // KIRMIZI: bildirim gizlenmenin hemen ardından, nefes ve balondan ÖNCE geliyordu
+    }
+
+    /// <summary>[perf Faz C · C4] Reduced-motion'da oynatılacak çıkış evresi yoktur: zincir faz yazımının İÇİNDE, eşzamanlı
+    /// tamamlanır ve sıra aynıdır (gizlenme → balon → bildirim).</summary>
+    [Fact]
+    public void Under_reduced_motion_the_exit_notice_fires_synchronously_after_the_balloon()
+    {
+        var f = new Fixture();
+        f.Controller.SetAnimationsEnabled(false);
+        f.RunningInTray();
+        f.Controller.ExitCompleted = () => f.Log.Add("ExitCompleted");
+
+        f.Controller.SetPhase(AppPhase.Done);   // FinishExit yok: çıkış evresi oynatılmaz
+
+        Assert.Equal(["HideNow", "Notify:Completed — 24 succeeded · 9 skipped · 1m 12s", "ExitCompleted"], f.Log);
+    }
+
+    /// <summary>[perf Faz C · C4] Pencere çıkış evresi sürerken geri gelirse gösterge anında gizlenir ama çıkışın bildirimi yine
+    /// BİR kez gelir: "pencere gizli mi, koşu bitti mi" kararı alıcıdadır (karakterizasyon pini).</summary>
+    [Fact]
+    public void The_exit_notice_still_fires_once_when_the_window_returns_mid_exit()
+    {
+        var f = new Fixture().RunningInTray();
+        int notices = 0;
+        f.Controller.ExitCompleted = () => notices++;
+        f.Controller.SetPhase(AppPhase.Done);
+
+        f.Controller.SetMainWindowVisible(true);   // çıkış sürerken pencere geri geldi
+        f.View.FinishExit();
+
+        Assert.Equal(1, notices);
+    }
+
     // ---------------------------------------------------------------- görünürlük kuralı
 
     [Fact]

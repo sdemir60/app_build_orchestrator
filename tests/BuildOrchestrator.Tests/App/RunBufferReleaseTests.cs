@@ -18,7 +18,9 @@ namespace BuildOrchestrator.Tests.App;
 /// ama dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve motorun yanıtı (<c>ProjectLogChunkEvent</c>) testten
 /// verilir. Tepsi göstergesi headless'ta kurulmaz; çıkış bildirimini test <c>MainWindow.OnTrayIndicatorExitFinished</c>'a
 /// doğrudan verir (<c>OnGlobalHotkey</c> deseni) ve gerçek <c>GC.Collect</c> yerine sayaçlı bir sahte takar
-/// (<c>MainWindow.MemoryCollector</c>) — süit gerçek toplama tetiklemez.</para>
+/// (<c>MainWindow.MemoryCollector</c>). Toplama uygulama boştayken ertelendiği için testler bildirimden sonra dispatcher'ı
+/// boşaltır (<c>DispatcherPump.DrainToIdle</c>). Gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan test, bir
+/// kez koşturur.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class RunBufferReleaseTests
@@ -158,13 +160,16 @@ public class RunBufferReleaseTests
         MainWindowHost.StartBuild(vm, "A");
 
         window.OnTrayIndicatorExitFinished();            // koşu sürerken: toplanacak bir şey yok
+        DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections);
 
         MainWindowHost.FinishBuild(vm, "A");
         window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
 
         window.OnTrayIndicatorExitFinished();            // aynı koşunun ikinci bitiş sinyali
+        DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);
         GC.KeepAlive(window);
     }
@@ -181,10 +186,12 @@ public class RunBufferReleaseTests
 
         MainWindowHost.RunBuild(vm, "A");
         window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
 
         MainWindowHost.RunBuild(vm, "A");                // ikinci koşu: başlangıç bayrağı sıfırlar
         window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
         Assert.Equal(2, collections);
         GC.KeepAlive(window);
     }
@@ -201,11 +208,30 @@ public class RunBufferReleaseTests
         MainWindowHost.RunBuild(vm, "A");
 
         window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections);                    // pencere görünür
 
         window.SetSurfaceHidden(true);
         window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // aynı bildirim gizliyken toplar
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · C-1] Üretim toplayıcısı (gerçek <c>GC.Collect</c>, bir kez) fırlatmaz. Agresif kip yalnız bloklayan biçimle
+    /// geçerlidir; <c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatıyordu ve süit bunu göremedi — diğer
+    /// testler toplayıcıyı sayaçlı bir sahteyle değiştirir. Süitte gerçek toplama yalnız burada koşar.
+    /// </summary>
+    [StaFact]
+    public void The_production_memory_collector_does_not_throw()
+    {
+        using var dir = new TempDir();
+        var (window, _, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+
+        var error = Record.Exception(window.MemoryCollector);   // üretim varsayılanı: sahte takılmadı
+
+        Assert.Null(error);   // KIRMIZI: GC.Collect(2, Aggressive, blocking: false, compacting: true) → ArgumentException
         GC.KeepAlive(window);
     }
 

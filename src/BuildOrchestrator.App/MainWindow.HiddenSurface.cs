@@ -85,25 +85,37 @@ public partial class MainWindow
 
     private bool _runCollectionHooked;
 
-    /// <summary>[perf Faz C · C4] Toplamanın TEK çağrı yeri (<see cref="OnTrayIndicatorExitFinished"/>) bunu çağırır. Üretimde
-    /// gerçek toplama; testler sayaçlı bir sahteyle değiştirir (süit gerçek GC tetiklemez). Engellemeyen
-    /// (<c>blocking: false</c>) ve sıkıştıran agresif toplama: UI thread'i bir duraklama görmez, nesil 2 ve LOH küçülür.</summary>
+    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı; ne zaman çağrılacağına <see cref="OnTrayIndicatorExitFinished"/>
+    /// karar verir. Testler sayaçlı bir sahteyle değiştirir; gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan
+    /// test bir kez koşturur. <b>Bloklayan</b> agresif toplama: <see cref="GCCollectionMode.Aggressive"/> yalnız
+    /// <c>blocking: true</c> ile geçerlidir (<c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatır); nesil 2
+    /// sıkıştırılır ve boşalan bellek işletim sistemine geri verilir. Toplama süresince UI thread'i durur — bu yüzden yalnız
+    /// pencere gizliyken, sonuç balonu gösterildikten sonra ve uygulama boştayken yapılır.</summary>
     internal Action MemoryCollector { get; set; } = CollectMemory;
 
-    private static void CollectMemory() => GC.Collect(2, GCCollectionMode.Aggressive, blocking: false, compacting: true);
+    private static void CollectMemory() => GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
     /// <summary>
-    /// [perf Faz C · C4] Tepsi göstergesi çıkış evresini tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>). Toplama
-    /// yalnız üç koşul bir arada ise yapılır: pencere GİZLİ, koşu BİTMİŞ (sürüyorsa — ya da yeni bir koşu başladıysa —
-    /// toplanacak bir şey yoktur) ve bu koşu için henüz toplanmadı. Çıkış sırasında pencere geri geldiyse bildirim yine gelir
-    /// ama kullanıcı ekrandadır: o yolda hiç toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
+    /// [perf Faz C · C4] Tepsi göstergesi çıkış sırasını tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>: gösterge
+    /// gizlendi, sonuç balonu gösterildi). Toplama yalnız üç koşul bir arada ise İSTENİR: pencere GİZLİ, koşu BİTMİŞ (sürüyorsa —
+    /// ya da yeni bir koşu başladıysa — toplanacak bir şey yoktur) ve bu koşu için henüz toplanmadı. Toplamanın kendisi
+    /// <see cref="DispatcherPriority.ApplicationIdle"/> ile ertelenir: reduced-motion'da bu bildirim koşu bitişinin faz yazımı
+    /// İÇİNDE eşzamanlı gelir ve bloklayan toplama koşu bitişinin kalan işini (yüzey yenilemesi, bekleyen Sync) bekletmemelidir.
+    /// Ertelenen iş koşulu yeniden sorar (<see cref="CollectWhileHidden"/>). Çıkış sırasında pencere geri geldiyse bildirim yine
+    /// gelir ama kullanıcı ekrandadır: o yolda hiç toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
     /// (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
     /// </summary>
     internal void OnTrayIndicatorExitFinished()
     {
         if (!IsSurfaceHidden || _collectedAfterRun || _vm.IsRunInFlight) return;
         _collectedAfterRun = true;
-        MemoryCollector();
+        Dispatcher.InvokeAsync(CollectWhileHidden, DispatcherPriority.ApplicationIdle);
+    }
+
+    /// <summary>Boşta ertelenen toplama: arada pencere geri geldiyse ya da yeni bir koşu başladıysa toplamaz.</summary>
+    private void CollectWhileHidden()
+    {
+        if (IsSurfaceHidden && !_vm.IsRunInFlight) MemoryCollector();
     }
 
     /// <summary>Koşu başlangıcını dinler: ilk gizlenmede bir kez abone olunur — toplama yalnız gizliyken yapılır ve bayrak

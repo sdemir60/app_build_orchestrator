@@ -50,8 +50,8 @@ public interface ITrayRunNotifier
 /// <para><b>İki çıkış yolu ayrıdır.</b> Pencere geri gelirse gösterge ANINDA gizlenir — kullanıcı zaten
 /// ekrana döndü, ona bir çıkış animasyonu izletmenin değeri yoktur ve bildirim de üretilmez (şerit oradadır).
 /// Aktif kümeden çıkılırsa (koşu bitti) çıkış evresi TAMAMLANIR, sonra gizlenme, sonra kısa bir nefes, sonra
-/// balloon. Bu ikisi karışırsa ya yarım kesilmiş bir animasyon ya da pencere açıkken gereksiz bir bildirim
-/// olur.</para>
+/// balloon, en sonda çıkış bildirimi (<see cref="ExitCompleted"/>). Bu ikisi karışırsa ya yarım kesilmiş bir animasyon ya
+/// da pencere açıkken gereksiz bir bildirim olur.</para>
 ///
 /// <para><b>Nefes neden bir dikiş:</b> kaybolma ile bildirim üst üste binmemelidir (K-14), ama süresi bir
 /// motion token'ıdır ve token okumak WPF ister. Controller saf kalsın diye bekleme
@@ -85,6 +85,15 @@ public sealed class TrayBuildIndicatorController(
     /// bekletilmez); testte senkron tamamlanan bir sahtedir, yani süitte GERÇEK bekleme oluşmaz.
     /// </summary>
     internal Func<Task> ExitBreath { get; set; } = () => Task.CompletedTask;
+
+    /// <summary>
+    /// [perf Faz C · C4] Çıkış sırası BİTTİ: gösterge gizlendi, nefes geçti, balon (ayar açıksa) gösterildi. Koreografinin EN SON
+    /// adımıdır: alıcının işi (tepside biten koşunun bellek toplaması, <c>MainWindow.OnTrayIndicatorExitFinished</c>) ne çıkış
+    /// animasyonunu ne balonu bekletebilir, hatası da balonu yutamaz. Pencere çıkış sırasında geri geldiyse de gelir (gösterge
+    /// zaten gizlenmiştir); "pencere gizli mi, koşu bitti mi" kararı alıcıdadır. Reduced-motion'da zincir faz yazımının İÇİNDE
+    /// eşzamanlı koşar — ağır işini alıcı kendisi erteler.
+    /// </summary>
+    internal Action? ExitCompleted { get; set; }
 
     /// <summary>Bir derleme koşuyor mu — göstergenin var olma gerekçesi. Sync bilerek DIŞARIDA.</summary>
     private static bool IsActive(AppPhase phase) =>
@@ -173,14 +182,6 @@ public sealed class TrayBuildIndicatorController(
 
     private void OnExitFinished() => _ = CompleteExitAsync();
 
-    /// <summary>
-    /// [perf Faz C · C4] Çıkış evresi bitti ve gösterge gizlendi: ekranda bu koşuya ait hiçbir şey kalmadı. Balon beklemesinden
-    /// (<see cref="ExitBreath"/>) ÖNCE bildirilir — koşu-sonu ekran dışı işler (bellek toplaması) bir animasyonu kesmez ve balonu
-    /// geciktirmez. Göstergenin kendi zaman çizelgesi değişmez, yalnız bir bildirim eklenir. Pencere çıkış sırasında geri geldiyse
-    /// de gelir (gösterge zaten gizlenmiştir); "gizli mi, koşu bitti mi" kararı alıcıdadır.
-    /// </summary>
-    internal Action? ExitCompleted { get; set; }
-
     private async Task CompleteExitAsync()
     {
         _exitPending = false;
@@ -190,9 +191,16 @@ public sealed class TrayBuildIndicatorController(
             view.HideNow();
         }
 
-        ExitCompleted?.Invoke();
         await ExitBreath();
+        ShowRunFinishedOnce();
+        // [perf Faz C · C-1] Bildirim balondan SONRA: alıcı eskiden burada, balondan ÖNCE koşuyordu ve fırlattığında (geçersiz
+        // GC.Collect biçimi) istisna bu gözlenmeyen Task'e düşüp balonu sessizce yutuyordu. Artık alıcının hatası balona ulaşamaz.
+        ExitCompleted?.Invoke();
+    }
 
+    /// <summary>Koşu başına tek balon: bütçe yalnız yeni bir koşu başlarken tazelenir (<see cref="SetPhase"/>).</summary>
+    private void ShowRunFinishedOnce()
+    {
         if (_notified) return;
         _notified = true;
         // [P3 · Task 4] TAZE okuma: ayar koşu SIRASINDA kapatılmış olabilir, ctor anındaki değer güvenilmez.
