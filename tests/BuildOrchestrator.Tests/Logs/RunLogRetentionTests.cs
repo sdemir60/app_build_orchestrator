@@ -323,6 +323,25 @@ public sealed class RunLogRetentionTests : IDisposable
         finally { TestJunction.Remove(link); }                   // temizlik (bkz. TestJunction.Remove)
     }
 
+    // [Son toparlama B1 · madde 1] Silmenin KENDİ kökü bir bağlantıysa hedefe inilmez. Prune bağlantıları SEÇİMDE eler (yukarıdaki
+    // test), ama seçimle silme arasında klasör bir bağlantıyla değiştirilirse (TOCTOU) silme kökünü bağlantı olarak bulur.
+    // Girişte kendi köküne bakmayan silme bağlantıyı dizin gibi açar ve hedefin İÇERİĞİNİ siler (hedef klasörün kendisi kalır).
+    [SkippableFact]
+    public void Deleting_a_folder_that_has_become_a_link_removes_only_the_link_and_never_enters_the_target()
+    {
+        var (target, precious) = MakeLinkTarget();
+        string link = At(Now - Keep - Days(3));                  // seçildikten sonra bağlantıya dönüşmüş koşu klasörü adı
+        Skip.IfNot(TestJunction.TryCreate(link, target), "junctions cannot be created here (mklink /J failed)");
+        try
+        {
+            RunLogRetention.DeleteWithoutFollowingLinks(link);
+
+            Assert.All(precious, p => Assert.True(File.Exists(p), "the link's target must not be entered or emptied"));
+            Assert.False(Directory.Exists(link), "the link itself is what goes");
+        }
+        finally { TestJunction.Remove(link); }                   // temizlik (bkz. TestJunction.Remove)
+    }
+
     // ---------------------------------------------------------------- motor bağlantısı
 
     [Fact]

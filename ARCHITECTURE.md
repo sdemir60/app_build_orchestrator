@@ -1351,7 +1351,8 @@ is not the newest run folder — the newest of the runs that have started, so a 
 clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
 folders directly under the logs root, never another folder, a file that happens to carry a run-folder name, or a
 link, and never anything outside the logs root; a link found inside a folder that goes is removed as the link it
-is, never followed. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
+is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
+target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
 over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
 folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
 stderr — stdout stays NDJSON only.
@@ -6025,6 +6026,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
+| Link-safe recursive deletion: a link is removed as the link it is and never entered, the root's own link check, and each caller keeps its own error policy (Clean best-effort, the run-log sweep strict) | `Core/Paths/LinkSafeTree.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
 | Dead-entry pruning (only keys whose file is gone), in all three ledgers | `Core/State/BuildStateStore.cs`, `Core/Discovery/EvaluationCache.cs`, `Core/Incremental/SourceHashCache.cs` (`PruneMissingUnderRoot`) |

@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Core.Paths;
 
 namespace BuildOrchestrator.Core.Logs;
 
@@ -10,8 +11,9 @@ namespace BuildOrchestrator.Core.Logs;
 ///
 /// <para><b>Silmenin sınırı</b> [değişmez: OutDir'e dokunulmaz — log kökü bir çıktı yolu değildir]: silme yalnız log
 /// kökünün DOĞRUDAN altındaki, adı <see cref="RunLogPaths.RunDirName"/> kalıbına TAM uyan klasörlerde olur. Başka bir
-/// klasör, adı kalıba uyan bir dosya ve yeniden-ayrıştırma noktaları (sembolik bağ, junction) hiçbir koşulda silinmez.
-/// Silinen bir klasörün İÇİNDEKİ bağlantılar da izlenmez: yalnız bağlantının kendisi kaldırılır, hedefe dokunulmaz
+/// klasör, adı kalıba uyan bir dosya ve yeniden-ayrıştırma noktaları (sembolik bağ, junction) hiçbir koşulda SEÇİLMEZ.
+/// Silme sırasında da bağlantıya inilmez: klasörün İÇİNDEKİ bağlantılar için ve seçimle silme arasında bir bağlantıyla
+/// yer değiştirmiş klasörün KENDİSİ için yalnız bağlantının kendisi kaldırılır, hedefe dokunulmaz
 /// (<c>DeleteWithoutFollowingLinks</c>). Aktif koşunun klasörü de kendiliğinden güvendedir: damgası şimdiye yakındır,
 /// pencerenin çok içindedir.</para>
 /// </summary>
@@ -113,26 +115,18 @@ public static class RunLogRetention
     }
 
     /// <summary>
-    /// Koşu klasörünü içeriğiyle siler; içindeki bağlantılara (junction/symlink) İNMEZ: bağlantının KENDİSİ kaldırılır,
-    /// hedefin içeriğine dokunulmaz. <c>Directory.Delete(recursive)</c> da bağlantıyı izlemez ama bu makinede (Windows,
-    /// .NET 10) içinde junction olan bir klasörde bağlantıyı ve dosyaları kaldırdıktan sonra
-    /// <see cref="UnauthorizedAccessException"/> fırlatıp boş klasörü geride bırakıyor: yanlış bir "silinemedi" satırı ve
-    /// bir açılış gecikmesi. Clean'in ağaç silmesiyle (<c>CleanWorkspaceService.DeleteTree</c>) aynı ilke; burada sıkı:
-    /// ilk IO hatası fırlar ve klasör sonraki açılışa kalır (<see cref="Prune"/> yutar).
+    /// Koşu klasörünü içeriğiyle siler — SIKI politikayla: ilk IO hatası fırlar ve klasör sonraki açılışa kalır
+    /// (<see cref="Prune"/> yutar). Bağlantılara (junction/symlink) İNMEZ: bağlantının KENDİSİ kaldırılır, hedefin
+    /// içeriğine dokunulmaz — klasörün İÇİNDEKİ bağlantılar için de, seçimle silme arasında klasörün yerine bir bağlantı
+    /// geçerse (TOCTOU) klasörün KENDİSİ için de (<see cref="LinkSafeTree"/> girişte kendi köküne taze bakar). Gezinme
+    /// Clean'in ağaç silmesiyle (<c>CleanWorkspaceService.DeleteTree</c>) ORTAKTIR. <c>Directory.Delete(recursive)</c>
+    /// kullanılmaz: bağlantıyı izlemez ama bu makinede (Windows, .NET 10) içinde junction olan bir klasörde bağlantıyı
+    /// ve dosyaları kaldırdıktan sonra <see cref="UnauthorizedAccessException"/> fırlatıp boş klasörü geride bırakıyor:
+    /// yanlış bir "silinemedi" satırı ve bir açılış gecikmesi. <c>internal</c>: <see cref="Prune"/> bağlantıyı seçimde
+    /// eler, kök-bağlantı durumu ancak buradan doğrudan sınanabilir.
     /// </summary>
-    private static void DeleteWithoutFollowingLinks(string dir)
-    {
-        foreach (string entry in Directory.GetFileSystemEntries(dir))
-        {
-            FileAttributes attributes = File.GetAttributes(entry);
-            // Dosya ya da dosya bağlantısı: File.Delete bağlantının KENDİSİNİ kaldırır. Dizin bağlantısı: yalnız bağlantı
-            // kaldırılır (özyineleme yok). Gerçek dizin: içine inilir.
-            if ((attributes & FileAttributes.Directory) == 0) File.Delete(entry);
-            else if ((attributes & FileAttributes.ReparsePoint) != 0) Directory.Delete(entry, recursive: false);
-            else DeleteWithoutFollowingLinks(entry);
-        }
-        Directory.Delete(dir, recursive: false);
-    }
+    internal static void DeleteWithoutFollowingLinks(string dir) =>
+        LinkSafeTree.Delete(dir, File.Delete, subDir => Directory.Delete(subDir, recursive: false));
 
     private static string Summary(int removed, int failed, string? firstError)
     {
