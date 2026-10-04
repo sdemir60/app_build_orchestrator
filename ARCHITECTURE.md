@@ -940,10 +940,14 @@ surfaces** — for every sibling file its last compile read, the producer, the f
 and the **engine fingerprint** of the run that wrote them. They are written only when the member's group converges —
 freshly for a member that compiled, carried over untouched for one that was carried. The surfaces are stored in a
 canonical order (producer, then file, case-insensitive; each pair once), so the file reads the same from run to run.
-Every other writer leaves them empty: a success recorded outside a converged group rebuilds the record without them
-and a Clean removes the record, while the invalidation of a group that did not converge keeps what is there but turns
-the last result into a failure, and a record whose last result is not a success is never trusted. A record without the
-fields — written before they existed, or reset this way — is one round one cannot trust (§8.8).
+No other writer stores values in them. A success recorded outside a converged group rebuilds the record without them,
+and a Clean removes the record. The invalidations — of a project that failed or whose success is not trusted, which
+includes every member of a group that did not converge, and the crash recovery at startup (§8.7) of a project that was
+in flight when a run died — turn the last result into a failure and copy the rest of the record as it was, the three
+fields included, and the non-convergence memory (§8.8) copies it too and touches only its own field. Where there is no
+record to copy, a new one is opened without the fields. Keeping the fields through an invalidation is safe because a
+record whose last result is not a success is never trusted. A record without the fields — written before they
+existed, or cleared this way — is one round one cannot trust (§8.8).
 The built commit and the last branch feed no decision: the
 built commit is diagnostic, and the project log's "last successful build" line is the only place a revision is
 shown. The last duration feeds none either: it is recorded after each success and read by nothing — the ETA (§8.4)
@@ -1360,10 +1364,11 @@ accepts — an ETA that runs long is the better failure. A member counts in that
 runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
 member's elapsed time within one round says nothing about how much of the group is left. Entering a third
 round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded. A member
-that round one carries (§8.8) is never compiled, yet its estimate stays in the term, at the full figure, until its
-group is finished: its result, a `skipped` one, is reported together with every other member's when the verdict is in,
-and only then does it leave. The estimate therefore includes compile time that is never spent, which is the same long
-direction.
+that round one carries (§8.8) counts in the term like any other, at the full figure, until its group is finished: its
+result is reported together with every other member's when the verdict is in — a `skipped` one when the group
+converges — and only then does it leave. One that stays carried until then is never compiled, so the estimate includes
+compile time that is never spent, which is the same long direction; one that a later round finds stale compiles at
+that point and spends its time like any other member.
 
 Every component lands in that single undivided term, even though independent components genuinely do run on
 different workers at the same time. The estimate is therefore pessimistic in exactly one direction whenever a
@@ -1579,8 +1584,10 @@ taken in this order, and the matching rule is written to `decision.log` before t
 (`A: round 1 — own inputs changed`):
 
 - **No trusted record.** The record is missing, its last result is not a success, that success was linked against a
-  failed dependency, one of the three cycle fields (§7.5) is absent or empty, the recorded surfaces name no file of
-  one of the member's direct dependencies inside the group, or a surface entry is incomplete or listed twice.
+  failed dependency, or one of the three cycle fields (§7.5) is absent or empty; or the member's set of direct
+  dependencies inside the group is empty (every member of a group of two or more has at least one, so an empty set is a
+  mistake in the evidence, and the member compiles rather than being carried by a check that silently never applies);
+  or the recorded surfaces name no file of one of those dependencies.
 - **Engine changed.** The fingerprint stored with the record is not this run's.
 - **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
   none), or the term differs from the stored one: the member's own files, its configuration or an upstream outside
@@ -1589,6 +1596,9 @@ taken in this order, and the matching rule is written to `decision.log` before t
   evidence path or an output file that is gone, or — for an output the tool built itself — fed copies that are not
   intact (§7.6); or its output evidence is in time mode, the mode an output compiled by someone else, Visual Studio
   say, is judged in.
+- **No trusted record, again.** A surface entry of the record is incomplete or listed twice. This check runs after the
+  engine, term and output rules, so a record that is damaged this way and also fails one of them is reported by that
+  rule.
 - **Read surface moved.** A sibling file the record says the member read hashes differently on disk, or is gone. The
   reason names the files, sorted and counted beyond a limit like the `moved=` field of a round line.
 
@@ -6131,7 +6141,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
-| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps); fed by the member terms the planner returns (`MemberTermById`) and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs` |
+| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps); fed by the member terms the planner returns (`MemberTermById`) and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields of the compiled members when the group converges | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `PersistBuildStateOnCarriedMember`, `PersistBuildStateOnSuccess`) |
 | Resolve round trail in decision.log (group header, evidence loss, round-one need lines, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
