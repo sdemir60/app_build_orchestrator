@@ -57,8 +57,23 @@ public static class WpfTemporaryAssemblyTargets
         """.ReplaceLineEndings();
 
     /// <summary>
+    /// [PERF Faz C/C6] İki dosyanın SABİT, ESKİ değişiklik tarihi (UTC). MSBuild <c>CustomBeforeMicrosoftCommonTargets</c>
+    /// import'unu her projenin <c>$(MSBuildAllProjects)</c> listesine katar ve <c>CoreCompile</c>'ın girdi denetimi o
+    /// listenin EN YENİ dosyasına bakar: targets dosyası yeni bir tarihle yazılınca (yeni bir sürümün içeriği
+    /// değiştirmesi ya da dosyanın ilk kez yazılması) motorun çağırdığı HER proje, çıktısı güncel olsa bile bir kez
+    /// baştan derlenirdi (ölçüldü: Rebuild 46 → 78 sn). Import nihai çıktıyı değiştirmez (acceptance testi: aynı
+    /// BAML baytları, aynı DLL boyutu), yani geçersizleştirmeye katılmamalıdır; bu yüzden iki dosya HER durumda bu
+    /// eski tarihle durur — yazımdan sonra da, içerik zaten aynıyken de.
+    /// <para><b>Sınır:</b> bu import bir gün nihai çıktıyı değiştirirse bu çekme KALDIRILMALIDIR — aksi halde MSBuild
+    /// değişikliği görmez ve eski çıktıyı güncel sayar.</para>
+    /// <para>Dosyalar aracın kendi önbellek kökündedir (<c>%LOCALAPPDATA%\BuildOrchestrator\msbuild\</c>), kullanıcının
+    /// OutDir'inde ya da obj'unda DEĞİL: "OutDir'e dokunulmaz" değişmezi bozulmaz.</para>
+    /// </summary>
+    public static readonly DateTime FixedTimestampUtc = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>
     /// <c>&lt;cacheRoot&gt;\msbuild\</c> altına iki dosyayı yazar ve targets dosyasının TAM yolunu döner. İçerik
-    /// aynıysa dosyaya dokunmaz (mtime korunur); farklıysa ya da yoksa yazar, yani bozulan ya da eski bir dosya,
+    /// aynıysa içeriğe dokunmaz, tarihini ise her durumda <see cref="FixedTimestampUtc"/>'ye çeker; farklıysa ya da yoksa yazar, yani bozulan ya da eski bir dosya,
     /// bir motorun MSBuild'i ilk çözdüğü anda (ilk koşu ya da ilk Optimize) onarılır; çözüm motor başına bir kez
     /// yapıldığından sonraki onarım yeni bir motoru bekler. Atomik yazım yoktur: motor tek yazıcıdır. G/Ç
     /// hatasında FIRLATIR — çağıran bunun bir optimizasyon olduğunu bilir ve derlemeyi targets'sız sürdürür.
@@ -74,16 +89,21 @@ public static class WpfTemporaryAssemblyTargets
 
         // Friend ÖNCE: "targets var ⇒ friend var". Yazım targets'tan önce yarıda kalsa bile targets'ı gören bir
         // MSBuild olmayan bir kaynak dosyasına bağlanmaz.
-        WriteIfDifferent(Path.Combine(directory, FriendFileName), FriendContent);
+        EnsureFile(Path.Combine(directory, FriendFileName), FriendContent);
         string targetsPath = Path.Combine(directory, TargetsFileName);
-        WriteIfDifferent(targetsPath, TargetsContent);
+        EnsureFile(targetsPath, TargetsContent);
         return targetsPath;
     }
 
-    private static void WriteIfDifferent(string path, string content)
+    /// <summary>İçerik farklıysa ya da dosya yoksa yazar; tarihi HER durumda <see cref="FixedTimestampUtc"/>'ye çeker.</summary>
+    private static void EnsureFile(string path, string content)
     {
-        if (File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal))
-            return;
-        File.WriteAllText(path, content); // UTF-8 (BOM'suz); içerik ASCII
+        bool identical = File.Exists(path) && string.Equals(File.ReadAllText(path), content, StringComparison.Ordinal);
+        if (!identical)
+            File.WriteAllText(path, content); // UTF-8 (BOM'suz); içerik ASCII
+        // Tarih yazımdan sonra da, içerik zaten aynıyken de çekilir: önceki bir sürümün yeni tarihle yazdığı dosya da
+        // düzelir. Zaten sabitse dosyaya hiç dokunulmaz.
+        if (File.GetLastWriteTimeUtc(path) != FixedTimestampUtc)
+            File.SetLastWriteTimeUtc(path, FixedTimestampUtc);
     }
 }

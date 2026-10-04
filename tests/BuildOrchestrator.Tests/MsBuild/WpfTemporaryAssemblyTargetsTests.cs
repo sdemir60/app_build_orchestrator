@@ -96,21 +96,108 @@ public class WpfTemporaryAssemblyTargetsTests
     }
 
     /// <summary>
-    /// Motor her açılışta yazar: içerik aynıysa dosyaya DOKUNMAZ (mtime korunur), bozulmuş ya da eski bir içerik
-    /// onarılır. Atomik yazım yoktur — motor tek yazıcıdır.
+    /// Motor her açılışta yazar: içerik aynıysa dosyayı YENİDEN YAZMAZ, bozulmuş ya da eski bir içerik onarılır. Atomik
+    /// yazım yoktur — motor tek yazıcıdır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Eskiden bu test "aynı içerik = dosyaya dokunulmaz" iddiasını <c>mtime</c>'ın
+    /// değişmemesiyle sınıyordu. İki dosyanın tarihi artık HER durumda sabit eski tarihe çekildiği için
+    /// (<see cref="WpfTemporaryAssemblyTargets.FixedTimestampUtc"/>) o karşılaştırma bir yeniden yazımı ayırt edemez — yeniden
+    /// yazım da aynı tarihle biterdi ve iddia boşalırdı. "Yeniden yazılmadı" artık baytla sınanır: dosya BOM'lu yerleştirilir
+    /// (<c>ReadAllText</c> BOM'u soyar, motorun içerik karşılaştırması için içerik AYNIDIR) ve BOM'suz bir yeniden yazım onu
+    /// silerdi.</para>
     /// </summary>
     [Fact]
-    public void rewriting_is_idempotent_and_does_not_touch_an_identical_file()
+    public void rewriting_is_idempotent_and_does_not_rewrite_an_identical_file()
     {
         using var dir = new TempDir();
-        string path = WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
-        var stamp = File.GetLastWriteTimeUtc(path);
+        var (targets, friend) = Plant(dir.Path, WpfTemporaryAssemblyTargets.TargetsContent,
+            WpfTemporaryAssemblyTargets.FriendContent, withBom: true);
+        File.SetLastWriteTimeUtc(targets, WpfTemporaryAssemblyTargets.FixedTimestampUtc); // tarih zaten sabit: yalnız yeniden yazım sınanır
+        File.SetLastWriteTimeUtc(friend, WpfTemporaryAssemblyTargets.FixedTimestampUtc);
 
         WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
-        Assert.Equal(stamp, File.GetLastWriteTimeUtc(path));
+        Assert.True(StartsWithBom(targets) && StartsWithBom(friend), "an identical file is not rewritten");
 
-        File.WriteAllText(path, "<Project />");
+        File.WriteAllText(targets, "<Project />");
         WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
-        Assert.Equal(WpfTemporaryAssemblyTargets.TargetsContent, File.ReadAllText(path)); // bozulan içerik onarılır
+        Assert.Equal(WpfTemporaryAssemblyTargets.TargetsContent, File.ReadAllText(targets)); // bozulan içerik onarılır
     }
+
+    /// <summary>
+    /// [PERF Faz C/C6] İki dosya ilk yazımdan sonra sabit, ESKİ tarihi taşır — "şimdi"yi değil. MSBuild bu import'u her
+    /// projenin girdileri arasında sayar; yeni tarihli bir targets dosyası motorun çağırdığı HER projeyi bir kez baştan
+    /// derletirdi (ölçüldü: Rebuild 46 → 78 sn), oysa import nihai çıktıyı değiştirmez.
+    /// </summary>
+    [Fact]
+    public void both_files_carry_the_fixed_old_timestamp_after_the_first_write()
+    {
+        using var dir = new TempDir();
+
+        WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
+
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc,
+            File.GetLastWriteTimeUtc(FileOf(dir.Path, WpfTemporaryAssemblyTargets.TargetsFileName)));
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc,
+            File.GetLastWriteTimeUtc(FileOf(dir.Path, WpfTemporaryAssemblyTargets.FriendFileName)));
+    }
+
+    /// <summary>Sabit tarih UTC ve "eski"dir: her çıktıdan çok önce — yakın bir tarihe taşınırsa çekmenin anlamı kalmaz.</summary>
+    [Fact]
+    public void the_fixed_timestamp_is_utc_and_far_in_the_past()
+    {
+        Assert.Equal(DateTimeKind.Utc, WpfTemporaryAssemblyTargets.FixedTimestampUtc.Kind);
+        Assert.True(WpfTemporaryAssemblyTargets.FixedTimestampUtc < DateTime.UtcNow.AddYears(-10));
+    }
+
+    /// <summary>
+    /// Önceki sürümün dosyayı YENİ bir tarihle yazdığı makine: içerik AYNI (yeniden yazılmaz — BOM baytı kalır) ama tarih
+    /// yeni; <c>EnsureWritten</c> tarihi sabit eski tarihe geri çeker.
+    /// </summary>
+    [Fact]
+    public void an_identical_file_with_a_newer_timestamp_is_pulled_back_without_a_rewrite()
+    {
+        using var dir = new TempDir();
+        var (targets, friend) = Plant(dir.Path, WpfTemporaryAssemblyTargets.TargetsContent,
+            WpfTemporaryAssemblyTargets.FriendContent, withBom: true);
+        Assert.NotEqual(WpfTemporaryAssemblyTargets.FixedTimestampUtc, File.GetLastWriteTimeUtc(targets)); // önkoşul: tarih yeni
+
+        WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
+
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc, File.GetLastWriteTimeUtc(targets));
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc, File.GetLastWriteTimeUtc(friend));
+        Assert.True(StartsWithBom(targets) && StartsWithBom(friend), "identical content is not rewritten");
+    }
+
+    /// <summary>İçerik farklıysa dosya yazılır VE yeni yazılmış olmasına rağmen tarihi sabit eski tarihe çekilir.</summary>
+    [Fact]
+    public void a_changed_file_is_rewritten_and_carries_the_fixed_timestamp()
+    {
+        using var dir = new TempDir();
+        var (targets, friend) = Plant(dir.Path, "<Project />", "// stale", withBom: false);
+
+        WpfTemporaryAssemblyTargets.EnsureWritten(dir.Path);
+
+        Assert.Equal(WpfTemporaryAssemblyTargets.TargetsContent, File.ReadAllText(targets));
+        Assert.Equal(WpfTemporaryAssemblyTargets.FriendContent, File.ReadAllText(friend));
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc, File.GetLastWriteTimeUtc(targets));
+        Assert.Equal(WpfTemporaryAssemblyTargets.FixedTimestampUtc, File.GetLastWriteTimeUtc(friend));
+    }
+
+    private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
+
+    /// <summary>Önbellek kökü altındaki dosya (klasör adı bilerek literal: diskteki konum belgelenmiş bir sözleşmedir).</summary>
+    private static string FileOf(string cacheRoot, string name) => Path.Combine(cacheRoot, "msbuild", name);
+
+    /// <summary>İki dosyayı elle, verilen içerikle ve YENİ bir tarihle yerleştirir — önceki bir sürümün bıraktığı hâl.</summary>
+    private static (string Targets, string Friend) Plant(string cacheRoot, string targetsContent, string friendContent, bool withBom)
+    {
+        Directory.CreateDirectory(Path.Combine(cacheRoot, "msbuild"));
+        string targets = FileOf(cacheRoot, WpfTemporaryAssemblyTargets.TargetsFileName);
+        string friend = FileOf(cacheRoot, WpfTemporaryAssemblyTargets.FriendFileName);
+        var encoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: withBom);
+        File.WriteAllText(targets, targetsContent, encoding);
+        File.WriteAllText(friend, friendContent, encoding);
+        return (targets, friend); // yeni yazıldı: tarih "şimdi"
+    }
+
+    private static bool StartsWithBom(string path) => File.ReadAllBytes(path).Take(Utf8Bom.Length).SequenceEqual(Utf8Bom);
 }

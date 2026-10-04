@@ -1727,7 +1727,10 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
   `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
   project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
-  written, the engine says so once on stderr and builds without the argument. The file has been checked against
+  written, the engine says so once on stderr and builds without the argument. Both files carry a fixed, old
+  modification time however they were written, so rewriting them with new content never makes MSBuild see a
+  newer import and rebuild every project once; the pin has to go if the file ever starts to change the output.
+  The file has been checked against
   the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the Visual Studio 2022 toolset
   (legacy-style projects).
 - No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
