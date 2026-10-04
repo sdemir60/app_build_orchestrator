@@ -689,6 +689,12 @@ while idle changes only the chip, because the profile travels with the next run 
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
 (`cpu cap off` for Full).
 
+The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
+machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical
+memory can carry, and when it has to cut it says so in the console (`workers reduced to <n> (<reason>)`). A machine with
+enough processors and memory runs the profile exactly as asked. The progress line and the time estimate use the count
+the engine actually started.
+
 If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
 every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the
 physical memory and make Windows page other applications (ARCHITECTURE.md §11.1).

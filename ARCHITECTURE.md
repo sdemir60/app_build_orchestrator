@@ -789,7 +789,7 @@ rewritten only when an entry changed (§16). Measured end to end on the real
 OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
-inputs, scanning the cache for misses, reading the misses — runs 16-way parallel; the values do not depend on
+inputs, scanning the cache for misses, reading the misses — runs `IoParallelism.Degree`-way parallel; the values do not depend on
 thread order (input lists are sorted, fingerprint terms are sorted), and leaving those loops serial measured
 544 ms instead of 303.
 
@@ -1044,7 +1044,7 @@ preview, where a project this tool has since built successfully reports it empty
 tool's own.
 
 **Cost.** In ledger mode only the build evidence and the learned fed copies are statted. Input times are read
-only by a time check — a project in time mode, or a member of a group in time mode. Checks run 16-way parallel,
+only by a time check — a project in time mode, or a member of a group in time mode. Checks run `IoParallelism.Degree`-way parallel,
 as input collection does.
 
 ---
@@ -2222,7 +2222,7 @@ stash setting says.
 
 ### 11.1 Perf profiles
 
-One chip cycles three fixed profiles. This is the single source of truth for all three values:
+One chip cycles three fixed profiles. This is the single source of truth for all three values; the parallelism column is the worker count a profile *asks for* — the engine fits the request to the machine at the start of each run (below):
 
 | Mode | Parallelism | Priority class | Inner-job hard CPU cap |
 |---|---|---|---|
@@ -2237,6 +2237,20 @@ single owner in Core, called by both the App and the Supervisor.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
+
+**The profile asks; the engine fits the request to the machine.** At the start of every run the Supervisor reads the
+machine once — its logical processor count (which follows the process's affinity) and its free physical memory — and
+passes the profile's worker count through `WorkerBudget.Clamp`. The rule and every constant it uses live in Core
+(`WorkerBudget`, `MachineResources`); the Supervisor only applies the answer. The request is cut only when it exceeds a
+fixed multiple of the logical processors (`WorkersPerCore`) or what the free memory can carry once a reserve is left to
+the machine (`BytesPerWorker`, `ReserveBytes`), and the answer is never below one worker; when both limits bind equally
+the memory is the one named. The multiple is above one on purpose: measured on the real workspace on machines
+restricted to two and to four logical processors, a rebuild is dominated by process start-up and file latency rather
+than by compute, so workers beyond the processor count still shorten it (one worker took nearly twice as long as two on
+the smaller machine, and four beat three on the larger). The memory rule is a safety net: a run that is mostly freshness
+checks commits far less than a full compile, so the rule comes into play on low-memory machines. `runStarted` carries
+the **actual** count, so the App's flow line and its ETA show what is running, and when the request was reduced the
+console and `decision.log` both get the same line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`).
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
@@ -6066,6 +6080,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
 | Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+| Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
+| File IO concurrency: the one degree shared by the first content-hash fill, the two binding passes and the output checks | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs` |
 
 **View models — the pure decision cores**
 

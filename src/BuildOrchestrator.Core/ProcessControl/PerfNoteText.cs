@@ -34,4 +34,12 @@ public static class PerfNoteText
     /// </summary>
     public static string Note(PerfProfile profile) => string.Format(CultureInfo.InvariantCulture,
         "parallelism: {0} · {1}", profile.Parallelism, CapText(profile.CpuCapPercent));
+
+    /// <summary>
+    /// [PERF Faz D / karar 10] Motorun, profilin istediği işçi sayısını makineye göre KIRPTIĞINI söyleyen satır:
+    /// <c>workers reduced to 2 (1 logical processor)</c>. Konsola ve decision.log'a AYNI metin yazılır; gerekçe
+    /// (<paramref name="reason"/>) <see cref="WorkerBudgetDecision.Reason"/>'dan gelir.
+    /// </summary>
+    public static string WorkersReduced(int workers, string reason) => string.Format(
+        CultureInfo.InvariantCulture, "workers reduced to {0} ({1})", workers, reason);
 }

@@ -4,6 +4,7 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Graph;
 using BuildOrchestrator.Core.Scheduling;
+using BuildOrchestrator.Core.Io;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -71,7 +72,7 @@ public sealed class IncrementalRunBinder
         // [Task 2] Klasörler de AYNI taramadan (CollectWithFolders) toplanır — ikinci bir yürüyüş yapılmaz.
         var collectedInputs = new ConcurrentDictionary<string, IReadOnlyList<ProjectInput>>(StringComparer.OrdinalIgnoreCase);
         var collectedFolders = new ConcurrentDictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 }, node =>
+        Parallel.ForEach(plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree }, node =>
         {
             var (files, folders) = ProjectInputs.CollectWithFolders(
                 node.Id, evaluatedById.TryGetValue(node.Id, out var ev) ? ev : null, _workspaceRoot);
@@ -102,7 +103,7 @@ public sealed class IncrementalRunBinder
         // paralelleştirilebilir; hesaplanan değer birebir aynıdır, yalnız daha erken ve daha hızlı hazırdır.
         Parallel.ForEach(
             _plan.Nodes,
-            new ParallelOptions { MaxDegreeOfParallelism = 16, CancellationToken = ct },
+            new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree, CancellationToken = ct },
             node => FingerprintOf(node));
 
         return read;
@@ -159,7 +160,7 @@ public sealed class IncrementalRunBinder
         }
 
         var checks = new ConcurrentDictionary<string, OutputCheck>(StringComparer.OrdinalIgnoreCase);
-        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = 16 },
+        Parallel.ForEach(_plan.Nodes, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
             node => checks[node.Id] = CheckOf(node.Id, timeOnly: false));
         return OutputEvidence.ApplyCycleGroups(checks, _plan.Cycles, id => CheckOf(id, timeOnly: true));
     }
