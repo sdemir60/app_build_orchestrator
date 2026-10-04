@@ -699,12 +699,13 @@ public class IncrementalPlannerTests
         [[CycA, CycB]], "Debug");
 
     /// <summary><see cref="UpstreamCyclePlan"/>'ın imzaları ve üye terimleri. DEĞİŞEN girdiler SCC dışı upstream
-    /// U'nun ve SCC üyesi B'nin içerik fingerprint'leridir.</summary>
-    private static IncrementalSignatures UpstreamCycleSignatures(string uFingerprint, string bFingerprint) =>
+    /// U'nun ve SCC üyesi B'nin içerik fingerprint'leri ile geçiş kipidir (varsayılan Safe).</summary>
+    private static IncrementalSignatures UpstreamCycleSignatures(
+        string uFingerprint, string bFingerprint, DependentMode mode = DependentMode.Safe) =>
         IncrementalPlanner.ComputeWillBuildWithSignatures(
             UpstreamCyclePlan(),
             FingerprintLookup(Fingerprints((CycU, uFingerprint), (CycA, "fpA"), (CycB, bFingerprint), (CycD, "fpD"))),
-            NoState, buildCycles: false, mode: DependentMode.Safe);
+            NoState, buildCycles: false, mode: mode);
 
     // ---- [RESOLVE Faz 3/Task 3.1] Üye terimi (MemberTermById): bileşik imzanın GİRDİSİ olan, üyenin KENDİ terimi
     // plana ayrıca taşınır. Bileşik imza DOWNSTREAM ve "grup kirli mi" için kalır; Resolve'un tur 1'i grubun İÇİNDE
@@ -749,6 +750,19 @@ public class IncrementalPlannerTests
         Assert.Equal(
             BuildSignature.HashText(termA + BuildSignature.ItemSeparator + termB + BuildSignature.ItemSeparator),
             result.SignatureById[CycA]);
+    }
+
+    /// <summary>Fast geçişinde kompozit kurulmaz (bkz. <c>ComputeComponent</c>'in gerekçesi), dolayısıyla üye terimi
+    /// de yoktur: <see cref="IncrementalSignatures.MemberTermById"/> null DEĞİL, BOŞ bir sözlüktür. Tüketen taraf
+    /// (Resolve tur 1, defter yazımı) terimi <c>GetValueOrDefault</c> ile okur; indeksleyici Fast koşusunda atar.</summary>
+    [Fact]
+    public void member_terms_are_an_empty_dictionary_in_fast_mode()
+    {
+        var fast = UpstreamCycleSignatures("fpU", "fpB", DependentMode.Fast);
+
+        Assert.NotNull(fast.MemberTermById);
+        Assert.Empty(fast.MemberTermById);
+        Assert.Contains(CycA, fast.SignatureById.Keys); // geçiş imzayı yine üretir; yalnız üye terimi yoktur
     }
 
     private const string SccE = @"C:\r\E.csproj";      // SCC2 üyeleri (bkz. AdjacentSccNodes)

@@ -203,7 +203,10 @@ public sealed record BuildState(
     // çözülür — üye "gerekli" sayılır (güvenli yön).
     string? CycleMemberTerm = null,
     // Aynı derlemede üyenin okuduğu kardeş yüzeyleri (üretici, dosya, yüzey özeti). Resolve'un tur 1'inde diskteki
-    // yüzey kayıttakinden farklıysa üye derlenir; null ⇒ yüzey kanıtı yok ⇒ üye gerekli.
+    // yüzey kayıttakinden farklıysa üye derlenir; null ⇒ yüzey kanıtı yok ⇒ üye gerekli. Liste KANONİK sıradadır:
+    // Producer'a, sonra File'a göre (StringComparer.OrdinalIgnoreCase), her (Producer, File) çifti bir kez — yazan
+    // taraf bu sırayı üretir. Eşitlik sıraya duyarlıdır (DepIssueRoots/FedOutputs deseni): aynı okumanın iki kaydı
+    // ancak kanonik sırada eşit okunur ve defter JSON'u koşudan koşuya kararlı kalır.
     IReadOnlyList<CycleReadSurface>? CycleReadSurfaces = null,
     // Kaydı yazan koşunun motor parmak izi (EngineFingerprint: MSBuild.exe yolu + dosya sürümü + build argüman
     // sözleşmesi). Bu koşununkinden farklıysa gruptaki herkes gerekli.

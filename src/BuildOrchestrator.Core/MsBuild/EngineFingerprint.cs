@@ -11,8 +11,10 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// başka bir MSBuild seçildi ya da argüman sözleşmesi — ör. WPF targets yolu — değişti).
 ///
 /// <para><b>Girenler:</b> MSBuild.exe tam yolu, dosya sürümü ve <see cref="MsBuildArguments.Build"/> çıktısının
-/// proje yolu DIŞINDAKİ öğeleri, sırasıyla. Liste sabit yer tutucularla istenir: ilk öğe (proje yolu) atılır,
-/// configuration DEĞERİ yer tutucu olarak girer — ikisi de üyenin kendi teriminde zaten vardır. WPF targets argümanı
+/// proje yolu DIŞINDAKİ öğeleri, sırasıyla. Parmak izi koşu geneline aittir (grubun her üyesi aynı değeri okur); bu
+/// yüzden liste sabit yer tutucularla istenir. İlk öğe (proje yolu) atılır: proje kimliği kaydın anahtarıdır (<see
+/// cref="Contracts.Model.BuildState.ProjectId"/>). Configuration DEĞERİ yer tutucu olarak girer: o, üyenin kendi
+/// teriminde vardır (<see cref="BuildSignature"/>'ın <c>cfg=</c> terimi). WPF targets argümanı
 /// (<c>-p:CustomBeforeMicrosoftCommonTargets=</c>) listenin parçasıdır; parmak izi onu da kapsar.</para>
 ///
 /// <para><b>Girmeyen: restore çağrısı.</b> Build'den önce koşabilen ayrı <c>-t:restore</c> çağrısı (<see

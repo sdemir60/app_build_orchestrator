@@ -224,6 +224,23 @@ public class BuildStateStoreTests : IDisposable
         Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = null });
     }
 
+    /// <summary>
+    /// [RESOLVE Faz 3/Task 3.2] <see cref="BuildState.CycleReadSurfaces"/>'ın eşitliği SIRAYA duyarlıdır
+    /// (<c>DepIssueRoots</c>/<c>FedOutputs</c> deseni): aynı okumanın iki kaydı ancak liste kanonik sıradaysa (Producer,
+    /// sonra File; harf-duyarsız) eşit okunur. Yazan taraf bu yüzden kanonik sırayı üretir (alanın yorumunda yazılı);
+    /// eşitlik sırasız yapılırsa bu test ve o yorum birlikte değişir.
+    /// </summary>
+    [Fact]
+    public void Cycle_read_surface_equality_is_order_sensitive_so_writers_keep_the_canonical_order()
+    {
+        var a = new CycleReadSurface(@"C:\r\A.csproj", @"C:\r\A\bin\Debug\A.dll", "SA");
+        var b = new CycleReadSurface(@"C:\r\B.csproj", @"C:\r\B\bin\Debug\B.dll", "SB");
+        var record = new BuildState(@"C:\r\C.csproj", "s", CycleReadSurfaces: [a, b]);
+
+        Assert.Equal(record, record with { CycleReadSurfaces = [a, b] });
+        Assert.NotEqual(record, record with { CycleReadSurfaces = [b, a] });
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {
