@@ -1650,6 +1650,17 @@ tell an operator whether a group hit the ceiling, stopped making progress or con
 the remembered signature when one was written. The same verdict also reaches the App, as `cycleCompleted`
 (§5.3), so it shows up in the event stream instead of only on disk.
 
+The rounds themselves leave a trail in `decision.log` as well, so "why did this group take another round" is
+answered from the log. Before the first round a header names the group, its member and intra-group producer
+counts, whether surface evidence is on, and how long the group-start surface hashing took. When evidence is lost
+— at the start or after a member's compile — one line names the producer, the file and the reason (unreadable,
+meaning locked or corrupt, or no derivable evidence path) and says the group continues in full rounds; only the
+first loss is written. Every completed round ends with one line: the round's decision, the stale members by
+name, the sibling files whose surface moved under them (the evidence behind the stale set, listed up to a limit
+and counted beyond it), the number of levels compiled, the round's wall time and its summed post-compile hashing
+time. Without evidence the stale and moved fields read `n/a`. The texts have a single owner in Core
+(`CycleDecisionLines`); the Supervisor only measures and calls it.
+
 Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
 rounds were never observed and their output may be one generation stale (§14.3).
 

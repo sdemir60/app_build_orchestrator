@@ -30,7 +30,7 @@ public class CycleRoundsTests
     /// senaryoları doğrudan yazabilir. Sıra listesi hem KAÇ tur koştuğunun hem de üyelerin build-order'da
     /// gidip gitmediğinin tek kanıtıdır.
     /// </summary>
-    private sealed class RoundRecorder
+    internal sealed class RoundRecorder
     {
         private readonly List<string> _calls = [];
         private readonly Dictionary<string, int> _rounds = new(StringComparer.OrdinalIgnoreCase);
@@ -62,7 +62,7 @@ public class CycleRoundsTests
     }
 
     /// <summary>A ↔ B: iki üyeli SCC (her biri diğerine bağımlı), build-order A → B.</summary>
-    private static RunPlan TwoMemberCycle() =>
+    internal static RunPlan TwoMemberCycle() =>
         CyclePlanOf(["A", "B"], Node("A", deps: ["B"], inCycle: true), Node("B", deps: ["A"], inCycle: true));
 
     /// <summary>"Dün yeşildi" kaydı: <paramref name="signature"/> imzasıyla Succeeded. Persist ile invalidate'i
@@ -1144,7 +1144,7 @@ public class CycleRoundsTests
     /// "derlediği" üyenin yüzeyini buraya yazar; koordinatörün enjekte edilen <c>apiSurface</c>'ı buradan okur.
     /// Gerçek PE YOK — yüzey özetinin kendisi gerçek metadata ile <c>ApiSurfaceHashTests</c>'te pinlidir;
     /// burada pinlenen, koordinatörün o özetle kurduğu TUR kararlarıdır.</summary>
-    private sealed class SurfaceDisk
+    internal sealed class SurfaceDisk
     {
         private readonly Dictionary<string, string> _byPath = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1171,7 +1171,7 @@ public class CycleRoundsTests
                 StringComparer.OrdinalIgnoreCase);
     }
 
-    private static RunPlan HashModePlan(RunPlan plan, params string[] names) =>
+    internal static RunPlan HashModePlan(RunPlan plan, params string[] names) =>
         plan with { Incremental = RunCoordinatorTests.Incremental(names) with { OutputsById = SurfaceDisk.OutputsFor(names) } };
 
     private static RunPlan SharedCopyPlan(RunPlan plan, params string[] names) =>

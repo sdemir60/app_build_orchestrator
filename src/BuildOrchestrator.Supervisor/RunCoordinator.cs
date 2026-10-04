@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Diagnostics;
@@ -1537,16 +1538,28 @@ public sealed class RunCoordinator(
             id => run.NodeById.TryGetValue(id, out var node) ? node.Dependencies : []);
 
         var outputsById = run.Incremental?.OutputsById;
+        // [PERF Faz E1] decision.log'da grubu ANAN ad: RecordCycleOutcome'un lideriyle aynı (build-order'daki ilk
+        // üye) — aynı grup iki satırda iki farklı adla anılmaz. Satır metinlerinin sahibi CycleDecisionLines'tır.
+        string group = NameOf(run, members[0]);
         // Üreticinin bilinen dosyaları → dosya başına yüzey özeti; tek bir okunamayan dosya kanıt değildir (null).
-        IReadOnlyDictionary<string, string>? SurfaceStateOf(string producerId)
+        // [PERF Faz E1] null dönüşte HANGİ dosyanın NEDEN kanıt olamadığı da döner: kanıt kaybı decision.log'a
+        // adıyla yazılır (yol türetilemedi ⇒ dosya yok; yüzey özeti okunamadı ⇒ kilitli ya da bozuk).
+        IReadOnlyDictionary<string, string>? SurfaceStateOf(string producerId, out string lostFile, out string lostReason)
         {
+            lostFile = CycleDecisionLines.NoFile;
+            lostReason = CycleDecisionLines.NoEvidencePathReason;
             if (outputsById is null || !outputsById.TryGetValue(producerId, out var outputs)) return null;
             var files = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { outputs.Evidence };
             foreach (string fed in outputs.FedCandidates) files.Add(fed);
             var state = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string file in files)
             {
-                if (_apiSurface(file) is not { } hash) return null; // okunamayan dosya kanıt değildir
+                if (_apiSurface(file) is not { } hash) // okunamayan dosya kanıt değildir
+                {
+                    lostFile = file;
+                    lostReason = CycleDecisionLines.UnreadableReason;
+                    return null;
+                }
                 state[file] = hash;
             }
             return state;
@@ -1565,12 +1578,24 @@ public sealed class RunCoordinator(
         // güncellenmez): bir üyenin okuma anı kaydı haritayı referansla tutar ve sonradan kaymaz.
         var surfaceState = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         bool hashMode = outputsById is not null && producers.Count > 0;
+        // [PERF Faz E1] Kanıt SESSİZCE kaybolmaz: ilk okunamayan üreticinin satırı, grup başlığından hemen sonra
+        // yazılır. Çıktı haritası hiç yoksa (artımlı plan yok) kaybedilecek kanıt da yoktur — başlık "off" der.
+        string? evidenceLoss = null;
+        var groupHashClock = Stopwatch.StartNew();
         foreach (string producerId in producers)
         {
             if (!hashMode) break;
-            if (SurfaceStateOf(producerId) is { } initial) surfaceState[producerId] = initial;
-            else hashMode = false;
+            if (SurfaceStateOf(producerId, out string lostFile, out string lostReason) is { } initial)
+                surfaceState[producerId] = initial;
+            else
+            {
+                hashMode = false;
+                evidenceLoss = CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, producerId), lostFile, lostReason);
+            }
         }
+        Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
+            groupHashClock.ElapsedMilliseconds));
+        if (evidenceLoss is not null) Decide(run.Logs, evidenceLoss);
 
         // [DEĞİŞEN KURAL] Yarıda kesilen grupta HİÇBİR üyenin sonucunun arkasında durulamaz: tur 1'de yeşile
         // dönmüş bir üye de Failed raporlanır. Eskiden yalnız reason yazılır, sonuç KORUNURDU — o üye ÖNCEKİ
@@ -1625,6 +1650,11 @@ public sealed class RunCoordinator(
                 run.Events.TryWrite(new CycleRoundStartedEvent(
                     run.RunId, members[0], round, CycleRoundPolicy.RoundCap, toBuild.Count));
 
+                // [PERF Faz E1] Tur satırının ölçüleri: turun süresi, derleme sonrası hash süresi (üyelerin TOPLAMI —
+                // aynı seviyedeki hash'ler eşzamanlı koşabilir) ve koşulan seviye sayısı.
+                var roundClock = Stopwatch.StartNew();
+                long roundHashTicks = 0;
+                int levelsRun = 0;
                 bool cutShort = false;
                 // [seviyeli turlar] Üyeler CycleRoundLevels'ın BARİYERLİ seviyeleriyle derlenir: komşu olmayan
                 // üyeler aynı seviyede EŞZAMANLI (koşunun paralellik tavanı InvokeOnceAsync'teki ortak
@@ -1708,15 +1738,16 @@ public sealed class RunCoordinator(
                         {
                             // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
                             // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
-                            var fresh = SurfaceStateOf(id);
+                            long hashStart = Stopwatch.GetTimestamp();
+                            var fresh = SurfaceStateOf(id, out string lostFile, out string lostReason);
+                            Interlocked.Add(ref roundHashTicks, Stopwatch.GetTimestamp() - hashStart);
                             if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
                             else
                             {
                                 // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
+                                // Kayıp, koşu başındakiyle AYNI satırdır (üretici, dosya, neden).
                                 hashMode = false;
-                                Decide(run.Logs, string.Format(CultureInfo.InvariantCulture,
-                                    "cycle {0}: output surface unreadable — continuing with full rounds",
-                                    Path.GetFileNameWithoutExtension(members[0])));
+                                Decide(run.Logs, CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, id), lostFile, lostReason));
                             }
                         }
                     }
@@ -1732,6 +1763,7 @@ public sealed class RunCoordinator(
                 foreach (var level in CycleRoundLevels.Compute(toBuild, id => siblingDeps[id], mayCollide))
                 {
                     if (StopRequested) { cutShort = true; break; }
+                    levelsRun++;
                     if (level.Count == 1) await CompileOneAsync(level[0]);
                     else await Task.WhenAll(level.Select(CompileOneAsync)); // tümü biter, ilk hata SONRA fırlar
                     if (cutShort) break;
@@ -1755,19 +1787,26 @@ public sealed class RunCoordinator(
                 // daha derlemenin sonucunu DEĞİŞTİREBİLECEĞİ üyeler. Karşılaştırılan, üyenin izlediği dosyalardır
                 // (CycleReadFiles). Karar saf policy'de (CycleRoundPolicy).
                 HashSet<string>? staleNow = null;
+                // [PERF Faz E1] Bayatlığın KANITI: bayat bir üyenin okuduğu hâlinden farklılaşmış kardeş dosyaları
+                // (tur satırının moved alanı). Bayat küme bununla değişmez — yalnız gerekçesi toplanır.
+                SortedSet<string>? movedFiles = null;
                 if (hashMode)
                 {
                     staleNow = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    movedFiles = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (string id in members)
                     {
                         var read = state[id].ReadStates;
                         if (read is null) { staleNow.Add(id); continue; } // savunmacı: kaydı olmayan bayat sayılır
                         foreach (string dep in siblingDeps[id])
-                            if (!read.TryGetValue(dep, out var seen) || Moved(seen, surfaceState[dep]))
+                        {
+                            if (!read.TryGetValue(dep, out var seen)) { staleNow.Add(id); continue; }
+                            foreach (string file in MovedFiles(seen, surfaceState[dep]))
                             {
                                 staleNow.Add(id);
-                                break;
+                                movedFiles.Add(file);
                             }
+                        }
                     }
                 }
 
@@ -1775,6 +1814,10 @@ public sealed class RunCoordinator(
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
                 previousFailed = failed;
+                Decide(run.Logs, CycleDecisionLines.RoundEnded(group, round, decision,
+                    staleNow is null ? null : members.Where(staleNow.Contains).Select(id => NameOf(run, id)).ToList(),
+                    movedFiles?.ToList(), levelsRun, roundClock.ElapsedMilliseconds,
+                    roundHashTicks * 1000 / Stopwatch.Frequency));
                 if (decision == CycleRoundDecision.NoProgress && staleNow is not null)
                     provenHopeless = [.. failed.Where(id => !staleNow.Contains(id))];
                 if (decision == CycleRoundDecision.Continue)
@@ -2021,14 +2064,15 @@ public sealed class RunCoordinator(
         public Dictionary<string, IReadOnlyDictionary<string, string>>? ReadStates { get; set; }
     }
 
-    /// <summary>[okunan dosya kanıtı] Okuma anında kaydedilen dosyalardan biri şimdi farklı mı? Yalnız kayıttaki
-    /// dosyalara bakılır: üyenin okumadığı bir kopyanın değişmesi onu bayat yapmaz.</summary>
-    private static bool Moved(IReadOnlyDictionary<string, string> seen, IReadOnlyDictionary<string, string> now)
+    /// <summary>[okunan dosya kanıtı] Okuma anında kaydedilen dosyalardan ŞİMDİ farklı olanlar — boşsa üye bu
+    /// üretici yüzünden bayat değildir. Yalnız kayıttaki dosyalara bakılır: üyenin okumadığı bir kopyanın
+    /// değişmesi onu bayat yapmaz. [PERF Faz E1] Dönen dosyalar tur satırının moved alanını da besler.</summary>
+    private static IEnumerable<string> MovedFiles(IReadOnlyDictionary<string, string> seen,
+                                                  IReadOnlyDictionary<string, string> now)
     {
         foreach (var (file, hash) in seen)
             if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
-                return true;
-        return false;
+                yield return file;
     }
 
     /// <summary>
