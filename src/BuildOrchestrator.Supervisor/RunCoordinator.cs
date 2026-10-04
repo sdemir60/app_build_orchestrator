@@ -2522,7 +2522,8 @@ public sealed class RunCoordinator(
     /// cref="Core.State.BuildStateStore.InvalidateWithoutEvidence"/>).
     /// </para>
     /// <para>
-    /// <b>Partial merge</b> (<see cref="Core.State.BuildDurationPersister"/> deseni) her iki yolda da geçerlidir:
+    /// <b>Partial merge</b> (<see cref="Core.State.BuildStateStore.Upsert"/> kaydın TÜMÜNÜ değiştirir; bu yüzden mevcut
+    /// kayıt okunur, yalnız ilgili alanlar <c>with</c> ile güncellenir) her iki yolda da geçerlidir:
     /// <see cref="BuildState.BuiltSignature"/>/<see cref="BuildState.BuiltCommit"/>/<see cref="BuildState.LastBranch"/>/
     /// <see cref="BuildState.LastDurationMs"/> DOKUNULMADAN korunur. Gerekçe: (1) imza, Fast (frozen-upstream)
     /// modda dependent'ların karşılaştırma tabanıdır — null'lanırsa bu projeye bağımlı HER proje de gereksizce
