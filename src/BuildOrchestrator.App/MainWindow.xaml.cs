@@ -1351,7 +1351,10 @@ public partial class MainWindow : Window
     private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
     {
         var controller = new TrayBuildIndicatorController(
-            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()))
+            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()),
+            // [perf Faz C · son toparlama B2] Çıkışın BAŞLADIĞI andaki koşu kimliği: bildirim nefesten sonra gelir ve o ana kadar yeni
+            // bir koşu başlamış olabilir; kimlik bildirim anında okunsaydı biten koşunun çıkışı yeni koşuya yazılırdı.
+            () => _vm.RunSerial)
         {
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.

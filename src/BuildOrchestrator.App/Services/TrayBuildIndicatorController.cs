@@ -65,9 +65,14 @@ public interface ITrayRunNotifier
 /// yok) ki üretim kablosu unutulamasın; balon TAM gösterileceği anda (<see cref="CompleteExitAsync"/> sonunda)
 /// TAZE okunur — kuruluş anında değil. Kapalıysa yalnız <see cref="ITrayRunNotifier.ShowRunFinished"/> ÇAĞRILMAZ;
 /// gösterge fiilleri (Show/BeginExit/HideNow) ve nefes AYNEN sürer — ayar bildirimi bastırır, göstergeyi değil.</para>
+///
+/// <para><b>[perf Faz C · son toparlama B2] Çıkış, BAŞLADIĞI andaki koşuya aittir.</b> <paramref name="currentRun"/> ZORUNLUDUR
+/// (üretimde <c>RunViewModel.RunSerial</c>): kimlik çıkışın başladığı anda alınır ve <see cref="ExitCompleted"/> ile taşınır.
+/// Bildirim nefesten sonra gelir; o ana kadar yeni bir koşu başlamış olabilir ve bildirim anındaki kimlik onun olurdu — alıcı
+/// biten koşunun çıkışını yeni koşuya yazardı. Balon çağrısı fırlatsa da bildirim yine gelir (hata gözlem noktasına yazılır).</para>
 /// </summary>
 public sealed class TrayBuildIndicatorController(
-    ITrayBuildIndicatorView view, ITrayRunNotifier notifier, Func<bool> notificationsOn)
+    ITrayBuildIndicatorView view, ITrayRunNotifier notifier, Func<bool> notificationsOn, Func<int> currentRun)
 {
     private bool _mainVisible = true;
     private AppPhase _phase = AppPhase.Empty;
@@ -92,8 +97,10 @@ public sealed class TrayBuildIndicatorController(
     /// animasyonunu ne balonu bekletebilir, hatası da balonu yutamaz. Pencere çıkış sırasında geri geldiyse de gelir (gösterge
     /// zaten gizlenmiştir); "pencere gizli mi, koşu bitti mi" kararı alıcıdadır. Reduced-motion'da zincir faz yazımının İÇİNDE
     /// eşzamanlı koşar — ağır işini alıcı kendisi erteler.
+    /// <para>Bildirim, çıkışın BAŞLADIĞI andaki koşu kimliğini taşır (<c>currentRun</c>): nefes sırasında yeni bir koşu başlasa bile
+    /// çıkış onun değil, çıkışı başlatan koşunundur.</para>
     /// </summary>
-    internal Action? ExitCompleted { get; set; }
+    internal Action<int>? ExitCompleted { get; set; }
 
     /// <summary>Bir derleme koşuyor mu — göstergenin var olma gerekçesi. Sync bilerek DIŞARIDA.</summary>
     private static bool IsActive(AppPhase phase) =>
@@ -176,13 +183,15 @@ public sealed class TrayBuildIndicatorController(
         if (_exitPending) return;
         _exitPending = true;
 
-        if (_animationsEnabled) view.BeginExit(OnExitFinished);
-        else OnExitFinished(); // reduced-motion: oynatılacak çıkış evresi yok, sıra aynen sürer
+        // [son toparlama B2] Kimlik çıkışın BAŞLADIĞI anda alınır, bildirim anında DEĞİL: nefes sırasında yeni bir koşu başlayabilir.
+        int run = currentRun();
+        if (_animationsEnabled) view.BeginExit(() => OnExitFinished(run));
+        else OnExitFinished(run); // reduced-motion: oynatılacak çıkış evresi yok, sıra aynen sürer
     }
 
-    private void OnExitFinished() => _ = CompleteExitAsync();
+    private void OnExitFinished(int run) => _ = CompleteExitAsync(run);
 
-    private async Task CompleteExitAsync()
+    private async Task CompleteExitAsync(int run)
     {
         _exitPending = false;
         if (_shown)
@@ -192,10 +201,17 @@ public sealed class TrayBuildIndicatorController(
         }
 
         await ExitBreath();
-        ShowRunFinishedOnce();
+        try { ShowRunFinishedOnce(); }
+        catch (Exception ex)
+        {
+            // [son toparlama B2] Balon çağrısı fırlatırsa çıkış bildirimi yine gelmeli: alıcı tepside biten koşunun bellek toplamasını ister,
+            // atlanırsa toplama sessizce kaybolurdu. Hata yutulmaz: fire-and-forget zincir (`_ = CompleteExitAsync`) gözlenmemiş bir
+            // exception'la sessizce ölmesin diye gözlem noktasına yazılır ([console pump] deseni, MainWindow.xaml.cs).
+            System.Diagnostics.Debug.WriteLine($"[tray balloon] unobserved error: {ex}");
+        }
         // [perf Faz C · C-1] Bildirim balondan SONRA: alıcı eskiden burada, balondan ÖNCE koşuyordu ve fırlattığında (geçersiz
         // GC.Collect biçimi) istisna bu gözlenmeyen Task'e düşüp balonu sessizce yutuyordu. Artık alıcının hatası balona ulaşamaz.
-        ExitCompleted?.Invoke();
+        ExitCompleted?.Invoke(run);
     }
 
     /// <summary>Koşu başına tek balon: bütçe yalnız yeni bir koşu başlarken tazelenir (<see cref="SetPhase"/>).</summary>

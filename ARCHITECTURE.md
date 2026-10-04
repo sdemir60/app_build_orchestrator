@@ -2421,12 +2421,6 @@ does not repeat it. Measured with CPU cycle counters, a build that runs in the t
 fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
 enough to be felt.
 
-A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
-resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
-failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit and
-shown the result balloon. The collection is blocking and compacting, so it runs only while the window is hidden, after the
-balloon and once the application is idle; it happens once per run and never while the window is visible.
-
 Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
 restores the window through the *same* path as clicking the tray icon, while clicks on the transparent area
@@ -2446,6 +2440,16 @@ ribbon. A line that carries no separator — today only the one an unexpected en
 failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
+
+A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
+resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
+failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit (and
+shown the result balloon, when *Show notifications* is on). The indicator takes the run's identity when its exit starts
+and hands it over with the exit notice, so a run that begins during the pause before the balloon does not inherit the
+previous run's exit: its own collection waits for its own exit. A collection requested while a run is in flight is
+dropped, and that run's own collection covers it. The collection is blocking and compacting, so it runs only while the
+window is hidden, after the exit (and the balloon) and once the application is idle; it happens once per run and never
+while the window is visible.
 
 **Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
 four the application can show: the first-close explanation, the run result, the second instance's warning and
@@ -5892,12 +5896,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
-| Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`) | `App/Services/TrayBuildIndicatorController.cs` |
-| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
-| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
+| Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`, carrying the run the exit began for) | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
+| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
+| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |

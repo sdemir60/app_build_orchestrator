@@ -88,7 +88,7 @@ public partial class MainWindow
     /// </summary>
     private int _collectedRun;
 
-    /// <summary>Göstergesi çıkışını bitirmiş koşunun kimliği — bildirim anındaki <c>RunViewModel.RunSerial</c> (koşu sürüyorsa o
+    /// <summary>Göstergesi çıkışını bitirmiş koşunun kimliği — bildirimin taşıdığı değer (çıkış BAŞLADIĞI andaki <c>RunViewModel.RunSerial</c>; koşu sürüyorsa o
     /// koşu, bittiyse biten koşu: kimlik yalnız yeni bir koşu başlarken artar).</summary>
     private int _indicatorExitedRun;
 
@@ -108,9 +108,11 @@ public partial class MainWindow
     /// ama kullanıcı ekrandadır: o yolda toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
     /// (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
     /// </summary>
-    internal void OnTrayIndicatorExitFinished()
+    /// <param name="run">Göstergenin çıkışı BAŞLADIĞI andaki koşu kimliği (<c>TrayBuildIndicatorController</c> taşır). Burada
+    /// <c>RunSerial</c> okunmaz: bildirim nefesten sonra gelir ve o ana kadar yeni bir koşu başlamış olabilir.</param>
+    internal void OnTrayIndicatorExitFinished(int run)
     {
-        _indicatorExitedRun = _vm.RunSerial;
+        _indicatorExitedRun = run;
         CollectAfterRunWhenDue();
     }
 

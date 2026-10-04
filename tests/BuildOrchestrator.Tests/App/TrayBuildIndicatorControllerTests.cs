@@ -73,11 +73,15 @@ public sealed class TrayBuildIndicatorControllerTests
         /// okuma iddiasını sınamak için).</summary>
         public bool NotificationsOn = true;
 
+        /// <summary>[son toparlama B2] Controller'ın <c>currentRun</c> dikişi (üretimde <c>RunViewModel.RunSerial</c>): testler çıkış
+        /// SIRASINDA değiştirip "nefes içinde yeni koşu başladı"yı taklit eder.</summary>
+        public int RunSerial = 1;
+
         public Fixture()
         {
             View = new FakeView(Recorder);
             Notifier = new RecordingTrayNotifier(Recorder.Log.Add);
-            Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn);
+            Controller = new TrayBuildIndicatorController(View, Notifier, () => NotificationsOn, () => RunSerial);
         }
 
         public List<string> Log => Recorder.Log;
@@ -93,6 +97,59 @@ public sealed class TrayBuildIndicatorControllerTests
         }
     }
 
+    /// <summary>Balon çağrısı fırlatan bildirim yüzeyi: OS balonunun gerçek hata biçimi (ör. kapanmış tepsi ikonu).</summary>
+    private sealed class ThrowingNotifier : ITrayRunNotifier
+    {
+        public void ShowRunFinished(RibbonLine line) => throw new InvalidOperationException("balloon failed");
+        public void ShowBuildIgnored(string reason) { }
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Çıkış bildirimi, çıkışın BAŞLADIĞI andaki koşuya aittir. Nefes sürerken yeni bir koşu
+    /// başlayabilir; bildirim o koşuyu değil, çıkışı başlatan koşuyu taşımalıdır — aksi halde alıcı biten koşunun çıkışını yeni
+    /// koşuya yazar (bellek toplaması yanlış koşuya bağlanır).
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_carries_the_run_that_was_current_when_the_exit_began()
+    {
+        var f = new Fixture().RunningInTray();
+        f.RunSerial = 7;
+        f.Controller.ExitBreath = () =>
+        {
+            f.RunSerial = 8;                               // nefes sürerken yeni koşu başladı
+            f.Controller.SetPhase(AppPhase.Running);
+            return Task.CompletedTask;
+        };
+        var seen = new List<int>();
+        f.Controller.ExitCompleted = run => seen.Add(run);
+
+        f.Controller.SetPhase(AppPhase.Done);              // çıkış başladı: kimlik 7
+        f.View.FinishExit();                               // gizlendi, nefes (yeni koşu), balon, bildirim
+
+        Assert.Equal([7], seen);
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Balon çağrısının hatası çıkış bildirimini atlatmaz. Alıcı tepside biten koşunun bellek
+    /// toplamasını ister; balon fırlatınca bildirim de gelmezse toplama sessizce kaybolurdu. Hata yutulmaz, gözlem noktasına
+    /// yazılır (sıra: balon → bildirim; iki adım birbirinin hatasından bağımsızdır).
+    /// </summary>
+    [Fact]
+    public void The_exit_notice_still_fires_when_the_balloon_call_throws()
+    {
+        var controller = new TrayBuildIndicatorController(new FakeView(new Recorder()), new ThrowingNotifier(), () => true, () => 1);
+        int notices = 0;
+        controller.ExitCompleted = _ => notices++;
+        controller.SetAnimationsEnabled(false);   // reduced-motion: zincir faz yazımının İÇİNDE eşzamanlı tamamlanır
+        controller.SetTerminalLine(Succeeded("Completed"));
+        controller.SetMainWindowVisible(false);
+        controller.SetPhase(AppPhase.Running);
+
+        controller.SetPhase(AppPhase.Done);       // balon çağrısı fırlatır
+
+        Assert.Equal(1, notices);   // KIRMIZI: balon fırlatınca alıcı atlanıyor, toplama sessizce kayboluyordu
+    }
+
     // ---------------------------------------------------------------- çıkış bildirimi ([perf Faz C · C4])
 
     /// <summary>
@@ -104,7 +161,7 @@ public sealed class TrayBuildIndicatorControllerTests
     public void A_throwing_exit_receiver_does_not_swallow_the_run_result_balloon()
     {
         var f = new Fixture().RunningInTray();
-        f.Controller.ExitCompleted = () => throw new InvalidOperationException("receiver failed");
+        f.Controller.ExitCompleted = _ => throw new InvalidOperationException("receiver failed");
 
         f.Controller.SetPhase(AppPhase.Done);
         f.View.FinishExit();
@@ -122,7 +179,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         var f = new Fixture().RunningInTray();
         f.Controller.ExitBreath = () => { f.Log.Add("Breath"); return Task.CompletedTask; };
-        f.Controller.ExitCompleted = () => f.Log.Add("ExitCompleted");
+        f.Controller.ExitCompleted = _ => f.Log.Add("ExitCompleted");
 
         f.Controller.SetPhase(AppPhase.Done);
         Assert.DoesNotContain("ExitCompleted", f.Log);   // çıkış evresi sürerken bildirim yok
@@ -141,7 +198,7 @@ public sealed class TrayBuildIndicatorControllerTests
         var f = new Fixture();
         f.Controller.SetAnimationsEnabled(false);
         f.RunningInTray();
-        f.Controller.ExitCompleted = () => f.Log.Add("ExitCompleted");
+        f.Controller.ExitCompleted = _ => f.Log.Add("ExitCompleted");
 
         f.Controller.SetPhase(AppPhase.Done);   // FinishExit yok: çıkış evresi oynatılmaz
 
@@ -155,7 +212,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         var f = new Fixture().RunningInTray();
         int notices = 0;
-        f.Controller.ExitCompleted = () => notices++;
+        f.Controller.ExitCompleted = _ => notices++;
         f.Controller.SetPhase(AppPhase.Done);
 
         f.Controller.SetMainWindowVisible(true);   // çıkış sürerken pencere geri geldi
@@ -474,7 +531,7 @@ public sealed class TrayBuildIndicatorControllerTests
     {
         string source = File.ReadAllText(Path.Combine(RepoPaths.AppSrcRoot, "MainWindow.xaml.cs"));
         var wiring = new Regex(
-            @"new TrayBuildIndicatorController\(\s*new LazyOverlayView\(this\), notifier, \(\) => ShellSwitches\.ShowNotifications\(_uiState\.Load\(\)\)\)");
+            @"new TrayBuildIndicatorController\(\s*new LazyOverlayView\(this\), notifier, \(\) => ShellSwitches\.ShowNotifications\(_uiState\.Load\(\)\),\s*(?://[^\n]*\s*)*\(\) => _vm\.RunSerial\)"); // üçüncü (notificationsOn) VE dördüncü (currentRun) argüman
 
         Assert.Single(wiring.Matches(source));
     }

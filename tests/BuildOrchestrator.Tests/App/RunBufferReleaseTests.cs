@@ -167,16 +167,16 @@ public class RunBufferReleaseTests
         window.SetSurfaceHidden(true);
         MainWindowHost.StartBuild(vm, "A");
 
-        window.OnTrayIndicatorExitFinished();            // koşu sürerken: henüz toplanmaz — sinyal bu koşu için kaydedilir
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // koşu sürerken: henüz toplanmaz — sinyal bu koşu için kaydedilir
         DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections);
 
         MainWindowHost.FinishBuild(vm, "A");
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
 
-        window.OnTrayIndicatorExitFinished();            // aynı koşunun ikinci bitiş sinyali
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // aynı koşunun ikinci bitiş sinyali
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);
         GC.KeepAlive(window);
@@ -193,14 +193,48 @@ public class RunBufferReleaseTests
         window.SetSurfaceHidden(true);
 
         MainWindowHost.RunBuild(vm, "A");
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // KIRMIZI: bugün hiçbir şey toplamıyor
 
         MainWindowHost.RunBuild(vm, "A");                // ikinci koşu: başlangıç bayrağı sıfırlar
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal(2, collections);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · son toparlama B2] Göstergenin çıkışı, nefes sırasında yeni bir koşu başlasa bile ÖNCEKİ koşuya aittir. Çıkış
+    /// bildirimi nefesten sonra gelir; N'in nefesi içinde N+1 başlarsa bildirimin anındaki koşu kimliği N+1'dir ve çıkış ona
+    /// yazılırdı: N+1 biter bitmez toplama istenir, bloklayan GC N+1'in göstergesinin ekrandaki çıkış animasyonu sırasında koşardı
+    /// ("balondan sonra" kuralının ihlali). Doğrusu: N+1 uçuştayken hiçbir şey toplanmaz, N+1 bitince de ancak N+1'in çıkışı
+    /// bitince — ve o zaman bir kez.
+    /// </summary>
+    [StaFact]
+    public void A_run_that_starts_during_the_indicator_breath_does_not_take_over_the_previous_runs_exit()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        int collections = 0;
+        window.MemoryCollector = () => collections++;
+        window.SetSurfaceHidden(true);
+
+        MainWindowHost.RunBuild(vm, "A");                // N biter; göstergenin çıkışı N için başlar
+        int ended = vm.RunSerial;
+        MainWindowHost.StartBuild(vm, "A");              // N'in nefesi içinde N+1 başladı
+        window.OnTrayIndicatorExitFinished(ended);       // N'in çıkışı (nefesten sonra): kimlik çıkışın başladığı andaki koşu
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);                    // N+1 uçuşta: ertelenen toplama atlanır
+        Assert.True(vm.RunSerial > ended, "ön-koşul: N+1 başladı");
+
+        MainWindowHost.FinishBuild(vm, "A");             // N+1 biter; göstergesinin çıkışı henüz bitmedi
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(0, collections);                    // KIRMIZI: N+1'in çıkış animasyonu sürerken bloklayan GC koşuyordu
+
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);            // N+1'in çıkışı bitti
+        DispatcherPump.DrainToIdle();
+        Assert.Equal(1, collections);
         GC.KeepAlive(window);
     }
 
@@ -215,12 +249,12 @@ public class RunBufferReleaseTests
         window.MemoryCollector = () => collections++;
         MainWindowHost.RunBuild(vm, "A");
 
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections);                    // pencere görünür
 
         window.SetSurfaceHidden(true);
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Equal(1, collections);                    // aynı bildirim gizliyken toplar
         GC.KeepAlive(window);
@@ -269,7 +303,7 @@ public class RunBufferReleaseTests
         var (window, vm, seen) = HiddenRunWithOneLine(dir);
 
         vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));   // faz Stopped: reduced-motion'da gösterge çıkışı ŞİMDİ biter
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
         Assert.Empty(seen);                                       // koşu hâlâ uçuşta: runCompleted gelmedi
 
@@ -289,7 +323,7 @@ public class RunBufferReleaseTests
         var (window, vm, seen) = HiddenRunWithOneLine(dir);
 
         vm.OnEvent(new ErrorEvent("runFailed", "the build failed"));
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: hata bitişinde tampon bırakılmıyordu
@@ -306,7 +340,7 @@ public class RunBufferReleaseTests
         var (window, vm, seen) = HiddenRunWithOneLine(dir);
 
         vm.OnEngineExited(1);
-        window.OnTrayIndicatorExitFinished();
+        window.OnTrayIndicatorExitFinished(vm.RunSerial);
         DispatcherPump.DrainToIdle();
 
         Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: motor kaybında tampon bırakılmıyordu
