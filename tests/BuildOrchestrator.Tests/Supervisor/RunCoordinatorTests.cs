@@ -2389,9 +2389,34 @@ public class RunCoordinatorTests
         var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
         Assert.Null(started.CpuCapPercent);
         Assert.Equal(4, started.Parallelism);
-        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap off", StringComparison.Ordinal));
-        Assert.Contains(h.ConsoleLines,
-            l => l.Contains("parallelism: 4 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal));
+        Assert.Contains(h.ConsoleLines, l => l.Contains("cpu cap off", StringComparison.Ordinal)); // başlık satırı
+        // [DEĞİŞEN KURAL — fix 1A · M1] Eski iddia notu konsol geri çağrısında alt-dize olarak arıyordu. O kopya kullanıcıya
+        // hiç ulaşmıyordu (App Supervisor'ın stderr'ini atar) ve kalktı: kullanıcının satırını App yazar (runStarted —
+        // RunViewModelStateTests). Burada: decision.log'da TAM satır tek kez, konsol geri çağrısında hiç.
+        AssertResolveNoteOnlyInDecisionLog(h, "parallelism: 4 · cpu cap off · priority normal (Resolve cycles)");
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1A — M1] Makine bütçeyi kırptığında not profilin isteğini değil motorun FİİLEN
+    /// koşturduğu işçi sayısını söyler (komut dört istedi, tek çekirdek ikiye kırptı).</summary>
+    [Fact]
+    public async Task A_resolve_cycles_note_names_the_clamped_worker_count()
+    {
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(ResolvePlan(), invoker) { Machine = (Cores: 1, FreeBytes: Harness.AmpleMachine.FreeBytes) };
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 4) with { PerfMode = "Balanced" }, default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(2, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
+        AssertResolveNoteOnlyInDecisionLog(h, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)");
+    }
+
+    /// <summary>[fix 1A — M1] Resolve notu decision.log'da TAM satır olarak TEK kez (satır = <c>HH:mm:ss.fff</c> damgası,
+    /// boşluk, metin), Supervisor'ın konsol geri çağrısında (stderr) hiç yok.</summary>
+    private static void AssertResolveNoteOnlyInDecisionLog(Harness h, string note)
+    {
+        Assert.Single(h.DecisionLog.Split('\n'), l => l.TrimEnd('\r') is { Length: > 13 } line && line[13..] == note);
+        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("priority normal", StringComparison.Ordinal));
     }
 
     /// <summary>[RESOLVE Faz 4] Anahtar kapalıyken Resolve bugünkü gibi profilin cap + priority'siyle koşar.</summary>

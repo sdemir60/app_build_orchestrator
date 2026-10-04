@@ -59,11 +59,14 @@ public class ResolveAtFullPrioritySettingsTests
 
         await run.ApplySettingsAsync([], @"D:\repo", [], resolveAtFullPriority: false);
         Assert.False(run.ResolveAtFullPriority);
-        Assert.Contains("Resolve cycles at full priority off — Resolve cycles follows the performance mode",
+        // [DEĞİŞEN KURAL — fix 1A · M5] Sonek eskiden "Resolve cycles follows…" / "Resolve cycles runs…" idi. Save koşu
+        // sürerken de yazılır ve not uçuştaki koşuyu değiştiriyormuş gibi okunuyordu; motor koşu başındaki anahtarı korur.
+        // Sonek artık bir SONRAKİ Resolve koşusunu söyler. Etiket önekini kod katalogdan türetir; test literal metni pinler.
+        Assert.Contains("Resolve cycles at full priority off — the next Resolve cycles run follows the performance mode",
             run.GetRunDocumentText(), StringComparison.Ordinal);
 
         await run.ApplySettingsAsync([], @"D:\repo", [], resolveAtFullPriority: true);
-        Assert.Contains("Resolve cycles at full priority on — Resolve cycles runs at normal priority with no CPU cap",
+        Assert.Contains("Resolve cycles at full priority on — the next Resolve cycles run runs at normal priority with no CPU cap",
             run.GetRunDocumentText(), StringComparison.Ordinal);
     }
 

@@ -600,6 +600,123 @@ public class RunViewModelStateTests
         Assert.DoesNotContain("applies to the next run", text);
     }
 
+    // ---------------------------------------------------------------- [RESOLVE Faz 4 · fix 1A] Resolve notu ve koşu bağlamı
+
+    /// <summary>[RESOLVE Faz 4 · fix 1A] Döngülü topolojili bir VM (Balanced). Koşular üretimdeki gibi KOMUT yolundan
+    /// başlar — koşunun perf bağlamı (mod + Resolve anahtarı) yalnız orada yakalanır. Motor başlatılmamıştır: gönderim
+    /// düşer, motorun cevabını (<see cref="RunStartedEvent"/>) test verir.</summary>
+    private static RunViewModel PerfContextVm(EngineHost engine, bool fullPriority)
+    {
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1")
+        {
+            RootPath = @"D:\repo",
+            PerfMode = "Balanced",
+            ResolveAtFullPriority = fullPriority,
+        };
+        vm.OnEvent(CycleTopology());
+        return vm;
+    }
+
+    /// <summary>Koşuyu komut yolundan başlatır: <see cref="RunMode.Cycles"/> → Resolve cycles, diğeri → Build.</summary>
+    private static Task StartViaCommandAsync(RunViewModel vm, RunMode mode) =>
+        (mode == RunMode.Cycles ? vm.BuildCyclesCommand : vm.BuildCommand).ExecuteAsync(null);
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I1] Resolve cycles tam öncelikte başlarken kullanıcının konsoluna TEK satır düşer; App
+    /// <c>runStarted</c>'ta yazar. Sayı motorun fiilî paralelliğidir (profilin dördü değil, cevaptaki üç), anahtar koşu
+    /// başlatılırken yakalanan değerdir. Kusur: satır yalnız Supervisor'ın stderr'ine gidiyordu ve App stderr'i atar —
+    /// kullanıcı onu hiç görmüyordu. Anahtar kapalıyken ve Build'de satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Cycles, true, true)]
+    [InlineData(RunMode.Cycles, false, false)]
+    [InlineData(RunMode.Build, true, false)]
+    public async Task A_resolve_run_at_full_priority_says_so_once_when_it_starts(RunMode mode, bool fullPriority, bool noted)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority);
+
+        await StartViaCommandAsync(vm, mode);
+        vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
+
+        string text = vm.GetRunDocumentText();
+        Assert.Equal(noted ? 1 : 0, text.Split("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)").Length - 1);
+        Assert.Equal(noted, text.Contains("priority normal", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I3] Koşu içi chip notu motorun O koşuya uyguladığını söyler: Resolve cycles tam öncelikteyse
+    /// cap'siz + Normal (<see cref="PerfNoteText.ResolveNote"/>), anahtar kapalıysa ya da koşu Build ise profilin kendi notu.
+    /// Mod ve anahtar koşunun yakalanan bağlamından gelir (komut yolundan başlamış koşu).
+    /// </summary>
+    [Theory]
+    [InlineData(RunMode.Cycles, true, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)")]
+    [InlineData(RunMode.Cycles, false, "parallelism: 2 · cpu cap 40%")]
+    [InlineData(RunMode.Build, true, "parallelism: 2 · cpu cap 40%")]
+    public async Task A_perf_change_during_a_run_describes_what_the_engine_applies_to_it(
+        RunMode mode, bool fullPriority, string expected)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority);
+        await StartViaCommandAsync(vm, mode);
+        vm.OnEvent(new RunStartedEvent("r1", mode, 4, 3, "Debug"));
+
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        string text = vm.GetRunDocumentText();
+        Assert.Contains(expected, text);
+        Assert.Equal(expected.Contains("priority normal", StringComparison.Ordinal),
+            text.Contains("priority normal", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I2] Açılış koreografisi boyunca chip canlıdır (<see cref="RunViewModel.IsMidRunLocked"/>) ve
+    /// notu AÇILAN koşuyu anlatmalı. Kusur: bağlam komutla birlikte, koreografiden SONRA yazılıyordu; oturumun ilk Resolve'u
+    /// o pencerede <c>cpu cap 40%</c> der, motor ise cap'siz ve Normal koşardı.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_while_a_resolve_run_is_opening_describes_that_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Cycles);
+        Assert.True(vm.IsStarting); // komut henüz gitmedi
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        Assert.Contains("parallelism: 2 · cpu cap off · priority normal (Resolve cycles)", vm.GetRunDocumentText());
+        choreography.SetResult();
+        await start;
+    }
+
+    /// <summary>
+    /// [RESOLVE Faz 4 · fix 1A — I2] Bir önceki koşunun bağlamı sonrakinin koreografisine sızmaz: Resolve başlatıldıktan
+    /// (komutu gittikten) sonra Build açılırken chip düz notu yazar — motor Light'ın cap'ini uygular. Kusur: not son
+    /// gönderilen (Resolve) komutla konuşup <c>cpu cap off · priority normal</c> derdi.
+    /// </summary>
+    [Fact]
+    public async Task A_perf_change_while_a_build_opens_after_a_resolve_start_writes_the_plain_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles); // komut gider; motor yok, VM boşa döner
+        Assert.False(vm.IsMidRunLocked);
+        var choreography = new TaskCompletionSource();
+        vm.OperationChoreography = _ => choreography.Task;
+
+        var start = StartViaCommandAsync(vm, RunMode.Build);
+        Assert.True(vm.IsStarting);
+        await vm.CyclePerfAsync(); // Balanced → Light
+
+        string text = vm.GetRunDocumentText();
+        Assert.Contains("parallelism: 2 · cpu cap 40%", text);
+        Assert.DoesNotContain("priority normal", text);
+        choreography.SetResult();
+        await start;
+    }
+
     // ---------------------------------------------------------------- [A13/T3a · a10/a11] K11 notunun Balanced varyantı + damgası
 
     /// <summary>

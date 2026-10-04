@@ -1013,14 +1013,13 @@ public sealed class RunCoordinator(
             perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
         // [RESOLVE Faz 4 / karar 11] Resolve cycles profilin önceliği/tavanı yerine tam öncelikte koşuyorsa bunu run
         // başında söyleyen TEK satır (metin PerfNoteText'te, chip notunun ailesinde; işçi sayısı yukarıdaki bütçeden) —
-        // konsola ve decision.log'a AYNI metin. Dönüşüm profili değiştirmediyse satır yoktur.
+        // decision.log'a. Dönüşüm profili değiştirmediyse satır yoktur. [fix 1A — I1] Kullanıcının konsolundaki satırı App
+        // yazar (runStarted'ta, AYNI metin); stderr'e kopya YAZILMAZ — App stderr'i atar, ileride konsola taşınırsa satır
+        // çiftlenmesin.
         if (perf is { } chosenPerf
             && PerfNoteText.ResolveNote(cmd.Mode, chosenPerf with { Parallelism = parallelism }, cmd.ResolveAtFullPriority)
                 is { } resolveNote)
-        {
-            console(resolveNote);
             Decide(logs, resolveNote);
-        }
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.

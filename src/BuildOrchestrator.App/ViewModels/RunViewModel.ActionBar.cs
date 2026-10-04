@@ -201,9 +201,13 @@ public sealed partial class RunViewModel
     {
         if (fullPriority == ResolveAtFullPriority) return;
         ResolveAtFullPriority = fullPriority;
+        // [fix 1A — M4] Etiket KATALOGDAN gelir (ShellSwitch.Note deseni): anahtarın adı burada literal yazılmaz.
+        // [fix 1A — M5] Sonek bir SONRAKİ Resolve koşusunu söyler: not koşu sürerken de yazılır, motor ise uçuştaki koşunun
+        // run başı anahtarını korur.
+        string label = GeneralSettingsCatalog.Definition(GeneralSetting.ResolveAtFullPriority).Label;
         AppendRunLine(fullPriority
-            ? "Resolve cycles at full priority on — Resolve cycles runs at normal priority with no CPU cap"
-            : "Resolve cycles at full priority off — Resolve cycles follows the performance mode");
+            ? $"{label} on — the next Resolve cycles run runs at normal priority with no CPU cap"
+            : $"{label} off — the next Resolve cycles run follows the performance mode");
     }
 
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
@@ -252,7 +256,8 @@ public sealed partial class RunViewModel
     /// <param name="settingNotes">[P3 · P4] <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>'in <c>Commit</c>'inin
     /// ürettiği, DEĞİŞEN kabuk anahtarlarının (Start with Windows, Start minimized to tray, Close to tray, Show
     /// notifications) konsol notları —
-    /// <see cref="ApplyStashOnBranchSwitch"/>'ten HEMEN SONRA, idle kapısından ÖNCE <see cref="AppendRunLine"/> ile
+    /// <see cref="ApplyResolveAtFullPriority"/>'den HEMEN SONRA (sıra: Pull → Stash → Resolve → bu notlar), idle kapısından
+    /// ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
     /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
