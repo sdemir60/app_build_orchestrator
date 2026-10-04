@@ -8,6 +8,7 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Io;
 using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
@@ -1582,16 +1583,26 @@ public sealed class RunCoordinator(
         // yazılır. Çıktı haritası hiç yoksa (artımlı plan yok) kaybedilecek kanıt da yoktur — başlık "off" der.
         string? evidenceLoss = null;
         var groupHashClock = Stopwatch.StartNew();
-        foreach (string producerId in producers)
+        if (hashMode)
         {
-            if (!hashMode) break;
-            if (SurfaceStateOf(producerId, out string lostFile, out string lostReason) is { } initial)
-                surfaceState[producerId] = initial;
-            else
-            {
-                hashMode = false;
-                evidenceLoss = CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, producerId), lostFile, lostReason);
-            }
+            // [PERF Faz E2] Üreticiler PARALEL okunur (derece: tek IO paralelliği sabiti). Kanıt İLK hatada kapanır:
+            // kaybı yalnız CAS'ı kazanan çağrı yazar ve döngü yeni üretici başlatmaz; sözlük yazımı kilit altında.
+            int lost = 0;
+            Parallel.ForEach(producers, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
+                (producerId, loop) =>
+                {
+                    if (Volatile.Read(ref lost) != 0) return;
+                    if (SurfaceStateOf(producerId, out string lostFile, out string lostReason) is { } initial)
+                    {
+                        lock (surfaceState) surfaceState[producerId] = initial;
+                    }
+                    else if (Interlocked.CompareExchange(ref lost, 1, 0) == 0)
+                    {
+                        evidenceLoss = CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, producerId), lostFile, lostReason);
+                        loop.Stop();
+                    }
+                });
+            hashMode = lost == 0;
         }
         Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
             groupHashClock.ElapsedMilliseconds));
@@ -1705,6 +1716,7 @@ public sealed class RunCoordinator(
                     // giren dalga üyeleri de "derleniyor" görünürdü (5 uydulu dalga, paralellik 2'de beşi birden).
                     await run.InvokeSlots.WaitAsync(ct);
                     bool announced = false;
+                    InvokeOutcome? outcome = null; // slot bırakıldıktan SONRAKİ hash kararına taşınır
                     try
                     {
                         // [§4.5] Sıra beklenirken Stop düşmüş olabilir: üye henüz BAŞLAMADI, başlatılmaz. Yukarıdaki
@@ -1716,7 +1728,7 @@ public sealed class RunCoordinator(
                         announced = true;
                         // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
                         // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
-                        var outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
+                        outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
                             suppressRestore: member.Result == BuildResult.Succeeded,
                             observeLine: compiled is null ? null : ObserveCompilerLine);
                         member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
@@ -1734,22 +1746,6 @@ public sealed class RunCoordinator(
                         }
                         if (outcome.Result != BuildResult.Succeeded)
                             member.FailReason = outcome.FailReason;
-                        else if (hashMode && producers.Contains(id))
-                        {
-                            // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
-                            // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
-                            long hashStart = Stopwatch.GetTimestamp();
-                            var fresh = SurfaceStateOf(id, out string lostFile, out string lostReason);
-                            Interlocked.Add(ref roundHashTicks, Stopwatch.GetTimestamp() - hashStart);
-                            if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
-                            else
-                            {
-                                // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
-                                // Kayıp, koşu başındakiyle AYNI satırdır (üretici, dosya, neden).
-                                hashMode = false;
-                                Decide(run.Logs, CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, id), lostFile, lostReason));
-                            }
-                        }
                     }
                     finally
                     {
@@ -1757,6 +1753,31 @@ public sealed class RunCoordinator(
                         // biten invoke de bitmiştir — grup onu kesip her üyeyi Failed raporlayana dek satır bekler.
                         if (announced) run.Events.TryWrite(new CycleMemberHeldEvent(run.RunId, id));
                         run.InvokeSlots.Release();
+                    }
+
+                    // [PERF Faz E2] SIRA — buraya yazım ekleyen (RESOLVE 3.4) bunu korur: (1) sonuç üyeye try içinde
+                    // yazılır; (2) CycleMemberHeldEvent slot bırakılmadan ÖNCE yazılır (finally); (3) derleme sonrası
+                    // hash BURADA, slot dışında okunur — büyük bir üreticinin okunması koşunun MSBuild kapasitesinden
+                    // düşmez, sıradaki üye bu arada derlemeye başlar; (4) surfaceState yazımı ve kanıtın kapanışı kilit
+                    // altındadır (aynı seviyedeki üyeler sözlüğü okuyor olabilir); (5) CompileOneAsync hash yazılmadan
+                    // dönmez ⇒ seviye bariyeri sonraki seviyeye taze yüzeyi verir. Stop'un return'ü ve istisna buraya gelmez.
+                    if (outcome?.Result == BuildResult.Succeeded && hashMode && producers.Contains(id))
+                    {
+                        // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
+                        // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
+                        long hashStart = Stopwatch.GetTimestamp();
+                        var fresh = SurfaceStateOf(id, out string lostFile, out string lostReason);
+                        Interlocked.Add(ref roundHashTicks, Stopwatch.GetTimestamp() - hashStart);
+                        if (fresh is not null) lock (surfaceState) surfaceState[id] = fresh;
+                        else
+                        {
+                            // Okunamayan yüzey kanıt değildir: kısa devre bu gruptan çekilir, tam tura dönülür.
+                            // Kayıp, koşu başındakiyle AYNI satırdır; eşzamanlı iki kayıptan yalnız ilki yazılır.
+                            bool first;
+                            lock (surfaceState) { first = hashMode; hashMode = false; }
+                            if (first)
+                                Decide(run.Logs, CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, id), lostFile, lostReason));
+                        }
                     }
                 }
 

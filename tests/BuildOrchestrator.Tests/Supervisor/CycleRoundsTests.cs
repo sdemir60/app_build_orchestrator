@@ -1382,6 +1382,103 @@ public class CycleRoundsTests
         Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
     }
 
+    /// <summary>
+    /// [PERF Faz E2] Grup başı yüzey hash'i üreticiler arasında PARALELDİR (derece: <c>IoParallelism.Degree</c>).
+    /// Eskiden üreticiler SIRAYLA okunurdu ve gerçek bir Resolve'da grup başı hash turun önünde tek başına
+    /// saniyeler tutuyordu. Sahte yüzey her çağrıda en çok 50 ms bekler; bekleme BAŞKA bir çağrının içeride olmasıyla
+    /// biter (sabit uyku değil, koşul + tavan [D8]): sıralı okumada hiçbir çağrı eşini görmez ve sekiz üreticinin
+    /// hash'i 8×50 ms'yi bulur, paralel okumada çağrılar buluşur ve beklemez. Süre E1'in grup başlığından okunur.
+    /// </summary>
+    [Fact]
+    public async Task the_group_start_surface_hash_reads_the_producers_in_parallel()
+    {
+        const int Producers = 8;
+        var ceiling = TimeSpan.FromMilliseconds(50);
+        string[] names = [.. Enumerable.Range(1, Producers).Select(i => "P" + i)];
+        // Halka: P1 → P2 → … → P8 → P1 — her üye bir kardeşin bağımlılığıdır, yani sekizi de üreticidir.
+        var plan = HashModePlan(CyclePlanOf(names,
+            names.Select((name, i) => Node(name, deps: [names[(i + 1) % Producers]], inCycle: true)).ToArray()), names);
+        var disk = new SurfaceDisk();
+        int invoked = 0, inside = 0, peak = 0;
+        using var met = new ManualResetEventSlim(false);
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => { Interlocked.Exchange(ref invoked, 1); return Ok(); });
+        using var h = new Harness(plan, invoker, apiSurface: path =>
+        {
+            if (Volatile.Read(ref invoked) == 0) // yalnız grup başı hash'i: ilk invoke'tan önce
+            {
+                int now = Interlocked.Increment(ref inside);
+                int seen;
+                while (now > (seen = Volatile.Read(ref peak)) && Interlocked.CompareExchange(ref peak, now, seen) != seen) { }
+                if (now > 1) met.Set();
+                met.Wait(ceiling);
+                Interlocked.Decrement(ref inside);
+            }
+            return disk.Read(path);
+        });
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.True(Volatile.Read(ref peak) > 1, "the group-start hash never read two producers at once");
+        var header = System.Text.RegularExpressions.Regex.Match(h.DecisionLog,
+            @"cycle P1: 8 members, 8 producers, evidence on, hash (\d+) ms");
+        Assert.True(header.Success, h.DecisionLog);
+        Assert.True(long.Parse(header.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
+                    < Producers * (long)ceiling.TotalMilliseconds, header.Value);
+    }
+
+    /// <summary>
+    /// [PERF Faz E2] Derleme sonrası yüzey hash'i MSBuild sırasını (slotu) TUTMAZ: üye derlemesi bitince slotu
+    /// bırakır, hash'i SONRA okur — sırada bekleyen seviye arkadaşı o arada derlemeye başlar. Eskiden hash slot
+    /// tutularak okunurdu; büyük bir üreticinin okunması koşunun MSBuild kapasitesinden düşerdi. "Bitti, grubunu
+    /// bekliyor" ilanı (<see cref="CycleMemberHeldEvent"/>) yine slot bırakılmadan ÖNCE yazılır. Paralellik 1:
+    /// yıldızın üç uydusu aynı seviyede, tek slot için sıradadır. İlk uydunun derleme sonrası hash'i en çok 200 ms
+    /// bekler; bekleme başka bir uydunun derlemeye başlamasıyla biter (koşul + tavan [D8]) — slot tutulsaydı o uydu
+    /// hash bitmeden başlayamazdı.
+    /// </summary>
+    [Fact]
+    public async Task the_post_compile_surface_hash_runs_after_the_build_slot_is_released()
+    {
+        var disk = StableStarDisk();
+        var plan = HashModePlan(StarCycle(), "Hub", "S1", "S2", "S3");
+        int satelliteStarts = 0, firstHashTaken = 0;
+        bool overlapped = false;
+        var compiled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var anotherStarted = new ManualResetEventSlim(false);
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker(async (name, round, _) =>
+        {
+            if (round == 1 && name.StartsWith('S') && Interlocked.Increment(ref satelliteStarts) >= 2)
+                anotherStarted.Set();
+            await Task.Yield(); // gerçek derleme gibi askıda: seviye arkadaşları slot sırasına girer
+            lock (compiled) compiled.Add(name);
+            return Ok();
+        });
+        using var h = new Harness(plan, invoker, apiSurface: path =>
+        {
+            string name = Path.GetFileNameWithoutExtension(path);
+            bool postCompile;
+            lock (compiled) postCompile = compiled.Contains(name);
+            if (postCompile && name.StartsWith('S') && Interlocked.Exchange(ref firstHashTaken, 1) == 0)
+                Volatile.Write(ref overlapped, anotherStarted.Wait(TimeSpan.FromMilliseconds(200)));
+            return disk.Read(path);
+        });
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.True(Volatile.Read(ref overlapped),
+            "no level mate could start while the first satellite's surface was hashed — the hash held the build slot");
+        // İlan sırası korunur: ilk uydunun "bitti" ilanı, sıradaki uydunun "derleniyor" ilanından ÖNCE yazılır.
+        var events = h.Events.ToList();
+        string first = events.OfType<ProjectStartedEvent>().First(e => NameOf(e.ProjectId).StartsWith('S')).ProjectId;
+        int held = events.FindIndex(e => e is CycleMemberHeldEvent m && m.ProjectId == first);
+        int next = events.FindIndex(e => e is ProjectStartedEvent s && s.ProjectId != first && NameOf(s.ProjectId).StartsWith('S'));
+        Assert.True(held >= 0 && held < next, $"held={held}, next={next}");
+        Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+    }
+
     // ---------------------------------------------------------------- 12c) okunan dosya kanıtı
     // Bir kardeşin çıktısı birden çok dosyada durur (kendi bin'i + post-build'in beslediği paylaşılan kopyalar).
     // Tüketicinin gerçekte hangisini okuduğunu derleyicinin komut satırı kesin söyler; tur sonu kararı o dosyaya

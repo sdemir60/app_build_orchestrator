@@ -1554,7 +1554,11 @@ second round with no API moved. Every copy stays in the record, the conservative
 failed (whether another round can help is judged on the widest evidence), when there is no command line (the
 compiler did not run, or its line could not be read), when the compiler read no file of the dependency's name
 (the reference was not found, and the file may yet appear), and when the file it read is none of the
-dependency's known copies (`CycleReadFiles`). At the end of the round the records are compared with the disk.
+dependency's known copies (`CycleReadFiles`). A producer's own surface is hashed when the group starts — all
+producers in parallel, bounded by the shared IO parallelism (`IoParallelism`) — and again after each of its
+successful compiles, once the member has released its build slot: reading a large output never holds a slot
+another member could use, and the level barrier still waits for the hash, so the next level reads the fresh
+surface. At the end of the round the records are compared with the disk.
 Everyone green and nobody stale means **converged**: every member provably compiled against
 final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
 whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
