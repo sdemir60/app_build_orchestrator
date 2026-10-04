@@ -2247,10 +2247,12 @@ the machine (`BytesPerWorker`, `ReserveBytes`), and the answer is never below on
 the memory is the one named. The multiple is above one on purpose: measured on the real workspace on machines
 restricted to two and to four logical processors, a rebuild is dominated by process start-up and file latency rather
 than by compute, so workers beyond the processor count still shorten it (one worker took nearly twice as long as two on
-the smaller machine, and four beat three on the larger). The memory rule is a safety net: a run that is mostly freshness
-checks commits far less than a full compile, so the rule comes into play on low-memory machines. `runStarted` carries
-the **actual** count, so the App's flow line and its ETA show what is running, and when the request was reduced the
-console and `decision.log` both get the same line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`).
+the smaller machine, and four beat three on the larger). The memory budget follows a full compile measured on the
+real workspace: beyond a fixed base for the engine and its first worker, each extra worker commits a few hundred
+megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
+on machines with little free memory. `runStarted` carries the **actual** count, so the App's flow line and its ETA show
+what is running, and when the request was reduced the console and `decision.log` both get the same line,
+`workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`).
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared

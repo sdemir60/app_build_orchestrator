@@ -20,10 +20,10 @@ public readonly record struct WorkerBudgetDecision(int Workers, string? Reason);
 /// iki işçinin neredeyse iki katı sürdü, dört işlemcide dört işçi üçten hızlıydı. İş işlemci değil süreç/IO gecikmesi
 /// ağırlıklı; çekirdek sayısının üstündeki işçi hâlâ kazandırıyor. Ölçülen aralıkta kazanan oran iki kattı, daha
 /// fazlası ölçülmedi — tavan bu yüzden oradadır.</para>
-/// <para><b>Bellek kuralı (güvenlik ağı):</b> boş bellekten <see cref="ReserveBytes"/> makineye bırakılır, kalan işçi
-/// başına <see cref="BytesPerWorker"/> ile bölünür (ARCHITECTURE §11.1'deki gerçek derleme ölçümü). Ölçümdeki Rebuild
-/// çoğunlukla güncellik denetimi olduğundan commit artışı bunun çok altında kaldı; kural düşük bellekli makinede devreye
-/// girer.</para>
+/// <para><b>Bellek kuralı (güvenlik ağı):</b> boş bellekten <see cref="ReserveBytes"/> makineye (ve motorla ilk işçinin
+/// tabanına) bırakılır, kalan işçi başına <see cref="BytesPerWorker"/> ile bölünür. İkisi de gerçek bir derlemenin
+/// ölçümüne dayanır (Clean → Build, tam derleyici): motor ile ilk işçinin tabanından sonra her ek işçi birkaç yüz MB
+/// commit ekledi; kural bunun üstüne pay koyar (ARCHITECTURE §11.1). Kural düşük bellekli makinede devreye girer.</para>
 /// </summary>
 public static class WorkerBudget
 {
@@ -32,10 +32,12 @@ public static class WorkerBudget
     /// <summary>Mantıksal işlemci başına izin verilen işçi — çekirdek kuralının TEK parametresi.</summary>
     public const int WorkersPerCore = 2;
 
-    /// <summary>Bir işçinin tahmini commit'i (gerçek derlemede ölçülen; ARCHITECTURE §11.1).</summary>
-    public const long BytesPerWorker = 2 * Gb;
+    /// <summary>Bir işçi için bütçelenen bellek: gerçek derlemede ölçülen ek işçi maliyetinin (birkaç yüz MB) üstüne
+    /// konan pay (ARCHITECTURE §11.1).</summary>
+    public const long BytesPerWorker = Gb / 2;
 
-    /// <summary>Makineye bırakılan pay: boş bellekten bu kadarı işçilere AYRILMAZ (IDE, tarayıcı, işletim sistemi).</summary>
+    /// <summary>Makineye bırakılan pay: boş bellekten bu kadarı işçilere AYRILMAZ. Motorun ve ilk işçinin sabit tabanını
+    /// ve makinenin geri kalanını (IDE, tarayıcı, işletim sistemi) karşılar.</summary>
     public const long ReserveBytes = 2 * Gb;
 
     /// <summary>

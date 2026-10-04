@@ -186,7 +186,8 @@ public class RunCoordinatorTests
             BuildStateStore? stateStore = null,
             ICpuGovernor? cpuGovernor = null, MemoryStream? output = null, InFlightLedger? inFlight = null,
             Func<string, string?>? apiSurface = null,
-            string? customBeforeTargetsPath = null)
+            string? customBeforeTargetsPath = null,
+            bool productionMachine = false)
         {
             _out = output ?? new MemoryStream(); // [Fix round 2] testler pump'ı duraklatan bir stdout verebilir
             Sut = new RunCoordinator(
@@ -214,8 +215,9 @@ public class RunCoordinatorTests
                 apiSurface: apiSurface,
                 // [PERF Faz D] Varsayılan makine BOLDUR: eski testler (paralellik tavanı, boşta bekleyen işçiler…) koşunun
                 // yapıldığı makinenin o anki boş belleğine/işlemcisine bağlı bir kırpmaya uğramasın. Kırpma testleri
-                // Machine'i kendisi verir.
-                machine: () => Machine);
+                // Machine'i kendisi verir. productionMachine: true ⇒ seam HİÇ verilmez (null): motor üretimdeki
+                // varsayılanı, yani gerçek makineyi okur.
+                machine: productionMachine ? null : () => Machine);
         }
 
         /// <summary>Bol işlemci ve bellek: işçi bütçesi hiçbir istek için devreye girmez.</summary>
@@ -306,6 +308,27 @@ public class RunCoordinatorTests
         Assert.Equal(4, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
         Assert.DoesNotContain(h.ConsoleLines, l => l.StartsWith("workers reduced", StringComparison.Ordinal));
         Assert.DoesNotContain("workers reduced", h.DecisionLog);
+    }
+
+    /// <summary>
+    /// [PERF Faz D fix1 / M4] ÜRETİM varsayılanı bağlıdır: <c>machine</c> seam'i verilmediğinde motor makineyi KENDİSİ okur
+    /// (<c>MachineResources.Snapshot</c>) ve işçi sayısını ona göre kırpar. Harness'in varsayılan "bol makinesi" bu yolu
+    /// gizler — varsayılan sabit bir değere ya da bol makineye çevrilse hiçbir test fark etmezdi. Burada seam verilmez ve
+    /// absürt bir istek (bin işçi) yapılır: bellek ne olursa olsun çekirdek kuralı sonucu mantıksal işlemcinin
+    /// <c>WorkersPerCore</c> katına bağlar (ve hiçbir koşulda 1'in altına inmez).
+    /// </summary>
+    [Fact]
+    public async Task without_a_machine_seam_the_engine_reads_the_real_machine_and_clamps()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+        using var h = new Harness(plan, invoker, productionMachine: true);
+
+        await h.Sut.StartAsync(Start(parallelism: 1000), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.InRange(started.Parallelism, 1, WorkerBudget.WorkersPerCore * Environment.ProcessorCount);
     }
 
     [Fact]
