@@ -6,6 +6,31 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Planning;
 
 /// <summary>
+/// [RESOLVE Faz 3/Task 3.1] <see cref="IncrementalPlanner.ComputeWillBuildWithSignatures"/>'ın dönüşü: kararı
+/// doldurulmuş plan, düğüm başına bileşik imza ve SCC üyelerinin KENDİ terimleri.
+///
+/// <para><see cref="MemberTermById"/> yalnız SCC üyeleri için doludur: üyenin bileşik imzaya giren terimi —
+/// SCC-içi kenarlar sabit <see cref="BuildSignature.NullMarker"/>'a düşer, SCC-dışı upstream'ler taze imzalarıyla
+/// girer. Kardeşin içeriği bu terime girmez; üyenin kendi dosyaları, configuration ya da grup dışı bir upstream'i
+/// değişince değişir. Bileşik imza DOWNSTREAM ve "grup kirli mi" için kalır; grubun İÇİNDE kimin derleneceğini
+/// (Resolve tur 1) üye terimi söyler. Fast geçişinde kompozit kurulmadığı için boştur.</para>
+///
+/// <para>İki öğeli ayrıştırma (<c>var (plan, signatures) = ...</c>) korunur: üye terimini okumayan çağıranlar
+/// (Sync'in iki geçişi, testler) değişmeden derlenir.</para>
+/// </summary>
+public sealed record IncrementalSignatures(
+    BuildPlan Plan,
+    IReadOnlyDictionary<string, string> SignatureById,
+    IReadOnlyDictionary<string, string> MemberTermById)
+{
+    public void Deconstruct(out BuildPlan plan, out IReadOnlyDictionary<string, string> signatureById)
+    {
+        plan = Plan;
+        signatureById = SignatureById;
+    }
+}
+
+/// <summary>
 /// [T25][A6] GLOBAL graf propagation + skip-gate: bir <see cref="BuildPlan"/>'ın her düğümü için
 /// <see cref="BuildSignature.Compute"/> (Task 6) ile <see cref="BuildPreview.ComputeWillBuild"/>/<see
 /// cref="WillBuildEvaluator"/> (mevcut, değişmez) arasındaki seam'i doldurur: <c>currentSignatureFunc</c>'ı
@@ -96,8 +121,11 @@ public static class IncrementalPlanner
     /// (topological memoize edilmiş) imzayı da döner. Supervisor'ın kompozisyon kökü, bir proje
     /// <c>projectSucceeded</c> olduğunda <see cref="BuildState.BuiltSignature"/>'ı bu haritadan persist eder —
     /// böylece BİR SONRAKİ <c>Build</c> koşusu incremental olur (temiz projeler skip).
+    /// <para>[RESOLVE Faz 3/Task 3.1] Dönüş SCC üyelerinin KENDİ terimlerini de taşır
+    /// (<see cref="IncrementalSignatures.MemberTermById"/>): <c>ComputeComponent</c>'in bileşiğe kattığı terimlerin
+    /// kendisi — ikinci bir hesap yoktur.</para>
     /// </summary>
-    public static (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) ComputeWillBuildWithSignatures(
+    public static IncrementalSignatures ComputeWillBuildWithSignatures(
         BuildPlan plan,
         Func<ProjectNode, string?> contentFingerprintForNode,
         IReadOnlyDictionary<string, BuildState> state,
@@ -115,6 +143,8 @@ public static class IncrementalPlanner
         // Fast frozen-upstream imzalarını da barındırdığı için "freshMemo" değil "computedMemo" — ikisi için de
         // tek bir isim doğru.
         var computedMemo = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // [RESOLVE Faz 3/Task 3.1] SCC üyesi → bileşiğe giren KENDİ terimi (ComputeComponent doldurur).
+        var memberTerm = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // [A3] üye id → o üyenin SCC'sinin (sıralı) üye listesi. plan.Cycles, TopoSort/Tarjan'ın ürettiği
@@ -198,9 +228,12 @@ public static class IncrementalPlanner
             foreach (string id in members)
             {
                 var member = byId[id]; // members yalnız byId'de BULUNAN id'lerle kuruldu
-                sb.Append(BuildSignature.Compute(
+                // [RESOLVE Faz 3/Task 3.1] Bileşiğe giren AYNI değer üyenin kendi terimi olarak plana da taşınır.
+                string term = BuildSignature.Compute(
                     member, plan.Configuration, contentFingerprintForNode(member),
-                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId)));
+                    depId => membersSet.Contains(depId) ? BuildSignature.NullMarker : Upstream(depId));
+                memberTerm[id] = term;
+                sb.Append(term);
                 sb.Append(BuildSignature.ItemSeparator);
             }
             string composite = BuildSignature.HashText(sb.ToString());
@@ -223,7 +256,7 @@ public static class IncrementalPlanner
         if (mode == DependentMode.Safe && outputs is not null
             && BehindDirtyUpstream(decided, outputs) is { Count: > 0 } cascaded)
             decided = Decide(cascaded);
-        return (decided, computedMemo);
+        return new IncrementalSignatures(decided, computedMemo, memberTerm);
     }
 
     /// <summary>

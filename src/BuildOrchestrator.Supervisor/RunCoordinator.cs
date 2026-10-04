@@ -53,6 +53,12 @@ public sealed record RunPlan(BuildPlan Plan, IReadOnlyDictionary<string, IReadOn
 /// (<see cref="IncrementalRunBinder.ChecksFor"/>) — koşu önizlemesi <c>OwnFilesChanged</c>'ı ve
 /// <c>OutputBuiltAt</c>'ı Sync ile AYNI yardımcılardan (<see cref="OutputEvidence.OwnFilesChanged(OutputCheck?, IReadOnlyDictionary{string, BuildState}?, string, string?)"/>,
 /// <see cref="OutputEvidence.OutputBuiltAt"/>) bundan yazar. <c>null</c> (testlerdeki basit planner) ⇒ kanıtsız.</param>
+/// <param name="MemberTermById">[RESOLVE Faz 3/Task 3.1] SCC üyesi → kendi terimi
+/// (<see cref="Core.Incremental.IncrementalSignatures.MemberTermById"/>): bileşik imzanın girdisi olan, kardeşlerin
+/// içeriğini değil yalnız üyenin kendi girdilerini ve grup dışı upstream'lerini anlatan terim. Resolve'un tur 1'i grubun
+/// İÇİNDE kimin derleneceğini bununla seçer; bileşik imza (<c>SignatureById</c>) DOWNSTREAM ve "grup kirli mi" için
+/// kalır. Yalnız SCC üyeleri için dolu (Fast geçişinde boş); <c>null</c> (testlerdeki basit planner) ⇒ üye terimi
+/// bilinmiyor.</param>
 public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string> SignatureById,
     string? HeadCommit,
@@ -60,7 +66,8 @@ public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string>? CommitByProjectId = null,
     IReadOnlyDictionary<string, string?>? ContentById = null,
     IReadOnlyDictionary<string, ProjectOutputs>? OutputsById = null,
-    IReadOnlyDictionary<string, OutputCheck>? ChecksById = null);
+    IReadOnlyDictionary<string, OutputCheck>? ChecksById = null,
+    IReadOnlyDictionary<string, string>? MemberTermById = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
