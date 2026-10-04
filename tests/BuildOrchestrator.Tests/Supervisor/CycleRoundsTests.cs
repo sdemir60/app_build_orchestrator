@@ -2376,6 +2376,10 @@ public class CycleRoundsTests
         string[] bLog = File.ReadAllLines(logs.ProjectLogPath(Id("B")));
         Assert.NotEmpty(bLog);
         Assert.Equal(aLog.Length, bLog.Length);
+        // [R3 final · M3] İlk satır DOĞRUDAN pinlenir: satır sayısı eşitliği, TÜM tembel açılışlara eklenen bir açıklama
+        // satırını yakalamazdı (A ve B birlikte +1 olur). Her projenin ilk satırı ilk invoke'un GERÇEK komut satırıdır.
+        Assert.Equal(ExpectedBuildCommandLine(Id("B")), bLog[0]);
+        Assert.Equal(ExpectedBuildCommandLine(Id("A")), aLog[0]);
     });
 
     [Fact] // eski defter (döngü alanları yok) ⇒ bugünkü davranış: herkes derlenir, nedeni decision.log'da
@@ -2412,6 +2416,10 @@ public class CycleRoundsTests
         Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSkippedEvent>()).ProjectId);
     });
 
+    /// <summary>[R3 final] Kural BİRİM düzeyinde, yalıtık pinlenir: bu girdi üretimde oluşamaz — <c>ApplyCycleGroups</c> bir
+    /// grupta tek bir üye zaman kipindeyse zaman kipini TÜM gruba yayar (§5.6), yani üretimde kimse taşınmaz. Test yalnız B'yi
+    /// zaman kipine alarak "zaman kipindeki üye derlenir, kardeşi taşınır" kuralını tek başına gösterir; iddia (B derlenir, A
+    /// taşınır) değişmez.</summary>
     [Fact] // K2/K3: çıktısı araç dışında (Visual Studio / satır menüsü) derlenmiş üye zaman kipindedir ⇒ derlenir
     public Task a_member_whose_output_is_in_time_mode_is_compiled() => InCacheRootAsync(async cacheRoot =>
     {
@@ -2550,7 +2558,9 @@ public class CycleRoundsTests
             // yakınsamanın bileşik imzasında (sig1) kalır — başarısız/kesilen koşu kimseye yeni imza (sig2) yazmaz; taşınan X dahil.
             Assert.Equal((BuildResult.Failed, "sig1"), (ledger[Id(name)].LastResult, ledger[Id(name)].BuiltSignature));
         }
-        Assert.NotEqual("n2", ledger[Id("N")].CycleMemberTerm);
+        // Terim de kayıtta kalır: başlangıç ChainPlan("sig1", "n1") N'ye n1 yazdı; yakınsamayan/kesilen grup terime dokunmaz
+        // (derlenen N'nin yeni terimi n2 deftere HİÇ girmez) — eşitsizlik değil, KESİN değer.
+        Assert.Equal("n1", ledger[Id("N")].CycleMemberTerm);
 
         // Takip koşusu: içerik değişmedi ama hiçbir kayıt güvenilir değil ⇒ herkes derlenir.
         var follow = new RoundRecorder();
@@ -2677,6 +2687,10 @@ public class CycleRoundsTests
         string[] bLog = File.ReadAllLines(logs.ProjectLogPath(Id("B")));
         Assert.NotEmpty(bLog);
         Assert.Equal(2 * bLog.Length, aLog.Length);
+        // [R3 final · M3] İlk satır DOĞRUDAN pinlenir (satır sayısı oranı, tüm tembel açılışlara eklenen bir satırı yakalamaz):
+        // tur 2'de ilk kez derlenen taşınan B'nin ve tur 1'de derlenen A'nın ilk satırı gerçek komut satırıdır.
+        Assert.Equal(ExpectedBuildCommandLine(Id("B")), bLog[0]);
+        Assert.Equal(ExpectedBuildCommandLine(Id("A")), aLog[0]);
     });
 
     /// <summary>[restore kapısı] Tur 2'de İLK kez derlenen taşınan üye restore kararından geçer: kayıttan gelen Succeeded'ı

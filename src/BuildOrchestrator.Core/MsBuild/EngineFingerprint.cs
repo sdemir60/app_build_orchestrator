@@ -35,6 +35,17 @@ public static class EngineFingerprint
     private const string ConfigurationPlaceholder = "<c>";
 
     /// <summary>
+    /// [R3 final] Koşunun toolset'inden hesaplar: MSBuild.exe yolu ve WPF targets yolu (toolset'in
+    /// <c>CustomBeforeTargetsPath</c>'i; <c>null</c> ⇒ komut satırına girmez). Build argüman listesini invoker'ın
+    /// koşturduğu <see cref="MsBuildArguments.Build"/> sözleşmesinden BU giriş kurar: koordinatör argüman listesini kendisi
+    /// seçmez (log satırı ile gerçek komut tek kaynaktan — guard <c>MsBuildArgumentsTests</c>), yalnız bunu çağırır.
+    /// Değer, aynı girdilerle (yol + dosya sürümü + liste) <c>Compute</c>'unkiyle aynıdır.
+    /// </summary>
+    public static string ForToolset(string msbuildExePath, string? customBeforeTargetsPath) =>
+        Compute(msbuildExePath, (project, configuration) =>
+            MsBuildArguments.Build(project, configuration, customBeforeTargets: customBeforeTargetsPath));
+
+    /// <summary>
     /// MSBuild.exe'nin dosya sürümünü okur ve saf hesaba verir. Okunamayan dosya (yok, erişim yok, geçersiz yol)
     /// sürümsüz sayılır, atmaz — testlerdeki sahte takımın yolu da böyle hesaplanır.
     /// </summary>

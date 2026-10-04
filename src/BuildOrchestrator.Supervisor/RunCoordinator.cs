@@ -1353,7 +1353,10 @@ public sealed class RunCoordinator(
         // SCC üyeleri de (ReportCycleMember) buradan geçer; derlenmeyen taşınan üyenin defter yenilemesi
         // (ReportCarriedCycleMember) aynı bayrağa uyar.
         lock (_gate) trustedResult &= !_interrupted;
-        IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
+        // [R3 final · O1] "depIssue var mı" koşulu TEK yerde türer (DepIssueRootsOf): kökler olay listesinin de defter
+        // yazımının da kaynağıdır — ikisi ayrı hesaplanıp ayrışamaz.
+        var depIssueRoots = DepIssueRootsOf(depIssues);
+        IReadOnlyList<string>? depIssuesForEvent = depIssueRoots is null ? null : depIssues.All;
         // [R-M4b · spec 2026-09-18 §1-14] Defterin kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
         // olay (ProjectFailedEvent.Evidence · ProjectSucceededEvent.Trusted) ve defter yazımı
         // (InvalidateBuildStateOnFailure). İkisi ayrı hesaplansaydı satır ile bir sonraki Sync ayrışabilirdi —
@@ -1374,8 +1377,9 @@ public sealed class RunCoordinator(
                 // Kayıt artık NOTLA ve KÖKLERİYLE yazılır; yeniden derleme kararını WillBuildEvaluator o nottan
                 // verir (WaitingForDependency) ve koşu kök düzeldiğinde uygular (ConditionalRebuild).
                 // Kazanç: sha çifti ve kart artık gerçeği gösterir.
-                // [A2 fix-4] Ayrımı ikinci kez TÜRETME: "depIssue var mı ⇒ kökler" kuralı DepIssueRootsOf'ta TEK yerdedir
-                // (taşınan SCC üyesinin defter yenilemesi de oradan okur) — depIssue şekli değişirse ikisi kilit adım kalsın.
+                // [A2 fix-4] Ayrımı ikinci kez TÜRETME: "depIssue var mı ⇒ kökler" kuralı DepIssueRootsOf'ta TEK yerdedir ve
+                // sonucu (depIssueRoots) hem olay listesini (depIssuesForEvent) hem bu persist'in köklerini besler — koşul bir
+                // kez türer, ikisi yapısal olarak kilit adımdır (taşınan SCC üyesinin defter yenilemesi de oradan okur).
                 // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
                 // bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
                 // [tek proje · Clean] Temizlenen projenin kaydı SİLİNİR (persist edilmez): çıktı artık yok,
@@ -1383,7 +1387,7 @@ public sealed class RunCoordinator(
                 if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
                 else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs,
-                        depIssueRoots: DepIssueRootsOf(depIssues), cycle: cycle);
+                        depIssueRoots: depIssueRoots, cycle: cycle);
                 // [final review I1] Trusted = defter bu başarıyı başarı olarak tuttu mu (invalidates'in tersi);
                 // tutmadıysa App satırı, bir sonraki Sync'in okuyacağı "kanıtsız hata" hâliyle çizer.
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent,
@@ -2259,19 +2263,34 @@ public sealed class RunCoordinator(
     /// derlenmedi, kanıtı son güvenilir derlemenindir. Bağımlılık notu başarı persist'iyle aynı kuraldır (en az bir sorun
     /// ⇔ not + kökler); notlu kayıt bir sonraki koşuda güvenilmez. Persist I/O hatası koşuyu ÖLDÜRMEZ (warn-only).
     /// </summary>
-    private void PersistBuildStateOnCarriedMember(RunContext run, string projectId, DepIssueResult depIssues)
+    private void PersistBuildStateOnCarriedMember(RunContext run, string projectId, DepIssueResult depIssues) =>
+        UpsertBuildState(run, projectId, (inc, signature) =>
+        {
+            // Kaydı koşu başında yoksa yenilenecek bir şey yok (taşınan üye güvenilir kayıtla taşınır).
+            if (run.LedgerAtStart?.GetValueOrDefault(projectId) is not { } recorded) return null;
+            var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
+            IReadOnlyList<string>? depIssueRoots = DepIssueRootsOf(depIssues);
+            return recorded with
+            {
+                BuiltSignature = signature, BuiltCommit = builtCommit, LastRunAt = DateTimeOffset.UtcNow, LastBranch = branch,
+                DepIssue = depIssueRoots is not null, DepIssueRoots = depIssueRoots,
+            };
+        });
+
+    /// <summary>
+    /// [R3 final] Defter yazımının ORTAK gövdesi: başarı persist'i (<see cref="PersistBuildStateOnSuccess"/>) ve taşınan
+    /// üyenin defter yenilemesi (<see cref="PersistBuildStateOnCarriedMember"/>) buradan geçer — ön koşul ve warn-only
+    /// <c>Upsert</c> (uyarı metni dahil) TEK yerde. Ön koşul: defter (<see cref="RunContext.StateStore"/>) ve bu proje
+    /// için planlama imzası (<see cref="IncrementalPlan"/>) yoksa YAZILMAZ (testlerdeki basit planner → Incremental null →
+    /// persist YOK, davranış nötr). <paramref name="create"/> yazılacak kaydı kurar (<c>null</c> ⇒ yazılacak bir şey
+    /// yok). Persist I/O hatası koşuyu ÖLDÜRMEZ (warn-only).
+    /// </summary>
+    private void UpsertBuildState(RunContext run, string projectId, Func<IncrementalPlan, string, BuildState?> create)
     {
         if (run.StateStore is null || run.Incremental is not { } inc
-            || !inc.SignatureById.TryGetValue(projectId, out var signature)
-            || run.LedgerAtStart?.GetValueOrDefault(projectId) is not { } recorded)
+            || !inc.SignatureById.TryGetValue(projectId, out var signature))
             return;
-        var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
-        IReadOnlyList<string>? depIssueRoots = DepIssueRootsOf(depIssues);
-        var state = recorded with
-        {
-            BuiltSignature = signature, BuiltCommit = builtCommit, LastRunAt = DateTimeOffset.UtcNow, LastBranch = branch,
-            DepIssue = depIssueRoots is not null, DepIssueRoots = depIssueRoots,
-        };
+        if (create(inc, signature) is not { } state) return;
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
@@ -2440,35 +2459,29 @@ public sealed class RunCoordinator(
     /// (<see cref="WillBuildReason.WaitingForDependency"/>).</param>
     /// <param name="cycle">[RESOLVE 3.4] Yakınsayan grupta derlenen üyenin döngü kanıtı; null ⇒ üç döngü alanı NULL yazılır.</param>
     private void PersistBuildStateOnSuccess(RunContext run, string projectId, long durationMs,
-        IReadOnlyList<string>? depIssueRoots, CycleMemberRecord? cycle = null)
-    {
-        if (run.StateStore is null || run.Incremental is not { } inc
-            || !inc.SignatureById.TryGetValue(projectId, out var signature))
-            return;
-
-        // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır. Harici bir proje kendi çalışma kopyasının
-        // revizyonunu taşır (ExternalRevisionReader); okunamadıysa (çalışma kopyası yok ya da git hatası)
-        // yuva BOŞ kalır —
-        // yanlış bir reponun commit'ini göstermektense hiçbir şey göstermek doğrudur. Branch her koşulda ana
-        // repoya aittir, harici kayda hiç yazılmaz.
-        var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
-        var state = new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
-            DateTimeOffset.UtcNow, branch, durationMs, DepIssue: depIssueRoots is not null,
-            BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots,
-            // [Faz 3/Task 4 — spec 2026-09-18 §5.1] Bu derlemenin GERÇEKTEN güncellediği havuz kopyaları —
-            // OutputsById'de kayıt yoksa (testlerdeki basit planner, kanıtsız proje) null (öğrenme yok).
-            FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)),
-            // [PERF E3] Restore'u koşan ya da kanıtla atlanan projenin karar anındaki packages.config özeti — bir
-            // sonraki Build/Cycles koşusunun restore kanıtı. Kayıt yoksa (packages.config yok, özet okunamadı) null.
-            PackagesConfigHash: run.PackagesConfigHashById.GetValueOrDefault(projectId),
-            // [RESOLVE 3.4] Döngü kanıtı yalnız yakınsayan grupta derlenen üyeye yazılır. Döngü dışı her başarı (Build,
-            // Rebuild, tek proje) taze kayıtla alanları NULL yazar — "mevcudu koru" DEĞİL: eski kanıt silinir, bir
-            // sonraki Resolve üyeyi gerekli sayar (güvenli taraf).
-            CycleMemberTerm: cycle?.Term, CycleReadSurfaces: cycle?.ReadSurfaces, CycleEngineFingerprint: cycle?.EngineFingerprint);
-        try { run.StateStore.Upsert(state); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
-    }
+        IReadOnlyList<string>? depIssueRoots, CycleMemberRecord? cycle = null) =>
+        UpsertBuildState(run, projectId, (inc, signature) =>
+        {
+            // [design v1.14.0 §9] HEAD ve branch ANA REPOYU anlatır. Harici bir proje kendi çalışma kopyasının
+            // revizyonunu taşır (ExternalRevisionReader); okunamadıysa (çalışma kopyası yok ya da git hatası)
+            // yuva BOŞ kalır —
+            // yanlış bir reponun commit'ini göstermektense hiçbir şey göstermek doğrudur. Branch her koşulda ana
+            // repoya aittir, harici kayda hiç yazılmaz.
+            var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
+            return new BuildState(projectId, signature, builtCommit, BuildResult.Succeeded,
+                DateTimeOffset.UtcNow, branch, durationMs, DepIssue: depIssueRoots is not null,
+                BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots,
+                // [Faz 3/Task 4 — spec 2026-09-18 §5.1] Bu derlemenin GERÇEKTEN güncellediği havuz kopyaları —
+                // OutputsById'de kayıt yoksa (testlerdeki basit planner, kanıtsız proje) null (öğrenme yok).
+                FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)),
+                // [PERF E3] Restore'u koşan ya da kanıtla atlanan projenin karar anındaki packages.config özeti — bir
+                // sonraki Build/Cycles koşusunun restore kanıtı. Kayıt yoksa (packages.config yok, özet okunamadı) null.
+                PackagesConfigHash: run.PackagesConfigHashById.GetValueOrDefault(projectId),
+                // [RESOLVE 3.4] Döngü kanıtı yalnız yakınsayan grupta derlenen üyeye yazılır. Döngü dışı her başarı (Build,
+                // Rebuild, tek proje) taze kayıtla alanları NULL yazar — "mevcudu koru" DEĞİL: eski kanıt silinir, bir
+                // sonraki Resolve üyeyi gerekli sayar (güvenli taraf).
+                CycleMemberTerm: cycle?.Term, CycleReadSurfaces: cycle?.ReadSurfaces, CycleEngineFingerprint: cycle?.EngineFingerprint);
+        });
 
     /// <summary>[tek proje · Clean] Başarılı bir <c>Clean</c>'den sonra projenin defter kaydını siler —
     /// gerekçe <see cref="BuildStateStore.Remove"/>'da. Defter I/O hatası koşuyu ÖLDÜRMEZ (warn-only), tıpkı
@@ -2589,16 +2602,25 @@ public sealed class RunCoordinator(
             ? signature
             : null;
 
+    /// <summary>[R3 final] <c>invoke error: …</c> gerekçe önekinin TEK literal'i: <see cref="InvokeErrorReason"/> yazar;
+    /// Acceptance sınıflandırıcısı (orchestrator kaynaklı hata sinyali) aynı sabiti okur — kopya YASAK. Serbest metindir,
+    /// derleyici kanıtı DEĞİLDİR (<see cref="FailureClassification"/>).</summary>
+    public const string InvokeErrorPrefix = "invoke error: ";
+
+    /// <summary>[R3 final] <c>group start failed: …</c> gerekçe önekinin TEK literal'i (<see cref="GroupStartErrorReason"/>);
+    /// <see cref="InvokeErrorPrefix"/> ile aynı kural: kanıt değil, orchestrator kaynaklı hata sinyali.</summary>
+    public const string GroupStartFailedPrefix = "group start failed: ";
+
     /// <summary>[R3c3] Beklenmeyen bir istisnanın başarısızlık gerekçesi — <c>invoke error: …</c> metninin TEK sahibi: tekil
     /// proje ve SCC grubu aynı yerden yazar. Serbest metindir, derleyici kanıtı DEĞİLDİR (<see cref="FailureClassification"/>).
     /// <see cref="AggregateException"/> sarmalı (ör. Parallel.ForEach) ilk iç istisnaya AÇILIR: sarmalın "One or more errors
     /// occurred" metni asıl nedeni gizlerdi.</summary>
-    private static string InvokeErrorReason(Exception ex) => "invoke error: " + FirstInner(ex).Message;
+    private static string InvokeErrorReason(Exception ex) => InvokeErrorPrefix + FirstInner(ex).Message;
 
     /// <summary>[R3c3] Grubun ilk dispatch'inden ÖNCE (yüzey hash'i, tur 1 seçimi, başlık satırları) fırlayan istisnanın
     /// gerekçesi — henüz hiçbir şey invoke edilmemişken "invoke error" yanıltırdı. Sahibi <see cref="InvokeErrorReason"/> ile
     /// AYNI yerdir (aynı açma kuralı, aynı biçim); kanıt DEĞİLDİR.</summary>
-    private static string GroupStartErrorReason(Exception ex) => "group start failed: " + FirstInner(ex).Message;
+    private static string GroupStartErrorReason(Exception ex) => GroupStartFailedPrefix + FirstInner(ex).Message;
 
     /// <summary>[R3c3] <see cref="AggregateException"/> sarmalını (iç içe olsa da) ilk iç istisnaya açar; sarmal değilse
     /// istisnanın kendisi. Paralel döngü birden çok iş parçacığında AYNI nedenle patlayabilir — ilki nedeni anlatır.</summary>
@@ -2723,9 +2745,10 @@ public sealed class RunCoordinator(
         /// (<see cref="MsBuildExePath"/>) ve AYNI targets yolundan (<see cref="CustomBeforeTargetsPath"/> — toolset'in
         /// <c>MsBuildToolset.CustomBeforeTargetsPath</c>'i) türetilir; ikinci bir yol hesabı yok. Yalnız derleme komut
         /// satırını kapsar (restore dışarıda). İlk döngü grubunda bir kez hesaplanır (dosya sürümü okuması); eşzamanlı
-        /// iki grup aynı değeri üretir.</summary>
-        public string EngineFingerprint => _engineFingerprint ??= Core.MsBuild.EngineFingerprint.Compute(MsBuildExePath,
-            (project, configuration) => MsBuildArguments.Build(project, configuration, customBeforeTargets: CustomBeforeTargetsPath));
+        /// iki grup aynı değeri üretir. Argüman listesini koordinatör SEÇMEZ: hesap Core'daki
+        /// <c>EngineFingerprint.ForToolset</c>'tedir (guard: <c>MsBuildArgumentsTests</c>).</summary>
+        public string EngineFingerprint => _engineFingerprint ??=
+            Core.MsBuild.EngineFingerprint.ForToolset(MsBuildExePath, CustomBeforeTargetsPath);
 
         private string? _engineFingerprint;
     }

@@ -55,6 +55,21 @@ public class EngineFingerprintTests
         Assert.NotEqual(today, EngineFingerprint.Compute(MsBuildExe, null, Today));
     }
 
+    /// <summary>
+    /// [R3 final] Toolset girişi (<see cref="EngineFingerprint.ForToolset"/>) koordinatörün eskiden kendi kurduğu parmak izinin
+    /// AYNI değerini üretir: MSBuild.exe yolu + dosya sürümü + invoker'ın koşturduğu build sözleşmesi (WPF targets argümanı
+    /// dahil; <c>null</c> yol ⇒ argümansız liste). Koordinatör argüman listesini artık seçmez (<c>MsBuildArgumentsTests</c>
+    /// guard'ı) ama değer değişmez — değişseydi kayıtlı her döngü üyesi bir kez "engine changed" sayılır, grupta herkes derlenirdi.
+    /// </summary>
+    [Fact]
+    public void The_toolset_entry_yields_the_fingerprint_of_the_build_contract_with_the_same_targets()
+    {
+        Assert.Equal(EngineFingerprint.Compute(MsBuildExe, Today), EngineFingerprint.ForToolset(MsBuildExe, TargetsPath));
+        Assert.Equal(EngineFingerprint.Compute(MsBuildExe, (p, c) => MsBuildArguments.Build(p, c)),
+            EngineFingerprint.ForToolset(MsBuildExe, null));
+        Assert.NotEqual(EngineFingerprint.ForToolset(MsBuildExe, TargetsPath), EngineFingerprint.ForToolset(MsBuildExe, null));
+    }
+
     [Fact]
     public void The_project_path_does_not_enter_the_fingerprint()
     {
