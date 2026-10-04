@@ -221,8 +221,11 @@ public class EventStreamTests
     /// <summary>
     /// [PERF Faz D / karar 10] Komutun (profilin) istediği işçi sayısı ile motorun koşu başında kırptığı FİİLİ sayı
     /// ayrışabilir. Akış satırı ve ETA <c>runStarted</c>'ın taşıdığı sayıyı okur (<c>_runParallelism</c>) — komuttaki
-    /// <c>Parallelism</c>'ı değil; yoksa akış "parallelism 4" derken motor iki işçiyle koşardı. Bu test o sözleşmeyi pinler
-    /// (kırpma App'e dokunmadan akar; test yeşil başlar).
+    /// <c>Parallelism</c>'ı değil; yoksa akış "parallelism 4" derken motor iki işçiyle koşardı.
+    /// Bu test AKIŞ SATIRI yarısını pinler (kırpma App'e dokunmadan akar; test yeşil başlar). ETA yarısı mevcut
+    /// <c>RunViewModelTests.EtaText_reflects_the_calculator_estimate_after_a_completion_using_observed_durations</c>
+    /// testinde pinlidir: runStarted <c>Parallelism = 1</c> taşır, varsayılan profil dört olsa da beklenen
+    /// <c>~20s left</c> = (10s + 10s) / 1; ETA komuttaki <c>Parallelism</c>'ı okusaydı <c>~5s left</c> çıkardı.
     /// </summary>
     [Fact]
     public void Run_started_carries_the_actual_worker_count_into_the_stream_line()

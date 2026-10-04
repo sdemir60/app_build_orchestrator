@@ -3,8 +3,8 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Graph;
-using BuildOrchestrator.Core.Scheduling;
 using BuildOrchestrator.Core.Io;
+using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.Incremental;
 

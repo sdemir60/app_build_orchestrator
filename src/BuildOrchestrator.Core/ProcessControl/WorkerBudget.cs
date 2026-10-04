@@ -1,5 +1,3 @@
-using System.Globalization;
-
 namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>
@@ -14,12 +12,11 @@ public readonly record struct WorkerBudgetDecision(int Workers, string? Reason);
 /// sayısına ve boş fiziksel belleğine göre koşu başında BİR KEZ kırpılır. Kural ve TÜM sabitleri burada, tek yerde;
 /// Supervisor yalnız uygular (planlama Core'dadır). Saf fonksiyondur: makineyi okumaz — onu
 /// <see cref="MachineResources"/> okur — böylece kural donanımdan bağımsız test edilir.
-/// <para><b>Çekirdek kuralı:</b> işçi, mantıksal işlemcinin <see cref="WorkersPerCore"/> katını aşarsa kırpılır. İlk plan
-/// hipotezi "işlemci ≤ 2 ise 1, değilse işlemci − 1"di (zayıf makinede ilk sorunun işlemci olduğu sanılmıştı). Ölçüm
-/// (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve 4 mantıksal işlemcide 1-4 işçi) bunu çürüttü: iki işlemcide tek işçi
-/// iki işçinin neredeyse iki katı sürdü, dört işlemcide dört işçi üçten hızlıydı. İş işlemci değil süreç/IO gecikmesi
-/// ağırlıklı; çekirdek sayısının üstündeki işçi hâlâ kazandırıyor. Ölçülen aralıkta kazanan oran iki kattı, daha
-/// fazlası ölçülmedi — tavan bu yüzden oradadır.</para>
+/// <para><b>Çekirdek kuralı:</b> işçi, mantıksal işlemcinin <see cref="WorkersPerCore"/> katını aşarsa kırpılır.
+/// Gerçek OSYS Rebuild'i yakınlık maskesiyle 2 ve 4 mantıksal işlemcide 1-4 işçiyle ölçüldü: işlemciden az işçi süreyi
+/// uzattı (iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü, dört işlemcide dört işçi üçten hızlıydı); küçük
+/// makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç verdi, büyük makinede dört işçi en hızlıydı. Ölçülen en
+/// yüksek oran (küçük makinede dört işçi = işlemcinin iki katı) tavan alındı; daha fazlası ölçülmedi.</para>
 /// <para><b>Bellek kuralı (güvenlik ağı):</b> boş bellekten <see cref="ReserveBytes"/> makineye (ve motorla ilk işçinin
 /// tabanına) bırakılır, kalan işçi başına <see cref="BytesPerWorker"/> ile bölünür. İkisi de gerçek bir derlemenin
 /// ölçümüne dayanır (Clean → Build, tam derleyici): motor ile ilk işçinin tabanından sonra her ek işçi birkaç yüz MB
@@ -56,8 +53,8 @@ public static class WorkerBudget
         if (workers == requested) return new WorkerBudgetDecision(workers, null);
 
         string reason = byCores < byMemory
-            ? string.Format(CultureInfo.InvariantCulture, cores == 1 ? "{0} logical processor" : "{0} logical processors", cores)
-            : string.Format(CultureInfo.InvariantCulture, "{0} GB free memory", Math.Max(0, freeBytes) / Gb);
+            ? PerfNoteText.LogicalProcessorsLimit(cores)
+            : PerfNoteText.FreeMemoryLimit(Math.Max(0, freeBytes) / Gb);
         return new WorkerBudgetDecision(workers, reason);
     }
 }

@@ -872,7 +872,7 @@ public sealed class RunCoordinator(
         // decision.log ve App'in akış satırı/ETA'sı hep bu FİİLİ sayıyı okur, komuttakini değil. Kırpma olduysa gerekçesi
         // konsola VE decision.log'a AYNI metinle yazılır (tek sahip: PerfNoteText.WorkersReduced).
         var (machineCores, machineFreeBytes) = _machine();
-        var workerBudget = WorkerBudget.Clamp(Math.Max(1, cmd.Parallelism), machineCores, machineFreeBytes);
+        var workerBudget = WorkerBudget.Clamp(cmd.Parallelism, machineCores, machineFreeBytes);
         int parallelism = workerBudget.Workers;
         if (workerBudget.Reason is { } reductionReason)
         {
@@ -880,8 +880,8 @@ public sealed class RunCoordinator(
             Decide(logs, reductionNote);
             console(reductionNote);
         }
-        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ (o, komutun kendi alanıdır — App aynı tablodan
-        // türetir). Buradan yalnız CPU cap + priority alınır.
+        // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ. Buradan yalnız CPU cap + priority alınır; işçi sayısı
+        // yukarıdaki bütçeden (WorkerBudget) gelir: komutun İSTEDİĞİ sayı, makineye göre kırpılmış hâliyle.
         // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
         PerfProfile? perf = cmd.PerfMode is { } perfModeText ? PerfProfile.TryParse(perfModeText) : null;
         int? appliedCap = null;                 // GERÇEKTEN yürürlükte olan cap (runStarted + konsol bunu yazar)
@@ -1005,8 +1005,9 @@ public sealed class RunCoordinator(
             foreach (var (projectId, reason, cycleUnconverged) in upToDateSkips)
                 DecideSkipped(projectId, reason, cycleUnconverged);
 
-            // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (perf profili) — koşu bitiminde
-            // hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using güvenlidir.
+            // [seviyeli turlar] Slot sayısı worker sayısıyla AYNI kaynaktan (kırpılmış FİİLİ sayı, yukarıdaki bütçe) —
+            // koşu bitiminde hiçbir bekleyen kalmaz (tüm worker'lar ve seviye görevleri await edilmiş olur), using
+            // güvenlidir.
             using var invokeSlots = new SemaphoreSlim(parallelism, parallelism);
             var run = new RunContext(
                 cmd.RunId, plan.Configuration, runPlan.SolutionRefs,

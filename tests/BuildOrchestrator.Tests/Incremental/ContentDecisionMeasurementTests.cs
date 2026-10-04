@@ -8,6 +8,7 @@ using BuildOrchestrator.Contracts.Model;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Git;
 using BuildOrchestrator.Core.Incremental;
+using BuildOrchestrator.Core.Io;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
 using Xunit;
@@ -166,7 +167,7 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         var swPar = Stopwatch.StartNew();
         System.Threading.Tasks.Parallel.ForEach(
             parallel,
-            new ParallelOptions { MaxDegreeOfParallelism = 16 },
+            new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
             f =>
             {
                 try { var b = File.ReadAllBytes(f); Interlocked.Add(ref parBytes, b.Length); _ = SHA256.HashData(b); }
@@ -177,7 +178,7 @@ public sealed class ContentDecisionMeasurementTests(ITestOutputHelper output)
         output.WriteLine($"# Cold first pass — {root}");
         output.WriteLine(Inv($"- files: {files.Count} (sequential half {sequential.Count}, parallel half {parallel.Count})"));
         output.WriteLine(Inv($"- sequential: {swSeq.ElapsedMilliseconds} ms · {seqBytes / 1024.0 / 1024.0:F1} MB · {swSeq.Elapsed.TotalMilliseconds / Math.Max(sequential.Count, 1):F2} ms/file"));
-        output.WriteLine(Inv($"- parallel(16): {swPar.ElapsedMilliseconds} ms · {parBytes / 1024.0 / 1024.0:F1} MB · {swPar.Elapsed.TotalMilliseconds / Math.Max(parallel.Count, 1):F2} ms/file"));
+        output.WriteLine(Inv($"- parallel({IoParallelism.Degree}): {swPar.ElapsedMilliseconds} ms · {parBytes / 1024.0 / 1024.0:F1} MB · {swPar.Elapsed.TotalMilliseconds / Math.Max(parallel.Count, 1):F2} ms/file"));
         output.WriteLine(Inv($"- projected full tree, parallel: {swPar.ElapsedMilliseconds * 2} ms"));
     }
 

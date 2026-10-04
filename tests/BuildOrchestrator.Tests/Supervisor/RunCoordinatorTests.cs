@@ -258,12 +258,12 @@ public class RunCoordinatorTests
     /// [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; motor onu koşu başında makineye göre kırpar ve
     /// <c>runStarted</c> FİİLİ sayıyı taşır (App'in akış satırı ve ETA'sı onu okur). Burada makinenin tek mantıksal
     /// işlemcisi var (bellek bol): istenen dört işçi çekirdek kuralıyla ikiye iner; kırpma konsola VE decision.log'a yazılır.
-    /// <para><b>Plan hipotezi ve değişme gerekçesi:</b> ilk plan "işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1" diyordu
-    /// ve bu testin ilk hâli iki işlemcide tek işçi bekliyordu. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve
+    /// <para><b>Plan hipotezi ve değişme gerekçesi:</b> planın varsayılan hipotezi "işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1"
+    /// idi; bu testin değerleri iki işlemcide tek işçi beklerdi. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve
     /// 4 mantıksal işlemci, 1-4 işçi) hipotezi çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü,
-    /// dört işlemcide dört işçi üçten hızlıydı — iş işlemci değil süreç/IO gecikmesi ağırlıklı, çekirdek sayısının üstündeki
-    /// işçi hâlâ kazandırıyor. Kural bu yüzden "işçi, mantıksal işlemcinin <c>WorkerBudget.WorkersPerCore</c> katını
-    /// aşarsa kırpılır"dır; beklenen değerler buna göre yeniden hesaplandı (eşik gevşetilmedi, ölçüme uydu).</para>
+    /// dört işlemcide dört işçi üçten hızlıydı; küçük makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç
+    /// verdi, daha fazlası ölçülmedi. Kural bu yüzden "işçi, mantıksal işlemcinin <c>WorkerBudget.WorkersPerCore</c>
+    /// katını aşarsa kırpılır"dır; beklenen değerler buna göre yeniden hesaplandı (eşik gevşetilmedi, ölçüme uydu).</para>
     /// </summary>
     [Fact]
     public async Task requested_workers_are_clamped_to_the_machine_and_runStarted_reports_the_actual_count()

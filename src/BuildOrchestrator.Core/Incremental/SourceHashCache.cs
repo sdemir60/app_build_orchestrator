@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
-using BuildOrchestrator.Core.State;
 using BuildOrchestrator.Core.Io;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -58,8 +58,9 @@ public sealed class SourceHashCache
     private readonly string _cachePath;
     private readonly ConcurrentDictionary<string, Entry> _entries;
 
-    /// <summary>Defter bellekte diskteki hâlinden farklı mı (1 = kirli). Birden çok thread özet ekler (Prefill 16
-    /// kanallı paraleldir) → bayrak <c>Volatile</c>/<c>Interlocked</c> ile yönetilir.</summary>
+    /// <summary>Defter bellekte diskteki hâlinden farklı mı (1 = kirli). Birden çok thread özet ekler (Prefill paralel
+    /// okur, derece <see cref="IoParallelism.Degree"/>) → bayrak <c>Volatile</c>/<c>Interlocked</c> ile
+    /// yönetilir.</summary>
     private int _dirty;
 
     public SourceHashCache(string cachePath)

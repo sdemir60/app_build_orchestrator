@@ -42,4 +42,21 @@ public static class PerfNoteText
     /// </summary>
     public static string WorkersReduced(int workers, string reason) => string.Format(
         CultureInfo.InvariantCulture, "workers reduced to {0} ({1})", workers, reason);
+
+    /// <summary>
+    /// [PERF Faz D / karar 10] Kırpmanın ÇEKİRDEK gerekçesi: <c>"2 logical processors"</c> (tek işlemcide tekil:
+    /// <c>"1 logical processor"</c>). <see cref="WorkerBudgetDecision.Reason"/> bunu taşır; çerçeve cümle
+    /// <see cref="WorkersReduced"/>'tadır — kullanıcıya görünen kırpma metninin TEK sahibi bu sınıftır.
+    /// </summary>
+    public static string LogicalProcessorsLimit(int logicalProcessors) => string.Format(
+        CultureInfo.InvariantCulture,
+        logicalProcessors == 1 ? "{0} logical processor" : "{0} logical processors",
+        logicalProcessors);
+
+    /// <summary>
+    /// [PERF Faz D / karar 10] Kırpmanın BELLEK gerekçesi: <c>"3 GB free memory"</c>; sayı tam gigabayta aşağı
+    /// yuvarlanmış boş bellektir (<see cref="WorkerBudgetDecision.Reason"/>).
+    /// </summary>
+    public static string FreeMemoryLimit(long freeGigabytes) => string.Format(
+        CultureInfo.InvariantCulture, "{0} GB free memory", freeGigabytes);
 }

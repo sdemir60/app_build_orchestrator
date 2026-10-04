@@ -7,13 +7,13 @@ namespace BuildOrchestrator.Tests.ProcessControl;
 /// <summary>
 /// [PERF Faz D / karar 10] <c>WorkerBudget</c>: profilin istediği işçi sayısı makineye göre kırpılır.
 ///
-/// <para><b>Plan hipotezi ve değişme gerekçesi:</b> ilk plan kuralı "mantıksal işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1"
-/// diye varsaydı (zayıf makinede ilk sorunun işlemci olduğu sanıldı) ve bu testin ilk hâli iki işlemcide tek işçi,
-/// dört işlemcide üç işçi bekliyordu. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve 4 mantıksal işlemci,
-/// 1-4 işçi, iki tekrar) bunu çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü, dört işlemcide
-/// dört işçi üçten hızlıydı — iş işlemci değil süreç/IO gecikmesi ağırlıklı, çekirdek sayısının üstündeki işçi hâlâ
-/// kazandırıyor. Kural bu yüzden "işçi, mantıksal işlemcinin <c>WorkersPerCore</c> katını aşarsa kırpılır" oldu ve
-/// beklenen değerler ona göre yeniden hesaplandı. Bellek kuralı da ölçüme göre DÜZELTİLDİ: plan ile ilk uygulama işçi
+/// <para><b>Plan hipotezi ve değişme gerekçesi:</b> planın varsayılan hipotezi "mantıksal işlemci ≤ 2 ise 1 işçi, değilse
+/// işlemci − 1" idi (zayıf makinede ilk sorunun işlemci olduğu sanıldı); beklenen değerler iki işlemcide tek işçi, dört
+/// işlemcide üç işçi olurdu. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve 4 mantıksal işlemci, 1-4 işçi, iki
+/// tekrar) bunu çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü, dört işlemcide dört işçi üçten
+/// hızlıydı; küçük makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç verdi, daha fazlası ölçülmedi. Kural
+/// bu yüzden "işçi, mantıksal işlemcinin <c>WorkersPerCore</c> katını aşarsa kırpılır" oldu ve beklenen değerler ona göre
+/// yeniden hesaplandı. Bellek kuralı da ölçüme göre DÜZELTİLDİ: plan ile ilk uygulama işçi
 /// başına 2 GB (makineye 2 GB pay) varsaymıştı; D1'in Rebuild'i çoğunlukla güncellik denetimi olduğundan ölçülen commit
 /// artışı bunun 10-20 kat altında kaldı ve varsayılan profil kırpmasız ~10 GB boş bellek isterdi. Gerçek derleme ayrıca
 /// ölçüldü (d1b: dört işlemci, Clean → Build, tam csc): makine commit artışı (tepe − başlangıç) tek işçide 0,93 GB, iki
