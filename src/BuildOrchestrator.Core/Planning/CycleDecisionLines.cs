@@ -57,11 +57,31 @@ public static class CycleDecisionLines
             group, round, DecisionTerm(decision), StaleTerm(staleNames), MovedTerm(movedFiles), levels, roundMs, hashMs);
 
     /// <summary>[Fix round 1 — I1] Grubun nihai kararı (Supervisor'dan taşındı, metin aynı):
-    /// <c>cycle A: converged (2 members)</c> · NoProgress hafızaya yazıldıysa <c>…; non-convergence remembered at sig</c>.</summary>
+    /// <c>cycle A: converged (2 members)</c> · NoProgress hafızaya yazıldıysa <c>…; non-convergence remembered at sig</c>.
+    /// [RESOLVE 3.4] Supervisor yakınsayan grubun satırını derlenen üye sayısıyla <see cref="ConvergedVerdict"/>'ten
+    /// yazar; buradaki biçimler (Converged dalı dahil) değişmeden kalır.</summary>
     public static string Verdict(string group, CycleRoundDecision decision, int members, string? rememberedAt) =>
         string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members){3}",
             group, OutcomeText(decision), members,
             rememberedAt is null ? "" : "; non-convergence remembered at " + rememberedAt);
+
+    /// <summary>[RESOLVE 3.4] Yakınsayan grubun nihai kararı, bu koşuda DERLENEN üye sayısıyla:
+    /// <c>cycle A: converged (2 members, 1 compiled)</c>. Taşınan üye (tur 1'de gerekmedi, sonra da bayatlamadı)
+    /// sayıya girmez; kanıtsız grupta herkes derlendiği için iki sayı eşittir.</summary>
+    public static string ConvergedVerdict(string group, int members, int compiled) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle {0}: {1} ({2} members, {3} compiled)",
+            group, OutcomeText(CycleRoundDecision.Converged), members, compiled);
+
+    /// <summary>[RESOLVE 3.4] Tur 1'de derlenecek üyenin nedeni — grup başlığından sonra, build order'da:
+    /// <c>A: round 1 — own inputs changed</c>. Neden metni <see cref="CycleMemberNeed"/>'in kararıdır (metinleri oradaki
+    /// const'lar); taşınan üye bu satırı almaz, grup sonunda <see cref="CarriedDetail"/> ile raporlanır.</summary>
+    public static string RoundOneNeed(string member, string reason) =>
+        string.Format(CultureInfo.InvariantCulture, "{0}: round 1 — {1}", member, reason);
+
+    /// <summary>[RESOLVE 3.4] Taşınan üyenin atlama satırındaki ayrıntı. Satırın kendisi tekil projeyle ORTAK atlama
+    /// biçimidir (<c>{ad}: skipped — up to date ({ayrıntı})</c>); bu sınıf yalnız ayrıntının sahibidir:
+    /// <c>B: skipped — up to date (carried: own inputs and read surfaces unchanged)</c>.</summary>
+    public const string CarriedDetail = "carried: own inputs and read surfaces unchanged";
 
     /// <summary>Kararın kullanıcıya dönük açıklaması — baş terimi <see cref="DecisionTerm"/>'dür (enum→metin eşlemesi
     /// tek yerde); tavan sayısı literal DEĞİL, tek kaynak <see cref="CycleRoundPolicy.RoundCap"/>.</summary>

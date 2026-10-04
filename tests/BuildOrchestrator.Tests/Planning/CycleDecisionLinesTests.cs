@@ -63,6 +63,15 @@ public class CycleDecisionLinesTests
             CycleDecisionLines.Verdict("A", CycleRoundDecision.CapReached, 3, rememberedAt: null));
     }
 
+    [Fact] // [RESOLVE 3.4] üye düzeyi atlamanın satırları: tur 1 nedeni, taşınan üyenin ayrıntısı, derlenen sayılı karar
+    public void member_level_skip_lines_name_the_round_one_reason_the_carried_detail_and_the_compiled_count()
+    {
+        Assert.Equal("A: round 1 — own inputs changed",
+            CycleDecisionLines.RoundOneNeed("A", CycleMemberNeed.OwnInputsChangedReason));
+        Assert.Equal("carried: own inputs and read surfaces unchanged", CycleDecisionLines.CarriedDetail);
+        Assert.Equal("cycle A: converged (17 members, 1 compiled)", CycleDecisionLines.ConvergedVerdict("A", 17, 1));
+    }
+
     [Theory] // tek eşleme: karar satırının açıklaması tur satırındaki terimi taşır
     [InlineData(CycleRoundDecision.Converged)]
     [InlineData(CycleRoundDecision.NoProgress)]

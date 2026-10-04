@@ -30,7 +30,7 @@ public class RunCoordinatorTests
     // (kopya YASAK, CLAUDE.md). Yalnız bu dosyaya özgü olanlar (RecordingGovernor, PumpGateStream, stale-obj
     // yardımcıları) private kalır.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
-    private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+    internal const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
 
     // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
     // kapısı ve copy-floor penceresinin TEK tetikleyicisi budur (copy'nin "başlıyor" sinyali YOKTUR).

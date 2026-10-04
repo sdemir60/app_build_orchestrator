@@ -514,9 +514,11 @@ public enum CycleOutcome { Converged, NoProgress, CapReached }
 
 /// <summary>[cycles] Bir SCC'nin koşusu bitti. ProjectId = build-order'daki İLK üye (CycleRoundStartedEvent'in
 /// lideriyle AYNI — satır tıklanabilir kalır). DurationMs üye sürelerinin toplamıdır; Rounds koşulan tur sayısı;
-/// FailedCount SON turun başarısız üye sayısı.</summary>
+/// FailedCount SON turun başarısız üye sayısı. [RESOLVE 3.4] CompiledCount grubun bu koşuda DERLENEN üye sayısıdır
+/// (tur 1'de gerekmeyip sonra da bayatlamayan — taşınan — üyeler girmez); -1 = alanı bilmeyen eski motor, App eski
+/// metni yazar. Sona ve varsayılanlı eklendi: eski JSON okunur.</summary>
 public sealed record CycleCompletedEvent(string RunId, string ProjectId, CycleOutcome Outcome,
-    int MemberCount, int Rounds, int FailedCount, long DurationMs) : IpcEvent;
+    int MemberCount, int Rounds, int FailedCount, long DurationMs, int CompiledCount = -1) : IpcEvent;
 
 /// <summary>[It-3][Task 17] Run başında (per-project build event'lerinden ÖNCE) yayınlanan will-build önizlemesi —
 /// plan'ın <see cref="ProjectNode.WillBuild"/>'ini App'e taşır: dirty=true / güncel=false / imza-yok-yahut-pre-Sync

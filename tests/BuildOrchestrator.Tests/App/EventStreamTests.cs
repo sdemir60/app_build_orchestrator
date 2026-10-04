@@ -525,6 +525,24 @@ public class EventStreamTests
             StreamText.CycleCompleted(CycleOutcome.CapReached, members: 4, rounds: 3, failed: 0, durationMs: 4200));
     }
 
+    /// <summary>[RESOLVE 3.4] Yakınsama satırı bu koşuda DERLENEN üye sayısını da söyler: tur 1 yalnız gereken üyeleri
+    /// derlediği için "17 members" tek başına grubun ne kadar iş yaptığını anlatmaz. Alanı bilmeyen eski motor
+    /// (<c>CompiledCount = -1</c>, alanın varsayılanı) eski metni alır.</summary>
+    [Fact]
+    public void Cycle_completed_names_the_compiled_member_count_when_the_engine_reports_it()
+    {
+        const string leaderId = @"C:\p\a.csproj";
+        var vm = NewVm();
+        vm.OnEvent(new CycleCompletedEvent("r1", leaderId, CycleOutcome.Converged, MemberCount: 17, Rounds: 1,
+            FailedCount: 0, DurationMs: 238_000, CompiledCount: 1));
+        Assert.Equal("cycle converged — 17 members, 1 compiled · 1 round · 3m 58s", vm.StreamEvents.Last().Text);
+
+        var legacy = NewVm();
+        legacy.OnEvent(new CycleCompletedEvent("r1", leaderId, CycleOutcome.Converged, MemberCount: 17, Rounds: 1,
+            FailedCount: 0, DurationMs: 238_000, CompiledCount: -1));
+        Assert.Equal("cycle converged — 17 members · 1 round · 3m 58s", legacy.StreamEvents.Last().Text);
+    }
+
     // ============================================================ [Task 12 PİN] — resolve cycles şerit metni (VM besleme)
 
     /// <summary>[Task 12 PİN] RunStarted(Cycles) + CycleRoundStarted(1/3) sonrası <c>vm.RibbonLine.Text</c>

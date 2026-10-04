@@ -212,9 +212,17 @@ public static class StreamText
     /// kararı TEK turda da verir (girdisi oturmuşken patlayan üye aynı girdiyle yine patlar), bu yüzden "iki
     /// kez" olmamış bir şeyi anlatabiliyordu. Satır artık iki kanıt yolunun ORTAK hükmünü söyler: bir deneme
     /// daha aynı biçimde patlar.</para></summary>
-    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs) =>
+    /// <param name="compiled">[RESOLVE 3.4] Bu koşuda derlenen üye sayısı (taşınan üyeler girmez); -1 = alanı bilmeyen
+    /// eski motor — eski metin.</param>
+    public static string CycleCompleted(CycleOutcome outcome, int members, int rounds, int failed, long durationMs,
+        int compiled = -1) =>
         outcome switch
         {
+            // [RESOLVE 3.4] Motor derlenen sayısını bildiriyorsa satır onu da söyler (tur 1 yalnız gereken üyeleri
+            // derler); bildirmeyen eski motor (compiled < 0) eski metni alır.
+            CycleOutcome.Converged when compiled >= 0 => string.Format(CultureInfo.InvariantCulture,
+                "cycle converged — {0}, {1} compiled · {2} · {3}", Counted(members, "member"), compiled,
+                Counted(rounds, "round"), DurationFormat.Duration(durationMs)),
             CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
                 "cycle converged — {0} · {1} · {2}", Counted(members, "member"), Counted(rounds, "round"),
                 DurationFormat.Duration(durationMs)),
