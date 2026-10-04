@@ -481,8 +481,8 @@ remembers a failed convergence, but only to report it — refusing to retry woul
 nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
 have changed since. The summary line says how many projects are stuck in one, so a run whose only casualty is
 a cycle that would not converge never reads as an unqualified success — those rows keep the amber warning triangle
-with a tooltip saying their projects are still out of date, and rows that compiled but never saw two clean
-rounds carry the same triangle with a tooltip saying their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
+with a tooltip saying their projects are still out of date, and rows that compiled but whose cycle reached the
+round ceiling without settling carry the same triangle with a tooltip saying their output may be one generation stale. And when an ordinary *Build* finishes with cycle members
 still dirty, the event stream adds a closing line pointing at *Resolve cycles* as the next step.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as

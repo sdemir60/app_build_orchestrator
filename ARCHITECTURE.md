@@ -1788,8 +1788,9 @@ and counted beyond it), the number of levels compiled, the round's wall time and
 time. Without evidence the stale and moved fields read `n/a`. The texts have a single owner in Core
 (`CycleDecisionLines`); the Supervisor only measures and calls it.
 
-Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
-rounds were never observed and their output may be one generation stale (§14.3).
+Members that survive to the ceiling are reported as succeeded but flagged as unsettled: the group never met its
+convergence test — a round with no stale member under surface evidence, two consecutive clean rounds without it —
+so their output may be one generation stale (§14.3).
 
 **Stop bookkeeping.** If a stop was acknowledged, writing `runStopped` is a debt that must be paid even when
 the run never reached `runStarted` (a stop pressed during a multi-second planning window) — otherwise the App

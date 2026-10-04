@@ -167,7 +167,8 @@ public static class RibbonText
                 // [design v1.7.0 §3.7] Resolve cycles sıradan bir Build DEĞİLDİR: döngü üyeleri ardışık
                 // turlarla derlenir ve kullanıcının bilmek istediği ilk şey kaçıncı turda olduğudur.
                 // <para>Tasarımın metni "pass 1/2" der ve SABİT iki geçiş vaat eder; tur sayısını MOTOR
-                // belirler (CycleRoundPolicy: yakınsama iki ardışık yeşil tur, tavan üç) ve uygulama bu
+                // belirler (CycleRoundPolicy: yakınsama yüzey kanıtı varken bayatsız bir tur, yokken iki ardışık
+                // yeşil tur; tavan üç) ve uygulama bu
                 // sayıyı olduğu gibi yazar. Sözcük de motorunkidir ("round") — konsol ve event stream aynı
                 // kelimeyi kullanır, arayüz tek dil konuşur.</para>
                 if (resolvingCycles)

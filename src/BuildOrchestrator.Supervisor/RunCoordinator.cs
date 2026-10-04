@@ -1530,7 +1530,8 @@ public sealed class RunCoordinator(
     ///
     /// <para><b>Stop'ta grup ile tekil proje SİMETRİK DEĞİLDİR</b> ve bu kasıtlıdır: graceful stop, in-flight
     /// TEK bir projenin bitip persist etmesine izin verir, ama bir SCC'yi İÇİNDE BULUNDUĞU TURUN sonunda
-    /// keser — yakınsama iki ardışık yeşil tur gerektirir ve kesilen grup asla yakınsamış sayılmaz (hiçbir şey
+    /// keser — kesilen grup yakınsama ölçütüne (kanıtla bayatsız tur ya da iki ardışık yeşil tur) varmadığı için
+    /// asla yakınsamış sayılmaz (hiçbir şey
     /// persist edilmez, tüm üyeler invalidate olur). Gerekçe "SCC tek bir derleme birimidir": burada "in-flight
     /// iş" tek bir invoke değil, TURLARIN TAMAMIDIR; kalan turları stop'a rağmen sürdürmek Stop'u anlamsız
     /// kılardı (32 üyeli bir grupta 64 invoke daha).</para>
