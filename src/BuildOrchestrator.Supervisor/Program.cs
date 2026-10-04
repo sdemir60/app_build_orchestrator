@@ -61,6 +61,11 @@ public static class Program
                 async ct => (await ResolveMsBuildAsync(innerJob, cacheRoot, ct)).Invoker),
             debugHooks, // [A13/B4] kapalıysa debugSpawnChildren error(debugHooksDisabled) ile reddedilir
             interruptedProjects);
+        // [PERF Faz C/C2 · karar 1] Koşu logları üç gün saklanır, son koşu kalır: saklama süpürmesi host kurulur kurulmaz
+        // ARKA PLANDA başlar — engineReady'yi ve ilk komutu bekletmez, sonucunu da kimse beklemez. Etkin koşunun klasörü
+        // süpürmeyle yarışmaz: damgası görülen en yeni damgadır ve pencerenin çok içindedir. Süpürme hiçbir IO hatası
+        // fırlatmaz; özet satırı stderr'e düşer (stdout YALNIZ NDJSON [D4]).
+        _ = Task.Run(() => RunLogRetention.Prune(logsRoot, DateTimeOffset.UtcNow, Console.Error.WriteLine));
         return await host.RunAsync();
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan →

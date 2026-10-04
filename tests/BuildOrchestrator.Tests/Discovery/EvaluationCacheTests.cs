@@ -544,6 +544,44 @@ public class EvaluationCacheTests
     // [Faz 3/Task 1] Eski (semasiz) bir kayit, mtime+length AYNI kalsa bile isabet SAYILMAMALI: Faz 3'te
     // EvaluatedProject'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayitta hep bos kalirdi.
     [Fact]
+    public void PruneStaleSchema_removes_every_entry_outside_the_current_schema_whatever_its_root_and_writes_the_ledger()
+    {
+        // [PERF Faz C/C2] Optimize: eski şemalı girdi hiç isabet vermez (GetOrEvaluate Schema == CurrentSchema ister) ve hiçbir
+        // kök onu göremez; budama KÖKTEN BAĞIMSIZdır. Budanan girdi diske yazılmazsa yalnız bellekte gider — dosyada kalır.
+        WithLedger((root, cachePath) =>
+        {
+            string current = Path.Combine(root, "wt-a", "Current.csproj");
+            string noField = Path.Combine(root, "wt-b", "NoField.csproj");   // Schema alanından önceki biçim
+            string zero = Path.Combine(root, "wt-c", "Zero.csproj");         // açıkça eski şema
+            string newer = Path.Combine(root, "wt-d", "Newer.csproj");       // daha yeni bir sürümün yazdığı: bu sürüm için isabet değil
+            EvaluationCacheFile.Write(cachePath, (current, EvaluationCache.CurrentSchema), (noField, null), (zero, 0),
+                (newer, EvaluationCache.CurrentSchema + 1));
+            var cache = new EvaluationCache(cachePath);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(3, cache.PruneStaleSchema());
+
+            Assert.True(ledger.WasRewritten);                                // budama defteri diske yazar
+            Assert.Equal(new[] { current }, EvaluationCacheFile.Keys(cachePath));
+        });
+    }
+
+    [Fact]
+    public void PruneStaleSchema_with_nothing_stale_leaves_the_ledger_untouched()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            EvaluationCacheFile.Write(cachePath, (Path.Combine(root, "A", "A.csproj"), EvaluationCache.CurrentSchema));
+            var cache = new EvaluationCache(cachePath);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(0, cache.PruneStaleSchema());
+
+            Assert.False(ledger.WasRewritten);                               // budanacak bir şey yoksa dokunulmaz
+        });
+    }
+
+    [Fact]
     public void An_entry_from_an_older_schema_is_evaluated_again()
     {
         string root = Path.Combine(Path.GetTempPath(), "evcache-" + Guid.NewGuid().ToString("N"));

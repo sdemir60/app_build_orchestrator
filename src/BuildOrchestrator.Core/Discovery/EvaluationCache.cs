@@ -151,6 +151,23 @@ public sealed class EvaluationCache(string cachePath)
         return dead.Count;
     }
 
+    /// <summary>
+    /// [optimize · PERF Faz C/C2] Şeması güncel olmayan girdileri KÖKTEN BAĞIMSIZ budar. <see cref="GetOrEvaluate"/> böyle
+    /// bir girdiyi hiçbir zaman isabet saymaz (<c>Schema == CurrentSchema</c> şartı): girdi karara hiç girmez, yalnız
+    /// dosyada yer tutar. Başka bir workspace'in ya da kaldırılmış bir worktree'nin eski sürümden kalan kayıtları ise
+    /// sonsuza dek birikirdi — <see cref="PruneMissingUnderRoot"/> yalnız kökün ALTINDAKİ ölü girdileri görür. Budanan
+    /// girdi, proje bir daha karşılaşıldığında bir kez yeniden değerlendirilir; hiçbir karar değişmez. Kaldırılan sayı döner.
+    /// <para>Gerçekten budandıysa <see cref="MarkDirty"/> + <see cref="Flush"/> çağrılır (aksi hâlde budama yalnız bellekte
+    /// kalır, dosyada durmaya devam ederdi); budanacak bir şey yoksa dosyaya HİÇ dokunulmaz.</para>
+    /// </summary>
+    public int PruneStaleSchema()
+    {
+        var stale = _entries.Where(e => e.Value.Schema != CurrentSchema).Select(e => e.Key).ToList();
+        foreach (string key in stale) _entries.Remove(key);
+        if (stale.Count > 0) { MarkDirty(); Flush(); }
+        return stale.Count;
+    }
+
     /// <summary>[optimize] Yarım kalmış atomik yazımlardan kalan kendi <c>.tmp</c> artıklarını süpürür
     /// (bkz. <see cref="Paths.TempFileSweeper"/>); silinen sayıyı döner.</summary>
     public int SweepOrphanTempFiles(TimeSpan olderThan) =>
