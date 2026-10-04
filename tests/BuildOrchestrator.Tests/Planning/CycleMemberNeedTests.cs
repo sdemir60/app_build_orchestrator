@@ -394,6 +394,33 @@ public class CycleMemberNeedTests
         AssertNeeded(decision, "A", "no trusted record");
     }
 
+    // Kaydı her yönden sağlam üye; yalnız grup içi bağımlılık kümesi BOŞ. İki ya da daha çok üyeli bir SCC'de her üyenin
+    // (güçlü bağlılık gereği) en az bir doğrudan grup içi bağımlılığı vardır; boş küme ancak çağıranın hatasıdır. Kuralı
+    // sessizce etkisiz bırakıp bayat bir üyeyi taşımak yerine hata gereksiz derleme olarak görünür kalır.
+    [Fact]
+    public void an_empty_in_group_dependency_set_makes_the_member_needed()
+    {
+        var member = Member("t1", Reads, Intact) with { InGroupDependencies = [] };
+
+        var decision = Decide(Disk(Reads), ("A", member));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    [Fact] // Sıra: boş bağımlılık kümesi de kayıt güvenilirliği grubunda — motor ve terim karşılaştırmasından ÖNCE.
+    public void an_empty_in_group_dependency_set_is_named_before_engine_and_term_changes()
+    {
+        var record = Ledger("t1", Reads) with { CycleEngineFingerprint = "engine-0" };
+        var member = Member("t1", Reads, Intact) with
+        {
+            Record = record, CurrentTerm = "t2", InGroupDependencies = [],
+        };
+
+        var decision = Decide(Disk(Reads), ("A", member));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
     // ---------------------------------------------------------------- (iv)/(v) çıktı
 
     [Fact] // (iv) Derleme kanıtı (projenin kendi çıktısı) diskte yok — terim aynı olsa da çıktı ortada değil.

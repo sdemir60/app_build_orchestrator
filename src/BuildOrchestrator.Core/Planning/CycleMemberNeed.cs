@@ -13,15 +13,16 @@ namespace BuildOrchestrator.Core.Planning;
 /// şüpheli her kanıt "gerekli" demektir; üye ancak HİÇBİR kural tutmuyorsa taşınır (atlanır).</para>
 ///
 /// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) —
-/// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş ya da üyenin grup içi
-/// bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok ya da
-/// değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → kayıtlı okuduğu
-/// bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
+/// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş, üyenin grup içi bağımlılık kümesi
+/// boş ya da bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok
+/// ya da değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → kayıtlı
+/// okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
 /// </summary>
 public static class CycleMemberNeed
 {
     /// <summary>Kayıt yok, başarısız, başarısız bir bağımlılığa link'li (<c>DepIssue</c>) ya da döngü kanıtı
-    /// eksik/bozuk — boş yüzey listesi ve üyenin grup içi bağımlılıklarını kapsamayan okuma kaydı dahil (karar 2 iii).</summary>
+    /// eksik/bozuk — boş yüzey listesi, boş grup içi bağımlılık kümesi ve bağımlılıkları kapsamayan okuma kaydı dahil
+    /// (karar 2 iii).</summary>
     public const string NoTrustedRecordReason = "no trusted record";
 
     /// <summary>Kayıt başka bir motorla yazılmış (karar 2 vi): toolset ya da build argüman sözleşmesi değişti.</summary>
@@ -52,8 +53,9 @@ public static class CycleMemberNeed
     /// <paramref name="Output"/>: çıktı kanıt kontrolü (<c>IncrementalPlan.ChecksById</c>; null ⇒ kanıt yok);
     /// <paramref name="InGroupDependencies"/>: üyenin DOĞRUDAN grup içi bağımlılıkları (proje referansları ∩ grubun
     /// üyeleri, tam csproj yolu). Kayıt bunların HER BİRİ için en az bir okuma girdisi taşımalıdır (üretici kimlikleri
-    /// OrdinalIgnoreCase eşleşir). Çağıran kümeyi TAM hesaplamalıdır: eksik verilen bağımlılık denetlenmez, boş küme
-    /// kuralı hiç işletmez.</summary>
+    /// OrdinalIgnoreCase eşleşir). İki ya da daha çok üyeli bir SCC'de her üyenin en az bir doğrudan grup içi bağımlılığı
+    /// vardır: BOŞ küme güvenilmez sayılır (üye gerekli) ve çağıranın hatası gereksiz derleme olarak görünür kalır.
+    /// Çağıran kümeyi TAM hesaplamalıdır: eksik verilen bağımlılık denetlenmez.</summary>
     public sealed record MemberEvidence(BuildState? Record, string? CurrentTerm, OutputCheck? Output,
                                         IReadOnlyCollection<string> InGroupDependencies);
 
@@ -113,8 +115,12 @@ public static class CycleMemberNeed
 
             // (iii) Kayıt, üyenin HER grup içi bağımlılığı için en az bir okuma girdisi taşımalı. Kayıtta olmayan bir
             // üreticinin yüzeyi oynasa da karar bunu GÖREMEZ (yazıcı bir üreticiyi düşürmüş olabilir): kısmi okuma kaydı
-            // güvenilmez. Bağımlılıkları çağıran hesaplar (üyenin proje referansları ∩ grubun üyeleri).
-            if (!CoversEveryDependency(recordedSurfaces, inGroupDependencies)) { Need(NoTrustedRecordReason); continue; }
+            // güvenilmez. Bağımlılıkları çağıran hesaplar (üyenin proje referansları ∩ grubun üyeleri). Küme BOŞ da
+            // olamaz: iki ya da daha çok üyeli bir SCC'de her üyenin (güçlü bağlılık gereği) en az bir doğrudan grup içi
+            // bağımlılığı vardır; boş küme ancak çağıranın hatasıdır ve kuralı sessizce etkisiz bırakıp bayat bir üyeyi
+            // taşırdı — hata gereksiz derleme olarak görünür kalsın.
+            if (inGroupDependencies.Count == 0 || !CoversEveryDependency(recordedSurfaces, inGroupDependencies))
+            { Need(NoTrustedRecordReason); continue; }
 
             // (vi) Motor: kayıt başka bir toolset/argüman sözleşmesinin ürünü. Grubun HER üyesi bu kapıdan geçer.
             // (Boş parmak izi yukarıda zaten güvenilmez sayıldı; iki boş "eşit" okunmaz.)
