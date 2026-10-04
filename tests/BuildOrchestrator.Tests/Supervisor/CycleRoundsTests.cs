@@ -2661,10 +2661,71 @@ public class CycleRoundsTests
             Node("M", deps: ["N", "R"], inCycle: true), Node("R", deps: ["N", "M"], inCycle: true)),
         signature, ("X", "x1"), ("N", termN), ("M", "m1"), ("R", "r1"));
 
+    /// <summary>
+    /// [kanıt varken yakınsama yalnız kanıtla] Yüzey kanıtı varken iki ardışık yeşil tur yakınsama DEĞİLDİR: tur 2'den
+    /// itibaren yalnız bayat üyeler derlenir ve derlenen bir üyenin yüzeyi başka bir üyenin okuduğu sabiti oynatabilir.
+    /// TAM tur 1 (taşınan yok, build-order B → A) yeşil biter; B, A'yı ESKİ yüzeyiyle okuduğundan tur 2 yalnız B'yi
+    /// derler ve B'nin KENDİ yüzeyi de oynar (A'nın sabiti B'nin yüzeyine girer) ⇒ A, B'nin tur-1 yüzeyine bağlı kalır:
+    /// bayat. İki tur da yeşildir; yine de A, B'nin eski yüzeyine bağlı bir çıktıdır.
+    /// <para><b>[DEĞİŞEN KURAL] Eski iddia:</b> iki ardışık yeşil tur yakınsamadır — kanıt olsun olmasın. Bu senaryo tur 2'de
+    /// "converged; stale=1 [A]" ile biterdi ve A, B'nin eski yüzeyiyle güvenilir persist edilirdi (sonraki Build SCC'yi
+    /// derlemezdi). <b>Neden değişti:</b> kanıt varken yeşil-yeşil "herkes nihai API'ye bağlandı" demez; bunu yalnız kanıt
+    /// söyler (<see cref="CycleRoundPolicy"/>). Doğrusu: tur 3 A'yı derler ve kimse bayat kalmayınca <c>stale=0</c> ile
+    /// yakınsar.</para>
+    /// </summary>
+    [Fact]
+    public async Task two_green_rounds_with_a_stale_member_do_not_converge_the_group()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a-old");
+            disk.Set("B", "b-old");
+            var plan = HashModePlan(CyclePlanOf(["B", "A"],
+                Node("B", deps: ["A"], inCycle: true),
+                Node("A", deps: ["B"], inCycle: true)), "A", "B");
+            var rec = new RoundRecorder();
+            // A yalnız tur 1'de oynar (a-old → a-new): ondan ÖNCE derlenen B eski yüzeyi okumuştur. B tur 1'de yüzeyini
+            // korur, tur 2'de DEĞİŞTİRİR (b-old → b2): A tur-1 yüzeyini (b-old) okumuştu.
+            var invoker = rec.Invoker((name, round) =>
+            {
+                disk.Set(name, name == "A" ? "a-new" : round == 1 ? "b-old" : "b2");
+                return Ok();
+            });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            // Tur 1: ikisi de. Tur 2: yalnız B (a-old okumuştu). Tur 3: yalnız A (b-old okumuştu).
+            Assert.True(rec.Calls.SequenceEqual(["B#1", "A#1", "B#2", "A#2"]),
+                string.Join(", ", rec.Calls) + "\n" + h.DecisionLog);
+            Assert.Equal([2, 1, 1], h.Events.OfType<CycleRoundStartedEvent>().Select(e => e.MemberCount));
+            var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+            Assert.Equal((CycleOutcome.Converged, 3), (completed.Outcome, completed.Rounds));
+            // Karar günlüğü: tur 2 yeşil-yeşildir ama A bayat ⇒ devam; yakınsama yalnız kimse bayat kalmayınca (tur 3).
+            string log = h.DecisionLog;
+            Assert.Contains("round 2: continue; stale=1 [A]", log);
+            Assert.Contains("round 3: converged; stale=0 []", log);
+            // A'nın kaydı B'nin NİHAİ yüzeyini taşır, bayat tur-1 yüzeyini DEĞİL — sonraki Build bu kayda güvenir.
+            var aRead = Assert.Single(store.Load()[Id("A")].CycleReadSurfaces!);
+            Assert.Equal((Id("B"), "b2"), (aRead.Producer, aRead.Hash));
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
     /// <summary>[karar 3 · Important I1] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına girmez. A değişir ve yüzeyi
     /// oynar, B taşınır ⇒ tur 2 B'yi derler; B'nin KENDİ yüzeyi de oynar (A'dan gelen bir sabit gibi) ⇒ A bayat. Taşınan
     /// B'nin kayıttan gelen Succeeded'ı tur 1'i "yeşil" saydırsaydı tur 2 "converged; stale=1 [A]" derdi ve A, B'nin eski
-    /// yüzeyiyle güvenilir persist edilirdi. Doğrusu: tur 3 A'yı derler; iki kayıt da NİHAİ kardeş yüzeyini taşır.</summary>
+    /// yüzeyiyle güvenilir persist edilirdi. Doğrusu: tur 3 A'yı derler; iki kayıt da NİHAİ kardeş yüzeyini taşır.
+    /// <para><b>[DEĞİŞEN KURAL]</b> Bu sonucu eskiden yalnız <c>previousFailed = null</c> koruması sağlıyordu: policy'nin
+    /// iki-yeşil kuralı <c>staleNow</c>'a bakmıyordu. İki-yeşil kuralı artık yalnız yüzey kanıtı YOKKEN çalışır (yukarıdaki
+    /// test): kanıt varken bu sonucu policy de sağlar; koruma <c>staleNow</c>'ın null olduğu turlar için yerinde kalır.</para></summary>
     [Fact]
     public Task a_round_one_with_carried_members_does_not_count_toward_two_green_rounds() => InCacheRootAsync(async cacheRoot =>
     {

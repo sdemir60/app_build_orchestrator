@@ -1915,9 +1915,9 @@ public sealed class RunCoordinator(
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
                 // [R3c2 · karar 3] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına taban olmaz: taşınan üyenin
-                // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Tur 1'i "yeşil" saydırsaydı tur 2, bayat bir üye
-                // varken Converged derdi (CycleRoundPolicy'nin ilk kuralı staleNow'a bakmaz). Kural değişmez; tur 1'den
-                // sonra yakınsama ya kanıtla (staleNow boş) ya da sonraki iki gerçek turla gelir.
+                // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Kanıt varken policy zaten yalnız kanıtla
+                // yakınsar (iki-yeşil kuralı staleNow null iken çalışır); bu koruma kanıtın düştüğü turlar içindir:
+                // tur 1'den sonra yakınsama ya kanıtla (staleNow boş) ya da sonraki iki gerçek turla gelir.
                 previousFailed = round == 1 && roundOneCarried ? null : failed;
                 Decide(run.Logs, CycleDecisionLines.RoundEnded(group, round, decision,
                     staleNow is null ? null : members.Where(staleNow.Contains).Select(id => NameOf(run, id)).ToList(),
