@@ -1763,6 +1763,11 @@ public sealed class RunCoordinator(
                     // dönmez ⇒ seviye bariyeri sonraki seviyeye taze yüzeyi verir. Stop'un return'ü ve istisna buraya gelmez.
                     if (outcome?.Result == BuildResult.Succeeded && hashMode && producers.Contains(id))
                     {
+                        // Slot devri boş bir thread'e bağlı kalmasın: hash ayrı bir iş öğesine bırakılır ve sıradaki
+                        // üyenin devamı (Release'in kuyruğa koyduğu) bu thread'de hemen koşabilir. Bırakılmasaydı devir,
+                        // hash bu thread'i tutarken başka bir thread'in boşalmasını beklerdi — yüklü test havuzunda
+                        // ölçüldü: sıradaki üye 200 ms tavanında başlayamadı (12 koşunun 3'ünde).
+                        await Task.Yield();
                         // Taze çıktı yazıldı: yüzeyi ŞİMDİ oku — sonraki seviyeler ve tur sonu bunu görür.
                         // Dosya okuma kilit DIŞINDA, yazım kilit İÇİNDE (tek gövde, farklı anahtarlar).
                         long hashStart = Stopwatch.GetTimestamp();
