@@ -188,7 +188,13 @@ public sealed record BuildState(
     // kanıtına eşit ve zamanı ondan en çok 2 s farklı olanlar (bkz. OutputEvidence.LearnFedOutputs). Hem defter
     // hem zaman kipinde denetlenir: biri yoksa, boyutu farklıysa ya da kanıttan eskiyse çıktı bozuk sayılır.
     // Alan SONA ve default'lu: eski kayıtlar null çözülür — liste yok, yalnız derleme kanıtı konuşur.
-    IReadOnlyList<string>? FedOutputs = null)
+    IReadOnlyList<string>? FedOutputs = null,
+    // [PERF Faz E3] Son başarının restore kararı anında okunan packages.config içerik özeti (SHA-256 hex,
+    // RestoreEvidence.HashOf) — restore koştuysa da, paketler zaten yerinde bulunup atlandıysa da. Build ve Cycles
+    // bir sonraki koşuda özet aynıysa ve paketler kuruluysa (klasör + .nupkg) restore'u atlar; Rebuild ona hiç
+    // bakmaz (toparlanma yolu). Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null çözülür —
+    // proje restore eder (güvenli yön).
+    string? PackagesConfigHash = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -211,7 +217,8 @@ public sealed record BuildState(
         && FailedAt == other.FailedAt
         && (FedOutputs is null
             ? other.FedOutputs is null
-            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs));
+            : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs))
+        && PackagesConfigHash == other.PackagesConfigHash;
 
     public override int GetHashCode()
     {
@@ -230,6 +237,7 @@ public sealed record BuildState(
         hash.Add(FailedSignature);
         hash.Add(FailedAt);
         foreach (string fed in FedOutputs ?? []) hash.Add(fed);
+        hash.Add(PackagesConfigHash);
         return hash.ToHashCode();
     }
 }

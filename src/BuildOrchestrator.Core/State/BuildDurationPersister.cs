@@ -4,8 +4,9 @@ namespace BuildOrchestrator.Core.State;
 
 /// <summary>
 /// [T70] Bir proje BAŞARIYLA derlendiğinde ölçülen süreyi (ms) <see cref="BuildStateStore"/>'a kalıcı hale
-/// getiren ince yardımcı — <see cref="Incremental.EtaCalculator"/>'ın gelecek tick'lerinin queued/building
-/// tahminlerini besleyen <c>BuildState.LastDurationMs</c>'i yazar.
+/// getiren ince yardımcı — <c>BuildState.LastDurationMs</c>'i yazar. Alan yalnız TANI kaydıdır:
+/// <see cref="Incremental.EtaCalculator"/> defterdeki son süreyi okumaz, tahmin koşu içi ortalamadan kurulur
+/// (ARCHITECTURE.md §8.4, §7.5).
 /// <para>
 /// <b>Partial merge:</b> <see cref="BuildStateStore.Upsert"/> TÜM <see cref="BuildState"/> kaydını değiştirir
 /// (partial-patch API'si yok) — bu yüzden burada önce mevcut kayıt <see cref="BuildStateStore.Load"/> ile

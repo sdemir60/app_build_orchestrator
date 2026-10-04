@@ -915,16 +915,20 @@ taken for a clean one. A project from an external root (§10.4) has the same rec
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
-all (§10.4). The record also carries the project's **fed outputs** — the copies of its output in dependents'
-`HintPath` locations that this tool's own successful build was seen to refresh (§7.6); the list is `null` when
-nothing could be learned (no derivable output path, the output file missing after the build, an older record),
-empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
-built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
-successful build" line is the only place a revision is shown. It is written by a single serialized writer,
-atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
-`FileShare.Delete`, and because Windows refuses a rename over a file with an open handle even when the handle
-shares delete, a transient sharing violation is retried a bounded number of times. A corrupt file never throws —
-it falls back to defaults.
+all (§10.4). Beside these sits the content hash (SHA-256) of the project's `packages.config` as its last success
+read it when deciding on the restore — the evidence that lets *Build* and *Resolve cycles* skip the restore
+prologue (§9.3); a record that predates the field answers `null`, and the project restores. The record also carries
+the project's **fed outputs** — the copies of its output in dependents' `HintPath` locations that this tool's own
+successful build was seen to refresh (§7.6); the list is `null` when nothing could be learned (no derivable output
+path, the output file missing after the build, an older record), empty when the path is known but no candidate
+matched, and it survives a failed attempt unchanged. The built commit and the last branch feed no decision: the
+built commit is diagnostic, and the project log's "last successful build" line is the only place a revision is
+shown. The last duration feeds none either: it is recorded after each success and read by nothing — the ETA (§8.4)
+averages the durations the current run has observed — so it stays in the file as a diagnostic record only. The file
+is written by a single serialized writer, atomically (unique temp file + `File.Move(overwrite)`), after every
+project completes. Readers open with `FileShare.Delete`, and because Windows refuses a rename over a file with an
+open handle even when the handle shares delete, a transient sharing violation is retried a bounded number of times.
+A corrupt file never throws — it falls back to defaults.
 
 ### 7.6 Output evidence
 
@@ -1318,8 +1322,12 @@ were stored carries no roots and compiles on every `Build` as it always did.
 baseline round count. That term belongs to the run where rounds actually run: a Clean cleans a cycle member once,
 as an ordinary project (§8.1), so there it is plain queued work.
 The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
-replaced by `· almost done` below 4 s. The per-project estimate comes from `BuildState.LastDurationMs`; with
-no history the ribbon shows progress and elapsed time without an estimate.
+replaced by `· almost done` below 4 s. `parallelism` is the worker count `runStarted` reports — what the engine
+actually runs once it has fitted the profile to the machine (§11.1) — and it holds for the whole run. The
+per-project estimate is one figure for every project: the mean duration of the projects that have succeeded or
+failed so far in the current run. The persisted last duration (§7.5) plays no part, so every run starts without an
+estimate, not only the first one: until a project has succeeded or failed there is nothing to average, and the
+ribbon shows progress and elapsed time without one.
 
 Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
 whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
@@ -1465,7 +1473,8 @@ log is the real record, and the channel is still drained to completion so no wri
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
 that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
 before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the
-solution directory and a restore flag derived from the presence of `packages.config`.
+solution directory and a restore flag derived from the presence of `packages.config`, the run mode and the
+project's restore evidence (§9.3).
 The project's log file is opened before and closed after the
 invocation, so a late line cannot be silently dropped. The first line written is the real MSBuild command
 line. On success the build state is persisted with the signature computed during planning; on failure the
@@ -1554,7 +1563,11 @@ second round with no API moved. Every copy stays in the record, the conservative
 failed (whether another round can help is judged on the widest evidence), when there is no command line (the
 compiler did not run, or its line could not be read), when the compiler read no file of the dependency's name
 (the reference was not found, and the file may yet appear), and when the file it read is none of the
-dependency's known copies (`CycleReadFiles`). At the end of the round the records are compared with the disk.
+dependency's known copies (`CycleReadFiles`). A producer's own surface is hashed when the group starts — all
+producers in parallel, bounded by the shared IO parallelism (`IoParallelism`) — and again after each of its
+successful compiles, once the member has released its build slot: reading a large output never holds a slot
+another member could use, and the level barrier still waits for the hash, so the next level reads the fresh
+surface. At the end of the round the records are compared with the disk.
 Everyone green and nobody stale means **converged**: every member provably compiled against
 final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
 whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
@@ -1569,9 +1582,9 @@ identical failure *set* twice means no progress (the comparison is on the set an
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
 idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
-repeated across rounds either: a member whose previous round succeeded already restored then, and nothing
-between rounds can change `packages.config` — only a member that failed carries the restore prologue again
-(§9.3), because the failure may have been the restore's own.
+repeated across rounds either: a member whose previous round succeeded already restored then or had no need to, and
+nothing between rounds can change `packages.config` — only a member that failed goes back through the restore
+decision (§9.3), because the failure may have been the restore's own.
 
 **Intermediate rounds are not published.** A member gets no `projectSucceeded`/`projectFailed` until the group
 is finished, and then exactly one, carrying the **sum** of its rounds as the duration — the real cost, not the
@@ -1649,6 +1662,17 @@ Whichever verdict a group ends on, it is named in `decision.log` — the per-mem
 tell an operator whether a group hit the ceiling, stopped making progress or converged, and the line carries
 the remembered signature when one was written. The same verdict also reaches the App, as `cycleCompleted`
 (§5.3), so it shows up in the event stream instead of only on disk.
+
+The rounds themselves leave a trail in `decision.log` as well, so "why did this group take another round" is
+answered from the log. Before the first round a header names the group, its member and intra-group producer
+counts, whether surface evidence is on, and how long the group-start surface hashing took. When evidence is lost
+— at the start or after a member's compile — one line names the producer, the file and the reason (unreadable,
+meaning locked or corrupt, or no derivable evidence path) and says the group continues in full rounds; only the
+first loss is written. Every completed round ends with one line: the round's decision, the stale members by
+name, the sibling files whose surface moved under them (the evidence behind the stale set, listed up to a limit
+and counted beyond it), the number of levels compiled, the round's wall time and its summed post-compile hashing
+time. Without evidence the stale and moved fields read `n/a`. The texts have a single owner in Core
+(`CycleDecisionLines`); the Supervisor only measures and calls it.
 
 Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
 rounds were never observed and their output may be one generation stale (§14.3).
@@ -1757,19 +1781,39 @@ That argument list has **two callers and one source**. The build path runs it as
 carries a `packages.config` next to its `.csproj` gets a restore child before its build child, and a non-zero
 restore exit means the build child is never started. Within a cycle group's rounds (§8.8) the prologue runs
 once, not per round: a member re-invoked after a successful round carries no restore — that success already
-restored, and nothing between rounds can change `packages.config` — while a member whose last round failed
-gets the prologue again, because the failure may have been the restore's own. A `-t:Clean` target gets no restore — there is nothing to
-restore for. *Optimize* (§13.2) calls the same list through a **restore-only entry point** on the invoker;
-`-t:Build` is never appended there, so that path cannot compile anything. It exists because a restore is not
-always a build's prologue: Optimize repairs what a build would otherwise have failed on. Both callers share the
-same invoker core — inner-job assignment, line pumping, the per-project timeout and the kill on timeout or
-cancel — so a restore child is governed exactly like a build child.
+restored or found its packages in place, and nothing between rounds can change `packages.config` — while a member
+whose last round failed goes back through the decision below, because the failure may have been the restore's own.
+A `-t:Clean` target gets no restore — there is nothing to restore for. *Optimize* (§13.2) calls the same list
+through a **restore-only entry point** on the invoker; `-t:Build` is never appended there, so that path cannot
+compile anything. It exists because a restore is not always a build's prologue: Optimize repairs what a build would
+otherwise have failed on. Both callers share the same invoker core — inner-job assignment, line pumping, the
+per-project timeout and the kill on timeout or cancel — so a restore child is governed exactly like a build child.
+
+**In *Build* and *Resolve cycles* the prologue is conditional.** Each success records the content hash (SHA-256) of
+the project's `packages.config` as the run read it when it made the restore decision, whether the restore then ran
+or was skipped (§7.5). The next *Build* or *Resolve cycles* run hashes the file again and reads its
+`<package id version>` entries; when the hash equals the recorded one and every listed package is installed, the
+prologue is skipped and `decision.log` gives the reason
+(`<project>: restore skipped — packages.config unchanged, N packages present`). A package counts as installed when
+its `<solutionDir>\packages\<id>.<version>\` folder holds `<id>.<version>.nupkg` — the file NuGet keeps beside every
+package it installs there. A folder without it, such as an extraction cut short by *Stop*, a timeout or a locked
+file can leave, counts as missing, so the next run, or the next round of a cycle group, restores again. Content
+alone decides; no date enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a
+record that predates the field), a changed file, a missing folder or `.nupkg`, or an unreadable or malformed
+`packages.config`. The witness is the solution's own `packages` folder, and `nuget.config` is not read: when
+NuGet's `repositoryPath` keeps the store elsewhere, a project with no copies in that folder restores on every run,
+but stale copies left behind there satisfy the evidence while the store NuGet would fill stays empty. *Rebuild*
+never consults the evidence and always restores, handing the decision back to NuGet — the way out of that case, as
+is Optimize when a `HintPath` target is missing. Optimize's repair below stands apart from this record: it restores
+an old-style project whose `HintPath` targets are missing without reading the ledger and leaves the recorded hash
+alone, so the next build finds the repaired folders and its hash comparison decides on the recorded hash,
+unaffected by the repair.
 
 Optimize restores only what a restore can actually fix, in two families. The **old-style** family this tool
 targets — a project that carries a `packages.config` beside its `.csproj`, taking its packages that way rather
 than through `PackageReference` — is restored when at least one of its NuGet `packages` `HintPath` targets is
 missing from disk. The
-`packages.config` itself is never parsed: NuGet's `repositoryPath` can move the store anywhere, so the
+`packages.config` itself is never parsed for this repair: NuGet's `repositoryPath` can move the store anywhere, so the
 `HintPath` is the only trustworthy witness of where the packages are expected. A `HintPath` still carrying an
 unexpanded MSBuild property is counted in nothing at all, because this service does no MSBuild evaluation and
 staying silent beats a wrong diagnosis. Every **SDK-style** project is restored on every Optimize. Its build
@@ -5265,7 +5309,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
@@ -5920,6 +5964,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
+| The hidden-surface signal — one inherited property every screen-only job reads, and the "visible again" test views use to catch up; the window writes it from its own visibility and the Build menu's popup gets it by hand | `App/Controls/HiddenSurface.cs`, `App/MainWindow.HiddenSurface.cs` (`SetSurfaceHidden`), `App/Views/ActionBar.xaml.cs` |
 | Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
 | Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
@@ -5982,7 +6027,6 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
-
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
@@ -5998,6 +6042,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure) | `Core/Planning/CycleReadFiles.cs` |
+| Resolve round trail in decision.log (group header, evidence loss, round line, verdict, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
@@ -6025,6 +6070,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
 | `SolutionDir` resolution for restore | `Core/MsBuild/SolutionDirResolver.cs` |
+| Restore evidence — whether a `packages.config` restore can be skipped — and its `decision.log` line | `Core/MsBuild/RestoreEvidence.cs` |
 | Output encoding | `Core/MsBuild/MsBuildOutputEncoding.cs` |
 | Process launching, argument list discipline, command-line escaping | `Core/Processes/ProcessRunner.cs`, `WindowsCommandLine.cs` |
 
@@ -6086,7 +6132,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
 | Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
-| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up and the output checks | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs` |
+| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the Resolve group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 
 **View models — the pure decision cores**
 
