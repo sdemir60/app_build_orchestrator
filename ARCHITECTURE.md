@@ -501,7 +501,8 @@ git's own detail on failure. The App builds every console line of a branch switc
 run ended normally.
 
 `cycleRoundStarted` is run-level rather than per-project, and it names the group's leader, the round, the cap
-and how many members that round compiles — a later round can be narrower than the group, because only the
+and how many members that round compiles — a round can be narrower than the group: the first compiles only
+the members that need it, a later one only the stale ones, because only the
 members whose read surfaces moved compile again (§8.8). A strongly-connected component is one build unit whose
 per-round results are never published (§8.8), so the round number is the only progress the group itself emits;
 its members still emit their own `projectStarted` on every round they compile in, because they really are
@@ -519,7 +520,9 @@ releases the slot, so the number of projects announced as compiling never exceed
 could not change the result: a failure whose read surfaces had settled, or without surface evidence the same
 members failing twice in a row) or the round cap reached — carrying that outcome as camelCase text, the leader's id (the same
 representative `cycleRoundStarted` used, so the line stays clickable), the member count, the rounds run, the
-last round's failure count and the summed duration of every member across every round. It is never published
+last round's failure count, the summed duration of every member across every round and `compiledCount`, how many of
+its members the group compiled (a member carried through the whole run is not counted; an engine that does not report
+the field leaves the App's line without the count). It is never published
 for a group cut short by a stop or an unexpected error: neither is evidence that the group cannot converge, and
 a later run deserves a real attempt rather than one that starts from a false verdict.
 
@@ -835,6 +838,16 @@ The composite is also what decides the members themselves. Since they all carry 
 either wholly dirty or wholly up to date — members never disagree, and a group whose every member is up to date
 is skipped as a group rather than rebuilt on every run.
 
+That is the decision about the group. Which members of a dirty group compile is a separate question, asked once more
+when a `Cycles` run starts the group (§8.8), and the composite cannot answer it: it is one value for every member.
+The answer is built from each member's own **term** — the very value the composite is made of: the member's files, the
+configuration and the signatures of its upstreams outside the component, with every intra-component edge collapsed to
+the marker, so a sibling's content never enters it. The planner returns the terms beside the signatures
+(`MemberTermById`; SCC members only, and empty under frozen-upstream evaluation, which builds no composite), the
+run plan carries them to the coordinator, and a converged group stores each member's term in its build state (§7.5).
+A term that equals the stored one says that nothing the member itself is built from has changed; what its siblings
+did to it is judged on the API surfaces it read (§8.8).
+
 ### 7.4 Will-build tri-state
 
 Before a run — and after every Sync — each project carries `WillBuild` as a tri-state:
@@ -921,7 +934,17 @@ prologue (§9.3); a record that predates the field answers `null`, and the proje
 the project's **fed outputs** — the copies of its output in dependents' `HintPath` locations that this tool's own
 successful build was seen to refresh (§7.6); the list is `null` when nothing could be learned (no derivable output
 path, the output file missing after the build, an older record), empty when the path is known but no candidate
-matched, and it survives a failed attempt unchanged. The built commit and the last branch feed no decision: the
+matched, and it survives a failed attempt unchanged. A cycle member's record also carries the three fields behind
+the first round of a *Resolve cycles* run (§8.8): the **member term** it last compiled with (§7.3), the **read
+surfaces** — for every sibling file its last compile read, the producer, the file and the API-surface hash it saw —
+and the **engine fingerprint** of the run that wrote them. They are written only when the member's group converges —
+freshly for a member that compiled, carried over untouched for one that was carried. The surfaces are stored in a
+canonical order (producer, then file, case-insensitive; each pair once), so the file reads the same from run to run.
+Every other writer leaves them empty: a success recorded outside a converged group rebuilds the record without them
+and a Clean removes the record, while the invalidation of a group that did not converge keeps what is there but turns
+the last result into a failure, and a record whose last result is not a success is never trusted. A record without the
+fields — written before they existed, or reset this way — is one round one cannot trust (§8.8).
+The built commit and the last branch feed no decision: the
 built commit is diagnostic, and the project log's "last successful build" line is the only place a revision is
 shown. The last duration feeds none either: it is recorded after each success and read by nothing — the ETA (§8.4)
 averages the durations the current run has observed — so it stays in the file as a diagnostic record only. The file
@@ -1336,7 +1359,11 @@ the estimate keeps the two-round budget anyway, in the same direction the rest o
 accepts — an ETA that runs long is the better failure. A member counts in that term from the moment it is planned until its group is finished — while the group
 runs as well, not only while it is queued — because intermediate rounds are never published (§8.8) and a
 member's elapsed time within one round says nothing about how much of the group is left. Entering a third
-round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded.
+round shifts the estimate once more, which is accepted — the ceiling is low enough that the drift is bounded. A member
+that round one carries (§8.8) is never compiled, yet its estimate stays in the term, at the full figure, until its
+group is finished: its result, a `skipped` one, is reported together with every other member's when the verdict is in,
+and only then does it leave. The estimate therefore includes compile time that is never spent, which is the same long
+direction.
 
 Every component lands in that single undivided term, even though independent components genuinely do run on
 different workers at the same time. The estimate is therefore pessimistic in exactly one direction whenever a
@@ -1538,10 +1565,72 @@ worker count, §11.1), so no combination of workers and level width ever exceeds
 A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
 held (§5.3): what the screen counts as compiling is exactly what holds a slot, and the members of a level still
 queued for one are announced nothing.
-The first round invokes every member; whether anyone is invoked again is a question of evidence, and a later
-round compiles only the members for whom the answer is yes. Each member's log file is opened once and kept
-open for every round: opening it per round would truncate the previous rounds away and restart the line
-numbers.
+Round one is a question of evidence too: it compiles the members that need it (below), a later round compiles only
+the members that went stale, and nobody else is invoked. Each member's log file is opened when the member first
+compiles and kept open for every later round: opening it per round would truncate the previous rounds away and
+restart the line numbers, and a member that is never compiled never gets a log.
+
+**Round one compiles only the members that need it.** When the group has surface evidence and the plan carries the
+members' terms (§7.3), a pure function in Core (`CycleMemberNeed`) sorts the members once, as the group starts. It
+reads what the ledger holds for each member (§7.5), the member's current term and output check (§7.6), its direct
+dependencies inside the group, the surface state hashed at group start and the engine fingerprint (below). Without
+that evidence every member compiles in round one. A member needs a compile when the first of these rules matches,
+taken in this order, and the matching rule is written to `decision.log` before the round starts, one line per member
+(`A: round 1 — own inputs changed`):
+
+- **No trusted record.** The record is missing, its last result is not a success, that success was linked against a
+  failed dependency, one of the three cycle fields (§7.5) is absent or empty, the recorded surfaces name no file of
+  one of the member's direct dependencies inside the group, or a surface entry is incomplete or listed twice.
+- **Engine changed.** The fingerprint stored with the record is not this run's.
+- **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
+  none), or the term differs from the stored one: the member's own files, its configuration or an upstream outside
+  the component changed.
+- **Output evidence missing, output built outside this tool.** The member has no output check, no derivable
+  evidence path or an output file that is gone, or — for an output the tool built itself — fed copies that are not
+  intact (§7.6); or its output evidence is in time mode, the mode an output compiled by someone else, Visual Studio
+  say, is judged in.
+- **Read surface moved.** A sibling file the record says the member read hashes differently on disk, or is gone. The
+  reason names the files, sorted and counted beyond a limit like the `moved=` field of a round line.
+
+A member that matches none of the rules is **carried**: nothing it is built from has changed and the surfaces it read
+are the ones it saw, so its output is still the right answer and it is not invoked. Its read state is rebuilt from
+the record and it counts as clean from the first round on, but it is not exempt — at the end of every round its
+recorded surfaces are compared with the disk like any other member's, so a sibling that compiled in round one and
+moved an API surface under it makes it stale, and a later round compiles it, through the restore decision of §9.3
+because a recorded success is not a round that restored. A member still carried when the group converges gets its
+single result with everyone else's: `skipped — up to date`, with `carried: own inputs and read surfaces unchanged`
+as the detail in `decision.log`. Its build state is refreshed at that moment, unless the run was interrupted: the new
+composite signature, the run's commit and branch, the run time and this run's dependency-issue note replace the old
+ones — which is what lets the next *Build* find the member up to date — while its duration, content fingerprint, fed
+outputs and the three cycle fields stay as its last compile left them. Having never compiled, the member has no
+project log in the run. When a group does not converge or is cut short, a carried member is handled like every
+other member of it (below): invalidated, reported with the rest and given no new values.
+
+A round one that carried members was clean only for the members that compiled, so the engine hands the stopping rule
+below no previous failure set after it: such a round never counts as the first of the two consecutive clean rounds
+the classic rule asks for. The group then converges when everyone is green and nobody is stale — in round one itself
+when nobody went stale — or after two further clean rounds. If the surface evidence is lost while round one runs, the
+later rounds are full rounds that compile every member, the carried ones included, and the record is written without
+read surfaces, so none of the group's members is carried the next time.
+
+The **engine fingerprint** is a SHA-256 over the full path of the `MSBuild.exe` the run resolved, its file version
+and every argument of the build command line except the project path (`EngineFingerprint`). The configuration enters
+as a placeholder, the WPF temporary-assembly targets argument (§9.2) is part of the list and the separate restore
+invocation (§9.3) is not; a file version that cannot be read counts as one more fixed value, not as an error. It is
+computed once per run. A record written under another fingerprint — another toolset or version, a changed argument
+contract — vouches for no one, so every member of every group compiles once.
+
+`decision.log` carries the outcome: a line per member that needs a compile, a `skipped — up to date (carried …)` line
+per carried member, and a verdict line that gives a converged group's compiled count beside its member count
+(`cycle {leader}: converged (N members, K compiled)`). The event stream carries the same count (§5.3).
+
+**A known limit.** A carried member is not compiled, so the copies of its siblings' outputs that a compile would have
+refreshed in its own output folder stay as its last compile left them — even though a sibling was recompiled in the
+run, which is possible only while that sibling's API surface did not move, the very condition for being carried. The
+tool never writes to an output folder itself (§9.4), so nothing refreshes them. The repository this tool is used on
+runs from one shared `Bin` folder, where the recompiled sibling has already written its own output, which is why the
+limit is accepted; a layout that ran from each member's own folder would see an older implementation of the sibling
+until that member compiles.
 
 The stopping rule is a pure function in Core, given the round number, the members currently failing, the
 previous round's failures and — when the engine can prove it — the members whose read surfaces went stale.
@@ -5309,7 +5398,7 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 | Path | Content | Corruption behaviour |
 |---|---|---|
 | `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
-| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
+| `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6), the `packages.config` content hash behind the restore decision (§9.3), a cycle member's term, the sibling surfaces it read and the engine fingerprint behind round one's compile decision (§7.5, §8.8); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
 | `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
@@ -6041,8 +6130,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
-| Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure) | `Core/Planning/CycleReadFiles.cs` |
-| Resolve round trail in decision.log (group header, evidence loss, round line, verdict, retry) | `Core/Planning/CycleDecisionLines.cs` |
+| Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
+| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps); fed by the member terms the planner returns (`MemberTermById`) and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs` |
+| Resolve round trail in decision.log (group header, evidence loss, round-one need lines, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
