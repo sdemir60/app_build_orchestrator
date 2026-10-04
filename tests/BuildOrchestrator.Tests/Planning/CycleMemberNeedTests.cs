@@ -28,9 +28,18 @@ public class CycleMemberNeedTests
         ProjectId: "A", BuiltSignature: "composite", LastResult: BuildResult.Succeeded,
         CycleMemberTerm: term, CycleReadSurfaces: reads, CycleEngineFingerprint: Engine);
 
-    // Değişmemiş üye: kayıttaki terim bugünkü terimle aynı. Fark `with` ile açılır (CurrentTerm, Record, Output).
+    // Üyenin grup içi bağımlılıkları: VARSAYILAN, kaydın okuduğu üreticilerin tamamıdır — yani kayıt her bağımlılığı
+    // kapsar; böylece bu kuralı sınamayan testler anlamını korur. Kapsamayan kayıt `with { InGroupDependencies = ... }`
+    // ile kurulur.
+    private static string[] ProducersOf(CycleReadSurface[] surfaces) =>
+        [.. surfaces.Where(surface => surface?.Producer is not null)
+                    .Select(surface => surface.Producer)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)];
+
+    // Değişmemiş üye: kayıttaki terim bugünkü terimle aynı ve kayıt her grup içi bağımlılığı kapsar. Fark `with` ile
+    // açılır (CurrentTerm, Record, Output, InGroupDependencies).
     private static CycleMemberNeed.MemberEvidence Member(string term, CycleReadSurface[] surfaces, OutputCheck? output) =>
-        new(Ledger(term, surfaces), term, output);
+        new(Ledger(term, surfaces), term, output, ProducersOf(surfaces));
 
     // Grup başında diskten okunan yüzeyler: üretici → dosya → özet.
     private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Disk(params CycleReadSurface[] surfaces) =>
@@ -324,9 +333,63 @@ public class CycleMemberNeedTests
     [Fact] // Defter dosyasındaki null eleman (JSON `null`) sözlük anahtarı olamaz: çökmek yerine kayıt güvenilmez sayılır.
     public void a_null_surface_entry_makes_the_member_needed()
     {
-        CycleReadSurface[] withNull = [.. Reads, null!];
+        // null İLK sırada: kapsama taraması (Any) ilk eşleşmede durur; null sonda olsa korumasız bir yardımcı ona hiç
+        // ulaşmazdı ve bu test o regresyonu yakalamazdı.
+        CycleReadSurface[] withNull = [null!, .. Reads];
 
         var decision = Decide(Disk(Reads), ("A", Member("t1", withNull, Intact)));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    // Kayıt iki grup içi bağımlılıktan yalnız birini kapsıyor (öteki yazılırken düşmüş): kayıtta olmayan üreticinin
+    // yüzeyi oynasa da karar bunu GÖREMEZ ⇒ kayıt güvenilmez, üye gerekli — diskteki yüzeyler kayıtla eşleşse bile.
+    // İki sırada da denenir: yalnız ilk ya da yalnız son bağımlılığı denetleyen bir kural birini kaçırırdı.
+    [Theory]
+    [InlineData("B", "C")]
+    [InlineData("C", "B")]
+    public void a_record_that_dropped_an_in_group_dependency_makes_the_member_needed(string first, string second)
+    {
+        // kayıt yalnız B'nin dosyalarını okumuş; C de bir grup içi bağımlılık ama kayıtta yok
+        var member = Member("t1", Reads, Intact) with { InGroupDependencies = [first, second] };
+
+        var decision = Decide(Disk(Reads), ("A", member));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    [Fact] // Kayıt HER grup içi bağımlılığı kapsıyorsa (her şey sağlamken) üye hâlâ taşınır; iki üretici de okuma durumunda.
+    public void a_record_covering_every_in_group_dependency_is_carried()
+    {
+        CycleReadSurface[] reads = [.. Reads, Read("C", @"X:\bin\C.dll", "hc")];
+        var member = Member("t1", reads, Intact) with { InGroupDependencies = ["B", "C"] };
+
+        var decision = Decide(Disk(reads), ("A", member));
+
+        AssertCarried(decision, "A");
+        Assert.Equal(2, decision.CarriedReadStates["A"].Count);
+    }
+
+    [Fact] // Üretici kimlikleri (Windows yolu) OrdinalIgnoreCase eşleşir: bağımlılık başka harfle verilse de kayıt kapsar.
+    public void in_group_dependencies_are_matched_to_recorded_producers_ignoring_case()
+    {
+        var member = Member("t1", Reads, Intact) with { InGroupDependencies = ["b"] };
+
+        var decision = Decide(Disk(Reads), ("A", member));
+
+        AssertCarried(decision, "A");
+    }
+
+    [Fact] // Sıra: kayıt güvenilirliği (eksik okuma kaydı dahil) motor ve terim karşılaştırmasından ÖNCE; neden "kayıt" kalır.
+    public void an_incomplete_read_record_is_named_before_engine_and_term_changes()
+    {
+        var record = Ledger("t1", Reads) with { CycleEngineFingerprint = "engine-0" };
+        var member = Member("t1", Reads, Intact) with
+        {
+            Record = record, CurrentTerm = "t2", InGroupDependencies = ["B", "C"],
+        };
+
+        var decision = Decide(Disk(Reads), ("A", member));
 
         AssertNeeded(decision, "A", "no trusted record");
     }

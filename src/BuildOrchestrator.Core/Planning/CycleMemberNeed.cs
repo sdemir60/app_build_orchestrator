@@ -12,15 +12,16 @@ namespace BuildOrchestrator.Core.Planning;
 /// "gerekir" yalnız zaman kaybıdır. Bu yüzden her kural "gerekli" yönünde ve erken çıkışlıdır: eksik, boş ya da
 /// şüpheli her kanıt "gerekli" demektir; üye ancak HİÇBİR kural tutmuyorsa taşınır (atlanır).</para>
 ///
-/// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) →
-/// kayıt başka bir motordan (vi) → üyenin kendi terimi yok ya da değişmiş (i) → çıktı kanıtı eksik, bu araç dışında
-/// derlenmiş ya da beslenen kopyası bozuk (iv, v) → kayıtlı okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki
-/// nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
+/// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) —
+/// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş ya da üyenin grup içi
+/// bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok ya da
+/// değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → kayıtlı okuduğu
+/// bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
 /// </summary>
 public static class CycleMemberNeed
 {
     /// <summary>Kayıt yok, başarısız, başarısız bir bağımlılığa link'li (<c>DepIssue</c>) ya da döngü kanıtı
-    /// eksik/bozuk — boş yüzey listesi dahil (karar 2 iii).</summary>
+    /// eksik/bozuk — boş yüzey listesi ve üyenin grup içi bağımlılıklarını kapsamayan okuma kaydı dahil (karar 2 iii).</summary>
     public const string NoTrustedRecordReason = "no trusted record";
 
     /// <summary>Kayıt başka bir motorla yazılmış (karar 2 vi): toolset ya da build argüman sözleşmesi değişti.</summary>
@@ -48,8 +49,13 @@ public static class CycleMemberNeed
 
     /// <summary>Bir üyenin kanıtları. <paramref name="Record"/>: defterdeki kayıt (<c>LedgerAtStart</c>);
     /// <paramref name="CurrentTerm"/>: bu koşunun üye terimi (<c>IncrementalPlan.MemberTermById</c>; yoksa null);
-    /// <paramref name="Output"/>: çıktı kanıt kontrolü (<c>IncrementalPlan.ChecksById</c>; null ⇒ kanıt yok).</summary>
-    public sealed record MemberEvidence(BuildState? Record, string? CurrentTerm, OutputCheck? Output);
+    /// <paramref name="Output"/>: çıktı kanıt kontrolü (<c>IncrementalPlan.ChecksById</c>; null ⇒ kanıt yok);
+    /// <paramref name="InGroupDependencies"/>: üyenin DOĞRUDAN grup içi bağımlılıkları (proje referansları ∩ grubun
+    /// üyeleri, tam csproj yolu). Kayıt bunların HER BİRİ için en az bir okuma girdisi taşımalıdır (üretici kimlikleri
+    /// OrdinalIgnoreCase eşleşir). Çağıran kümeyi TAM hesaplamalıdır: eksik verilen bağımlılık denetlenmez, boş küme
+    /// kuralı hiç işletmez.</summary>
+    public sealed record MemberEvidence(BuildState? Record, string? CurrentTerm, OutputCheck? Output,
+                                        IReadOnlyCollection<string> InGroupDependencies);
 
     /// <summary>Kararın sonucu. <paramref name="ToBuild"/>: build order'a göre sıralı gerekli üyeler.
     /// <paramref name="CarriedReadStates"/>: TAŞINAN (atlanan) üye → kayıttan kurulan üretici → dosya → yüzey özeti
@@ -86,7 +92,7 @@ public static class CycleMemberNeed
                 reasons[member] = reason;
             }
 
-            var (record, currentTerm, output) = evidence(member);
+            var (record, currentTerm, output, inGroupDependencies) = evidence(member);
 
             // (iii) Güvenilir kayıt: defterde var, son derleme başarılı, başarısız bir bağımlılığa link'li DEĞİL ve üç
             // döngü alanı dolu. Biri null/boşsa kanıt yok (eski defter, döngü dışı kayıt, yakınsamayan koşu): üye
@@ -104,6 +110,11 @@ public static class CycleMemberNeed
                     CycleEngineFingerprint: { Length: > 0 } recordedEngine,
                 })
             { Need(NoTrustedRecordReason); continue; }
+
+            // (iii) Kayıt, üyenin HER grup içi bağımlılığı için en az bir okuma girdisi taşımalı. Kayıtta olmayan bir
+            // üreticinin yüzeyi oynasa da karar bunu GÖREMEZ (yazıcı bir üreticiyi düşürmüş olabilir): kısmi okuma kaydı
+            // güvenilmez. Bağımlılıkları çağıran hesaplar (üyenin proje referansları ∩ grubun üyeleri).
+            if (!CoversEveryDependency(recordedSurfaces, inGroupDependencies)) { Need(NoTrustedRecordReason); continue; }
 
             // (vi) Motor: kayıt başka bir toolset/argüman sözleşmesinin ürünü. Grubun HER üyesi bu kapıdan geçer.
             // (Boş parmak izi yukarıda zaten güvenilmez sayıldı; iki boş "eşit" okunmaz.)
@@ -155,6 +166,18 @@ public static class CycleMemberNeed
         foreach (var (file, hash) in seen)
             if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
                 yield return file;
+    }
+
+    // Kayıt, üyenin HER grup içi bağımlılığı için en az bir okuma girdisi (Producer == bağımlılık) taşıyor mu.
+    // Karşılaştırma OrdinalIgnoreCase (Windows yolu). Null eleman ya da null üretici hiçbir bağımlılığı kapsamaz
+    // (bozuk girdi; ReadStatesOf de kaydı güvenilmez sayar) ve çökertmez.
+    private static bool CoversEveryDependency(IReadOnlyList<CycleReadSurface> surfaces,
+                                              IReadOnlyCollection<string> dependencies)
+    {
+        foreach (string dependency in dependencies)
+            if (!surfaces.Any(surface => string.Equals(surface?.Producer, dependency, StringComparison.OrdinalIgnoreCase)))
+                return false;
+        return true;
     }
 
     // Kayıtlı yüzeyleri üretici → dosya → özet biçimine çevirir; aynı (Producer, File) iki kez ya da eksik parçalı
