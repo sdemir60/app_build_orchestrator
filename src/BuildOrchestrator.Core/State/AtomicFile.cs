@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BuildOrchestrator.Core.Scheduling;
 
 namespace BuildOrchestrator.Core.State;
@@ -9,7 +10,7 @@ namespace BuildOrchestrator.Core.State;
 /// ile absorbe edilir; okuma Delete-share'lidir. Okuyan hiçbir zaman yarım/bozuk bir dosya görmez. Dört dosya aynı
 /// protokolü paylaşır, kopyalamaz (CLAUDE.md kopya yasağı): küçük durum dosyaları metin varyantlarını
 /// (<see cref="WriteAllText"/>, <see cref="ReadAllTextSharingDelete"/>), birkaç MB'lık defterler tüm içeriği UTF-16 ara
-/// string'e çevirmeyen akış varyantlarını (<see cref="Write"/>, <see cref="OpenReadSharingDelete"/>) kullanır — paylaşım ve
+/// string'e çevirmeyen akış varyantlarını (<see cref="Write"/>, <see cref="OpenReadSharingDelete"/>) ve onların JSON çiftini (<see cref="WriteJson{T}"/>, <see cref="ReadJson{T}"/>) kullanır — paylaşım ve
 /// retry kuralı ikisinde de AYNI koddur.
 ///
 /// <para>Gecikme GÖMÜLMEZ, çağırandan gelir (D8): üretim varsayılanı ve test dikişi
@@ -87,6 +88,28 @@ internal static class AtomicFile
         using var reader = new StreamReader(fs);
         return reader.ReadToEnd();
     }
+
+    /// <summary>
+    /// İki büyük defterin (<c>evaluation-cache.json</c>, <c>source-hash-cache.json</c>) ORTAK okuma iskeleti: Delete-share'li açış
+    /// (<see cref="OpenReadSharingDelete"/>) + akıştan ayrıştırma — içerik UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un
+    /// iki katı bellek). Okuma hatası ve bozuk JSON ÇAĞIRANA yayılır (<see cref="IOException"/>,
+    /// <see cref="UnauthorizedAccessException"/>, <see cref="JsonException"/>): hangisinin "boş defter" sayılacağı çağıranın
+    /// kararıdır. Boş içerik (<c>null</c> literali) <c>null</c> döner.
+    /// </summary>
+    internal static T? ReadJson<T>(string path, JsonSerializerOptions options)
+    {
+        using var stream = OpenReadSharingDelete(path);
+        return JsonSerializer.Deserialize<T>(stream, options);
+    }
+
+    /// <summary>
+    /// <see cref="ReadJson{T}"/>'in yazım eşi: değer akışa serileştirilir (<see cref="Write"/>) — ara string ya da bayt dizisi yok;
+    /// atomik yol (temp + bütçeli rename) ve hata davranışı <see cref="Write"/> ile birebir aynıdır. Kirli bayrak ve hangi
+    /// hatanın yutulacağı defterin kendi kararıdır.
+    /// </summary>
+    /// <param name="retryDelay">Başarısız bir rename denemesinden SONRAKİ gecikme (parametre: 1-based deneme no).</param>
+    internal static void WriteJson<T>(string path, T value, JsonSerializerOptions options, Action<int> retryDelay) =>
+        Write(path, stream => JsonSerializer.Serialize(stream, value, options), retryDelay);
 
     /// <summary>
     /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma tutamağı (handle) VARKEN — tutamak Delete-share

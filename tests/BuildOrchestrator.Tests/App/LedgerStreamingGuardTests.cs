@@ -4,8 +4,7 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [PERF Faz C/C1] İki büyük defter (<c>evaluation-cache.json</c>, <c>source-hash-cache.json</c>; gerçek OSYS'te birkaç
-/// MB'lık JSON) dosyaya YALNIZ <c>AtomicFile</c>'ın akış varyantlarıyla dokunur: <c>OpenReadSharingDelete</c> +
-/// <c>JsonSerializer.Deserialize(stream)</c>, <c>Write</c> + <c>JsonSerializer.Serialize(stream)</c>. Kural iki şeyin sessizce
+/// MB'lık JSON) dosyaya YALNIZ <c>AtomicFile</c>'ın akış varyantlarıyla dokunur: <c>ReadJson</c> / <c>WriteJson</c> (akıştan ayrıştırır, akışa serileştirir). Kural iki şeyin sessizce
 /// geri gelmesini önler: (1) tüm dosyayı tek string'e ya da diziye çeviren çağrılar (<c>ReadAllText</c>, <c>ReadAllBytes</c>,
 /// <c>SerializeToUtf8Bytes</c>…) dosyanın birkaç katı ara bellek üretir ve büyük nesne yığınına (LOH) her işlemde yük
 /// bindirir; (2) defterin kendi <c>File.OpenRead</c>/<c>File.Create</c>/<c>File.Move</c> kopyası <c>AtomicFile</c>'ın paylaşım
@@ -27,8 +26,8 @@ public sealed class LedgerStreamingGuardTests
         + @"|\bFile\.(?:OpenRead|OpenWrite|Open|Create|Move)\b|\bnew\s+FileStream\b",
         RegexOptions.Compiled);
 
-    private static readonly Regex AtomicRead = new(@"\bAtomicFile\.OpenReadSharingDelete\(", RegexOptions.Compiled);
-    private static readonly Regex AtomicWrite = new(@"\bAtomicFile\.Write\(", RegexOptions.Compiled);
+    private static readonly Regex AtomicRead = new(@"\bAtomicFile\.ReadJson<", RegexOptions.Compiled);
+    private static readonly Regex AtomicWrite = new(@"\bAtomicFile\.WriteJson\(", RegexOptions.Compiled);
 
     [Theory]
     [InlineData("EvaluationCache.cs")]
@@ -79,6 +78,8 @@ public sealed class LedgerStreamingGuardTests
     [InlineData("string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));")]
     [InlineData("using var stream = AtomicFile.OpenReadSharingDelete(path);")]
     [InlineData("AtomicFile.Write(cachePath, stream => JsonSerializer.Serialize(stream, _entries, Json), delay);")]
+    [InlineData("var d = AtomicFile.ReadJson<Dictionary<string, Entry>>(path, Json);")]
+    [InlineData("AtomicFile.WriteJson(cachePath, _entries, Json, delay);")]
     [InlineData("if (!File.Exists(path)) return empty;")]
     public void The_rule_ignores_a_comment_the_source_hash_read_and_the_AtomicFile_stream_calls(string line)
     {

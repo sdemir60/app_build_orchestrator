@@ -5963,7 +5963,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
-| The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text and stream forms) | `Core/State/AtomicFile.cs` |
+| The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text, stream and JSON forms) | `Core/State/AtomicFile.cs` |
 
 **Scheduling and run execution**
 

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using BuildOrchestrator.Core.State;
 using Xunit;
 
@@ -39,6 +40,30 @@ public sealed class AtomicFileStreamTests : IDisposable
 
         Assert.Equal("hello", File.ReadAllText(path));
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+    }
+
+    /// <summary>[son toparlama B2 · O-3] JSON çifti: akışla yazılan değer akıştan aynen okunur; yazım atomik yolu (klasör, temp) kullanır.</summary>
+    [Fact]
+    public void WriteJson_and_ReadJson_round_trip_through_the_stream_path()
+    {
+        string path = Path.Combine(_dir, "nested", "ledger.json");
+        var value = new Dictionary<string, int> { ["a"] = 1, ["b"] = 2 };
+        var options = new JsonSerializerOptions { WriteIndented = false };
+
+        AtomicFile.WriteJson(path, value, options, _ => { });
+
+        Assert.Equal("{\"a\":1,\"b\":2}", File.ReadAllText(path));
+        Assert.Equal(value, AtomicFile.ReadJson<Dictionary<string, int>>(path, options));
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+    }
+
+    /// <summary>[son toparlama B2 · O-3] Bozuk JSON ÇAĞIRANA yayılır: "bozuk defter = boş defter" kararı defterindir, yardımcının değil.</summary>
+    [Fact]
+    public void ReadJson_lets_a_corrupt_file_propagate_to_the_caller()
+    {
+        string path = Existing("{ not json");
+
+        Assert.ThrowsAny<JsonException>(() => AtomicFile.ReadJson<Dictionary<string, int>>(path, new JsonSerializerOptions()));
     }
 
     [Fact]

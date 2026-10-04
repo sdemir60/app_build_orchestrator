@@ -121,7 +121,7 @@ public sealed class EvaluationCache(string cachePath)
     /// <para><b>[PERF Faz C/C1] Yalnız kirliyse yazar, akışla yazar.</b> Hiçbir girdisi değişmemiş bir defter (warm
     /// Sync ya da koşu: her girdi isabet) diske dokunmaz — gerçek OSYS'te birkaç MB'lık JSON'u her pencereye
     /// dönüşte yeniden yazmak gereksiz yüktü. Yazılamayan defter (yutulan IO hatası) kirli kalır ve sonraki
-    /// <see cref="Flush"/> yeniden dener. Yazım <see cref="AtomicFile.Write"/> ile akışla yapılır — defter UTF-16 ara
+    /// <see cref="Flush"/> yeniden dener. Yazım <see cref="AtomicFile.WriteJson{T}"/> ile akışla yapılır — defter UTF-16 ara
     /// string'e çevrilmez; atomik yol (temp + retry'lı rename) durum dosyalarıyla ORTAKTIR, burada kopyalanmaz.</para>
     /// </summary>
     public void Flush()
@@ -130,8 +130,7 @@ public sealed class EvaluationCache(string cachePath)
 
         try
         {
-            AtomicFile.Write(cachePath, stream => JsonSerializer.Serialize(stream, _entries, Json),
-                EffectiveRenameRetryDelay);
+            AtomicFile.WriteJson(cachePath, _entries, Json, EffectiveRenameRetryDelay);
             _dirty = false; // yalnız yazım BAŞARILIYSA: düşen yazım defteri kirli bırakır
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -194,8 +193,7 @@ public sealed class EvaluationCache(string cachePath)
         {
             // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
             // Delete-share'li (AtomicFile): durum dosyalarıyla aynı okuma kuralı.
-            using var stream = AtomicFile.OpenReadSharingDelete(path);
-            var d = JsonSerializer.Deserialize<Dictionary<string, Entry>>(stream, Json);
+            var d = AtomicFile.ReadJson<Dictionary<string, Entry>>(path, Json);
             return d is null ? new(StringComparer.OrdinalIgnoreCase) : new(d, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(StringComparer.OrdinalIgnoreCase); } // bozuk cache → yeniden kur

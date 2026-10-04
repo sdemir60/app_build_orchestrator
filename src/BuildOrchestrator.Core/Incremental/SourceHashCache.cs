@@ -34,8 +34,7 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <see cref="MarkDirty"/> kaldırır; <see cref="Flush"/> onu yazmadan ÖNCE indirir, böylece yazım sürerken araya
 /// giren yeni bir özet bayrağı yeniden kaldırır ve kaybolmaz. Yazılamayan defter (yutulan IO hatası) ve racy
 /// pencerede dışarıda bırakılan girdi bayrağı kirli bırakır — pencere geçince sonraki <see cref="Flush"/> o
-/// girdiyi de yazar. Defter UTF-16 ara string'e çevrilmez: okuma <c>AtomicFile.OpenReadSharingDelete</c> +
-/// <c>Deserialize(stream)</c>, yazım <c>AtomicFile.Write</c> + <c>Serialize(stream)</c> — Delete-share'li okuma ve
+/// girdiyi de yazar. Defter UTF-16 ara string'e çevrilmez: okuma <c>AtomicFile.ReadJson</c>, yazım <c>AtomicFile.WriteJson</c> — Delete-share'li okuma ve
 /// retry'lı atomik rename durum dosyalarıyla ORTAK koddur.</para>
 /// </summary>
 public sealed class SourceHashCache
@@ -204,8 +203,7 @@ public sealed class SourceHashCache
 
         try
         {
-            AtomicFile.Write(_cachePath, stream => JsonSerializer.Serialize(stream, persistable, Json),
-                EffectiveRenameRetryDelay);
+            AtomicFile.WriteJson(_cachePath, persistable, Json, EffectiveRenameRetryDelay);
             if (leftOutRacy) MarkDirty(); // dışarıda kalan racy girdi: pencere geçince sonraki Flush onu da yazar
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -250,8 +248,7 @@ public sealed class SourceHashCache
         {
             // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
             // Delete-share'li (AtomicFile): durum dosyalarıyla aynı okuma kuralı.
-            using var stream = AtomicFile.OpenReadSharingDelete(path);
-            var loaded = JsonSerializer.Deserialize<Dictionary<string, Entry>>(stream, Json);
+            var loaded = AtomicFile.ReadJson<Dictionary<string, Entry>>(path, Json);
             return loaded is null ? empty : new ConcurrentDictionary<string, Entry>(loaded, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
