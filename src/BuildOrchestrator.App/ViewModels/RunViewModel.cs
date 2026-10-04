@@ -1992,6 +1992,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         _currentRunId = e.RunId;
         _awaitingRunCompleted = true;
+        RunSerial++; // [perf Faz C · C4] koşu kimliği — motorun koşu kimliği tekrar edebilir, sayaç etmez
         BeginInterruptRecord(e);
         // [Task 2 review fix M-2] Mod'un TEK yazım noktası — InRunQueueFor/OnProjectSkipped bunu okur, hangi
         // sırada hangi partial'ın çalıştığına bağlı KALMADAN (bkz. alanın kendi XML yorumu).
@@ -2438,10 +2439,7 @@ public sealed partial class RunViewModel : ObservableObject
         _awaitingRunCompleted = false;
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
-        // [perf Faz C · C4] Canlı satır tamponu koşu bitince bırakılır (bekleyen bir log dikişi varsa dikiş bitince:
-        // OnProjectLogChunk). Phase'ten ÖNCE: Phase yazımı tepsi göstergesinin çıkış bildirimini (reduced-motion'da eşzamanlı)
-        // ve onun tetiklediği koşu-sonu bellek toplamasını başlatabilir — toplama, bırakılmış tamponu toplamalıdır.
-        ReleaseLiveLinesWhenIdle();
+        MarkRunEnded(); // [perf Faz C · C4] tampon bırakılır, sonra "koşu bitti" sinyali — Stop'un bitişi de burasıdır
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde kümülatif özet
         RefreshRunSurface();
@@ -2462,6 +2460,35 @@ public sealed partial class RunViewModel : ObservableObject
     /// <summary>Kendiliğinden Sync'in gördüğü koşu: kilit (<see cref="IsMidRunLocked"/>) ya da henüz
     /// <c>runCompleted</c>'ı gelmemiş başlamış koşu.</summary>
     internal bool IsRunInFlight => IsMidRunLocked || _awaitingRunCompleted;
+
+    /// <summary>[perf Faz C · C4] Koşu kimliği: her <c>runStarted</c>'da bir artar. Motorun koşu kimliği tekrar edebilir (testler
+    /// hep aynısını verir); sayaç etmez. Planlamada düşen bir başlatma (<c>runStarted</c> hiç gelmedi) kimlik almaz.</summary>
+    internal int RunSerial { get; private set; }
+
+    /// <summary>[perf Faz C · C4] <b>"Koşu bitti" sinyali:</b> biten son koşunun kimliği (<see cref="RunSerial"/>). Yalnız
+    /// <see cref="MarkRunEnded"/> yazar, canlı tampon bırakıldıktan SONRA. Pencere bunu dinler: tepside biten koşunun bellek
+    /// toplaması (<c>MainWindow.HiddenSurface</c>) bu sinyal ile göstergenin çıkış bildiriminin birleşimidir.</summary>
+    internal int EndedRunSerial
+    {
+        get => _endedRunSerial;
+        private set => SetProperty(ref _endedRunSerial, value);
+    }
+
+    private int _endedRunSerial;
+
+    /// <summary>
+    /// [perf Faz C · C4] Koşunun HER bitiş yolu buradan geçer: <c>runCompleted</c> (<see cref="OnRunCompleted"/> — Stop'un bitişi
+    /// dahil: <c>runStopped</c> koşuyu bitirmez, <see cref="IsRunInFlight"/> <c>runCompleted</c>'a dek sürer), koşu-bitiren hata
+    /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce canlı tampon bırakılır
+    /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
+    /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
+    /// değişmez.
+    /// </summary>
+    private void MarkRunEnded()
+    {
+        ReleaseLiveLinesWhenIdle();
+        EndedRunSerial = RunSerial;
+    }
 
     /// <summary>[T8 fix round 1 · I1] Bu koşuya ait olmayan bir koşu-sonu olayı: başka bir koşunun id'si, ya da
     /// koşu çoktan bittikten sonra gelen <c>runStopped</c> (host, sahiplenemediği bir Stop'u — ör. koşu kapanırken
@@ -2512,12 +2539,11 @@ public sealed partial class RunViewModel : ObservableObject
         // dokunulmadan kalır (run dokümanı gösterilmeye devam eder).
         if (e.Code == "logNotFound" && _pendingLoad is { } pending)
         {
-            _pendingLoad = null;
             // [her projenin sayfası var] Log YOKSA da proje moduna geçilir: sayfa boş kalmaz, o projenin O ANKi
             // durumunu anlatan metni gösterir (Console.ConsoleEmptyState.ForEmptyLog). Eskiden mod hiç kurulmuyor,
             // kullanıcı run anlatısına bakıyordu — tıklama "hiçbir şey yapmıyor" gibi görünüyordu.
             EnterProjectMode(pending.ProjectId);
-            pending.Completion.TrySetResult();
+            CompletePendingLoad(pending); // [perf Faz C · C4] yüklemenin sonu: dikiş yanıtıyla aynı kural (bırakma yeniden sorulur)
         }
         // [B1] REDDEDİLEN bir başlatma isteği (runInProgress) kendi "starting" bayrağını BIRAKMALIDIR. Motor run
         // slotunu (_runActive) tüm event'ler yazıldıktan SONRA bırakır (ExecuteRunAsync'in finally'si), yani
@@ -2540,6 +2566,7 @@ public sealed partial class RunViewModel : ObservableObject
         _awaitingRunCompleted = false; // runCompleted gelmeyecek — kilit düşüşü koşunun bitişidir
         IsRunning = false;
         IsStarting = false; // [Fix wave 1(It-3), Finding 3] planFailed/msbuildNotFound — Rebuild'i geri aç
+        MarkRunEnded(); // [perf Faz C · C4] runCompleted gelmeyecek: koşunun bitişi burasıdır (tampon + sinyal)
         // Run-bitiren bir hata geldiğinde runCompleted ASLA gelmez — fazı bırakan başka kapı yoktur.
         // [Stopping] Stop penceresinde gelirse buton sonsuza dek pasif, şerit sonsuza dek "Stopping" kalırdı.
         // [runFailed] Running'de gelirse (yalnız runFailed bunu yapabilir — kümedeki diğer üç kod runStarted'dan
@@ -2614,6 +2641,7 @@ public sealed partial class RunViewModel : ObservableObject
         IsRunning = false;
         IsStarting = false;
         _currentRunId = null;
+        MarkRunEnded(); // [perf Faz C · C4] motor gitti: koşunun bitişi burasıdır (tampon + sinyal)
         // [C2 fold — A5 review] Engine Sync ortasında ölürse hiçbir syncCompleted/Sync-hatası gelmez; faz
         // Syncing'de asılı kalır ve _syncInFlight sızardı. RunEndingErrorCodes deseniyle simetrik olarak burada
         // da uçuştaki Sync serbest bırakılır.
@@ -2979,7 +3007,7 @@ public sealed partial class RunViewModel : ObservableObject
     {
         // [Fix wave 1(It-3), Finding 2] Yeni bir yükleme, henüz tamamlanmamış eski bir _pendingLoad'ın yerini
         // alırsa eskisini burada çözüyoruz — aksi halde eski awaiter'ın Completion'ı ASLA tamamlanmaz (leak).
-        _pendingLoad?.Completion.TrySetResult();
+        if (_pendingLoad is { } previous) CompletePendingLoad(previous);
         var pending = new PendingLoad(projectId);
         _pendingLoad = pending;
         try { await _engine.SendAsync(new GetProjectLogCommand(projectId)); }
@@ -3041,9 +3069,7 @@ public sealed partial class RunViewModel : ObservableObject
             EnterProjectMode(e.ProjectId);
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
-        _pendingLoad = null;
-        ReleaseLiveLinesWhenIdle(); // [perf Faz C · C4] dikiş bitti: koşu zaten bitmişse ertelenen bırakma şimdi yapılır
-        pending.Completion.TrySetResult();
+        CompletePendingLoad(pending); // [perf Faz C · C4] dikiş bitti: koşu zaten bitmişse ertelenen bırakma şimdi yapılır
     }
 
     /// <summary>
@@ -3054,8 +3080,9 @@ public sealed partial class RunViewModel : ObservableObject
     ///
     /// <para><b>Bekleyen dikiş (<see cref="_pendingLoad"/>) varsa bırakma ertelenir:</b> kuyruğu bu tamponda durur; yanıt gelmeden
     /// bırakılsaydı dikilen belge son satırlardan yoksun kalırdı. Çağıranlar iki yerdir ve ikisi de koşulu yeniden sorar:
-    /// koşu bitişi (<see cref="OnRunCompleted"/>) ve dikişin bitişi (<see cref="OnProjectLogChunk"/>) — hangisi sonra gelirse
-    /// bırakmayı o yapar; ayrı bir "ertelendi" bayrağı tutulmaz (bayat bayrak koşu ortasında tamponu silerdi).</para>
+    /// koşunun bitişi (<see cref="MarkRunEnded"/> — her bitiş yolu) ve bekleyen yüklemenin sonu (<see cref="CompletePendingLoad"/>
+    /// — dikiş ya da "log yok" yanıtı) — hangisi sonra gelirse bırakmayı o yapar; ayrı bir "ertelendi" bayrağı tutulmaz (bayat
+    /// bayrak koşu ortasında tamponu silerdi).</para>
     ///
     /// <para><b>"Uçuşta yükleme" ölçütü <see cref="_pendingLoad"/>'dur, <see cref="LoadProjectLogAsync"/>'in dönüşü değil:</b>
     /// gönderim düşse bile dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve kuyruk ona aittir.</para>
@@ -3068,6 +3095,21 @@ public sealed partial class RunViewModel : ObservableObject
     {
         if (IsRunInFlight || _pendingLoad is not null) return;
         lock (_gate) _liveLines.Clear();
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] <b>Bekleyen yüklemenin sonu — tek yer.</b> Üç çağıran: dikişin bitişi (<see cref="OnProjectLogChunk"/>),
+    /// motorun "log yok" yanıtı (<c>logNotFound</c>, <see cref="OnError"/>) ve yeni bir yüklemenin eskisinin yerini alması
+    /// (<see cref="LoadProjectLogAsync"/>). Sıra her yerde aynıdır: bekleyen düşer, ertelenmiş tampon bırakması yeniden sorulur
+    /// (koşu bitmişse şimdi yapılır — <see cref="ReleaseLiveLinesWhenIdle"/>), awaiter serbest kalır. Gönderim hatası bir son
+    /// DEĞİLDİR: istek yola çıkmadı ve dikiş bilerek silahlı kalır (gecikmiş bir chunk hâlâ eşleşir); orada yalnız awaiter
+    /// serbest kalır.
+    /// </summary>
+    private void CompletePendingLoad(PendingLoad pending)
+    {
+        if (ReferenceEquals(_pendingLoad, pending)) _pendingLoad = null;
+        ReleaseLiveLinesWhenIdle();
+        pending.Completion.TrySetResult();
     }
 
     /// <summary>

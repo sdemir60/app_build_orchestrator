@@ -68,47 +68,63 @@ public partial class MainWindow
             Dispatcher.InvokeAsync(ResyncAfterShow, DispatcherPriority.Loaded);
             return;
         }
-        HookRunCollection();
         _choreographer.Cancel(_vm.Projects);
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
     }
 
     /// <summary>
-    /// [perf Faz C · C4] <b>Tepside biten koşunun ardından tek seferlik bellek toplaması.</b> Koşu tepsideyken derlendi ve
-    /// bitti, tepsi göstergesi çıkış evresini tamamlayıp gizlendi (<see cref="OnTrayIndicatorExitFinished"/>): ekranda bu
-    /// koşuya ait hiçbir şey kalmadı ve pencere görünmediği için bir toplamanın takılması kimseye görünmez. O anda koşunun
-    /// atıkları (canlı satır tamponu bırakılmıştır — <c>RunViewModel.LiveLineCount</c>) ölü yük olarak durur; toplama onları
-    /// geri verir. Toplama koşu başına <b>bir kez</b> yapılır: bayrak yeni koşu başlayınca düşer
-    /// (<see cref="OnVmPropertyChangedForRunCollection"/>), aynı koşunun ikinci bitiş sinyali yeniden toplamaz.
+    /// [perf Faz C · C4] <b>Tepside biten koşunun ardından tek seferlik bellek toplaması.</b> Koşu tepsideyken bitti ve tepsi
+    /// göstergesi çıkışını tamamladı: ekranda bu koşuya ait hiçbir şey kalmadı ve koşunun atıkları (canlı satır tamponu
+    /// bırakılmıştır — <c>RunViewModel.LiveLineCount</c>) ölü yük olarak durur; toplama onları geri verir.
+    ///
+    /// <para><b>İki sinyalin birleşimi; hangisi sonra gelirse toplamayı o ister</b> (<see cref="CollectAfterRunWhenDue"/>): koşu
+    /// bitti (<c>RunViewModel.EndedRunSerial</c> — HER bitiş yolunda, tampon bırakıldıktan sonra; ctor aboneliği) VE gösterge
+    /// çıkışını bitirdi (<see cref="OnTrayIndicatorExitFinished"/> — gizlenme ve sonuç balonundan sonra). Sıra koşuya göre değişir:
+    /// normalde koşu önce biter; reduced-motion'da tepside Stop'ta gösterge <c>runStopped</c> anında çıkar, koşu ise
+    /// <c>runCompleted</c> ile sonra biter.</para>
+    ///
+    /// <para><b>Koşu başına bir kez, koşu kimliğine bağlı</b> (<c>RunViewModel.RunSerial</c>): yeni koşu yeni kimlik getirir, aynı
+    /// koşunun ikinci sinyali yeniden toplamaz. Pencere görünürken hiç toplanmaz.</para>
     /// </summary>
-    private bool _collectedAfterRun;
+    private int _collectedRun;
 
-    private bool _runCollectionHooked;
+    /// <summary>Göstergesi çıkışını bitirmiş koşunun kimliği — bildirim anındaki <c>RunViewModel.RunSerial</c> (koşu sürüyorsa o
+    /// koşu, bittiyse biten koşu: kimlik yalnız yeni bir koşu başlarken artar).</summary>
+    private int _indicatorExitedRun;
 
-    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı; ne zaman çağrılacağına <see cref="OnTrayIndicatorExitFinished"/>
-    /// karar verir. Testler sayaçlı bir sahteyle değiştirir; gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan
-    /// test bir kez koşturur. <b>Bloklayan</b> agresif toplama: <see cref="GCCollectionMode.Aggressive"/> yalnız
-    /// <c>blocking: true</c> ile geçerlidir (<c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatır); nesil 2
-    /// sıkıştırılır ve boşalan bellek işletim sistemine geri verilir. Toplama süresince UI thread'i durur — bu yüzden yalnız
-    /// pencere gizliyken, sonuç balonu gösterildikten sonra ve uygulama boştayken yapılır.</summary>
+    /// <summary>[perf Faz C · C4] Toplamanın TEK gerçek çağrısı; ne zaman çağrılacağına <see cref="CollectAfterRunWhenDue"/> karar
+    /// verir. Testler sayaçlı bir sahteyle değiştirir; gerçek toplamayı yalnız üretim toplayıcısının geçerliliğini sınayan test
+    /// bir kez koşturur. <b>Bloklayan</b> agresif toplama: <see cref="GCCollectionMode.Aggressive"/> yalnız <c>blocking: true</c> ile
+    /// geçerlidir (<c>blocking: false</c> her çağrıda <see cref="ArgumentException"/> fırlatır); nesil 2 sıkıştırılır ve boşalan
+    /// bellek işletim sistemine geri verilir. Toplama süresince UI thread'i durur — bu yüzden yalnız pencere gizliyken, sonuç
+    /// balonu gösterildikten sonra ve uygulama boştayken yapılır.</summary>
     internal Action MemoryCollector { get; set; } = CollectMemory;
 
     private static void CollectMemory() => GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
     /// <summary>
     /// [perf Faz C · C4] Tepsi göstergesi çıkış sırasını tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>: gösterge
-    /// gizlendi, sonuç balonu gösterildi). Toplama yalnız üç koşul bir arada ise İSTENİR: pencere GİZLİ, koşu BİTMİŞ (sürüyorsa —
-    /// ya da yeni bir koşu başladıysa — toplanacak bir şey yoktur) ve bu koşu için henüz toplanmadı. Toplamanın kendisi
-    /// <see cref="DispatcherPriority.ApplicationIdle"/> ile ertelenir: reduced-motion'da bu bildirim koşu bitişinin faz yazımı
-    /// İÇİNDE eşzamanlı gelir ve bloklayan toplama koşu bitişinin kalan işini (yüzey yenilemesi, bekleyen Sync) bekletmemelidir.
-    /// Ertelenen iş koşulu yeniden sorar (<see cref="CollectWhileHidden"/>). Çıkış sırasında pencere geri geldiyse bildirim yine
-    /// gelir ama kullanıcı ekrandadır: o yolda hiç toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
+    /// gizlendi, sonuç balonu gösterildi) — toplamanın gösterge sinyali. Çıkış sırasında pencere geri geldiyse bildirim yine gelir
+    /// ama kullanıcı ekrandadır: o yolda toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
     /// (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
     /// </summary>
     internal void OnTrayIndicatorExitFinished()
     {
-        if (!IsSurfaceHidden || _collectedAfterRun || _vm.IsRunInFlight) return;
-        _collectedAfterRun = true;
+        _indicatorExitedRun = _vm.RunSerial;
+        CollectAfterRunWhenDue();
+    }
+
+    /// <summary>
+    /// İki sinyal de buraya gelir. Toplama yalnız biten koşunun göstergesi de çıktıysa, bu koşu için henüz toplanmadıysa ve pencere
+    /// GİZLİYSE istenir. Toplamanın kendisi <see cref="DispatcherPriority.ApplicationIdle"/> ile ertelenir: reduced-motion'da iki
+    /// sinyal de koşu bitişinin içinde eşzamanlı gelebilir ve bloklayan toplama koşu bitişinin kalan işini (yüzey yenilemesi,
+    /// bekleyen Sync) bekletmemelidir. Ertelenen iş koşulu yeniden sorar (<see cref="CollectWhileHidden"/>).
+    /// </summary>
+    private void CollectAfterRunWhenDue()
+    {
+        int run = _vm.EndedRunSerial;
+        if (run != _indicatorExitedRun || run == _collectedRun || !IsSurfaceHidden) return;
+        _collectedRun = run;
         Dispatcher.InvokeAsync(CollectWhileHidden, DispatcherPriority.ApplicationIdle);
     }
 
@@ -116,23 +132,6 @@ public partial class MainWindow
     private void CollectWhileHidden()
     {
         if (IsSurfaceHidden && !_vm.IsRunInFlight) MemoryCollector();
-    }
-
-    /// <summary>Koşu başlangıcını dinler: ilk gizlenmede bir kez abone olunur — toplama yalnız gizliyken yapılır ve bayrak
-    /// yalnız o zaman anlam taşır; ctor'a ayrı bir abonelik eklenmez.</summary>
-    private void HookRunCollection()
-    {
-        if (_runCollectionHooked) return;
-        _runCollectionHooked = true;
-        _vm.PropertyChanged += OnVmPropertyChangedForRunCollection;
-    }
-
-    /// <summary>Yeni bir koşu (ya da başlatma) başlayınca bayrak düşer: o koşunun bitişi kendi toplamasını alır.</summary>
-    private void OnVmPropertyChangedForRunCollection(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-    {
-        if ((e.PropertyName is nameof(ViewModels.RunViewModel.IsRunning) or nameof(ViewModels.RunViewModel.IsStarting))
-            && _vm.IsMidRunLocked)
-            _collectedAfterRun = false;
     }
 
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:

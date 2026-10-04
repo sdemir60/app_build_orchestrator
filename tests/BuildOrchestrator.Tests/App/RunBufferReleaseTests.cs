@@ -146,8 +146,8 @@ public class RunBufferReleaseTests
     }
 
     /// <summary>
-    /// Gizli + koşu bitti + gösterge çıkış evresini tamamladı → bellek BİR kez toplanır. Koşu sürerken gelen bildirim
-    /// (yeni bir koşu başlamış olabilir) ve aynı koşunun ikinci bitiş sinyali toplamaz.
+    /// Gizli + koşu bitti + gösterge çıkış evresini tamamladı → bellek BİR kez toplanır. Koşu sürerken gelen bildirim o anda
+    /// toplamaz (koşu bitince bitiş sinyali toplamayı ister) ve aynı koşunun ikinci bitiş sinyali yeniden toplamaz.
     /// </summary>
     [StaFact]
     public void A_hidden_window_collects_memory_once_when_the_run_has_ended_and_the_indicator_has_left()
@@ -159,7 +159,7 @@ public class RunBufferReleaseTests
         window.SetSurfaceHidden(true);
         MainWindowHost.StartBuild(vm, "A");
 
-        window.OnTrayIndicatorExitFinished();            // koşu sürerken: toplanacak bir şey yok
+        window.OnTrayIndicatorExitFinished();            // koşu sürerken: henüz toplanmaz — sinyal bu koşu için kaydedilir
         DispatcherPump.DrainToIdle();
         Assert.Equal(0, collections);
 
@@ -174,7 +174,7 @@ public class RunBufferReleaseTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Bayrak koşu BAŞINDA sıfırlanır: her koşunun bitişi kendi toplamasını alır.</summary>
+    /// <summary>"Bir kez" koşu kimliğine bağlıdır (<c>RunViewModel.RunSerial</c>): her koşunun bitişi kendi toplamasını alır.</summary>
     [StaFact]
     public void Each_run_that_ends_while_hidden_gets_its_own_collection()
     {
@@ -232,6 +232,98 @@ public class RunBufferReleaseTests
         var error = Record.Exception(window.MemoryCollector);   // üretim varsayılanı: sahte takılmadı
 
         Assert.Null(error);   // KIRMIZI: GC.Collect(2, Aggressive, blocking: false, compacting: true) → ArgumentException
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Tepside süren bir koşu: pencere gizli, A'nın bir satırı canlı tamponda. Toplayıcı sahtedir ve çağrıldığı andaki
+    /// canlı tampon boyunu kaydeder — "bırakma → toplama" sırası böyle gözlenir.</summary>
+    private static (global::BuildOrchestrator.App.MainWindow window, RunViewModel vm, List<int> seen) HiddenRunWithOneLine(TempDir dir)
+    {
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        var seen = new List<int>();
+        window.MemoryCollector = () => seen.Add(vm.LiveLineCount);
+        window.SetSurfaceHidden(true);
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        Assert.Equal(1, vm.LiveLineCount);   // ön-koşul: koşu sürerken tampon dolu
+        return (window, vm, seen);
+    }
+
+    /// <summary>
+    /// [perf Faz C · M-2] Toplama iki sinyalin birleşimidir — koşu bitti VE gösterge çıkışını bitirdi — ve hangisi sonra gelirse
+    /// toplamayı o ister. Reduced-motion'da tepside Stop'ta gösterge <c>runStopped</c> anında çıkar (faz <c>Stopped</c>) ama koşu
+    /// <c>runCompleted</c>'a dek uçuştadır: bitiş sinyali sonra gelir ve toplamayı o ister — bir kez, bırakılmış tamponla.
+    /// </summary>
+    [StaFact]
+    public void A_run_stopped_in_the_tray_under_reduced_motion_is_collected_once_when_it_completes()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));   // faz Stopped: reduced-motion'da gösterge çıkışı ŞİMDİ biter
+        window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
+        Assert.Empty(seen);                                       // koşu hâlâ uçuşta: runCompleted gelmedi
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 0, 100));
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal([0], seen);   // KIRMIZI: runCompleted toplamayı yeniden sormuyordu — o koşu hiç toplanmıyordu
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[perf Faz C · C4] Koşu-bitiren hata (<c>runFailed</c>) da bir koşu bitişidir: <c>runCompleted</c> gelmez, tampon yine
+    /// bırakılır ve tepside toplama bırakılmış tamponla olur.</summary>
+    [StaFact]
+    public void A_run_that_fails_in_the_tray_releases_its_buffer_before_the_collection()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEvent(new ErrorEvent("runFailed", "the build failed"));
+        window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: hata bitişinde tampon bırakılmıyordu
+        Assert.Equal([0], seen);             // bir kez ve bırakılmış tamponla
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[perf Faz C · C4] Motor kaybı da bir koşu bitişidir: tampon bırakılır ve tepside toplama bırakılmış tamponla
+    /// olur.</summary>
+    [StaFact]
+    public void A_run_whose_engine_dies_in_the_tray_releases_its_buffer_before_the_collection()
+    {
+        using var dir = new TempDir();
+        var (window, vm, seen) = HiddenRunWithOneLine(dir);
+
+        vm.OnEngineExited(1);
+        window.OnTrayIndicatorExitFinished();
+        DispatcherPump.DrainToIdle();
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: motor kaybında tampon bırakılmıyordu
+        Assert.Equal([0], seen);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// [perf Faz C · M-1] Bekleyen yüklemenin "log yok" yanıtı (<c>logNotFound</c>) da yüklemenin sonudur: koşu yanıttan önce
+    /// bittiyse ertelenen bırakma yanıtla yapılır — dikiş yanıtıyla aynı kural (bekleyen yüklemenin sonu tek yerde).
+    /// </summary>
+    [StaFact]
+    public void A_log_not_found_reply_releases_the_buffer_of_a_run_that_ended_while_the_log_was_loading()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        MainWindowHost.StartBuild(vm, "A");
+        MainWindowHost.LogLine(vm, "A", 1, "a line");
+        RequestProjectLog(vm, "A");                      // yükleme istendi, yanıt henüz yok
+        MainWindowHost.CompleteRun(vm, 1);               // yanıttan ÖNCE koşu biter
+        Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: bırakma yanıtı bekliyor
+
+        vm.OnEvent(new ErrorEvent("logNotFound", "no log for A"));
+
+        Assert.Equal(0, vm.LiveLineCount);   // KIRMIZI: logNotFound yanıtı ertelenen bırakmayı sormuyordu
         GC.KeepAlive(window);
     }
 

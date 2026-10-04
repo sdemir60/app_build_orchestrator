@@ -396,6 +396,12 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
+        // [perf Faz C · C4] "Koşu bitti" sinyali: tepside biten koşunun bellek toplaması iki sinyalin birleşimidir
+        // (MainWindow.HiddenSurface — CollectAfterRunWhenDue); bu, koşu tarafı.
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.EndedRunSerial)) CollectAfterRunWhenDue();
+        };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
         // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
         Graph.GraphHoverEcho.Wire(_vm, Shell.GraphHost);
@@ -1350,7 +1356,8 @@ public partial class MainWindow : Window
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
-            // [perf Faz C · C4] Çıkış evresi bitince (gösterge gizlendi) tepside biten koşunun tek seferlik bellek toplaması.
+            // [perf Faz C · C4] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): tepside biten koşunun bellek
+            // toplamasının gösterge sinyali (koşu sinyali ctor'daki EndedRunSerial aboneliğidir).
             ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;
