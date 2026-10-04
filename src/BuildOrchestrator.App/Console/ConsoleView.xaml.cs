@@ -45,7 +45,7 @@ public partial class ConsoleView : UserControl
     /// (kardeş sahiplerin deseni: <see cref="Views.EventStreamView"/>/<see cref="Views.ProjectRow"/>/
     /// <see cref="Graph.GraphView"/>). <b>latch'siz abonelikli kip</b> (<c>new MotionGate(this)</c>) —
     /// <see cref="Controls.StickyLayerList"/>'in aboneliksiz kipi burada YANLIŞ olurdu: o sahip sonsuz saat
-    /// TUTMAZ, bu görünüm ise <c>RepeatBehavior.Forever</c> bir blink saati başlatır (<see cref="StartBlink"/>).
+    /// TUTMAZ, bu görünüm ise pencerenin ortak imleç saatine bağlanır (<see cref="StartBlink"/>, <see cref="CursorClock"/>).
     ///
     /// <para><b>Neden seam gerekliydi (1.8/1.9):</b> bu görünüm motion sinyalini statik
     /// <see cref="MotionGate.StaticAnimationsEnabled"/> üzerinden DOĞRUDAN okuyordu; headless'ta <c>App.Motion</c>
@@ -65,7 +65,6 @@ public partial class ConsoleView : UserControl
     private bool _idleReady;
     // [design v1.8.0 §3.1] Workspace YOK mu — prompt satırı "Waiting for a workspace" der (SetHasWorkspace).
     private bool _noWorkspace;
-    private bool _blinking; // imleç blink saati dönüyor mu (yeniden başlatma guard'ı)
 
     // [Task 6] Satır hover bandının YEREL (donmamış) fırçası — MotionTokens.TransitionColor bunu animate eder.
     private readonly SolidColorBrush _hoverBandBrush;
@@ -567,32 +566,32 @@ public partial class ConsoleView : UserControl
         if (ActiveLineOverlay.Margin != margin) ActiveLineOverlay.Margin = margin;
     }
 
-    // [3b M-4 · D3 §3] Aktif-satır imlecinin blink animasyonu — artık
-    // EventStreamView'ın imleci de dahil ÜÇ başlatıcı MotionTokens.CreateBlinkAnimation'ı paylaşır (kopya YASAK).
+    // [3b M-4 · D3 §3 · perf B4] Aktif-satır imlecinin blink'i: EventStreamView'ın imleciyle birlikte pencerenin TEK
+    // imleç saatine (CursorClock) bağlanır — iki imleç ayrı saat kurmaz (kopya YASAK).
     /// <summary>[StatusGlyph/BuildingSpinner deseni] Zaten dönen saat YENİDEN BAŞLATILMAZ: RefreshPrompt her
-    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi.</summary>
+    /// görsel-satır değişiminde koşar ve her seferinde yeni bir blink kurmak imleci "takılı" gösterirdi. Bu garanti
+    /// <see cref="CursorClock.Attach"/>'tadır (idempotent): burada ayrıca bir "dönüyor mu" bayrağı tutulmaz.</summary>
     private void StartBlink()
     {
         // Görünmezken saat KURULMAZ. Kapı burada, çağıranlarda değil: RefreshPrompt her görsel-satır değişiminde
         // koşar ve tepsideyken de koşar — yalnız IsVisibleChanged'de durdurmak saati bir sonraki olayda geri
         // kurardı (ölçüldü, bkz. HiddenCursorClockTests).
         if (!IsVisible) { StopBlink(); return; }
-        if (_blinking) return;
-        _blinking = true;
-        ActiveCursor.BeginAnimation(OpacityProperty, MotionTokens.CreateBlinkAnimation());
-        // [design v1.12.1 §2.5] Kırpmanın üstüne renk turu biner — ikisi ayrı saatlerdir ve yalnız FAZLARI
-        // ortaktır (renk kırpmanın dibinde atlar, bkz. CursorHop).
-        CursorHop.Start(this, ActiveCursor);
+        // [perf B4 · karar 4] Kırpma ve renk turu pencerenin ORTAK saatinden gelir (CursorClock): konsol ve event
+        // stream imleçleri aynı fazda kırpar ve pencere aktif değilken ikisi de sabit durur.
+        CursorClock.Attach(ActiveCursor, this, CursorRestKey);
     }
 
     private void StopBlink()
     {
-        _blinking = false;
-        ActiveCursor.BeginAnimation(OpacityProperty, null);
-        ActiveCursor.Opacity = 1.0;
-        // Prompt'un dinlenme rengi amberdir — turdan çıkınca imleç oraya döner (stream'in ton kanalının eşi).
-        CursorHop.Stop(ActiveCursor, ConsolePalette.Keys.Icon);
+        // Prompt'un dinlenme rengi amberdir — saatten çıkınca imleç oraya döner (stream'in ton kanalının eşi).
+        // Detach opaklığı da 1'e getirir ve hiç bağlanmamış imleç (reduced-motion) için de aynı sonucu verir.
+        CursorClock.Detach(ActiveCursor, CursorRestKey());
     }
+
+    /// <summary>Prompt imlecinin dinlenme rengi (amber): bağlama ve bırakma AYNI anahtarı okur — tek tanım. Stream'in
+    /// <c>CursorRestKey</c>'inin eşi; orada ton kanalı değiştiği için dinamik, burada sabittir.</summary>
+    private static string CursorRestKey() => ConsolePalette.Keys.Icon;
 
     // ---------------------------------------------------------------- narrative (run) modu
 

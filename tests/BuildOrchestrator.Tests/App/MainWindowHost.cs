@@ -183,6 +183,29 @@ internal static class MainWindowHost
     /// motorun cevabını test <c>vm.OnEvent(...)</c> ile verir. Verilmezse gönderim her zaman düşer.</summary>
     public static void AcceptSends(RunViewModel vm) => vm.DebugSendOverride = _ => Task.CompletedTask;
 
+    /// <summary>[perf Faz B · B3] Stop/Esc testlerinin ortak kurulumu: <see cref="New"/> (ya da <paramref name="projectNames"/>
+    /// verilirse <see cref="NewWithProjects(TempDir, string[])"/>) + repo kökü + gönderimin kabulü (<see cref="AcceptSends"/>) +
+    /// giden komutların toplandığı liste (<c>DebugOnCommandSent</c>). <c>EscStopTests</c> ile <c>StopNowTests</c> aynı kurulumu
+    /// paylaşır (kopya YASAK).</summary>
+    public static (MainWindow window, RunViewModel vm, List<IpcCommand> sent) NewWithSends(
+        TempDir uiStateDir, string[]? projectNames = null)
+    {
+        MainWindow window;
+        RunViewModel vm;
+        if (projectNames is null) (window, vm) = New(uiStateDir);
+        else (window, vm, _) = NewWithProjects(uiStateDir, projectNames);
+        vm.RootPath = @"C:\src\OSYS";
+        AcceptSends(vm);
+        var sent = new List<IpcCommand>();
+        vm.DebugOnCommandSent = sent.Add;
+        return (window, vm, sent);
+    }
+
+    /// <summary>[perf Faz B · B3 takip] <paramref name="text"/>'in kaç SATIRI <paramref name="line"/>'ı içerir — konsol satırı
+    /// sayan testlerin TEK sayım yeri (<c>EscStopTests</c> ile <c>StopNowTests</c> aynı işi ayrı ayrı yazmıştı).</summary>
+    public static int Occurrences(string text, string line) =>
+        text.Split('\n').Count(l => l.Contains(line, StringComparison.Ordinal));
+
     /// <summary>[perf A1 fix 1] Motorun planı (<c>buildPreview</c>): bu projeler derlenecek.
     /// <see cref="RunViewModel.ScopeFor"/> kapsamı bu bayraktan (<c>WillBuild</c>) türer — plansız bir fixture'da kapsam
     /// BOŞTUR ve açılış koreografisi görünür pencerede bile hiç oynamaz (<c>OperationChoreographer.Play</c>, n == 0);

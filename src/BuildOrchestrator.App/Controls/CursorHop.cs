@@ -57,25 +57,29 @@ public static class CursorHop
     public static bool IsRunning(Shape? cursor) => cursor?.Fill is SolidColorBrush { HasAnimatedProperties: true };
 
     /// <summary>
-    /// Turu başlatır. <b>Zaten dönen bir tur YENİDEN kurulmaz</b> (<c>StatusGlyph</c>/<c>BuildingSpinner</c>
-    /// deseni): her olayda yeniden başlatmak ritmi sıfırlar ve imleç hep ilk renkte takılı görünürdü.
+    /// [perf B4] Turun SAATİ — <see cref="CursorClock"/> iki imleç için TEK bir saat kurar ve her imleci ona bağlar
+    /// (<see cref="Start"/>). Görünüm HENÜZ bir kaynak sözlüğüne bağlı değilse (DataContext, ağaca girmeden önce
+    /// yazılabilir) palet çözülemez ve <c>null</c> döner: tur o karede kurulmaz, imleç token rengiyle sabit kalır.
+    /// Sessiz atlama, ağaç dışı bir çağrının uygulamayı düşürmesinden İYİDİR — kayıp tek şey turdur.
     /// </summary>
-    public static void Start(FrameworkElement host, Shape cursor)
+    internal static AnimationClock? CreateClock(Func<string, object?> find) => CreateAnimation(find)?.CreateClock();
+
+    /// <summary>
+    /// Turu verilen (paylaşımlı) saate bağlar. <b>Zaten dönen bir tur YENİDEN kurulmaz</b> (<c>StatusGlyph</c>/
+    /// <c>BuildingSpinner</c> deseni): her olayda yeniden bağlamak fırçayı değiştirir ve imleç hep ilk renkte takılı
+    /// görünürdü. Her imleç kendi YEREL fırçasını alır; saat ise ortaktır, yani iki imleç aynı anda aynı renge atlar.
+    /// </summary>
+    internal static void Start(Shape cursor, AnimationClock clock)
     {
-        ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(cursor);
+        ArgumentNullException.ThrowIfNull(clock);
         if (IsRunning(cursor)) return;
 
-        // Görünüm HENÜZ bir kaynak sözlüğüne bağlı değilse (DataContext, ağaca girmeden önce yazılabilir)
-        // palet çözülemez. Tur o karede kurulmaz; görünüm yüklenince çağrı tekrarlanır ve tur orada başlar.
-        // Sessiz atlama, ağaç dışı bir çağrının uygulamayı düşürmesinden İYİDİR — imlecin rengi zaten token
-        // referansındadır, yani kayıp tek şey turdur.
-        if (CreateAnimation(host.TryFindResource) is not { } animation) return;
-        // Yerel fırça: taban renk turun İLK adımıdır, böylece saat kurulmadan önceki tek karede bile imleç
+        // Yerel fırça: taban renk turun İLK adımıdır, böylece saat bağlanmadan önceki tek karede bile imleç
         // paletin dışında bir renk taşımaz.
-        var brush = new SolidColorBrush(FirstColor(animation));
+        var brush = new SolidColorBrush(FirstColor((ColorAnimationUsingKeyFrames)clock.Timeline));
         cursor.Fill = brush;
-        brush.BeginAnimation(SolidColorBrush.ColorProperty, animation);
+        brush.ApplyAnimationClock(SolidColorBrush.ColorProperty, clock);
     }
 
     /// <summary>Turu söker ve rengi verilen token referansına geri bırakır (yerel fırça terk edilir).</summary>

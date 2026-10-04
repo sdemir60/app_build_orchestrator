@@ -13,7 +13,7 @@ namespace BuildOrchestrator.App.ViewModels;
 /// (<see cref="StartWithWindows"/>, <see cref="StartMinimizedToTray"/>, <see cref="CloseToTray"/>,
 /// <see cref="ShowNotifications"/>) yalnız diyalog taslağında yaşardı — kaydedilmez, dosyaya yazılmaz, hiçbir davranışı
 /// sürmezdi. Artık Windows ile başlama, Windows ile açılışta tepside başlama, pencere kapanışı
-/// (<c>MainWindow.OnClosing</c>) ve üç tray-balloon yolu bu değerleri okur.</para></summary>
+/// (<c>MainWindow.OnClosing</c>) ve dört tray-balloon yolu bu değerleri okur.</para></summary>
 public enum GeneralSetting
 {
     /// <summary>[P4] Kalıcı kabuk anahtarı (<see cref="ShellSwitches.StartWithWindows"/>) — Windows'un başlangıç
@@ -81,7 +81,8 @@ public static class GeneralSettingsCatalog
         new("NOTIFICATIONS",
         [
             new(GeneralSetting.ShowNotifications, "Show notifications",
-                "A tray notification when a build finishes — succeeded or failed.", Default: true),
+                "Tray notifications: a build's result, the first close to the tray, a Build shortcut that could not start, "
+                + "and a second launch that could not bring the window forward.", Default: true),
         ]),
     ];
 

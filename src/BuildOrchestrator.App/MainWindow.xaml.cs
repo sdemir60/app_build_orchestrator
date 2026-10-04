@@ -110,6 +110,20 @@ public partial class MainWindow : Window
         // SetMainWindowVisible aboneliğiyle birleşmez — o göstergenin denetleyicisini sürer, bu DP'yi yazar. Hiç
         // gösterilmeyen pencerede olay ateşlenmez: StartInTray sinyali kendisi kurar.
         IsVisibleChanged += (_, _) => SetSurfaceHidden(!IsVisible);
+        // [perf B4 · karar 4] İmleçler pencere AKTİFKEN kırpar (Windows geleneği); başka pencere öne gelince, simge
+        // durumuna küçültülünce ve tepsiye inince ikisi de sabit durur. Sinyalin TEK kaynağı bu pencerenin kendi
+        // Activated/Deactivated olaylarıdır: görünümler aktifliği kendileri OKUMAZ (başsız test pencereleri etkin
+        // olmayabilir). Saat pencere başınadır — konsol ve event stream aynı pencerede aynı saati bulur.
+        // (Aynı Activated olayına bağlı öbür kanca, VM'in OnWindowActivated'ı, aşağıda VM kablajının yanındadır.)
+        var cursorClock = CursorClock.For(this);
+        Activated += (_, _) => cursorClock.SetWindowActive(true);
+        Deactivated += (_, _) => cursorClock.SetWindowActive(false);
+        // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
+        // açılış, yeniden başlatma) — Deactivated o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki
+        // pencerede kırpardı. İçerik ilk çizildiğinde (Loaded'dan sonra; aktivasyon o ana dek işlenmiştir) durum pencerenin
+        // KENDİ IsActive'inden okunur, sonrası yukarıdaki olayların işidir. İmleç saati için pencerenin IsActive'ini
+        // okuyan TEK yer burasıdır.
+        ContentRendered += (_, _) => cursorClock.SetWindowActive(IsActive);
         InitializeComponent();
         if (resourceScope is not null) Resources.MergedDictionaries.Add(resourceScope);
         _uiState = uiState ?? new JsonUiStateStore(JsonUiStateStore.DefaultPath);
@@ -358,6 +372,7 @@ public partial class MainWindow : Window
         // [spec 2026-09-18 §6.4] Yarıdaki git işleminin yoklaması UI thread'inde tık atar; yalnız işaret dururken çalışır.
         _vm.GitOperationPollTimer = new DispatcherPollTimer(Dispatcher);
         _vm.EnableAutoSync(action => Dispatcher.InvokeAsync(action));
+        // (Aynı Activated olayına bağlı öbür kanca — imleç saatinin aktiflik kablajı — ctor'un başındadır: cursorClock.)
         Activated += (_, _) => _vm.OnWindowActivated();
 
         _elapsedTimer.Tick += (_, _) => OnElapsedTick();
@@ -549,7 +564,10 @@ public partial class MainWindow : Window
     /// <summary>[design v1.13.0 §2.11] Esc zincirinin dialog dalı: <b>What's new → About → Settings</b> — üst üste
     /// binerler (XAML'de sonra gelen üstte çizilir); Esc her zaman EN ÜST katmanı indirir, alta sızmaz.
     /// [kullanıcı kararı 2026-09-29] Zincirin son halkası koşudur — karar <see cref="KeyboardShortcuts.ResolveEsc"/>'te;
-    /// Stop kendi komutundan geçer (kapısı <see cref="RunViewModel.EscRunState"/>'in girdisidir).</summary>
+    /// Stop kendi komutundan geçer: Esc graceful gönderir; Stopping sürerken (kullanıcı ya da branch kesmesi istemiş
+    /// olsun) hard stop gönderir ([kullanıcı kararı 2026-10-03]); komut hangisi olduğuna kendi fazından karar verir ve
+    /// hard gittikten sonraki Esc'i kendi içinde yutar
+    /// (<see cref="RunViewModel.EscRunState"/> yalnız zincirin girdisidir).</summary>
     private void OnEscapePressed()
     {
         switch (KeyboardShortcuts.ResolveEsc(AnyDialogOpen, AnyPopoverOpen, _vm.SelectedProjectId is not null,
@@ -562,8 +580,8 @@ public partial class MainWindow : Window
                 break;
             case EscAction.ClosePopovers: CloseAllPopovers(); break;
             case EscAction.ClearSelection: _vm.SelectProject(null); break;
-            case EscAction.StopRun: _vm.StopCommand.Execute(null); break;
-            case EscAction.AcknowledgeStopping: _vm.AcknowledgeStopRequest(); break;
+            case EscAction.StopRun:
+            case EscAction.StopNow: _vm.StopCommand.Execute(null); break;
             case EscAction.ExplainUnstoppable: _vm.NoteEscCannotStop(); break;
         }
     }
@@ -858,7 +876,7 @@ public partial class MainWindow : Window
         // geçişleri ≤200ms'de yansısın. GraphView sık UpdateStatuses'a göre tasarlandı (Zeno/pulse guard'ları).
         // Boşta itmeyiz (statü değişimi zaten Counters/topoloji event'lerinden gelir — gereksiz churn yok).
         // [E4/T48] Koşarken frontier'i (ilk building satır) yumuşak takip et (arbiter seçim varken reddeder).
-        if (_vm.IsRunUnderway) { PushGraphStatuses(); FollowFrontier(); } // bekleyen istek bir koşu değildir
+        if (_vm.IsMidRunLocked) { PushGraphStatuses(); FollowFrontier(); }
     }
 
     /// <summary>[perf Faz A · A6 test yüzeyi] <see cref="FollowFrontier"/> çağrı sayacı — gizliyken tikin frontier takibine
@@ -934,13 +952,12 @@ public partial class MainWindow : Window
 
     /// <summary>[quiet] Koşu fazını grafa iter (design v1.3.0 §2.3 "Koşu yaşam döngüsü"): koşarken graf
     /// soluklaşır ve yalnız derlenenler parlak kalır; koşu bitince tümü sonuç renginde tam opak canlanır.
-    /// Kaynak koşunun gerçekten yolda olmasıdır (<see cref="RunViewModel.IsRunUnderway"/>) — [kullanıcı bildirimi
-    /// 2026-09-29] bir işin bitmesini bekleyen istek kilidi taşır ama grafı söndürmez: o sırada graf süren işi ve önceki
-    /// sonucu gösterir. (Eskiden kilidin kendisiydi, <see cref="RunViewModel.IsMidRunLocked"/>.)</summary>
+    /// Kaynak koşu kilididir (<see cref="RunViewModel.IsMidRunLocked"/>): koşu açılırken (planlama dahil) ve koşarken Running.
+    /// Bir workspace işi (Sync, Clean, ...) sürerken kilit kapalıdır — graf o sırada süren işi ve önceki sonucu gösterir.</summary>
     private void PushGraphRunPhase()
     {
         if (IsSurfaceHidden) { _graphStaleWhileHidden = true; return; } // [perf Faz A · A4] bkz. PushGraphStatuses
-        Shell.GraphHost.RunPhase = _vm.IsRunUnderway ? GraphRunPhase.Running : GraphRunPhase.Idle;
+        Shell.GraphHost.RunPhase = _vm.IsMidRunLocked ? GraphRunPhase.Running : GraphRunPhase.Idle;
     }
 
     /// <summary>[D5] Id → satır VM haritası (GraphBinder statüyü buradan okur). Id'ler Windows yolu → OIC.</summary>
@@ -1025,12 +1042,6 @@ public partial class MainWindow : Window
                 // düşen gönderim, koreografide iptal — hepsi kilidi düşürür): graf filtreye döner — final
                 // oynuyorsa dönüşü finalin kendisi yapar (GraphView.EndOperation).
                 if (!_vm.IsMidRunLocked) Shell.GraphHost.EndOperation();
-                break;
-            case nameof(RunViewModel.IsRunUnderway):
-                // [kullanıcı bildirimi 2026-09-29] Bir işin bitmesini bekleyen istek başladı: kilit (IsStarting) zaten
-                // açıktı, dolayısıyla koşu fazına giriş bu bildirimle gelir — tıklamayla hemen başlayan koşunun aynısı.
-                PushGraphRunPhase();
-                PushGraphStatuses();
                 break;
             case nameof(RunViewModel.Phase):
                 // [design v1.11.0 §9-5] Koşu bitti → "neon tutuşma" YALNIZ grafta oynar.
@@ -1295,7 +1306,7 @@ public partial class MainWindow : Window
 
         // [T62] Tepsi: Close to tray açıkken × pencereyi buraya gizler (K5) → uygulama tepsiden yönetilir. [P3 · Task 3]
         // Exit güvenli tam çıkıştır — uçuştaki iş beklenir (ExitFromTray).
-        _tray = new AppTrayIcon(_vm.StopCommand);
+        _tray = new AppTrayIcon(_vm.StopCommand, _vm);
         _tray.RestoreRequested += ShowFromTray;
         _tray.ExitRequested += ExitFromTray;
 
@@ -1402,9 +1413,19 @@ public partial class MainWindow : Window
         return 0;
     }
 
+    /// <summary>[perf B2] Tepsi bildirim yüzeyi: üretimde tepsi ikonunun kendisi (<c>_tray</c>), testte sahte bir
+    /// notifier. <c>OnSourceInitialized</c> headless süitte koşmaz, yani gerçek <c>TaskbarIcon</c> kurulmaz ve
+    /// <c>_tray</c> orada <c>null</c>'dır — bu seam olmadan "tepsideyken yok sayılan kısayol balon gösterir" sınanamazdı.</summary>
+    internal ITrayRunNotifier? TrayNotifierForTest { get; set; }
+
+    private ITrayRunNotifier? TrayNotifier => TrayNotifierForTest ?? _tray;
+
     /// <summary>[kullanıcı kararı 2026-09-29] Getir/gizle kararı <see cref="WindowToggle"/>'da; gizleme tepsiye iner
     /// (ilk-× balonu burada gösterilmez — o balon ×'ın davranışını anlatır). Build pencereyi GETİRMEZ ve pencere
     /// içindeki Build ile AYNI komuttur (<see cref="GlobalHotkeys.CommandFor"/>; CanExecute onurlanır).
+    /// <para>[perf B2] Kapı kapalıysa (iş sürüyor) kısayol hiçbir şey yapmaz — kuyruk yoktur. Pencere GİZLİYKEN bunu
+    /// söyleyen tek yüzey bir balondur (<see cref="ITrayRunNotifier.ShowBuildIgnored"/>); pencere görünürken ekran
+    /// zaten söyler. Her balon gibi Show notifications'a bağlıdır ve sorulduğu anda TAZE okunur.</para>
     /// <para>[design v1.23.0 §2.12] Restart ekranı görünürken hiçbir global kısayol çalışmaz
     /// (<see cref="InputSuspended"/>). internal: test yüzeyi — <c>WM_HOTKEY</c> gösterilmeyen pencerede üretilemez.</para></summary>
     internal void OnGlobalHotkey(GlobalHotkeyAction action)
@@ -1419,6 +1440,9 @@ public partial class MainWindow : Window
         }
         var command = GlobalHotkeys.CommandFor(action, _vm);
         if (command is not null && command.CanExecute(null)) command.Execute(null);
+        else if (action == GlobalHotkeyAction.Build && IsSurfaceHidden
+            && _vm.WhyRunCannotStart() is { } reason && ShellSwitches.ShowNotifications(_uiState.Load()))
+            TrayNotifier?.ShowBuildIgnored(reason);
     }
 
     private void ToggleMaximizeRestore()

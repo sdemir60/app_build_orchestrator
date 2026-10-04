@@ -993,123 +993,101 @@ public class RunViewModelStateTests
 
     // ---------------------------------------------------------------- [Fix wave 1, C2 review Finding 1] Sync sırasında hiçbir run BAŞLAMAZ
 
+    // [kullanıcı kararı 2026-10-02] Bu bölümün başındaki test (`A_run_pressed_while_a_sync_is_in_flight_waits_for_it_instead_of_starting`,
+    // eski adı `No_run_can_start_while_a_sync_is_in_flight`) silindi — kuyruk yok. "Sync sürerken hiçbir run komutu çalıştırılamaz"
+    // iddiası artık `RunRequestDuringWorkTests`'te pinlidir: her iş türü × her run komutu
+    // (`Every_run_command_is_not_executable_while_a_sync_clean_optimize_checkout_or_pull_is_in_flight`); kuyruğun kaldırılma
+    // gerekçesi o dosyanın doc'undadır. Aşağıdaki dört test kapının Sync BİTİNCE açıldığını pinler. Tek projeli liste ortak
+    // `VmTopology.Seed` ile kurulur (kapıyı yalnız süren Sync kapatsın, listesizlik değil).
+
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>No_run_can_start_while_a_sync_is_in_flight</c>):
-    /// Sync uçuştayken Build ve Rebuild'in kapısı KAPALIDIR. Gerekçesi bugün de doğrudur: Supervisor Sync boyunca komut
-    /// döngüsünü BLOKLAR ve mid-Sync başlayan bir koşu konsol tamponlarını ANINDA temizleyip "build requested" yazar,
-    /// Sync'in kalan satırları da aynı run dokümanına akardı — iki hikâye iç içe geçerdi. (Daha eski bir kural Build'i
-    /// prototipin <c>doBuild</c> asimetrisiyle Sync sırasında da açık tutuyordu; bu test onu da pinlemişti.)
-    ///
-    /// <para><b>Değişme gerekçesi (ölçüm):</b> kapalı kapı tıklamayı YUTUYORDU. Pencereye dönüş kendiliğinden bir Sync
-    /// başlatır; Clean, Optimize ya da Resolve'dan dönen kullanıcının Build'i o Sync boyunca iki tık kayboluyordu.
-    /// Yeni kural: kapı açık kalır ve basış bir İSTEKTİR — koşu hiçbir şeyi temizlemeden bekler, komut Sync bitince
-    /// gider. Hikâyeler yine iç içe geçmez: koşunun ilk satırı Sync'in son satırından SONRA yazılır.</para>
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>A_sync_ending_without_a_project_list_closes_build_and_says_so</c>,
+    /// kullanıcı bildirimi 2026-09-29): Sync Build'i kapatmaz (basış bekler); bitişin bildirimi listesiz biten Sync'te
+    /// kapıyı kapatır. Kuyruk kaldırıldı; asıl iddia geri geldi: Sync'in kapattığı Build, Sync bitince TEK yerden yeniden
+    /// açılır ve bildirimi de o yoldan gelir.
     /// </summary>
     [Fact]
-    public async Task A_run_pressed_while_a_sync_is_in_flight_waits_for_it_instead_of_starting()
+    public async Task Sync_completing_reenables_build_as_well_as_rebuild()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        VmTopology.Seed(vm); // [topoloji kapısı] run komutlarının ön-koşulu — konu bu değil
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-
-        Assert.True(vm.RebuildCommand.CanExecute(null));
-        Assert.True(CommandPress.Press(vm.BuildCommand));
-        Assert.Empty(sent.OfType<StartRunCommand>()); // Sync sürerken komut gitmez
-
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
-
-        Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
-    }
-
-    /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_completing_reenables_build_as_well_as_rebuild</c>):
-    /// Sync'in kapattığı Build, Sync bitince TEK yerden yeniden açılır ve bildirimi de o yoldan gelir. Sync artık Build'i
-    /// kapatmaz (basış bekler — yukarıdaki test). Bitişin bildirimi yine ŞARTTIR: proje listesi yokken Build'i açık tutan
-    /// şey süren iştir — listesiz biten bir Sync'te kapı o anda kapanır ve RelayCommand bunu kendi sormaz.
-    /// </summary>
-    [Fact]
-    public async Task A_sync_ending_without_a_project_list_closes_build_and_says_so()
-    {
-        await using var engine = new EngineHost(TestPaths.SupervisorExe);
-        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.BuildCommand.CanExecute(null));      // basılabilir — Sync'in listesini bekler
+        Assert.False(vm.BuildCommand.CanExecute(null)); // Sync sürerken kapalı
 
         bool buildChanged = false;
         vm.BuildCommand.CanExecuteChanged += (_, _) => buildChanged = true;
 
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0)); // topolojisiz bitti
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
-        Assert.False(vm.BuildCommand.CanExecute(null));
+        Assert.True(vm.BuildCommand.CanExecute(null));
         Assert.True(buildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_completing_reenables_rebuild_and_raises_CanExecuteChanged</c>):
-    /// Sync bitince Rebuild yeniden açılır ve <c>CanExecuteChanged</c> atılır. Rebuild'in Sync'le ilişkisi Build'inkiyle
-    /// AYNI yeni kurala bağlıdır: Sync onu kapatmaz; listesiz biten Sync kapatır ve bunu duyurur.
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>A_sync_ending_without_a_project_list_closes_rebuild_and_raises_CanExecuteChanged</c>,
+    /// kullanıcı bildirimi 2026-09-29): Rebuild'in Sync'le ilişkisi Build'inkiyle aynı kurala bağlıydı. Kuyruk kaldırıldı;
+    /// asıl iddia geri geldi: Sync bitince Rebuild yeniden açılır ve <c>CanExecuteChanged</c> atılır.
     /// <para>[Not] Bu Sync'in İÇİNDE bir <c>WorkspaceTopologyEvent</c> GÖNDERİLMEZ: topolojinin gelişi run komutlarını
     /// KENDİSİ yeniden sordurur (<c>OnWorkspaceTopology</c>) — gönderilseydi bildirimin bitişten geldiği ayırt edilemezdi.</para>
     /// </summary>
     [Fact]
-    public async Task A_sync_ending_without_a_project_list_closes_rebuild_and_raises_CanExecuteChanged()
+    public async Task Sync_completing_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
+        VmTopology.Seed(vm);
         vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 
-        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 0, 0));
+        vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 1, 0));
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Engine_death_mid_sync_reenables_rebuild_via_release_sync_phase</c>):
-    /// motor Sync ortasında ölünce Rebuild <c>ReleaseSyncPhase</c> üzerinden yeniden AÇILIR. Sync artık Rebuild'i
-    /// kapatmaz; o yol yine Rebuild'in kapısını değiştirir ama ters yönde: liste yokken Rebuild'i açık tutan süren
-    /// işti — motor ölünce iş bitti ve liste gelmedi, kapı o anda kapanır ve bunu duyurur. (Sync düğmesinin aynı
-    /// yoldan açılması <see cref="Engine_death_mid_sync_reopens_the_sync_gate"/>'te pinlidir.)
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>Engine_death_mid_sync_closes_rebuild_via_release_sync_phase_when_no_project_list_came</c>,
+    /// kullanıcı bildirimi 2026-09-29): liste yokken Rebuild'i açık tutan süren işti; motor ölünce kapı kapanır. Kuyruk
+    /// kaldırıldı; asıl iddia geri geldi: motor Sync ortasında ölünce Rebuild <c>ReleaseSyncPhase</c> üzerinden yeniden
+    /// AÇILIR. (Sync düğmesinin aynı yoldan açılması <see cref="Engine_death_mid_sync_reopens_the_sync_gate"/>'te pinlidir.)
     /// </summary>
     [Fact]
-    public async Task Engine_death_mid_sync_closes_rebuild_via_release_sync_phase_when_no_project_list_came()
+    public async Task Engine_death_mid_sync_reenables_rebuild_via_release_sync_phase()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
 
         vm.OnEngineExited(1); // engine Sync ortasında öldü → ReleaseSyncPhase
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski iddia (<c>Sync_attributed_planFailed_reenables_rebuild_and_raises_CanExecuteChanged</c>):
-    /// Sync'e atfedilen <c>planFailed</c> Rebuild'i AÇAR ve <c>CanExecuteChanged</c> atar ([re-review C2, Finding 4]: bu,
-    /// Sync yüzeyini bırakan 4. geçiştir ve bildirimi unutulmuştu). Sync artık Rebuild'i kapatmaz; aynı geçiş Rebuild'i
-    /// liste yokken KAPATIR — bildirimi yine şarttır. (Sync düğmesinin açılması
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>Sync_attributed_planFailed_closes_rebuild_and_raises_CanExecuteChanged_when_no_project_list_came</c>,
+    /// kullanıcı bildirimi 2026-09-29): aynı geçiş Rebuild'i liste yokken kapatırdı. Kuyruk kaldırıldı; asıl iddia geri
+    /// geldi: Sync'e atfedilen <c>planFailed</c> Rebuild'i AÇAR ve <c>CanExecuteChanged</c> atar ([re-review C2, Finding 4]:
+    /// bu, Sync yüzeyini bırakan 4. geçiştir ve bildirimi unutulmuştu). (Sync düğmesinin açılması
     /// <see cref="A_failed_sync_reopens_the_sync_gate"/>'te pinlidir.)
     /// </summary>
     [Fact]
-    public async Task Sync_attributed_planFailed_closes_rebuild_and_raises_CanExecuteChanged_when_no_project_list_came()
+    public async Task Sync_attributed_planFailed_reenables_rebuild_and_raises_CanExecuteChanged()
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = @"D:\repo" };
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main")); // ilk Sync: liste henüz yok
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        VmTopology.Seed(vm);
+        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+        Assert.False(vm.RebuildCommand.CanExecute(null));
 
         bool rebuildChanged = false;
         vm.RebuildCommand.CanExecuteChanged += (_, _) => rebuildChanged = true;
@@ -1118,7 +1096,7 @@ public class RunViewModelStateTests
         // ateşlenmeli.
         vm.OnEvent(new ErrorEvent("planFailed", "git fetch origin failed"));
 
-        Assert.False(vm.RebuildCommand.CanExecute(null));
+        Assert.True(vm.RebuildCommand.CanExecute(null));
         Assert.True(rebuildChanged);
     }
 

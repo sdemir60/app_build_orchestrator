@@ -193,9 +193,10 @@ public static class StreamText
     public static string CycleRound(int round, int cap, int memberCount) =>
         string.Format(CultureInfo.InvariantCulture, "cycle round {0}/{1} — {2}", round, cap, Counted(memberCount, "member"));
 
-    /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c>) — döngü satırlarının TEK çekim kuralı;
-    /// tekil sayı artık olağan bir durumdur (tek turda biten grup, tek üyeli seçici tur).</summary>
-    private static string Counted(int count, string noun) =>
+    /// <summary>Sayı + çekimli ad (<c>1 member</c> · <c>2 members</c> · <c>1 in-flight compile</c>) — döngü satırlarının ve hard
+    /// stop bitiş satırının (<see cref="RunViewModel.HardStoppedLine"/>) TEK çekim kuralı; tekil sayı olağan bir durumdur
+    /// (tek turda biten grup, tek üyeli seçici tur, tek uçuştaki derleme).</summary>
+    internal static string Counted(int count, string noun) =>
         string.Format(CultureInfo.InvariantCulture, "{0} {1}{2}", count, noun, count == 1 ? "" : "s");
 
     /// <summary>[Task 4] Aktif satırın grup-ilerleme detayı — <c>StreamComposer.StartBuilding</c>'in <c>detail</c>

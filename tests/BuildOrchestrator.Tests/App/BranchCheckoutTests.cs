@@ -143,72 +143,22 @@ public class BranchCheckoutTests
     }
 
     /// <summary>
-    /// <b>[DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29]</b> Eski ad ve iddia (<c>Build_is_locked_while_a_checkout_is_in_flight</c>):
-    /// checkout uçuştayken Build, Rebuild ve satırın play'i KAPALIDIR. Gerekçe (checkout'un temizliği mid-checkout
-    /// başlayan koşunun konsolunu siler) başlamayı yasaklar, basmayı değil; kapalı düğmeye basılan Build ise
-    /// kayboluyordu. Artık basış bekler ve checkout'un Sync'i bitince yeni ağaçta başlar
-    /// (<see cref="Build_pressed_during_a_checkout_starts_on_the_new_tree_after_its_sync"/>).
+    /// <b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>Build_can_be_pressed_while_a_checkout_is_in_flight</c>,
+    /// kullanıcı bildirimi 2026-09-29): checkout uçuştayken Build, Rebuild ve satırın play'i basılabilir — basış bekler ve
+    /// checkout'un Sync'i bitince yeni ağaçta başlar. Kuyruk kaldırıldı: asıl ad ve iddia geri geldi — checkout uçuştayken
+    /// Build, Rebuild ve satırın play'i KAPALIDIR (checkout'un temizliği mid-checkout başlayan koşunun konsolunu siler).
+    /// <para>Aynı kuralla iki test SİLİNDİ — pinledikleri davranış (kuyruk) artık yok; gerekçe <c>RunRequestDuringWorkTests</c>
+    /// doc'unda: <c>Build_pressed_during_a_checkout_starts_on_the_new_tree_after_its_sync</c> (checkout sürerken basılan Build'in
+    /// Sync'ten sonra yeni ağaçta başlaması) ve <c>A_build_waiting_on_a_checkout_that_does_not_switch_is_taken_back_and_the_reason_stays</c>
+    /// (checkout branch'i değiştirmeden bitince bekleyen Build'in geri alınması).</para>
     /// </summary>
     [Fact]
-    public async Task Build_can_be_pressed_while_a_checkout_is_in_flight()
+    public async Task Build_is_locked_while_a_checkout_is_in_flight()
     {
         var gates = await GatesDuringCheckoutAsync();
-        Assert.True(gates["build"]);
-        Assert.True(gates["rebuild"]);
-        Assert.True(gates["row"]);
-    }
-
-    /// <summary>Checkout sürerken basılan Build hemen başlamaz; checkout'un açtığı bölümün Sync'i bitince yeni ağaçta
-    /// başlar — komutu konsolu temizlenmiş bir bölüme değil, Sync'ten sonraki kendi bölümüne yazılır.</summary>
-    [Fact]
-    public async Task Build_pressed_during_a_checkout_starts_on_the_new_tree_after_its_sync()
-    {
-        var vm = NewVm();
-        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: checkout gerçekten uçuşta kalır
-        VmTopology.Seed(vm);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-        await vm.SelectBranch(FeatureX);
-        Assert.True(vm.CheckoutBusy); // ön-koşul
-
-        Assert.True(CommandPress.Press(vm.BuildCommand));
-        vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Switched, "main", "feature/x", FullSha, 0, null, null));
-        Assert.Empty(sent.OfType<StartRunCommand>()); // checkout bitti ama Sync'i sürüyor
-
-        vm.OnEvent(new SyncStartedEvent(@"D:\repo", "feature/x"));
-        VmTopology.Seed(vm);
-        vm.OnEvent(new SyncCompletedEvent("feature/x", "sha1234", false, 1, 0, ActiveBranch: "feature/x"));
-
-        Assert.Equal(RunMode.Build, Assert.Single(sent.OfType<StartRunCommand>()).Mode);
-    }
-
-    /// <summary>Checkout branch'i DEĞİŞTİRMEDEN biterse (kirli ağaç reddi ya da checkout hatası) bekleyen Build eski
-    /// ağacı derlemez: istek geri alınır. Reddin/hatanın satırı konsolda kalır ve iptal satırı ALTINA düşer — koşunun
-    /// açılışı o açıklamayı silmez.</summary>
-    [Theory]
-    [InlineData("refused")]
-    [InlineData("failed")]
-    public async Task A_build_waiting_on_a_checkout_that_does_not_switch_is_taken_back_and_the_reason_stays(string outcome)
-    {
-        var vm = NewVm();
-        vm.DebugSendOverride = _ => Task.CompletedTask; // motor canlı: checkout gerçekten uçuşta kalır
-        VmTopology.Seed(vm);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-        await vm.SelectBranch(FeatureX);
-        Assert.True(CommandPress.Press(vm.BuildCommand));
-
-        if (outcome == "refused")
-            vm.OnEvent(new CheckoutCompletedEvent(CheckoutStatus.Dirty, "main", "feature/x", null, 3, null, null));
-        else
-            vm.OnEvent(new ErrorEvent("checkoutFailed", "index.lock exists"));
-
-        Assert.False(vm.IsStarting);
-        Assert.Empty(sent.OfType<StartRunCommand>());
-        string console = vm.GetRunDocumentText();
-        Assert.Contains(outcome == "refused" ? PlanProgressLines.SwitchRefusedDirty(3) : "[error] checkoutFailed",
-            console, StringComparison.Ordinal);
-        Assert.Equal(RunViewModel.RunCancelledLine, Lines(vm)[^1]);
+        Assert.False(gates["build"]);
+        Assert.False(gates["rebuild"]);
+        Assert.False(gates["row"]);
     }
 
     [Fact]

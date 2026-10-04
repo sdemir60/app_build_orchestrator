@@ -136,6 +136,13 @@ public partial class ProjectRow : UserControl
         var run = FindRunViewModel();
         actions.BuildButton.Command = run?.BuildProjectCommand;
         actions.StopButton.Command = run?.StopCommand;
+        // [Stop now] Satırdaki Stop ikonu görünür etiket taşımaz: adı ve tooltip'i VM'in TEK Stop durumunu (StopStage) izler.
+        // Zayıf olay yöneticisi — satır konteynerleri geri dönüştürülür, VM satırı canlı tutmamalı.
+        if (run is not null)
+        {
+            actions.ApplyStopStage(run.StopStage);
+            PropertyChangedEventManager.AddHandler(run, OnRunStopStageChanged, nameof(RunViewModel.StopStage));
+        }
         actions.RowMenuContent.ItemInvoked += OnRowMenuItem;
         // [design v1.11.0 §9-6] Menünün çapası SATIRIN KENDİSİDİR, ⋯ düğmesi değil (BuildApp.jsx:609
         // `right: 8`). Yerleşim Custom'dır: WPF geri çağrıyı menü ÖLÇÜLDÜKTEN sonra çağırır, yani menünün
@@ -947,6 +954,12 @@ public partial class ProjectRow : UserControl
                 await run.OpenSolutionInVisualStudioAsync(vm.Id, sln); // bkz. OnVsClick: vswhere UI'da beklenmez
         };
         return row;
+    }
+
+    /// <summary>[Stop now] Koşunun Stop aşaması değişti: hover bloğu kurulmuşsa Stop ikonunun adı/tooltip'i tazelenir.</summary>
+    private void OnRunStopStageChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_actions is { } actions && sender is RunViewModel run) actions.ApplyStopStage(run.StopStage);
     }
 
     /// <summary>[C1 debt] Seçim RunViewModel'de yaşar; kartın DataContext'i satır VM'idir → ata ağaçta

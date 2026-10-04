@@ -231,13 +231,10 @@ version's notes as its text. Installed copies pick it up on their next check.
    in the project list.
 2. **Sync** — scans, builds the graph, and marks which projects would build. Nothing is compiled here. The
    first Sync runs by itself when the application starts. No build starts before it has run: a run before the
-   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running*, *Sync*
-   itself is disabled — the engine handles one thing at a time — but *Build* and *Rebuild* (and *Resolve cycles*,
-   once the graph has a cycle) stay pressable: a press made then waits for the Sync — the button turns into *Stop*
-   at once (pressing it takes the request back) — and the run starts the moment the Sync finishes. *Build*
-   pressed during a Clean, an Optimize, a branch switch or a pull waits the same way, so a click on *Build* is
-   never lost — not even the one that brings the window back. If the work it waits for fails — a Sync or a job
-   errors, a branch switch or a pull is refused — the request is taken back and the console keeps the reason.
+   first Sync would compile for real while the list and the graph stayed empty. While a Sync is *running* — the
+   one the application starts by itself included — the engine handles one thing at a time: *Sync* shows its busy
+   state and *Build*, *Rebuild*, *Resolve cycles*, the row actions and `F5` are disabled until it finishes, so
+   nothing waits behind it. A Clean, an Optimize, a branch switch or a pull closes them the same way.
 
    If two projects produce the same assembly name, Sync warns and names both: a reference to that DLL cannot be
    resolved to one producer, so its dependency edge is dropped and nothing waits for it. Rename one of them, or
@@ -369,10 +366,13 @@ version's notes as its text. Installed copies pick it up on their next check.
    *"▸ Starting — resolving what to build"* and the console lists each step as it completes. A stop in that
    window is a real stop, and it still compiles nothing.
 6. **Stop** — nothing new is dispatched and the in-flight `MSBuild.exe` children finish, including their
-   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button
-   reads *Stopping…* and is disabled and the ribbon reports how many are still finishing. To carry on, press
-   *Build* again: everything that already succeeded is skipped as up to date, so only the remaining work runs.
-   The elapsed clock starts from zero — it is a new run.
+   post-build copy, so no half-written DLL is left behind and their work is kept. Until they do, the button — and
+   the tray menu's Stop item — reads *Stop now* and the ribbon reports how many are still finishing. Pressing
+   *Stop now* — or `Esc` — does not wait, whether you asked for the stop or a branch switch did: the in-flight
+   compiles are terminated at once, the console says how many, and the button reads *Terminating…* and is
+   disabled. Those projects count as failed, so the next Build compiles them again.
+   To carry on, press *Build* again: everything that already succeeded is skipped as up to date, so only the
+   remaining work runs. The elapsed clock starts from zero — it is a new run.
 
 **Reading the list.** One colour tells one story: the stripe on the left, the dot beside the name, the status
 glyph and the graph node all carry the same status, so there is nothing to cross-reference. Green does not
@@ -532,8 +532,9 @@ brings it up to date in a single pass. When the run finishes the mark plays out 
 with the result — click it to bring the window back too — and the same sentence is waiting in the ribbon when
 you open the window again. A run that finishes while the window is open shows no notification — the ribbon
 already says it. Turn *Show notifications* off and the app shows no Windows notification at all — not the
-result, not the one-time *still running in the tray* note, not the warning a second copy of the app gives when
-it cannot bring the window forward; the corner mark is not a notification and still appears.
+result, not the one-time *still running in the tray* note, not the note a Build hotkey press leaves when something
+keeps it from starting, not the warning a second copy of the app gives when it cannot bring the window forward;
+the corner mark is not a notification and still appears.
 
 To quit, choose *Exit* from the tray icon's menu — or, with *Close to tray* off, just close the window.
 Quitting waits for the work in flight: with nothing running the app closes at once; otherwise a running build is
@@ -555,7 +556,7 @@ brings a fresh engine up.
 |---|---|---|
 | `Shift+Space` | anywhere | Show or hide the window |
 | `Ctrl+Shift+Space` | anywhere | Build without bringing the window up |
-| `F5` | window | Build — only starts; while a run is in flight it does nothing |
+| `F5` | window | Build — only starts; while a run is in flight or a Sync, Clean, Optimize, branch switch or pull runs, it does nothing |
 | `F6` | window | Rebuild |
 | `F7` | window | Clean — the Build menu's Clean, not the maintenance box's Deep Clean |
 | `Ctrl+F` | window | Focus the project filter |
@@ -564,9 +565,9 @@ brings a fresh engine up.
 
 The two global hotkeys work whether the window is in front, behind Visual Studio or in the tray. `Shift+Space`
 hides the window only when it is in front; from the tray, minimized or behind another window it brings it
-forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight, and
-pressed during a Sync or a maintenance job it waits for that work and builds when it ends — and with the window
-hidden the tray indicator and the result balloon report it.
+forward. `Ctrl+Shift+Space` starts the same Build as the button — nothing happens while a run is in flight or while
+a Sync, Clean, Optimize, branch switch or pull runs (with the window hidden in the tray, a balloon says why) — and
+with the window hidden the tray indicator and the result balloon report a build it does start.
 Both are read from `ui-state.json` (`ShowHideHotkey`, `BuildHotkey`); there is no UI for changing them
 (Settings has General, Workspace, External projects and Layers). An older `Hotkey` entry (`Alt+B`) is ignored.
 If one cannot be registered — another application already owns that combination — it is silently disabled; the
@@ -574,9 +575,10 @@ tray icon still restores the window, and the About screen marks that row *unavai
 rather than mysterious.
 
 `Esc` stops a Build, Rebuild or Clean the way *Stop* does — the projects in flight finish and the next Build
-carries on from there. Pressing it again while the stop drains sends nothing; the ribbon line dips once to say
-the key was heard. A Sync, Deep Clean, Optimize, branch switch or pull cannot be stopped; `Esc` during one writes
-a single console line saying so.
+carries on from there. Pressing it while a stop drains — yours, or one a branch switch started — is *Stop now*: the
+in-flight compiles are terminated at once, and a further `Esc` does nothing. A Sync, Deep Clean, Optimize, branch
+switch or pull cannot be stopped;
+`Esc` during one writes a single console line saying so.
 
 Disabled commands stay disabled when triggered by a shortcut — the key never bypasses the button's state.
 `F1` toggles About and works even while another dialog is open: About opens on top, and Esc closes the topmost
@@ -633,7 +635,8 @@ Clicking the pill opens a card: the installed and incoming versions with the dow
 highlights from its release notes grouped like What's new — at most five, with a `+N more in What's new after
 restart` line when there are more — and *Later* / *Restart to update*. While a build, a Sync or a maintenance task
 is running, *Restart to update* is disabled and the line above it says what it is waiting for — `Esc stops it`
-for a build; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
+for a build, `Esc stops it now` once a stop is already draining (the next Esc is the hard stop), and no key once the
+hard stop has gone; it comes back on its own when the work ends. *Later*, a second click on the pill, a click elsewhere,
 Esc or opening a dialog closes the card; the pill stays.
 
 *Restart to update* closes the card and covers the whole window, title bar included, with the restart screen:

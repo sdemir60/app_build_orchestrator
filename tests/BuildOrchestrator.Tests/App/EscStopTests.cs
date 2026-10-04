@@ -1,8 +1,6 @@
 using System.Windows.Input;
 using BuildOrchestrator.App;
-using BuildOrchestrator.App.Services;
 using BuildOrchestrator.App.ViewModels;
-using BuildOrchestrator.App.Views;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Tests.Supervisor;
 
@@ -10,26 +8,22 @@ namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
 /// [kullanıcı kararı 2026-09-29] Esc zincirinin koşu katmanı, pencerenin GERÇEK Esc bağlamasından sürülür
-/// (<see cref="MainWindowInputTests"/> deseni): hiçbir katman açık değilken Esc çalışan Build/Rebuild/Clean'i durdurur;
-/// durdurma zaten sürerken tekrar Esc ikinci bir stop GÖNDERMEZ, şerit satırı kısa bir vurguyla "duyuldu" der;
+/// (<see cref="MainWindowInputTests"/> deseni): hiçbir katman açık değilken Esc çalışan Build/Rebuild/Clean'i durdurur
+/// (graceful); durdurma zaten sürerken tekrar Esc hard stop gönderir ("Stop now"), üçüncü Esc hiçbir şey göndermez;
 /// durdurulamayan bir iş (Sync, Deep Clean, Optimize, checkout, pull) sürerken konsola tek satır düşer — aynı işte
 /// yalnız ilk basışta. Görünmeyen sessiz Sync'te Esc bir şey söylemez.
+///
+/// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03 · perf Faz B · B3]</b> ESKİ İDDİA (kullanıcı kararı 2026-09-29):
+/// durdurma sürerken tekrar Esc ikinci bir stop GÖNDERMEZ; şerit satırı kısa bir vurguyla (opaklık 1 → 0,4 → 1) "duyuldu,
+/// zaten duruyor" der ve konsola satır yazılmaz. GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi kadar sürebilir ve
+/// ikinci Esc kullanıcının beklemek istemediğini söyler — ona "duyuldu" demek yerine isteğini yerine getirmek gerekir.
+/// "Duyuldu" vurgusunun yerini iki kalıcı iz aldı: konsol satırı (<see cref="RunViewModel.StopNowRequestedLine"/>) ve
+/// düğmenin "Terminating…" hâli. Vurguyu pinleyen iki şerit testi (motion açıkken saat kurulur / reduced-motion'da kurulmaz)
+/// bu yüzden SİLİNDİ: pinledikleri davranış (<c>StopRequestAcknowledged</c> olayı, şerit pulse'ı) artık yok.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class EscStopTests
 {
-    private static (MainWindow window, RunViewModel vm, List<IpcCommand> sent) NewWindowWithSends(TempDir temp)
-    {
-        var (window, vm) = MainWindowHost.New(temp);
-        vm.RootPath = @"C:\src\OSYS";
-        MainWindowHost.AcceptSends(vm);
-        var sent = new List<IpcCommand>();
-        vm.DebugOnCommandSent = sent.Add;
-        return (window, vm, sent);
-    }
-
-    private static int Occurrences(string text, string line) =>
-        text.Split('\n').Count(l => l.Contains(line, StringComparison.Ordinal));
 
     // ---------------------------------------------------------------- durdur
 
@@ -37,7 +31,7 @@ public class EscStopTests
     public void Escape_with_nothing_open_stops_a_running_build()
     {
         using var temp = new TempDir();
-        var (window, vm, sent) = NewWindowWithSends(temp);
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
         MainWindowHost.StartBuild(vm);
 
         MainWindowHost.PressEscape(window);
@@ -51,7 +45,7 @@ public class EscStopTests
     public void Escape_clears_a_selection_before_it_stops_the_build()
     {
         using var temp = new TempDir();
-        var (window, vm, sent) = NewWindowWithSends(temp);
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
         MainWindowHost.StartBuild(vm);
         vm.SelectProject(@"C:\p\a.csproj");
 
@@ -64,25 +58,47 @@ public class EscStopTests
         GC.KeepAlive(window);
     }
 
-    /// <summary>Durdurma sürerken tekrar Esc: ikinci bir stop GİTMEZ ve konsola satır EKLENMEZ; VM şeride "duyuldu"
-    /// sinyalini verir.</summary>
+    /// <summary>[Stop now] Durdurma sürerken ikinci Esc hard stop gönderir (<see cref="StopKind.Hard"/>, koşan run'ın
+    /// kimliğiyle) ve konsola tek satır düşer; üçüncü Esc hiçbir şey göndermez ve satır EKLEMEZ — hard zaten gitti.</summary>
     [StaFact]
-    public void A_second_escape_while_stopping_sends_nothing_and_acknowledges_on_the_ribbon()
+    public void A_second_escape_while_stopping_sends_a_hard_stop_and_a_third_sends_nothing()
     {
         using var temp = new TempDir();
-        var (window, vm, sent) = NewWindowWithSends(temp);
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
         MainWindowHost.StartBuild(vm);
         MainWindowHost.PressEscape(window);
+        Assert.Equal(AppPhase.Stopping, vm.Phase); // ön-koşul: ilk Esc graceful gitti
+
+        MainWindowHost.PressEscape(window); // ikinci Esc: hard
+        string afterHard = vm.GetRunDocumentText();
+        MainWindowHost.PressEscape(window); // üçüncü Esc
+
+        StopRunCommand[] expected = [new("r1", StopKind.Graceful), new("r1", StopKind.Hard)];
+        Assert.Equal(expected, sent.OfType<StopRunCommand>().ToArray());
+        Assert.Equal(1, MainWindowHost.Occurrences(afterHard, RunViewModel.StopNowRequestedLine));
+        Assert.Equal(afterHard, vm.GetRunDocumentText()); // üçüncü Esc konsola hiçbir satır eklemedi — konsolun TAMAMI aynı
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>[Stop now · M6] Branch değişiminin kesmesi de durdurmayı Stopping'e çeker (<c>RequestInterruptAsync</c> →
+    /// <see cref="StopKind.Interrupt"/>): kullanıcı O drain sürerken İLK kez Esc'e bastığında bu hard stop'tur — "ikinci basış"
+    /// anlatısı yalnız kullanıcının kendi Stop'u içindir — ve aşama baştan "Stop now"dur (tüm yüzler bunu okur).</summary>
+    [StaFact]
+    public async Task Escape_during_a_branch_interrupt_drain_sends_the_hard_stop_at_once()
+    {
+        using var temp = new TempDir();
+        var (window, vm, sent) = MainWindowHost.NewWithSends(temp);
+        MainWindowHost.StartBuild(vm);
+
+        await vm.RequestInterruptAsync(); // branch değişti: kesme gitti, drain başladı
         Assert.Equal(AppPhase.Stopping, vm.Phase); // ön-koşul
-        int acknowledged = 0;
-        vm.StopRequestAcknowledged += (_, _) => acknowledged++;
-        string console = vm.GetRunDocumentText();
+        Assert.Equal(StopStage.StopNow, vm.StopStage);
 
         MainWindowHost.PressEscape(window);
 
-        Assert.Single(sent.OfType<StopRunCommand>());
-        Assert.Equal(1, acknowledged);
-        Assert.Equal(console, vm.GetRunDocumentText());
+        StopRunCommand[] expected = [new("r1", StopKind.Interrupt), new("r1", StopKind.Hard)];
+        Assert.Equal(expected, sent.OfType<StopRunCommand>().ToArray());
+        Assert.Equal(StopStage.Terminating, vm.StopStage);
         GC.KeepAlive(window);
     }
 
@@ -92,14 +108,14 @@ public class EscStopTests
     public async Task Escape_during_a_sync_says_once_that_it_cannot_be_stopped()
     {
         using var temp = new TempDir();
-        var (window, vm, _) = NewWindowWithSends(temp);
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp);
         await MainWindowHost.StartSync(vm, SyncMode.Manual);
         Assert.True(vm.SyncBusy); // ön-koşul: motorun cevabı bekleniyor
 
         MainWindowHost.PressEscape(window);
         MainWindowHost.PressEscape(window);
 
-        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.Sync)));
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.Sync)));
         GC.KeepAlive(window);
     }
 
@@ -109,7 +125,7 @@ public class EscStopTests
     public async Task A_new_operation_gets_its_own_cannot_be_stopped_line()
     {
         using var temp = new TempDir();
-        var (window, vm, _) = NewWindowWithSends(temp);
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp);
         await MainWindowHost.StartSync(vm, SyncMode.Manual);
         MainWindowHost.PressEscape(window);
         MainWindowHost.ReplySync(vm, ("A", null)); // Sync bitti — meşguliyet kalktı
@@ -118,7 +134,7 @@ public class EscStopTests
         Assert.True(vm.CleanBusy); // ön-koşul
         MainWindowHost.PressEscape(window);
 
-        Assert.Equal(1, Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
+        Assert.Equal(1, MainWindowHost.Occurrences(vm.GetRunDocumentText(), RunViewModel.EscCannotStopLine(OperationLabel.DeepClean)));
         GC.KeepAlive(window);
     }
 
@@ -128,7 +144,7 @@ public class EscStopTests
     public async Task Escape_during_a_silent_sync_says_nothing()
     {
         using var temp = new TempDir();
-        var (window, vm, _) = NewWindowWithSends(temp);
+        var (window, vm, _) = MainWindowHost.NewWithSends(temp);
         await MainWindowHost.StartSync(vm, SyncMode.Silent);
         Assert.True(vm.SyncBusy); // ön-koşul
         string console = vm.GetRunDocumentText();
@@ -136,40 +152,6 @@ public class EscStopTests
         MainWindowHost.PressEscape(window);
 
         Assert.Equal(console, vm.GetRunDocumentText());
-        GC.KeepAlive(window);
-    }
-
-    // ---------------------------------------------------------------- şerit vurgusu
-
-    private static RunViewModel NewVm() =>
-        new(new EngineHost(TestPaths.SupervisorExe), MainWindowHost.NeverTickingBatcher(), () => "r1");
-
-    /// <summary>Vurgu şerit satırının opaklığında kısa bir saattir; motion açıkken GERÇEKTEN kurulur (karşıtı
-    /// aşağıda: reduced-motion'da hiç kurulmaz — ikisi birlikte kapının iki yönlü çalıştığını söyler).</summary>
-    [StaFact]
-    public void The_ribbon_line_pulses_when_a_stop_request_is_acknowledged_with_motion_on()
-    {
-        var vm = NewVm();
-        var ribbon = new StickyRibbon { DataContext = vm, AnimationsEnabledProvider = () => true };
-        var window = DsResources.Realize(DsResources.NewHost(), ribbon);
-        Assert.False(ribbon.PhaseText.HasAnimatedProperties); // ön-koşul
-
-        vm.AcknowledgeStopRequest();
-
-        Assert.True(ribbon.PhaseText.HasAnimatedProperties, "şerit satırının vurgu saati kurulmadı");
-        GC.KeepAlive(window);
-    }
-
-    [StaFact]
-    public void The_ribbon_line_does_not_pulse_under_reduced_motion()
-    {
-        var vm = NewVm();
-        var ribbon = new StickyRibbon { DataContext = vm, AnimationsEnabledProvider = () => false };
-        var window = DsResources.Realize(DsResources.NewHost(), ribbon);
-
-        vm.AcknowledgeStopRequest();
-
-        Assert.False(ribbon.PhaseText.HasAnimatedProperties);
         GC.KeepAlive(window);
     }
 }

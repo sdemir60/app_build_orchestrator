@@ -62,11 +62,13 @@
               <!-- Ds.Input.Sm (28px şeride sığması için sm ölçü) + büyüteç prefix (paddingLeft 26) + watermark.
                    [E5/T46] Ctrl+F bunu odaklar (MainWindow → Shell.FocusProjectFilter); içindeki Esc yalnız
                    sorguyu temizler + blur eder (OnFilterKeyDown, handled) — global Esc zincirine SIZMAZ. Text
-                   iki-yönlü ProjectQuery'ye bağlı (filtre kaynağı — VisibleProjects bunu okur). PanelHeader.
+                   iki-yönlü ProjectQuery'ye bağlı (filtre kaynağı — VisibleProjects bunu okur) ve GECİKMELİ yazar (Delay): ProjectQuery'nin
+                   her değişimi bir liste yeniden kurulumu + graf tazelemesi olduğundan hızlı yazılan sözcük TEK yayın olur; Esc ve temizle
+                   düğmesi de aynı yoldan, aynı gecikmeyle işler. PanelHeader.
                    RightContent bir alt-namescope olduğundan buraya x:Name/handler XAML'de YAZILAMAZ (MC3093) →
                    referans + PreviewKeyDown kod-tarafı bağlanır (ShellRoot ctor), erişim RightContent üzerinden. -->
               <TextBox Width="160" Style="{DynamicResource Ds.Input.Sm}" controls:DsChrome.Watermark="Filter…" controls:DsChrome.IsClearable="True"
-                       Text="{Binding ProjectQuery, UpdateSourceTrigger=PropertyChanged}"
+                       Text="{Binding ProjectQuery, UpdateSourceTrigger=PropertyChanged, Delay=150}"
                        AutomationProperties.Name="Filter projects">
                 <controls:DsChrome.Prefix>
                   <Viewbox Width="14" Height="14">

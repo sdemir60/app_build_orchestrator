@@ -24,14 +24,20 @@ public interface ITrayBuildIndicatorView
     void HideNow();
 }
 
-/// <summary>[K-5] Koşu bitişinin BİLDİRİM yüzeyi — gerçek uygulaması OS tray balloon'udur (uygulama-içi
-/// toast design §8'de YASAK).</summary>
+/// <summary>[K-5] Tepsinin BİLDİRİM yüzeyi: koşu bitişi ve [perf B2] tepsideyken yok sayılan Build kısayolunun
+/// nedeni — gerçek uygulaması OS tray balloon'udur (uygulama-içi toast design §8'de YASAK).</summary>
 public interface ITrayRunNotifier
 {
     /// <summary>Şeridin o anki terminal SATIRI — metin+bayrak çifti DEĞİL. Bildirimin başlığı ile gövdesi
     /// satırın kendi baş/gövde ayrımından (<see cref="RibbonLine.Head"/>/<see cref="RibbonLine.Detail"/>)
     /// doğar; statü de satırın kendi glyph'indedir.</summary>
     void ShowRunFinished(RibbonLine line);
+
+    /// <summary>[perf B2] Tepsideyken basılan ama komutun kapısı kapalı olduğu için yok sayılan Build kısayolunun
+    /// AÇIKLAMASI. Pencere gizliyken ekran yoktur; kısayol sessizce hiçbir şey yapmazsa kullanıcı neden başlamadığını
+    /// bilemez, balon tek yüzeydir. <paramref name="reason"/> <c>RunViewModel.WhyRunCannotStart()</c>'ın kısa
+    /// cümlesidir; balonun metni TEK yerde kurulur (<c>AppTrayIcon.BuildIgnoredBody</c>).</summary>
+    void ShowBuildIgnored(string reason);
 }
 
 /// <summary>

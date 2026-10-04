@@ -14,11 +14,18 @@ namespace BuildOrchestrator.Tests.App;
 /// açıklama satırı nedenini söyler — yarım kalan koşu olmaz. Karar VM'de TEK bir hesaplanan özelliktir
 /// (<see cref="RunViewModel.UpdateRestartBlockedReason"/>); sıra: (1) Clean / Optimize / Resolve / checkout / pull →
 /// <c>Available once the running task finishes.</c> (2) herhangi bir Sync, sessizi dahil →
-/// <c>Available once Sync finishes.</c> (3) koşu sürüyor, işaretleniyor ya da bekleyen bir Build isteği var →
+/// <c>Available once Sync finishes.</c> (3) koşu sürüyor ya da işaretleniyor (açılış koreografisi) →
 /// <c>Available once the build finishes — Esc stops it.</c> İş bitince düğme kendiliğinden açılır.
 ///
 /// <para><b>Tasarımdan sapma (plan U3):</b> tasarım "— F5 stops it." der; uygulamada F5 koşuyu durdurmaz, Esc
 /// durdurur. Tuşun adı kısayol kataloğundan okunur (<see cref="ShortcutCatalog"/>).</para>
+///
+/// <para><b>[DEĞİŞEN KURAL — perf Faz B son toparlama · F-M1]</b> ESKİ İDDİA: koşu nedeni, Stop'un hangi aşamada olduğuna
+/// bakmadan hep <c>Available once the build finishes — Esc stops it.</c> der. GEREKÇE: Stopping'de bir sonraki Esc hard
+/// stop'tur (ARCHITECTURE §4.5: hiçbir yüzey, bir sonraki basış hard stop iken "Stop" demez) ve Terminating'de Esc hiçbir
+/// şey yapmaz — ipucu orada düpedüz yanlıştı. Cümle artık <see cref="StopStage"/>'i izler: istenmedi → eski cümle (aşağıdaki
+/// vakalar değişmedi), graceful gitti → <c>… Esc stops it now.</c>, hard gitti → Esc'siz
+/// <c>Available once the build stops.</c> (<see cref="UpdateText.WaitForBuildAt"/>).</para>
 ///
 /// <para>Harness: gönderimler sahte ama canlı bir motora gider (<see cref="RunViewModel.DebugSendOverride"/>), tıklama
 /// WPF'in yaptığı gibi kapıdan geçer (<see cref="CommandPress"/>).</para>
@@ -74,10 +81,12 @@ public class UpdateRestartLockTests
                 Assert.True(CommandPress.Press(vm.BuildCommand));
                 Assert.True(vm.IsStarting);
                 break;
-            case "buildWaitingForSync":
+            case "buildPressedDuringSync":
+                // [kullanıcı kararı 2026-10-02] Sync sürerken Build basılamaz: kapı kapalı, istek kuyruğa alınmaz — ne koşu
+                // başlar ne de işaretleme penceresi açılır; kilidin nedeni Sync'in nedeni olarak kalır.
                 Assert.True(CommandPress.Press(vm.SyncCommand));
-                Assert.True(CommandPress.Press(vm.BuildCommand)); // Sync sürerken basılan Build bekler
-                Assert.True(vm.IsStarting);
+                Assert.False(CommandPress.Press(vm.BuildCommand));
+                Assert.False(vm.IsStarting);
                 break;
             default: throw new ArgumentOutOfRangeException(nameof(work), work, null);
         }
@@ -102,8 +111,13 @@ public class UpdateRestartLockTests
 
     /// <summary>Her iş türü kendi nedenini söyler ve Restart kapanır. Resolve bir koşudur ama bir görev gibi okunur
     /// (tasarım: Clean/Optimize/Resolve); checkout ve pull tasarımda yoktur, görev kovasına girer. Sessiz Sync de kilitler
-    /// (plan U3) — ekranda görünmese de kurulum onu yarıda keserdi. Sync sürerken basılıp bekleyen Build, Sync'in nedenini
-    /// taşır: sıra görev > Sync > koşu.</summary>
+    /// (plan U3) — ekranda görünmese de kurulum onu yarıda keserdi. Sync sürerken Build'e basmak hiçbir şey başlatmaz (kapı
+    /// kapalı) ve kilidin nedenini DEĞİŞTİRMEZ: neden Sync'in nedeni olarak kalır, <c>IsStarting</c> açılmaz.
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02]</b> Önceki ad ve iddia (<c>buildWaitingForSync</c>, kullanıcı
+    /// bildirimi 2026-09-29): Sync sürerken basılıp bekleyen Build kilidin nedenini Sync'ten alır (sıra görev &gt; Sync &gt;
+    /// koşu) — basış bir istekti ve <c>IsStarting</c>'i açardı. Kuyruk kaldırıldı: basış kapıdan geçmez. Vaka silinmedi, yeni
+    /// kurala göre yeniden yazıldı (gerekçe <c>RunRequestDuringWorkTests</c> doc'unda).</para></summary>
     [Theory]
     [InlineData("clean", "task")]
     [InlineData("optimize", "task")]
@@ -114,7 +128,7 @@ public class UpdateRestartLockTests
     [InlineData("silentSync", "sync")]
     [InlineData("build", "build")]
     [InlineData("marking", "build")]
-    [InlineData("buildWaitingForSync", "sync")]
+    [InlineData("buildPressedDuringSync", "sync")]
     public async Task Work_in_flight_locks_the_restart_and_names_the_reason(string work, string reason)
     {
         var vm = NewVm();
@@ -134,13 +148,28 @@ public class UpdateRestartLockTests
     [InlineData(false, false, true, "build")]
     public void The_reason_follows_task_then_sync_then_build(bool task, bool sync, bool build, string expected)
     {
-        Assert.Equal(ExpectedReason(expected), UpdateText.RestartBlockedReason(task, sync, build));
+        Assert.Equal(ExpectedReason(expected), UpdateText.RestartBlockedReason(task, sync, build, StopStage.Stop));
     }
 
     [Fact]
     public void Nothing_in_flight_gives_no_reason()
     {
-        Assert.Null(UpdateText.RestartBlockedReason(taskRunning: false, syncRunning: false, buildRunning: false));
+        Assert.Null(UpdateText.RestartBlockedReason(taskRunning: false, syncRunning: false, buildRunning: false,
+            stopStage: StopStage.Stop));
+    }
+
+    /// <summary>[F-M1] Aşama yalnız KOŞU cümlesini değiştirir: görev ve Sync, Stop'un hangi aşamada olduğuna bakmadan
+    /// önce gelir; iş yoksa hiçbir aşama neden üretmez.</summary>
+    [Theory]
+    [InlineData(StopStage.Stop)]
+    [InlineData(StopStage.StopNow)]
+    [InlineData(StopStage.Terminating)]
+    public void The_stop_stage_only_changes_the_build_sentence(StopStage stage)
+    {
+        Assert.Equal(UpdateText.WaitForTask, UpdateText.RestartBlockedReason(true, true, true, stage));
+        Assert.Equal(UpdateText.WaitForSync, UpdateText.RestartBlockedReason(false, true, true, stage));
+        Assert.Equal(UpdateText.WaitForBuildAt(stage), UpdateText.RestartBlockedReason(false, false, true, stage));
+        Assert.Null(UpdateText.RestartBlockedReason(false, false, false, stage));
     }
 
     /// <summary>Metinler birebir (tasarım §2.12 · §9); koşu nedeni durduran tuşu kataloğun jestiyle yazar — tasarımın
@@ -153,6 +182,49 @@ public class UpdateRestartLockTests
         Assert.Equal("Available once the build finishes — Esc stops it.", UpdateText.WaitForBuild);
         Assert.Contains(ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0] + " stops it.", UpdateText.WaitForBuild,
             StringComparison.Ordinal);
+    }
+
+    /// <summary>[F-M1] Koşu nedeninin metni Stop'un aşamasını izler: istenmeden önce eski cümle, graceful gittikten sonra bir
+    /// sonraki Esc'in hard olduğunu söyleyen cümle, hard gittikten sonra Esc'siz cümle. Her geçiş duyurulur (kart satırı ve
+    /// komut kapısı tazelenir) — aşama değişimi, iş kilidinin değişimi kadar bir tetikleyicidir.</summary>
+    [Fact]
+    public async Task The_build_reason_follows_the_stop_stage_and_each_step_is_announced()
+    {
+        var vm = NewVm();
+        int reasonChanges = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.UpdateRestartBlockedReason)) reasonChanges++;
+        };
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 1, "Debug", 0));
+        Assert.Equal(StopStage.Stop, vm.StopStage); // ön-koşul
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.Stop), vm.UpdateRestartBlockedReason);
+        int afterStart = reasonChanges;
+
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(StopStage.StopNow, vm.StopStage); // ön-koşul: graceful gitti
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.StopNow), vm.UpdateRestartBlockedReason);
+        Assert.Equal(afterStart + 1, reasonChanges);
+
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(StopStage.Terminating, vm.StopStage); // ön-koşul: hard gitti
+        Assert.Equal(UpdateText.WaitForBuildAt(StopStage.Terminating), vm.UpdateRestartBlockedReason);
+        Assert.Equal(afterStart + 2, reasonChanges);
+        Assert.False(vm.RestartToUpdateCommand.CanExecute(null)); // koşu bitmedi: kilit sürer
+    }
+
+    /// <summary>[F-M1] Aşama metinleri birebir; durduran tuşun adı kataloğun jestiyle yazılır. Terminating'de tuşa HİÇ
+    /// değinilmez: o aşamada Esc hiçbir şey yapmaz.</summary>
+    [Fact]
+    public void The_stop_stage_texts_are_verbatim_and_the_terminating_one_names_no_key()
+    {
+        string esc = ShortcutCatalog.Get(ShortcutId.Escape).Gestures[0];
+
+        Assert.Equal(UpdateText.WaitForBuild, UpdateText.WaitForBuildAt(StopStage.Stop));
+        Assert.Equal("Available once the build stops — Esc stops it now.", UpdateText.WaitForBuildAt(StopStage.StopNow));
+        Assert.Contains(esc + " stops it now.", UpdateText.WaitForBuildStopping, StringComparison.Ordinal);
+        Assert.Equal("Available once the build stops.", UpdateText.WaitForBuildAt(StopStage.Terminating));
+        Assert.DoesNotContain(esc, UpdateText.WaitForBuildTerminating, StringComparison.Ordinal);
     }
 
     /// <summary>İş bitince düğme kendiliğinden açılır: neden düşer ve yalnız DEĞİŞTİĞİNDE duyurulur (koşunun başı ve

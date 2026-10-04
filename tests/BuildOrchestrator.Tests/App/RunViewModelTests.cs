@@ -890,12 +890,16 @@ public class RunViewModelTests
     }
 
     /// <summary>[Stopping] Graceful stop uçuştaki child'ların bitmesini bekler; o pencerede uygulamanın
-    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve
-    /// <c>StopCommand</c> pasifleşir (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ) — ama kilit
-    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration
-    /// açılmamalı ve split-button geri gelmemeli.</summary>
+    /// TIKLAMAYI ALDIĞINI göstermesi gerekir. Faz <see cref="AppPhase.Stopping"/>'e geçer ve kilit
+    /// (<see cref="RunViewModel.IsMidRunLocked"/>) SÜRER: motor hâlâ koşuyor, branch/configuration açılmamalı ve
+    /// split-button geri gelmemeli. <c>StopCommand</c> AÇIK kalır: ikinci basış hard stop'tur ("Stop now").
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — kullanıcı kararı 2026-10-03]</b> ESKİ İDDİA: <c>StopCommand</c> Stopping'de pasifleşir
+    /// (aynı Stop'a ikinci kez basmak yeni bir stopRun ÜRETMEZ). GEREKÇE: drain, uçuştaki en yavaş projenin kalan süresi
+    /// kadar sürebilir; ikinci basış beklemek istemediğini söyler ve hard stop gönderir — kapı hard gidince kapanır
+    /// (<c>StopNowTests</c>).</para></summary>
     [Fact]
-    public async Task Stop_moves_the_phase_to_stopping_and_disables_the_stop_command_while_the_lock_holds()
+    public async Task Stop_moves_the_phase_to_stopping_and_keeps_the_stop_command_open_for_the_hard_stop_while_the_lock_holds()
     {
         using var sandbox = new SupervisorSandbox();
         await using var engine = sandbox.IsolatedEngineHost(WideStartupTimeout);
@@ -908,7 +912,7 @@ public class RunViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.Equal(AppPhase.Stopping, vm.Phase);
-        Assert.False(vm.StopCommand.CanExecute(null));
+        Assert.True(vm.StopCommand.CanExecute(null)); // ikinci basış (hard) için AÇIK
         Assert.True(vm.IsMidRunLocked);
     }
 
@@ -2495,10 +2499,10 @@ public class RunViewModelTests
         Assert.False(vm.IsStarting);
         // [Fix wave 1, C2 review Finding 1] _syncInFlight BİLEREK true kalır (çakışan pencere — yukarıdaki
         // TryConsumeSyncFailure yorumu), yani VM'e göre bir Sync HÂLÂ uçuşta olabilir.
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Rebuild bu yüzden KAPALI kalır (mid-Sync başlayan
-        // bir koşu konsolu temizleyip canlı transkripti bozardı). Artık Sync sürerken basılan koşu bekler ve Sync bitince
-        // başlar — transkript bozulmaz, kapı açıktır (RunRequestWaitsForWorkTests).
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // Rebuild bu yüzden KAPALI kalır: mid-Sync başlayan bir koşu konsolu temizleyip canlı transkripti bozardı.
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02] Bir ara ([kullanıcı bildirimi 2026-09-29]) Sync sürerken basılan
+        // koşu bekliyordu ve kapı açıktı; kuyruk kaldırıldı (RunRequestDuringWorkTests), kapı yine kapalı.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Boot, vm.Phase); // faz yine de bırakılır
     }
 
@@ -2516,10 +2520,10 @@ public class RunViewModelTests
         vm.OnEvent(new ErrorEvent("runFailed", "beklenmeyen hata"));
 
         Assert.False(vm.IsRunning);
-        // [DEĞİŞEN KURAL — kullanıcı bildirimi 2026-09-29] Eski iddia: Sync HÂLÂ uçuşta olduğu için Rebuild BİLEREK
-        // kapalı kalır — canlı Sync transkripti hâlâ büyüyor olabilir. Artık Sync sürerken basılan koşu bekler ve Sync
-        // bitince başlar (transkripte dokunmaz); kapı açıktır (RunRequestWaitsForWorkTests).
-        Assert.True(vm.RebuildCommand.CanExecute(null));
+        // Sync HÂLÂ uçuşta olduğu için Rebuild BİLEREK kapalı kalır — canlı Sync transkripti hâlâ büyüyor olabilir.
+        // [DEĞİŞEN KURAL — kullanıcı kararı 2026-10-02] Bir ara ([kullanıcı bildirimi 2026-09-29]) Sync sürerken basılan
+        // koşu bekliyordu ve kapı açıktı; kuyruk kaldırıldı (RunRequestDuringWorkTests), kapı yine kapalı.
+        Assert.False(vm.RebuildCommand.CanExecute(null));
         Assert.Equal(AppPhase.Syncing, vm.Phase); // Sync HÂLÂ uçuşta — fazı bu hata bırakmaz
     }
 

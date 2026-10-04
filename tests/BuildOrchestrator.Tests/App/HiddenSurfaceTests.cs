@@ -515,7 +515,7 @@ public class HiddenSurfaceTests
         string selected = MainWindowHost.IdOf("P5");
         vm.SelectProject(selected);
 
-        Assert.True(vm.IsRunUnderway);                                // ön-koşul: koşu sürüyor — model Running
+        Assert.True(vm.IsMidRunLocked);                                // ön-koşul: koşu sürüyor — model Running
         Assert.Equal(pushesBefore, graph.UpdateStatusesCallCount);    // KIRMIZI: bugün her olay grafa itilir
         Assert.Equal(GraphRunPhase.Idle, graph.RunPhase);             // faz itilmedi
         Assert.Null(graph.SelectedNode);                              // seçim itilmedi

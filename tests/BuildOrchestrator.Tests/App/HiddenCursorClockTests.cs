@@ -28,11 +28,12 @@ namespace BuildOrchestrator.Tests.App;
 [Collection("Console UI (serial)")] // WPF StaFact çekişme flake'i — bkz. ConsoleUiSerialCollection
 public class HiddenCursorClockTests
 {
-    private static RunViewModel NewVm() =>
+    // [perf B4] internal: CursorClockTests aynı VM'i ve aynı "saat dönüyor mu" ölçüsünü kullanır (kopya fixture YASAK).
+    internal static RunViewModel NewVm() =>
         new(new EngineHost(TestPaths.SupervisorExe), new ConsoleBatcher(_ => Task.Delay(Timeout.Infinite)), () => "r1")
         { RootPath = @"D:\repo" };
 
-    private static bool Ticking(UIElement cursor) =>
+    internal static bool Ticking(UIElement cursor) =>
         cursor.HasAnimatedProperties || CursorHop.IsRunning(cursor as Shape);
 
     private static ConsoleView RealizeConsole(out Window window)
