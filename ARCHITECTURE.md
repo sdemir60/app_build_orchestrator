@@ -1356,6 +1356,13 @@ failed so far in the current run. The persisted last duration (§7.5) plays no p
 estimate, not only the first one: until a project has succeeded or failed there is nothing to average, and the
 ribbon shows progress and elapsed time without one.
 
+The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
+by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. A `Cycles` run
+does not use that line. Its ribbon reads `▸ Resolving cycles · round {r}/{cap} · {n}/{m} · {elapsed}` — `preparing
+dependencies` stands in for the round while the run is still compiling the cycles' stale upstream (§8.1) — and
+carries no estimate suffix. The figure is still computed for such a run, which is what the cycle term below is for,
+and no line on screen prints it.
+
 Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
 whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
 so the flat division the other term encodes would overpromise for them. A group whose output surfaces prove settled can finish in a single round (§8.8);
@@ -4370,8 +4377,10 @@ precisely the retroactive animation the motion contract forbids. A new row compl
 instantly. That rule lives in the panel rather than in the row, since a row does not know its siblings. Without it — one timer per row — a fast
 run had two or three lines opening leftward at once, which is the defect that started this whole detour. Burst
 and failure events skip the typewriter entirely, as does reduced motion, and each row types exactly once, so a
-recycled container does not replay it. A row counts as "typing" for 420 ms after its text completes, matching
-§6, which is also how long it keeps the single-writer slot.
+recycled container does not replay it. A row counts as "typing" while its lock-in runs, from the first frame until the head has crossed the line, and
+that is exactly how long it holds the single-writer slot; nothing is held after the text completes. In the stream
+the caret-hold figure (`CursorHoldMs`) applies only to a row that prints instantly, where it is the window in which
+the caret wears that row's tone (below).
 
 **The prompt line is an indicator, not a surface.** It has two states and its text is amber in both: the
 project being compiled (`X building…`) or nothing at all, a wall-clock stamp and a blinking caret. Its *text*
@@ -6134,7 +6143,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
-| Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
+| Build state store, non-convergence lookup, invalidation without evidence; what a finished project leaves in it — the success record with its measured duration, the failure record (with or without evidence) | `Core/State/BuildStateStore.cs`, `Supervisor/RunCoordinator.cs` (`PersistBuildStateOnSuccess`, `UpsertBuildState`, `InvalidateBuildStateOnFailure`) |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
 | The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text, stream and JSON forms) | `Core/State/AtomicFile.cs` |
 
