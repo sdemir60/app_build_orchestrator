@@ -19,7 +19,8 @@ namespace BuildOrchestrator.Core.Planning;
 /// </summary>
 public static class CycleMemberNeed
 {
-    /// <summary>Kayıt yok, başarısız ya da döngü kanıtı eksik/bozuk (karar 2 iii).</summary>
+    /// <summary>Kayıt yok, başarısız, başarısız bir bağımlılığa link'li (<c>DepIssue</c>) ya da döngü kanıtı
+    /// eksik/bozuk — boş yüzey listesi dahil (karar 2 iii).</summary>
     public const string NoTrustedRecordReason = "no trusted record";
 
     /// <summary>Kayıt başka bir motorla yazılmış (karar 2 vi): toolset ya da build argüman sözleşmesi değişti.</summary>
@@ -87,14 +88,19 @@ public static class CycleMemberNeed
 
             var (record, currentTerm, output) = evidence(member);
 
-            // (iii) Güvenilir kayıt: defterde var, son derleme başarılı ve üç döngü alanı dolu. Biri null/boşsa kanıt
-            // yok (eski defter, döngü dışı kayıt, yakınsamayan koşu): üye gerekli. Boş yüzey LİSTESİ null değildir —
-            // "hiçbir kardeş yüzeyi okumadı" demektir ve güvenilir kanıttır.
+            // (iii) Güvenilir kayıt: defterde var, son derleme başarılı, başarısız bir bağımlılığa link'li DEĞİL ve üç
+            // döngü alanı dolu. Biri null/boşsa kanıt yok (eski defter, döngü dışı kayıt, yakınsamayan koşu): üye
+            // gerekli. DepIssue: kayıt başarısız bir bağımlılığın çıktısına link'liydi ve kaynak değişmese de yeniden
+            // derlemenin tek sinyali odur (ConditionalRebuild); kökler (DepIssueRoots) bilinse de bilinmese de üye
+            // gerekli. Yüzey listesi BOŞ da olamaz: döngüdeki her üye en az bir kardeşin çıktısını okur, meşru kayıt asla
+            // boş liste taşımaz; boş liste ancak bir yazım hatasından doğar ve üyeyi yüzey kontrolü olmadan sonsuza dek
+            // taşırdı.
             if (record is not
                 {
                     LastResult: BuildResult.Succeeded,
+                    DepIssue: false,
                     CycleMemberTerm: { Length: > 0 } recordedTerm,
-                    CycleReadSurfaces: { } recordedSurfaces,
+                    CycleReadSurfaces: { Count: > 0 } recordedSurfaces,
                     CycleEngineFingerprint: { Length: > 0 } recordedEngine,
                 })
             { Need(NoTrustedRecordReason); continue; }

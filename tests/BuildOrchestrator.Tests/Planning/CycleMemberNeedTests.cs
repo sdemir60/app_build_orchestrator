@@ -94,15 +94,6 @@ public class CycleMemberNeedTests
         AssertCarried(decision, "A");
     }
 
-    [Fact] // null ≠ boş: boş liste "hiçbir kardeş yüzeyi okumadı" demektir ve GÜVENİLİR kanıttır.
-    public void an_empty_surface_record_is_trusted_evidence_of_reading_nothing()
-    {
-        var decision = Decide(Disk(), ("A", Member("t1", [], Intact)));
-
-        AssertCarried(decision, "A");
-        Assert.Empty(decision.CarriedReadStates["A"]);
-    }
-
     // ---------------------------------------------------------------- (i) kendi girdisi
 
     [Fact]
@@ -295,6 +286,51 @@ public class CycleMemberNeedTests
         AssertNeeded(decision, "A", "no trusted record");
     }
 
+    // [DEĞİŞEN KURAL] Eski iddia: "boş liste = hiçbir kardeş yüzeyi okumadı = GÜVENİLİR kanıt, üye taşınır" (null ≠ boş).
+    // Değişme gerekçesi: döngüdeki her üye en az bir grup kardeşinin çıktısını okur (SCC tanımı; okuma kaydı her kardeş
+    // bağımlılığı için bir girdi koyar), yani meşru bir kayıt asla boş liste taşımaz. Boş liste ancak bir yazım hatasından
+    // doğar (ör. null okuma durumunun `?? []` ile boşa çevrilmesi) ve üyeyi yüzey kontrolü olmadan sonsuza dek taşırdı.
+    // Yeni kural: null gibi boş liste de "kanıt yok" — üye gerekli.
+    [Fact]
+    public void an_empty_surface_record_makes_the_member_needed()
+    {
+        var decision = Decide(Disk(Reads), ("A", Member("t1", [], Intact)));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    // Son başarı BAŞARISIZ bir bağımlılığın çıktısına link'liydi: kaynak değişmese de yeniden derlemenin tek sinyali bu not
+    // (ConditionalRebuild). Terim, yüzey, çıktı ve motor sağlam olsa da kayıt güvenilmez; kökler kayıtlı olsa da.
+    [Fact]
+    public void a_record_with_a_dependency_issue_and_known_roots_makes_the_member_needed()
+    {
+        var record = Ledger("t1", Reads) with { DepIssue = true, DepIssueRoots = ["U"] };
+
+        var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, Intact) with { Record = record }));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    [Fact] // Kökler bilinmiyorsa (DepIssueRoots null) da aynı: bilinmeyen kök "düzeldi" diye okunamaz — güvenli taraf.
+    public void a_record_with_a_dependency_issue_and_unknown_roots_makes_the_member_needed()
+    {
+        var record = Ledger("t1", Reads) with { DepIssue = true, DepIssueRoots = null };
+
+        var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, Intact) with { Record = record }));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
+    [Fact] // Defter dosyasındaki null eleman (JSON `null`) sözlük anahtarı olamaz: çökmek yerine kayıt güvenilmez sayılır.
+    public void a_null_surface_entry_makes_the_member_needed()
+    {
+        CycleReadSurface[] withNull = [.. Reads, null!];
+
+        var decision = Decide(Disk(Reads), ("A", Member("t1", withNull, Intact)));
+
+        AssertNeeded(decision, "A", "no trusted record");
+    }
+
     // ---------------------------------------------------------------- (iv)/(v) çıktı
 
     [Fact] // (iv) Derleme kanıtı (projenin kendi çıktısı) diskte yok — terim aynı olsa da çıktı ortada değil.
@@ -391,6 +427,69 @@ public class CycleMemberNeedTests
 
         // çıktı sağlam; yalnız yüzey yanlış ⇒ yüzey
         Assert.Equal("read surface moved: " + B1, ReasonOf(Member("t1", Reads, Intact)));
+    }
+
+    [Fact] // Terim özet metnidir: karşılaştırma Ordinal — yalnız harf farkı bile "değişti" sayılır (sıkı yön).
+    public void a_term_that_differs_only_in_case_is_a_changed_term()
+    {
+        var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, Intact) with { CurrentTerm = "T1" }));
+
+        AssertNeeded(decision, "A", "own inputs changed");
+    }
+
+    [Fact] // Parmak izi de özet metnidir: Ordinal — yalnız harf farkı başka bir motor sayılır.
+    public void an_engine_fingerprint_that_differs_only_in_case_is_a_different_engine()
+    {
+        var record = Ledger("t1", Reads) with { CycleEngineFingerprint = Engine.ToUpperInvariant() };
+
+        var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, Intact) with { Record = record }));
+
+        AssertNeeded(decision, "A", "engine changed");
+    }
+
+    [Fact] // Neden satırındaki dosyalar harf-duyarsız SIRALI ve TEKİL (tur satırının moved alanıyla aynı düzen), üreticiler arasında da.
+    public void the_moved_surface_reason_is_sorted_and_distinct_across_producers()
+    {
+        const string a = @"X:\bin\A.dll", b = @"X:\bin\b.dll", c = @"X:\bin\C.dll";
+        // kayıt sırası kasıtlı karışık; b.dll iki üreticide de kayıtlı
+        CycleReadSurface[] reads = [Read("C", c, "h"), Read("C", b, "h"), Read("B", b, "h"), Read("B", a, "h")];
+
+        var decision = Decide(Disk(), ("A", Member("t1", reads, Intact)));
+
+        AssertNeeded(decision, "A", "read surface moved: " + CycleDecisionLines.MovedTerm([a, b, c]));
+    }
+
+    [Fact] // Sıra: motor → bugünkü terim → çıktı. "no member term" ne motor değişikliğinden önce ne çıktı sorunundan sonra gelir.
+    public void a_missing_current_term_sits_between_the_engine_rule_and_the_output_rules()
+    {
+        var withoutTerm = Member("t1", Reads, Intact with { EvidenceMissing = true }) with { CurrentTerm = null };
+        var otherEngine = Ledger("t1", Reads) with { CycleEngineFingerprint = "engine-0" };
+
+        // terim yok + çıktı bozuk ⇒ terim (çıktı kuralından önce)
+        AssertNeeded(Decide(Disk(Reads), ("A", withoutTerm)), "A", "no member term");
+        // motor farklı + terim yok ⇒ motor (terim kuralından önce)
+        AssertNeeded(Decide(Disk(Reads), ("A", withoutTerm with { Record = otherEngine })), "A", "engine changed");
+    }
+
+    [Fact] // Sıra: çıktı kuralları yüzey kuralından ÖNCE: kopyaları bozuk ve yüzeyi oynamış üye çıktı nedenini söyler.
+    public void broken_fed_copies_are_named_before_a_moved_surface()
+    {
+        var moved = Disk(Read("B", B1, "h1-moved"), Read("B", B2, "h2"));
+
+        var decision = Decide(moved, ("A", Member("t1", Reads, Intact with { FedIntact = false })));
+
+        AssertNeeded(decision, "A", "output evidence missing");
+    }
+
+    [Fact] // Sonuç sözlükleri üye kimliğinde (Windows yolu) ve üretici adında harf-duyarsızdır: çağıran kimliği başka harfle sorabilir.
+    public void the_decision_dictionaries_ignore_the_case_of_ids()
+    {
+        var needed = Member("t1", Reads, Intact) with { CurrentTerm = "t2" };
+
+        var decision = Decide(Disk(Reads), (@"C:\r\A.csproj", needed), (@"C:\r\B.csproj", Member("t1", Reads, Intact)));
+
+        Assert.Equal("own inputs changed", decision.Reasons[@"c:\R\a.CSPROJ"]);
+        Assert.True(decision.CarriedReadStates[@"c:\R\b.CSPROJ"].ContainsKey("b"));
     }
 
     [Fact] // Üyeler birbirinden bağımsız karara girer; ToBuild build order'ı (verilen sırayı) korur.
