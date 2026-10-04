@@ -204,7 +204,8 @@ version's notes as its text. Installed copies pick it up on their next check.
    picker, centred over the window.
 
    **General** holds switches in four groups — Startup, Build, Branches and Notifications. *Pull before build*
-   (see step 4), *Stash and switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
+   (see step 4), *Resolve cycles at full priority* (see [Performance modes](#performance-modes)), *Stash and
+   switch branches* (see step 3), *Start with Windows*, *Start minimized to tray*, *Close
    to tray* and *Show notifications* all work, and *Save* keeps them. *Close to tray* and *Show notifications* are
    on by default; what they change is described with the tray, further down.
 
@@ -692,6 +693,13 @@ Switching **while a run is in flight** writes a console note and sends the new p
 while idle changes only the chip, because the profile travels with the next run anyway. The note is a timestamped
 narrative line — `14:02:31 parallelism: 4 · cpu cap 70%` — whose body is exactly `parallelism: <n> · cpu cap <p>%`
 (`cpu cap off` for Full).
+
+**Resolve cycles runs at full priority.** Whatever the profile, a *Resolve cycles* run keeps the profile's worker
+count but drops its CPU cap and runs at normal priority, so it finishes sooner on a busy machine — at the price that
+other applications may slow down while it runs. The console says so when the run starts, and a switch during the run
+writes the same kind of note: `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`. *Settings → General
+→ Resolve cycles at full priority* (on by default) turns this off, and Resolve then follows the profile. Build, Rebuild
+and Clean always follow the profile.
 
 The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
 machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical

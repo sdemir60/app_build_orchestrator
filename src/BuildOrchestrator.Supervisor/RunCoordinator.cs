@@ -193,6 +193,12 @@ public sealed class RunCoordinator(
     // [T20-b/P3] Bu run'da YÜRÜRLÜKTEKİ profil — copy-contention penceresi kapanınca cap buraya döner.
     // (_perfApplied false iken anlamsızdır; ikisi de run sınırında birlikte sıfırlanır.)
     private PerfProfile? _activePerf;
+    // [RESOLVE Faz 4 / karar 11] Bu run'ın perf DÖNÜŞÜMÜNÜN girdileri: koşu modu + Ayarlar'ın "Resolve cycles at full
+    // priority" anahtarı. Run başında, ilk ApplyPerfLocked'tan ÖNCE aynı kilit altında komuttan yazılır; canlı
+    // setPerfMode da onları okur (bkz. ApplyPerfLocked). _perfApplied false iken hiçbir yol okumaz, bu yüzden run
+    // sonunda ayrıca sıfırlanmaz — her run başı onları yeniden yazar.
+    private RunMode _perfRunMode;
+    private bool _perfResolveAtFullPriority;
     // [T20-b/P3] Şu an KAÇ worker copy-contention penceresinde. Ref-count zorunludur: paralel build'de birden
     // çok worker aynı anda MSB302x görebilir ve erken çıkan biri, diğeri hâlâ kopyalarken cap'i geri kısardı.
     private int _copyFloorDepth;
@@ -404,8 +410,13 @@ public sealed class RunCoordinator(
     /// </summary>
     private int? ApplyPerfLocked(PerfProfile profile, List<string> warnings)
     {
-        _activePerf = profile; // [P3] copy penceresi kapanınca buraya dönülür
-        return WritePerfLocked(profile, warnings);
+        // [RESOLVE Faz 4 / karar 11] Run başı da canlı setPerfMode da profili AYNI Core dönüşümünden geçirir: Resolve
+        // cycles koşusunda (anahtar açıkken) yürürlükteki profil cap'siz + Normal'dir; işçi sayısı zaten run başında
+        // sabitlenmiştir. Copy penceresi ve drain kuralları dönüşmüş profile uygulanır — cap'siz profilde pencere hiç
+        // açılmaz (EnterCopyFloor), priority tabanı Normal'i aşağı çekmez (EffectivePriorityLocked yalnız yükseltir).
+        var active = PerfProfile.ForRun(_perfRunMode, profile, _perfResolveAtFullPriority);
+        _activePerf = active; // [P3] copy penceresi kapanınca buraya dönülür
+        return WritePerfLocked(active, warnings);
     }
 
     /// <summary>
@@ -915,6 +926,8 @@ public sealed class RunCoordinator(
             // kullanıcının DAHA SONRAKİ sözüdür. Niyet burada TÜKETİLİR (bir sonraki run'a taşınmaz).
             perf = _pendingPerf ?? perf;
             _pendingPerf = null;
+            _perfRunMode = cmd.Mode;
+            _perfResolveAtFullPriority = cmd.ResolveAtFullPriority;
             if (perf is { } profile) { _perfApplied = true; appliedCap = ApplyPerfLocked(profile, perfWarnings); }
             if (_stopKind is not null) scheduler.RequestStop(); // plan kurulurken gelmiş Stop
         }
@@ -998,6 +1011,16 @@ public sealed class RunCoordinator(
             "run {0} started: mode={1} projects={2} parallelism={3} configuration={4} cpuCap={5}",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapValueUnset : PerfNoteText.CapValue(appliedCap)));
+        // [RESOLVE Faz 4 / karar 11] Resolve cycles profilin önceliği/tavanı yerine tam öncelikte koşuyorsa bunu run
+        // başında söyleyen TEK satır (metin PerfNoteText'te, chip notunun ailesinde; işçi sayısı yukarıdaki bütçeden) —
+        // konsola ve decision.log'a AYNI metin. Dönüşüm profili değiştirmediyse satır yoktur.
+        if (perf is { } chosenPerf
+            && PerfNoteText.ResolveNote(cmd.Mode, chosenPerf with { Parallelism = parallelism }, cmd.ResolveAtFullPriority)
+                is { } resolveNote)
+        {
+            console(resolveNote);
+            Decide(logs, resolveNote);
+        }
 
         // runStarted yazıldı: buradan SONRA hangi yoldan çıkılırsa çıkılsın (beklenmeyen exception dahil)
         // kapanış olayları TAM OLARAK BİR KEZ yazılır — aksi halde App'in run'ı sonsuza dek "koşuyor" kalırdı.

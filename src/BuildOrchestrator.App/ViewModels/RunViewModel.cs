@@ -862,6 +862,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty] private bool _stashOnBranchSwitch;
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority": Resolve cycles koşusu
+    /// profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun. <b>Varsayılan: evet</b> (kullanıcı onayı) —
+    /// kapalıyken Resolve da profili izler. Değer her <see cref="StartRunCommand"/> ile motora gider; Build/Rebuild/Clean'i
+    /// etkilemez (dönüşüm Core'da: <see cref="PerfProfile.ForRun"/>).
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _resolveAtFullPriority = true;
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -987,7 +994,8 @@ public sealed partial class RunViewModel : ObservableObject
         // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjectsForWire, UpdateExternals, scopeProjectId);
+            ExternalProjectsForWire, UpdateExternals, scopeProjectId, ResolveAtFullPriority);
+        _sentRun = cmd; // [RESOLVE Faz 4] koşu içi chip notu bu komutun modu + anahtarıyla konuşur
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -1772,6 +1780,11 @@ public sealed partial class RunViewModel : ObservableObject
     internal static PerfProfile ProfileFor(string perfMode) =>
         PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Son gönderilen koşu komutu: koşu içi chip notu motorla AYNI dönüşümü
+    /// (<see cref="PerfProfile.ForRun"/>) aynı girdilerle — koşunun modu ve koşu başındaki Resolve anahtarı — anlatsın
+    /// diye tutulur. Yalnız koşu uçuştayken okunur (<see cref="CyclePerfAsync"/>'in <see cref="IsMidRunLocked"/> kapısı).</summary>
+    private StartRunCommand? _sentRun;
+
     /// <summary>
     /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
     /// CANLI (kilitlenmez) — ve artık koşan run'a GERÇEKTEN etki eder: <see cref="SetPerfModeCommand"/> gönderilir.
@@ -1797,7 +1810,11 @@ public sealed partial class RunViewModel : ObservableObject
         var profile = ProfileFor(PerfMode);
         Parallelism = profile.Parallelism;
         if (!IsMidRunLocked) return;
-        AppendRunLine(PerfNoteText.Note(profile)); // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da)
+        // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da). [RESOLVE Faz 4] Resolve cycles koşusunda not,
+        // motorun uyguladığını (cap'siz + Normal) söyler.
+        AppendRunLine(_sentRun is { } sentRun
+            ? PerfNoteText.Note(sentRun.Mode, profile, sentRun.ResolveAtFullPriority)
+            : PerfNoteText.Note(profile));
         await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
 

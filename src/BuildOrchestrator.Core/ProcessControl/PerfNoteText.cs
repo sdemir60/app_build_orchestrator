@@ -1,4 +1,5 @@
 using System.Globalization;
+using BuildOrchestrator.Contracts.Ipc;
 
 namespace BuildOrchestrator.Core.ProcessControl;
 
@@ -34,6 +35,34 @@ public static class PerfNoteText
     /// </summary>
     public static string Note(PerfProfile profile) => string.Format(CultureInfo.InvariantCulture,
         "parallelism: {0} · {1}", profile.Parallelism, CapText(profile.CpuCapPercent));
+
+    /// <summary>
+    /// [RESOLVE Faz 4 / karar 11] Resolve cycles'ın tam öncelik notu — chip notunun ailesinde, priority ve koşu adı
+    /// eklenmiş TEK satır: <c>parallelism: 4 · cpu cap off · priority normal (Resolve cycles)</c>. Dönüşüm
+    /// (<see cref="PerfProfile.ForRun"/>) profili DEĞİŞTİRMEDİYSE <c>null</c>: Build/Rebuild/Clean, kapalı anahtar ve
+    /// zaten tam öncelikli Full için söylenecek ek bir şey yoktur. Supervisor run-başı satırını (konsol +
+    /// decision.log) yalnız bu dolu iken yazar.
+    /// </summary>
+    public static string? ResolveNote(RunMode mode, PerfProfile profile, bool resolveAtFullPriority)
+    {
+        var run = PerfProfile.ForRun(mode, profile, resolveAtFullPriority);
+        return run == profile ? null : string.Format(CultureInfo.InvariantCulture,
+            "{0} · priority {1} (Resolve cycles)", Note(run), PriorityValue(run.Priority));
+    }
+
+    /// <summary>Priority'nin değer terimi (<c>"normal"</c>) — perf konsol metninin sözlüğü bu sınıftadır.</summary>
+    private static string PriorityValue(ProcessPriorityClassKind kind) => kind switch
+    {
+        ProcessPriorityClassKind.Normal => "normal",
+        ProcessPriorityClassKind.BelowNormal => "below normal",
+        _ => "idle",
+    };
+
+    /// <summary>[RESOLVE Faz 4 / karar 11] Koşu içindeki chip notu: Resolve tam öncelikteyse <see cref="ResolveNote"/>,
+    /// değilse profilin kendi notu (<see cref="Note(PerfProfile)"/>). App koşu komutunun modu + anahtarıyla çağırır —
+    /// not, motorun o profile uyguladığını söyler.</summary>
+    public static string Note(RunMode mode, PerfProfile profile, bool resolveAtFullPriority) =>
+        ResolveNote(mode, profile, resolveAtFullPriority) ?? Note(profile);
 
     /// <summary>
     /// [PERF Faz D / karar 10] Motorun, profilin istediği işçi sayısını makineye göre KIRPTIĞINI söyleyen satır:

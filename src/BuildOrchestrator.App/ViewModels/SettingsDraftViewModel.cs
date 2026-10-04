@@ -132,6 +132,14 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         set => GeneralRow(GeneralSetting.StashOnBranchSwitch).IsOn = value;
     }
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] General sayfasının BUILD grubundaki <c>Resolve cycles at full priority</c>
+    /// satırının KENDİSİ (<see cref="StashOnBranchSwitch"/> deseni). Varsayılan AÇIK; Save'e kadar yalnız taslaktır.</summary>
+    public bool ResolveAtFullPriority
+    {
+        get => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn;
+        set => GeneralRow(GeneralSetting.ResolveAtFullPriority).IsOn = value;
+    }
+
     /// <summary>Seçilmiş ama HENÜZ UYGULANMAMIŞ repo kökü. "Change…" yalnız burayı yazar; kök değişimi,
     /// satır reset'i ve Sync Save'e ertelenir — Cancel/Esc taslağı atar ve hiçbir iz kalmaz. Diyalog
     /// açılırken canlı <see cref="RunViewModel.RootPath"/> ile başlar.</summary>
@@ -145,6 +153,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// taslak da boş kalır.</summary>
     /// <param name="pullExternalsBeforeBuild">Canlı bayrağın taslak kopyası (varsayılan açık).</param>
     /// <param name="stashOnBranchSwitch">Canlı stash ayarının taslak kopyası (varsayılan kapalı).</param>
+    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4] Canlı Resolve tam öncelik ayarının taslak kopyası (varsayılan açık).</param>
     /// <param name="saved">[P3 · P4] Kalıcı kabuk anahtarlarının (<see cref="ShellSwitches"/>) kayıtlı durumu — verildiyse
     /// <see cref="ShellSwitches.All"/>'daki HER satır <see cref="ShellSwitches.IsOn"/> ile tohumlanır; <c>null</c> ⇒
     /// satırlar zaten kendi katalog varsayılanındadır (<see cref="GeneralSettingRowViewModel"/> ctor'u).</param>
@@ -153,13 +162,15 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// anında yazar.</param>
     public SettingsDraftViewModel(IReadOnlyList<LayerPattern>? initial, string? repositoryRoot,
         IReadOnlyList<ExternalProject>? initialExternals = null, bool pullExternalsBeforeBuild = true,
-        bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null)
+        bool stashOnBranchSwitch = false, UiState? saved = null, AutostartService? autostart = null,
+        bool resolveAtFullPriority = true)
     {
         _repositoryRoot = repositoryRoot;
         _openedWithoutWorkspace = string.IsNullOrWhiteSpace(repositoryRoot);
         GeneralGroups = BuildGeneralGroups();
         PullExternalsBeforeBuild = pullExternalsBeforeBuild;
         StashOnBranchSwitch = stashOnBranchSwitch;
+        ResolveAtFullPriority = resolveAtFullPriority;
         if (saved is not null)
             foreach (var s in ShellSwitches.All) GeneralRow(s.Setting).IsOn = ShellSwitches.IsOn(saved, s.Setting);
         _autostart = autostart;
@@ -240,7 +251,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
     /// imzasını büyütmez).</summary>
     public SettingsFile ToFile()
     {
-        var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch);
+        var file = SettingsFile.From(RepositoryRoot, BuildPatterns(), BuildExternals(), PullExternalsBeforeBuild, StashOnBranchSwitch,
+            ResolveAtFullPriority);
         foreach (var s in ShellSwitches.All) s.WriteFile(file, GeneralRow(s.Setting).IsOn);
         return file;
     }
@@ -271,6 +283,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         if (file.PullExternalBeforeBuild is { } pull) PullExternalsBeforeBuild = pull;
         // [spec 2026-09-18 §6.3] Stash ayarı AYNI kural: anahtar yoksa taslaktaki değer korunur.
         if (file.StashOnBranchSwitch is { } stash) StashOnBranchSwitch = stash;
+        // [RESOLVE Faz 4] Resolve tam öncelik AYNI kural: anahtar yoksa taslaktaki değer korunur.
+        if (file.ResolveAtFullPriority is { } resolve) ResolveAtFullPriority = resolve;
         // [P3 · P4] Kabuk anahtarları (ShellSwitches) AYNI kural: anahtar dosyada yoksa (ReadFile null) o satır
         // dokunulmaz kalır — pull/stash'in deseninin tablo üzerinden tekrarı.
         foreach (var s in ShellSwitches.All)
@@ -331,6 +345,7 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         state.ExternalProjects = externals.ToList();
         state.UpdateExternals = PullExternalsBeforeBuild;
         state.StashOnBranchSwitch = StashOnBranchSwitch;
+        state.ResolveAtFullPriority = ResolveAtFullPriority;
         // [P4] Start with Windows YALNIZ diyaloğun açıldığı değerden farklıysa uygulanır: Windows kaydı anında yazılır
         // ve tercih değişir. Dokunulmadıysa ikisi de olduğu gibi kalır (Save'in gösterilen "kapalı"yı sessizce tercihe
         // yazması kullanıcının vermediği bir karar olurdu); kayıt yazılamadıysa tercih de değişmez.
@@ -347,7 +362,8 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         settingNotes.AddRange(ShellSwitches.Commit(state, s => s == GeneralSetting.StartWithWindows && !turned
             ? ShellSwitches.StartWithWindows(state) : GeneralRow(s).IsOn));
         store.Save(state);
-        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes);
+        await run.ApplySettingsAsync(patterns, RepositoryRoot, externals, PullExternalsBeforeBuild, StashOnBranchSwitch, settingNotes,
+            ResolveAtFullPriority);
     }
 
     /// <summary>Katalogdan satırları kurar; bağımlı satırın etkinliğini üst anahtara, pull satırını
@@ -376,6 +392,10 @@ public sealed partial class SettingsDraftViewModel : ObservableObject
         _generalRows[GeneralSetting.StashOnBranchSwitch].PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(StashOnBranchSwitch));
+        };
+        _generalRows[GeneralSetting.ResolveAtFullPriority].PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(GeneralSettingRowViewModel.IsOn)) OnPropertyChanged(nameof(ResolveAtFullPriority));
         };
         return groups;
     }

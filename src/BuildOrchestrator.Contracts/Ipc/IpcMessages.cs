@@ -134,13 +134,17 @@ public enum DependentMode { Safe, Fast }
 /// olarak hedefe yapışır: bir sonraki Build hedefi yeniden derler, aksi halde taze imzası onu bayat bir
 /// DLL'e kalıcı olarak link'li bırakırdı. Döngü üyesi bir hedef tek başına, döngü dışıymış gibi derlenir;
 /// döngüdeki bağımlılıkları her koşulda bayat sayılır.</para></param>
+/// <param name="ResolveAtFullPriority">[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority".
+/// Yalnız <see cref="RunMode.Cycles"/> koşusunu etkiler: açıkken motor profilin işçi sayısını korur ama cap'siz ve
+/// Normal öncelikte koşar (dönüşüm Core'da: <c>PerfProfile.ForRun</c>). Varsayılan <c>true</c> (onaylanmış
+/// varsayılan): alanı taşımayan eski NDJSON satırları da tam öncelikle çözülür.</param>
 /// <remarks>[spec 2026-09-18 §1-1] Koşu daima <see cref="RootPath"/>'teki çalışma ağacında derlenir: branch ve
 /// worktree alanları kalktı. Onları taşıyan eski NDJSON satırları fazla alanlar yok sayılarak çözülür.</remarks>
 public sealed record StartRunCommand(string RunId, RunMode Mode, string RootPath, string Configuration, int Parallelism,
     DependentMode DependentMode = DependentMode.Safe,
     IReadOnlyList<LayerPattern>? LayerPatterns = null, string? PerfMode = null,
     IReadOnlyList<ExternalProject>? ExternalProjects = null, bool UpdateExternals = true,
-    string? ScopeProjectId = null) : IpcCommand;
+    string? ScopeProjectId = null, bool ResolveAtFullPriority = true) : IpcCommand;
 
 /// <summary>
 /// [T20-b/K11] KOŞARKEN perf profilini değiştir. <b>Canlı değişen YALNIZ CPU cap + priority'dir</b>: worker'lar

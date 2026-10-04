@@ -1,3 +1,5 @@
+using BuildOrchestrator.Contracts.Ipc;
+
 namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>[T20-a/K11] Kullanıcının perf chip'iyle seçtiği üç profil.</summary>
@@ -60,4 +62,22 @@ public readonly record struct PerfProfile(int Parallelism, int? CpuCapPercent, P
         "Light" => For(PerfMode.Light),
         _ => null,
     };
+
+    /// <summary>
+    /// [RESOLVE Faz 4 / karar 11 — kullanıcı onayı] Bir koşuda GERÇEKTEN uygulanacak profil. Resolve cycles
+    /// (<see cref="RunMode.Cycles"/>), Ayarlar'ın "Resolve cycles at full priority" anahtarı açıkken, profilin işçi
+    /// sayısını KORUR ama cap'ini ve priority'sini Full'ün satırından alır (cap yok + Normal). Gerekçe ölçümdür: başka
+    /// yük altındaki bir makinede Balanced'ın tavanı ve düşük önceliği Resolve'u belirgin uzattı, sakin makinede fark
+    /// küçük kaldı — ve Resolve, kullanıcının başında beklediği kısa bir koşudur. Değerler ayrı sabit olarak YAZILMAZ
+    /// (<see cref="CopyPhaseFloorPercent"/> ile aynı gerekçe: tablo değiştiği gün sessizce ayrışırdı).
+    /// <para>Anahtar kapalıyken ya da Build/Rebuild/Clean'de profil AYNEN döner; Full zaten cap'siz + Normal
+    /// olduğundan dönüşüm onu değiştirmez. Saf ve TEK yerdir: Supervisor run başında da canlı <c>setPerfMode</c>'da
+    /// da bunu uygular, konsol notu da bunu anlatır (<see cref="PerfNoteText.ResolveNote"/>).</para>
+    /// </summary>
+    public static PerfProfile ForRun(RunMode mode, PerfProfile profile, bool resolveAtFullPriority)
+    {
+        if (mode != RunMode.Cycles || !resolveAtFullPriority) return profile;
+        var full = For(PerfMode.Full);
+        return profile with { CpuCapPercent = full.CpuCapPercent, Priority = full.Priority };
+    }
 }

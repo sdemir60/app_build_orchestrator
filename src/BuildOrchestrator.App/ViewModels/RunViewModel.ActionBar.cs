@@ -192,6 +192,20 @@ public sealed partial class RunViewModel
             : "Stash and switch branches off — a branch switch stops while there are uncommitted changes");
     }
 
+    /// <summary>
+    /// [RESOLVE Faz 4 / karar 11] Settings Save: "Resolve cycles at full priority" switch'ini uygular. Değer bir sonraki
+    /// <see cref="StartRunCommand"/> ile motora gider. Not yalnız değer GERÇEKTEN değiştiyse yazılır
+    /// (<see cref="ApplyStashOnBranchSwitch"/> deseni).
+    /// </summary>
+    private void ApplyResolveAtFullPriority(bool fullPriority)
+    {
+        if (fullPriority == ResolveAtFullPriority) return;
+        ResolveAtFullPriority = fullPriority;
+        AppendRunLine(fullPriority
+            ? "Resolve cycles at full priority on — Resolve cycles runs at normal priority with no CPU cap"
+            : "Resolve cycles at full priority off — Resolve cycles follows the performance mode");
+    }
+
     /// <summary>[Settings] Save'in TEK giriş noktası: katman pattern'lerini uygular, gerekirse repo kökünü
     /// değiştirir ve TEK bir Sync gönderir.
     ///
@@ -241,9 +255,11 @@ public sealed partial class RunViewModel
     /// <see cref="ApplyStashOnBranchSwitch"/>'ten HEMEN SONRA, idle kapısından ÖNCE <see cref="AppendRunLine"/> ile
     /// sırayla yazılır (bu yüzden motor/workspace durumundan ETKİLENMEZ — <see cref="ApplyPullExternals"/>/
     /// <see cref="ApplyStashOnBranchSwitch"/>'in kendi notlarıyla AYNI konum).</param>
+    /// <param name="resolveAtFullPriority">[RESOLVE Faz 4 / karar 11] General'ın "Resolve cycles at full priority"
+    /// switch'i.</param>
     public async Task ApplySettingsAsync(IReadOnlyList<LayerPattern> patterns, string? repositoryRoot,
         IReadOnlyList<ExternalProject> externals, bool pullExternalsBeforeBuild = true, bool stashOnBranchSwitch = false,
-        IReadOnlyList<string>? settingNotes = null)
+        IReadOnlyList<string>? settingNotes = null, bool resolveAtFullPriority = true)
     {
         string root = RootOf(repositoryRoot);
         if (WorkspaceIdle && root.Length == 0 && HasWorkspace) CloseWorkspace();
@@ -252,6 +268,7 @@ public sealed partial class RunViewModel
         ApplyExternalProjects(externals);
         ApplyPullExternals(pullExternalsBeforeBuild);
         ApplyStashOnBranchSwitch(stashOnBranchSwitch);
+        ApplyResolveAtFullPriority(resolveAtFullPriority);
         if (settingNotes is not null)
             foreach (var note in settingNotes) AppendRunLine(note);
         if (!WorkspaceIdle)

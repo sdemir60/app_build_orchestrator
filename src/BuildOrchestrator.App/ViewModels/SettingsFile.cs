@@ -58,6 +58,10 @@ public sealed class SettingsFile
     /// taslaktaki değeri sıfırlamaz (<see cref="SettingsDraftViewModel.LoadFrom"/>).</summary>
     [JsonPropertyName("stashOnBranchSwitch")] public bool? StashOnBranchSwitch { get; set; }
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Resolve cycles tam öncelikte mi koşsun. <see cref="StashOnBranchSwitch"/> gibi
+    /// KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz.</summary>
+    [JsonPropertyName("resolveAtFullPriority")] public bool? ResolveAtFullPriority { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP: <c>Start with Windows</c>. <see cref="StashOnBranchSwitch"/> gibi
     /// KASITLI OLARAK nullable: anahtarı taşımayan (eski) bir dosya taslaktaki değeri sıfırlamaz
     /// (<see cref="SettingsDraftViewModel.LoadFrom"/>). Okuma/yazma <see cref="BuildOrchestrator.App.Shell.ShellSwitches"/>
@@ -94,7 +98,7 @@ public sealed class SettingsFile
     /// hiç eksik BIRAKMAZ (§9: "yalnız boş olmayan path'ler").</summary>
     public static SettingsFile From(string? repositoryRoot, IReadOnlyList<LayerPattern> layers,
         IReadOnlyList<ExternalProject>? externals = null, bool? pullExternalBeforeBuild = null,
-        bool? stashOnBranchSwitch = null)
+        bool? stashOnBranchSwitch = null, bool? resolveAtFullPriority = null)
     {
         ArgumentNullException.ThrowIfNull(layers);
         return new SettingsFile
@@ -102,6 +106,7 @@ public sealed class SettingsFile
             RepositoryRoot = repositoryRoot,
             PullExternalBeforeBuild = pullExternalBeforeBuild,
             StashOnBranchSwitch = stashOnBranchSwitch,
+            ResolveAtFullPriority = resolveAtFullPriority,
             // Sıra BİLEREK budur (RepositoryRoot → ExternalProjects → Layers): nesne başlatıcısının kendi
             // sırası JSON çıktısını ETKİLEMEZ (System.Text.Json BİLDİRİM sırasını yazar), ama okunurluk için
             // sınıftaki alan sırasıyla AYNI tutulur — iki sıra sessizce ayrışmasın.
