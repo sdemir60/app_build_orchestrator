@@ -15,7 +15,8 @@ namespace BuildOrchestrator.Core.Planning;
 /// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) —
 /// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş, üyenin grup içi bağımlılık kümesi
 /// boş ya da bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok
-/// ya da değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → kayıtlı
+/// ya da değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → okuma
+/// kaydının bütünlüğü (aynı (Producer, File) iki kez ya da eksik parçalı girdi: yine "güvenilir kayıt yok", iii) → kayıtlı
 /// okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
 /// </summary>
 public static class CycleMemberNeed
