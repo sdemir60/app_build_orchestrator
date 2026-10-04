@@ -409,7 +409,8 @@ external cards. No configuration rides with it, because not one of its steps loo
 `cleanWorkspace` removes build output, this one puts back what is missing and removes only what breaks a
 build: it restores the projects whose NuGet packages are missing from disk and every SDK-style project (§9.3),
 names the references a restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
-the three ledgers of entries whose file is gone and the evaluation cache of entries from an older schema, sweeping the temp files their atomic writes left behind
+the three ledgers of entries whose file is gone and the evaluation cache of entries from a schema other than the
+current one, sweeping the temp files their atomic writes left behind
 (§16). Everything else is left alone — the global NuGet caches, `NuGet.config`, `bin` and the shared `OutDir`,
 the run logs, the UI state, and git, since Optimize runs no version-control command at all.
 Its permission to write in the workspace is bounded by the resolved project set: a folder no card resolves to
@@ -470,7 +471,8 @@ back (§13.2). `optimizeCompleted` closes the window with one counter per
 step: projects scanned, projects restored, restores that failed, references restore could not resolve, projects
 whose `obj` was cleaned, the three ledger prunes kept apart, temp files swept, files that were in use and bytes
 reclaimed. Nothing the App can derive is put on the wire, and the three prune counts stay apart because the
-source-hash ledger is keyed by source file rather than by project and fills up far faster; entries from an older schema are counted with the evaluation cache's. The console's closing
+source-hash ledger is keyed by source file rather than by project and fills up far faster; entries from a schema
+other than the current one are counted with the evaluation cache's. The console's closing
 line and the App's one-line stream summary are worded from **one list of terms** that names only what happened —
 restores that succeeded and that failed, unresolved references, cleaned `obj` folders, pruned entries, swept
 temp files, bytes reclaimed — so a count is never worded two ways and a zero is never spelled out; with nothing
@@ -640,7 +642,7 @@ the cache would serve a stale evaluation. Each entry also carries the cache **sc
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
 from a record that predates it — the project is simply evaluated again the first time it is met. The cache is
 written back only when an entry changed — a project evaluated, or a fingerprint refreshed after a touch — so a run
-made of hits writes nothing (§16). Optimize removes the entries of an older schema outright, whatever root they
+made of hits writes nothing (§16). Optimize removes the entries of any other schema outright, whatever root they
 belong to (§16).
 
 `file → project` mapping comes from the evaluated `Compile` items, never from a path prefix. A file that sits
@@ -1345,12 +1347,14 @@ can always be read. The engine prunes them once, in the background, as soon as i
 neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
 folder carries the newest stamp there is, far inside the window. A folder is removed only when its name is
 exactly a run-folder name, its stamp (the local wall-clock time the run started) is older than the window and it
-is not the newest run folder. Nothing else is ever touched: only folders directly under the logs root, never
-another folder, a file that happens to carry a run-folder name, or a link, and never anything outside the logs
-root. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off over several
-starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that folder for the
-next start. A sweep that removed, or failed to remove, something writes one summary line to stderr — stdout
-stays NDJSON only.
+is not the newest run folder — the newest of the runs that have started, so a folder stamped in the future (a
+clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
+folders directly under the logs root, never another folder, a file that happens to carry a run-folder name, or a
+link, and never anything outside the logs root; a link found inside a folder that goes is removed as the link it
+is, never followed. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
+over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
+folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
+stderr — stdout stays NDJSON only.
 
 ### 8.6 Planning pipeline
 
@@ -2059,8 +2063,8 @@ the event stream and a silent Sync runs. A run the user already stopped — the 
 only the run's end is still to come — is not interrupted: no interrupt is sent, no stream line or summary is
 written, and the trigger waits for the run's end like any other. As a safety net the end of every run is itself
 a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. Clearing is for the
-screen only: it never touches the run logs on disk, which leave on their own three days after their run, the
-newest run's folder excepted (§8.5).
+screen only: it never touches the run logs on disk, which leave on their own — the engine removes them at its
+first start more than three days after their run, the newest run's folder excepted (§8.5).
 
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
@@ -4009,8 +4013,7 @@ lines.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  The disk logs are never
-  touched — clearing is for the screen. The view-model clears its buffer and says so
+  Clearing never touches the disk logs — it is for the screen. The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
@@ -5212,9 +5215,9 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 | Path | Content | Corruption behaviour |
 |---|---|---|
-| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed three days after the run, except the newest run's, which always stays (§8.5) | — |
+| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
 | `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written, builds run without the argument |
@@ -5246,7 +5249,7 @@ normaliser: a root is resolved and compared with a trailing separator, so `C:\re
 `C:\repo2\...`, and each root gets its own pass, because an external root is not under the main root's prefix.
 
 The evaluation cache has a second kind of dead entry, and it is the one no root can see: an entry written under
-an older schema is never a hit (§6.2), so it decides nothing and only takes room in the file — and what a retired
+a schema other than the current one is never a hit (§6.2), so it only takes room in the file — and what a retired
 worktree or another workspace left behind would stay for good, because a pass scoped to a root reaches only the
 paths under its roots. Optimize therefore removes every entry whose schema is not the current one, wherever its
 path points, and counts those with the evaluation-cache prunes. Nothing is lost: a project met again is evaluated

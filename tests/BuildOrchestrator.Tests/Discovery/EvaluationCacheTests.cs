@@ -597,8 +597,6 @@ public class EvaluationCacheTests
         });
     }
 
-    // [Faz 3/Task 1] Eski (semasiz) bir kayit, mtime+length AYNI kalsa bile isabet SAYILMAMALI: Faz 3'te
-    // EvaluatedProject'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayitta hep bos kalirdi.
     [Fact]
     public void PruneStaleSchema_removes_every_entry_outside_the_current_schema_whatever_its_root_and_writes_the_ledger()
     {
@@ -637,6 +635,8 @@ public class EvaluationCacheTests
         });
     }
 
+    // [Faz 3/Task 1] Eski (semasiz) bir kayit, mtime+length AYNI kalsa bile isabet SAYILMAMALI: Faz 3'te
+    // EvaluatedProject'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayitta hep bos kalirdi.
     [Fact]
     public void An_entry_from_an_older_schema_is_evaluated_again()
     {
@@ -659,26 +659,9 @@ public class EvaluationCacheTests
             var info = new FileInfo(proj);
             string cachePath = Path.Combine(root, "cache.json");
 
-            // Eski format (Schema alani hic yok) elle yazilir; mtime/length GERCEK dosyayla eslesiyor.
-            string escapedPath = proj.Replace(@"\", @"\\");
-            string oldJson = $$"""
-                {
-                  "{{escapedPath}}": {
-                    "MtimeTicks": {{info.LastWriteTimeUtc.Ticks}},
-                    "Length": {{info.Length}},
-                    "Hash": "deadbeef",
-                    "Project": {
-                      "Path": "{{escapedPath}}",
-                      "AssemblyName": "Stale",
-                      "CompileFiles": [],
-                      "HintPaths": [],
-                      "ProjectReferences": [],
-                      "IsSdkStyle": false
-                    }
-                  }
-                }
-                """;
-            File.WriteAllText(cachePath, oldJson);
+            // Eski format (Schema alani hic yok): ortak yardimci yazar; mtime/length GERCEK dosyayla eslesiyor.
+            EvaluationCacheFile.WriteEntries(cachePath,
+                new EvaluationCacheFile.Entry(proj, Schema: null, MtimeTicks: info.LastWriteTimeUtc.Ticks, Length: info.Length));
 
             var cache = new EvaluationCache(cachePath);
             int calls = 0;
@@ -689,7 +672,7 @@ public class EvaluationCacheTests
 
             Assert.Equal(1, calls); // eski semali kayit isabet sayilmadi, evaluate yeniden cagrildi
             Assert.NotNull(result);
-            Assert.Equal("OSYS.A", result!.AssemblyName); // "Stale" degil, gercek deger
+            Assert.Equal("OSYS.A", result!.AssemblyName); // yardimcinin yazdigi "Fake" degil, gercek deger
             Assert.Equal("Library", result.OutputType);   // yeni alan dolu
             Assert.Single(result.OutputPaths);             // yeni alan dolu
         }

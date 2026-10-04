@@ -360,9 +360,10 @@ public sealed class OptimizeWorkspaceService(
 
     // ---------------------------------------------------------------- adım 4-5: defter hijyeni
 
-    /// <summary>Üç defter de aynı ölçütle budanır: anahtarın gösterdiği dosya diskte yoksa girdi ölüdür. İlk
-    /// ikisi csproj yoluyla, üçüncüsü KAYNAK DOSYA yoluyla anahtarlıdır — bu yüzden en hızlı biriken odur ve
-    /// ayrı sayılır. Her kök ayrı süpürülür (harici kök ana kökün öneki ALTINDA değildir).</summary>
+    /// <summary>Üç defter de aynı ölçütle budanır: anahtarın gösterdiği dosya diskte yoksa girdi ölüdür (evaluation cache'in
+    /// bir ölçütü daha var: şeması güncel olmayan girdi de ölüdür — aşağıda). İlk ikisi csproj yoluyla, üçüncüsü KAYNAK
+    /// DOSYA yoluyla anahtarlıdır — bu yüzden en hızlı biriken odur ve ayrı sayılır. Her kök ayrı süpürülür (harici kök ana
+    /// kökün öneki ALTINDA değildir); şema budaması köklerden bağımsızdır.</summary>
     private void PruneDeadCacheEntries(IReadOnlyList<string> roots, Tally tally, Action<IpcEvent> emit)
     {
         tally.PrunedStateEntries = roots.Sum(stateStore.PruneMissingUnderRoot);
