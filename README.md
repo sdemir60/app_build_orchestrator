@@ -339,7 +339,9 @@ version's notes as its text. Installed copies pick it up on their next check.
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on
      one of those — except a project that already built successfully against a dependency that was failing,
      which waits until that dependency recovers instead of being retried every time.
-   - *Rebuild* — all projects, cached state ignored.
+   - *Rebuild* — all projects, cached state ignored; every project with a `packages.config` restores its packages
+     again, whereas *Build* and *Resolve cycles* skip that restore while the file is unchanged and its packages are
+     present.
    - *Clean* — `msbuild /t:Clean` on every project, external projects and cycle members included; nothing is
      compiled and the caches are untouched. Like Visual Studio's *Clean Solution*, it deletes every output
      MSBuild recorded for a project, wherever it was written — a shared output folder included. Each cleaned

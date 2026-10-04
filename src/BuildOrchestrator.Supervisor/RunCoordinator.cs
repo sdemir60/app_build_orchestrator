@@ -1053,7 +1053,9 @@ public sealed class RunCoordinator(
                     _ => MsBuildTarget.Build,
                 },
                 // [WPF geçici assembly] Motorun açılışta yazdığı targets dosyası: her derleme isteğine taşınır.
-                CustomBeforeTargetsPath: toolset.CustomBeforeTargetsPath);
+                CustomBeforeTargetsPath: toolset.CustomBeforeTargetsPath,
+                // [PERF E3] Restore kararı koşunun modunu okur (Rebuild her zaman restore eder).
+                Mode: cmd.Mode);
 
             var workers = Enumerable.Range(0, parallelism)
                 .Select(_ => Task.Run(() => WorkerAsync(run, ct), CancellationToken.None))
@@ -2150,17 +2152,22 @@ public sealed class RunCoordinator(
         RunContext run, string projectId, DepIssueResult depIssues, ProjectLogFile log, CancellationToken ct,
         bool suppressRestore = false, Action<string>? observeLine = null)
     {
+        // [PERF E3] Çözüm dizini hem isteğe hem restore kanıtına gider (paket klasörleri <solutionDir>\packages altında).
+        string solutionDir = SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, []));
         // Proje kimliği (tam csproj yolu) derlenen dosyanın kendisidir; proje kendi (VS-parity) obj'inde derlenir.
         var request = new MsBuildInvokeRequest(
             ProjectId: projectId,
             Configuration: run.Configuration,
-            SolutionDir: SolutionDirResolver.Resolve(projectId, run.SolutionRefs.GetValueOrDefault(projectId, [])),
+            SolutionDir: solutionDir,
             // Clean hiçbir şey derlemez: paket restore'u onun için anlamsız bir bekleme olurdu. [restore-once]
             // suppressRestore, SCC tur döngüsünün "bu üyenin bir önceki turu BAŞARILIYDI" bilgisidir: başarılı
             // invoke restore prologunu da içerir ve turlar arasında ne kaynak ne packages.config değişebilir —
             // aynı no-op restore'u her turda yeniden ödemek 7 üyeli gerçek bir grupta tur başına dakikalar
             // ölçüyordu. Başarısız üye yeniden restore ALIR (patlayan şey restore'un kendisi olabilir).
-            NeedsRestore: !suppressRestore && run.MsBuildTarget != MsBuildTarget.Clean && HasPackagesConfig(projectId),
+            // [PERF E3] packages.config projesi Build ve Cycles'ta restore kanıtı tatmin edildiyse prolog almaz;
+            // Rebuild her zaman alır (NeedsPackagesRestore).
+            NeedsRestore: !suppressRestore && run.MsBuildTarget != MsBuildTarget.Clean
+                && NeedsPackagesRestore(run, projectId, solutionDir),
             Target: run.MsBuildTarget,
             // [WPF geçici assembly] Targets yolu koşuya toolset'ten gelir; komut satırı ve invoker AYNI isteği okur.
             CustomBeforeTargets: run.CustomBeforeTargetsPath);
@@ -2293,7 +2300,10 @@ public sealed class RunCoordinator(
             BuiltContent: inc.ContentById?.GetValueOrDefault(projectId), DepIssueRoots: depIssueRoots,
             // [Faz 3/Task 4 — spec 2026-09-18 §5.1] Bu derlemenin GERÇEKTEN güncellediği havuz kopyaları —
             // OutputsById'de kayıt yoksa (testlerdeki basit planner, kanıtsız proje) null (öğrenme yok).
-            FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)));
+            FedOutputs: OutputEvidence.LearnFedOutputs(inc.OutputsById?.GetValueOrDefault(projectId)),
+            // [PERF E3] Restore'u koşan ya da kanıtla atlanan projenin karar anındaki packages.config özeti — bir
+            // sonraki Build/Cycles koşusunun restore kanıtı. Kayıt yoksa (packages.config yok, özet okunamadı) null.
+            PackagesConfigHash: run.PackagesConfigHashById.GetValueOrDefault(projectId));
         try { run.StateStore.Upsert(state); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         { console("warning: build-state could not be written (" + Path.GetFileNameWithoutExtension(projectId) + "): " + ex.Message); }
@@ -2433,11 +2443,38 @@ public sealed class RunCoordinator(
         return string.Format(CultureInfo.InvariantCulture, "{0}{1}", FailureClassification.ExitPrefix, invoke.ExitCode);
     }
 
-    // [I2-K2/S2] Legacy restore sinyali: csproj'un YANINDA packages.config. bin/OutDir'e BAKILMAZ [§4].
-    private static bool HasPackagesConfig(string projectId)
+    // [I2-K2/S2] Legacy restore sinyali: csproj'un YANINDA packages.config (yolu; yoksa null). bin/OutDir'e
+    // BAKILMAZ [§4].
+    private static string? PackagesConfigOf(string projectId)
     {
         string? dir = Path.GetDirectoryName(Path.GetFullPath(projectId));
-        return dir is not null && File.Exists(Path.Combine(dir, "packages.config"));
+        string? path = dir is null ? null : Path.Combine(dir, "packages.config");
+        return path is not null && File.Exists(path) ? path : null;
+    }
+
+    /// <summary>
+    /// [PERF E3] Bir packages.config projesinin bu invoke'ta restore prologu alıp almayacağı. Rebuild (toparlanma
+    /// yolu) kanıta bakmadan restore eder. Build ve Cycles, koşu başındaki defterin özeti bugünkü içerikle aynıysa ve
+    /// listelenen paketlerin klasörleri yerindeyse restore'u atlar ve nedenini decision.log'a yazar — karar da metin
+    /// de Core'dadır (<see cref="RestoreEvidence"/>); burada yalnız defter ve mod bağlanır. Restore koşsa da
+    /// atlansa da karar anındaki özet <c>RunContext.PackagesConfigHashById</c>'e düşer; başarı onu deftere yazar.
+    /// Kanıt yalnız içeriktir, tarih karara girmez.
+    /// </summary>
+    private bool NeedsPackagesRestore(RunContext run, string projectId, string solutionDir)
+    {
+        if (PackagesConfigOf(projectId) is not { } packagesConfig) return false;
+        string? recorded = run.LedgerAtStart?.GetValueOrDefault(projectId)?.PackagesConfigHash;
+        if (run.Mode != RunMode.Rebuild
+            && RestoreEvidence.IsSatisfied(packagesConfig, solutionDir, recorded, out int present))
+        {
+            run.PackagesConfigHashById[projectId] = recorded!;
+            Decide(run.Logs, RestoreEvidence.SkippedLine(NameOf(run, projectId), present));
+            return false;
+        }
+        // Özet okunamadıysa (dosya kilitli ya da kayboldu) kayıt düşer: başarı null yazar, sonraki koşu restore eder.
+        if (RestoreEvidence.HashOf(packagesConfig) is { } current) run.PackagesConfigHashById[projectId] = current;
+        else run.PackagesConfigHashById.TryRemove(projectId, out _);
+        return true;
     }
 
     /// <summary>Yalnız aktif run YOKKEN log writer'ı kapatır: process kapanırken (bkz. Program) hâlâ koşan bir
@@ -2493,7 +2530,16 @@ public sealed class RunCoordinator(
         // [tek proje] Bu koşunun MSBuild hedefi — yalnız satır menüsünün Rebuild'i Build'den ayrılır (§3.8).
         MsBuildTarget MsBuildTarget = MsBuildTarget.Build,
         // [WPF geçici assembly] Targets dosyasının tam yolu (toolset'ten); null ⇒ build komut satırına girmez.
-        string? CustomBeforeTargetsPath = null);
+        string? CustomBeforeTargetsPath = null,
+        // [PERF E3] Koşunun modu — restore kararı onu okur: Rebuild (toparlanma yolu) paket kanıtına bakmadan her
+        // packages.config projesini restore eder; Build ve Cycles kanıt tatmin edildiyse atlar.
+        RunMode Mode = RunMode.Build)
+    {
+        /// <summary>[PERF E3] projectId → bu koşuda restore'u koşan ya da kanıtla atlanan projenin, karar ANINDA
+        /// okunan packages.config özeti. Başarı persist'i (<c>PersistBuildStateOnSuccess</c>) onu deftere yazar:
+        /// derleme sürerken dosya değişse bile defter restore kararının gördüğü içeriği anlatır.</summary>
+        public ConcurrentDictionary<string, string> PackagesConfigHashById { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Park etmiş worker'ları toplu uyandıran async sinyal — <c>SemaphoreSlim</c>/sleep-poll YOK [D8].

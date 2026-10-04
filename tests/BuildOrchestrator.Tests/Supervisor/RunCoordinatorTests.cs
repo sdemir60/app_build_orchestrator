@@ -1250,6 +1250,96 @@ public class RunCoordinatorTests
         Assert.Equal(Path.Combine(root, "B"), b.SolutionDir);         // sln yok → projenin kendi dizini
     }
 
+    // ---------------------------------------------------------------- [PERF Faz E3] koşullu restore
+
+    /// <summary>[PERF Faz E3] İki koşunun A tarafı: ilk (Rebuild) ve ikinci koşunun A isteği, ikinci koşunun
+    /// decision.log'u, ilk koşudan sonraki defter kaydı ve A'nın packages.config yolu.</summary>
+    private sealed record RestoreScenario(MsBuildInvokeRequest First, MsBuildInvokeRequest Second, string DecisionLog,
+        BuildState? Recorded, string PackagesConfig);
+
+    /// <summary>[PERF Faz E3] Paketleri yerinde bir packages.config projesi (A; çözüm dizini sln'in dizini, iki
+    /// paketin <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\</c> klasörü var) AYNI harness'ta iki kez
+    /// koşar: önce Rebuild — kanıt yok, restore koşar ve başarı özeti deftere yazar —, sonra
+    /// <paramref name="second"/>. <paramref name="assert"/> geçici dizinler silinmeden çağrılır. Kurulum üç testte
+    /// tek yerde (kopya YASAK).</summary>
+    private static async Task RunTwiceWithPackagesInPlace(RunMode second, Action<RestoreScenario> assert)
+    {
+        string root = Directory.CreateTempSubdirectory("bo-coord-restore-").FullName;
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            string aId = Path.Combine(root, "A", "A.csproj");
+            string packagesConfig = Path.Combine(root, "A", "packages.config");
+            Directory.CreateDirectory(Path.Combine(root, "A"));
+            await File.WriteAllTextAsync(packagesConfig,
+                """<packages><package id="Dapper" version="2.1.35" /><package id="Serilog" version="3.1.1" /></packages>""");
+            Directory.CreateDirectory(Path.Combine(root, "packages", "Dapper.2.1.35"));
+            Directory.CreateDirectory(Path.Combine(root, "packages", "Serilog.3.1.1"));
+
+            var refs = EmptyRefs();
+            refs[aId] = [new SolutionRef("Osys", Path.Combine(root, "Osys.sln"))];
+            var plan = new RunPlan(
+                new BuildPlan([new ProjectNode(aId, "A", aId, [], [], 0, null, null, false, true)], Cycles: [],
+                    Configuration: "Debug"),
+                refs,
+                new IncrementalPlan(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [aId] = "sig" },
+                    "headsha", "main"));
+            var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
+            var store = new BuildStateStore(cacheRoot);
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            BuildState? recorded = store.Load().GetValueOrDefault(aId);
+            await h.Sut.StartAsync(new StartRunCommand("r2", second, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var requests = invoker.Requests.Where(r => r.ProjectId == aId).ToList();
+            Assert.Equal(2, requests.Count);
+            assert(new RestoreScenario(requests[0], requests[1], h.DecisionLog, recorded, packagesConfig));
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { /* test temizliği */ }
+            if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true);
+        }
+    }
+
+    /// <summary>[PERF Faz E3] Paketleri değişmemiş projede Build restore'u atlar: ikinci (Build) koşunun A isteği
+    /// restore taşımaz — komut satırında restore prologu da yoktur (proje logunun ilk satırı ve invoker AYNI
+    /// <see cref="MsBuildArguments.PlanFor"/>'u okur) — ve decision.log nedeni Core'un metniyle yazar.</summary>
+    [Fact]
+    public Task A_build_run_skips_restore_when_packages_config_is_unchanged_and_its_packages_are_present() =>
+        RunTwiceWithPackagesInPlace(RunMode.Build, s =>
+        {
+            Assert.False(s.Second.NeedsRestore);
+            Assert.Null(MsBuildArguments.PlanFor(s.Second).Restore);
+            Assert.Contains(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        });
+
+    /// <summary>[PERF Faz E3] Rebuild toparlanma yoludur: kanıt tatmin edilmiş olsa da restore KOŞAR ve "atlandı"
+    /// satırı yazılmaz. Bugünkü davranışın pini — yeni kural Rebuild'e sızmasın.</summary>
+    [Fact]
+    public Task A_rebuild_run_restores_even_when_the_packages_evidence_is_satisfied() =>
+        RunTwiceWithPackagesInPlace(RunMode.Rebuild, s =>
+        {
+            Assert.True(s.Second.NeedsRestore);
+            Assert.NotNull(MsBuildArguments.PlanFor(s.Second).Restore);
+            Assert.DoesNotContain(RestoreEvidence.SkippedLine("A", 2), s.DecisionLog);
+        });
+
+    /// <summary>[PERF Faz E3] Başarılı derleme, restore kararı anındaki packages.config özetini deftere yazar
+    /// (<see cref="BuildState.PackagesConfigHash"/>): ilk koşu kanıtsızdır ve restore koşar; yazılan özet bir sonraki
+    /// koşunun kanıtıdır.</summary>
+    [Fact]
+    public Task A_successful_build_records_the_packages_config_hash() =>
+        RunTwiceWithPackagesInPlace(RunMode.Build, s =>
+        {
+            Assert.True(s.First.NeedsRestore);
+            Assert.NotNull(s.Recorded?.PackagesConfigHash);
+            Assert.Equal(RestoreEvidence.HashOf(s.PackagesConfig), s.Recorded!.PackagesConfigHash);
+        });
+
     // ---------------------------------------------------------------- 12) depIssue propagation (T54)
 
     [Fact]

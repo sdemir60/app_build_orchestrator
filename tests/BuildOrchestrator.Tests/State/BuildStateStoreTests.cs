@@ -156,6 +156,33 @@ public class BuildStateStoreTests : IDisposable
         Assert.Equal(fresh, back); // liste alanı içerikle karşılaştırılır (round-trip farklı örnek üretir)
     }
 
+    /// <summary>
+    /// [PERF Faz E3] <see cref="BuildState.PackagesConfigHash"/> round-trip eder (JSON adı <c>PackagesConfigHash</c>,
+    /// eşitliğe girer) ve bu alandan ÖNCE yazılmış bir kayıt — alan eklenmeden önceki biçimin birebir kopyası,
+    /// FedOutputs dahil — <c>null</c>'a çözülür: eski defterle ilk Build her packages.config projesini restore eder
+    /// (güvenli yön). <see cref="Fed_outputs_round_trip_and_an_old_record_reads_null"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Packages_config_hash_round_trips_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.PackagesConfigHash);
+
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", PackagesConfigHash: "ABC123");
+        store.Upsert(fresh);
+
+        Assert.Contains("\"PackagesConfigHash\":\"ABC123\"", File.ReadAllText(StatePath));
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal("ABC123", back.PackagesConfigHash);
+        Assert.Equal(fresh, back);
+        Assert.NotEqual(fresh, fresh with { PackagesConfigHash = "DEF456" });
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {
