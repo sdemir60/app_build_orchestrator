@@ -183,6 +183,47 @@ public class BuildStateStoreTests : IDisposable
         Assert.NotEqual(fresh, fresh with { PackagesConfigHash = "DEF456" });
     }
 
+    /// <summary>
+    /// [RESOLVE Faz 3/Task 3.2] Döngü alanları — <see cref="BuildState.CycleMemberTerm"/>, <see
+    /// cref="BuildState.CycleReadSurfaces"/>, <see cref="BuildState.CycleEngineFingerprint"/> — round-trip eder (JSON
+    /// adları özellik adlarıdır; üçü de eşitliğe girer, okunan yüzeyler içerikle karşılaştırılır) ve bu alanlardan
+    /// ÖNCE yazılmış bir kayıt — alanlar eklenmeden önceki biçimin birebir kopyası, PackagesConfigHash dahil —
+    /// <c>null</c>'a çözülür: eski defterle ilk Cycles koşusunda her üye gerekli sayılır (güvenli yön).
+    /// <see cref="Packages_config_hash_round_trips_and_an_old_record_reads_null"/> ile aynı desen.
+    /// </summary>
+    [Fact]
+    public void Cycle_fields_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null,"PackagesConfigHash":null}}""");
+        var store = new BuildStateStore(_root);
+
+        var old = Assert.Contains(@"C:\r\Old.csproj", store.Load());
+        Assert.Null(old.CycleMemberTerm);
+        Assert.Null(old.CycleReadSurfaces);
+        Assert.Null(old.CycleEngineFingerprint);
+
+        var surface = new CycleReadSurface(@"C:\r\B.csproj", @"C:\r\B\bin\Debug\B.dll", "SURF1");
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded,
+            CycleMemberTerm: "TERM1", CycleReadSurfaces: [surface], CycleEngineFingerprint: "ENGINE1");
+        store.Upsert(fresh);
+
+        string json = File.ReadAllText(StatePath);
+        Assert.Contains("\"CycleMemberTerm\":\"TERM1\"", json);
+        Assert.Contains("\"CycleReadSurfaces\":[{\"Producer\":", json);
+        Assert.Contains("\"Hash\":\"SURF1\"}]", json);
+        Assert.Contains("\"CycleEngineFingerprint\":\"ENGINE1\"", json);
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal([surface], back.CycleReadSurfaces);
+        Assert.Equal(fresh, back); // okunan yüzeyler içerikle karşılaştırılır (round-trip farklı örnek üretir)
+        Assert.Equal(fresh.GetHashCode(), back.GetHashCode());
+        Assert.NotEqual(fresh, fresh with { CycleMemberTerm = "TERM2" });
+        Assert.NotEqual(fresh, fresh with { CycleEngineFingerprint = "ENGINE2" });
+        Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = [surface with { Hash = "SURF2" }] });
+        Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = null });
+    }
+
     [Fact] // dosya yok → boş, throw yok
     public void Load_returns_empty_when_file_missing()
     {
