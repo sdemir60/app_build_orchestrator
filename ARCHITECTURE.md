@@ -1626,7 +1626,7 @@ other member of it (below): invalidated, reported with the rest and given no new
 A round one that carried members was clean only for the members that compiled, so the engine hands the stopping rule
 below no previous failure set after it: such a round never counts as the first of the two consecutive clean rounds
 the classic rule asks for. The group then converges when everyone is green and nobody is stale — in round one itself
-when nobody went stale — or after two further clean rounds. If the surface evidence is lost while round one runs, the
+when nobody went stale. If the surface evidence is lost while round one runs, two further clean rounds are needed: the
 later rounds are full rounds that compile every member, the carried ones included, and the record is written without
 read surfaces, so none of the group's members is carried the next time.
 
@@ -1679,7 +1679,11 @@ successful compiles, once the member has released its build slot: reading a larg
 another member could use, and the level barrier still waits for the hash, so the next level reads the fresh
 surface. At the end of the round the records are compared with the disk.
 Everyone green and nobody stale means **converged**: every member provably compiled against
-final surfaces — in a single round when no API moved, which is the typical body-only change. A failing member
+final surfaces — in a single round when no API moved, which is the typical body-only change. Two clean rounds in a
+row do not stand in for that proof when the evidence exists: a round after the first compiles only the stale members,
+and a compile can move a surface another member read (one member's constant flowing into another's API), so a member
+can still be bound to an old surface after two clean rounds. The group converges only when nobody is stale, and a
+member that is still stale when the budget runs out ends the group at the ceiling. A failing member
 whose read surfaces did not move is proof that a retry would fail identically, so the group stops as **no
 progress** — in the first round when the failure is hopeless from the start, which is what keeps a broken
 source from burning the remaining rounds. A failing member whose inputs did move gets another round, and that
@@ -1784,8 +1788,9 @@ and counted beyond it), the number of levels compiled, the round's wall time and
 time. Without evidence the stale and moved fields read `n/a`. The texts have a single owner in Core
 (`CycleDecisionLines`); the Supervisor only measures and calls it.
 
-Members that survive to the ceiling are reported as succeeded but flagged as unsettled, because two clean
-rounds were never observed and their output may be one generation stale (§14.3).
+Members that survive to the ceiling are reported as succeeded but flagged as unsettled: the group never met its
+convergence test — a round with no stale member under surface evidence, two consecutive clean rounds without it —
+so their output may be one generation stale (§14.3).
 
 **Stop bookkeeping.** If a stop was acknowledged, writing `runStopped` is a debt that must be paid even when
 the run never reached `runStarted` (a stop pressed during a multi-second planning window) — otherwise the App

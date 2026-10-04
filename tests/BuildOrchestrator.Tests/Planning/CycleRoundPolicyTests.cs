@@ -107,5 +107,38 @@ public class CycleRoundPolicyTests
     {
         Assert.Equal(CycleRoundDecision.Continue, CycleRoundPolicy.Decide(1, Set(), null, staleNow: null));
         Assert.Equal(CycleRoundDecision.Continue, CycleRoundPolicy.Decide(1, Set("a"), null, staleNow: null));
+        // İki ardışık yeşil tur kanıtsız yakınsamanın TEK ölçütüdür; kanıt varken bu kural çalışmaz (aşağıdaki testler).
+        Assert.Equal(CycleRoundDecision.Converged, CycleRoundPolicy.Decide(2, Set(), Set(), staleNow: null));
+    }
+
+    // ---------------------------------------------------------------- kanıt varken yakınsama yalnız kanıtla
+    // [DEĞİŞEN KURAL] Eski iddia: iki ardışık yeşil tur yakınsamadır — kanıt (staleNow) olsun olmasın. Neden değişti:
+    // kanıt varken tur ≥ 2 herkesi değil yalnız bayat üyeleri derler ve derlenen bir üyenin yüzeyi başka bir üyenin
+    // okuduğu sabiti oynatabilir (A'nın sabiti B'nin yüzeyine girer ⇒ tur 2'de derlenen B oynar, A bayat kalır).
+    // Yeşil-yeşil "herkes nihai API'ye bağlandı" demez; bunu yalnız kanıt söyler. Kanıt YOKKEN iki-yeşil kuralı aynen durur.
+
+    [Fact] // Kanıt varken yeşil-yeşil YETMEZ: "a" bayat ⇒ bir tur daha. (NoProgress de değil: boş küme "aynı hata kümesi" sayılmaz.)
+    public void two_green_rounds_with_a_stale_member_continue()
+    {
+        Assert.Equal(CycleRoundDecision.Continue, CycleRoundPolicy.Decide(2, Set(), Set(), staleNow: Set("a")));
+    }
+
+    [Fact] // Bayat üye tavana kadar kalırsa karar CapReached'tir; yeşil-yeşil onu Converged'e çeviremez.
+    public void two_green_rounds_with_a_stale_member_at_the_cap_are_cap_reached()
+    {
+        Assert.Equal(CycleRoundDecision.CapReached,
+            CycleRoundPolicy.Decide(CycleRoundPolicy.RoundCap, Set(), Set(), staleNow: Set("a")));
+    }
+
+    [Fact] // Kontrol grubu: AYNI girdi, bayat yok ⇒ kanıt kuralı Converged der ("kanıtla asla yakınsama" DEĞİL).
+    public void two_green_rounds_with_nobody_stale_converge_by_the_evidence()
+    {
+        Assert.Equal(CycleRoundDecision.Converged, CycleRoundPolicy.Decide(2, Set(), Set(), staleNow: Set()));
+    }
+
+    [Fact] // Boş olmayan aynı hata kümesi iki turdur patlıyorsa kanıt varken de NoProgress — bu kural değişmedi.
+    public void the_same_stale_failure_set_twice_is_still_no_progress()
+    {
+        Assert.Equal(CycleRoundDecision.NoProgress, CycleRoundPolicy.Decide(2, Set("a"), Set("a"), staleNow: Set("a")));
     }
 }

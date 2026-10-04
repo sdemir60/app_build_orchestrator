@@ -240,8 +240,8 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     /// event'te geçip atılıyordu (bkz. <see cref="Console.ConsoleEmptyState.ForEmptyLog"/>).</summary>
     [ObservableProperty] private string? _skipReason;
 
-    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti (iki
-    /// ardışık yeşil tur hiç olmadı) — <see cref="ProjectSucceededEvent.CycleUnsettled"/>'tan AYNEN taşınır.
+    /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti (yakınsama
+    /// ölçütü hiç tutmadı) — <see cref="ProjectSucceededEvent.CycleUnsettled"/>'tan AYNEN taşınır.
     /// Derleme başarılı ama çıktı bir kuşak geride OLABİLİR. RENDER Task 9'undur — burası yalnız veri taşır.</summary>
     [ObservableProperty] private bool _cycleUnsettled;
 

@@ -1530,7 +1530,8 @@ public sealed class RunCoordinator(
     ///
     /// <para><b>Stop'ta grup ile tekil proje SİMETRİK DEĞİLDİR</b> ve bu kasıtlıdır: graceful stop, in-flight
     /// TEK bir projenin bitip persist etmesine izin verir, ama bir SCC'yi İÇİNDE BULUNDUĞU TURUN sonunda
-    /// keser — yakınsama iki ardışık yeşil tur gerektirir ve kesilen grup asla yakınsamış sayılmaz (hiçbir şey
+    /// keser — kesilen grup yakınsama ölçütüne (kanıtla bayatsız tur ya da iki ardışık yeşil tur) varmadığı için
+    /// asla yakınsamış sayılmaz (hiçbir şey
     /// persist edilmez, tüm üyeler invalidate olur). Gerekçe "SCC tek bir derleme birimidir": burada "in-flight
     /// iş" tek bir invoke değil, TURLARIN TAMAMIDIR; kalan turları stop'a rağmen sürdürmek Stop'u anlamsız
     /// kılardı (32 üyeli bir grupta 64 invoke daha).</para>
@@ -1915,9 +1916,9 @@ public sealed class RunCoordinator(
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
                 // [R3c2 · karar 3] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına taban olmaz: taşınan üyenin
-                // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Tur 1'i "yeşil" saydırsaydı tur 2, bayat bir üye
-                // varken Converged derdi (CycleRoundPolicy'nin ilk kuralı staleNow'a bakmaz). Kural değişmez; tur 1'den
-                // sonra yakınsama ya kanıtla (staleNow boş) ya da sonraki iki gerçek turla gelir.
+                // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Kanıt varken policy zaten yalnız kanıtla
+                // yakınsar (iki-yeşil kuralı staleNow null iken çalışır); bu koruma kanıtın düştüğü turlar içindir:
+                // tur 1'den sonra yakınsama ya kanıtla (staleNow boş) ya da sonraki iki gerçek turla gelir.
                 previousFailed = round == 1 && roundOneCarried ? null : failed;
                 Decide(run.Logs, CycleDecisionLines.RoundEnded(group, round, decision,
                     staleNow is null ? null : members.Where(staleNow.Contains).Select(id => NameOf(run, id)).ToList(),

@@ -305,7 +305,8 @@ public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNum
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");
 /// yoksa null (JSON'a yazılmaz). [It-3]</param>
 /// <param name="CycleUnsettled">[cycle rounds] Bu proje bir SCC üyesidir ve grup TUR TAVANINA dayanarak bitti
-/// (iki ardışık yeşil tur hiç olmadı): derleme başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
+/// (yakınsama ölçütü hiç tutmadı: yüzey kanıtı varken bayatsız bir tur, yokken iki ardışık yeşil tur): derleme
+/// başarılı, ama çıktı bir kuşak geride OLABİLİR. <b>Ayrı bir
 /// alandır, <see cref="DepIssues"/>'a sahte bir isim enjekte EDİLMEZ</b> — o liste "hangi bağımlılık patladı"
 /// sorusunun cevabıdır ve ikinci bir anlam yüklenirse App'in <c>▲ N</c> sayacı ile filtre chip'i yanlış sayar.
 /// Varsayılan <c>false</c>: bu alandan ÖNCE yazılmış NDJSON satırları aynen çözülmeye devam eder.</param>
