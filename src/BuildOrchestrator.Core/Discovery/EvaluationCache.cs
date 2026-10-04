@@ -35,6 +35,11 @@ public sealed class EvaluationCache(string cachePath)
     /// </summary>
     internal Action<int>? RenameRetryDelay { get; set; }
 
+    /// <summary>Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı
+    /// (<see cref="BuildStateStore.EffectiveRenameRetryDelay"/> ile aynı desen). Ayrı üye olmasının sebebi testtir —
+    /// varsayılanı no-op'a çeviren bir mutasyon aksi halde süiti yeşil bırakırdı (<c>LedgerRetryDefaultTests</c>).</summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay;
+
     /// <summary>
     /// [Faz 3/Task 1] Güncel önbellek şeması. Eski (şemasız/daha düşük şemalı) kayıtlar isabet SAYILMAZ —
     /// <see cref="EvaluatedProject"/>'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayıtta boş
@@ -126,7 +131,7 @@ public sealed class EvaluationCache(string cachePath)
         try
         {
             AtomicFile.Write(cachePath, stream => JsonSerializer.Serialize(stream, _entries, Json),
-                RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay);
+                EffectiveRenameRetryDelay);
             _dirty = false; // yalnız yazım BAŞARILIYSA: düşen yazım defteri kirli bırakır
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -155,10 +160,12 @@ public sealed class EvaluationCache(string cachePath)
 
     /// <summary>
     /// [optimize · PERF Faz C/C2] Şeması güncel olmayan girdileri KÖKTEN BAĞIMSIZ budar. <see cref="GetOrEvaluate"/> böyle
-    /// bir girdiyi hiçbir zaman isabet saymaz (<c>Schema == CurrentSchema</c> şartı): isabet sayılmayan girdi yalnız
-    /// dosyada yer tutar. Başka bir workspace'in ya da kaldırılmış bir worktree'nin eski sürümden kalan kayıtları ise
+    /// bir girdiyi hiçbir zaman isabet saymaz (<c>Schema == CurrentSchema</c> şartı); isabet sayılmayan girdi dosyada yer
+    /// tutar. TEK istisna <c>Stale()</c> yedeğidir: csproj tarama sırasında KAYBOLURSA yedek, o girdiyi şemaya BAKMADAN
+    /// döndürür. Başka bir workspace'in ya da kaldırılmış bir worktree'nin eski sürümden kalan kayıtları ise
     /// sonsuza dek birikirdi — <see cref="PruneMissingUnderRoot"/> yalnız kökün ALTINDAKİ ölü girdileri görür. Budanan
-    /// girdi, proje bir daha karşılaşıldığında bir kez yeniden değerlendirilir; hiçbir karar değişmez. Kaldırılan sayı döner.
+    /// girdi, proje bir daha karşılaşıldığında bir kez yeniden değerlendirilir; budama o yedek durumu dışında hiçbir kararı
+    /// değiştirmez (kaybolan bir csproj için yedek artık o girdiyi döndüremez). Kaldırılan sayı döner.
     /// <para>Gerçekten budandıysa <see cref="MarkDirty"/> + <see cref="Flush"/> çağrılır (aksi hâlde budama yalnız bellekte
     /// kalır, dosyada durmaya devam ederdi); budanacak bir şey yoksa dosyaya HİÇ dokunulmaz.</para>
     /// </summary>

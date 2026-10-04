@@ -1345,7 +1345,7 @@ line, and a strange line stitch in MSBuild output cannot desynchronize the chunk
 Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
 can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
 neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
-folder carries the newest stamp there is, far inside the window. A folder is removed only when its name is
+folder carries the newest stamp not in the future, far inside the window. A folder is removed only when its name is
 exactly a run-folder name, its stamp (the local wall-clock time the run started) is older than the window and it
 is not the newest run folder — the newest of the runs that have started, so a folder stamped in the future (a
 clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
@@ -5275,11 +5275,13 @@ normaliser: a root is resolved and compared with a trailing separator, so `C:\re
 `C:\repo2\...`, and each root gets its own pass, because an external root is not under the main root's prefix.
 
 The evaluation cache has a second kind of dead entry, and it is the one no root can see: an entry written under
-a schema other than the current one is never a hit (§6.2), so it only takes room in the file — and what a retired
+a schema other than the current one is never a hit (§6.2), so it takes room in the file — and what a retired
 worktree or another workspace left behind would stay for good, because a pass scoped to a root reaches only the
 paths under its roots. Optimize therefore removes every entry whose schema is not the current one, wherever its
 path points, and counts those with the evaluation-cache prunes. Nothing is lost: a project met again is evaluated
-once and written under the current schema, so no build decision moves.
+once and written under the current schema, so no build decision moves. The one exception is a project file that
+vanishes during a scan: the cache's fallback for a missing file returns whatever entry it holds for that path
+without looking at the schema, and a removed entry can no longer be returned.
 
 Optimize also sweeps the ledgers' **orphaned temp files**. An atomic write killed between its temp write and
 its rename leaves a `<ledger>.<guid>.tmp` behind; each ledger sweeps only the pattern of its own name, and only
@@ -5787,9 +5789,10 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
   `source-hash-cache.json` are written to a unique temp name and moved into place through one code path
   (`AtomicFile`), and read with `FileShare.Delete`, so a read is not refused because another party holds the file
   with delete access. Windows refuses a rename over a file that still has an open handle even when that handle
-  shares delete, so the rename is retried a bounded number of times until the handle closes; a ledger whose retries
-  run out keeps its dirty flag and writes again at the next flush (§16). The temp file a killed write leaves
-  behind is collected by *Optimize* (§16).
+  shares delete, so the rename is retried a bounded number of times until the handle closes. When the retries run
+  out, `evaluation-cache.json` and `source-hash-cache.json` stay dirty and the same instance writes again at its
+  next flush; an instance that never flushes again loses only that write, and the entries are derived afresh the
+  next time (§16). The temp file a killed write leaves behind is collected by *Optimize* (§16).
 - **Git writes are user actions, each with its own gate, in one file.** The fast-forward is `--ff-only` (so it
   can neither rewrite history nor create a merge), refuses a dirty or diverged tree, and runs only from the
   user's click on the `N behind` chip or for an external root the user left on (§10.5, §10.4). The checkout

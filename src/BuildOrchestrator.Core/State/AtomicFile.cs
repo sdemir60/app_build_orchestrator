@@ -89,11 +89,12 @@ internal static class AtomicFile
     }
 
     /// <summary>
-    /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma handle'ı olduğunda — Delete-share
-    /// verilmiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
-    /// ile başarısız olabilir (gözlemlenen Windows davranışı: handle kapanışı ile rename arasında kısa bir yarış
-    /// penceresi kalıyor). Bu GERÇEK VERİ KAYBI değildir — tmp dosya hâlâ diskte durur; kısa, sınırlı bir retry
-    /// bu geçici pencereyi absorbe eder (bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni).
+    /// <see cref="File.Move(string, string, bool)"/> hedefte açık bir okuma tutamağı (handle) VARKEN — tutamak Delete-share
+    /// vermiş olsa BİLE — geçici bir sharing-violation (<see cref="IOException"/>/<see cref="UnauthorizedAccessException"/>)
+    /// ile reddedilir (ölçüldü, bkz. <see cref="OpenReadSharingDelete"/>): ret tutamak açık kaldığı sürece sürer ve
+    /// kapanınca biter — kapanıştan sonra kalan bir "yarış penceresi" değil. Bu GERÇEK VERİ KAYBI değildir — tmp dosya
+    /// hâlâ diskte durur; kısa, sınırlı bir retry tutamağın kapanmasını bekler (bütçe tükenirse özgün istisna yayılır;
+    /// bkz. RetryingMsBuildInvoker'daki MSB302x contention retry deseni).
     /// </summary>
     private static void MoveAtomicWithRetry(string tmp, string target, Action<int> retryDelay)
         // [B2] Döngünün kendisi ortak (SyncRetry) — burada yalnız BU yolun kararları durur: kaç deneme, hangi

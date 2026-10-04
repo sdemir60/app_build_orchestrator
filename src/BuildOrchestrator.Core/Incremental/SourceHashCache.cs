@@ -85,6 +85,11 @@ public sealed class SourceHashCache
     /// </summary>
     internal Action<int>? RenameRetryDelay { get; set; }
 
+    /// <summary>Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı
+    /// (<see cref="BuildStateStore.EffectiveRenameRetryDelay"/> ile aynı desen). Ayrı üye olmasının sebebi testtir —
+    /// varsayılanı no-op'a çeviren bir mutasyon aksi halde süiti yeşil bırakırdı (<c>LedgerRetryDefaultTests</c>).</summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay;
+
     /// <summary>
     /// Dosyanın içerik özeti. Boyut ve mtime önbellektekiyle aynıysa dosya AÇILMAZ. Okunamayan / var olmayan
     /// dosya <c>null</c> döner — canlı build ↔ tarama yarışında kaybolan dosya kararı düşürmez, yalnız o
@@ -200,7 +205,7 @@ public sealed class SourceHashCache
         try
         {
             AtomicFile.Write(_cachePath, stream => JsonSerializer.Serialize(stream, persistable, Json),
-                RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay);
+                EffectiveRenameRetryDelay);
             if (leftOutRacy) MarkDirty(); // dışarıda kalan racy girdi: pencere geçince sonraki Flush onu da yazar
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)

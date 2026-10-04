@@ -63,8 +63,8 @@ public static class Program
             interruptedProjects);
         // [PERF Faz C/C2 · karar 1] Koşu logları üç gün saklanır, son koşu kalır: saklama süpürmesi host kurulur kurulmaz
         // ARKA PLANDA başlar — engineReady'yi ve ilk komutu bekletmez, sonucunu da kimse beklemez. Etkin koşunun klasörü
-        // süpürmeyle yarışmaz: damgası görülen en yeni damgadır ve pencerenin çok içindedir. Süpürme hiçbir IO hatası
-        // fırlatmaz; özet satırı stderr'e düşer (stdout YALNIZ NDJSON [D4]).
+        // süpürmeyle yarışmaz: damgası şimdiden ileri olmayan en yeni damgadır ve pencerenin çok içindedir. Süpürme hiçbir
+        // IO hatası fırlatmaz; özet satırı stderr'e düşer (stdout YALNIZ NDJSON [D4]).
         _ = Task.Run(() => RunLogRetention.Prune(logsRoot, DateTimeOffset.UtcNow, Console.Error.WriteLine));
         return await host.RunAsync();
 
