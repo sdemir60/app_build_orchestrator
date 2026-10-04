@@ -4,10 +4,11 @@ using BuildOrchestrator.Core.MsBuild;
 namespace BuildOrchestrator.Tests.MsBuild;
 
 /// <summary>
-/// [PERF Faz E3] packages.config restore kanıtı: içerik özeti (SHA-256) + listelenen paketlerin
-/// <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\</c> klasörleri. Karar yalnız İÇERİĞE bakar — dosyanın
-/// tarihi değişse de özet aynı kalır; kanıt eksik kaldığında (özet farklı ya da kayıtsız, klasör eksik, XML bozuk)
-/// cevap "tatmin edilmedi"dir ve restore koşar (güvenli taraf).
+/// [PERF Faz E3] packages.config restore kanıtı: içerik özeti (SHA-256) + listelenen her paketin NuGet'in kendi
+/// "kurulu" işaretiyle yerinde olması — <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
+/// Karar yalnız İÇERİĞE bakar — dosyanın tarihi değişse de özet aynı kalır; kanıt eksik kaldığında (özet farklı ya da
+/// kayıtsız, klasör ya da .nupkg eksik, XML bozuk ya da DTD taşıyor) cevap "tatmin edilmedi"dir ve restore koşar
+/// (güvenli taraf).
 /// </summary>
 public sealed class RestoreEvidenceTests : IDisposable
 {
@@ -29,21 +30,34 @@ public sealed class RestoreEvidenceTests : IDisposable
         try { Directory.Delete(_solutionDir, recursive: true); } catch (IOException) { /* test temizliği */ }
     }
 
-    /// <summary>Proje dizinine packages.config yazar, verilen paket klasörlerini çözüm dizininin <c>packages\</c>
-    /// altına açar ve dosyanın bugünkü özetini (deftere yazılacak değeri) döner.</summary>
-    private string Arrange(string content, params string[] presentFolders)
+    /// <summary>NuGet'in packages.config düzeninde KURULU bir paket: <c>packages\&lt;kimlik&gt;\&lt;kimlik&gt;.nupkg</c>
+    /// (kimlik = <c>id.version</c>; NuGet .nupkg'yi çıkarmanın EN SONUNDA yazar). .nupkg'nin yolunu döner — silinirse
+    /// geriye yarıda kesilmiş bir restore'un bıraktığı klasör kalır. Paket fixture'ının TEK yeri: RunCoordinatorTests de
+    /// bunu kullanır (kopya YASAK).</summary>
+    internal static string InstallPackage(string solutionDir, string identity)
+    {
+        string folder = Path.Combine(solutionDir, "packages", identity);
+        Directory.CreateDirectory(folder);
+        string nupkg = Path.Combine(folder, identity + ".nupkg");
+        File.WriteAllBytes(nupkg, []);
+        return nupkg;
+    }
+
+    /// <summary>Proje dizinine packages.config yazar, verilen paketleri çözüm dizinine kurar
+    /// (<see cref="InstallPackage"/>) ve dosyanın bugünkü özetini (deftere yazılacak değeri) döner.</summary>
+    private string Arrange(string content, params string[] installed)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(PackagesConfig)!);
         File.WriteAllText(PackagesConfig, content);
-        foreach (string folder in presentFolders)
-            Directory.CreateDirectory(Path.Combine(_solutionDir, "packages", folder));
+        foreach (string identity in installed)
+            InstallPackage(_solutionDir, identity);
         return RestoreEvidence.HashOf(PackagesConfig)!;
     }
 
-    /// <summary>Özet aynı ve her paketin klasörü yerinde → tatmin edildi; sayı listelenen paket sayısıdır. Dosyanın
-    /// tarihi ileri alınsa da karar değişmez (tarih karara girmez).</summary>
+    /// <summary>Özet aynı ve her paket kurulu → tatmin edildi; sayı listelenen paket sayısıdır. Dosyanın tarihi ileri
+    /// alınsa da karar değişmez (tarih karara girmez).</summary>
     [Fact]
-    public void Same_content_and_every_package_folder_present_is_satisfied_whatever_the_file_date()
+    public void Same_content_and_every_package_installed_is_satisfied_whatever_the_file_date()
     {
         string recorded = Arrange(TwoPackages, "Newtonsoft.Json.13.0.3", "Dapper.2.1.35");
         File.SetLastWriteTimeUtc(PackagesConfig, DateTime.UtcNow.AddDays(1));
@@ -53,7 +67,7 @@ public sealed class RestoreEvidenceTests : IDisposable
         Assert.True(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded)); // üç argümanlı biçim aynı kararı verir
     }
 
-    /// <summary>İçerik değişti (yeni sürümün klasörü bile yerinde) → tatmin edilmedi: yalnız özet farkı karar verir.</summary>
+    /// <summary>İçerik değişti (yeni sürüm bile kurulu) → tatmin edilmedi: yalnız özet farkı karar verir.</summary>
     [Fact]
     public void Changed_content_is_not_satisfied()
     {
@@ -72,11 +86,39 @@ public sealed class RestoreEvidenceTests : IDisposable
         Assert.False(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded));
     }
 
+    /// <summary>Yarıda kesilen restore (Stop, zaman aşımı, dosya kilidi) paket klasörünü açmış ama .nupkg'yi
+    /// yazamamıştır → tatmin edilmedi: NuGet de paketi kurulu saymaz; sonraki koşu restore eder.</summary>
+    [Fact]
+    public void A_package_folder_without_its_nupkg_is_not_satisfied()
+    {
+        string recorded = Arrange(TwoPackages, "Newtonsoft.Json.13.0.3");
+        File.Delete(InstallPackage(_solutionDir, "Dapper.2.1.35"));
+
+        Assert.False(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded));
+    }
+
     /// <summary>Özet aynı ama XML bozuk → tatmin edilmedi (paket listesi okunamıyor; restore koşar).</summary>
     [Fact]
     public void Malformed_xml_is_not_satisfied()
     {
         string recorded = Arrange("<packages><package id=\"Dapper\" version=", "Dapper.2.1.35");
+
+        Assert.False(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded));
+    }
+
+    /// <summary>DTD yasak: DOCTYPE taşıyan packages.config → tatmin edilmedi. Varlık sürümü kurulu paketin sürümüne
+    /// açar — DTD işlenseydi kanıt tatmin edilirdi; yasak dosyayı restore'a düşürür.</summary>
+    [Fact]
+    public void A_doctype_is_not_satisfied()
+    {
+        string recorded = Arrange(
+            """
+            <?xml version="1.0" encoding="utf-8"?>
+            <!DOCTYPE packages [ <!ENTITY dapperVersion "2.1.35"> ]>
+            <packages>
+              <package id="Dapper" version="&dapperVersion;" />
+            </packages>
+            """, "Dapper.2.1.35");
 
         Assert.False(RestoreEvidence.IsSatisfied(PackagesConfig, _solutionDir, recorded));
     }

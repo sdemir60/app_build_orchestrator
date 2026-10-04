@@ -191,7 +191,7 @@ public sealed record BuildState(
     IReadOnlyList<string>? FedOutputs = null,
     // [PERF Faz E3] Son başarının restore kararı anında okunan packages.config içerik özeti (SHA-256 hex,
     // RestoreEvidence.HashOf) — restore koştuysa da, paketler zaten yerinde bulunup atlandıysa da. Build ve Cycles
-    // bir sonraki koşuda özet aynıysa ve listelenen paketlerin klasörleri yerindeyse restore'u atlar; Rebuild ona hiç
+    // bir sonraki koşuda özet aynıysa ve paketler kuruluysa (klasör + .nupkg) restore'u atlar; Rebuild ona hiç
     // bakmaz (toparlanma yolu). Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null çözülür —
     // proje restore eder (güvenli yön).
     string? PackagesConfigHash = null)

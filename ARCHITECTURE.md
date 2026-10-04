@@ -915,7 +915,10 @@ taken for a clean one. A project from an external root (§10.4) has the same rec
 its built-commit slot means the same thing — except that the revision written there is **its own** working
 copy's, not the repository's, because the repository's HEAD describes a different repository. The last-branch
 slot stays empty for the same reason, and so does the commit when the working copy has no readable revision at
-all (§10.4). Beside these sits the content hash (SHA-256) of the project's `packages.config` as its last success read it when deciding on the restore — the evidence that lets *Build* and *Resolve cycles* skip the restore prologue (§9.3); a record that predates the field answers `null`, and the project restores. The record also carries the project's **fed outputs** — the copies of its output in dependents'
+all (§10.4). Beside these sits the content hash (SHA-256) of the project's `packages.config` as its last success
+read it when deciding on the restore — the evidence that lets *Build* and *Resolve cycles* skip the restore
+prologue (§9.3); a record that predates the field answers `null`, and the project restores. The record also carries
+the project's **fed outputs** — the copies of its output in dependents'
 `HintPath` locations that this tool's own successful build was seen to refresh (§7.6); the list is `null` when
 nothing could be learned (no derivable output path, the output file missing after the build, an older record),
 empty when the path is known but no candidate matched, and it survives a failed attempt unchanged. The
@@ -1465,7 +1468,8 @@ log is the real record, and the channel is still drained to completion so no wri
 invoking and used for all three consumers at once (the log's warning lines, the event, and the accumulation
 that this project's own dependents will inherit). A project the run evaluates conditionally is decided just
 before that, and skipped there when every recorded root still fails (§8.3). The invocation request carries the
-solution directory and a restore flag derived from the presence of `packages.config`, the run mode and the project's restore evidence (§9.3).
+solution directory and a restore flag derived from the presence of `packages.config`, the run mode and the
+project's restore evidence (§9.3).
 The project's log file is opened before and closed after the
 invocation, so a late line cannot be silently dropped. The first line written is the real MSBuild command
 line. On success the build state is persisted with the signature computed during planning; on failure the
@@ -1573,7 +1577,8 @@ identical failure *set* twice means no progress (the comparison is on the set an
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
 idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
-repeated across rounds either: a member whose previous round succeeded already restored then or had no need to, and nothing
+repeated across rounds either: a member whose previous round succeeded already restored then or had no need to, and
+nothing
 between rounds can change `packages.config` — only a member that failed goes back through the restore decision
 (§9.3), because the failure may have been the restore's own.
 
@@ -1772,27 +1777,34 @@ That argument list has **two callers and one source**. The build path runs it as
 carries a `packages.config` next to its `.csproj` gets a restore child before its build child, and a non-zero
 restore exit means the build child is never started. Within a cycle group's rounds (§8.8) the prologue runs
 once, not per round: a member re-invoked after a successful round carries no restore — that success already
-restored or found its packages in place, and nothing between rounds can change `packages.config` — while a member whose last round failed
-goes back through the decision below, because the failure may have been the restore's own. A `-t:Clean` target gets no restore — there is nothing to
+restored or found its packages in place, and nothing between rounds can change `packages.config` — while a member
+whose last round failed
+goes back through the decision below, because the failure may have been the restore's own. A `-t:Clean` target gets
+no restore — there is nothing to
 restore for. *Optimize* (§13.2) calls the same list through a **restore-only entry point** on the invoker;
 `-t:Build` is never appended there, so that path cannot compile anything. It exists because a restore is not
 always a build's prologue: Optimize repairs what a build would otherwise have failed on. Both callers share the
 same invoker core — inner-job assignment, line pumping, the per-project timeout and the kill on timeout or
 cancel — so a restore child is governed exactly like a build child.
 
-**In *Build* and *Resolve cycles* the prologue is conditional.** Each success records the content hash (SHA-256)
-of the project's `packages.config` as the run read it when it made the restore decision, whether the restore then
-ran or was skipped (§7.5). The next *Build* or *Resolve cycles* run hashes the file again and reads its
-`<package id version>` entries; when the hash equals the recorded one and every listed package has its
-`<solutionDir>\packages\<id>.<version>\` folder, the prologue is skipped and `decision.log` gives the reason
-(`<project>: restore skipped — packages.config unchanged, N packages present`). Content alone decides; no date
-enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a record that predates
-the field), a changed file, a missing folder, an unreadable or malformed `packages.config`, or a package store that
-NuGet's `repositoryPath` keeps somewhere other than the solution's `packages` folder. *Rebuild* never consults the
-evidence and always restores — it is the recovery path for a package folder that exists but cannot be trusted.
-Optimize's repair below stands apart from this record: it restores an old-style project whose `HintPath` targets
-are missing without reading the ledger and leaves the recorded hash alone, so the next build finds the repaired
-folders and its hash comparison decides as before.
+**In *Build* and *Resolve cycles* the prologue is conditional.** Each success records the content hash (SHA-256) of
+the project's `packages.config` as the run read it when it made the restore decision, whether the restore then ran
+or was skipped (§7.5). The next *Build* or *Resolve cycles* run hashes the file again and reads its
+`<package id version>` entries; when the hash equals the recorded one and every listed package is installed, the
+prologue is skipped and `decision.log` gives the reason
+(`<project>: restore skipped — packages.config unchanged, N packages present`). A package counts as installed by
+NuGet's own marker: its `<solutionDir>\packages\<id>.<version>\` folder holds `<id>.<version>.nupkg`, which NuGet
+writes last when it extracts a package. An extraction cut short — by *Stop*, a timeout or a locked file — leaves a
+folder without it, so the next run, or the next round of a cycle group, restores again. Content alone decides; no
+date enters. Anything short of that proof runs the restore: no recorded hash (a first build, or a record that
+predates the field), a changed file, a missing folder or `.nupkg`, or an unreadable or malformed `packages.config`.
+The witness is the solution's own `packages` folder, and `nuget.config` is not read: when NuGet's `repositoryPath`
+keeps the store elsewhere, a project with no copies in that folder restores on every run as before, but stale
+copies left behind there satisfy the evidence while the store NuGet would fill stays empty. *Rebuild* never
+consults the evidence and always restores, handing the decision back to NuGet — the way out of that case, as is
+Optimize when a `HintPath` target is missing. Optimize's repair below stands apart from this record: it restores an
+old-style project whose `HintPath` targets are missing without reading the ledger and leaves the recorded hash
+alone, so the next build finds the repaired folders and its hash comparison decides as before.
 
 Optimize restores only what a restore can actually fix, in two families. The **old-style** family this tool
 targets — a project that carries a `packages.config` beside its `.csproj`, taking its packages that way rather

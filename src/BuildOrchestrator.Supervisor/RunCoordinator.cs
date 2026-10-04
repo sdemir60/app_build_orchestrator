@@ -2455,7 +2455,7 @@ public sealed class RunCoordinator(
     /// <summary>
     /// [PERF E3] Bir packages.config projesinin bu invoke'ta restore prologu alıp almayacağı. Rebuild (toparlanma
     /// yolu) kanıta bakmadan restore eder. Build ve Cycles, koşu başındaki defterin özeti bugünkü içerikle aynıysa ve
-    /// listelenen paketlerin klasörleri yerindeyse restore'u atlar ve nedenini decision.log'a yazar — karar da metin
+    /// listelenen paketler kuruluysa (klasör + .nupkg) restore'u atlar ve nedenini decision.log'a yazar — karar da metin
     /// de Core'dadır (<see cref="RestoreEvidence"/>); burada yalnız defter ve mod bağlanır. Restore koşsa da
     /// atlansa da karar anındaki özet <c>RunContext.PackagesConfigHashById</c>'e düşer; başarı onu deftere yazar.
     /// Kanıt yalnız içeriktir, tarih karara girmez.

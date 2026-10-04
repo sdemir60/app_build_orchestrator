@@ -8,16 +8,21 @@ namespace BuildOrchestrator.Core.MsBuild;
 /// <summary>
 /// [PERF Faz E3] Bir packages.config projesinin restore'u atlanabilir mi — kararın TEK sahibi (saf; UI ve process
 /// bağımsız test edilir). Kanıt yalnız İÇERİKTİR: <c>packages.config</c>'in SHA-256 özeti son başarıda deftere
-/// yazılan özetle (<c>BuildState.PackagesConfigHash</c>) aynı olmalı ve dosyanın listelediği her paketin
-/// <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\</c> klasörü bulunmalıdır. Tarih/mtime karara GİRMEZ.
-/// Kanıtın eksik kaldığı her durumda — özet kayıtsız ya da farklı, dosya okunamıyor, XML bozuk, bir klasör eksik,
-/// NuGet'in <c>repositoryPath</c>'i paketleri çözümün <c>packages</c> klasörü dışında tutuyor — cevap "tatmin
-/// edilmedi"dir ve restore koşar (güvenli taraf). Restore'un atlandığını anlatan decision.log satırının metni de
-/// burada durur; Supervisor yalnız çağırır (kopya YASAK).
+/// yazılan özetle (<c>BuildState.PackagesConfigHash</c>) aynı olmalı ve dosyanın listelediği her paket NuGet'in kendi
+/// "kurulu" işaretini taşımalıdır: <c>&lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\&lt;id&gt;.&lt;version&gt;.nupkg</c>.
+/// NuGet packages.config düzeninde .nupkg'yi çıkarmanın EN SONUNDA yazar ve paketi onunla kurulu sayar; yarıda
+/// kesilen bir restore (Stop, zaman aşımı, dosya kilidi) .nupkg'siz bir klasör bırakır ve o klasör kanıt sayılmaz —
+/// sonraki koşu ya da tur yine restore eder. Tarih/mtime karara GİRMEZ. Kanıtın eksik kaldığı her durumda — özet
+/// kayıtsız ya da farklı, dosya okunamıyor, XML bozuk ya da DTD taşıyor, bir klasör ya da .nupkg eksik — cevap
+/// "tatmin edilmedi"dir ve restore koşar (güvenli taraf). Sınır: <c>nuget.config</c> okunmaz; <c>repositoryPath</c>
+/// depoyu başka yere taşıdıysa ve çözümün <c>packages</c> klasöründe eski kopyalar kaldıysa kanıt onları görür
+/// (toparlanma: Rebuild ya da HintPath hedefi eksikse Optimize — ARCHITECTURE §9.3). Restore'un atlandığını anlatan
+/// decision.log satırının metni de burada durur; Supervisor yalnız çağırır (kopya YASAK).
 /// </summary>
 public static class RestoreEvidence
 {
-    // packages.config güvenilmeyen girdidir (ARCHITECTURE §21): DTD yasak, dış kaynak çözülmez.
+    // Savunma derinliği: packages.config'in DTD'ye ve dış kaynağa ihtiyacı yoktur, ikisi de kapalı — DOCTYPE taşıyan
+    // ya da bozuk bir dosya XmlException verir ve karar restore'a düşer.
     private static readonly XmlReaderSettings SafeXml = new() { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
 
     /// <summary>packages.config içerik özeti (SHA-256 hex); dosya yoksa null. Okunamayan dosya da null döner —
@@ -26,15 +31,15 @@ public static class RestoreEvidence
         ReadContent(packagesConfigPath) is { } content ? Hash(content) : null;
 
     /// <summary>Kayıtlı özet bugünküyle aynı VE packages.config'teki her &lt;package id= version=&gt; için
-    /// &lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\ klasörü varsa true. XML bozuksa false (restore koşar —
-    /// güvenli taraf).</summary>
+    /// &lt;solutionDir&gt;\packages\&lt;id&gt;.&lt;version&gt;\ klasörü ve içinde NuGet'in kurulu işareti
+    /// &lt;id&gt;.&lt;version&gt;.nupkg varsa true. XML bozuksa false (restore koşar — güvenli taraf).</summary>
     public static bool IsSatisfied(string packagesConfigPath, string solutionDir, string? recordedHash) =>
         IsSatisfied(packagesConfigPath, solutionDir, recordedHash, out _);
 
     /// <summary>Üç argümanlı biçimle AYNI karar — o buna devreder, karar tek yerde kalır. Tatmin edildiğinde
-    /// <paramref name="presentPackages"/> listelenen (klasörü yerinde olan) paket sayısıdır: decision.log satırının
-    /// sayısı (<see cref="SkippedLine"/>). Özet ve paket listesi dosyanın TEK okumasından gelir — iki okuma arasında
-    /// değişen bir dosya eski içeriğin özetiyle yeni içeriğin listesini eşleştiremez.</summary>
+    /// <paramref name="presentPackages"/> listelenen (kurulu) paket sayısıdır: decision.log satırının sayısı
+    /// (<see cref="SkippedLine"/>). Özet ve paket listesi dosyanın TEK okumasından gelir — iki okuma arasında değişen
+    /// bir dosya eski içeriğin özetiyle yeni içeriğin listesini eşleştiremez.</summary>
     public static bool IsSatisfied(string packagesConfigPath, string solutionDir, string? recordedHash,
         out int presentPackages)
     {
@@ -57,9 +62,10 @@ public static class RestoreEvidence
         {
             string? id = (string?)package.Attribute("id");
             string? version = (string?)package.Attribute("version");
-            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(version)
-                || !Directory.Exists(Path.Combine(solutionDir, "packages", id + "." + version)))
-                return false;
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(version)) return false;
+            // Klasör ile .nupkg AYNI kimlikten adlanır; .nupkg yoksa paket kurulu değildir (NuGet de öyle sayar).
+            string identity = id + "." + version;
+            if (!File.Exists(Path.Combine(solutionDir, "packages", identity, identity + ".nupkg"))) return false;
             present++;
         }
         presentPackages = present;
