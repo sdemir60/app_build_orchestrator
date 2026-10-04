@@ -1350,7 +1350,8 @@ public sealed class RunCoordinator(
         // [spec 2026-09-18 §6.1 · karar 10 · P4] Branch kesmesinden SONRA biten hiçbir sonucun arkasında durulmaz:
         // derlenen kaynak artık diskteki kaynak değildir. Başarı defterde kanıtsız hata olur (Trusted=false, gri
         // never built), hata kanıt sayılmaz — çökme kurtarmasıyla aynı defter hâli (§5.5). TEK kapı burasıdır;
-        // SCC üyeleri de (ReportCycleMember) buradan geçer.
+        // SCC üyeleri de (ReportCycleMember) buradan geçer; derlenmeyen taşınan üyenin defter yenilemesi
+        // (ReportCarriedCycleMember) aynı bayrağa uyar.
         lock (_gate) trustedResult &= !_interrupted;
         IReadOnlyList<string>? depIssuesForEvent = depIssues.All.Count > 0 ? depIssues.All : null;
         // [R-M4b · spec 2026-09-18 §1-14] Defterin kararı TEK KEZ verilir ve İKİ tüketiciye gider: App'e giden
@@ -1609,34 +1610,6 @@ public sealed class RunCoordinator(
         // güncellenmez): bir üyenin okuma anı kaydı haritayı referansla tutar ve sonradan kaymaz.
         var surfaceState = new Dictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         bool hashMode = outputsById is not null && producers.Count > 0;
-        // [PERF Faz E1] Kanıt SESSİZCE kaybolmaz: ilk okunamayan üreticinin satırı, grup başlığından hemen sonra
-        // yazılır. Çıktı haritası hiç yoksa (artımlı plan yok) kaybedilecek kanıt da yoktur — başlık "off" der.
-        string? evidenceLoss = null;
-        var groupHashClock = Stopwatch.StartNew();
-        if (hashMode)
-        {
-            // [PERF Faz E2] Üreticiler PARALEL okunur (derece: tek IO paralelliği sabiti). Kanıt İLK hatada kapanır:
-            // kaybı yalnız CAS'ı kazanan çağrı yazar ve döngü yeni üretici başlatmaz; sözlük yazımı kilit altında.
-            int lost = 0;
-            Parallel.ForEach(producers, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
-                (producerId, loop) =>
-                {
-                    if (Volatile.Read(ref lost) != 0) return;
-                    if (SurfaceStateOf(producerId, out string lostFile, out string lostReason) is { } initial)
-                    {
-                        lock (surfaceState) surfaceState[producerId] = initial;
-                    }
-                    else if (Interlocked.CompareExchange(ref lost, 1, 0) == 0)
-                    {
-                        evidenceLoss = CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, producerId), lostFile, lostReason);
-                        loop.Stop();
-                    }
-                });
-            hashMode = lost == 0;
-        }
-        Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
-            groupHashClock.ElapsedMilliseconds));
-        if (evidenceLoss is not null) Decide(run.Logs, evidenceLoss);
 
         // [DEĞİŞEN KURAL] Yarıda kesilen grupta HİÇBİR üyenin sonucunun arkasında durulamaz: tur 1'de yeşile
         // dönmüş bir üye de Failed raporlanır. Eskiden yalnız reason yazılır, sonuç KORUNURDU — o üye ÖNCEKİ
@@ -1676,6 +1649,38 @@ public sealed class RunCoordinator(
         HashSet<string>? provenHopeless = null;
         try
         {
+            // [R3c2 · kesilme garantisi] Grup başı bloğu (yüzey hash'i, başlık ve kanıt kaybı satırları) bu
+            // try'ın İÇİNDEDİR: orada fırlayan beklenmeyen bir istisna da catch → FailEveryMember yolundan her
+            // üyeyi raporlatır (eskiden try'ın dışındaydı ve üyeler hiç raporlanmazdı — koşu asılırdı).
+            // [PERF Faz E1] Kanıt SESSİZCE kaybolmaz: ilk okunamayan üreticinin satırı, grup başlığından hemen sonra
+            // yazılır. Çıktı haritası hiç yoksa (artımlı plan yok) kaybedilecek kanıt da yoktur — başlık "off" der.
+            string? evidenceLoss = null;
+            var groupHashClock = Stopwatch.StartNew();
+            if (hashMode)
+            {
+                // [PERF Faz E2] Üreticiler PARALEL okunur (derece: tek IO paralelliği sabiti). Kanıt İLK hatada kapanır:
+                // kaybı yalnız CAS'ı kazanan çağrı yazar ve döngü yeni üretici başlatmaz; sözlük yazımı kilit altında.
+                int lost = 0;
+                Parallel.ForEach(producers, new ParallelOptions { MaxDegreeOfParallelism = IoParallelism.Degree },
+                    (producerId, loop) =>
+                    {
+                        if (Volatile.Read(ref lost) != 0) return;
+                        if (SurfaceStateOf(producerId, out string lostFile, out string lostReason) is { } initial)
+                        {
+                            lock (surfaceState) surfaceState[producerId] = initial;
+                        }
+                        else if (Interlocked.CompareExchange(ref lost, 1, 0) == 0)
+                        {
+                            evidenceLoss = CycleDecisionLines.EvidenceUnavailable(group, NameOf(run, producerId), lostFile, lostReason);
+                            loop.Stop();
+                        }
+                    });
+                hashMode = lost == 0;
+            }
+            Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
+                groupHashClock.ElapsedMilliseconds));
+            if (evidenceLoss is not null) Decide(run.Logs, evidenceLoss);
+
             // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
             // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
             // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
@@ -1691,6 +1696,7 @@ public sealed class RunCoordinator(
             // değişmez), bayatlarsa sonraki turda derlenir. Fast koşusunda terim haritası BOŞTUR: GetValueOrDefault ⇒
             // null ⇒ "no member term", herkes gerekli (ayrı dal yok).
             IReadOnlyList<string> toBuild = members;
+            bool roundOneCarried = false; // [R3c2] tur 1'de taşınan üye var mı — iki-yeşil kuralının tabanı (tur sonu)
             if (hashMode && run.Incremental is { MemberTermById: { } memberTerms } incremental)
             {
                 var need = CycleMemberNeed.Decide(members,
@@ -1700,6 +1706,7 @@ public sealed class RunCoordinator(
                         siblingDeps[id]),
                     surfaceState, run.EngineFingerprint);
                 toBuild = need.ToBuild;
+                roundOneCarried = need.CarriedReadStates.Count > 0;
                 foreach (string id in need.ToBuild)
                     Decide(run.Logs, CycleDecisionLines.RoundOneNeed(NameOf(run, id), need.Reasons[id]));
                 foreach (var (id, carriedReads) in need.CarriedReadStates)
@@ -1780,10 +1787,12 @@ public sealed class RunCoordinator(
                         TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
                         run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
                         announced = true;
-                        // [restore-once] bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
-                        // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır.
+                        // [restore-once] bu koşuda bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
+                        // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır. [R3c2] Taşınan üyenin
+                        // Succeeded'ı kayıttan gelir, bu koşunun derlemesi değildir: ilk derlemesi (hangi turda olursa)
+                        // restore kararından geçer — Carried ilk invoke'ta düşer.
                         outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
-                            suppressRestore: member.Result == BuildResult.Succeeded,
+                            suppressRestore: member.Result == BuildResult.Succeeded && !member.Carried,
                             observeLine: compiled is null ? null : ObserveCompilerLine);
                         member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
                         member.Result = outcome.Result;
@@ -1896,7 +1905,11 @@ public sealed class RunCoordinator(
                 roundsRun = round;
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
-                previousFailed = failed;
+                // [R3c2 · karar 3] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına taban olmaz: taşınan üyenin
+                // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Tur 1'i "yeşil" saydırsaydı tur 2, bayat bir üye
+                // varken Converged derdi (CycleRoundPolicy'nin ilk kuralı staleNow'a bakmaz). Kural değişmez; tur 1'den
+                // sonra yakınsama ya kanıtla (staleNow boş) ya da sonraki iki gerçek turla gelir.
+                previousFailed = round == 1 && roundOneCarried ? null : failed;
                 Decide(run.Logs, CycleDecisionLines.RoundEnded(group, round, decision,
                     staleNow is null ? null : members.Where(staleNow.Contains).Select(id => NameOf(run, id)).ToList(),
                     movedFiles?.ToList(), levelsRun, roundClock.ElapsedMilliseconds,
@@ -2233,7 +2246,11 @@ public sealed class RunCoordinator(
         {
             ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.UpToDate,
                 cycleUnconverged: false, detail: CycleDecisionLines.CarriedDetail);
-            PersistBuildStateOnCarriedMember(run, projectId, depIssues);
+            // [R3c2] Branch kesmesinden sonra hiçbir sonucun arkasında durulmaz (ReportProjectResult'taki kapı): kesilmiş
+            // koşu taşınan üyenin kaydını da yenilemez — kayıt son güvenilir derlemenin olarak kalır.
+            bool interrupted;
+            lock (_gate) interrupted = _interrupted;
+            if (!interrupted) PersistBuildStateOnCarriedMember(run, projectId, depIssues);
         }
         finally
         {

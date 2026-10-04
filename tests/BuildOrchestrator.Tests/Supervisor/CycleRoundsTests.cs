@@ -2332,7 +2332,9 @@ public class CycleRoundsTests
         var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
         Assert.Equal((CycleOutcome.Converged, 2, 2), (completed.Outcome, completed.Rounds, completed.CompiledCount));
         Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
-        Assert.Contains(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("B"));
+        // [R3c2 · pin] Süre yalnız tur 2'nin derlemesidir: taşındığı tur 1 süre katmaz.
+        Assert.Equal(Ok().DurationMs,
+            Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("B")).DurationMs);
         var read = Assert.Single(store.Load()[Id("B")].CycleReadSurfaces!);
         Assert.Equal((Id("A"), "a2"), (read.Producer, read.Hash));
     });
@@ -2458,38 +2460,63 @@ public class CycleRoundsTests
         }
     });
 
-    /// <summary>[karar 4 · K4/K5] Yakınsamayan ya da kesilen koşu yeni döngü alanı YAZMAZ ve taşınan üyesinin arkasında
-    /// da durmaz: hiç derlenmemiş taşınan üye de bugünkü yoldan geçersizlenir (yarım grup bir sonraki koşuda "güncel"
-    /// görünmez) ve "up to date" raporlanmaz; derlenen üyenin yeni terimi deftere girmez.</summary>
+    /// <summary>[karar 4 · K4/K5 · Review Focus 3] Yakınsamayan (NoProgress, CapReached) ya da kesilen (Stop) koşu yeni döngü
+    /// alanı YAZMAZ ve taşınan üyesinin arkasında da durmaz: hiç derlenmemiş taşınan üye dahil HER üye geçersizlenir
+    /// (<c>LastResult=Failed</c>, yeni bileşik imza yok), "up to date" raporlanmaz, derlenen üyenin yeni terimi deftere girmez.
+    /// Takip koşusunda (içerik değişmeden) kalan döngü alanları kimseyi taşıtmaz: herkes "no trusted record" ile derlenir.
+    /// <para>[R3c2] Eski biçim iki üyeli grupta yalnız NoProgress ve Stop'u pinliyordu (aynı iddialar); CapReached'te sona dek
+    /// taşınan bir üye kurulamadığı için grafik <see cref="ChainPlan"/>'e taşındı ve takip koşusu eklendi.</para></summary>
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task non_converged_and_stopped_groups_write_no_cycle_fields(bool stopped) => InCacheRootAsync(async cacheRoot =>
+    [InlineData("no progress")]
+    [InlineData("stopped")]
+    [InlineData("cap reached")]
+    public Task non_converged_and_stopped_groups_write_no_cycle_fields(string outcome) => InCacheRootAsync(async cacheRoot =>
     {
-        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        string[] names = ["X", "N", "M", "R"];
+        var store = new BuildStateStore(cacheRoot);
+        var disk = new SurfaceDisk();
+        foreach (string name in names) disk.Set(name, name.ToLowerInvariant() + "1");
+        await ConvergeOnceAsync(store, disk, ChainPlan("sig1", "n1"));
         using var cts = new CancellationTokenSource();
         var rec = new RoundRecorder();
-        // Yalnız B değişik: A taşınır; B ya girdisi oturmuşken patlar (NoProgress) ya da derlenirken koşu kesilir.
-        var invoker = rec.Invoker((_, _, ct) =>
+        // Yalnız N değişik: X, M, R taşınır.
+        // · no progress: N girdisi oturmuşken patlar (tur 1).
+        // · stopped: N derlenirken koşu kesilir.
+        // · cap reached: tur 2'de M (R'nin eski yüzeyini okuyup) patlar, R yüzeyini oynatır ⇒ M bayat kalır; tur 3'te M
+        //   yüzeyini oynatır ⇒ hâlâ hareket var (X ve R bayat) ⇒ tavan. X hiç derlenmez.
+        var invoker = rec.Invoker((name, round, ct) =>
         {
-            if (!stopped) return Task.FromResult(Exit(1));
-            cts.Cancel();
-            ct.ThrowIfCancellationRequested();
+            if (outcome == "stopped") { cts.Cancel(); ct.ThrowIfCancellationRequested(); }
+            if (outcome == "no progress" || (name == "M" && round == 1)) return Task.FromResult(Exit(1));
+            disk.Set(name, name.ToLowerInvariant() + "2");
             return Task.FromResult(Ok());
         });
-        using var h = await ResolveAsync(store, disk, TwoMembers("sig2", "a1", "b2"), invoker, ct: cts.Token);
-
-        Assert.Equal(["B#1"], rec.Calls);
-        var a = store.Load()[Id("A")];
-        var b = store.Load()[Id("B")];
-        Assert.Equal((BuildResult.Failed, "sig1"), (a.LastResult, a.BuiltSignature));
-        Assert.Equal(BuildResult.Failed, b.LastResult);
-        Assert.NotEqual("b2", b.CycleMemberTerm);
-        if (!stopped) // kesilen koşuda olay akışı sorgulanamaz (stopped_group_invalidates_every_member notu)
+        string[] expectedCalls = outcome == "cap reached" ? ["N#1", "M#1", "R#1", "M#2"] : ["N#1"];
+        using (var h = await ResolveAsync(store, disk, ChainPlan("sig2", "n2"), invoker, ct: cts.Token))
         {
-            Assert.Equal(CycleOutcome.NoProgress, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
-            Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal(expectedCalls, rec.Calls);
+            if (outcome != "stopped") // kesilen koşuda olay akışı sorgulanamaz (stopped_group_invalidates_every_member notu)
+            {
+                Assert.Equal(outcome == "cap reached" ? CycleOutcome.CapReached : CycleOutcome.NoProgress,
+                    Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+                Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+            }
         }
+        var ledger = store.Load();
+        foreach (string name in names)
+        {
+            Assert.Equal(BuildResult.Failed, ledger[Id(name)].LastResult);       // taşınan X dahil
+            Assert.NotEqual("sig2", ledger[Id(name)].BuiltSignature);
+        }
+        Assert.NotEqual("n2", ledger[Id("N")].CycleMemberTerm);
+
+        // Takip koşusu: içerik değişmedi ama hiçbir kayıt güvenilir değil ⇒ herkes derlenir.
+        var follow = new RoundRecorder();
+        using var next = await ResolveAsync(store, disk, ChainPlan("sig2", "n2"), follow.Invoker((_, _) => Ok()));
+        Assert.Equal(["M#1", "N#1", "R#1", "X#1"], follow.Calls.Order(StringComparer.Ordinal));
+        foreach (string name in names)
+            Assert.Contains(CycleDecisionLines.RoundOneNeed(name, CycleMemberNeed.NoTrustedRecordReason), next.DecisionLog,
+                StringComparison.Ordinal);
     });
 
     [Fact] // hashMode kapalı (çıktı haritası yok) ⇒ bugünkü davranış: güvenilir kayıt olsa da üye kararı yok, herkes derlenir
@@ -2571,4 +2598,111 @@ public class CycleRoundsTests
         Assert.Null(a.CycleReadSurfaces);
         Assert.Null(a.CycleEngineFingerprint);
     });
+
+    // ---------------------------------------------------------------- 15) [R3c2] seçici tur 1'in sertleştirmesi
+
+    /// <summary>X → M, N → X, M ↔ R, M ve R → N (build order X, N, M, R): X yalnız M'yi okur; N değişince M ve R bayatlar.
+    /// M ile R birbirini okur: ikisi aynı turda derlenirken önce M girer (okunma ve komşu sayısı eşit ⇒ build order,
+    /// <c>CycleRoundLevels</c>) ve R'nin ESKİ yüzeyini okur. Terimler x1/m1/r1, N'ninki parametre.</summary>
+    private static RunPlan ChainPlan(string signature, string termN) => MemberSkipPlan(CyclePlanOf(["X", "N", "M", "R"],
+            Node("X", deps: ["M"], inCycle: true), Node("N", deps: ["X"], inCycle: true),
+            Node("M", deps: ["N", "R"], inCycle: true), Node("R", deps: ["N", "M"], inCycle: true)),
+        signature, ("X", "x1"), ("N", termN), ("M", "m1"), ("R", "r1"));
+
+    /// <summary>[karar 3 · Important I1] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına girmez. A değişir ve yüzeyi
+    /// oynar, B taşınır ⇒ tur 2 B'yi derler; B'nin KENDİ yüzeyi de oynar (A'dan gelen bir sabit gibi) ⇒ A bayat. Taşınan
+    /// B'nin kayıttan gelen Succeeded'ı tur 1'i "yeşil" saydırsaydı tur 2 "converged; stale=1 [A]" derdi ve A, B'nin eski
+    /// yüzeyiyle güvenilir persist edilirdi. Doğrusu: tur 3 A'yı derler; iki kayıt da NİHAİ kardeş yüzeyini taşır.</summary>
+    [Fact]
+    public Task a_round_one_with_carried_members_does_not_count_toward_two_green_rounds() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var rec = new RoundRecorder();
+        using var h = await ResolveAsync(store, disk, TwoMembers("sig2", "a2", "b1"),
+            rec.Invoker((name, _) => { disk.Set(name, name == "A" ? "a2" : "b2"); return Ok(); }));
+
+        Assert.True(rec.Calls.SequenceEqual(["A#1", "B#1", "A#2"]), string.Join(", ", rec.Calls) + "\n" + h.DecisionLog);
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.Converged, 3), (completed.Outcome, completed.Rounds));
+        var aRead = Assert.Single(store.Load()[Id("A")].CycleReadSurfaces!);
+        Assert.Equal((Id("B"), "b2"), (aRead.Producer, aRead.Hash));
+        var bRead = Assert.Single(store.Load()[Id("B")].CycleReadSurfaces!);
+        Assert.Equal((Id("A"), "a2"), (bRead.Producer, bRead.Hash));
+    });
+
+    /// <summary>[restore kapısı] Tur 2'de İLK kez derlenen taşınan üye restore kararından geçer: kayıttan gelen Succeeded'ı
+    /// "önceki turda derlendi" sayılmaz. Kanıt: Converged sonrası kaydın <c>PackagesConfigHash</c>'i dolu (karar anında
+    /// okunan özet). Restore-once fixture'ının deseni: benzersiz adlar, packages.config proje klasöründe.</summary>
+    [Fact]
+    public Task a_carried_member_first_compiled_in_round_two_goes_through_the_restore_decision() => InCacheRootAsync(async cacheRoot =>
+    {
+        const string px = "RestoreCarriedX";                  // packages.config'li, tur 1'de taşınan
+        const string py = "RestoreCarriedY";
+        string projectDir = Path.GetDirectoryName(Id(px))!;
+        Directory.CreateDirectory(projectDir);
+        File.WriteAllText(Path.Combine(projectDir, "packages.config"), "<packages />");
+        try
+        {
+            var cycle = CyclePlanOf([px, py], Node(px, deps: [py], inCycle: true), Node(py, deps: [px], inCycle: true));
+            var store = new BuildStateStore(cacheRoot);
+            var disk = new SurfaceDisk();
+            disk.Set(px, "x1");
+            disk.Set(py, "y1");
+            await ConvergeOnceAsync(store, disk, MemberSkipPlan(cycle, "sig1", (px, "x1"), (py, "y1")));
+            Assert.NotNull(store.Load()[Id(px)].PackagesConfigHash);
+            // Y değişti ve yüzeyi oynar ⇒ X tur 1'de taşınır, tur 2'de bayat olarak İLK kez derlenir.
+            var rec = new RoundRecorder();
+            using var h = await ResolveAsync(store, disk, MemberSkipPlan(cycle, "sig2", (px, "x1"), (py, "y2")),
+                rec.Invoker((name, _) => { if (name == py) disk.Set(py, "y2"); return Ok(); }));
+
+            Assert.Equal([$"{py}#1", $"{px}#1"], rec.Calls);
+            Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+            Assert.NotNull(store.Load()[Id(px)].PackagesConfigHash);
+        }
+        finally { Directory.Delete(projectDir, recursive: true); }
+    });
+
+    /// <summary>[kesme kapısı] Branch kesmesinden sonra biten grupta taşınan üyenin defteri YENİLENMEZ: kesilmiş koşunun hiçbir
+    /// sonucunun arkasında durulmaz (ReportProjectResult'taki kapı) — taşınan üyenin defter yenilemesi de o bayrağa uyar.</summary>
+    [Fact]
+    public Task an_interrupted_run_does_not_refresh_the_record_of_a_carried_member() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var bBefore = store.Load()[Id("B")];
+        var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rec = new RoundRecorder();
+        // Yalnız A değişik: A derlenirken branch kesmesi gelir; A biter, grup tur 1'de kanıtla yakınsar, B taşınır.
+        var invoker = rec.Invoker(async (_, _, _) => { inFlight.TrySetResult(); await release.Task; return Ok(); });
+        using var h = new Harness(TwoMembers("sig2", "a2", "b1"), invoker, stateStore: store, apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await inFlight.Task.WaitAsync(Limit);
+        Assert.True(h.Sut.TryRequestStop(StopKind.Interrupt));
+        release.SetResult();
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1"], rec.Calls);
+        Assert.Equal(bBefore, store.Load()[Id("B")]);                        // taşınan üyenin kaydı aynen
+    });
+
+    /// <summary>[kesilme garantisi] Grup başı bloğu (yüzey hash'i, başlık satırları) üyelerin raporlanmasını garanti eden
+    /// try'ın İÇİNDEDİR: orada fırlayan beklenmeyen bir istisna da her üyeyi Failed raporlatır (nedeni istisna metni),
+    /// grup tamamlanır ve koşu biter — asılmaz (sınırlı bekleme).</summary>
+    [Fact]
+    public async Task an_exception_at_group_start_fails_every_member_and_the_run_completes()
+    {
+        var rec = new RoundRecorder();
+        using var h = new Harness(HashModePlan(TwoMemberCycle(), "A", "B"), rec.Invoker((_, _) => Ok()),
+            apiSurface: _ => throw new InvalidOperationException("surface reader exploded"));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Empty(rec.Calls);
+        var failed = h.Events.OfType<ProjectFailedEvent>().ToList();
+        Assert.Equal([Id("A"), Id("B")], failed.Select(e => e.ProjectId));
+        Assert.All(failed, e => Assert.Contains("surface reader exploded", e.Reason, StringComparison.Ordinal));
+        Assert.Empty(h.Events.OfType<CycleCompletedEvent>());
+    }
 }
