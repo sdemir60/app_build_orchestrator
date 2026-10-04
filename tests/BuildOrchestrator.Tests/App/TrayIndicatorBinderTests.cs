@@ -62,7 +62,7 @@ public sealed class TrayIndicatorBinderTests
         var vm = NewVm();
         var view = new SpyView();
         var notifier = new RecordingTrayNotifier();
-        var controller = new TrayBuildIndicatorController(view, notifier, () => true);
+        var controller = new TrayBuildIndicatorController(view, notifier, () => true, () => 1);
         controller.SetMainWindowVisible(false);
         TrayIndicatorBinder.Attach(vm, controller);
         return (vm, view, notifier, controller);
@@ -189,7 +189,7 @@ public sealed class TrayIndicatorBinderTests
     {
         var vm = NewVm();
         var view = new SpyView();
-        var controller = new TrayBuildIndicatorController(view, new RecordingTrayNotifier(), () => true);
+        var controller = new TrayBuildIndicatorController(view, new RecordingTrayNotifier(), () => true, () => 1);
         TrayIndicatorBinder.Attach(vm, controller);   // pencere GÖRÜNÜR (varsayılan)
 
         StartRun(vm);

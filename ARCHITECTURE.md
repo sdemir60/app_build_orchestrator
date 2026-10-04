@@ -184,9 +184,10 @@ arrives — the symptom is a build that hangs forever rather than one that fails
 of them an active end: it writes stdin, and it must *read* stdout and stderr for as long as the child lives. A
 pipe nobody reads fills its buffer — a few kilobytes — and then the next write from the child blocks forever,
 inside whatever the child happened to be doing. The App drains the Supervisor's stderr for exactly this
-reason and discards the bytes: the engine's diagnostics already reach disk through `decision.log`, and
-anything the user must see travels as an IPC event. The drain exists to keep the pipe moving, not to collect
-anything.
+reason and discards the bytes: a run's diagnostics already reach disk through `decision.log`; the engine's
+start-up and warning lines — among them the run-log retention summary (§8.5) and the memory line (§11.4) — go
+to stderr alone and serve only whoever reads it directly; anything the user must see travels as an IPC event.
+The drain exists to keep the pipe moving, not to collect anything.
 
 This is not theoretical. The engine writes a diagnostic line per stale-obj project at the start of planning; a
 177-project workspace produces tens of kilobytes. With nothing reading stderr, planning froze partway through
@@ -409,7 +410,8 @@ external cards. No configuration rides with it, because not one of its steps loo
 `cleanWorkspace` removes build output, this one puts back what is missing and removes only what breaks a
 build: it restores the projects whose NuGet packages are missing from disk and every SDK-style project (§9.3),
 names the references a restore cannot fix, deletes the stale NuGet residue from the `obj` of old-style projects (§9.4), and prunes
-the three ledgers of entries whose file is gone, sweeping the temp files their atomic writes left behind
+the three ledgers of entries whose file is gone and the evaluation cache of entries from a schema other than the
+current one, sweeping the temp files their atomic writes left behind
 (§16). Everything else is left alone — the global NuGet caches, `NuGet.config`, `bin` and the shared `OutDir`,
 the run logs, the UI state, and git, since Optimize runs no version-control command at all.
 Its permission to write in the workspace is bounded by the resolved project set: a folder no card resolves to
@@ -470,7 +472,8 @@ back (§13.2). `optimizeCompleted` closes the window with one counter per
 step: projects scanned, projects restored, restores that failed, references restore could not resolve, projects
 whose `obj` was cleaned, the three ledger prunes kept apart, temp files swept, files that were in use and bytes
 reclaimed. Nothing the App can derive is put on the wire, and the three prune counts stay apart because the
-source-hash ledger is keyed by source file rather than by project and fills up far faster. The console's closing
+source-hash ledger is keyed by source file rather than by project and fills up far faster; entries from a schema
+other than the current one are counted with the evaluation cache's. The console's closing
 line and the App's one-line stream summary are worded from **one list of terms** that names only what happened —
 restores that succeeded and that failed, unresolved references, cleaned `obj` folders, pruned entries, swept
 temp files, bytes reclaimed — so a count is never worded two ways and a zero is never spelled out; with nothing
@@ -638,7 +641,10 @@ Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
 the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
-from a record that predates it — the project is simply evaluated again the first time it is met.
+from a record that predates it — the project is simply evaluated again the first time it is met. The cache is
+written back only when an entry changed — a project evaluated, or a fingerprint refreshed after a touch — so a run
+made of hits writes nothing (§16). Optimize removes the entries of any other schema outright, whatever root they
+belong to (§16).
 
 `file → project` mapping comes from the evaluated `Compile` items, never from a path prefix. A file that sits
 inside a project's directory but is not compiled by it does not make it dirty.
@@ -778,7 +784,8 @@ answers: the repository read the blob table while external roots already read th
 apart. Reading content closes all three, works offline, and needs no version control at all.
 
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
-size and modification time, so a steady-state run only stats the input set. Measured end to end on the real
+size and modification time, so a steady-state run only stats the input set and writes nothing back — the file is
+rewritten only when an entry changed (§16). Measured end to end on the real
 OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
@@ -914,8 +921,9 @@ empty when the path is known but no candidate matched, and it survives a failed 
 built commit and the last branch feed no decision: the built commit is diagnostic, and the project log's "last
 successful build" line is the only place a revision is shown. It is written by a single serialized writer,
 atomically (unique temp file + `File.Move(overwrite)`), after every project completes. Readers open with
-`FileShare.Delete` so they cannot block the writer's rename, and a transient sharing violation is retried a
-bounded number of times. A corrupt file never throws — it falls back to defaults.
+`FileShare.Delete`, and because Windows refuses a rename over a file with an open handle even when the handle
+shares delete, a transient sharing violation is retried a bounded number of times. A corrupt file never throws —
+it falls back to defaults.
 
 ### 7.6 Output evidence
 
@@ -1335,6 +1343,21 @@ by exactly one worker (the scheduler guarantees it); `decision.log` is written f
 inside a single MSBuild output line is normalized to a space so that one appended line is always one physical
 line, and a strange line stitch in MSBuild output cannot desynchronize the chunk reader.
 
+Run logs are kept for three days, and the newest run's folder always stays however old it is, so the last run
+can always be read. The engine prunes them once, in the background, as soon as it has built its host: the sweep
+neither delays `engineReady` nor the first command, and the run that is starting is safe by construction — its
+folder carries the newest stamp not in the future, far inside the window. A folder is removed only when its name is
+exactly a run-folder name, its stamp (the local wall-clock time the run started) is older than the window and it
+is not the newest run folder — the newest of the runs that have started, so a folder stamped in the future (a
+clock set back, a name made by hand) neither goes nor shields an older run. Nothing else is ever touched: only
+folders directly under the logs root, never another folder, a file that happens to carry a run-folder name, or a
+link, and never anything outside the logs root; a link found inside a folder that goes is removed as the link it
+is, never followed, and so is a folder swapped for a link after the sweep chose it: only the link goes and its
+target is not entered. One sweep removes a bounded number of folders, oldest first, so a long backlog is worked off
+over several starts rather than stalling one; an I/O error (a log still open in an editor, say) leaves that
+folder for the next start. A sweep that removed, or failed to remove, something writes one summary line to
+stderr — stdout stays NDJSON only.
+
 ### 8.6 Planning pipeline
 
 Planning is entirely Core's work; the Supervisor's composition root only wires it. For every run the sequence is:
@@ -1706,9 +1729,11 @@ Without it the Supervisor still starts and the failure surfaces as a resolve err
   restore call (§9.3), which compiles nothing. A global property replaces MSBuild's own import of the default
   `Custom.Before.Microsoft.Common.targets`, so the file imports that default itself and the chain stays whole; a
   project's own `CustomBeforeMicrosoftCommonTargets` is the one thing it displaces (§20). If the files cannot be
-  written, the engine says so once on stderr and builds without the argument. The file has been checked against
-  the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the Visual Studio 2022 toolset
-  (legacy-style projects).
+  written or pinned, the engine says so once on stderr and builds without the argument. Both files carry a fixed,
+  old modification time however they were written, so rewriting them with new content never makes MSBuild see a
+  newer import and rebuild every project once; the pin has to go if the file ever starts to change the output.
+  The file has been checked against the Visual Studio 18.9 toolset (SDK-style and legacy-style projects) and the
+  Visual Studio 2022 toolset (legacy-style projects).
 - No verbosity switch is passed. MSBuild's default prints the compiler's command line, and a cycle round reads
   its `/reference:` list to learn which sibling file a member really compiled against (§8.8). Losing that line
   costs precision only: the round then judges the member on every copy.
@@ -2041,8 +2066,9 @@ M not built · logs: <folder>` — followed by the switch line; if the branch di
 the event stream and a silent Sync runs. A run the user already stopped — the engine has acknowledged the Stop and
 only the run's end is still to come — is not interrupted: no interrupt is sent, no stream line or summary is
 written, and the trigger waits for the run's end like any other. As a safety net the end of every run is itself
-a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. The run logs on disk are
-never deleted; clearing is for the screen only.
+a trigger, so a HEAD movement the watcher missed is still caught when the run finishes. Clearing is for the
+screen only: it never touches the run logs on disk, which leave on their own — the engine removes them at its
+first start more than three days after their run, the newest run's folder excepted (§8.5).
 
 **While git is mid-operation, the tool waits.** The git directory's markers say what is in progress:
 `MERGE_HEAD` (a merge waiting for conflict resolution), `rebase-merge\` or `rebase-apply\` (a rebase),
@@ -2249,6 +2275,14 @@ cannot drift apart.
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
 
+### 11.4 Memory line
+
+When a sync finishes and when a run ends, whatever its outcome, the engine writes one line to its stderr:
+`memory: private=<MB> committed=<MB> heap=<MB>` — the process's private bytes, the managed heap's committed bytes
+as of the last collection, and the managed heap's current size. The line only reports: nothing is collected or
+released because of it, and stdout stays NDJSON. The App discards the engine's stderr (§4.3), so the line serves
+whoever reads that stream directly, such as a measurement harness.
+
 ---
 
 ## 12. Application shell
@@ -2406,6 +2440,16 @@ ribbon. A line that carries no separator — today only the one an unexpected en
 failures that name a reason keep their heads — falls back to the product name over the whole line. Clicking the
 notification restores the window through the *same* path as the tray icon and the overlay. A run that ends while
 the window is *visible* produces no balloon at all — the ribbon is already on screen.
+
+A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
+resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
+failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit (and
+shown the result balloon, when *Show notifications* is on). The indicator takes the run's identity when its exit starts
+and hands it over with the exit notice, so a run that begins during the pause before the balloon does not inherit the
+previous run's exit: its own collection waits for its own exit. A collection requested while a run is in flight is
+dropped, and that run's own collection covers it. The collection is blocking and compacting, so it runs only while the
+window is hidden, after the exit (and the balloon) and once the application is idle; it happens once per run and never
+while the window is visible.
 
 **Every balloon answers to one switch.** *Show notifications* (Settings → General, on by default) gates all
 four the application can show: the first-close explanation, the run result, the second instance's warning and
@@ -3991,8 +4035,7 @@ lines.
 - **A new section empties the narrative in place.** Not every operation opens one: a run, the Sync button,
   the click of Clean or Optimize and a branch change do (§10.2); a pull, the Sync a maintenance job chains and
   every automatic Sync append to what is already there, and a refused or failed checkout only adds its line.
-  The disk logs are never
-  touched — clearing is for the screen. The view-model clears its buffer and says so
+  Clearing never touches the disk logs — it is for the screen. The view-model clears its buffer and says so
   (`ConsoleCleared`); the shell resets the document at once, without a tilt — the tilt belongs to the mode
   switch, this is the same panel starting over — and leaves a project log that is on screen alone, since
   `Back` seeds the fresh narrative anyway. Batches of the previous operation still in the pump are dropped
@@ -4010,6 +4053,14 @@ lines.
   A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
   when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
   line: the console jumps to the present state of the run (§12.3).
+- **A finished run lets go of its live lines.** While a run streams, the view model also keeps its lines in a side buffer
+  per project: a project log opened mid-run is the disk snapshot plus whatever the disk did not hold yet when the
+  snapshot was taken, and that remainder is read from the side buffer. When the run ends — completed, stopped, failed or
+  with the engine lost — the disk holds everything and the buffer is released, unless a log request is still waiting for
+  its reply; then the release follows the reply, whether it brings the log or says there is none, so the page being built
+  still gets its last lines. A project's own text buffer is dropped when the console leaves its page, for another project
+  or for the narrative, and opening the project again reads the disk log afresh (§5.5). Opening a new section still
+  clears everything at once, as above.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -5194,12 +5245,12 @@ Everything the application persists lives under `%LOCALAPPDATA%\BuildOrchestrato
 
 | Path | Content | Corruption behaviour |
 |---|---|---|
-| `logs\run-<timestamp>\` | per-run and per-project logs | — |
+| `logs\run-<timestamp>\` | per-run and per-project logs; a run's folder is removed at the first engine start more than three days after the run, except the newest run's, which always stays (§8.5) | — |
 | `build-state.json` | per-project signature, commit, result, duration, dependency-issue note with its root project ids, non-convergent cycle signature, the fed outputs learned from the last success (§7.6); projects from external roots share the file under the same key shape, without a commit or branch (§7.5). A record written before a field existed loads with that field empty | falls back to empty |
-| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry from an older schema is re-evaluated rather than served (§6.2) | falls back to empty |
+| `evaluation-cache.json` | csproj evaluation cache; each entry records the schema it was written under, and an entry written under another schema is re-evaluated rather than served (§6.2); Optimize removes such entries outright, whatever root they belong to | falls back to empty |
 | `source-hash-cache.json` | source content hashes keyed by path, size and modification time (§7.1) — this is what turns the content decision into one stat pass per run | falls back to empty (the next run re-reads and rebuilds it) |
 | `run-inflight.json` | the ids of the projects the engine has dispatched and not yet reported — written at dispatch, erased at the result, emptied at the end of every run; left non-empty only by an engine that died mid-run, and read once at the next engine start (§8.7). Absent while no run is in flight | an unparsable file is deleted and nothing is recovered; an unreadable one stays for the next start |
-| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written, builds run without the argument |
+| `msbuild\wpf-temporary-assembly.targets`, `msbuild\wpf-temporary-assembly-friend.cs` | the two files behind `-p:CustomBeforeMicrosoftCommonTargets` (§9.2). An engine writes them the first time it resolves `MSBuild.exe` — on its first run or its first Optimize — and only when the content on disk differs from its own; both files carry a fixed, old modification time however they were written (§9.2); the path carries no version, and a missing or edited file is repaired the next time a new engine resolves MSBuild | rewritten from the engine's own copy the next time a new engine resolves MSBuild; if they cannot be written or pinned, builds run without the argument |
 | `ui-state.json` | layout mode + three splits, repository root, configuration, perf mode, layer patterns, external roots (path) and whether to update them (§10.4), whether to stash before a branch switch (§10.3), hotkey, *Start with Windows* (`Autostart`) and *Start minimized to tray*, whether closing the window hides to the tray and whether tray notifications are shown (§12.3), tray-balloon-shown, last-seen release-notes version. The branch is not stored: it is whatever is checked out. Fields older versions wrote and this one no longer reads are ignored | falls back to defaults; a field whose *type* changed between versions is tolerated rather than taking the whole file down |
 
 *Start with Windows* additionally writes one `HKCU\...\Run` value, and turning it on removes Task Manager's
@@ -5227,15 +5278,32 @@ touched, so no project's build decision moves. Both operations scope by root thr
 normaliser: a root is resolved and compared with a trailing separator, so `C:\repo` cannot claim
 `C:\repo2\...`, and each root gets its own pass, because an external root is not under the main root's prefix.
 
+The evaluation cache has a second kind of dead entry, and it is the one no root can see: an entry written under
+a schema other than the current one is never a hit (§6.2), so it takes room in the file — and what a retired
+worktree or another workspace left behind would stay for good, because a pass scoped to a root reaches only the
+paths under its roots. Optimize therefore removes every entry whose schema is not the current one, wherever its
+path points, and counts those with the evaluation-cache prunes. Nothing is lost: a project met again is evaluated
+once and written under the current schema, so no build decision moves. The one exception is a project file that
+vanishes during a scan: the cache's fallback for a missing file returns whatever entry it holds for that path
+without looking at the schema, and a removed entry can no longer be returned.
+
 Optimize also sweeps the ledgers' **orphaned temp files**. An atomic write killed between its temp write and
 its rename leaves a `<ledger>.<guid>.tmp` behind; each ledger sweeps only the pattern of its own name, and only
 files old enough that no write still in flight could own them.
 
-When an operation finds nothing to change in a ledger, that file is not rewritten at all — no write, no rename
-race.
+The two caches, `evaluation-cache.json` and `source-hash-cache.json`, each keep a dirty flag. Only a change to an
+entry raises it — a project evaluated, a fingerprint refreshed after a touch, a hash recomputed, a dead entry
+pruned — and only a successful write lowers it, so a write that fails leaves the ledger dirty and the next flush
+tries again. The source-hash cache also keeps the flag raised while its last flush left out an entry inside the
+racy window (§21.3); a later flush of the same instance writes that entry once the window has passed, and a
+command that never flushes again simply hashes that file afresh. Both caches are read and written as streams, so
+the file is never turned into one string in memory. An operation that finds nothing to change in a ledger —
+Optimize pruning nothing, or a Sync or a run that only hit the two caches — does not rewrite that file at all: no
+write, no rename race.
 
-`build-state.json` and `run-inflight.json` share one atomic write path (`AtomicFile`): a unique
-temp file, then a rename over the target with a bounded retry for a transient sharing violation.
+All four files share one atomic path (`AtomicFile`): a unique temp file, then a rename over the target with a
+bounded retry for a transient sharing violation. The two small state files go through its text forms, the two
+ledgers through its stream forms.
 
 The Supervisor accepts `--logs` to relocate the log root; the cache and state files, `run-inflight.json`
 included, live next to it, in its parent folder. The App never passes it; it exists so the test suite never
@@ -5322,6 +5390,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | No worktree surface (`NoWorktreeSurfaceTests`) | no `worktree` git verb and no `BaseIntermediateOutputPath` in the source, no branch or worktree field on `startRun`, and no worktree type or discriminator in the contract |
 | No product name in code (`NoProductNameInCodeTests`) | no identifier under `src` — type, member, enum value, parameter or local — carries the name of the product the tool was first built for; comments and string literals are exempt, and the code inside an interpolation hole is still scanned |
 | Isolated test engines (`SupervisorIsolationGuardTests`) | every test that starts a real Supervisor gives it an isolated cache (`--logs`, or the shared sandbox), so no test reads or recovers the user's own `run-inflight.json` (§16); the engine a test starts comes only from the sandbox — a host built directly on the real executable takes no extra arguments, is never returned by a helper or kept in a non-private field or property, and is never started through a private one |
+| Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's CI badge (the run of `main`), and the workflows: CI builds and tests every push to `develop` and `main`, with no path filter, on the pinned image and can be called by the release; the release runs on `v*` tags one at a time and is never cancelled, writes only from its publish job, checks that the tag is on `main`, and publishes through `package.ps1` (§18) |
 
@@ -5721,10 +5790,13 @@ meaning. The one place a command line is assembled by hand (MSBuild) escapes acc
   matching everything.
 - **NDJSON line limit** (1 MiB) is enforced on both write and read; log chunks are 64 K, far below it.
 - **Atomic state writes:** `build-state.json`, `run-inflight.json`, `evaluation-cache.json` and
-  `source-hash-cache.json` are written
-  to a unique temp name and moved into place; readers open with `FileShare.Delete` so they cannot block the
-  rename, which is retried a bounded number of times on a transient sharing violation. The temp file a killed
-  write leaves behind is collected by *Optimize* (§16).
+  `source-hash-cache.json` are written to a unique temp name and moved into place through one code path
+  (`AtomicFile`), and read with `FileShare.Delete`, so a read is not refused because another party holds the file
+  with delete access. Windows refuses a rename over a file that still has an open handle even when that handle
+  shares delete, so the rename is retried a bounded number of times until the handle closes. When the retries run
+  out, `evaluation-cache.json` and `source-hash-cache.json` stay dirty and the same instance writes again at its
+  next flush; an instance that never flushes again loses only that write, and the entries are derived afresh the
+  next time (§16). The temp file a killed write leaves behind is collected by *Optimize* (§16).
 - **Git writes are user actions, each with its own gate, in one file.** The fast-forward is `--ff-only` (so it
   can neither rewrite history nor create a merge), refuses a dirty or diverged tree, and runs only from the
   user's click on the `N behind` chip or for an external root the user left on (§10.5, §10.4). The checkout
@@ -5824,11 +5896,13 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
-| Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
+| Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`, carrying the run the exit began for) | `App/Services/TrayBuildIndicatorController.cs` |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |
 | Extended window styles for that overlay (`WS_EX_*`) | `App/Shell/Win32.cs` |
+| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
+| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | View mode + splitter persistence | `App/Shell/LayoutState.cs`, `App/Shell/UiStateStore.cs`, `App/Controls/DsSplitter.cs` |
 | Keyboard semantics (key → intent, Esc chain) | `App/Shell/KeyboardShortcuts.cs` |
 | …Esc's run layer on the view model (the chain's input state, the can't-be-stopped line) | `App/ViewModels/RunViewModel.Esc.cs` |
@@ -5866,7 +5940,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 |---|---|
 | Workspace scan, ignore list | `Core/Discovery/WorkspaceScanner.cs` |
 | Raw csproj XML evaluation; the output path (`OutputFileFor`) and resolved `HintPath` targets | `Core/Discovery/CsprojEvaluator.cs` |
-| Evaluation cache (mtime + length fingerprint, schema) | `Core/Discovery/EvaluationCache.cs` |
+| Evaluation cache (mtime + length fingerprint, schema; written only when dirty, as a stream) | `Core/Discovery/EvaluationCache.cs` |
 | `.sln` parsing, project↔solution map | `Core/Discovery/SolutionMapper.cs` |
 | Stale-`obj` diagnosis (warn-only, two consumers: the run-start warner and Optimize's removal step), TFM derivation | `Core/Discovery/StaleObjDetector.cs`, `TargetFrameworkMonikerDeriver.cs`, `Supervisor/StaleObjRunStartWarner.cs` |
 | DLL name → producing project | `Core/Graph/ProducerMap.cs` |
@@ -5883,7 +5957,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Signature computation | `Core/Incremental/BuildSignature.cs` |
 | Propagation, Safe/Fast, SCC composite hash, content fingerprint | `Core/Incremental/IncrementalPlanner.cs` |
 | The input set of a project (declared items, folder sweep, `Directory.Build.*`) | `Core/Incremental/ProjectInputs.cs` |
-| Content-hash cache keyed by size and mtime, parallel first fill | `Core/Incremental/SourceHashCache.cs` |
+| Content-hash cache keyed by size and mtime, parallel first fill, written only when dirty as a stream | `Core/Incremental/SourceHashCache.cs` |
 | Input collection (files and swept folders), path terms, the two binding passes, output checks per node (`ChecksFor`, `OutputsById`), a cycle member's time check leaving out its siblings' outputs (`ExcludingSameCycleSiblings`) | `Core/Incremental/IncrementalRunBinder.cs` |
 | Output evidence: evidence paths and fed candidates, ledger/time mode, time verdict, cycle groups, learning fed outputs, `modified` ↔ `affected` and `outputBuiltAt` helpers | `Core/Incremental/OutputEvidence.cs` |
 | API surface hash of a managed output (declarations only — no IL/MVID/generated names; version counts only under a strong name) | `Core/Incremental/ApiSurfaceHash.cs` |
@@ -5893,7 +5967,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
 | Build state store, duration persistence, non-convergence lookup, invalidation without evidence | `Core/State/BuildStateStore.cs`, `BuildDurationPersister.cs` |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
-| The one atomic write path shared by the build state and the in-flight ledger | `Core/State/AtomicFile.cs` |
+| The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text, stream and JSON forms) | `Core/State/AtomicFile.cs` |
 
 **Scheduling and run execution**
 
@@ -5915,6 +5989,8 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
+| Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
+| The engine's memory line: the line format, the process read and the sink that swallows its own errors; written to stderr after a sync (whatever its outcome) and after a run | `Core/Diagnostics/MemoryLine.cs`, `Supervisor/SupervisorHost.cs` (`SyncWorkspaceAsync`), `Supervisor/RunCoordinator.cs` (`ReportMemory`), the stderr channel in `Supervisor/Program.cs` |
 | Log chunking for the UI | `Core/Logs/LogChunker.cs` |
 
 **Build execution**
@@ -5925,7 +6001,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The `vswhere` search itself | `Core/MsBuild/VsWhereLocator.cs` |
 | Duplicate `AssemblyName` detection and the warning it produces | `Core/Graph/ProducerMap.cs`, `Core/Planning/PlanProgressLines.cs` |
 | Argument contract (build and restore), MSBuild target selection | `Core/MsBuild/MsBuildArguments.cs` |
-| The WPF temporary-assembly targets — their content, the friend source file and the write into the state folder | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
+| The WPF temporary-assembly targets — their content, the friend source file, the write into the state folder and the fixed modification time of both files | `Core/MsBuild/WpfTemporaryAssemblyTargets.cs` |
 | Invocation, output pumping, per-project kill; the restore-only entry point Optimize uses | `Core/MsBuild/MsBuildInvoker.cs` (`InvokeAsync`, `RestoreAsync`) |
 | Copy-contention detection and retry decorator | `Core/MsBuild/CopyContention.cs`, `RetryingMsBuildInvoker.cs` |
 | Reference list read from the compiler's command line in MSBuild's output | `Core/MsBuild/CompilerReferences.cs` |
@@ -5958,9 +6034,11 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Command execution wrapper and result shape | `Core/Processes/CommandLineTool.cs`, `Core/Git/GitMessages.cs` |
 | Sync flow (fetch or last known remote → analysis → events), the per-source `syncDiscovery` emit | `Core/Workspace/SyncWorkspaceService.cs` |
 | Clean flow (merged scan incl. external roots → per-root state reset → `bin`/`obj` deletion → summary), the delete permission gate | `Core/Workspace/CleanWorkspaceService.cs` |
+| Link-safe recursive deletion: a link is removed as the link it is and never entered, the root's own link check, and each caller keeps its own error policy (Clean best-effort, the run-log sweep strict) | `Core/Paths/LinkSafeTree.cs` |
 | Optimize flow (merged scan → per-project restore → unresolved-reference report → old-style stale-`obj` removal → ledger prune → temp sweep → summary), the restore heartbeat, the collected restore output and its error extraction, the summary terms shared with the stream line | `Core/Workspace/OptimizeWorkspaceService.cs` |
 | Workspace-scoped build-state removal (every key under the root) | `Core/State/BuildStateStore.cs` (`RemoveUnderRoot`) |
 | Dead-entry pruning (only keys whose file is gone), in all three ledgers | `Core/State/BuildStateStore.cs`, `Core/Discovery/EvaluationCache.cs`, `Core/Incremental/SourceHashCache.cs` (`PruneMissingUnderRoot`) |
+| Stale-schema pruning of the evaluation cache (every entry not under the current schema, whatever its root) | `Core/Discovery/EvaluationCache.cs` (`PruneStaleSchema`) |
 | Root normalization and the `C:\repo` / `C:\repo2` prefix trap — one gate for both the reset and the prune | `Core/Paths/RootScope.cs` |
 | Orphaned atomic-write `.tmp` sweep (per-target pattern, age threshold) | `Core/Paths/TempFileSweeper.cs`, the three ledgers' `SweepOrphanTempFiles` |
 | Human-readable byte sizes (console summaries and the stream) | `Core/Formatting/ByteFormat.cs` |

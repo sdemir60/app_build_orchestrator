@@ -39,6 +39,11 @@ public sealed class InFlightLedger
     /// </summary>
     internal Action<int>? RenameRetryDelay { get; set; }
 
+    /// <summary>Gerçekten koşacak gecikme: dikiş kuruluysa o, değilse ÜRETİM varsayılanı
+    /// (<see cref="BuildStateStore.EffectiveRenameRetryDelay"/> ile aynı desen). Ayrı üye olmasının sebebi testtir —
+    /// varsayılanı no-op'a çeviren bir mutasyon aksi halde süiti yeşil bırakırdı (<c>LedgerRetryDefaultTests</c>).</summary>
+    internal Action<int> EffectiveRenameRetryDelay => RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay;
+
     /// <summary>Proje dispatch edildi — dosyaya yazılır. Zaten listedeyse (SCC'nin sonraki turu) dosyaya dokunulmaz.
     /// I/O hatası çağırana yayılır; koşuyu durdurup durdurmamak çağıranın kararıdır.</summary>
     public void Add(string projectId)
@@ -145,7 +150,7 @@ public sealed class InFlightLedger
         var all = _ids.Union(_unrecovered, StringComparer.OrdinalIgnoreCase).ToList();
         if (all.Count == 0) { File.Delete(_path); return; }
         AtomicFile.WriteAllText(_path, JsonSerializer.Serialize(all),
-            RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay);
+            EffectiveRenameRetryDelay);
     }
 
     /// <summary>Dosyayı ayrıştırır. <c>false</c> ⇒ içerik bozuk (güvenilmez). Okuma hatası (kilit, izin) BOZUKLUK

@@ -12,6 +12,13 @@ namespace BuildOrchestrator.Tests.App;
 /// </summary>
 internal static class DispatcherPump
 {
+    /// <summary>[perf Faz C · C4] Dispatcher kuyruğunu <see cref="System.Windows.Threading.DispatcherPriority.ApplicationIdle"/>
+    /// önceliğine kadar boşaltır: o öncelikte ya da üstünde bekleyen her iş (ör. boşta ertelenen koşu-sonu bellek toplaması) bu
+    /// çağrı dönmeden koşar. Zamanlayıcısız ve deterministiktir: aynı öncelikteki işler sırayla koşar, bu çağrının işi en sondadır.</summary>
+    public static void DrainToIdle() =>
+        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+            static () => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+
     public static void PumpUntil(Func<bool> condition, TimeSpan timeout)
     {
         if (condition()) return;

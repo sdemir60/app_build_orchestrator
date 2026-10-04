@@ -2,6 +2,7 @@ using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.Discovery;
 using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Formatting;
+using BuildOrchestrator.Core.Paths;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Scheduling;
 using BuildOrchestrator.Core.State;
@@ -181,23 +182,14 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
         return null;
     }
 
-    /// <summary>Bir ağacı dosya-dosya siler. Reparse point (junction/symlink) İZLENMEZ: yalnız bağlantının
-    /// kendisi kaldırılır, hedefin içeriğine DOKUNULMAZ — aksi halde bin'e konmuş bir bağlantı silmeyi
-    /// workspace'in tamamen dışına taşırdı.</summary>
-    private void DeleteTree(string dir, Tally tally)
-    {
-        var info = new DirectoryInfo(dir);
-        if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
-        {
-            TryDeleteDirectoryEntry(dir);
-            return;
-        }
-
-        foreach (string file in SafeEnumerate(() => Directory.EnumerateFiles(dir))) DeleteFile(file, tally);
-        foreach (string sub in SafeEnumerate(() => Directory.EnumerateDirectories(dir))) DeleteTree(sub, tally);
-
-        TryDeleteDirectoryEntry(dir); // bottom-up, best-effort: kilitli dosya kalmışsa klasör de kalır
-    }
+    /// <summary>Bir ağacı dosya-dosya siler — BEST-EFFORT politikasıyla. Reparse point (junction/symlink) İZLENMEZ: yalnız
+    /// bağlantının kendisi kaldırılır, hedefin içeriğine DOKUNULMAZ — aksi halde bin'e konmuş bir bağlantı silmeyi
+    /// workspace'in tamamen dışına taşırdı (<c>bin</c>'in kendisi bir bağlantıysa da aynı). Gezinme
+    /// <see cref="LinkSafeTree"/>'dedir (koşu logu saklamasıyla ORTAK); burada yalnız Clean'in politikası durur: dosya başı
+    /// salt-okur temizliği + retry + sayaç (<see cref="DeleteFile"/>), kilitli dosya kalmışsa klasör de kalır
+    /// (<see cref="TryDeleteDirectoryEntry"/>), numaralandırma hatası akışı durdurmaz.</summary>
+    private void DeleteTree(string dir, Tally tally) =>
+        LinkSafeTree.Delete(dir, file => DeleteFile(file, tally), TryDeleteDirectoryEntry, tolerateListingErrors: true);
 
     private void DeleteFile(string path, Tally tally)
     {
@@ -226,13 +218,6 @@ public sealed class CleanWorkspaceService(WorkspaceScanner scanner, BuildStateSt
     {
         try { Directory.Delete(dir, recursive: false); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* içinde kilitli dosya kaldı */ }
-    }
-
-    /// <summary>Numaralandırma sırasında klasör başkası tarafından kaldırılırsa akış durmaz.</summary>
-    private static IEnumerable<string> SafeEnumerate(Func<IEnumerable<string>> enumerate)
-    {
-        try { return enumerate().ToList(); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
     }
 
     /// <summary>Uyarı satırının yol metni: dizini İÇEREN köke göre görelidir (harici bir projeyi ana köke göre

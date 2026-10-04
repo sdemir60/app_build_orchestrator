@@ -313,7 +313,8 @@ public class EvaluationCacheTests
             var cache = SeededCache(root, cachePath);
 
             // Başka bir process'in cache dosyasını tuttuğu an: rename (File.Move overwrite) sharing-violation alır.
-            using (new FileStream(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            cache.RenameRetryDelay = _ => { };   // kilit hiç kalkmaz: retry bütçesi gerçek bekleme olmadan tükensin [D8]
+            using (LedgerFileProbe.HoldLocked(cachePath))
                 cache.Flush(); // FIRLATMAMALI — kaybolan tek şey bir cache girdisidir, Sync değil
 
             // Öksüz .tmp bırakmaz (aksi halde her başarısız flush diskte çöp biriktirirdi)
@@ -335,12 +336,29 @@ public class EvaluationCacheTests
             var a = SeededCache(root, cachePath);
             var b = SeededCache(root, cachePath);
 
+            // csproj'lar bariyerden ÖNCE kurulur: sıcak döngüde yalnız GetOrEvaluate + Flush kalır, iki örnek rename'de
+            // eskisi kadar sık çakışır (döngü içinde dosya yazmak çakışmayı seyreltirdi).
+            var projects = Enumerable.Range(0, 200).Select(i =>
+            {
+                string proj = Path.Combine(root, $"P{i}.csproj");
+                File.WriteAllText(proj, "<Project/>");
+                return proj;
+            }).ToList();
+
             // Sleep YOK [D8]: iki task aynı bariyerden çıkıp 200 kez yarışır — sabit .tmp adında çakışma kaçınılmaz.
             using var barrier = new Barrier(2);
             Task Hammer(EvaluationCache cache) => Task.Run(() =>
             {
                 barrier.SignalAndWait();
-                for (int i = 0; i < 200; i++) cache.Flush();
+                // [C1] Eski iddia: her Flush yazar, 200 çağrı 200 yazımı yarıştırır. Yeni kural: yalnız KİRLİ Flush yazar —
+                // bu yüzden her turda henüz görülmemiş bir proje değerlendirilip defter kirletilir; yazım yolu (temp +
+                // rename) yine her turda iki örnek arasında yarışır. Yazım sayısı eskisiyle AYNI (200); tur başına tek
+                // fark bir GetOrEvaluate (mtime+size, hash) — yük o kadar fazla, yazım yoğunluğu korunur.
+                foreach (string proj in projects)
+                {
+                    cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "A", [], [], [], false));
+                    cache.Flush();
+                }
             });
 
             await Task.WhenAll(Hammer(a), Hammer(b)); // tek bir istisna bile testi düşürür
@@ -379,6 +397,244 @@ public class EvaluationCacheTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // ---------------------------------------------------------------- [PERF Faz C/C1] kirli bayrağı: defter yalnız değiştiyse yazılır
+
+    // Warm bir Sync ya da koşu defterdeki hiçbir girdiyi değiştirmez; Flush eskiden yine de koşulsuz yazıyordu
+    // (gerçek OSYS'te birkaç MB'lık JSON, her pencereye dönüşte). "Yazıldı mı"yı LedgerFileProbe ölçer: defterin
+    // mtime'ı eski bir damgaya çekilir, yeniden yazım (temp + File.Move) damgayı bugüne getirir — saat ve uyku yok.
+
+    /// <summary>[C1] Kirli bayrağı testlerinin ortak iskeleti: geçici kök + defter yolu; iş bitince kök silinir.</summary>
+    private static void WithLedger(Action<string, string> test)
+    {
+        string root = Directory.CreateTempSubdirectory("evcache-").FullName;
+        try { test(root, Path.Combine(root, "cache.json")); }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void DirtyFlag_flush_after_load_without_any_change_leaves_the_ledger_untouched()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();          // defter bir girdiyle diske yazıldı
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            new EvaluationCache(cachePath).Flush();        // yükle → hiçbir girdi değişmedi → yazma YOK
+
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_cache_hit_does_not_dirty_the_ledger()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            var cache = new EvaluationCache(cachePath);
+
+            // Warm yol: mtime+size eşit → hızlı yol; evaluate ÇAĞRILMAZ ve defter kirlenmez.
+            var hit = cache.GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                _ => throw new InvalidOperationException("a hit must not evaluate"));
+            cache.Flush();
+
+            Assert.NotNull(hit);
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_changed_project_is_written_by_the_next_flush_and_only_by_it()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            string proj = Path.Combine(root, "A.csproj");
+            var cache = new EvaluationCache(cachePath);
+
+            File.WriteAllText(proj, "<Project><!-- changed --></Project>");   // boyut + içerik değişti → yeniden değerlendirilir
+            cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "Changed", [], [], [], false));
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.True(ledger.WasRewritten);                                 // kirli → yazar
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.False(ledger.WasRewritten);                                // temiz → ikinci Flush yazmaz
+
+            var reloaded = new EvaluationCache(cachePath).GetOrEvaluate(proj,
+                _ => throw new InvalidOperationException("the written entry must be served from disk"));
+            Assert.Equal("Changed", reloaded!.AssemblyName);                  // yazılan şey değişen girdidir
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_touched_file_refreshes_its_entry_and_that_refresh_is_written_once()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            string proj = Path.Combine(root, "A.csproj");
+            File.SetLastWriteTimeUtc(proj, DateTime.UtcNow.AddDays(1));       // yalnız mtime; içerik (hash) aynı
+            var cache = new EvaluationCache(cachePath);
+
+            var served = cache.GetOrEvaluate(proj, _ => throw new InvalidOperationException("a touch must not evaluate"));
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.NotNull(served);
+            Assert.True(ledger.WasRewritten);       // girdinin mtime'ı yenilendi; kalıcı olmazsa her yüklemede hash yeniden hesaplanır
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_pruning_a_dead_entry_writes_the_ledger_and_pruning_nothing_does_not()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            var cache = SeededCache(root, cachePath);                         // A.csproj
+            string ghost = Path.Combine(root, "Ghost.csproj");
+            File.WriteAllText(ghost, "<Project/>");
+            cache.GetOrEvaluate(ghost, p => new EvaluatedProject(p, "Ghost", [], [], [], false));
+            cache.Flush();
+            File.Delete(ghost);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(1, cache.PruneMissingUnderRoot(root));
+            Assert.True(ledger.WasRewritten);                                 // budama defteri yazar
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            Assert.Equal(0, cache.PruneMissingUnderRoot(root));
+            Assert.False(ledger.WasRewritten);                                // budanacak bir şey yoksa dokunulmaz
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_failed_write_leaves_the_ledger_dirty_so_the_next_flush_retries()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            File.WriteAllText(cachePath, "{}");
+            var cache = SeededCache(root, cachePath);                         // bir girdi → kirli
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            cache.RenameRetryDelay = _ => { };   // kilit hiç kalkmaz: retry bütçesi gerçek bekleme olmadan tükensin [D8]
+            using (LedgerFileProbe.HoldLocked(cachePath))
+                cache.Flush();                                                // hedef kilitli → yazım düşer (yutulur)
+            Assert.False(ledger.WasRewritten);
+
+            cache.Flush();                                                    // kilit kalktı → bayrak kirli kaldıysa yazar
+            Assert.True(ledger.WasRewritten);
+        });
+    }
+
+    // [C1 düzeltme 1 · I1] Defterin okuma tutamağı Delete-share verir (durum dosyalarıyla aynı kural, AtomicFile): hedefte
+    // DELETE erişimi tutan bir taraf varken (dosyayı silen/yeniden adlandıran başka bir process) Load'un açışı reddedilmez.
+    // Windows paylaşım denetimi SİMETRİKTİR; karşı taraf önce açılır (DELETE erişimi tutar) ve Load'un onunla uyuşup
+    // uyuşmadığına bakılır — saat ve uyku yok. Varsayılan okuma kipi (FileShare.Read) bu tutamağı reddeder → defter boş okunur.
+    // (Açık bir okuyucu hedefin üstüne rename'i Delete-share'e rağmen geciktirir; onu retry absorbe eder — sonraki test.)
+    [Fact]
+    public void Load_reads_a_ledger_that_another_party_holds_with_delete_access()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+
+            using (LedgerFileProbe.HoldDeleteAccess(cachePath))
+            {
+                var hit = new EvaluationCache(cachePath).GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                    _ => throw new InvalidOperationException("the ledger must be read even while a delete-access holder is open"));
+
+                Assert.NotNull(hit);                                              // girdi diskten geldi: defter okundu
+            }
+        });
+    }
+
+    // [C1 düzeltme 1 · O1] Yazım AtomicFile'dan geçer: hedef kısa süre Delete-share'siz tutulursa rename retry ile absorbe
+    // edilir ve defter güncellemesi kaybolmaz (eskiden tek denemede düşer, yutulurdu). Tutamak, retry gecikmesi dikişinden
+    // ilk retry'da bırakılır — saat ve uyku yok.
+    [Fact]
+    public void Flush_absorbs_a_brief_sharing_violation_on_the_ledger_with_a_retry()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            File.WriteAllText(cachePath, "{}");
+            var cache = SeededCache(root, cachePath);                             // bir girdi → kirli
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            using var block = LedgerFileProbe.BlockRename(cachePath);             // Delete-share YOK → rename düşer
+            cache.RenameRetryDelay = block.ReleaseOnRetry;
+
+            cache.Flush();
+
+            Assert.Equal(1, block.Retries);                                       // ilk deneme düştü, ikincisi geçti
+            Assert.True(ledger.WasRewritten);
+            var reloaded = new EvaluationCache(cachePath).GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                _ => throw new InvalidOperationException("the retried write must have persisted the entry"));
+            Assert.NotNull(reloaded);
+        });
+    }
+
+    // [C1] Akışla yazım disk biçimini DEĞİŞTİRMEZ: tek satır kompakt JSON, BOM yok. Okuma yönünü
+    // An_entry_from_an_older_schema_is_evaluated_again kapatır (elle yazılmış eski biçim akışla okunur).
+    [Fact]
+    public void The_streamed_ledger_is_still_compact_utf8_json_without_a_byte_order_mark()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+
+            byte[] bytes = File.ReadAllBytes(cachePath);
+
+            Assert.Equal((byte)'{', bytes[0]);                                // BOM (EF BB BF) yok
+            Assert.DoesNotContain((byte)'\n', bytes);                         // WriteIndented=false: tek satır
+            using var doc = System.Text.Json.JsonDocument.Parse(bytes);
+            Assert.Equal(System.Text.Json.JsonValueKind.Object, doc.RootElement.ValueKind);
+            Assert.Single(doc.RootElement.EnumerateObject());                 // SeededCache tek proje
+        });
+    }
+
+    [Fact]
+    public void PruneStaleSchema_removes_every_entry_outside_the_current_schema_whatever_its_root_and_writes_the_ledger()
+    {
+        // [PERF Faz C/C2] Optimize: eski şemalı girdi hiç isabet vermez (GetOrEvaluate Schema == CurrentSchema ister) ve hiçbir
+        // kök onu göremez; budama KÖKTEN BAĞIMSIZdır. Budanan girdi diske yazılmazsa yalnız bellekte gider — dosyada kalır.
+        WithLedger((root, cachePath) =>
+        {
+            string current = Path.Combine(root, "wt-a", "Current.csproj");
+            string noField = Path.Combine(root, "wt-b", "NoField.csproj");   // Schema alanından önceki biçim
+            string zero = Path.Combine(root, "wt-c", "Zero.csproj");         // açıkça eski şema
+            string newer = Path.Combine(root, "wt-d", "Newer.csproj");       // daha yeni bir sürümün yazdığı: bu sürüm için isabet değil
+            EvaluationCacheFile.Write(cachePath, (current, EvaluationCache.CurrentSchema), (noField, null), (zero, 0),
+                (newer, EvaluationCache.CurrentSchema + 1));
+            var cache = new EvaluationCache(cachePath);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(3, cache.PruneStaleSchema());
+
+            Assert.True(ledger.WasRewritten);                                // budama defteri diske yazar
+            Assert.Equal(new[] { current }, EvaluationCacheFile.Keys(cachePath));
+        });
+    }
+
+    [Fact]
+    public void PruneStaleSchema_with_nothing_stale_leaves_the_ledger_untouched()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            EvaluationCacheFile.Write(cachePath, (Path.Combine(root, "A", "A.csproj"), EvaluationCache.CurrentSchema));
+            var cache = new EvaluationCache(cachePath);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(0, cache.PruneStaleSchema());
+
+            Assert.False(ledger.WasRewritten);                               // budanacak bir şey yoksa dokunulmaz
+        });
+    }
+
     // [Faz 3/Task 1] Eski (semasiz) bir kayit, mtime+length AYNI kalsa bile isabet SAYILMAMALI: Faz 3'te
     // EvaluatedProject'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayitta hep bos kalirdi.
     [Fact]
@@ -403,26 +659,9 @@ public class EvaluationCacheTests
             var info = new FileInfo(proj);
             string cachePath = Path.Combine(root, "cache.json");
 
-            // Eski format (Schema alani hic yok) elle yazilir; mtime/length GERCEK dosyayla eslesiyor.
-            string escapedPath = proj.Replace(@"\", @"\\");
-            string oldJson = $$"""
-                {
-                  "{{escapedPath}}": {
-                    "MtimeTicks": {{info.LastWriteTimeUtc.Ticks}},
-                    "Length": {{info.Length}},
-                    "Hash": "deadbeef",
-                    "Project": {
-                      "Path": "{{escapedPath}}",
-                      "AssemblyName": "Stale",
-                      "CompileFiles": [],
-                      "HintPaths": [],
-                      "ProjectReferences": [],
-                      "IsSdkStyle": false
-                    }
-                  }
-                }
-                """;
-            File.WriteAllText(cachePath, oldJson);
+            // Eski format (Schema alani hic yok): ortak yardimci yazar; mtime/length GERCEK dosyayla eslesiyor.
+            EvaluationCacheFile.WriteEntries(cachePath,
+                new EvaluationCacheFile.Entry(proj, Schema: null, MtimeTicks: info.LastWriteTimeUtc.Ticks, Length: info.Length));
 
             var cache = new EvaluationCache(cachePath);
             int calls = 0;
@@ -433,7 +672,7 @@ public class EvaluationCacheTests
 
             Assert.Equal(1, calls); // eski semali kayit isabet sayilmadi, evaluate yeniden cagrildi
             Assert.NotNull(result);
-            Assert.Equal("OSYS.A", result!.AssemblyName); // "Stale" degil, gercek deger
+            Assert.Equal("OSYS.A", result!.AssemblyName); // yardimcinin yazdigi "Fake" degil, gercek deger
             Assert.Equal("Library", result.OutputType);   // yeni alan dolu
             Assert.Single(result.OutputPaths);             // yeni alan dolu
         }

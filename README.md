@@ -424,7 +424,8 @@ a build does not restore them: run *Optimize* before building it again.
 
 *Optimize* — the gauge in the middle of the box — is the workspace doctor: it restores missing NuGet packages
 and every SDK-style project's package assets, names the broken references a restore cannot fix, clears stale NuGet leftovers out of `obj` and prunes dead
-cache entries, over the same projects a build sees, external roots included. It changes no build decision —
+cache entries, over the same projects a build sees, external roots included (cache entries written under a
+schema other than the current one go too, wherever they point). It changes no build decision —
 nothing it does makes a project stale. Its flow is the same as *Clean*'s: the project list and the graph empty at
 the click, its button turns amber with a spinner, and when it finishes a *Sync* runs on its own to put the plan
 back. The console reports each step's result; a failed restore shows MSBuild's error messages, not its whole
@@ -656,7 +657,8 @@ rehearsal), and `BO_UPDATE_PRERELEASE=1` also offers pre-releases.
 ### State on disk
 
 Everything the app persists lives under `%LOCALAPPDATA%\BuildOrchestrator\`: `logs\run-<timestamp>\` (per-run
-and per-project logs), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
+and per-project logs, removed at the first engine start more than three days after their run — the latest run's
+folder always stays), `build-state.json`, `evaluation-cache.json`, `source-hash-cache.json`, `ui-state.json`
 and, only while a build is running, `run-inflight.json` — the projects being compiled right now. If the engine
 dies mid-build (a crash, Task Manager, a closed session), the next start finds that file, marks those projects
 as not built and prints `previous run was interrupted; N projects will rebuild`, so a half-written output is

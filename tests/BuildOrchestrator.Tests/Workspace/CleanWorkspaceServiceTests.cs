@@ -361,36 +361,39 @@ public class CleanWorkspaceServiceTests : IDisposable
         File.WriteAllText(precious, "must survive");
 
         string link = Path.Combine(a, "bin", "linked");
-        Skip.IfNot(TryCreateJunction(link, target), "bu ortamda junction oluşturulamıyor (mklink /J başarısız)");
+        Skip.IfNot(TestJunction.TryCreate(link, target), "bu ortamda junction oluşturulamıyor (mklink /J başarısız)");
 
-        Run(NewService(), _root);
-
-        Assert.False(Directory.Exists(Path.Combine(a, "bin")));
-        Assert.True(File.Exists(precious), "junction hedefinin içeriğine DOKUNULMAMALI");
-    }
-
-    /// <summary>Junction (dizin bağlantısı) kurar. Symlink'in aksine yükseltilmiş hak gerektirmez ama yine de
-    /// her ortamda çalışmaz — başarısızlık testi atlatır, gizlice yeşile boyamaz.</summary>
-    private static bool TryCreateJunction(string link, string target)
-    {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(link)!);
-            var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            using var process = Process.Start(psi);
-            if (process is null) return false;
-            process.WaitForExit(10_000);
-            return process.HasExited && process.ExitCode == 0 && Directory.Exists(link);
+            Run(NewService(), _root);
+
+            Assert.False(Directory.Exists(Path.Combine(a, "bin")));
+            Assert.True(File.Exists(precious), "junction hedefinin içeriğine DOKUNULMAMALI");
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        finally { TestJunction.Remove(link); } // Dispose'taki Directory.Delete(recursive) içinde junction olan klasörde fırlatır (bkz. TestJunction.Remove)
+    }
+
+    // [Son toparlama B1 · madde 1] bin'in KENDİSİ bir junction (ör. bin başka bir sürücüye bağlanmış): Clean önce kendi
+    // kökünün bağlantı olduğuna bakar — hedefin içeriğine inmez, yalnız bağlantıyı kaldırır.
+    [SkippableFact]
+    public void Clean_removes_a_bin_that_is_itself_a_link_without_entering_its_target()
+    {
+        string a = SeedProject("A");
+        string target = Path.Combine(_cacheRoot, "link-target");
+        Directory.CreateDirectory(target);
+        string precious = Path.Combine(target, "precious.txt");
+        File.WriteAllText(precious, "must survive");
+
+        string bin = Path.Combine(a, "bin");
+        Directory.Delete(bin, recursive: true);                  // gerçek bin gider, yerine bağlantı geçer
+        Skip.IfNot(TestJunction.TryCreate(bin, target), "bu ortamda junction oluşturulamıyor (mklink /J başarısız)");
+        try
         {
-            return false;
+            Run(NewService(), _root);
+
+            Assert.False(Directory.Exists(bin), "bin bağlantısı kaldırılmalı");
+            Assert.True(File.Exists(precious), "junction hedefinin içeriğine DOKUNULMAMALI");
         }
+        finally { TestJunction.Remove(bin); } // Dispose'taki Directory.Delete(recursive) içinde junction olan klasörde fırlatır
     }
 }

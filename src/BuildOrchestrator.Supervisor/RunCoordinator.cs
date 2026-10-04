@@ -4,6 +4,7 @@ using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Diagnostics;
 using BuildOrchestrator.Core.Externals;
 using BuildOrchestrator.Core.Incremental;
 using BuildOrchestrator.Core.Logs;
@@ -268,6 +269,13 @@ public sealed class RunCoordinator(
     /// in-flight <c>MSBuild.exe</c>'ler post-build copy'lerini bitirirken) reddetmek doğru davranıştır.</para>
     /// </summary>
     public bool IsRunActive { get { lock (_gate) return _runActive; } }
+
+    /// <summary>
+    /// [PERF Faz C/C3] Motorun bellek tanı satırını konsol (stderr) kanalına yazar: Sync bitişinde host, koşu
+    /// bitişinde koordinatörün kendisi çağırır — kanalın sahibi koordinatördür, host ikinci bir stderr bağı kurmaz.
+    /// Hata fırlatmaz (<c>MemoryLine.Report</c> yutar).
+    /// </summary>
+    public void ReportMemory() => MemoryLine.Report(console);
 
     /// <summary>
     /// [I2-K1] Aktif run'ın Stop'unu sahiplenir. <c>true</c> → <c>runStopped</c>'ı (in-flight sonuçları
@@ -649,6 +657,9 @@ public sealed class RunCoordinator(
                 _copyFloorDepth = 0;
                 _capDrained = false;
             }
+            // [PERF Faz C/C3] Koşu bitti ve yuva bırakıldı: bellek tanı satırı. Yuvadan SONRA yazılır — tanı hiçbir
+            // koşulda yuvayı tutmaz; normal çıkışların hepsi (tamamlanma, Stop, planFailed, beklenmeyen hata) tek satır bırakır.
+            ReportMemory();
         }
     }
 

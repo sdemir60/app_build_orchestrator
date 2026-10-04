@@ -396,6 +396,12 @@ public partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(RunViewModel.SelectedProjectId)) UpdateFrontierSelection();
         };
+        // [perf Faz C · C4] "Koşu bitti" sinyali: tepside biten koşunun bellek toplaması iki sinyalin birleşimidir
+        // (MainWindow.HiddenSurface — CollectAfterRunWhenDue); bu, koşu tarafı.
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RunViewModel.EndedRunSerial)) CollectAfterRunWhenDue();
+        };
         Shell.ConsoleHeaderControl.BackRequested += (_, _) => OnBack();
         // Liste ↔ graf karşılıklı hover: bir yüzeydeki imleç, öbüründe standart hover olarak yansır.
         Graph.GraphHoverEcho.Wire(_vm, Shell.GraphHost);
@@ -1345,11 +1351,17 @@ public partial class MainWindow : Window
     private void SetUpTrayBuildIndicator(ITrayRunNotifier notifier)
     {
         var controller = new TrayBuildIndicatorController(
-            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()))
+            new LazyOverlayView(this), notifier, () => ShellSwitches.ShowNotifications(_uiState.Load()),
+            // [perf Faz C · son toparlama B2] Çıkışın BAŞLADIĞI andaki koşu kimliği: bildirim nefesten sonra gelir ve o ana kadar yeni
+            // bir koşu başlamış olabilir; kimlik bildirim anında okunsaydı biten koşunun çıkışı yeni koşuya yazılırdı.
+            () => _vm.RunSerial)
         {
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
+            // [perf Faz C · C4] Çıkış sırası bitince (gösterge gizlendi, balon gösterildi): tepside biten koşunun bellek
+            // toplamasının gösterge sinyali (koşu sinyali ctor'daki EndedRunSerial aboneliğidir).
+            ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;
 
