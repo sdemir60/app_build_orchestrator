@@ -67,7 +67,7 @@ public sealed class RunLogRetentionTests : IDisposable
         return (target, new[] { top, deep });
     }
 
-    // karar 1: üç gün. README (State on disk) ile ARCHITECTURE (§8.5, §16) aynı süreyi anlatır — biri değişirse üçü birlikte değişir.
+    // karar 1: üç gün. README (State on disk) ile ARCHITECTURE (§8.5, §10.2, §16, §22 kod haritası) aynı süreyi anlatır — "three days" / "three-day" geçen her yer birlikte değişir.
     [Fact]
     public void Run_logs_are_kept_for_three_days()
     {

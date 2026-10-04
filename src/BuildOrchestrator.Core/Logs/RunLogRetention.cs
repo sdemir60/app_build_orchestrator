@@ -19,7 +19,7 @@ namespace BuildOrchestrator.Core.Logs;
 /// </summary>
 public static class RunLogRetention
 {
-    /// <summary>[karar 1] Üç gün. TEK tanım: README ve ARCHITECTURE (§8.5, §16) süreyi buradan anlatır.</summary>
+    /// <summary>[karar 1] Üç gün. TEK tanım: README ve ARCHITECTURE (§8.5, §10.2, §16, §22) süreyi buradan anlatır.</summary>
     public static readonly TimeSpan KeepFor = TimeSpan.FromDays(3);
 
     /// <summary>Bir <see cref="Prune"/> çağrısının silebileceği en çok klasör: yüzlerce eski klasörün birikmiş olduğu bir

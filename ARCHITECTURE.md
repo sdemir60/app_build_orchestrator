@@ -184,9 +184,10 @@ arrives — the symptom is a build that hangs forever rather than one that fails
 of them an active end: it writes stdin, and it must *read* stdout and stderr for as long as the child lives. A
 pipe nobody reads fills its buffer — a few kilobytes — and then the next write from the child blocks forever,
 inside whatever the child happened to be doing. The App drains the Supervisor's stderr for exactly this
-reason and discards the bytes: the engine's diagnostics already reach disk through `decision.log`, and
-anything the user must see travels as an IPC event. The drain exists to keep the pipe moving, not to collect
-anything.
+reason and discards the bytes: the engine's diagnostics already reach disk through `decision.log`, with two
+exceptions that go to stderr alone — the run-log retention summary (§8.5) and the memory line (§11.4), which
+serve only whoever reads the engine's stderr directly — and anything the user must see travels as an IPC event.
+The drain exists to keep the pipe moving, not to collect anything.
 
 This is not theoretical. The engine writes a diagnostic line per stale-obj project at the start of planning; a
 177-project workspace produces tens of kilobytes. With nothing reading stderr, planning froze partway through
