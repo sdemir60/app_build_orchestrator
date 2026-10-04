@@ -2438,6 +2438,10 @@ public sealed partial class RunViewModel : ObservableObject
         _awaitingRunCompleted = false;
         ElapsedMs = e.DurationMs; // yerel Stopwatch'tan değil, engine'in kesin süresinden — clock drift yok
         IsRunning = false;
+        // [perf Faz C · C4] Canlı satır tamponu koşu bitince bırakılır (bekleyen bir log dikişi varsa dikiş bitince:
+        // OnProjectLogChunk). Phase'ten ÖNCE: Phase yazımı tepsi göstergesinin çıkış bildirimini (reduced-motion'da eşzamanlı)
+        // ve onun tetiklediği koşu-sonu bellek toplamasını başlatabilir — toplama, bırakılmış tamponu toplamalıdır.
+        ReleaseLiveLinesWhenIdle();
         Phase = e.Outcome == RunOutcome.Stopped ? AppPhase.Stopped : AppPhase.Done; // [C2] Running → Done/Stopped
         DepIssueCount = e.DepIssueCount; // [Task 17] run genelinde kümülatif özet
         RefreshRunSurface();
@@ -2807,6 +2811,14 @@ public sealed partial class RunViewModel : ObservableObject
                 : _projectLineCount.TryGetValue(ActiveProjectId, out var n) ? n : 0;
     }
 
+    /// <summary>[perf Faz C · C4 · test yüzeyi] Canlı satır tamponundaki (<c>_liveLines</c>) toplam satır sayısı. Tampon koşu
+    /// sürerken log dikişinin kuyruğu içindir (<see cref="OnProjectLogChunk"/>); koşu bitince — bekleyen bir dikiş yoksa —
+    /// bırakılır (<c>ReleaseLiveLinesWhenIdle</c>). Bırakmanın TEK gözlem noktası bu sayıdır.</summary>
+    internal int LiveLineCount
+    {
+        get { lock (_gate) return _liveLines.Values.Sum(list => list.Count); }
+    }
+
     private static int CountLines(StringBuilder sb)
     {
         int n = 0;
@@ -3030,7 +3042,51 @@ public sealed partial class RunViewModel : ObservableObject
         }
         DebugAfterStitchLockExited?.Invoke(); // yalnız testler ayarlar — bkz. alan tanımı
         _pendingLoad = null;
+        ReleaseLiveLinesWhenIdle(); // [perf Faz C · C4] dikiş bitti: koşu zaten bitmişse ertelenen bırakma şimdi yapılır
         pending.Completion.TrySetResult();
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] Canlı satır tamponunu (<c>_liveLines</c>) bırakır — yalnız koşu BİTMİŞSE ve bekleyen bir log dikişi
+    /// yoksa. Tampon koşu sürerken tek iş içindir: bir proje logu açılırken motor snapshot'ının
+    /// (<c>ThroughLineNumber</c>) ötesindeki satırlar dikişe buradan eklenir (<see cref="OnProjectLogChunk"/>). Koşu bittikten
+    /// sonra disk tamdır ve tampon ölü yüktür (OSYS büyüklüğünde bir koşuda yüz binlerce satır nesnesi).
+    ///
+    /// <para><b>Bekleyen dikiş (<see cref="_pendingLoad"/>) varsa bırakma ertelenir:</b> kuyruğu bu tamponda durur; yanıt gelmeden
+    /// bırakılsaydı dikilen belge son satırlardan yoksun kalırdı. Çağıranlar iki yerdir ve ikisi de koşulu yeniden sorar:
+    /// koşu bitişi (<see cref="OnRunCompleted"/>) ve dikişin bitişi (<see cref="OnProjectLogChunk"/>) — hangisi sonra gelirse
+    /// bırakmayı o yapar; ayrı bir "ertelendi" bayrağı tutulmaz (bayat bayrak koşu ortasında tamponu silerdi).</para>
+    ///
+    /// <para><b>"Uçuşta yükleme" ölçütü <see cref="_pendingLoad"/>'dur, <see cref="LoadProjectLogAsync"/>'in dönüşü değil:</b>
+    /// gönderim düşse bile dikiş silahlı kalır (gecikmiş bir chunk hâlâ eşleşir) ve kuyruk ona aittir.</para>
+    ///
+    /// <para><b><see cref="IsRunInFlight"/> ise bırakmayı durdurur:</b> yeni bir koşu ya da başlatma sürerken tampon o koşunun
+    /// satırlarını taşır (dikiş bunu yeni koşu boyunca da ister). Yeni işlem başlangıcı tamponu zaten tümden temizler
+    /// (<see cref="ClearConsoleForNewOperation"/>); o davranış değişmez.</para>
+    /// </summary>
+    private void ReleaseLiveLinesWhenIdle()
+    {
+        if (IsRunInFlight || _pendingLoad is not null) return;
+        lock (_gate) _liveLines.Clear();
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] Konsol bir projeden ayrılınca (başka bir projeye ya da anlatıya döndü) o projenin metin tamponu ve satır
+    /// sayısı bırakılır: yeniden açılış diskten yeniden yükler (<see cref="LoadProjectLogAsync"/>), yani tampon yalnız
+    /// EKRANDAKİ sayfa için yaşar. Bırakma anı seçimin değiştiği an DEĞİL, gösterimin ayrıldığı andır: yeni projenin yanıtı gelene
+    /// dek eski sayfa ekrandadır ve satırları (<see cref="OnProjectLog"/>) ona akmaya devam eder — tamponu o aralıkta bırakmak
+    /// başlık sayacını bozar ve yarım bir tampon yeniden doğurur. <see cref="EnterProjectMode"/> bu değişimi zaten
+    /// <c>_gate</c> içinde yapar (Monitor reentrant); anlatıya dönüş (<see cref="ShowRun"/>) kilit dışında yapar, o yüzden
+    /// kilit burada alınır.
+    /// </summary>
+    partial void OnActiveProjectIdChanged(string? oldValue, string? newValue)
+    {
+        if (oldValue is null) return;
+        lock (_gate)
+        {
+            _projectText.Remove(oldValue);
+            _projectLineCount.Remove(oldValue);
+        }
     }
 
     /// <summary>

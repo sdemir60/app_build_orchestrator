@@ -68,8 +68,59 @@ public partial class MainWindow
             Dispatcher.InvokeAsync(ResyncAfterShow, DispatcherPriority.Loaded);
             return;
         }
+        HookRunCollection();
         _choreographer.Cancel(_vm.Projects);
         if (Shell.GraphHost.IsEndFinalePlaying) Shell.GraphHost.CancelEndFinale();
+    }
+
+    /// <summary>
+    /// [perf Faz C · C4] <b>Tepside biten koşunun ardından tek seferlik bellek toplaması.</b> Koşu tepsideyken derlendi ve
+    /// bitti, tepsi göstergesi çıkış evresini tamamlayıp gizlendi (<see cref="OnTrayIndicatorExitFinished"/>): ekranda bu
+    /// koşuya ait hiçbir şey kalmadı ve pencere görünmediği için bir toplamanın takılması kimseye görünmez. O anda koşunun
+    /// atıkları (canlı satır tamponu bırakılmıştır — <c>RunViewModel.LiveLineCount</c>) ölü yük olarak durur; toplama onları
+    /// geri verir. Toplama koşu başına <b>bir kez</b> yapılır: bayrak yeni koşu başlayınca düşer
+    /// (<see cref="OnVmPropertyChangedForRunCollection"/>), aynı koşunun ikinci bitiş sinyali yeniden toplamaz.
+    /// </summary>
+    private bool _collectedAfterRun;
+
+    private bool _runCollectionHooked;
+
+    /// <summary>[perf Faz C · C4] Toplamanın TEK çağrı yeri (<see cref="OnTrayIndicatorExitFinished"/>) bunu çağırır. Üretimde
+    /// gerçek toplama; testler sayaçlı bir sahteyle değiştirir (süit gerçek GC tetiklemez). Engellemeyen
+    /// (<c>blocking: false</c>) ve sıkıştıran agresif toplama: UI thread'i bir duraklama görmez, nesil 2 ve LOH küçülür.</summary>
+    internal Action MemoryCollector { get; set; } = CollectMemory;
+
+    private static void CollectMemory() => GC.Collect(2, GCCollectionMode.Aggressive, blocking: false, compacting: true);
+
+    /// <summary>
+    /// [perf Faz C · C4] Tepsi göstergesi çıkış evresini tamamladı (<c>TrayBuildIndicatorController.ExitCompleted</c>). Toplama
+    /// yalnız üç koşul bir arada ise yapılır: pencere GİZLİ, koşu BİTMİŞ (sürüyorsa — ya da yeni bir koşu başladıysa —
+    /// toplanacak bir şey yoktur) ve bu koşu için henüz toplanmadı. Çıkış sırasında pencere geri geldiyse bildirim yine gelir
+    /// ama kullanıcı ekrandadır: o yolda hiç toplanmaz. <c>internal</c>: test yüzeyi — headless'ta gösterge hiç kurulmaz
+    /// (<c>OnSourceInitialized</c> koşmaz), testler bildirimi doğrudan verir.
+    /// </summary>
+    internal void OnTrayIndicatorExitFinished()
+    {
+        if (!IsSurfaceHidden || _collectedAfterRun || _vm.IsRunInFlight) return;
+        _collectedAfterRun = true;
+        MemoryCollector();
+    }
+
+    /// <summary>Koşu başlangıcını dinler: ilk gizlenmede bir kez abone olunur — toplama yalnız gizliyken yapılır ve bayrak
+    /// yalnız o zaman anlam taşır; ctor'a ayrı bir abonelik eklenmez.</summary>
+    private void HookRunCollection()
+    {
+        if (_runCollectionHooked) return;
+        _runCollectionHooked = true;
+        _vm.PropertyChanged += OnVmPropertyChangedForRunCollection;
+    }
+
+    /// <summary>Yeni bir koşu (ya da başlatma) başlayınca bayrak düşer: o koşunun bitişi kendi toplamasını alır.</summary>
+    private void OnVmPropertyChangedForRunCollection(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if ((e.PropertyName is nameof(ViewModels.RunViewModel.IsRunning) or nameof(ViewModels.RunViewModel.IsStarting))
+            && _vm.IsMidRunLocked)
+            _collectedAfterRun = false;
     }
 
     /// <summary>Gizliyken konsol belgesine yazılmayan bir batch, temizlik ya da mod geçişi oldu (seçim yolu:

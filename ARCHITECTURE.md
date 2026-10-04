@@ -2412,7 +2412,10 @@ body of the 200 ms tick (live durations, the console header's line counter, foll
 engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
 the view model, and the document is built from that full text once, without the tilt, when the window comes back
 (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
-none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
+none. Once a run that ended in the tray has finished its indicator's exit, the process collects garbage a single time —
+the run's buffers are already released by then (§13.5) — so a build's leftovers do not stay resident while nobody is
+looking; it does not repeat within a run and never happens while the window is visible. Each surface only notes that it
+has fallen behind; when the window comes back each catches up with the model in
 a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
 cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
 their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
@@ -4042,6 +4045,13 @@ lines.
   A project log that was open is rebuilt from its own text the same way — pinned to the top and not following, as
   when it is opened — an empty log shows its project's empty-state text, as it does then. Nothing is replayed line by
   line: the console jumps to the present state of the run (§12.3).
+- **A finished run lets go of its live lines.** While a run streams, the view model also keeps its lines in a side buffer
+  per project: a project log opened mid-run is the disk snapshot plus whatever the disk did not hold yet when the
+  snapshot was taken, and that remainder is read from the side buffer. When the run completes the disk holds everything
+  and the buffer is released — unless a log request is still waiting for its reply, in which case the release follows
+  the reply, so the page being built still gets its last lines. A project's own text buffer is dropped when the console
+  leaves its page, for another project or for the narrative, and opening the project again reads the disk log afresh
+  (§5.5). Starting an operation still clears everything at once, as above.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every

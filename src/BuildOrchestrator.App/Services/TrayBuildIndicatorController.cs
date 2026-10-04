@@ -173,6 +173,14 @@ public sealed class TrayBuildIndicatorController(
 
     private void OnExitFinished() => _ = CompleteExitAsync();
 
+    /// <summary>
+    /// [perf Faz C · C4] Çıkış evresi bitti ve gösterge gizlendi: ekranda bu koşuya ait hiçbir şey kalmadı. Balon beklemesinden
+    /// (<see cref="ExitBreath"/>) ÖNCE bildirilir — koşu-sonu ekran dışı işler (bellek toplaması) bir animasyonu kesmez ve balonu
+    /// geciktirmez. Göstergenin kendi zaman çizelgesi değişmez, yalnız bir bildirim eklenir. Pencere çıkış sırasında geri geldiyse
+    /// de gelir (gösterge zaten gizlenmiştir); "gizli mi, koşu bitti mi" kararı alıcıdadır.
+    /// </summary>
+    internal Action? ExitCompleted { get; set; }
+
     private async Task CompleteExitAsync()
     {
         _exitPending = false;
@@ -182,6 +190,7 @@ public sealed class TrayBuildIndicatorController(
             view.HideNow();
         }
 
+        ExitCompleted?.Invoke();
         await ExitBreath();
 
         if (_notified) return;

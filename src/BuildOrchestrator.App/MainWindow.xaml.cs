@@ -1350,6 +1350,8 @@ public partial class MainWindow : Window
             // [K-14] Kaybolma ile bildirim üst üste binmesin diye araya giren nefes. Süre token'dan gelir ve
             // reduced-motion'da kendiliğinden sıfırlanır — kod tarafında ms literali yoktur.
             ExitBreath = () => Task.Delay(MotionTokens.ResolveSlow(this).TimeSpan),
+            // [perf Faz C · C4] Çıkış evresi bitince (gösterge gizlendi) tepside biten koşunun tek seferlik bellek toplaması.
+            ExitCompleted = OnTrayIndicatorExitFinished,
         };
         _trayIndicator = controller;
 
