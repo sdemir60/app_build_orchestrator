@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BuildOrchestrator.Core.State;
 
 namespace BuildOrchestrator.Core.Incremental;
 
@@ -33,8 +34,9 @@ namespace BuildOrchestrator.Core.Incremental;
 /// <see cref="MarkDirty"/> kaldırır; <see cref="Flush"/> onu yazmadan ÖNCE indirir, böylece yazım sürerken araya
 /// giren yeni bir özet bayrağı yeniden kaldırır ve kaybolmaz. Yazılamayan defter (yutulan IO hatası) ve racy
 /// pencerede dışarıda bırakılan girdi bayrağı kirli bırakır — pencere geçince sonraki <see cref="Flush"/> o
-/// girdiyi de yazar. Defter UTF-16 ara string'e çevrilmez: <c>File.OpenRead</c> + <c>Deserialize(stream)</c>,
-/// <c>File.Create</c> + <c>Serialize(stream)</c>.</para>
+/// girdiyi de yazar. Defter UTF-16 ara string'e çevrilmez: okuma <c>AtomicFile.OpenReadSharingDelete</c> +
+/// <c>Deserialize(stream)</c>, yazım <c>AtomicFile.Write</c> + <c>Serialize(stream)</c> — Delete-share'li okuma ve
+/// retry'lı atomik rename durum dosyalarıyla ORTAK koddur.</para>
 /// </summary>
 public sealed class SourceHashCache
 {
@@ -76,6 +78,12 @@ public sealed class SourceHashCache
     /// okuyup indirir.
     /// </summary>
     private void MarkDirty() => Volatile.Write(ref _dirty, 1);
+
+    /// <summary>
+    /// [D8] Atomik rename retry'ının gecikme dikişi — <see cref="BuildStateStore.RenameRetryDelay"/> ile aynı desen (parametre:
+    /// 1-based deneme no). Üretimde null → <see cref="BuildStateStore.DefaultRenameRetryDelay"/> (üretim backoff'unun tek sahibi).
+    /// </summary>
+    internal Action<int>? RenameRetryDelay { get; set; }
 
     /// <summary>
     /// Dosyanın içerik özeti. Boyut ve mtime önbellektekiyle aynıysa dosya AÇILMAZ. Okunamayan / var olmayan
@@ -183,19 +191,15 @@ public sealed class SourceHashCache
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
         bool leftOutRacy = persistable.Count < snapshot.Length;
 
-        string tmp = _cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_cachePath)!);
-            // Akış rename'den ÖNCE kapanmalı (açık kalsa File.Move paylaşım ihlaline düşerdi).
-            using (var stream = File.Create(tmp)) JsonSerializer.Serialize(stream, persistable, Json);
-            File.Move(tmp, _cachePath, overwrite: true);
+            AtomicFile.Write(_cachePath, stream => JsonSerializer.Serialize(stream, persistable, Json),
+                RenameRetryDelay ?? BuildStateStore.DefaultRenameRetryDelay);
             if (leftOutRacy) MarkDirty(); // dışarıda kalan racy girdi: pencere geçince sonraki Flush onu da yazar
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            try { File.Delete(tmp); } catch (Exception cleanup) when (cleanup is IOException or UnauthorizedAccessException) { }
-            MarkDirty(); // yazılamadı: defter kirli kalır, sonraki Flush yeniden dener
+            MarkDirty(); // retry bütçesi de tükendi: defter kirli kalır, sonraki Flush yeniden dener
         }
     }
 
@@ -234,7 +238,8 @@ public sealed class SourceHashCache
         try
         {
             // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
-            using var stream = File.OpenRead(path);
+            // Delete-share'li (AtomicFile): durum dosyalarıyla aynı okuma kuralı.
+            using var stream = AtomicFile.OpenReadSharingDelete(path);
             var loaded = JsonSerializer.Deserialize<Dictionary<string, Entry>>(stream, Json);
             return loaded is null ? empty : new ConcurrentDictionary<string, Entry>(loaded, StringComparer.OrdinalIgnoreCase);
         }

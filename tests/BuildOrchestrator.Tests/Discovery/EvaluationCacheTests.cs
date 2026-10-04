@@ -313,7 +313,8 @@ public class EvaluationCacheTests
             var cache = SeededCache(root, cachePath);
 
             // Başka bir process'in cache dosyasını tuttuğu an: rename (File.Move overwrite) sharing-violation alır.
-            using (new FileStream(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            cache.RenameRetryDelay = _ => { };   // kilit hiç kalkmaz: retry bütçesi gerçek bekleme olmadan tükensin [D8]
+            using (LedgerFileProbe.HoldLocked(cachePath))
                 cache.Flush(); // FIRLATMAMALI — kaybolan tek şey bir cache girdisidir, Sync değil
 
             // Öksüz .tmp bırakmaz (aksi halde her başarısız flush diskte çöp biriktirirdi)
@@ -513,12 +514,59 @@ public class EvaluationCacheTests
             var cache = SeededCache(root, cachePath);                         // bir girdi → kirli
             var ledger = LedgerFileProbe.Pin(cachePath);
 
-            using (new FileStream(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            cache.RenameRetryDelay = _ => { };   // kilit hiç kalkmaz: retry bütçesi gerçek bekleme olmadan tükensin [D8]
+            using (LedgerFileProbe.HoldLocked(cachePath))
                 cache.Flush();                                                // hedef kilitli → yazım düşer (yutulur)
             Assert.False(ledger.WasRewritten);
 
             cache.Flush();                                                    // kilit kalktı → bayrak kirli kaldıysa yazar
             Assert.True(ledger.WasRewritten);
+        });
+    }
+
+    // [C1 düzeltme 1 · I1] Defterin okuma tutamağı Delete-share verir (durum dosyalarıyla aynı kural, AtomicFile): hedefte
+    // DELETE erişimi tutan bir taraf varken (dosyayı silen/yeniden adlandıran başka bir process) Load'un açışı reddedilmez.
+    // Windows paylaşım denetimi SİMETRİKTİR; karşı taraf önce açılır (DELETE erişimi tutar) ve Load'un onunla uyuşup
+    // uyuşmadığına bakılır — saat ve uyku yok. Varsayılan okuma kipi (FileShare.Read) bu tutamağı reddeder → defter boş okunur.
+    // (Açık bir okuyucu hedefin üstüne rename'i Delete-share'e rağmen geciktirir; onu retry absorbe eder — sonraki test.)
+    [Fact]
+    public void Load_reads_a_ledger_that_another_party_holds_with_delete_access()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+
+            using (LedgerFileProbe.HoldDeleteAccess(cachePath))
+            {
+                var hit = new EvaluationCache(cachePath).GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                    _ => throw new InvalidOperationException("the ledger must be read even while a delete-access holder is open"));
+
+                Assert.NotNull(hit);                                              // girdi diskten geldi: defter okundu
+            }
+        });
+    }
+
+    // [C1 düzeltme 1 · O1] Yazım AtomicFile'dan geçer: hedef kısa süre Delete-share'siz tutulursa rename retry ile absorbe
+    // edilir ve defter güncellemesi kaybolmaz (eskiden tek denemede düşer, yutulurdu). Tutamak, retry gecikmesi dikişinden
+    // ilk retry'da bırakılır — saat ve uyku yok.
+    [Fact]
+    public void Flush_absorbs_a_brief_sharing_violation_on_the_ledger_with_a_retry()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            File.WriteAllText(cachePath, "{}");
+            var cache = SeededCache(root, cachePath);                             // bir girdi → kirli
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            using var block = LedgerFileProbe.BlockRename(cachePath);             // Delete-share YOK → rename düşer
+            cache.RenameRetryDelay = block.ReleaseOnRetry;
+
+            cache.Flush();
+
+            Assert.Equal(1, block.Retries);                                       // ilk deneme düştü, ikincisi geçti
+            Assert.True(ledger.WasRewritten);
+            var reloaded = new EvaluationCache(cachePath).GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                _ => throw new InvalidOperationException("the retried write must have persisted the entry"));
+            Assert.NotNull(reloaded);
         });
     }
 
