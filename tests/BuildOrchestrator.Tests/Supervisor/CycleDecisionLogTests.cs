@@ -147,7 +147,7 @@ public class CycleDecisionLogTests
         disk.Set("B", "b1");
         var rec = new RoundRecorder();
         using var h = new Harness(HashModePlan(TwoMemberCycle(), "A", "B"), rec.Invoker((_, _) => Ok()),
-            apiSurface: path => path.Contains("B", StringComparison.OrdinalIgnoreCase) ? null : disk.Read(path));
+            apiSurface: path => path.Equals(SurfaceDisk.PathOf("B"), StringComparison.OrdinalIgnoreCase) ? null : disk.Read(path));
 
         string log = await RunCyclesAsync(h);
 
@@ -208,7 +208,7 @@ public class CycleDecisionLogTests
             return Ok();
         });
         using var h = new Harness(HashModePlan(TwoMemberCycle(), "A", "B"), invoker,
-            apiSurface: path => Volatile.Read(ref bCompiled) == 1 && path.Contains("B", StringComparison.OrdinalIgnoreCase)
+            apiSurface: path => Volatile.Read(ref bCompiled) == 1 && path.Equals(SurfaceDisk.PathOf("B"), StringComparison.OrdinalIgnoreCase)
                 ? null
                 : disk.Read(path));
 

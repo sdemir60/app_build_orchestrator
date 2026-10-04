@@ -3,11 +3,11 @@ using System.Globalization;
 namespace BuildOrchestrator.Core.Planning;
 
 /// <summary>
-/// [PERF Faz E1] Resolve (SCC tur döngüsü) satırlarının TEK sahibi: <c>decision.log</c>'a — ve aynı olayı başka
-/// bir kanala taşıyacak her yere — giden metin YALNIZ buradan üretilir. Supervisor ölçüleri toplar (kim bayat,
-/// hangi dosya kaydı, ne kadar sürdü) ve bu metotları çağırır; biçimi bilmez. Her satır biçimi ayrı, saf bir
-/// metottur: yeni bir satır (ör. üye düzeyi atlama) yeni bir metot olarak eklenir, mevcut biçimlere dokunmaz.
-/// Sayılar <see cref="CultureInfo.InvariantCulture"/>'dır.
+/// [PERF Faz E1] Resolve (SCC tur döngüsü) satırlarının TEK sahibi: <c>decision.log</c>'a giden metin YALNIZ
+/// buradan üretilir. App'in olay akışı metni (<c>StreamText</c>) ayrı tanımlıdır — bu sahiplik ona uzanmaz.
+/// Supervisor ölçüleri toplar (kim bayat, hangi dosya kaydı, ne kadar sürdü) ve bu metotları çağırır; biçimi
+/// bilmez. Her satır biçimi ayrı, saf bir metottur: yeni bir satır (ör. üye düzeyi atlama) yeni bir metot olarak
+/// eklenir, mevcut biçimlere dokunmaz. Sayılar <see cref="CultureInfo.InvariantCulture"/>'dır.
 /// </summary>
 public static class CycleDecisionLines
 {

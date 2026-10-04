@@ -2532,8 +2532,10 @@ public sealed class RunCoordinator(
         // [WPF geçici assembly] Targets dosyasının tam yolu (toolset'ten); null ⇒ build komut satırına girmez.
         string? CustomBeforeTargetsPath = null,
         // [PERF E3] Koşunun modu — restore kararı onu okur: Rebuild (toparlanma yolu) paket kanıtına bakmadan her
-        // packages.config projesini restore eder; Build ve Cycles kanıt tatmin edildiyse atlar.
-        RunMode Mode = RunMode.Build)
+        // packages.config projesini restore eder; Build ve Cycles kanıt tatmin edildiyse atlar. Tek kuruluş yeri
+        // (Mode: cmd.Mode) modu her zaman geçer; varsayılan GÜVENLİ yöndedir (kanıta bakılmaz, restore koşar) —
+        // yalnız Mode'u unutan gelecekteki bir kuruluş yerini güvenli tarafta tutar.
+        RunMode Mode = RunMode.Rebuild)
     {
         /// <summary>[PERF E3] projectId → bu koşuda restore'u koşan ya da kanıtla atlanan projenin, karar ANINDA
         /// okunan packages.config özeti. Başarı persist'i (<c>PersistBuildStateOnSuccess</c>) onu deftere yazar:
