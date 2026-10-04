@@ -18,6 +18,17 @@ public sealed class EvaluationCache(string cachePath)
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
     /// <summary>
+    /// [PERF Faz C/C1] Defter bellekte diskteki hâlinden farklı mı. Bayrağı YALNIZ <see cref="MarkDirty"/> kaldırır —
+    /// bir girdi değiştiğinde (yeni değerlendirme, tazelenen parmak izi, budanan girdi) — ve yalnız yazım BAŞARILI
+    /// olunca <see cref="Flush"/> indirir: yalnız isabet gören bir Sync/koşu defteri diske HİÇ yazmaz; yazılamayan
+    /// defter kirli kalır ve sonraki <see cref="Flush"/> yeniden dener. Defteri değiştiren her yeni yol da
+    /// <see cref="MarkDirty"/>'i çağırmak zorundadır. Sınıfın kendisi gibi (<c>_entries</c>) tek thread içindir.
+    /// </summary>
+    private bool _dirty;
+
+    private void MarkDirty() => _dirty = true;
+
+    /// <summary>
     /// [Faz 3/Task 1] Güncel önbellek şeması. Eski (şemasız/daha düşük şemalı) kayıtlar isabet SAYILMAZ —
     /// <see cref="EvaluatedProject"/>'e eklenen yeni alanlar (OutputType, OutputPaths, ...) eski kayıtta boş
     /// kalmasın diye proje her karşılaşıldığında bir kez yeniden değerlendirilir.
@@ -55,10 +66,11 @@ public sealed class EvaluationCache(string cachePath)
             {
                 if (e.MtimeTicks == mtime && e.Length == length) return e.Project; // hızlı yol: mtime+size eşit
                 if (Hash(csprojPath) is var h && h == e.Hash)                      // mtime/size farklı ama içerik aynı
-                { _entries[csprojPath] = e with { MtimeTicks = mtime, Length = length }; return e.Project; }
+                { _entries[csprojPath] = e with { MtimeTicks = mtime, Length = length }; MarkDirty(); return e.Project; }
             }
             var proj = evaluate(csprojPath);
             _entries[csprojPath] = new Entry(mtime, length, Hash(csprojPath), proj, CurrentSchema);
+            MarkDirty();
             return proj;
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException
@@ -92,16 +104,26 @@ public sealed class EvaluationCache(string cachePath)
     /// <para>Yutmak güvenlidir çünkü bu cache SALT bir optimizasyondur ve <see cref="Load"/> hem YOK olan hem
     /// BOZUK bir dosyayı zaten tolere eder (boş map ile devam) — düşen bir flush'ın bedeli, bir sonraki
     /// taramada yeniden değerlendirilecek csproj'lardır; kaybolan bir Sync değil.</para>
+    ///
+    /// <para><b>[PERF Faz C/C1] Yalnız kirliyse yazar, akışla yazar.</b> Hiçbir girdisi değişmemiş bir defter (warm
+    /// Sync ya da koşu: her girdi isabet) diske dokunmaz — gerçek OSYS'te birkaç MB'lık JSON'u her pencereye
+    /// dönüşte yeniden yazmak gereksiz yüktü. Yazılamayan defter (yutulan IO hatası) kirli kalır ve sonraki
+    /// <see cref="Flush"/> yeniden dener. Yazım <c>File.Create</c> + <c>JsonSerializer.Serialize(stream)</c> ile
+    /// yapılır — defter UTF-16 ara string'e çevrilmez; atomik yol (temp + rename) aynıdır.</para>
     /// </summary>
     public void Flush()
     {
+        if (!_dirty) return;
+
         // Tekil temp adı: BuildStateStore.Upsert ile AYNI desen (`<path>.<guid>.tmp`).
         string tmp = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, Json));
+            // Akış rename'den ÖNCE kapanmalı (açık kalsa File.Move paylaşım ihlaline düşerdi).
+            using (var stream = File.Create(tmp)) JsonSerializer.Serialize(stream, _entries, Json);
             File.Move(tmp, cachePath, overwrite: true);
+            _dirty = false; // yalnız yazım BAŞARILIYSA: düşen yazım defteri kirli bırakır
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -125,7 +147,7 @@ public sealed class EvaluationCache(string cachePath)
 
         var dead = _entries.Keys.Where(k => Paths.RootScope.Contains(prefix, k) && !File.Exists(k)).ToList();
         foreach (string key in dead) _entries.Remove(key);
-        if (dead.Count > 0) Flush();
+        if (dead.Count > 0) { MarkDirty(); Flush(); }
         return dead.Count;
     }
 
@@ -144,7 +166,9 @@ public sealed class EvaluationCache(string cachePath)
         if (!File.Exists(path)) return new(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var d = JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(path), Json);
+            // [PERF Faz C/C1] Akışla okuma: defter UTF-16 ara string'e çevrilmez (birkaç MB'lık JSON'un iki katı bellek).
+            using var stream = File.OpenRead(path);
+            var d = JsonSerializer.Deserialize<Dictionary<string, Entry>>(stream, Json);
             return d is null ? new(StringComparer.OrdinalIgnoreCase) : new(d, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException) { return new(StringComparer.OrdinalIgnoreCase); } // bozuk cache → yeniden kur

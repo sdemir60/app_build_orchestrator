@@ -638,7 +638,8 @@ Results are cached in `evaluation-cache.json`, keyed by path with an mtime **and
 length term is not decoration: an edit that preserves the modification timestamp is otherwise invisible, and
 the cache would serve a stale evaluation. Each entry also carries the cache **schema** it was written under; an
 entry from an older schema is never a hit, so a field the evaluator learned to extract is never served empty
-from a record that predates it — the project is simply evaluated again the first time it is met.
+from a record that predates it — the project is simply evaluated again the first time it is met. The cache is written back only when an entry
+changed — a project evaluated, or a fingerprint refreshed after a touch — so a run made of hits writes nothing (§16).
 
 `file → project` mapping comes from the evaluated `Compile` items, never from a path prefix. A file that sits
 inside a project's directory but is not compiled by it does not make it dirty.
@@ -778,7 +779,8 @@ answers: the repository read the blob table while external roots already read th
 apart. Reading content closes all three, works offline, and needs no version control at all.
 
 The cost is reading files, and it is paid once: `source-hash-cache.json` (§16) keys each hash by the file's
-size and modification time, so a steady-state run only stats the input set. Measured end to end on the real
+size and modification time, so a steady-state run only stats the input set and writes nothing back — the file is rewritten only when an entry
+changed (§16). Measured end to end on the real
 OSYS repository (177 projects, 22,982 input files, 288 MB), from the scan through both binding passes: **303 ms
 per run** with a warm cache, against ~213 ms for the two git commands the old formula ran. With the cache empty
 but the files in the OS cache it is ~670 ms. Everything on that path that is IO — collecting each project's
@@ -5231,7 +5233,14 @@ Optimize also sweeps the ledgers' **orphaned temp files**. An atomic write kille
 its rename leaves a `<ledger>.<guid>.tmp` behind; each ledger sweeps only the pattern of its own name, and only
 files old enough that no write still in flight could own them.
 
-When an operation finds nothing to change in a ledger, that file is not rewritten at all — no write, no rename
+The two caches, `evaluation-cache.json` and `source-hash-cache.json`, each keep a dirty flag. Only a change to an
+entry raises it — a project evaluated, a fingerprint refreshed after a touch, a hash recomputed, a dead entry
+pruned — and only a successful write lowers it, so a write that fails leaves the ledger dirty and the next flush
+tries again. The source-hash cache also keeps the flag raised while its last flush left out an entry inside the
+racy window (§7.1): the first flush after the window has passed writes that entry. Both caches are read and
+written as streams, so the file is never turned into one string in memory. So when an operation finds nothing to
+change in a ledger — Optimize pruning nothing, or a Sync or a run that only hit the two caches — that file is not
+rewritten at all — no write, no rename
 race.
 
 `build-state.json` and `run-inflight.json` share one atomic write path (`AtomicFile`): a unique

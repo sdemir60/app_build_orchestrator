@@ -340,7 +340,16 @@ public class EvaluationCacheTests
             Task Hammer(EvaluationCache cache) => Task.Run(() =>
             {
                 barrier.SignalAndWait();
-                for (int i = 0; i < 200; i++) cache.Flush();
+                // [C1] Eski iddia: her Flush yazar, 200 çağrı 200 yazımı yarıştırır. Yeni kural: yalnız KİRLİ Flush yazar —
+                // bu yüzden her turda önce yeni bir proje değerlendirilip defter kirletilir; yazım yolu (temp + rename)
+                // yine her turda iki örnek arasında yarışır (eşzamanlılık güvencesi gevşemedi, yük aynı kaldı).
+                for (int i = 0; i < 200; i++)
+                {
+                    string proj = Path.Combine(root, Guid.NewGuid().ToString("N") + ".csproj");
+                    File.WriteAllText(proj, "<Project/>");
+                    cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "A", [], [], [], false));
+                    cache.Flush();
+                }
             });
 
             await Task.WhenAll(Hammer(a), Hammer(b)); // tek bir istisna bile testi düşürür
@@ -377,6 +386,159 @@ public class EvaluationCacheTests
             Assert.Equal(2, calls);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // ---------------------------------------------------------------- [PERF Faz C/C1] kirli bayrağı: defter yalnız değiştiyse yazılır
+
+    // Warm bir Sync ya da koşu defterdeki hiçbir girdiyi değiştirmez; Flush eskiden yine de koşulsuz yazıyordu
+    // (gerçek OSYS'te birkaç MB'lık JSON, her pencereye dönüşte). "Yazıldı mı"yı LedgerFileProbe ölçer: defterin
+    // mtime'ı eski bir damgaya çekilir, yeniden yazım (temp + File.Move) damgayı bugüne getirir — saat ve uyku yok.
+
+    /// <summary>[C1] Kirli bayrağı testlerinin ortak iskeleti: geçici kök + defter yolu; iş bitince kök silinir.</summary>
+    private static void WithLedger(Action<string, string> test)
+    {
+        string root = Directory.CreateTempSubdirectory("evcache-").FullName;
+        try { test(root, Path.Combine(root, "cache.json")); }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public void DirtyFlag_flush_after_load_without_any_change_leaves_the_ledger_untouched()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();          // defter bir girdiyle diske yazıldı
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            new EvaluationCache(cachePath).Flush();        // yükle → hiçbir girdi değişmedi → yazma YOK
+
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_cache_hit_does_not_dirty_the_ledger()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            var cache = new EvaluationCache(cachePath);
+
+            // Warm yol: mtime+size eşit → hızlı yol; evaluate ÇAĞRILMAZ ve defter kirlenmez.
+            var hit = cache.GetOrEvaluate(Path.Combine(root, "A.csproj"),
+                _ => throw new InvalidOperationException("a hit must not evaluate"));
+            cache.Flush();
+
+            Assert.NotNull(hit);
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_changed_project_is_written_by_the_next_flush_and_only_by_it()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            string proj = Path.Combine(root, "A.csproj");
+            var cache = new EvaluationCache(cachePath);
+
+            File.WriteAllText(proj, "<Project><!-- changed --></Project>");   // boyut + içerik değişti → yeniden değerlendirilir
+            cache.GetOrEvaluate(proj, p => new EvaluatedProject(p, "Changed", [], [], [], false));
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.True(ledger.WasRewritten);                                 // kirli → yazar
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.False(ledger.WasRewritten);                                // temiz → ikinci Flush yazmaz
+
+            var reloaded = new EvaluationCache(cachePath).GetOrEvaluate(proj,
+                _ => throw new InvalidOperationException("the written entry must be served from disk"));
+            Assert.Equal("Changed", reloaded!.AssemblyName);                  // yazılan şey değişen girdidir
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_touched_file_refreshes_its_entry_and_that_refresh_is_written_once()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+            string proj = Path.Combine(root, "A.csproj");
+            File.SetLastWriteTimeUtc(proj, DateTime.UtcNow.AddDays(1));       // yalnız mtime; içerik (hash) aynı
+            var cache = new EvaluationCache(cachePath);
+
+            var served = cache.GetOrEvaluate(proj, _ => throw new InvalidOperationException("a touch must not evaluate"));
+            var ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.NotNull(served);
+            Assert.True(ledger.WasRewritten);       // girdinin mtime'ı yenilendi; kalıcı olmazsa her yüklemede hash yeniden hesaplanır
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            cache.Flush();
+            Assert.False(ledger.WasRewritten);
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_pruning_a_dead_entry_writes_the_ledger_and_pruning_nothing_does_not()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            var cache = SeededCache(root, cachePath);                         // A.csproj
+            string ghost = Path.Combine(root, "Ghost.csproj");
+            File.WriteAllText(ghost, "<Project/>");
+            cache.GetOrEvaluate(ghost, p => new EvaluatedProject(p, "Ghost", [], [], [], false));
+            cache.Flush();
+            File.Delete(ghost);
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            Assert.Equal(1, cache.PruneMissingUnderRoot(root));
+            Assert.True(ledger.WasRewritten);                                 // budama defteri yazar
+
+            ledger = LedgerFileProbe.Pin(cachePath);
+            Assert.Equal(0, cache.PruneMissingUnderRoot(root));
+            Assert.False(ledger.WasRewritten);                                // budanacak bir şey yoksa dokunulmaz
+        });
+    }
+
+    [Fact]
+    public void DirtyFlag_a_failed_write_leaves_the_ledger_dirty_so_the_next_flush_retries()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            File.WriteAllText(cachePath, "{}");
+            var cache = SeededCache(root, cachePath);                         // bir girdi → kirli
+            var ledger = LedgerFileProbe.Pin(cachePath);
+
+            using (new FileStream(cachePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                cache.Flush();                                                // hedef kilitli → yazım düşer (yutulur)
+            Assert.False(ledger.WasRewritten);
+
+            cache.Flush();                                                    // kilit kalktı → bayrak kirli kaldıysa yazar
+            Assert.True(ledger.WasRewritten);
+        });
+    }
+
+    // [C1] Akışla yazım disk biçimini DEĞİŞTİRMEZ: tek satır kompakt JSON, BOM yok. Okuma yönünü
+    // An_entry_from_an_older_schema_is_evaluated_again kapatır (elle yazılmış eski biçim akışla okunur).
+    [Fact]
+    public void The_streamed_ledger_is_still_compact_utf8_json_without_a_byte_order_mark()
+    {
+        WithLedger((root, cachePath) =>
+        {
+            SeededCache(root, cachePath).Flush();
+
+            byte[] bytes = File.ReadAllBytes(cachePath);
+
+            Assert.Equal((byte)'{', bytes[0]);                                // BOM (EF BB BF) yok
+            Assert.DoesNotContain((byte)'\n', bytes);                         // WriteIndented=false: tek satır
+            using var doc = System.Text.Json.JsonDocument.Parse(bytes);
+            Assert.Equal(System.Text.Json.JsonValueKind.Object, doc.RootElement.ValueKind);
+            Assert.Single(doc.RootElement.EnumerateObject());                 // SeededCache tek proje
+        });
     }
 
     // [Faz 3/Task 1] Eski (semasiz) bir kayit, mtime+length AYNI kalsa bile isabet SAYILMAMALI: Faz 3'te
