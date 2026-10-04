@@ -18,7 +18,7 @@ namespace BuildOrchestrator.App;
 /// (<see cref="_listStaleWhileHidden"/>) · 200 ms'lik tikin gövdesi (<see cref="_tickStaleWhileHidden"/>; motor sessizlik
 /// bekçisi hariç — o gizliyken de koşar) · sticky şerit, Build menüsü, alt çubuğun sayaç chip'leri, proje satırları ve olay
 /// akışı satırları (her biri kendi bayrağıyla, kalıtsal sinyalin değişiminde <c>OnPropertyChanged</c> ile dönüşte tek geçişte
-/// yetişir).</para>
+/// yetişir) · tepside biten koşunun bellek toplaması (<see cref="CollectAfterRunWhenDue"/>: yalnız gizliyken).</para>
 ///
 /// <para><b>Üretim kablajı:</b> <c>IsVisibleChanged</c> (ctor'da tek abonelik) ve <see cref="StartInTray"/>
 /// (pencere hiç gösterilmediği için olay ateşlenmez). Testler <see cref="SetSurfaceHidden"/>'ı doğrudan çağırır

@@ -2856,6 +2856,13 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     public string GetRunDocumentText() { lock (_gate) return _runText.ToString(); }
+    /// <summary>[perf Faz C · C4 · test yüzeyi] Bir projenin metin tamponundaki satır sayısı — sayfası ekranda olmasa da (yetim
+    /// dikiş). Tamponun temizliğini metinle birlikte pinler.</summary>
+    internal int GetProjectLineCount(string projectId)
+    {
+        lock (_gate) return _projectLineCount.TryGetValue(projectId, out var n) ? n : 0;
+    }
+
     public string GetProjectDocumentText(string projectId)
     {
         lock (_gate) return _projectText.TryGetValue(projectId, out var sb) ? sb.ToString() : "";

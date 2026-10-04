@@ -2412,16 +2412,19 @@ body of the 200 ms tick (live durations, the console header's line counter, foll
 engine-silence watchdog still runs, §4.6). The console document is left alone too: the narrative stays complete in
 the view model, and the document is built from that full text once, without the tilt, when the window comes back
 (§13.5). Infinite decorative animations run only while their element is visible (§14.5), so a hidden window runs
-none. Once a run that ended in the tray has finished its indicator's exit, the process collects garbage a single time —
-the run's buffers are already released by then (§13.5) — so a build's leftovers do not stay resident while nobody is
-looking; it does not repeat within a run and never happens while the window is visible. Each surface only notes that it
-has fallen behind; when the window comes back each catches up with the model in
+none. Each surface only notes that it has fallen behind; when the window comes back each catches up with the model in
 a single pass, and nothing that happened meanwhile is played back — no glow, no typewriter, no list reveal, no
 cross-fade of a row's dot. The graph, the ribbon's progress bar and a row whose selection changed settle on the present state with
 their own short transitions rather than a replay of the run. A topology change is the exception: the graph is rebuilt on the spot even while hidden, and the return
 does not repeat it. Measured with CPU cycle counters, a build that runs in the tray costs the UI thread a small
 fraction of what the same build costs with the window in front, and no piece of its work holds the thread long
 enough to be felt.
+
+A run that ends while the window is hidden is followed by one full garbage collection, so a build's leftovers do not stay
+resident while nobody is looking. It waits for two signals, whichever comes last: the run has ended — completed, stopped,
+failed or with the engine lost — and its buffers are released (§13.5), and the tray indicator has finished its exit and
+shown the result balloon. The collection is blocking and compacting, so it runs only while the window is hidden, after the
+balloon and once the application is idle; it happens once per run and never while the window is visible.
 
 Three properties make the overlay a good citizen rather than a box parked on the desktop. It never takes focus and never
 appears in Alt-Tab (`ShowActivated=false` plus `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`). Clicking the drawn logo
@@ -4047,11 +4050,12 @@ lines.
   line: the console jumps to the present state of the run (§12.3).
 - **A finished run lets go of its live lines.** While a run streams, the view model also keeps its lines in a side buffer
   per project: a project log opened mid-run is the disk snapshot plus whatever the disk did not hold yet when the
-  snapshot was taken, and that remainder is read from the side buffer. When the run completes the disk holds everything
-  and the buffer is released — unless a log request is still waiting for its reply, in which case the release follows
-  the reply, so the page being built still gets its last lines. A project's own text buffer is dropped when the console
-  leaves its page, for another project or for the narrative, and opening the project again reads the disk log afresh
-  (§5.5). Starting an operation still clears everything at once, as above.
+  snapshot was taken, and that remainder is read from the side buffer. When the run ends — completed, stopped, failed or
+  with the engine lost — the disk holds everything and the buffer is released, unless a log request is still waiting for
+  its reply; then the release follows the reply, whether it brings the log or says there is none, so the page being built
+  still gets its last lines. A project's own text buffer is dropped when the console leaves its page, for another project
+  or for the narrative, and opening the project again reads the disk log afresh (§5.5). Opening a new section still
+  clears everything at once, as above.
 - The console body is drawn at **Geist Mono 300**; dense output scans more easily at the lighter weight. Every
   other mono surface stays at 400.
 - The console formats text in **Ideal** mode, overriding the window's `Display` (§14.2). Display rounds every
@@ -5884,7 +5888,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | …its shell side: the one path tray *Exit* and `X` share, bringing the waiting window forward, the shutdown | `App/MainWindow.xaml.cs` (`RequestFullExit`, `ExitNow`) |
 | *Show notifications* on the four balloons (first close, run result, second instance, ignored Build hotkey) | `App/Shell/UiStateStore.cs` (`FirstCloseBalloonGate`), `App/Services/TrayBuildIndicatorController.cs`, `App/Shell/SecondInstanceGate.cs`, `App/MainWindow.xaml.cs` (`OnGlobalHotkey`) |
 | The ignored Build hotkey's balloon: shown only with the window hidden and *Show notifications* on; the reason is the run gate's own answer | `App/MainWindow.xaml.cs` (`OnGlobalHotkey`, `TrayNotifierForTest`), `App/ViewModels/RunViewModel.cs` (`WhyRunCannotStart`), `App/ViewModels/RunGateText.cs` (the reason sentences), `App/Shell/AppTrayIcon.cs` (`ShowBuildIgnored`, `BuildIgnoredBody`) |
-| Tray build indicator — when it shows, exit choreography, one balloon | `App/Services/TrayBuildIndicatorController.cs` |
+| Tray build indicator — when it shows, exit choreography, one balloon, then the exit notice (`ExitCompleted`) | `App/Services/TrayBuildIndicatorController.cs` |
+| Memory collection after a run that ended in the tray — two signals, once per run, deferred to idle | `App/MainWindow.HiddenSurface.cs` (`OnTrayIndicatorExitFinished`, `CollectAfterRunWhenDue`, `MemoryCollector`), `App/ViewModels/RunViewModel.cs` (`MarkRunEnded`, `EndedRunSerial`) |
+| Live line buffer released when a run ends; a pending log load ends in one place | `App/ViewModels/RunViewModel.cs` (`ReleaseLiveLinesWhenIdle`, `CompletePendingLoad`) |
 | …its wiring to the view model (line, phase) | `App/Services/TrayIndicatorBinder.cs` |
 | …the animated mark itself (loop, static frame) | `App/Controls/TrayBuildIndicator.xaml(.cs)` |
 | …the frameless, non-activating overlay window that carries it | `App/Views/TrayBuildOverlayWindow.xaml(.cs)` |

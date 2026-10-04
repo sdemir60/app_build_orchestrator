@@ -130,7 +130,14 @@ public class RunBufferReleaseTests
         string a = MainWindowHost.IdOf("A");
         MainWindowHost.StartBuild(vm, "A");
         MainWindowHost.LogLine(vm, "A", 1, "old line");
+        // Yetim dikiş: kart seçilir, yükleme istenir, yanıt gelmeden kart bırakılır — gecikmiş yanıt dikişi yine yazar ama sayfa
+        // açılmaz (RunViewModelTests'teki deselect deseni). Bu tamponu yalnız yeni işlemin temizliği boşaltır.
         RequestProjectLog(vm, "A");
+        vm.SelectProject(null);
+        ReplyWithProjectLog(vm, "A", "old line\n", through: 1);
+        Assert.Equal("old line\n", vm.GetProjectDocumentText(a));   // ön-koşul: proje tamponu dolu (eskiden hiç dolmuyordu — iddia boştu)
+        Assert.Equal(1, vm.GetProjectLineCount(a));                 // ön-koşul: satır sayısı da
+        RequestProjectLog(vm, "A");                                  // yeniden açılıyor: yanıt henüz yok
         MainWindowHost.CompleteRun(vm, 1);               // dikiş bekliyor: canlı tampon yerinde
         Assert.Equal(1, vm.LiveLineCount);               // ön-koşul: temizlenecek canlı satır var
         Assert.Contains("old line", vm.GetRunDocumentText());
@@ -141,6 +148,7 @@ public class RunBufferReleaseTests
         Assert.Equal(0, vm.LiveLineCount);
         Assert.DoesNotContain("old line", vm.GetRunDocumentText());
         Assert.Equal("", vm.GetProjectDocumentText(a));
+        Assert.Equal(0, vm.GetProjectLineCount(a));
         Assert.True(cleared > 0, "ConsoleCleared bildirilmeli: kabuk ekrandaki belgeyi de boşaltır");
         GC.KeepAlive(window);
     }
@@ -328,6 +336,29 @@ public class RunBufferReleaseTests
     }
 
     /// <summary>
+    /// [perf Faz C · C4] Konsol anlatıya dönünce (<c>ShowRun</c>) açık projenin tamponu da düşer — proje→proje geçişiyle aynı kural:
+    /// bırakma anı gösterimin ayrıldığı andır; yeniden açılış diskten yükler.
+    /// </summary>
+    [StaFact]
+    public void Returning_the_console_to_the_narrative_drops_the_project_buffer()
+    {
+        using var dir = new TempDir();
+        var (window, vm, _) = MainWindowHost.NewWithProjects(dir, ("A", null));
+        string a = MainWindowHost.IdOf("A");
+        OpenProjectLog(vm, "A", "a on disk\n", through: 0);
+        Assert.Equal(a, vm.ActiveProjectId);                        // ön-koşul: A'nın sayfası ekranda
+        Assert.Equal("a on disk\n", vm.GetProjectDocumentText(a));  // ön-koşul: tampon dolu
+        Assert.Equal(1, vm.GetProjectLineCount(a));
+
+        vm.ShowRun();
+
+        Assert.Null(vm.ActiveProjectId);
+        Assert.Equal("", vm.GetProjectDocumentText(a));
+        Assert.Equal(0, vm.GetProjectLineCount(a));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
     /// [perf Faz A · A2'den ertelenen] Gizli konsol yetişmesinin PROJE LOGU kolu: pencere gizliyken bir projenin logu açıkken
     /// satırlar gelir ve koşu biter; dönüşte proje belgesi <b>tilt'siz</b> ve <b>kayıpsız</b> modelin tam metninden bir kez
     /// kurulur. Faz C'de koşu sonu canlı tamponu bırakır — açık projenin metin tamponu (<c>_projectText</c>) bundan etkilenmez
@@ -343,6 +374,7 @@ public class RunBufferReleaseTests
         var row = MainWindowHost.ProjectOf(vm, "A");
         vm.ActiveProjectId = row.Id;                                     // proje logu açık (motor round-trip'i yok: mod doğrudan kurulur)
         var documentBefore = console.EditorControl.Document;
+        string textBefore = documentBefore.Text;
         window.SetSurfaceHidden(true);
 
         MainWindowHost.StartBuild(vm, "A");
@@ -351,7 +383,7 @@ public class RunBufferReleaseTests
         MainWindowHost.LogLine(vm, "A", 2, "second");
         MainWindowHost.FinishBuild(vm, "A");                             // koşu gizliyken biter: canlı tampon bırakılır
         Assert.Equal(0, vm.LiveLineCount);                               // KIRMIZI: bırakma bugün yok (dönüş kurulumu ondan bağımsız)
-        Assert.Same(documentBefore, console.EditorControl.Document);     // gizliyken belgeye dokunulmadı
+        Assert.Equal(textBefore, console.EditorControl.Document.Text);   // gizliyken belgeye hiçbir satır basılmadı (yerinde ekleme de yok)
 
         window.SetSurfaceHidden(false);
         window.ResyncAfterShow();
