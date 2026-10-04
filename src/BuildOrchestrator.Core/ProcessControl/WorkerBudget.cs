@@ -18,9 +18,11 @@ public readonly record struct WorkerBudgetDecision(int Workers, string? Reason);
 /// makinede üçüncü ve dördüncü işçi hâlâ küçük ama tutarlı kazanç verdi, büyük makinede dört işçi en hızlıydı. Ölçülen en
 /// yüksek oran (küçük makinede dört işçi = işlemcinin iki katı) tavan alındı; daha fazlası ölçülmedi.</para>
 /// <para><b>Bellek kuralı (güvenlik ağı):</b> boş bellekten <see cref="ReserveBytes"/> makineye (ve motorla ilk işçinin
-/// tabanına) bırakılır, kalan işçi başına <see cref="BytesPerWorker"/> ile bölünür. İkisi de gerçek bir derlemenin
+/// tabanına) bırakılır, kalan işçi başına <see cref="BytesPerWorker"/> ile bölünür. İşçi payı gerçek bir derlemenin
 /// ölçümüne dayanır (Clean → Build, tam derleyici): motor ile ilk işçinin tabanından sonra her ek işçi birkaç yüz MB
-/// commit ekledi; kural bunun üstüne pay koyar (ARCHITECTURE §11.1). Kural düşük bellekli makinede devreye girer.</para>
+/// commit ekledi; kural bunun üstüne pay koyar. Makine payı ölçülen o tabanı karşılar; geri kalanı (IDE, tarayıcı,
+/// işletim sistemi için bırakılan) ölçüm değil yargıdır (ARCHITECTURE §11.1). Kural düşük bellekli makinede devreye
+/// girer.</para>
 /// </summary>
 public static class WorkerBudget
 {

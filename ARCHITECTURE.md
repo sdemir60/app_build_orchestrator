@@ -2248,8 +2248,8 @@ fixed multiple of the logical processors (`WorkersPerCore`) or what the free mem
 the machine (`BytesPerWorker`, `ReserveBytes`), and the answer is never below one worker; when both limits bind equally
 the memory is the one named. The multiple is above one on purpose, though not by much: measured on the real
 workspace on machines restricted to two and to four logical processors, running fewer workers than processors cost
-time, most clearly on the smaller machine; there a third and a fourth worker still shaved a small but consistent
-amount off, and on the larger machine four workers were the fastest tried. Nothing beyond that was measured, so the
+time on both; on the smaller machine a third and a fourth worker still shaved a small but consistent amount off,
+and on the larger machine four workers were the fastest tried. Nothing beyond that was measured, so the
 ceiling stays a small multiple of the processors. The memory budget follows a full compile measured on the
 real workspace: beyond a fixed base for the engine and its first worker, each extra worker commits a few hundred
 megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
