@@ -194,7 +194,23 @@ public sealed record BuildState(
     // bir sonraki koşuda özet aynıysa ve paketler kuruluysa (klasör + .nupkg) restore'u atlar; Rebuild ona hiç
     // bakmaz (toparlanma yolu). Alan SONA ve default'lu: eski build-state.json kayıtları alansızdır ve null çözülür —
     // proje restore eder (güvenli yön).
-    string? PackagesConfigHash = null)
+    string? PackagesConfigHash = null,
+    // [RESOLVE Faz 3 — karar 2/4] Bu döngü üyesinin son GÜVENİLİR derlemesindeki KENDİ terimi (IncrementalPlan.
+    // MemberTermById: SCC-içi kenarlar sabit işaret, grup dışı upstream'ler taze imzalarıyla). Bileşik imzadan
+    // (BuiltSignature) AYRI durur: bileşik kardeşlerin içeriğini de taşır, üyenin kendi girdilerinin değişip
+    // değişmediğini söyleyemez. Üç döngü alanını yalnız grubu yakınsayan (Converged) Cycles koşusu yazar; yakınsamayan
+    // ya da kesilen koşu hiçbirini yazmaz. Alanlar SONA ve default'lu: eski kayıtlar ve döngü dışı projeler null
+    // çözülür — üye "gerekli" sayılır (güvenli yön).
+    string? CycleMemberTerm = null,
+    // Aynı derlemede üyenin okuduğu kardeş yüzeyleri (üretici, dosya, yüzey özeti). Resolve'un tur 1'inde diskteki
+    // yüzey kayıttakinden farklıysa üye derlenir; null ⇒ yüzey kanıtı yok ⇒ üye gerekli. Liste KANONİK sıradadır:
+    // Producer'a, sonra File'a göre (StringComparer.OrdinalIgnoreCase), her (Producer, File) çifti bir kez — yazan
+    // taraf bu sırayı üretir. Eşitlik sıraya duyarlıdır (DepIssueRoots/FedOutputs deseni): aynı okumanın iki kaydı
+    // ancak kanonik sırada eşit okunur ve defter JSON'u koşudan koşuya kararlı kalır.
+    IReadOnlyList<CycleReadSurface>? CycleReadSurfaces = null,
+    // Kaydı yazan koşunun motor parmak izi (EngineFingerprint: MSBuild.exe yolu + dosya sürümü + build argüman
+    // sözleşmesi). Bu koşununkinden farklıysa gruptaki herkes gerekli.
+    string? CycleEngineFingerprint = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -218,7 +234,12 @@ public sealed record BuildState(
         && (FedOutputs is null
             ? other.FedOutputs is null
             : other.FedOutputs is not null && FedOutputs.SequenceEqual(other.FedOutputs))
-        && PackagesConfigHash == other.PackagesConfigHash;
+        && PackagesConfigHash == other.PackagesConfigHash
+        && CycleMemberTerm == other.CycleMemberTerm
+        && (CycleReadSurfaces is null
+            ? other.CycleReadSurfaces is null
+            : other.CycleReadSurfaces is not null && CycleReadSurfaces.SequenceEqual(other.CycleReadSurfaces))
+        && CycleEngineFingerprint == other.CycleEngineFingerprint;
 
     public override int GetHashCode()
     {
@@ -238,9 +259,19 @@ public sealed record BuildState(
         hash.Add(FailedAt);
         foreach (string fed in FedOutputs ?? []) hash.Add(fed);
         hash.Add(PackagesConfigHash);
+        hash.Add(CycleMemberTerm);
+        foreach (var surface in CycleReadSurfaces ?? []) hash.Add(surface);
+        hash.Add(CycleEngineFingerprint);
         return hash.ToHashCode();
     }
 }
+
+/// <summary>
+/// [RESOLVE Faz 3] Bir döngü üyesinin son GÜVENİLİR derlemesinde okuduğu kardeş yüzeyi: üretici id'si
+/// (<c>Producer</c>, tam csproj yolu), okunan dosya (<c>File</c>) ve o dosyanın API yüzeyi özeti (<c>Hash</c>).
+/// <see cref="BuildState.CycleReadSurfaces"/>'ın öğesidir; eşitlik üç alanın değer eşitliğidir.
+/// </summary>
+public sealed record CycleReadSurface(string Producer, string File, string Hash);
 
 /// <summary>
 /// Ana repo DIŞINDA yaşayan, build'den ÖNCE kendi klonundan güncellenip derlenen bir proje (ör. müşteriye

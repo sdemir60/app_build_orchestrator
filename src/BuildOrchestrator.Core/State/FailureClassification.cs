@@ -21,7 +21,7 @@ public static class FailureClassification
 
     /// <summary><paramref name="reason"/> bir derleyici kanıtı mı (MSBuild'in kendi sıfır-dışı çıkışı, <see
     /// cref="ExitPrefix"/> ile başlar). <c>null</c> (başarı) dahil her başka reason (<c>"timeout"</c>,
-    /// <c>"stopped"</c>, <c>"invoke error: …"</c>) kanıt DEĞİLDİR.</summary>
+    /// <c>"stopped"</c>, <c>"invoke error: …"</c>, <c>"group start failed: …"</c>) kanıt DEĞİLDİR.</summary>
     public static bool IsCompilerFailure(string? reason) =>
         reason is not null && reason.StartsWith(ExitPrefix, StringComparison.Ordinal);
 }

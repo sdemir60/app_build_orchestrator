@@ -436,7 +436,9 @@ output.
 Why cycles are a button and not something *Build* does for you: a cycle is built as one unit — the members
 compile in barriered waves (members that don't reference each other directly share a wave and compile in
 parallel, up to the run's parallelism; direct neighbours never overlap; the members most others reference go
-first), and a member compiles again only when the **API surface** of the sibling file it actually built
+first). Round one compiles only the members that need it — a member whose own inputs and the sibling API surfaces
+it read are unchanged since it last settled is carried: reported as up to date, not compiled — and after that a
+member compiles again only when the **API surface** of the sibling file it actually built
 against has changed. A body-only change settles in a single round, right after a *Clean* too; an API change
 costs a second round only for the members that read the old API; three rounds is the ceiling, and a
 member that fails while its inputs are provably settled stops the run at once — an identical compile cannot

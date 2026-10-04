@@ -201,15 +201,17 @@ public static class Program
             // kontroller: dışarıda derlenmiş güncel proje BuiltOutside ile pre-skip edilir, kanıtı eksik/bozuk
             // olan derlenir. Kontroller plana da taşınır (koşu önizlemesi).
             var checks = binder.ChecksFor(state);
-            var (bound, signatures) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode, checks);
+            var (bound, signatures, memberTerms) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode, checks);
 
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
             // ve önizlemenin modified ↔ affected ayrımı defterdeki özetle bugünkünün karşılaştırmasından çıkar.
             // [Faz 3/Task 4] OutputsById de aynı binder'dan — Supervisor başarılı derlemeden sonra beslenen
             // kopyaları buradan öğrenir (BuildState.FedOutputs).
+            // [RESOLVE Faz 3/Task 3.1] SCC üyelerinin kendi terimleri de taşınır: Resolve'un tur 1'i grubun içinde
+            // kimin derleneceğini bunlarla seçer (bileşik imza downstream ve "grup kirli mi" için kalır).
             return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById,
-                binder.OutputsById, checks));
+                binder.OutputsById, checks, memberTerms));
         }
         catch (Exception ex)
         {

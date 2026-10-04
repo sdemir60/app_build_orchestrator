@@ -52,7 +52,7 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
     /// savunulabilirdir; POZİTİF orchestrator sinyali olmadıkça hata repo-kaynaklı sayılır (orchestrator'ın
     /// "kırmadığını" kanıtlama yükü orchestrator'dadır, ama belirsiz exit-N'i orchestrator'a yıkmak dürüst değildir).
     /// <list type="bullet">
-    /// <item><b>Orchestrator:</b> reason <c>invoke error:</c> ile başlar (invoke/log yolunda exception),
+    /// <item><b>Orchestrator:</b> reason <c>invoke error:</c> ya da <c>group start failed:</c> ile başlar (invoke/log yolunda ya da grup başlangıcında exception),
     ///   VEYA reason <c>stopped</c> (bu koşuda Stop verilMEDİ → beklenmeyen), VEYA log'da kalıcı copy-contention
     ///   (MSB3027 = retry sayısı aşıldı) VAR ve derleme/restore hatası YOK (paralelliğin tetiklediği çakışma
     ///   retry bütçesini yendi).</item>
@@ -66,7 +66,8 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
     /// </summary>
     private static (FailClass Cls, string Signal) Classify(string reason, string logText)
     {
-        if (reason.StartsWith("invoke error:", StringComparison.Ordinal))
+        if (reason.StartsWith(BuildOrchestrator.Supervisor.RunCoordinator.InvokeErrorPrefix, StringComparison.Ordinal)
+            || reason.StartsWith(BuildOrchestrator.Supervisor.RunCoordinator.GroupStartFailedPrefix, StringComparison.Ordinal))
             return (FailClass.Orchestrator, "invoke/log yolunda exception: " + reason);
         if (reason == "stopped")
             return (FailClass.Orchestrator, "beklenmeyen 'stopped' (bu koşuda Stop verilmedi)");

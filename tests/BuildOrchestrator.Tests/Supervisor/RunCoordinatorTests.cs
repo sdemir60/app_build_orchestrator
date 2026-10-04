@@ -30,7 +30,15 @@ public class RunCoordinatorTests
     // (kopya YASAK, CLAUDE.md). Yalnız bu dosyaya özgü olanlar (RecordingGovernor, PumpGateStream, stale-obj
     // yardımcıları) private kalır.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30); // hang'i sonsuz bekleme değil, test hatası yapar
-    private const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+    internal const string FakeMsBuildExe = @"C:\fake\Bin\MSBuild.exe";
+
+    /// <summary>[R3 final] Bir projenin logunun İLK satırının beklenen değeri: GERÇEK MSBuild komut satırı — <see cref="FakeMsBuildExe"/>
+    /// ile, invoker'ın koşturduğu build listesinden (<see cref="MsBuildArguments.Build"/>; configuration <c>Start</c>'ınki,
+    /// <c>Debug</c>). Log-ilk-satırı pinlerinin ORTAK beklentisi (kalıp kopyalanmaz); <paramref name="customBeforeTargets"/>
+    /// yalnız yol taşıyan toolset içindir.</summary>
+    internal static string ExpectedBuildCommandLine(string projectId, string? customBeforeTargets = null) =>
+        WindowsCommandLine.Build(FakeMsBuildExe,
+            [.. MsBuildArguments.Build(projectId, "Debug", customBeforeTargets: customBeforeTargets)]);
 
     // [T20-b/P3] Gerçek MSBuild'in post-build copy çakışma satırı (MSB3021) — RetryingMsBuildInvoker'ın retry
     // kapısı ve copy-floor penceresinin TEK tetikleyicisi budur (copy'nin "başlıyor" sinyali YOKTUR).
@@ -1051,10 +1059,27 @@ public class RunCoordinatorTests
 
         // (i) her projenin logunun ilk satırı, yolu taşıyan gerçek komut satırıdır
         foreach (string name in new[] { "A", "B" })
-            Assert.Equal(
-                WindowsCommandLine.Build(FakeMsBuildExe,
-                    [.. MsBuildArguments.Build(Id(name), "Debug", customBeforeTargets: targetsPath)]),
+            Assert.Equal(ExpectedBuildCommandLine(Id(name), targetsPath),
                 File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id(name)))[0]);
+    }
+
+    /// <summary>
+    /// [R3c3 · M2] Tekil proje yolunda invoker bir <see cref="AggregateException"/> fırlatırsa (ör. Parallel.ForEach sarmalı)
+    /// başarısızlık gerekçesi sarmalın "One or more errors occurred" metni değil, ilk iç istisnanın mesajıdır — SCC grubu
+    /// ile AYNI sahip (<c>RunCoordinator.InvokeErrorReason</c>) yazar. Eski metin: <c>invoke error: One or more errors
+    /// occurred. (boom)</c>; tekil yolun gerekçesini pinleyen test yoktu.
+    /// </summary>
+    [Fact]
+    public async Task a_single_project_invoker_exception_inside_an_aggregate_fails_with_the_inner_message()
+    {
+        var plan = PlanOf(Node("A"));
+        var invoker = new FakeInvoker((_, _, _) => throw new AggregateException(new InvalidOperationException("boom")));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal("invoke error: boom", Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Reason);
     }
 
     [Fact]
@@ -1078,8 +1103,7 @@ public class RunCoordinatorTests
         var logs = events.OfType<ProjectLogEvent>().ToList();
         Assert.Equal([1, 2, 3, 4], logs.Select(l => l.LineNumber)); // komut satırı + 3 çıktı satırı, ardışık
 
-        string expectedCommandLine = WindowsCommandLine.Build(FakeMsBuildExe,
-            [.. MsBuildArguments.Build(Id("A"), "Debug")]);
+        string expectedCommandLine = ExpectedBuildCommandLine(Id("A"));
         Assert.Equal(expectedCommandLine, logs[0].Text);
 
         string[] diskLines = File.ReadAllLines(h.LogWriters[0].ProjectLogPath(Id("A")));

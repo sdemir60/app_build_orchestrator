@@ -3,6 +3,7 @@ using System.IO;
 using System.Text.RegularExpressions;
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.State;
 using static BuildOrchestrator.Tests.Supervisor.CycleRoundsTests;
 using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
@@ -91,7 +92,9 @@ public class CycleDecisionLogTests
 
         int header = IndexOf(log, "cycle A: 2 members, 2 producers, evidence on, hash {ms} ms");
         int round1 = IndexOf(log, "cycle A round 1: converged; stale=0 []; moved=none; levels=2; round {ms} ms; hash {ms} ms");
-        int verdict = IndexOf(log, "cycle A: converged (2 members)");
+        // [DEĞİŞEN KURAL — RESOLVE 3.4] Eski iddia: karar satırı "cycle A: converged (2 members)" idi. Tur 1 yalnız
+        // gereken üyeleri derlediği için satır derlenen sayıyı da taşır; üye terimi yok ⇒ herkes derlendi.
+        int verdict = IndexOf(log, CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 2, rememberedAt: null));
         Assert.True(header < round1 && round1 < verdict, log);
     }
 
@@ -119,7 +122,8 @@ public class CycleDecisionLogTests
         int round1 = IndexOf(log, "cycle A round 1: continue; stale=1 [A]; moved=" + SurfaceDisk.PathOf("B")
                                   + "; levels=3; round {ms} ms; hash {ms} ms");
         int round2 = IndexOf(log, "cycle A round 2: converged; stale=0 []; moved=none; levels=1; round {ms} ms; hash {ms} ms");
-        int verdict = IndexOf(log, "cycle A: converged (3 members)");
+        // [DEĞİŞEN KURAL — RESOLVE 3.4] eski: "cycle A: converged (3 members)"; artık derlenen sayısıyla (terimsiz grup).
+        int verdict = IndexOf(log, CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 3, compiled: 3, rememberedAt: null));
         Assert.True(header < round1 && round1 < round2 && round2 < verdict, log);
     }
 

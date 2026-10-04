@@ -253,7 +253,8 @@ public sealed partial class RunViewModel
                     CycleOutcome.Converged => StreamKind.Ok,
                     CycleOutcome.NoProgress => StreamKind.Fail,
                     _ => StreamKind.Info, // CapReached
-                }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs));
+                }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs,
+                    e.CompiledCount));
                 break;
 
             // [spec 2026-09-18 §6.2] Satır kipe göre OnSyncCompleted'ta seçildi (sessiz Sync'te tek satır ya da hiç).

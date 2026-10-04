@@ -120,7 +120,9 @@ public sealed class IncrementalRunBinder
     /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>
     /// <param name="outputs">[Faz 3/Task 5] Çıktı kanıtı kontrolleri (<see cref="ChecksFor"/>) — yalnız karara
     /// girer, imzaya ASLA. <c>null</c> ⇒ kanıtsız bağlama (bugünkü karar).</param>
-    public (BuildPlan Plan, IReadOnlyDictionary<string, string> SignatureById) Bind(
+    /// <returns>[RESOLVE Faz 3/Task 3.1] Bağlanmış plan, bileşik imzalar ve SCC üyelerinin kendi terimleri
+    /// (<see cref="IncrementalSignatures"/>; iki öğeli <c>(plan, signatures)</c> ayrıştırması korunur).</returns>
+    public IncrementalSignatures Bind(
         IReadOnlyDictionary<string, BuildState> state, bool buildCycles, DependentMode mode,
         IReadOnlyDictionary<string, OutputCheck>? outputs = null)
     {

@@ -49,4 +49,25 @@ public class CycleReadFilesTests
     {
         Assert.Equal(Known, CycleReadFiles.Tracked(Known, [@"X:\elsewhere\B.dll"], succeeded: true));
     }
+
+    /// <summary>"Taşındı"nın TEK tanımı (tur 1 kararı ve tur sonu bayatlığı aynı ilkeyi okur): kayıtlı dosya yoksa ya da özeti
+    /// (büyük/küçük harf DAHİL) farklıysa taşınmıştır. Eskiden <c>CycleMemberNeed</c>'deydi; yuvası, hangi dosyaların
+    /// yargılanacağını söyleyen <see cref="CycleReadFiles.Tracked"/>'ın yanıdır.</summary>
+    [Fact]
+    public void moved_files_lists_only_recorded_files_that_differ_or_vanished()
+    {
+        const string b1 = @"X:\bin\B1.dll", b2 = @"X:\bin\B2.dll", b3 = @"X:\bin\B3.dll", b4 = @"X:\bin\B4.dll";
+        var seen = new Dictionary<string, string> { [b1] = "h1", [b2] = "h2", [b3] = "h3", [b4] = "h4" };
+        var now = new Dictionary<string, string>
+        {
+            [b1] = "h1",                       // aynı
+            [b2] = "moved",                    // farklı
+            [b4] = "H4",                       // yalnız harf farkı: Ordinal ⇒ farklı
+            [@"X:\bin\B9.dll"] = "unrelated",  // kayıtta yok ⇒ yok sayılır
+        };
+
+        var moved = CycleReadFiles.MovedFiles(seen, now).Order(StringComparer.Ordinal);
+
+        Assert.Equal(new[] { b2, b3, b4 }, moved);
+    }
 }
