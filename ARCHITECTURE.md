@@ -1659,7 +1659,11 @@ dependency's evidence path *and* its fed copies (§7.6), each file hashed over d
 attributes included — every field of a value type (private ones too), explicit type layout; no IL, no MVID,
 no compiler-generated names, signatures resolved to type names rather than
 raw blobs so a renumbered ref table cannot masquerade as change; the assembly version counts only under a
-strong name, so a wildcard `AssemblyVersion` does not defeat the proof). When the compile ends, the record
+strong name, so a wildcard `AssemblyVersion` does not defeat the proof). One generated type is left out as well,
+matched by its exact full name: WPF's XAML loader helper (`XamlGeneratedNamespace.GeneratedInternalTypeHelper`).
+The markup compiler emits it according to its incremental state in `obj` rather than the source, and no sibling can
+bind to it — every WPF assembly carries its own, which the loader reaches by reflection — so counting it would make
+an unchanged source look changed and recompile every reader for nothing. When the compile ends, the record
 keeps only the file the member really read. The compiler says which one: MSBuild prints the compiler's command
 line, and its `/reference:` list is the outcome of reference resolution, whatever `HintPath`,
 `ProjectReference`, reference path or import led there (`CompilerReferences`). A *Clean* is where this

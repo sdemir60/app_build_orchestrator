@@ -164,6 +164,35 @@ public class ApiSurfaceHashTests
         Assert.Equal(without, with);
     }
 
+    /// <summary>Aynı modüle boş, public, sealed bir tip daha ekler: iki varyantın TEK farkı o tipin varlığı olsun
+    /// (üyesi/özniteliği yok — özet farkı yalnız tipin sayılıp sayılmadığından gelir).</summary>
+    private static void SiblingType(TypeBuilder type, string fullName) =>
+        ((ModuleBuilder)type.Module).DefineType(fullName,
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class).CreateType();
+
+    [Fact] // WPF bu tipi kaynağa değil obj'deki artımlı işaretleme durumuna göre üretir: aynı kaynak, iki derleme.
+    public void the_wpf_xaml_loader_helper_type_does_not_change_the_hash()
+    {
+        // Sayılsaydı içerik aynıyken yüzey "değişti" görünür, Resolve okuyan herkesi boşuna yeniden derlerdi.
+        string? without = HashOf(Assembly(t => Method(t, "M", 1)));
+        // Ad üretimin TEK sabitinden (kopya yasak); gerçek WPF adıyla eşleştiği gerçek derlemeyle doğrulandı.
+        string? with = HashOf(Assembly(t => { Method(t, "M", 1); SiblingType(t, ApiSurfaceHash.XamlLoaderHelperType); }));
+
+        Assert.NotNull(without);
+        Assert.Equal(without, with);
+    }
+
+    [Theory] // Dışlama YALNIZ tam ad: aynı basit ad başka namespace'te ya da aynı namespace'te başka ad GERÇEK bir tiptir.
+    [InlineData("Other.GeneratedInternalTypeHelper")]
+    [InlineData("XamlGeneratedNamespace.SomethingElse")]
+    public void a_type_that_only_resembles_the_xaml_loader_helper_changes_the_hash(string fullName)
+    {
+        string? without = HashOf(Assembly(t => Method(t, "M", 1)));
+        string? with = HashOf(Assembly(t => { Method(t, "M", 1); SiblingType(t, fullName); }));
+
+        Assert.NotEqual(without, with);
+    }
+
     [Fact] // Strong-name YOKKEN loader sürüme bakmaz; wildcard AssemblyVersion kısa devreyi öldürmemeli.
     public void an_assembly_version_bump_without_a_strong_name_does_not_change_the_hash()
     {

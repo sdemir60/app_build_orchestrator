@@ -28,7 +28,11 @@ namespace BuildOrchestrator.Core.Incremental;
 /// adlar (<c>&lt;</c> içeren) hariçtir — gövde
 /// değişiminde derleyicinin ürettiği state-machine/closure adları kayar ve özet boşuna oynardı; aynı nedenle
 /// üretilmiş tip ADI taşıyan <c>AsyncStateMachine</c>/<c>IteratorStateMachine</c> öznitelikleri ile
-/// <c>CompilerGenerated</c> ve (derleme kipine bağlı) <c>Debuggable</c> da sayılmaz.</para>
+/// <c>CompilerGenerated</c> ve (derleme kipine bağlı) <c>Debuggable</c> da sayılmaz. WPF işaretleme derleyicisinin
+/// ürettiği XAML yükleyici yardımcı tipi (tam adı <c>XamlGeneratedNamespace.GeneratedInternalTypeHelper</c>) da
+/// hariçtir: kaynağa değil <c>obj</c>'deki artımlı işaretleme durumuna bağlı olarak bir derlemede belirir, ötekinde
+/// kaybolur — sayılsaydı içerik aynıyken yüzey "değişti" görünürdü. Dışlama YALNIZ bu tam addır
+/// (<c>XamlGeneratedNamespace.*</c> değil).</para>
 ///
 /// <para><b>Değer tipinin private alanları DAHİLDİR:</b> kesin atama ve <c>unmanaged</c> kuralı struct'ın BÜTÜN
 /// alanlarına bakar (Roslyn reference assembly'leri de bu yüzden struct alanlarını atmaz); alanların tipi
@@ -127,10 +131,22 @@ public static class ApiSurfaceHash
         foreach (string line in rendered) text.Append(line);
     }
 
+    /// <summary>WPF işaretleme derleyicisinin ürettiği XAML yükleyici yardımcı tipinin tam adı;
+    /// <see cref="IncludeType"/> bu tipi özetin dışında tutar. Adın gerçek WPF çıktısıyla eşleştiği birim testle değil
+    /// gerçek derlemeyle doğrulandı (OSYS'te aynı kaynaktan iki derleme, bu tip dışlanınca aynı özet).</summary>
+    internal const string XamlLoaderHelperType = "XamlGeneratedNamespace.GeneratedInternalTypeHelper";
+
     private static bool IncludeType(MetadataReader reader, TypeDefinition type)
     {
+        string fullName = FullNameOf(reader, type);
         // '<Module>', '<PrivateImplementationDetails>', closure/state-machine tipleri: üretilmiş adlar.
-        if (FullNameOf(reader, type).Contains('<')) return false;
+        if (fullName.Contains('<')) return false;
+        // WPF'in XAML yükleyici yardımcısı: hiçbir kardeş ona bağlanamaz (aynı tam ad her WPF derlemesinde AYRI
+        // üretilir; yükleyici yansımayla YEREL derlemedekini kullanır) ve varlığı kaynağa değil obj'deki artımlı
+        // işaretleme durumuna bağlıdır — sayılırsa içerik aynıyken yüzey "değişti" görünür ve okuyan herkes
+        // boşuna yeniden derlenir. YALNIZ bu tam ad: "XamlGeneratedNamespace.*" gibi geniş bir kural, aynı
+        // ad alanındaki gerçek bir tipi de yutardı.
+        if (fullName == XamlLoaderHelperType) return false;
         return (type.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPrivate;
     }
 
