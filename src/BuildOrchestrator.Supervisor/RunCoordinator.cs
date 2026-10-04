@@ -714,6 +714,7 @@ public sealed class RunCoordinator(
         // dispatch'te dep-issue hesabına girer (bkz. ComputeDepIssues).
         IReadOnlyDictionary<string, IReadOnlyList<StaleDependency>>? staleDependenciesById = null;
         Dictionary<string, string> nameById;
+        CycleGroups? groups; // [cycle rounds] SCC üyelik haritasının TEK örneği — plan'ın son hâlinden kurulur (aşağıda)
 
         {
             // Planlama hataları (I/O, harici hazırlık) ayrı bir kanal AÇMAZ: mevcut planlama-hatası kodu
@@ -746,6 +747,18 @@ public sealed class RunCoordinator(
                 staleDependenciesById = new Dictionary<string, IReadOnlyList<StaleDependency>>(StringComparer.OrdinalIgnoreCase)
                 { [scope.Target.Id] = scope.StaleDependencies };
             }
+
+            // [cycle rounds] SCC üyelik haritası TEK yerde kurulur ve HEM scheduler'a (grup dispatch'i) HEM run
+            // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
+            // sessizce ayrışabilirdi. Plan'ın SON hâlinden (Clean ve kapsam daraltmasından sonra) kurulur; tohum
+            // bölümündeki retry satırı da grubun adını bu örnekten okur. Plan'da hiç SCC yoksa null geçilir:
+            // scheduler o zaman bugünkü davranışını (InCycle düğümleri pre-skip) birebir korur ve tur döngüsü hiç
+            // devreye girmez. Kapsam kapısı BURADADIR: Cycles DIŞINDAKİ her modda harita hiç KURULMAZ ve scheduler'a
+            // null gider — yani diğer modlar için yazılmış ayrı bir kod yolu yoktur, "SCC yok" hâliyle BİREBİR aynı
+            // dal seçilir.
+            groups = cmd.Mode == RunMode.Cycles && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
+                ? withCycles
+                : null;
 
             lock (_gate)
             {
@@ -793,14 +806,10 @@ public sealed class RunCoordinator(
                     //
                     // Hafıza YAZILMAYA devam eder (kanıt) ve burada OKUNUR: operatör grubun neden yine turlar
                     // harcadığını decision.log'un ilk satırlarından görür.
-                    if (stateStore is not null && runPlan.Incremental is { } inc)
+                    // groups: Cycles modunda plan'da SCC varsa null DEĞİLDİR (boş olmayan her SCC haritadadır).
+                    if (stateStore is not null && runPlan.Incremental is { } inc && groups is not null)
                     {
                         var cycleState = stateStore.Load();
-                        // [Fix round 1 — I1] Retry satırı grubu başlık ve karar satırlarıyla AYNI adla anar
-                        // (CycleGroupName: build-order lideri); üyelik sırası scheduler'ın da okuduğu kuraldan
-                        // (CycleGroups) gelir. Bu örnek YALNIZ ad içindir, dispatch'e girmez.
-                        var membership = CycleGroups.From(runPlan.Plan);
-                        var planNodeById = runPlan.Plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
                         foreach (var cycle in runPlan.Plan.Cycles)
                         {
                             // [I4] Temsilci seçimi YAZAN tarafla (UpdateCycleNonConvergenceMemory) TEK yerdedir:
@@ -809,9 +818,11 @@ public sealed class RunCoordinator(
                             if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
                                 || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
                             if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
+                            // [Fix round 1 — I1] Grup, başlık ve karar satırlarıyla AYNI adla anılır (CycleGroupName:
+                            // build-order lideri). Build-order üyeleri scheduler'ın da okuduğu TEK örnekten (groups), ad
+                            // tam plandan kurulmuş nameById'den gelir — geri dönüşü NameOf'unkiyle aynı (kimlik).
                             Decide(logs, CycleDecisionLines.Retrying(
-                                CycleGroupName(membership.IsMember(representative) ? membership.MembersOf(representative) : cycle,
-                                    id => NameOf(planNodeById, id)),
+                                CycleGroupName(groups.MembersOf(representative), id => nameById.GetValueOrDefault(id, id)),
                                 signature));
                         }
                     }
@@ -855,15 +866,8 @@ public sealed class RunCoordinator(
             clock = new RunClock(nowMs);
         }
 
-        // [cycle rounds] SCC üyelik haritası TEK yerde kurulur ve HEM scheduler'a (grup dispatch'i) HEM run
-        // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
-        // sessizce ayrışabilirdi. Plan'da hiç SCC yoksa null geçilir: scheduler o zaman bugünkü davranışını
-        // (InCycle düğümleri pre-skip) birebir korur ve tur döngüsü hiç devreye girmez.
-        // Kapsam kapısı BURADADIR: Cycles DIŞINDAKİ her modda harita hiç KURULMAZ ve scheduler'a null gider —
-        // yani diğer modlar için yazılmış ayrı bir kod yolu yoktur, "SCC yok" hâliyle BİREBİR aynı dal seçilir.
-        var groups = cmd.Mode == RunMode.Cycles && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
-            ? withCycles
-            : null;
+        // [cycle rounds] groups: planlama bloğunda plan'ın son hâlinden kurulan TEK örnek — scheduler ve run context
+        // AYNI örneği alır (gerekçe kuruluş yerinde).
         var scheduler = new ReadySetScheduler(runPlan.Plan, schedulerSeed, groups);
 
         MsBuildToolset toolset;
@@ -1405,10 +1409,8 @@ public sealed class RunCoordinator(
 
     /// <summary>Projenin görünen adı; id her zaman plan'dadır (scheduler aynı plan'dan sürülür) ama arama
     /// FIRLATMAYAN biçimde yapılır: buradan gelecek bir exception Complete'i atlatabilirdi.</summary>
-    private static string NameOf(RunContext run, string projectId) => NameOf(run.NodeById, projectId);
-
-    private static string NameOf(IReadOnlyDictionary<string, ProjectNode> nodeById, string projectId) =>
-        nodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
+    private static string NameOf(RunContext run, string projectId) =>
+        run.NodeById.TryGetValue(projectId, out var node) ? node.Name : projectId;
 
     /// <summary>[Fix round 1 — I1] decision.log'da bir SCC'yi ANAN ad: build-order'daki ilk üyenin adı. Başlık, tur,
     /// kayıp, karar ve retry satırları grubu bu TEK kuraldan anar (CycleRoundStartedEvent'in lideri de aynı üyedir).
