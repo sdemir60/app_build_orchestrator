@@ -1235,7 +1235,7 @@ public sealed class RunCoordinator(
         {
             // Invoke/log yolunda beklenmeyen hata: proje tek başına düşer, run devam eder ("hata derlemeyi
             // öldürmez", A3) — ve aşağıdaki finally sayesinde scheduler ASLA askıda kalmaz.
-            failReason = "invoke error: " + ex.Message;
+            failReason = InvokeErrorReason(ex);
             failLogTail = ""; // reason zaten hatayı taşır; satır sonuna ayrıca süre EKLENMEZ
         }
         finally
@@ -1374,8 +1374,8 @@ public sealed class RunCoordinator(
                 // Kayıt artık NOTLA ve KÖKLERİYLE yazılır; yeniden derleme kararını WillBuildEvaluator o nottan
                 // verir (WaitingForDependency) ve koşu kök düzeldiğinde uygular (ConditionalRebuild).
                 // Kazanç: sha çifti ve kart artık gerçeği gösterir.
-                // [A2 fix-4] Ayrımı ikinci kez TÜRETME: depIssuesForEvent zaten "depIssue var mı" sorusunun
-                // materyalize edilmiş hâlidir — depIssue şekli değişirse ikisi kilit adım kalsın.
+                // [A2 fix-4] Ayrımı ikinci kez TÜRETME: "depIssue var mı ⇒ kökler" kuralı DepIssueRootsOf'ta TEK yerdedir
+                // (taşınan SCC üyesinin defter yenilemesi de oradan okur) — depIssue şekli değişirse ikisi kilit adım kalsın.
                 // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
                 // bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
                 // [tek proje · Clean] Temizlenen projenin kaydı SİLİNİR (persist edilmez): çıktı artık yok,
@@ -1383,7 +1383,7 @@ public sealed class RunCoordinator(
                 if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
                 else if (trustedResult)
                     PersistBuildStateOnSuccess(run, projectId, durationMs,
-                        depIssueRoots: depIssuesForEvent is null ? null : depIssues.RootIds, cycle: cycle);
+                        depIssueRoots: DepIssueRootsOf(depIssues), cycle: cycle);
                 // [final review I1] Trusted = defter bu başarıyı başarı olarak tuttu mu (invalidates'in tersi);
                 // tutmadıysa App satırı, bir sonraki Sync'in okuyacağı "kanıtsız hata" hâliyle çizer.
                 run.Events.TryWrite(new ProjectSucceededEvent(run.RunId, projectId, durationMs, depIssuesForEvent,
@@ -1637,6 +1637,9 @@ public sealed class RunCoordinator(
         // Kesilme gerekçesi: stop/iptal "stopped", beklenmeyen hata kendi metnini taşır — ikisi AYIRT EDİLİR
         // kalır (tekil proje yolundaki failReason ayrımıyla aynı).
         string interruptedReason = FailureReasons.Stopped;
+        // [R3c3] İlk dispatch yapıldı mı: öncesinde fırlayan istisna grup BAŞI hatasıdır (yüzey hash'i, tur 1 seçimi, başlık
+        // satırları), sonrasındaki "invoke error"dır — iki neden metni de InvokeErrorReason ile AYNI yerde sahiplenilir.
+        bool groupDispatched = false;
         // [Task 3] finally'deki RecordCycleOutcome çağrısına geçecek — try içinde tanımlanırsa scope dışına
         // taşmazlardı, decision'la AYNI kapsamda dururlar.
         int roundsRun = 0;
@@ -1680,11 +1683,6 @@ public sealed class RunCoordinator(
             Decide(run.Logs, CycleDecisionLines.GroupStarted(group, members.Count, producers.Count, hashMode,
                 groupHashClock.ElapsedMilliseconds));
             if (evidenceLoss is not null) Decide(run.Logs, evidenceLoss);
-
-            // Her üyenin logu grubun TÜM turları boyunca AÇIK kalır. OpenProjectLog truncate ettiği için
-            // (FileMode.Create) tur başına açmak önceki turların logunu silerdi ve satır numaraları her turda
-            // 1'e dönerdi. Bir SCC'nin üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
-            foreach (string id in members) state[id].Log = run.Logs.OpenProjectLog(id);
 
             HashSet<string>? previousFailed = null;
             // [API kısa devresi] Turun derleyeceği üyeler: tur 1 HERKES; sonraki turlar yalnız bayat bağlanmış
@@ -1787,11 +1785,18 @@ public sealed class RunCoordinator(
                         TrackInFlight(ledger => ledger.Add(id)); // [§5.5] her tur yeni bir dispatch; sonuç ReportProjectResult'ta düşer
                         run.Events.TryWrite(new ProjectStartedEvent(run.RunId, id, NameOf(run, id)));
                         announced = true;
+                        groupDispatched = true; // [R3c3] bundan sonraki istisna "invoke error"dır; öncesi grup başı hatasıdır
+                        // [R3c3] Proje logu ilk derlemede TEMBEL açılır: hiç derlenmeyen (taşınan) üye boş bir dosya bırakmaz,
+                        // sıradan güncel atlama gibi dosya almaz. Açılınca grubun kalan turları boyunca AÇIK kalır —
+                        // OpenProjectLog truncate eder (FileMode.Create): tur başına açmak önceki turların logunu silerdi ve
+                        // satır numaraları her turda 1'e dönerdi. Açıklama satırı YAZILMAZ: projenin ilk satırı gerçek MSBuild
+                        // komut satırıdır (v7Δ-7). Derlenen üye sayısı kadar dosya tanıtıcısı açık kalır — 32 üye için kabul edilir.
+                        var memberLog = member.Log ??= run.Logs.OpenProjectLog(id);
                         // [restore-once] bu koşuda bir önceki turu BAŞARILI bitmiş üye restore prologunu yeniden ödemez
                         // (gerekçe InvokeOnceAsync'te); başarısız üye yeniden restore alır. [R3c2] Taşınan üyenin
                         // Succeeded'ı kayıttan gelir, bu koşunun derlemesi değildir: ilk derlemesi (hangi turda olursa)
                         // restore kararından geçer — Carried ilk invoke'ta düşer.
-                        outcome = await InvokeOnceAsync(run, id, member.DepIssues, member.Log!, ct,
+                        outcome = await InvokeOnceAsync(run, id, member.DepIssues, memberLog, ct,
                             suppressRestore: member.Result == BuildResult.Succeeded && !member.Carried,
                             observeLine: compiled is null ? null : ObserveCompilerLine);
                         member.DurationMs += outcome.DurationMs;         // süre TURLARIN TOPLAMI
@@ -1893,7 +1898,7 @@ public sealed class RunCoordinator(
                         foreach (string dep in siblingDeps[id])
                         {
                             if (!read.TryGetValue(dep, out var seen)) { staleNow.Add(id); continue; }
-                            foreach (string file in MovedFiles(seen, surfaceState[dep]))
+                            foreach (string file in CycleReadFiles.MovedFiles(seen, surfaceState[dep]))
                             {
                                 staleNow.Add(id);
                                 movedFiles.Add(file);
@@ -1930,7 +1935,7 @@ public sealed class RunCoordinator(
         }
         catch (Exception ex)
         {
-            interruptedReason = "invoke error: " + ex.Message;
+            interruptedReason = groupDispatched ? InvokeErrorReason(ex) : GroupStartErrorReason(ex);
         }
         finally
         {
@@ -2022,10 +2027,9 @@ public sealed class RunCoordinator(
         // sorudur: o "hangi üyenin imzası okunacak", bu "kullanıcı grubu hangi adla görüyor".
         string leader = CycleGroupName(members, id => NameOf(run, id));
         string? remembered = UpdateCycleNonConvergenceMemory(run, allMembers, members, decision);
-        // [RESOLVE 3.4] Yakınsayan grubun satırı derlenen üye sayısını da söyler; diğer kararların satırı aynı.
-        Decide(run.Logs, decision == CycleRoundDecision.Converged
-            ? CycleDecisionLines.ConvergedVerdict(leader, members.Count, compiledCount)
-            : CycleDecisionLines.Verdict(leader, decision, members.Count, remembered));
+        // [RESOLVE 3.4] Tek biçim: yakınsayan grubun satırı derlenen üye sayısını da söyler (CycleDecisionLines.Verdict),
+        // diğer kararların satırı aynı.
+        Decide(run.Logs, CycleDecisionLines.Verdict(leader, decision, members.Count, compiledCount, remembered));
 
         // ProjectId = members[0] (İD, ad DEĞİL) — CycleRoundStartedEvent'in lideriyle AYNI temsilci, satır
         // tıklanabilir kalsın diye.
@@ -2152,7 +2156,8 @@ public sealed class RunCoordinator(
 
         public DepIssueResult DepIssues { get; } = depIssues;
 
-        /// <summary>Grubun tüm turları boyunca açık kalan proje logu; açılamadıysa null.</summary>
+        /// <summary>Üyenin ilk derlemesinde TEMBEL açılan ve grubun kalan turları boyunca açık kalan proje logu; hiç
+        /// derlenmediyse (taşınan üye) null — dosya da oluşmaz.</summary>
         public ProjectLogFile? Log { get; set; }
 
         /// <summary>[API kısa devresi] Üyenin SON invoke'u başlarken okuduğu kardeş yüzeyleri (üretici → izlenen
@@ -2164,17 +2169,6 @@ public sealed class RunCoordinator(
         /// henüz derlenmedi. Bayatlayıp derlenince düşer (<c>CompileOneAsync</c>); grup yakınsadığında hâlâ taşınıyorsa
         /// "up to date (carried)" raporlanır.</summary>
         public bool Carried { get; set; }
-    }
-
-    /// <summary>[okunan dosya kanıtı] Okuma anında kaydedilen dosyalardan ŞİMDİ farklı olanlar — boşsa üye bu
-    /// üretici yüzünden bayat değildir. Yalnız kayıttaki dosyalara bakılır: üyenin okumadığı bir kopyanın
-    /// değişmesi onu bayat yapmaz. [PERF Faz E1] Dönen dosyalar tur satırının moved alanını da besler.</summary>
-    private static IEnumerable<string> MovedFiles(IReadOnlyDictionary<string, string> seen,
-                                                  IReadOnlyDictionary<string, string> now)
-    {
-        foreach (var (file, hash) in seen)
-            if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
-                yield return file;
     }
 
     /// <summary>[RESOLVE 3.4] Yakınsayan grupta derlenen üyenin deftere giden döngü kanıtı — <see cref="BuildState"/>'in
@@ -2272,7 +2266,7 @@ public sealed class RunCoordinator(
             || run.LedgerAtStart?.GetValueOrDefault(projectId) is not { } recorded)
             return;
         var (builtCommit, branch) = BuiltRevisionOf(run, inc, projectId);
-        IReadOnlyList<string>? depIssueRoots = depIssues.All.Count > 0 ? depIssues.RootIds : null;
+        IReadOnlyList<string>? depIssueRoots = DepIssueRootsOf(depIssues);
         var state = recorded with
         {
             BuiltSignature = signature, BuiltCommit = builtCommit, LastRunAt = DateTimeOffset.UtcNow, LastBranch = branch,
@@ -2290,6 +2284,12 @@ public sealed class RunCoordinator(
         IsExternal(run, projectId)
             ? (inc.CommitByProjectId?.GetValueOrDefault(projectId), null)
             : (inc.HeadCommit, inc.Branch);
+
+    /// <summary>[R3c3] Bağımlılık notunun defter karşılığı: en az bir sorun (<see cref="DepIssueResult.All"/>) ⇒ notun
+    /// KÖKLERİ (kimlik; <see cref="DepIssueResult.RootIds"/>), sorun yoksa <c>null</c> — kayıt notsuz yazılır. Başarı
+    /// persist'i (<see cref="ReportProjectResult"/>) ve taşınan üyenin defter yenilemesi aynı kuralı buradan okur.</summary>
+    private static IReadOnlyList<string>? DepIssueRootsOf(DepIssueResult depIssues) =>
+        depIssues.All.Count > 0 ? depIssues.RootIds : null;
 
     /// <summary>
     /// [cycle rounds] Tek bir MSBuild invoke'u — komut satırları, depIssue warn satırları dahil. Event YAYMAZ,
@@ -2588,6 +2588,22 @@ public sealed class RunCoordinator(
         && inc.SignatureById.TryGetValue(projectId, out var signature)
             ? signature
             : null;
+
+    /// <summary>[R3c3] Beklenmeyen bir istisnanın başarısızlık gerekçesi — <c>invoke error: …</c> metninin TEK sahibi: tekil
+    /// proje ve SCC grubu aynı yerden yazar. Serbest metindir, derleyici kanıtı DEĞİLDİR (<see cref="FailureClassification"/>).
+    /// <see cref="AggregateException"/> sarmalı (ör. Parallel.ForEach) ilk iç istisnaya AÇILIR: sarmalın "One or more errors
+    /// occurred" metni asıl nedeni gizlerdi.</summary>
+    private static string InvokeErrorReason(Exception ex) => "invoke error: " + FirstInner(ex).Message;
+
+    /// <summary>[R3c3] Grubun ilk dispatch'inden ÖNCE (yüzey hash'i, tur 1 seçimi, başlık satırları) fırlayan istisnanın
+    /// gerekçesi — henüz hiçbir şey invoke edilmemişken "invoke error" yanıltırdı. Sahibi <see cref="InvokeErrorReason"/> ile
+    /// AYNI yerdir (aynı açma kuralı, aynı biçim); kanıt DEĞİLDİR.</summary>
+    private static string GroupStartErrorReason(Exception ex) => "group start failed: " + FirstInner(ex).Message;
+
+    /// <summary>[R3c3] <see cref="AggregateException"/> sarmalını (iç içe olsa da) ilk iç istisnaya açar; sarmal değilse
+    /// istisnanın kendisi. Paralel döngü birden çok iş parçacığında AYNI nedenle patlayabilir — ilki nedeni anlatır.</summary>
+    private static Exception FirstInner(Exception ex) =>
+        ex is AggregateException { InnerExceptions.Count: > 0 } aggregate ? FirstInner(aggregate.InnerExceptions[0]) : ex;
 
     private string ReasonFor(MsBuildInvokeResult invoke)
     {

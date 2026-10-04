@@ -527,7 +527,10 @@ public class EventStreamTests
 
     /// <summary>[RESOLVE 3.4] Yakınsama satırı bu koşuda DERLENEN üye sayısını da söyler: tur 1 yalnız gereken üyeleri
     /// derlediği için "17 members" tek başına grubun ne kadar iş yaptığını anlatmaz. Alanı bilmeyen eski motor
-    /// (<c>CompiledCount = -1</c>, alanın varsayılanı) eski metni alır.</summary>
+    /// (<c>CompiledCount = -1</c>, alanın varsayılanı) eski metni alır.
+    /// <para>[R3c3] Eski iddia: <c>17 members, 1 compiled · 1 round</c> — derlenen sayısı tur sayısından " · " ile
+    /// ayrılıyordu. Plan metni üye, derlenen ve tur sayılarını virgülle birleştirir (<c>17 members, 1 compiled, 1 round</c>)
+    /// ve süreyi " · " ile ayırır; satır plana çekildi.</para></summary>
     [Fact]
     public void Cycle_completed_names_the_compiled_member_count_when_the_engine_reports_it()
     {
@@ -535,7 +538,7 @@ public class EventStreamTests
         var vm = NewVm();
         vm.OnEvent(new CycleCompletedEvent("r1", leaderId, CycleOutcome.Converged, MemberCount: 17, Rounds: 1,
             FailedCount: 0, DurationMs: 238_000, CompiledCount: 1));
-        Assert.Equal("cycle converged — 17 members, 1 compiled · 1 round · 3m 58s", vm.StreamEvents.Last().Text);
+        Assert.Equal("cycle converged — 17 members, 1 compiled, 1 round · 3m 58s", vm.StreamEvents.Last().Text);
 
         var legacy = NewVm();
         legacy.OnEvent(new CycleCompletedEvent("r1", leaderId, CycleOutcome.Converged, MemberCount: 17, Rounds: 1,

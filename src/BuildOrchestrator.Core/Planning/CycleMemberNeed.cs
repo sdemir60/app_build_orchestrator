@@ -157,23 +157,6 @@ public static class CycleMemberNeed
         return new Decision(toBuild, carried, reasons);
     }
 
-    /// <summary>
-    /// [okunan dosya kanıtı] Okuma anında kaydedilen dosyalardan ŞİMDİ farklı olanlar (diskte artık olmayanlar dahil;
-    /// özet karşılaştırması Ordinal) — boşsa üye bu üretici yüzünden bayat değildir. Yalnız kayıttaki dosyalara
-    /// bakılır: üyenin okumadığı bir kopyanın değişmesi onu bayat yapmaz. Tur 1 kararı (<see cref="Decide"/>) ile
-    /// tur sonu bayatlığı AYNI soruyu sorar: kaydedilen yüzey şimdiki yüzeyle hâlâ aynı mı. Sonuç, neden satırında
-    /// adıyla yazılır (<see cref="ReadSurfaceMovedPrefix"/>).
-    /// </summary>
-    /// <param name="seen">Okuma anında kaydedilen: dosya → yüzey özeti.</param>
-    /// <param name="now">Şimdiki (diskten okunan): dosya → yüzey özeti.</param>
-    public static IEnumerable<string> MovedFiles(IReadOnlyDictionary<string, string> seen,
-                                                 IReadOnlyDictionary<string, string> now)
-    {
-        foreach (var (file, hash) in seen)
-            if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
-                yield return file;
-    }
-
     // Kayıt, üyenin HER grup içi bağımlılığı için en az bir okuma girdisi (Producer == bağımlılık) taşıyor mu.
     // Karşılaştırma OrdinalIgnoreCase (Windows yolu). Null eleman ya da null üretici hiçbir bağımlılığı kapsamaz
     // (bozuk girdi; ReadStatesOf de kaydı güvenilmez sayar) ve çökertmez.
@@ -215,7 +198,7 @@ public static class CycleMemberNeed
         foreach (var (producer, seen) in readStates)
         {
             var now = surfaceState.TryGetValue(producer, out var current) ? current : NoFiles;
-            foreach (string file in MovedFiles(seen, now)) moved.Add(file);
+            foreach (string file in CycleReadFiles.MovedFiles(seen, now)) moved.Add(file);
         }
         return [.. moved];
     }

@@ -1072,7 +1072,7 @@ public class CycleRoundsTests
         // [DEĞİŞEN KURAL — RESOLVE 3.4] Eski iddia: satır "cycle A: converged (2 members)" idi. Tur 1 artık yalnız
         // gereken üyeleri derlediği için üye sayısı tek başına grubun ne kadar iş yaptığını söylemez; satır derlenen
         // sayıyı da taşır. Bu grupta yüzey kanıtı ve üye terimi yok ⇒ üye kararı verilmez, herkes derlenir.
-        Assert.Contains(CycleDecisionLines.ConvergedVerdict("A", members: 2, compiled: 2), h.DecisionLog,
+        Assert.Contains(CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 2, rememberedAt: null), h.DecisionLog,
             StringComparison.Ordinal);
         Assert.DoesNotContain("remembered at", h.DecisionLog, StringComparison.Ordinal);
     }
@@ -1994,14 +1994,9 @@ public class CycleRoundsTests
     [Fact]
     public async Task a_member_that_succeeded_last_round_does_not_repeat_the_restore_prologue()
     {
-        // Benzersiz adlar: PlanRoot paylaşılan bir temp köküdür ve "A"/"B" adlarını başka testler de kullanır —
-        // oraya packages.config bırakmak paralel koşan testlerin NeedsRestore'unu sessizce çevirirdi.
         const string px = "RestoreOnceX";
         const string py = "RestoreOnceY";
-        string projectDir = Path.GetDirectoryName(Id(px))!;
-        Directory.CreateDirectory(projectDir);
-        File.WriteAllText(Path.Combine(projectDir, "packages.config"), "<packages />");
-        try
+        await WithPackagesConfigAsync(px, async () =>
         {
             var plan = CyclePlanOf([px, py],
                 Node(px, deps: [py], inCycle: true),
@@ -2018,7 +2013,19 @@ public class CycleRoundsTests
                 invoker.Requests.Where(r => r.ProjectId == Id(px)).Select(r => r.NeedsRestore));
             Assert.Equal([false, false],                      // packages.config'i olmayan üye zaten taşımaz
                 invoker.Requests.Where(r => r.ProjectId == Id(py)).Select(r => r.NeedsRestore));
-        }
+        });
+    }
+
+    /// <summary>[restore-once fixture] <paramref name="projectName"/> projesinin klasörüne packages.config bırakır, gövdeyi
+    /// koşar ve klasörü her durumda siler. Ad BENZERSİZ olmalıdır: PlanRoot paylaşılan bir temp köküdür ve "A"/"B" adlarını
+    /// başka testler de kullanır — oraya packages.config bırakmak paralel koşan testlerin NeedsRestore'unu sessizce çevirirdi.
+    /// Restore-once testi ve "taşınan üyenin ilk derlemesi" testi aynı kurulumu buradan alır.</summary>
+    private static async Task WithPackagesConfigAsync(string projectName, Func<Task> body)
+    {
+        string projectDir = Path.GetDirectoryName(Id(projectName))!;
+        Directory.CreateDirectory(projectDir);
+        File.WriteAllText(Path.Combine(projectDir, "packages.config"), "<packages />");
+        try { await body(); }
         finally { Directory.Delete(projectDir, recursive: true); }
     }
 
@@ -2314,7 +2321,7 @@ public class CycleRoundsTests
         Assert.Contains(CycleDecisionLines.RoundOneNeed("A", CycleMemberNeed.OwnInputsChangedReason), log, StringComparison.Ordinal);
         Assert.DoesNotContain(CycleDecisionLines.RoundOneNeed("B", ""), log, StringComparison.Ordinal);
         Assert.Contains($"B: skipped — {SkipReasons.UpToDate} ({CycleDecisionLines.CarriedDetail})", log, StringComparison.Ordinal);
-        Assert.Contains(CycleDecisionLines.ConvergedVerdict("A", members: 2, compiled: 1), log, StringComparison.Ordinal);
+        Assert.Contains(CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 1, rememberedAt: null), log, StringComparison.Ordinal);
     });
 
     /// <summary>[karar 3] Taşınan B, A'nın ESKİ yüzeyini okumuş kayıtla tur sonu sorusuna girer; A'nın yüzeyi tur 1'de
@@ -2337,6 +2344,38 @@ public class CycleRoundsTests
             Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("B")).DurationMs);
         var read = Assert.Single(store.Load()[Id("B")].CycleReadSurfaces!);
         Assert.Equal((Id("A"), "a2"), (read.Producer, read.Hash));
+    });
+
+    /// <summary>[R3c3 · tembel log] Hiç derlenmeyen taşınan üyenin bu koşuda proje logu YOKTUR: sıradan bir güncel atlama
+    /// gibi dosya almaz. Eskiden grup başında HER üyenin logu açılırdı ve taşınan üye koşunun log klasöründe boş bir dosya
+    /// bırakırdı. Log ilk derlemede açılır: derlenen A'nın logu vardır.</summary>
+    [Fact]
+    public Task a_carried_member_that_is_never_compiled_leaves_no_project_log() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        using var h = await ResolveAsync(store, disk, TwoMembers("sig2", "a2", "b1"),
+            new RoundRecorder().Invoker((_, _) => Ok()));
+
+        var logs = h.LogWriters[^1];
+        Assert.True(File.Exists(logs.ProjectLogPath(Id("A"))));            // derlenen üye: log var
+        Assert.False(File.Exists(logs.ProjectLogPath(Id("B"))));           // taşınan, hiç derlenmeyen üye: dosya YOK
+    });
+
+    /// <summary>[R3c3 · tembel log] Tur 2'de İLK kez derlenen taşınan üyenin logu da açılır ve TEK dosyadır: yalnız o
+    /// derlemenin satırlarını taşır. Açıklama satırı yazılmaz — projenin ilk satırı gerçek MSBuild komut satırıdır: B'nin
+    /// logu, bir kez derlenen A'nınkiyle aynı satır sayısındadır.</summary>
+    [Fact]
+    public Task a_carried_member_first_compiled_in_round_two_has_one_project_log() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        using var h = await ResolveAsync(store, disk, TwoMembers("sig2", "a2", "b1"),
+            new RoundRecorder().Invoker((name, _) => { if (name == "A") disk.Set("A", "a2"); return Ok(); }));
+
+        var logs = h.LogWriters[^1];
+        string[] aLog = File.ReadAllLines(logs.ProjectLogPath(Id("A")));
+        string[] bLog = File.ReadAllLines(logs.ProjectLogPath(Id("B")));
+        Assert.NotEmpty(bLog);
+        Assert.Equal(aLog.Length, bLog.Length);
     });
 
     [Fact] // eski defter (döngü alanları yok) ⇒ bugünkü davranış: herkes derlenir, nedeni decision.log'da
@@ -2464,8 +2503,10 @@ public class CycleRoundsTests
     /// alanı YAZMAZ ve taşınan üyesinin arkasında da durmaz: hiç derlenmemiş taşınan üye dahil HER üye geçersizlenir
     /// (<c>LastResult=Failed</c>, yeni bileşik imza yok), "up to date" raporlanmaz, derlenen üyenin yeni terimi deftere girmez.
     /// Takip koşusunda (içerik değişmeden) kalan döngü alanları kimseyi taşıtmaz: herkes "no trusted record" ile derlenir.
-    /// <para>[R3c2] Eski biçim iki üyeli grupta yalnız NoProgress ve Stop'u pinliyordu (aynı iddialar); CapReached'te sona dek
-    /// taşınan bir üye kurulamadığı için grafik <see cref="ChainPlan"/>'e taşındı ve takip koşusu eklendi.</para></summary>
+    /// <para>[R3c2] Eski biçim iki üyeli grupta yalnız NoProgress ve Stop'u pinliyordu (aynı iddialar: taşınan üyenin imzası TAM
+    /// <c>sig1</c> kalır, <c>LastResult=Failed</c>, derlenenin yeni terimi yazılmaz, "up to date" raporlanmaz); CapReached'te sona
+    /// dek taşınan bir üye kurulamadığı için grafik <see cref="ChainPlan"/>'e taşındı ve takip koşusu eklendi. Kesin imza pini
+    /// dört üyenin HEPSİNE uygulanır.</para></summary>
     [Theory]
     [InlineData("no progress")]
     [InlineData("stopped")]
@@ -2505,8 +2546,9 @@ public class CycleRoundsTests
         var ledger = store.Load();
         foreach (string name in names)
         {
-            Assert.Equal(BuildResult.Failed, ledger[Id(name)].LastResult);       // taşınan X dahil
-            Assert.NotEqual("sig2", ledger[Id(name)].BuiltSignature);
+            // Eski pinin (iki üyeli grup, taşınan A) KESİN değeri dört üyeli grafikte HER üyeye uygulanır: kayıt TAM önceki
+            // yakınsamanın bileşik imzasında (sig1) kalır — başarısız/kesilen koşu kimseye yeni imza (sig2) yazmaz; taşınan X dahil.
+            Assert.Equal((BuildResult.Failed, "sig1"), (ledger[Id(name)].LastResult, ledger[Id(name)].BuiltSignature));
         }
         Assert.NotEqual("n2", ledger[Id("N")].CycleMemberTerm);
 
@@ -2628,20 +2670,24 @@ public class CycleRoundsTests
         Assert.Equal((Id("B"), "b2"), (aRead.Producer, aRead.Hash));
         var bRead = Assert.Single(store.Load()[Id("B")].CycleReadSurfaces!);
         Assert.Equal((Id("A"), "a2"), (bRead.Producer, bRead.Hash));
+        // [R3c3] Log ilk derlemede açılır ve turlar boyunca AÇIK kalır (yeniden açmak truncate ederdi): A iki kez, B bir kez
+        // derlendi ⇒ A'nın logu B'ninkinin iki katı satır taşır, ikisi de TEK dosyada.
+        var logs = h.LogWriters[^1];
+        string[] aLog = File.ReadAllLines(logs.ProjectLogPath(Id("A")));
+        string[] bLog = File.ReadAllLines(logs.ProjectLogPath(Id("B")));
+        Assert.NotEmpty(bLog);
+        Assert.Equal(2 * bLog.Length, aLog.Length);
     });
 
     /// <summary>[restore kapısı] Tur 2'de İLK kez derlenen taşınan üye restore kararından geçer: kayıttan gelen Succeeded'ı
     /// "önceki turda derlendi" sayılmaz. Kanıt: Converged sonrası kaydın <c>PackagesConfigHash</c>'i dolu (karar anında
-    /// okunan özet). Restore-once fixture'ının deseni: benzersiz adlar, packages.config proje klasöründe.</summary>
+    /// okunan özet). Kurulum restore-once testiyle ORTAK: <see cref="WithPackagesConfigAsync"/>.</summary>
     [Fact]
     public Task a_carried_member_first_compiled_in_round_two_goes_through_the_restore_decision() => InCacheRootAsync(async cacheRoot =>
     {
         const string px = "RestoreCarriedX";                  // packages.config'li, tur 1'de taşınan
         const string py = "RestoreCarriedY";
-        string projectDir = Path.GetDirectoryName(Id(px))!;
-        Directory.CreateDirectory(projectDir);
-        File.WriteAllText(Path.Combine(projectDir, "packages.config"), "<packages />");
-        try
+        await WithPackagesConfigAsync(px, async () =>
         {
             var cycle = CyclePlanOf([px, py], Node(px, deps: [py], inCycle: true), Node(py, deps: [px], inCycle: true));
             var store = new BuildStateStore(cacheRoot);
@@ -2658,8 +2704,7 @@ public class CycleRoundsTests
             Assert.Equal([$"{py}#1", $"{px}#1"], rec.Calls);
             Assert.Equal(CycleOutcome.Converged, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
             Assert.NotNull(store.Load()[Id(px)].PackagesConfigHash);
-        }
-        finally { Directory.Delete(projectDir, recursive: true); }
+        });
     });
 
     /// <summary>[kesme kapısı] Branch kesmesinden sonra biten grupta taşınan üyenin defteri YENİLENMEZ: kesilmiş koşunun hiçbir
@@ -2687,8 +2732,11 @@ public class CycleRoundsTests
     });
 
     /// <summary>[kesilme garantisi] Grup başı bloğu (yüzey hash'i, başlık satırları) üyelerin raporlanmasını garanti eden
-    /// try'ın İÇİNDEDİR: orada fırlayan beklenmeyen bir istisna da her üyeyi Failed raporlatır (nedeni istisna metni),
-    /// grup tamamlanır ve koşu biter — asılmaz (sınırlı bekleme).</summary>
+    /// try'ın İÇİNDEDİR: orada fırlayan beklenmeyen bir istisna da her üyeyi Failed raporlatır, grup tamamlanır ve koşu
+    /// biter — asılmaz (sınırlı bekleme). Neden metni <c>group start failed: iç mesaj</c>'dır.
+    /// <para>[R3c3] Eski iddia: neden istisna metniydi ve genel catch'ten <c>invoke error: One or more errors occurred.
+    /// (…)</c> olarak çıkıyordu — "invoke error" bir yüzey hash'i hatasını anlatmaz, Parallel.ForEach'in AggregateException
+    /// sarmalı da iç mesajı gizler. Metin artık grup başı önekiyle ve açılmış iç mesajla pinlidir.</para></summary>
     [Fact]
     public async Task an_exception_at_group_start_fails_every_member_and_the_run_completes()
     {
@@ -2702,7 +2750,24 @@ public class CycleRoundsTests
         Assert.Empty(rec.Calls);
         var failed = h.Events.OfType<ProjectFailedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], failed.Select(e => e.ProjectId));
-        Assert.All(failed, e => Assert.Contains("surface reader exploded", e.Reason, StringComparison.Ordinal));
+        Assert.All(failed, e => Assert.Equal("group start failed: surface reader exploded", e.Reason));
         Assert.Empty(h.Events.OfType<CycleCompletedEvent>());
+    }
+
+    /// <summary>[R3c3] Grubun ilk dispatch'inden SONRA fırlayan beklenmeyen istisna "invoke error" olarak kalır (grup başı
+    /// hatasından AYRI): her üye Failed raporlanır, neden istisnanın iç mesajıdır.</summary>
+    [Fact]
+    public async Task an_exception_after_the_first_dispatch_is_reported_as_an_invoke_error()
+    {
+        var rec = new RoundRecorder();
+        using var h = new Harness(TwoMemberCycle(),
+            rec.Invoker((_, _) => throw new InvalidOperationException("compiler host exploded")));
+
+        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        var failed = h.Events.OfType<ProjectFailedEvent>().ToList();
+        Assert.Equal([Id("A"), Id("B")], failed.Select(e => e.ProjectId));
+        Assert.All(failed, e => Assert.Equal("invoke error: compiler host exploded", e.Reason));
     }
 }

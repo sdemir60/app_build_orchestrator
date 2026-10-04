@@ -52,15 +52,20 @@ public class CycleDecisionLinesTests
     public void every_decision_has_its_own_term(CycleRoundDecision decision, string term) =>
         Assert.Equal(term, CycleDecisionLines.DecisionTerm(decision));
 
-    [Fact] // [Fix round 1 — I1] karar satırı Supervisor'dan TAŞINDI: metin bayt bayt aynı kalır
+    /// <summary>[Fix round 1 — I1] Karar satırı Supervisor'dan TAŞINDI: metin bayt bayt aynı kalır.
+    /// <para>[R3c3] Eski iddia: <c>Verdict</c>'in Converged dalı <c>cycle A: converged (2 members)</c> yazardı; yakınsama
+    /// satırı ayrıca "N compiled" ekli ayrı bir metottan (<c>ConvergedVerdict</c>) gelirdi — iki biçim, aynı önek iki format
+    /// string'inde, biri hiç çağrılmıyordu. Artık TEK biçim: Converged satırı derlenen sayısını taşır; NoProgress ve CapReached
+    /// satırları değişmedi ve sayıyı taşımaz (decision.log baytları aynı).</para></summary>
+    [Fact]
     public void the_verdict_names_the_outcome_the_member_count_and_the_remembered_signature()
     {
-        Assert.Equal("cycle A: converged (2 members)",
-            CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, 2, rememberedAt: null));
+        Assert.Equal("cycle A: converged (2 members, 1 compiled)",
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, 2, compiled: 1, rememberedAt: null));
         Assert.Equal("cycle A: no progress — another round could not change the result (2 members); non-convergence remembered at sig",
-            CycleDecisionLines.Verdict("A", CycleRoundDecision.NoProgress, 2, rememberedAt: "sig"));
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.NoProgress, 2, compiled: 1, rememberedAt: "sig"));
         Assert.Equal($"cycle A: round cap reached ({CycleRoundPolicy.RoundCap} rounds) — output may be one generation behind (3 members)",
-            CycleDecisionLines.Verdict("A", CycleRoundDecision.CapReached, 3, rememberedAt: null));
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.CapReached, 3, compiled: 2, rememberedAt: null));
     }
 
     [Fact] // [RESOLVE 3.4] üye düzeyi atlamanın satırları: tur 1 nedeni, taşınan üyenin ayrıntısı, derlenen sayılı karar
@@ -69,7 +74,8 @@ public class CycleDecisionLinesTests
         Assert.Equal("A: round 1 — own inputs changed",
             CycleDecisionLines.RoundOneNeed("A", CycleMemberNeed.OwnInputsChangedReason));
         Assert.Equal("carried: own inputs and read surfaces unchanged", CycleDecisionLines.CarriedDetail);
-        Assert.Equal("cycle A: converged (17 members, 1 compiled)", CycleDecisionLines.ConvergedVerdict("A", 17, 1));
+        Assert.Equal("cycle A: converged (17 members, 1 compiled)",
+            CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, 17, compiled: 1, rememberedAt: null));
     }
 
     [Theory] // tek eşleme: karar satırının açıklaması tur satırındaki terimi taşır

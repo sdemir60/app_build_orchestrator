@@ -17,6 +17,7 @@ public class FailureClassificationTests
     [InlineData("timeout", false)]
     [InlineData("stopped", false)]
     [InlineData("invoke error: boom", false)]
+    [InlineData("group start failed: boom", false)]
     [InlineData("exitcode 1", false)]  // önekle BAŞLAMIYOR — "exit " boşluğu dahil tam eşleşme gerekir
     [InlineData("", false)]
     public void Classifies_the_reason_string(string reason, bool expected) =>

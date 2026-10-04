@@ -219,9 +219,10 @@ public static class StreamText
         outcome switch
         {
             // [RESOLVE 3.4] Motor derlenen sayısını bildiriyorsa satır onu da söyler (tur 1 yalnız gereken üyeleri
-            // derler); bildirmeyen eski motor (compiled < 0) eski metni alır.
+            // derler); bildirmeyen eski motor (compiled < 0) eski metni alır. Üye, derlenen ve tur sayıları virgülle
+            // birleşir (plan metni: "17 members, 1 compiled, 1 round"), süre " · " ile ayrılır.
             CycleOutcome.Converged when compiled >= 0 => string.Format(CultureInfo.InvariantCulture,
-                "cycle converged — {0}, {1} compiled · {2} · {3}", Counted(members, "member"), compiled,
+                "cycle converged — {0}, {1} compiled, {2} · {3}", Counted(members, "member"), compiled,
                 Counted(rounds, "round"), DurationFormat.Duration(durationMs)),
             CycleOutcome.Converged => string.Format(CultureInfo.InvariantCulture,
                 "cycle converged — {0} · {1} · {2}", Counted(members, "member"), Counted(rounds, "round"),

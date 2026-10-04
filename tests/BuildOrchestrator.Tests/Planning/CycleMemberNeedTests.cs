@@ -165,26 +165,6 @@ public class CycleMemberNeedTests
         Assert.DoesNotContain(files[^1], decision.Reasons["A"]);
     }
 
-    [Fact] // Ortak "taşındı" ilkeli: kayıtlı dosya yoksa ya da özeti (büyük/küçük harf DAHİL) farklıysa taşınmıştır.
-    public void moved_files_lists_only_recorded_files_that_differ_or_vanished()
-    {
-        var seen = new Dictionary<string, string>
-        {
-            [B1] = "h1", [B2] = "h2", [@"X:\bin\B3.dll"] = "h3", [@"X:\bin\B4.dll"] = "h4",
-        };
-        var now = new Dictionary<string, string>
-        {
-            [B1] = "h1",                       // aynı
-            [B2] = "moved",                    // farklı
-            [@"X:\bin\B4.dll"] = "H4",         // yalnız harf farkı: Ordinal ⇒ farklı
-            [@"X:\bin\B9.dll"] = "unrelated",  // kayıtta yok ⇒ yok sayılır
-        };
-
-        var moved = CycleMemberNeed.MovedFiles(seen, now).Order(StringComparer.Ordinal);
-
-        Assert.Equal(new[] { B2, @"X:\bin\B3.dll", @"X:\bin\B4.dll" }, moved);
-    }
-
     // ---------------------------------------------------------------- (iii) güvenilir kayıt
 
     [Fact]

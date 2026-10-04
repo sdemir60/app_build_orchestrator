@@ -47,6 +47,24 @@ public static class CycleReadFiles
         return read.Count == 0 ? producerFiles : [.. producerFiles.Where(read.Contains)];
     }
 
+    /// <summary>
+    /// Okuma anında kaydedilen dosyalardan ŞİMDİ farklı olanlar (diskte artık olmayanlar dahil; özet karşılaştırması
+    /// Ordinal) — boşsa üye bu üretici yüzünden bayat değildir. Yalnız kayıttaki dosyalara bakılır: üyenin okumadığı bir
+    /// kopyanın değişmesi onu bayat yapmaz (hangi dosyaların yargılanacağını <see cref="Tracked"/> söyler). Tur 1 kararı
+    /// (<see cref="CycleMemberNeed.Decide"/>) ile tur sonu bayatlığı (Supervisor) AYNI soruyu sorar: kaydedilen yüzey şimdiki
+    /// yüzeyle hâlâ aynı mı — "taşındı"nın TEK tanımı burasıdır. Sonuç tur satırının moved alanını ve tur 1 neden satırını
+    /// (<see cref="CycleMemberNeed.ReadSurfaceMovedPrefix"/>) besler.
+    /// </summary>
+    /// <param name="seen">Okuma anında kaydedilen: dosya → yüzey özeti.</param>
+    /// <param name="now">Şimdiki (diskten okunan): dosya → yüzey özeti.</param>
+    public static IEnumerable<string> MovedFiles(IReadOnlyDictionary<string, string> seen,
+                                                 IReadOnlyDictionary<string, string> now)
+    {
+        foreach (var (file, hash) in seen)
+            if (!now.TryGetValue(file, out string? current) || !string.Equals(hash, current, StringComparison.Ordinal))
+                yield return file;
+    }
+
     private static bool SamePath(string a, string b) =>
         string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
 
