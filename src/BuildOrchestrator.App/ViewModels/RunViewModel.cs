@@ -862,6 +862,13 @@ public sealed partial class RunViewModel : ObservableObject
     /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
     [ObservableProperty] private bool _stashOnBranchSwitch;
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General "Resolve cycles at full priority": Resolve cycles koşusu
+    /// profilin işçi sayısıyla ama cap'siz ve Normal öncelikte mi koşsun. <b>Varsayılan: evet</b> (kullanıcı onayı) —
+    /// kapalıyken Resolve da profili izler. Değer her <see cref="StartRunCommand"/> ile motora gider; Build/Rebuild/Clean'i
+    /// etkilemez (dönüşüm Core'da: <see cref="PerfProfile.ForRun"/>).
+    /// <para><see cref="ObservablePropertyAttribute"/>: kalıcılık bu bildirimden sürer (MainWindow).</para></summary>
+    [ObservableProperty] private bool _resolveAtFullPriority = true;
+
     /// <summary>[T12] Koşarken (veya planlama penceresinde) branch/configuration kontrolleri kilitli;
     /// perf chip'i CANLI kalır. UI <c>IsEnabled</c> bunu okur.</summary>
     public bool IsMidRunLocked => IsRunning || IsStarting;
@@ -942,6 +949,11 @@ public sealed partial class RunViewModel : ObservableObject
         // [tek proje] Hedef, kilitten ÖNCE yazılır: kilit düşerken (PropagateRunLock) bırakılır, dolayısıyla
         // sıra ters olsaydı hedef daha tıklama anında silinirdi. Tam koşuda açıkça null'dır.
         RunTargetId = scopeProjectId;
+        // [RESOLVE Faz 4 / karar 11 · fix 1A — I2] Koşunun perf bağlamı IsStarting'ten ÖNCE TEK yerde yakalanır: chip açılış
+        // koreografisi boyunca canlıdır (IsMidRunLocked) ve oradaki not da AÇILAN koşuyu anlatmalı. Komutun anahtarı aşağıda
+        // AYNI değerden kurulur — koreografi sırasında Save anahtarı değiştirse de not ile tel ayrışmaz.
+        var runPerf = (Mode: mode, ResolveAtFullPriority);
+        _runPerf = runPerf;
         IsStarting = true;
         ClearConsoleForNewOperation();
         // [design doBuild — BuildApp.jsx:1199-1200] Seçim sıfırlanır. SIRA ÖNEMLİ: konsol temizliğinden SONRA
@@ -987,7 +999,7 @@ public sealed partial class RunViewModel : ObservableObject
         // [spec 2026-09-18 §1-1] Koşu daima RootPath'teki çalışma ağacında derlenir: branch/worktree gitmez.
         var cmd = new StartRunCommand(runId, mode, RootPath, Configuration, Parallelism,
             DependentMode.Safe, LayerPatterns, PerfMode,
-            ExternalProjectsForWire, UpdateExternals, scopeProjectId);
+            ExternalProjectsForWire, UpdateExternals, scopeProjectId, runPerf.ResolveAtFullPriority);
         if (!await TrySendAsync(cmd, RunModeLabel(mode)))
         {
             IsStarting = false;
@@ -1772,6 +1784,16 @@ public sealed partial class RunViewModel : ObservableObject
     internal static PerfProfile ProfileFor(string perfMode) =>
         PerfProfile.TryParse(perfMode) ?? PerfProfile.For(CorePerfMode.Balanced);
 
+    /// <summary>[RESOLVE Faz 4 / karar 11 · fix 1A — I2] Koşunun perf bağlamı: koşu modu ve koşu başındaki "Resolve cycles at
+    /// full priority" anahtarı — notlar motorla AYNI dönüşümü (<see cref="PerfProfile.ForRun"/>) aynı girdilerle anlatsın
+    /// diye. <see cref="BeginRunAsync"/> onu <see cref="IsStarting"/>'ten ÖNCE yazar ve
+    /// <see cref="StartRunCommand.ResolveAtFullPriority"/>'yi AYNI değerden kurar. Okuyanlar: <see cref="CyclePerfAsync"/>
+    /// (yalnız <see cref="IsMidRunLocked"/> iken — açılış koreografisi dahil) ve <see cref="OnRunStarted"/>'ın Resolve notu.
+    /// <para>Koşu bitince SIFIRLANMAZ, bilerek: bir sonraki koşu başlatılırken, okunmadan önce yeniden yazılır; idle chip yolu
+    /// onu okumaz. Bitmiş (ya da gönderilemeyen) bir koşunun bağlamı bu yüzden sonrakine sızamaz. Oturumda henüz koşu
+    /// başlatılmadıysa <c>null</c>'dır: chip düz notu yazar, run başı notu yazılmaz.</para></summary>
+    private (RunMode Mode, bool ResolveAtFullPriority)? _runPerf;
+
     /// <summary>
     /// [T43 · T20-b/K11] Perf chip: Full → Balanced → Light → Full döngüsü; paralelliği de günceller. Koşarken de
     /// CANLI (kilitlenmez) — ve artık koşan run'a GERÇEKTEN etki eder: <see cref="SetPerfModeCommand"/> gönderilir.
@@ -1797,7 +1819,13 @@ public sealed partial class RunViewModel : ObservableObject
         var profile = ProfileFor(PerfMode);
         Parallelism = profile.Parallelism;
         if (!IsMidRunLocked) return;
-        AppendRunLine(PerfNoteText.Note(profile)); // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da)
+        // BuildApp.jsx:1366-1372'nin K11 karşılığı (kopya metin Core'da). [RESOLVE Faz 4] Resolve cycles koşusunda not,
+        // motorun uyguladığını (cap'siz + Normal) söyler.
+        // [fix 1A — I2] Mod + anahtar koşunun başlatılırken yakalanan bağlamından (_runPerf): açılış koreografisinde de
+        // AÇILAN koşuyu anlatır, bir öncekini değil.
+        AppendRunLine(_runPerf is { } run
+            ? PerfNoteText.Note(run.Mode, profile, run.ResolveAtFullPriority)
+            : PerfNoteText.Note(profile));
         await TrySendAsync(new SetPerfModeCommand(PerfMode), "setPerfMode");
     }
 
@@ -2046,6 +2074,14 @@ public sealed partial class RunViewModel : ObservableObject
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
         _projectStartedAtMs.Clear();
+        // [RESOLVE Faz 4 / karar 11 · fix 1A — I1] Resolve cycles tam öncelikte başladıysa kullanıcının konsoluna TEK satır.
+        // Metin PerfNoteText'te (Supervisor'ın decision.log satırıyla AYNI); sayı motorun fiilî paralelliği, anahtar koşu
+        // başlatılırken yakalanan değer (_runPerf). Supervisor'ın stderr'i App'te atılır (EngineHost), kullanıcının gördüğü
+        // satır buradan yazılır. Anahtar kapalıyken, Full'de ve Build/Rebuild/Clean'de satır yoktur.
+        if (_runPerf is { } run
+            && PerfNoteText.ResolveNote(e.Mode, ProfileFor(PerfMode) with { Parallelism = e.Parallelism },
+                run.ResolveAtFullPriority) is { } resolveNote)
+            AppendRunLine(resolveNote);
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
     }

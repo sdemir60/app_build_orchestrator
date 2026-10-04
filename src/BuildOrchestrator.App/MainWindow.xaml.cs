@@ -204,6 +204,8 @@ public partial class MainWindow : Window
         _vm.UpdateExternals = saved.UpdateExternals ?? true;
         // [spec 2026-09-18 §6.3] Stash ayarı: hiç yazılmamışsa KAPALI — araç commit'lenmemiş işi kendiliğinden kenara koymaz.
         _vm.StashOnBranchSwitch = saved.StashOnBranchSwitch ?? false;
+        // [RESOLVE Faz 4 / karar 11] Resolve tam öncelik: hiç yazılmamışsa AÇIK — onaylanmış varsayılan; eski dosya da onu alır.
+        _vm.ResolveAtFullPriority = saved.ResolveAtFullPriority ?? true;
         _vm.PropertyChanged += OnWorkflowPreferenceChanged;
 
         // [design v1.11.0 §2.1] Title bar'ın mono bağlam metni (OSYS · main · main-2) KALDIRILDI — başlık
@@ -1266,7 +1268,7 @@ public partial class MainWindow : Window
         SyncModeButtons(state.Mode);
     }
 
-    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch)
+    /// <summary>[D6 fold] İş akışı tercihi (RepositoryRoot/Configuration/PerfMode/UpdateExternals/StashOnBranchSwitch/ResolveAtFullPriority)
     /// değişince kalıcı duruma yazar — yerleşim persist'iyle AYNI desen (Load → muta → Save; düşük frekans).
     /// [D7 M3] RootPath değişimi (Settings → Save ile uygulanan kök, ilk kurulum dahil)
     /// TEK noktadan buradan persist edilir; açılışta seed edilip hatırlanır.</summary>
@@ -1279,12 +1281,14 @@ public partial class MainWindow : Window
             case nameof(RunViewModel.PerfMode):
             case nameof(RunViewModel.UpdateExternals):
             case nameof(RunViewModel.StashOnBranchSwitch):
+            case nameof(RunViewModel.ResolveAtFullPriority):
                 var s = _uiState.Load();
                 s.RepositoryRoot = _vm.RootPath;
                 s.Configuration = _vm.Configuration;
                 s.PerfMode = _vm.PerfMode;
                 s.UpdateExternals = _vm.UpdateExternals;
                 s.StashOnBranchSwitch = _vm.StashOnBranchSwitch;
+                s.ResolveAtFullPriority = _vm.ResolveAtFullPriority;
                 _uiState.Save(s);
                 break;
         }

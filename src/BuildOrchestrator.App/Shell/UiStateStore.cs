@@ -106,6 +106,11 @@ public sealed class UiState
     /// sıfırlamasın); yok ⇒ kapalı (MainWindow seed'i).</summary>
     public bool? StashOnBranchSwitch { get; set; }
 
+    /// <summary>[RESOLVE Faz 4 / karar 11] Settings → General → <c>Resolve cycles at full priority</c>.
+    /// <see cref="UpdateExternals"/> ile AYNI gerekçeyle NULLABLE; yok ⇒ AÇIK (MainWindow seed'i) — anahtarı taşımayan
+    /// eski bir dosya onaylanmış varsayılanı alır.</summary>
+    public bool? ResolveAtFullPriority { get; set; }
+
     /// <summary>[P4] Settings → General → STARTUP → <c>Start with Windows</c>: uygulamanın tercihi — Windows oturumu
     /// açılınca başlasın mı. Her açılış bu tercihi Windows'un başlangıç kaydıyla hizalar
     /// (<see cref="Services.AutostartService.Apply"/>); Save kaydı anında yazar. <see cref="UpdateExternals"/> ile AYNI

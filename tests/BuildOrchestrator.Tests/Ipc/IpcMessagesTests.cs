@@ -159,18 +159,44 @@ public class IpcMessagesTests
         Assert.Equal(cmd, back);
     }
 
+    /// <summary>Kuyruk alanlarının HİÇBİRİNİ taşımayan eski bir <c>startRun</c> satırı — tel uyumluluğu testlerinin ortak
+    /// girdisi (kopya yok).</summary>
+    private const string LegacyStartRunLine = """
+        {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
+        """;
+
     [Fact]
     public void A_start_run_line_written_before_the_scope_field_existed_is_a_full_run()
     {
-        const string legacy = """
-            {"type":"startRun","runId":"r1","mode":"build","rootPath":"D:\\repo","configuration":"Debug","parallelism":4}
-            """;
-
-        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(legacy, IpcJson.Options));
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(LegacyStartRunLine, IpcJson.Options));
 
         Assert.Null(back.ScopeProjectId);
         // Kapsamsız komut alanı hiç YAZMAZ (WhenWritingNull): eski Supervisor'lar da aynı satırı görür.
         Assert.DoesNotContain("scopeProjectId", JsonSerializer.Serialize<IpcCommand>(back, IpcJson.Options));
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Resolve tam öncelik bayrağını taşımayan eski bir satır onaylanmış
+    /// varsayılanla (açık) çözülür (ARCHITECTURE §5).</summary>
+    [Fact]
+    public void A_start_run_line_written_before_the_priority_flag_existed_resolves_at_full_priority()
+    {
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(LegacyStartRunLine, IpcJson.Options));
+
+        Assert.True(back.ResolveAtFullPriority);
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M3] Kapalı bayrak tele camelCase adıyla YAZILIR ve geri döner: tele düşmeseydi
+    /// Supervisor kapalı anahtarı varsayılan (açık) diye okurdu.</summary>
+    [Fact]
+    public void StartRunCommand_resolve_at_full_priority_round_trips_when_it_is_turned_off()
+    {
+        var cmd = new StartRunCommand("r1", RunMode.Cycles, @"D:\repo", "Debug", 4, ResolveAtFullPriority: false);
+        string json = JsonSerializer.Serialize<IpcCommand>(cmd, IpcJson.Options);
+        Assert.Contains("\"resolveAtFullPriority\":false", json, StringComparison.Ordinal);
+
+        var back = Assert.IsType<StartRunCommand>(JsonSerializer.Deserialize<IpcCommand>(json, IpcJson.Options));
+
+        Assert.False(back.ResolveAtFullPriority);
     }
 
     // [A1/T15] Katman pattern'leri App'ten Supervisor'a IPC ile taşınır — Core'daki LayerEngine ancak bu

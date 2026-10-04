@@ -1,3 +1,4 @@
+using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Core.ProcessControl;
 using Xunit;
 
@@ -48,4 +49,77 @@ public class PerfProfileTests
     [InlineData("Turbo")]
     public void Try_parse_returns_null_for_an_unknown_perf_mode_text(string text)
         => Assert.Null(PerfProfile.TryParse(text));
+
+    // ---------------------------------------------------------------- [RESOLVE Faz 4 / karar 11] koşu dönüşümü
+
+    /// <summary>Resolve cycles + anahtar açık: cap YOK, priority Normal, işçi sayısı profilden (kullanıcı onayı). Beklenen
+    /// değerler LİTERAL anlamdır (null / Normal) — dönüşümün kendisinden türetilmez.</summary>
+    [Theory]
+    [InlineData(PerfMode.Balanced)]
+    [InlineData(PerfMode.Light)]
+    public void A_resolve_cycles_run_drops_the_cap_runs_at_normal_priority_and_keeps_the_profile_workers(PerfMode mode)
+    {
+        var profile = PerfProfile.For(mode);
+
+        var run = PerfProfile.ForRun(RunMode.Cycles, profile, resolveAtFullPriority: true);
+
+        Assert.Null(run.CpuCapPercent);
+        Assert.Equal(ProcessPriorityClassKind.Normal, run.Priority);
+        Assert.Equal(profile.Parallelism, run.Parallelism);
+    }
+
+    /// <summary>Anahtar kapalıyken Resolve bugünkü gibi profilin önceliği/tavanıyla koşar.</summary>
+    [Theory]
+    [InlineData(PerfMode.Full)]
+    [InlineData(PerfMode.Balanced)]
+    [InlineData(PerfMode.Light)]
+    public void A_resolve_cycles_run_follows_the_profile_when_the_switch_is_off(PerfMode mode)
+        => Assert.Equal(PerfProfile.For(mode),
+            PerfProfile.ForRun(RunMode.Cycles, PerfProfile.For(mode), resolveAtFullPriority: false));
+
+    /// <summary>Build/Rebuild/Clean HİÇ etkilenmez — anahtar açık olsa bile.</summary>
+    [Theory]
+    [InlineData(RunMode.Build, PerfMode.Balanced)]
+    [InlineData(RunMode.Build, PerfMode.Light)]
+    [InlineData(RunMode.Rebuild, PerfMode.Balanced)]
+    [InlineData(RunMode.Rebuild, PerfMode.Light)]
+    [InlineData(RunMode.Clean, PerfMode.Balanced)]
+    [InlineData(RunMode.Clean, PerfMode.Light)]
+    public void Build_rebuild_and_clean_always_follow_the_profile(RunMode runMode, PerfMode mode)
+        => Assert.Equal(PerfProfile.For(mode),
+            PerfProfile.ForRun(runMode, PerfProfile.For(mode), resolveAtFullPriority: true));
+
+    /// <summary>Full zaten cap'siz + Normal: dönüşüm onu değiştirmez.</summary>
+    [Fact]
+    public void Full_is_unchanged_by_the_resolve_transform()
+        => Assert.Equal(PerfProfile.For(PerfMode.Full),
+            PerfProfile.ForRun(RunMode.Cycles, PerfProfile.For(PerfMode.Full), resolveAtFullPriority: true));
+
+    /// <summary>Konsol notu chip notunun ailesindedir: priority ve koşu adı eklenmiş tek satır (KOPYA METİN bilerek
+    /// literal). Dönüşüm profili değiştirmediyse not profilin kendi notudur ve run-başı satırı (ResolveNote) yoktur.</summary>
+    [Fact]
+    public void The_resolve_note_names_the_lifted_priority_and_other_runs_keep_the_profile_note()
+    {
+        var balanced = PerfProfile.For(PerfMode.Balanced);
+
+        Assert.Equal("parallelism: 4 · cpu cap off · priority normal (Resolve cycles)",
+            PerfNoteText.Note(RunMode.Cycles, balanced, resolveAtFullPriority: true));
+        Assert.Equal("parallelism: 4 · cpu cap off · priority normal (Resolve cycles)",
+            PerfNoteText.ResolveNote(RunMode.Cycles, balanced, resolveAtFullPriority: true));
+        Assert.Equal(PerfNoteText.Note(balanced), PerfNoteText.Note(RunMode.Build, balanced, resolveAtFullPriority: true));
+        Assert.Equal(PerfNoteText.Note(balanced), PerfNoteText.Note(RunMode.Cycles, balanced, resolveAtFullPriority: false));
+        Assert.Null(PerfNoteText.ResolveNote(RunMode.Cycles, PerfProfile.For(PerfMode.Full), resolveAtFullPriority: true));
+        Assert.Null(PerfNoteText.ResolveNote(RunMode.Build, balanced, resolveAtFullPriority: true));
+    }
+
+    /// <summary>[RESOLVE Faz 4 · fix 1B — M6] Priority'nin değer terimi her sınıf için AÇIKÇA yazılıdır (KOPYA METİN bilerek
+    /// literal); tanımsız bir değer — ileride eklenen bir enum üyesi — sessizce <c>"idle"</c> diye etiketlenmez, fırlatır.</summary>
+    [Fact]
+    public void The_priority_value_names_every_class_and_rejects_an_unknown_one()
+    {
+        Assert.Equal("normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Normal));
+        Assert.Equal("below normal", PerfNoteText.PriorityValue(ProcessPriorityClassKind.BelowNormal));
+        Assert.Equal("idle", PerfNoteText.PriorityValue(ProcessPriorityClassKind.Idle));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PerfNoteText.PriorityValue((ProcessPriorityClassKind)99));
+    }
 }

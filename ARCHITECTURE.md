@@ -380,9 +380,12 @@ flag existed keeps updating; when it is false the engine runs no version-control
 gate.
 
 `startRun` may also carry **`scopeProjectId`** — the identity of one project, sent when a run is started from
-a row (§13.2). It is the last field and defaults to null, so a full run writes the same line it always did.
+a row (§13.2). It defaults to null, so a full run writes the same line it always did.
 When it is set the engine plans in full and then cuts the plan down to that one project (§8.1): dependencies
 are not compiled and nothing outside the scope enters the run.
+
+`startRun` also carries **`resolveAtFullPriority`** — the user's *Resolve cycles at full priority* setting, read
+only by a `Cycles` run (§11.1). A line without it decodes as on, the setting's default.
 
 Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
 camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
@@ -1095,6 +1098,10 @@ only by a time check — a project in time mode, or a member of a group in time 
 `Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
 a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
 and is meant to be run before a build, not instead of one.
+
+A `Cycles` run is also the one run that does not take the perf profile's cap and priority: it keeps the
+profile's worker count and runs uncapped at Normal priority, unless *Resolve cycles at full priority* is turned off in
+Settings (§11.1).
 
 **A single project is a scope, not a mode.** A run started from a row (§13.2) carries the project's identity
 and keeps the mode of the item pressed — *Build* or *Rebuild*. Planning runs in full, exactly as for any run,
@@ -2391,10 +2398,26 @@ is the worker count a profile *asks for* — the engine fits the request to the 
 | Balanced (default) | 4 | BelowNormal | 70 % |
 | Light | 2 | Idle | 40 % |
 
+A Resolve cycles run is not a fourth profile: with *Resolve cycles at full priority* on it keeps the chosen profile's
+parallelism and takes the Full row's priority and cap — Normal, none (below).
+
 Switching mid-run changes the cap and the priority live and writes a console note whose body is exactly
-`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full). **Parallelism does not change mid-run** — workers
-are created once at the start of a run — so the new worker count applies to the next run. The note text has a
-single owner in Core, called by both the App and the Supervisor.
+`parallelism: <n> · cpu cap <p>%` (`cpu cap off` for Full); during a Resolve cycles run at full priority a switch to
+Balanced or Light writes the Resolve cycles note below instead, which adds the priority. **Parallelism does not
+change mid-run** — workers are created once at the start of a run — so the new worker count applies to the next run.
+The note text has a single owner in Core, called by both the App and the Supervisor.
+
+**A Resolve cycles run takes full priority.** A `Cycles` run (§8.1) keeps the worker count of the chosen profile but
+takes the cap and the priority of the Full row — no cap, Normal — whatever the profile. Measured on a machine with
+other work running, Balanced's cap and lower priority stretched a Resolve run markedly, while on a quiet machine the
+difference was small; the run is short and the user is waiting for it. The rule is one pure function in Core
+(`PerfProfile.ForRun`); the Supervisor applies it at the start of the run and to every mid-run switch, with the mode
+and the setting that came with the run, so the copy floor and the drain rule (§11.3) work on the profile actually in
+force. `runStarted` carries the cap actually written — none — and the console and `decision.log` get one line,
+`parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
+Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
+carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
+`Build`, `Rebuild` and `Clean` are never affected, and Full is uncapped at Normal already.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -2448,7 +2471,8 @@ fresh structure would silently clear the kill flag.
 While a post-build copy is stuck on contention, the cap and priority are raised to the Balanced values
 (70 % / BelowNormal) for the duration of that window, which is reference-counted. Light's 40 % is therefore not
 an absolute ceiling. The floor is *defined as* Balanced's values rather than as separate constants, so the two
-cannot drift apart.
+cannot drift apart. The floor only raises: a run with no cap — Full, or a Resolve cycles run at full priority
+(§11.1) — never opens the window, and a Normal priority is never lowered to it.
 
 Once a graceful stop starts draining, the cap is never re-applied and the priority cannot go below the same
 floor (§4.5).
@@ -3665,7 +3689,7 @@ The rail exists because settings grow. A single column put every section under t
 setting squeezed it further; a section list keeps each page short and gives the next settings a place to land
 without widening the dialog. **General** is that place. Its rows come from one catalog
 (`GeneralSettingsCatalog`) in four groups — *Startup* (*Start with Windows*, *Start minimized to tray*, *Close
-to tray*), *Build* (*Pull before build*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
+to tray*), *Build* (*Pull before build*, *Resolve cycles at full priority*), *Branches* (*Stash and switch branches*, §10.3) and *Notifications*
 (*Show notifications*) — and every row is drawn by
 one template (`Ds.Settings.ToggleRow`): the name over a single line of description on the left, a switch on the
 right, a hairline between rows but not above a group's first. Adding a setting is adding a catalog row; there is
@@ -3673,7 +3697,7 @@ no layout work. A row that depends on another (*Start minimized to tray* on *Sta
 switch's own disabled opacity and stops taking input while its parent is off, without moving anything. Every
 switch on the page drives behaviour. *Stash and switch branches* follows the pull switch's rules: saved with
 *Save*, carried to the engine on the next checkout, and a console note written only when its value actually
-changed.
+changed. *Resolve cycles at full priority* follows the same rules and travels with every `startRun` (§11.1).
 
 *Start with Windows*, *Start minimized to tray*, *Close to tray* and *Show notifications* are **shell switches**:
 they drive the start, the window and the tray (§12.3), not how anything builds, so they never travel to the
@@ -3790,13 +3814,14 @@ change deferred — …`. A root entered afterwards is a first setup again: sile
 
 **Export · Import · Clear.** The footer carries three icon buttons on its left. Export writes
 `build-orchestrator-settings.json` — `{ app, version, repositoryRoot, externalProjects[{ path }],
-pullExternalBeforeBuild, stashOnBranchSwitch, startWithWindows, startMinimizedToTray, closeToTray,
+pullExternalBeforeBuild, stashOnBranchSwitch, resolveAtFullPriority, startWithWindows, startMinimizedToTray, closeToTray,
 showNotifications, layers[{ name, pattern }] }`, the external array sitting between the root and the layers (the
 field order the file is written in, not just a key that happens to be present) and holding only cards with a
 non-blank path; import reads one back **into the form**; clear empties the root, every layer and every external
-card, and returns every General switch to its catalog default — *Pull before build*, *Close to tray* and *Show
-notifications* on, the rest off. Every General switch travels in the file, so saving an imported file that has
-*Start with Windows* on turns it on for that machine — deliberately. All three touch the draft only: nothing is
+card, and returns every General switch to its catalog default — *Pull before build*, *Resolve cycles at full
+priority*, *Close to tray* and *Show notifications* on, the rest off. Every General switch travels in the file, so
+saving an imported file that has *Start with Windows* on turns it on for that machine — deliberately. All three
+touch the draft only: nothing is
 applied until *Save*, and there is no confirmation dialog. Clear's confirmation is the button itself — the
 first press turns the icon red and prints a warning, cancels itself after 2.4 s, and only a second press
 empties the form. Feedback for all three sits on the same footer line for 2.4 s, green or red. A malformed
@@ -3823,7 +3848,7 @@ highlighted pattern`, in that order of priority. The draft derives the reason fr
 conditions that gate *Save* (`SaveBlockedReason`, with `CanSave` defined as "no reason"), so the button and the
 line cannot disagree.
 
-A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `startWithWindows`,
+A file that omits a switch's key (`pullExternalBeforeBuild`, `stashOnBranchSwitch`, `resolveAtFullPriority`, `startWithWindows`,
 `startMinimizedToTray`, `closeToTray` or `showNotifications`) leaves that switch where it is, the same rule the
 external list already follows: a file cannot silently reset a setting it does not carry.
 
@@ -6255,7 +6280,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Job object: creation, assignment, CPU rate, priority, terminate | `Core/ProcessControl/JobObject.cs`, `NativeMethods.cs` |
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
-| Perf table, copy-phase floor | `Core/ProcessControl/PerfProfile.cs`, `PerfNoteText.cs`, `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs` |
+| Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
 | File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the Resolve group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 
