@@ -21,6 +21,11 @@ public sealed partial class RunViewModel
     // (RunStartedEvent.TotalProjects DEĞİL, o skip'leri de sayar) ancak BuildPreview işlendikten SONRA hazırdır.
     // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır).
     private RunMode? _pendingRunStartMode;
+    // [PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını kırptıysa akıştaki "workers reduced to …" satırı
+    // (WorkersReducedNote) — başlangıç satırıyla BİRLİKTE ertelenir ve onun HEMEN ardından yayılır. _pendingRunStartMode
+    // ile aynı yerde yazılır (her runStarted'da, kırpma yoksa null — önceki koşunun bekleyen satırı taşınmaz) ve aynı
+    // yerde temizlenir.
+    private string? _pendingWorkersReducedNote;
 
     // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
     // RunViewModel.cs'in `_currentRunMode` alanı (OnRunStarted). Eskiden burada AYRI bir `_streamRunMode` vardı
@@ -126,6 +131,7 @@ public sealed partial class RunViewModel
                 // hazır (BuildPreview RunStarted'ı hemen izler — yayın sırası: BuildPreviewEvent'in doc'u). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
+                _pendingWorkersReducedNote = WorkersReducedNote(e);
                 // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE
                 // RunViewModel.cs'in OnRunStarted'ı onu zaten yazmıştır (tek yazıcı). Bildirim yine BURADA: o
                 // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
@@ -172,7 +178,13 @@ public sealed partial class RunViewModel
                         RunMode.Clean => StreamText.CleanStarted(_dirtyIds.Count, parallelism),
                         _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
+                    // [kırpma notu görünür] Kırpma satırı başlangıç satırının HEMEN ardından — konsolu kalabalık bir
+                    // koşuda da gözden kaçmasın. Info: başlangıç satırının anlatı tonu; motor isteği makineye uydurdu,
+                    // hiçbir şey reddedilmedi (Warn git reddinindir).
+                    if (_pendingWorkersReducedNote is { } reductionNote)
+                        PushStream(StreamKind.Info, null, reductionNote);
                     _pendingRunStartMode = null;
+                    _pendingWorkersReducedNote = null;
                 }
                 break;
 

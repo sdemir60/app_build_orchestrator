@@ -748,6 +748,80 @@ public class RunViewModelStateTests
             StartNote: text.Contains("parallelism: 3 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal)));
     }
 
+    // ---------------------------------------------------------------- [PERF Faz D / karar 10] İşçi kırpma notu görünür
+
+    /// <summary>
+    /// [PERF Faz D / karar 10 · kırpma notu görünür] Motor profilin istediğinden az işçiyle koşarsa (<c>runStarted</c>
+    /// gerekçe taşır) kullanıcı bunu İKİ yerde görür: konsolda TAM satır bir kez, event stream'de koşunun başlangıç
+    /// satırının HEMEN ardından aynı metin (Info — başlangıç satırının anlatı tonu). Kusur: satır yalnız decision.log'a ve
+    /// Supervisor'ın stderr'ine gidiyordu; App stderr'i atar — kullanıcı onu hiç görmüyordu. Gerekçe yoksa iki yerde de
+    /// satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData("1 logical processor")]
+    [InlineData(null)]
+    public async Task A_run_with_fewer_workers_than_asked_says_so_in_the_console_and_after_the_stream_start_line(string? reason)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        const string note = "workers reduced to 2 (1 logical processor)";
+        bool reduced = reason is not null;
+        Assert.Equal(reduced ? 1 : 0, vm.GetRunDocumentText().Split(note).Length - 1);
+        var stream = vm.StreamEvents.ToList();
+        int start = stream.FindIndex(s => s.Text.StartsWith("Build started", StringComparison.Ordinal));
+        Assert.True(start >= 0, "the run's start line is missing from the stream");
+        Assert.Equal(reduced ? 1 : 0, stream.Count(s => s.Text.Contains("workers reduced", StringComparison.Ordinal)));
+        if (reduced)
+        {
+            Assert.Equal(note, stream[start + 1].Text);
+            Assert.Equal(StreamKind.Info, stream[start + 1].Kind);
+        }
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür] Kırpılmış bir Resolve cycles koşusu tam öncelikte başlarsa iki not da konsola düşer; sıra
+    /// decision.log'unkiyle AYNI: önce kırpma (sayının nereden geldiğini söyler), sonra o sayıyı kullanan Resolve notu.
+    /// </summary>
+    [Fact]
+    public async Task A_clamped_resolve_run_names_the_reduction_before_its_full_priority_note()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+
+        string text = vm.GetRunDocumentText();
+        int reduction = text.IndexOf("workers reduced to 2 (1 logical processor)", StringComparison.Ordinal);
+        int resolve = text.IndexOf("parallelism: 2 · cpu cap off · priority normal (Resolve cycles)", StringComparison.Ordinal);
+        Assert.True(reduction >= 0 && resolve > reduction, text);
+    }
+
+    /// <summary>
+    /// [kırpma notu görünür] Akış satırı başlangıç satırıyla birlikte <see cref="BuildPreviewEvent"/>'e ertelenir; yeni koşu
+    /// bir öncekinin bekleyen satırını TAŞIMAZ (motor <c>runStarted</c>'dan sonra, önizlemeden önce ölmüş olabilir). Bu pin
+    /// düzeltmeden önce de yeşildir (o zaman hiç satır yoktu): bekleyen satırın her <c>runStarted</c>'da yeniden
+    /// yazıldığını korur.
+    /// </summary>
+    [Fact]
+    public async Task A_new_run_does_not_carry_the_previous_runs_pending_reduction_line()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+        // motor önizlemeden önce öldü: r0'ın bekleyen satırı yayılmadı
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        Assert.Contains(vm.StreamEvents, s => s.Text.StartsWith("Build started", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.StreamEvents, s => s.Text.Contains("workers reduced", StringComparison.Ordinal));
+    }
+
     // ---------------------------------------------------------------- [A13/T3a · a10/a11] K11 notunun Balanced varyantı + damgası
 
     /// <summary>

@@ -265,7 +265,8 @@ public class RunCoordinatorTests
     /// <summary>
     /// [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; motor onu koşu başında makineye göre kırpar ve
     /// <c>runStarted</c> FİİLİ sayıyı taşır (App'in akış satırı ve ETA'sı onu okur). Burada makinenin tek mantıksal
-    /// işlemcisi var (bellek bol): istenen dört işçi çekirdek kuralıyla ikiye iner; kırpma konsola VE decision.log'a yazılır.
+    /// işlemcisi var (bellek bol): istenen dört işçi çekirdek kuralıyla ikiye iner; kırpmanın gerekçesi <c>runStarted</c>'la
+    /// App'e gider (kullanıcının satırını App yazar) ve satır decision.log'a yazılır — Supervisor'ın stderr'ine değil.
     /// <para><b>Plan hipotezi ve değişme gerekçesi:</b> planın varsayılan hipotezi "işlemci ≤ 2 ise 1 işçi, değilse işlemci − 1"
     /// idi; bu testin değerleri iki işlemcide tek işçi beklerdi. D1 ölçümü (gerçek OSYS Rebuild, yakınlık maskesiyle 2 ve
     /// 4 mantıksal işlemci, 1-4 işçi) hipotezi çürüttü: iki işlemcide tek işçi iki işçinin neredeyse iki katı sürdü,
@@ -294,10 +295,16 @@ public class RunCoordinatorTests
         var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
         Assert.Equal(2, started.Parallelism);                       // komut dört istedi, motor ikiye kırptı
         Assert.Equal(2, invoker.MaxConcurrent);                     // iki işçi gerçekten koştu, tavan aşılmadı
-        const string note = "workers reduced to 2 (1 logical processor)";
-        Assert.Contains(note, h.ConsoleLines);                      // kullanıcının konsolunda
+        // [DEĞİŞEN KURAL — işçi kırpma notu görünür] Eski iddia satırı Supervisor'ın konsol geri çağrısında arıyordu
+        // ("kullanıcının konsolunda"). O kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı satırı
+        // hiç görmüyordu. Gerekçe artık runStarted'la App'e gider; kullanıcının konsol ve event stream satırını App yazar
+        // (RunViewModelStateTests). Burada: olay gerekçeyi taşır, decision.log'da TAM satır tek kez, konsol geri
+        // çağrısında hiç (Resolve notuyla aynı sahiplik: stderr ileride yüzeye çıkarsa satır çiftlenmesin).
+        Assert.Equal("1 logical processor", started.WorkersReducedReason);
+        Assert.Single(h.DecisionLog.Split('\n'),
+            l => l.TrimEnd('\r') is { Length: > 13 } line && line[13..] == "workers reduced to 2 (1 logical processor)");
+        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("workers reduced", StringComparison.Ordinal));
         Assert.Contains(h.ConsoleLines, l => l.Contains(", 2 workers,", StringComparison.Ordinal)); // başlık fiili sayıyı yazar
-        Assert.Contains(note, h.DecisionLog);                       // decision.log'da AYNI metin
         Assert.Contains("parallelism=2", h.DecisionLog);
     }
 
@@ -313,7 +320,9 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(parallelism: 4), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Equal(4, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        Assert.Equal(4, started.Parallelism);
+        Assert.Null(started.WorkersReducedReason);                  // kırpma yok → App'e gidecek satır da yok
         Assert.DoesNotContain(h.ConsoleLines, l => l.StartsWith("workers reduced", StringComparison.Ordinal));
         Assert.DoesNotContain("workers reduced", h.DecisionLog);
     }

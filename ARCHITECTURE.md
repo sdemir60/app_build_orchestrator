@@ -575,7 +575,8 @@ Three of these carry the whole model:
 `runStarted.cpuCapPercent` reports the cap that was **actually** written to the job, not the one that was
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
 `runStarted.logDirectory` is the run's log folder on disk; the summary line of a run interrupted by a branch
-change names it (§8.8).
+change names it (§8.8). `runStarted.workersReducedReason` is present only when the engine started fewer workers than
+the profile asked for, and carries the reason the App's reduction note names (§11.1).
 
 ### 5.4 Error handling
 
@@ -2436,8 +2437,11 @@ ceiling stays a small multiple of the processors. The memory budget follows a fu
 real workspace: beyond a fixed base for the engine and its first worker, each extra worker commits a few hundred
 megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
 on machines with little free memory. `runStarted` carries the **actual** count, so the App's flow line and its ETA show
-what is running, and when the request was reduced the console and `decision.log` both get the same line,
-`workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`).
+what is running. When the request was reduced, `runStarted` also carries the reason (`workersReducedReason`) and
+one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), reaches three places with the same
+text: the engine writes it to `decision.log`, and the App writes it to the console when the run starts and to the
+event stream right after the run's opening line. The engine keeps no stderr copy: the App discards the engine's stderr
+(§4.3), so the line the user sees is the App's.
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
@@ -6281,7 +6285,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Suspended launch + handle-list inheritance | `Core/ProcessControl/JobProcessLauncher.cs`, `ProcThreadAttributeList.cs`, `JobChildProcess.cs` |
 | Job completion port notifications | `Core/ProcessControl/JobCompletionPort.cs` |
 | Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
-| Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, and the single point where the engine applies it at run start | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs` |
+| Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, the single point where the engine applies it at run start (and writes the note to `decision.log`), and where the App writes the note (console at run start, event stream right after the opening line) | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs`, `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `WorkersReducedNote`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch) |
 | File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the Resolve group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 
 **View models — the pure decision cores**

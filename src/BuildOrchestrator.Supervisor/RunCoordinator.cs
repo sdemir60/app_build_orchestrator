@@ -900,17 +900,16 @@ public sealed class RunCoordinator(
 
         // [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; fiili sayı koşu başında makineye göre BİR KEZ
         // kırpılır (kural ve sabitler Core'da, WorkerBudget — burada yalnız uygulanır). runStarted, konsol başlığı,
-        // decision.log ve App'in akış satırı/ETA'sı hep bu FİİLİ sayıyı okur, komuttakini değil. Kırpma olduysa gerekçesi
-        // konsola VE decision.log'a AYNI metinle yazılır (tek sahip: PerfNoteText.WorkersReduced).
+        // decision.log ve App'in akış satırı/ETA'sı hep bu FİİLİ sayıyı okur, komuttakini değil. Kırpma olduysa satır
+        // (tek sahip: PerfNoteText.WorkersReduced) burada decision.log'a yazılır; gerekçe runStarted'la
+        // (WorkersReducedReason) App'e gider ve kullanıcının konsol + event stream satırını App AYNI metinle yazar.
+        // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — Resolve notuyla aynı sahiplik;
+        // stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         var (machineCores, machineFreeBytes) = _machine();
         var workerBudget = WorkerBudget.Clamp(cmd.Parallelism, machineCores, machineFreeBytes);
         int parallelism = workerBudget.Workers;
         if (workerBudget.Reason is { } reductionReason)
-        {
-            string reductionNote = PerfNoteText.WorkersReduced(parallelism, reductionReason);
-            Decide(logs, reductionNote);
-            console(reductionNote);
-        }
+            Decide(logs, PerfNoteText.WorkersReduced(parallelism, reductionReason));
         // [T20-b/K11] Perf profili: PARALELLİK BURADAN GELMEZ. Buradan yalnız CPU cap + priority alınır; işçi sayısı
         // yukarıdaki bütçeden (WorkerBudget) gelir: komutun İSTEDİĞİ sayı, makineye göre kırpılmış hâliyle.
         // PerfMode yoksa ya da çözülemiyorsa profil null'dır ve job'a HİÇ dokunulmaz (geriye dönük uyum).
@@ -937,7 +936,7 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory));
+            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory, WorkersReducedReason: workerBudget.Reason));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
@@ -1003,7 +1002,9 @@ public sealed class RunCoordinator(
         // v7Δ-7: konsolda solution-level msbuild izlenimi verilmez — motorun gerçeği proje-başına shell-out'tur,
         // gerçek komut satırları proje loglarındadır.
         console(string.Format(CultureInfo.InvariantCulture,
-            // [D1 review · A3] console(...) satırları KULLANICININ konsolunda görünür → İngilizce.
+            // [D1 review · A3] console(...) Supervisor'ın stderr tanı kanalıdır (Program.cs); App onu okuyup ATAR
+            // (EngineHost, ARCHITECTURE §4.3) — kullanıcıya görünen satırlar IPC olaylarıyla gider. Metin yine
+            // İngilizce: log/tanı dili.
             "Run {0} ({1}): {2} projects, {3} workers, {4}, {5} — each project is built as its own compiler child process; command lines are in the project logs.",
             cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism, plan.Configuration,
             perf is null ? PerfNoteText.CapTextUnset : PerfNoteText.CapText(appliedCap)));

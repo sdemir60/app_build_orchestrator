@@ -2074,6 +2074,13 @@ public sealed partial class RunViewModel : ObservableObject
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
         _projectStartedAtMs.Clear();
+        // [PERF Faz D / karar 10 · kırpma notu görünür] Motor profilin istediğinden az işçiyle başladıysa kullanıcının
+        // konsoluna TEK satır (event stream'deki eşini RunViewModel.Stream.cs, koşunun başlangıç satırının hemen ardından
+        // yayar). Metin Supervisor'ın decision.log satırıyla AYNI (WorkersReducedNote → PerfNoteText); stderr kopyası
+        // yoktur, App stderr'i atar. Resolve notundan ÖNCE: decision.log'un sırası, ve Resolve notunun sayısı bu kırpmadan
+        // gelir.
+        if (WorkersReducedNote(e) is { } reductionNote)
+            AppendRunLine(reductionNote);
         // [RESOLVE Faz 4 / karar 11 · fix 1A — I1] Resolve cycles tam öncelikte başladıysa kullanıcının konsoluna TEK satır.
         // Metin PerfNoteText'te (Supervisor'ın decision.log satırıyla AYNI); sayı motorun fiilî paralelliği, anahtar koşu
         // başlatılırken yakalanan değer (_runPerf). Supervisor'ın stderr'i App'te atılır (EngineHost), kullanıcının gördüğü
@@ -2085,6 +2092,14 @@ public sealed partial class RunViewModel : ObservableObject
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
     }
+
+    /// <summary>[PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını makineye göre kırptıysa kullanıcıya
+    /// görünen satır (<c>workers reduced to 2 (1 logical processor)</c>), kırpmadıysa <c>null</c>. Sayı motorun fiilî
+    /// paralelliği, gerekçe <see cref="RunStartedEvent.WorkersReducedReason"/>, metin
+    /// <see cref="PerfNoteText.WorkersReduced"/>. Konsol satırı (<see cref="OnRunStarted"/>) ve event stream satırı
+    /// (<see cref="AppendStreamFor"/>) bunu okur — iki yerin metni ayrışamaz.</summary>
+    private static string? WorkersReducedNote(RunStartedEvent e) =>
+        e.WorkersReducedReason is { } reason ? PerfNoteText.WorkersReduced(e.Parallelism, reason) : null;
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
