@@ -204,9 +204,11 @@ public sealed partial class RunViewModel
                         PushStream(StreamKind.Info, null, reductionNote);
                     // [koşu başı uyarıları görünür] Koşu başı uyarıları onların ardından, motorun sırasıyla (bayat obj, ters
                     // katman). Warn: kullanıcının bakması gereken bir sorun. Akışın Warn satırları önek taşımaz; öneki
-                    // StreamText düşürür (konsol satırı AYNEN kalır).
-                    foreach (string runStartWarning in _pendingRunStartWarnings ?? [])
-                        PushStream(StreamKind.Warn, null, StreamText.RunStartWarning(runStartWarning));
+                    // StreamText düşürür (konsol satırı AYNEN kalır). [akış seli] Çok sayıda uyarı akışın sınırlı tamponunu
+                    // doldurmasın diye tavanı aşan uyarılar TEK özet satırına iner (StreamText.RunStartWarningLines);
+                    // konsol her satırı yazmaya devam eder.
+                    foreach (string runStartWarning in StreamText.RunStartWarningLines(_pendingRunStartWarnings))
+                        PushStream(StreamKind.Warn, null, runStartWarning);
                     ForgetPendingRunStart();
                 }
                 break;

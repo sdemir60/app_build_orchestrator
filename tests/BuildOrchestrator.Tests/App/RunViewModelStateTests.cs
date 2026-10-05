@@ -932,6 +932,37 @@ public class RunViewModelStateTests
     }
 
     /// <summary>
+    /// [koşu başı uyarıları · akış seli] Event stream'de koşu başı uyarıları tavana kadar (üç) her biri ayrı bir Warn satırıdır,
+    /// öneksiz; tavanı aşınca akışa TEK Warn özet satırı düşer (<c>{n} run-start warnings — see the console</c>, n uyarıların
+    /// gerçek sayısı). Konsol tavandan bağımsız HER satırı AYNEN tam bir kez yazar ve özet satırını yazmaz: özet satırı
+    /// konsola yönlendirir. Kusur: her uyarı satırı akışa ayrı yazılıyordu; çok projeli bir çalışma alanında
+    /// (ARCHITECTURE §4.3) bayat obj satırları akışın sınırlı tamponunu doldurup diğer olayları gömerdi.
+    /// </summary>
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(4, true)]
+    [InlineData(25, true)]
+    public async Task Run_start_warnings_beyond_the_stream_limit_collapse_into_one_summary_line(int count, bool collapsed)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+        string[] texts = [.. Enumerable.Range(1, count).Select(i => $"P{i}: obj holds a restore for .NETStandard,Version=v2.0")];
+        string[] warnings = [.. texts.Select(t => "warning: " + t)]; // Supervisor'ın kompozisyonu: "warning: " + metin
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", Warnings: warnings));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        // Konsol: tavandan bağımsız her satır AYNEN, tam bir kez (satır bazlı); özet satırı konsola yazılmaz.
+        var consoleLines = vm.GetRunDocumentText().Split('\n');
+        Assert.All(warnings, w => Assert.Equal(1, consoleLines.Count(l => l == w)));
+        Assert.DoesNotContain(consoleLines, l => l.Contains("run-start warnings", StringComparison.Ordinal));
+        // Akış: bu koşunun akışa yazdığı Warn satırlarının TAMAMI (uyarılar dışında bu akışa Warn düşüren bir şey yok).
+        string[] expected = collapsed ? [$"{count} run-start warnings — see the console"] : texts;
+        Assert.Equal(expected, vm.StreamEvents.Where(s => s.Kind == StreamKind.Warn).Select(s => s.Text));
+    }
+
+    /// <summary>
     /// [kırpma notu görünür · review M5] Tek projelik koşuda (satır menüsünden Build/Rebuild/Clean — <c>RunTargetId</c>
     /// dolu) kırpma satırı ne konsola ne akışa yazılır: bir proje derlenirken işçi sayısı koşuyu tarif etmez, akışın tek
     /// proje başlangıç satırı da bu yüzden paralellik söylemez. decision.log satırı Supervisor'da kalır (tanı). Önizleme

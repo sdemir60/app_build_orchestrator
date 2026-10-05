@@ -80,6 +80,25 @@ public static class StreamText
 
     private const string RunStartWarningPrefix = "warning: ";
 
+    /// <summary>[koşu başı uyarıları · akış seli] Akışa her biri AYRI satır olarak yazılan koşu başı uyarısı sayısının
+    /// tavanı. Bayat obj taraması planın her düğümünde koşar ve her bayat proje bir uyarıdır; çok projeli bir çalışma
+    /// alanında (ARCHITECTURE §4.3) satır satır yazmak akışın sınırlı tamponunu doldurup diğer olayları gömerdi. Tavanı
+    /// aşan uyarılar <see cref="RunStartWarningLines"/> ile TEK özet satırına iner; konsol tavandan bağımsız her satırı
+    /// yazar ve özet oraya yönlendirir. Tavan tek yerde tanımlıdır.</summary>
+    private const int RunStartWarningLineLimit = 3;
+
+    /// <summary>[koşu başı uyarıları · akış seli] <c>runStarted.Warnings</c>'in event stream'e yazılacak Warn satırları:
+    /// en çok <see cref="RunStartWarningLineLimit"/> uyarı varsa her biri ayrı satır (<see cref="RunStartWarning"/> —
+    /// öneksiz); daha çoksa tek özet satırı, <c>{n} run-start warnings — see the console</c> (n uyarıların gerçek sayısı).
+    /// Uyarı yoksa (<c>null</c> ya da boş) satır yoktur. Özet metni YALNIZ burada yazılır.</summary>
+    public static IReadOnlyList<string> RunStartWarningLines(IReadOnlyList<string>? warnings)
+    {
+        if (warnings is null or { Count: 0 }) return [];
+        if (warnings.Count > RunStartWarningLineLimit)
+            return [string.Format(CultureInfo.InvariantCulture, "{0} run-start warnings — see the console", warnings.Count)];
+        return [.. warnings.Select(RunStartWarning)];
+    }
+
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";
 
