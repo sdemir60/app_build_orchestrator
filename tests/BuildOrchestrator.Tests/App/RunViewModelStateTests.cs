@@ -853,17 +853,20 @@ public class RunViewModelStateTests
     /// [kırpma notu görünür · review M5] Tek projelik koşuda (satır menüsünden Build/Rebuild/Clean — <c>RunTargetId</c>
     /// dolu) kırpma satırı ne konsola ne akışa yazılır: bir proje derlenirken işçi sayısı koşuyu tarif etmez, akışın tek
     /// proje başlangıç satırı da bu yüzden paralellik söylemez. decision.log satırı Supervisor'da kalır (tanı). Önizleme
-    /// akışa yalnız açılış satırını ekler.
+    /// akışa yalnız açılış satırını ekler. Satır menüsünün üç kipi de (Build/Rebuild/Clean) aynı kapıdan geçer.
     /// </summary>
-    [Fact]
-    public async Task A_single_project_run_writes_the_reduction_line_to_neither_the_console_nor_the_stream()
+    [Theory]
+    [InlineData(RunMode.Build)]
+    [InlineData(RunMode.Rebuild)]
+    [InlineData(RunMode.Clean)]
+    public async Task A_single_project_run_writes_the_reduction_line_to_neither_the_console_nor_the_stream(RunMode mode)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = PerfContextVm(engine, fullPriority: true);
         await StartViaCommandAsync(vm, RunMode.Build);
-        vm.RunTargetId = "A"; // satırdan Build'e basıldı (BeginRunAsync bunu tıklama anında yazar)
+        vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
 
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 2, "Debug", WorkersReducedReason: "1 logical processor"));
+        vm.OnEvent(new RunStartedEvent("r1", mode, 1, 2, "Debug", WorkersReducedReason: "1 logical processor"));
         int streamBefore = vm.StreamEvents.Count;
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
 

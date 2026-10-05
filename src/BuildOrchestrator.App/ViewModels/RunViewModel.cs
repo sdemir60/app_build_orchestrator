@@ -2075,7 +2075,8 @@ public sealed partial class RunViewModel : ObservableObject
         _runParallelism = e.Parallelism;
         _projectStartedAtMs.Clear();
         // [PERF Faz D / karar 10 · kırpma notu görünür] Motor profilin istediğinden az işçiyle başladıysa kullanıcının
-        // konsoluna TEK satır (event stream'deki eşini RunViewModel.Stream.cs, koşunun başlangıç satırının hemen ardından
+        // konsoluna TEK satır — tek projelik koşu hariç (WorkersReducedNote'un kapısı) — (event stream'deki eşini
+        // RunViewModel.Stream.cs, koşunun başlangıç satırının hemen ardından
         // yayar). Metin Supervisor'ın decision.log satırıyla AYNI (WorkersReducedNote → PerfNoteText); stderr kopyası
         // yoktur, App stderr'i atar. Resolve notundan ÖNCE: decision.log'un sırası, ve Resolve notunun sayısı bu kırpmadan
         // gelir.

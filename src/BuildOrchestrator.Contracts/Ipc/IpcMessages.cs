@@ -305,7 +305,8 @@ public enum RunOutcome { Completed, Stopped }
 /// <param name="WorkersReducedReason">[PERF Faz D / karar 10] Motor profilin İSTEDİĞİ işçi sayısını makineye göre
 /// kırptıysa kırpmanın gerekçesi (<c>WorkerBudget.Clamp</c>'in metni: <c>"1 logical processor"</c> ·
 /// <c>"3 GB free memory"</c>); <see cref="Parallelism"/> zaten kırpılmış FİİLİ sayıdır. App bununla kullanıcının
-/// konsoluna ve event stream'e <c>workers reduced to {Parallelism} ({gerekçe})</c> satırını yazar (metin Core'da,
+/// konsoluna ve event stream'e <c>workers reduced to {Parallelism} ({gerekçe})</c> satırını yazar — tek projelik koşu
+/// hariç: orada işçi sayısı koşuyu tarif etmez (metin Core'da,
 /// <c>PerfNoteText.WorkersReduced</c>). Kırpma yoksa <c>null</c> (JSON'a yazılmaz); bu alandan ÖNCE yazılmış NDJSON
 /// satırları <c>null</c> çözülür.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,

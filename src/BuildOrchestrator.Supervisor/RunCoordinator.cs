@@ -902,7 +902,8 @@ public sealed class RunCoordinator(
         // kırpılır (kural ve sabitler Core'da, WorkerBudget — burada yalnız uygulanır). runStarted, konsol başlığı,
         // decision.log ve App'in akış satırı/ETA'sı hep bu FİİLİ sayıyı okur, komuttakini değil. Kırpma olduysa satır
         // (tek sahip: PerfNoteText.WorkersReduced) burada decision.log'a yazılır; gerekçe runStarted'la
-        // (WorkersReducedReason) App'e gider ve kullanıcının konsol + event stream satırını App AYNI metinle yazar.
+        // (WorkersReducedReason) App'e gider ve kullanıcının konsol + event stream satırını App AYNI metinle yazar
+        // (tek projelik koşu hariç — orada işçi sayısı koşuyu tarif etmez).
         // [kırpma notu görünür] stderr'e (console) kopya YAZILMAZ: App stderr'i atar — Resolve notuyla aynı sahiplik;
         // stderr ileride yüzeye çıkarsa satır çiftlenmesin.
         var (machineCores, machineFreeBytes) = _machine();

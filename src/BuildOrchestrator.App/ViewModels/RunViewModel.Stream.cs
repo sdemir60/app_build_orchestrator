@@ -19,7 +19,8 @@ public sealed partial class RunViewModel
     private bool _streamHadNewest;
     // [D3 §2] koşunun başlangıç anlatı satırı ("Build started" ailesi) RunStarted'dan BuildPreview'a ERTELENİR — will-build sayısı
     // (RunStartedEvent.TotalProjects DEĞİL, o skip'leri de sayar) ancak BuildPreview işlendikten SONRA hazırdır.
-    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır).
+    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır) —
+    // koşu önizlemeye varmadan biterse MarkRunEnded da temizler (ikisi de ForgetPendingRunStart üzerinden).
     private RunMode? _pendingRunStartMode;
     // [PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını kırptıysa akıştaki "workers reduced to …" satırı
     // (WorkersReducedNote) — başlangıç satırıyla BİRLİKTE ertelenir ve onun HEMEN ardından yayılır. _pendingRunStartMode
