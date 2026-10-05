@@ -2,8 +2,9 @@ namespace BuildOrchestrator.Core.ProcessControl;
 
 /// <summary>
 /// [PERF Faz D / karar 10] <see cref="WorkerBudget.Clamp"/>'in cevabı. <c>Workers</c> FİİLİ işçi sayısıdır (en az 1);
-/// <c>Reason</c> null ise istenen sayı olduğu gibi verilmiştir (kırpılmadı), doluysa konsola yazılacak gerekçedir
-/// (<see cref="PerfNoteText.WorkersReduced"/>).
+/// <c>Reason</c> null ise istenen sayı olduğu gibi verilmiştir (kırpılmadı), doluysa kırpmanın gerekçesidir: Supervisor
+/// onunla decision.log satırını yazar ve <c>runStarted</c>'la App'e taşır (App konsol ve event stream satırını yazar);
+/// metin tek kaynaktan gelir (<see cref="PerfNoteText.WorkersReduced"/>).
 /// </summary>
 public readonly record struct WorkerBudgetDecision(int Workers, string? Reason);
 

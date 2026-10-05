@@ -68,8 +68,9 @@ public static class PerfNoteText
 
     /// <summary>
     /// [PERF Faz D / karar 10] Motorun, profilin istediği işçi sayısını makineye göre KIRPTIĞINI söyleyen satır:
-    /// <c>workers reduced to 2 (1 logical processor)</c>. Konsola ve decision.log'a AYNI metin yazılır; gerekçe
-    /// (<paramref name="reason"/>) <see cref="WorkerBudgetDecision.Reason"/>'dan gelir.
+    /// <c>workers reduced to 2 (1 logical processor)</c>. Metnin TEK kaynağı burasıdır: Supervisor decision.log satırını,
+    /// App kullanıcının konsol ve event stream satırını (<c>runStarted.WorkersReducedReason</c>'dan; tek projelik koşu
+    /// hariç) bu metinle yazar. Gerekçe (<paramref name="reason"/>) <see cref="WorkerBudgetDecision.Reason"/>'dan gelir.
     /// </summary>
     public static string WorkersReduced(int workers, string reason) => string.Format(
         CultureInfo.InvariantCulture, "workers reduced to {0} ({1})", workers, reason);

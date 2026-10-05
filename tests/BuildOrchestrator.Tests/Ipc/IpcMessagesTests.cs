@@ -817,6 +817,25 @@ public class IpcMessagesTests
         Assert.DoesNotContain("cpuCapPercent", JsonSerializer.Serialize<IpcEvent>(uncapped, IpcJson.Options));
     }
 
+    // [PERF Faz D / karar 10] runStarted motorun işçi kırpma gerekçesini taşır (App kullanıcının konsol ve event stream
+    // satırını bundan yazar). Kırpma yoksa alan JSON'a YAZILMAZ; bu alandan ÖNCE yazılmış bir satır null çözülür.
+    [Fact]
+    public void RunStartedEvent_carries_the_worker_reduction_reason_and_an_older_line_decodes_it_as_null()
+    {
+        var reduced = new RunStartedEvent("r1", RunMode.Build, 3, 2, "Debug", WorkersReducedReason: "1 logical processor");
+        string json = JsonSerializer.Serialize<IpcEvent>(reduced, IpcJson.Options);
+        Assert.Contains("\"workersReducedReason\":\"1 logical processor\"", json);
+        Assert.Equal(reduced, JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+
+        Assert.DoesNotContain("workersReducedReason",
+            JsonSerializer.Serialize<IpcEvent>(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"), IpcJson.Options));
+
+        var older = Assert.IsType<RunStartedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+            """{"type":"runStarted","runId":"r1","mode":"build","totalProjects":3,"parallelism":4,"configuration":"Debug"}""",
+            IpcJson.Options));
+        Assert.Null(older.WorkersReducedReason);
+    }
+
     // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi. Pinlenen, toleranslı
     // okuyucudur: IpcJson.Options bilinmeyen alanı YOK SAYAR (UnmappedMemberHandling ayarlanmaz, varsayılan
     // Skip'tir) — bilinmeyen ya da kontrattan kalkmış bir alan çözümlemeyi bozmamalı. Satırdaki elapsedMsAtStart

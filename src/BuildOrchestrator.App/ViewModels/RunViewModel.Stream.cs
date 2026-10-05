@@ -19,8 +19,26 @@ public sealed partial class RunViewModel
     private bool _streamHadNewest;
     // [D3 §2] koşunun başlangıç anlatı satırı ("Build started" ailesi) RunStarted'dan BuildPreview'a ERTELENİR — will-build sayısı
     // (RunStartedEvent.TotalProjects DEĞİL, o skip'leri de sayar) ancak BuildPreview işlendikten SONRA hazırdır.
-    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır).
+    // RunStarted mode'u burada tutulur; BuildPreview satırı yayıp bunu TEMİZLER (satır koşu başına bir kez yazılır) —
+    // koşu önizlemeye varmadan biterse MarkRunEnded da temizler (ikisi de ForgetPendingRunStart üzerinden).
     private RunMode? _pendingRunStartMode;
+    // [PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını kırptıysa akıştaki "workers reduced to …" satırı
+    // (WorkersReducedNote) — başlangıç satırıyla BİRLİKTE ertelenir ve onun HEMEN ardından yayılır. _pendingRunStartMode
+    // ile aynı yerde yazılır (her runStarted'da, kırpma yoksa null — önceki koşunun bekleyen satırı taşınmaz) ve aynı
+    // yerde temizlenir (ForgetPendingRunStart).
+    private string? _pendingWorkersReducedNote;
+
+    /// <summary>[kırpma notu görünür · review M1] Bekleyen koşu-başlangıç akış durumunu (başlangıç satırının kipi ve kırpma
+    /// satırı) BİRLİKTE bırakır; ikisinin sıfırlandığı TEK yer burasıdır. İki çağıran var: <see cref="BuildPreviewEvent"/>
+    /// dalı (satırlar yayıldı) ve <see cref="MarkRunEnded"/> (koşu önizlemesine varmadan bitti: motor <c>runStarted</c>'tan
+    /// sonra, önizlemeden ÖNCE öldü ya da koşu-bitiren hata geldi). İkincisi olmazsa Restart sonrası Appended Sync'in
+    /// önizlemesi (<see cref="BuildPreviewEvent"/>'in tek diğer üreticisi) ölü koşunun "Build started" ve "workers reduced"
+    /// satırlarını yeni akışa basardı.</summary>
+    private void ForgetPendingRunStart()
+    {
+        _pendingRunStartMode = null;
+        _pendingWorkersReducedNote = null;
+    }
 
     // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
     // RunViewModel.cs'in `_currentRunMode` alanı (OnRunStarted). Eskiden burada AYRI bir `_streamRunMode` vardı
@@ -126,6 +144,7 @@ public sealed partial class RunViewModel
                 // hazır (BuildPreview RunStarted'ı hemen izler — yayın sırası: BuildPreviewEvent'in doc'u). Burada
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
+                _pendingWorkersReducedNote = WorkersReducedNote(e);
                 // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE
                 // RunViewModel.cs'in OnRunStarted'ı onu zaten yazmıştır (tek yazıcı). Bildirim yine BURADA: o
                 // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
@@ -172,7 +191,12 @@ public sealed partial class RunViewModel
                         RunMode.Clean => StreamText.CleanStarted(_dirtyIds.Count, parallelism),
                         _ => StreamText.BuildStarted(_dirtyIds.Count, parallelism),
                     });
-                    _pendingRunStartMode = null;
+                    // [kırpma notu görünür] Kırpma satırı başlangıç satırının HEMEN ardından — konsolu kalabalık bir
+                    // koşuda da gözden kaçmasın. Info: başlangıç satırının anlatı tonu; motor isteği makineye uydurdu,
+                    // hiçbir şey reddedilmedi (Warn git reddinindir).
+                    if (_pendingWorkersReducedNote is { } reductionNote)
+                        PushStream(StreamKind.Info, null, reductionNote);
+                    ForgetPendingRunStart();
                 }
                 break;
 

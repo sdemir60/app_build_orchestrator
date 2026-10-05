@@ -2074,6 +2074,14 @@ public sealed partial class RunViewModel : ObservableObject
         _totalProjects = e.TotalProjects;
         _runParallelism = e.Parallelism;
         _projectStartedAtMs.Clear();
+        // [PERF Faz D / karar 10 · kırpma notu görünür] Motor profilin istediğinden az işçiyle başladıysa kullanıcının
+        // konsoluna TEK satır — tek projelik koşu hariç (WorkersReducedNote'un kapısı) — (event stream'deki eşini
+        // RunViewModel.Stream.cs, koşunun başlangıç satırının hemen ardından
+        // yayar). Metin Supervisor'ın decision.log satırıyla AYNI (WorkersReducedNote → PerfNoteText); stderr kopyası
+        // yoktur, App stderr'i atar. Resolve notundan ÖNCE: decision.log'un sırası, ve Resolve notunun sayısı bu kırpmadan
+        // gelir.
+        if (WorkersReducedNote(e) is { } reductionNote)
+            AppendRunLine(reductionNote);
         // [RESOLVE Faz 4 / karar 11 · fix 1A — I1] Resolve cycles tam öncelikte başladıysa kullanıcının konsoluna TEK satır.
         // Metin PerfNoteText'te (Supervisor'ın decision.log satırıyla AYNI); sayı motorun fiilî paralelliği, anahtar koşu
         // başlatılırken yakalanan değer (_runPerf). Supervisor'ın stderr'i App'te atılır (EngineHost), kullanıcının gördüğü
@@ -2085,6 +2093,20 @@ public sealed partial class RunViewModel : ObservableObject
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
     }
+
+    /// <summary>[PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını makineye göre kırptıysa kullanıcıya
+    /// görünen satır (<c>workers reduced to 2 (1 logical processor)</c>), kırpmadıysa <c>null</c>. Sayı motorun fiilî
+    /// paralelliği, gerekçe <see cref="RunStartedEvent.WorkersReducedReason"/>, metin
+    /// <see cref="PerfNoteText.WorkersReduced"/>. Konsol satırı (<see cref="OnRunStarted"/>) ve event stream satırı
+    /// (<see cref="AppendStreamFor"/>) bunu okur — iki yerin metni ayrışamaz.
+    /// <para><b>Tek projelik koşuda</b> (<see cref="RunTargetId"/> dolu — satır menüsünden Build/Rebuild/Clean) da
+    /// <c>null</c>: satırdan başlatılan koşu yalnız o projeyi derler, işçi sayısı onu tarif etmez; akışın tek proje
+    /// başlangıç satırı da bu yüzden paralellik söylemez (<c>StreamText.SingleProjectStarted</c>). Satırın decision.log
+    /// kopyası Supervisor'da kalır (tanı).</para></summary>
+    private string? WorkersReducedNote(RunStartedEvent e) =>
+        RunTargetId is null && e.WorkersReducedReason is { } reason
+            ? PerfNoteText.WorkersReduced(e.Parallelism, reason)
+            : null;
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
@@ -2518,10 +2540,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce canlı tampon bırakılır
     /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
     /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
-    /// değişmez.
+    /// değişmez. Bekleyen koşu-başlangıç akış durumu da burada bırakılır (<see cref="ForgetPendingRunStart"/>): önizlemesine
+    /// varmadan biten koşunun başlangıç ve kırpma satırları sonraki bir Sync önizlemesine sızmaz.
     /// </summary>
     private void MarkRunEnded()
     {
+        ForgetPendingRunStart();
         ReleaseLiveLinesWhenIdle();
         EndedRunSerial = RunSerial;
     }
