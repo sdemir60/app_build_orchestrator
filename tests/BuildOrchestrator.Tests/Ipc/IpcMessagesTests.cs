@@ -846,10 +846,11 @@ public class IpcMessagesTests
     [Fact]
     public void RunStartedEvent_carries_the_run_start_warnings_in_order_and_an_older_line_decodes_them_as_null()
     {
+        // Örnek satırlar App testlerinin sabitleriyle AYNI (ikinci bir kopya yok); tel katmanı metni yorumlamaz.
         var warned = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", Warnings:
         [
-            "warning: P: obj holds a foreign TFM restore",
-            "warning: reverse layer dependency: 'A' (layer 0 'Data') depends on producer 'B.csproj' (layer 1 'Ui')",
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.StaleObjWarning,
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.ReverseLayerWarning,
         ]);
         string json = JsonSerializer.Serialize<IpcEvent>(warned, IpcJson.Options);
         Assert.Contains("\"warnings\":[", json);

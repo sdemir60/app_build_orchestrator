@@ -2550,7 +2550,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
     /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
     /// değişmez. Bekleyen koşu-başlangıç akış durumu da burada bırakılır (<see cref="ForgetPendingRunStart"/>): önizlemesine
-    /// varmadan biten koşunun başlangıç ve kırpma satırları sonraki bir Sync önizlemesine sızmaz.
+    /// varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki bir Sync önizlemesine sızmaz.
     /// </summary>
     private void MarkRunEnded()
     {
