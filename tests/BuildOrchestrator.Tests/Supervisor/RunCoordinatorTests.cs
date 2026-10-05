@@ -301,9 +301,7 @@ public class RunCoordinatorTests
         // (RunViewModelStateTests). Burada: olay gerekçeyi taşır, decision.log'da TAM satır tek kez, konsol geri
         // çağrısında hiç (Resolve notuyla aynı sahiplik: stderr ileride yüzeye çıkarsa satır çiftlenmesin).
         Assert.Equal("1 logical processor", started.WorkersReducedReason);
-        Assert.Single(h.DecisionLog.Split('\n'),
-            l => l.TrimEnd('\r') is { Length: > 13 } line && line[13..] == "workers reduced to 2 (1 logical processor)");
-        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("workers reduced", StringComparison.Ordinal));
+        AssertNoteOnlyInDecisionLog(h, "workers reduced to 2 (1 logical processor)", "workers reduced");
         Assert.Contains(h.ConsoleLines, l => l.Contains(", 2 workers,", StringComparison.Ordinal)); // başlık fiili sayıyı yazar
         Assert.Contains("parallelism=2", h.DecisionLog);
     }
@@ -2402,7 +2400,7 @@ public class RunCoordinatorTests
         // [DEĞİŞEN KURAL — fix 1A · M1] Eski iddia notu konsol geri çağrısında alt-dize olarak arıyordu. O kopya kullanıcıya
         // hiç ulaşmıyordu (App Supervisor'ın stderr'ini atar) ve kalktı: kullanıcının satırını App yazar (runStarted —
         // RunViewModelStateTests). Burada: decision.log'da TAM satır tek kez, konsol geri çağrısında hiç.
-        AssertResolveNoteOnlyInDecisionLog(h, "parallelism: 4 · cpu cap off · priority normal (Resolve cycles)");
+        AssertNoteOnlyInDecisionLog(h, "parallelism: 4 · cpu cap off · priority normal (Resolve cycles)", "priority normal");
     }
 
     /// <summary>[RESOLVE Faz 4 · fix 1A — M1] Makine bütçeyi kırptığında not profilin isteğini değil motorun FİİLEN
@@ -2417,15 +2415,16 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(2, Assert.Single(h.Events.OfType<RunStartedEvent>()).Parallelism);
-        AssertResolveNoteOnlyInDecisionLog(h, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)");
+        AssertNoteOnlyInDecisionLog(h, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)", "priority normal");
     }
 
-    /// <summary>[fix 1A — M1] Resolve notu decision.log'da TAM satır olarak TEK kez (satır = <c>HH:mm:ss.fff</c> damgası,
-    /// boşluk, metin), Supervisor'ın konsol geri çağrısında (stderr) hiç yok.</summary>
-    private static void AssertResolveNoteOnlyInDecisionLog(Harness h, string note)
+    /// <summary>[fix 1A — M1 · işçi kırpma notu] Not decision.log'da TAM satır olarak TEK kez (satır = <c>HH:mm:ss.fff</c>
+    /// damgası, boşluk, metin), Supervisor'ın konsol geri çağrısında (stderr) hiçbir satırda <paramref name="consoleMarker"/>
+    /// yok. Damga genişliği (13) YALNIZ burada yaşar: Resolve notu ve işçi kırpma notu testleri aynı kontrolü paylaşır.</summary>
+    private static void AssertNoteOnlyInDecisionLog(Harness h, string note, string consoleMarker)
     {
         Assert.Single(h.DecisionLog.Split('\n'), l => l.TrimEnd('\r') is { Length: > 13 } line && line[13..] == note);
-        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains("priority normal", StringComparison.Ordinal));
+        Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(consoleMarker, StringComparison.Ordinal));
     }
 
     /// <summary>[RESOLVE Faz 4] Anahtar kapalıyken Resolve bugünkü gibi profilin cap + priority'siyle koşar.</summary>

@@ -705,10 +705,10 @@ profile. Build, Rebuild and Clean always follow the profile.
 The parallelism in the table is what a profile *asks for*. At the start of each run the engine fits the request to the
 machine: it never starts more workers than a fixed multiple of the logical processors, nor more than the free physical
 memory can carry, and when it has to cut it says so with one line, `workers reduced to <n> (<reason>)` — in the console
-when the run starts, and in the event stream right after the run's opening line, so it is not lost in a busy console. A
-machine with
-enough processors and memory runs the profile exactly as asked. The progress line and the time estimate use the count
-the engine actually started.
+when the run starts, and in the event stream right after the run's opening line, so it is not lost in a busy console.
+A run started from a single project's row leaves the line out: the worker count does not describe a one-project run.
+A machine with enough processors and memory runs the profile exactly as asked. The progress line and the time estimate
+use the count the engine actually started.
 
 If the whole machine freezes during a build, lower the profile. The limit is usually memory rather than CPU:
 every parallel project runs its own compiler, and with an IDE and browsers already open, Full can use up the

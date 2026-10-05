@@ -2097,9 +2097,15 @@ public sealed partial class RunViewModel : ObservableObject
     /// görünen satır (<c>workers reduced to 2 (1 logical processor)</c>), kırpmadıysa <c>null</c>. Sayı motorun fiilî
     /// paralelliği, gerekçe <see cref="RunStartedEvent.WorkersReducedReason"/>, metin
     /// <see cref="PerfNoteText.WorkersReduced"/>. Konsol satırı (<see cref="OnRunStarted"/>) ve event stream satırı
-    /// (<see cref="AppendStreamFor"/>) bunu okur — iki yerin metni ayrışamaz.</summary>
-    private static string? WorkersReducedNote(RunStartedEvent e) =>
-        e.WorkersReducedReason is { } reason ? PerfNoteText.WorkersReduced(e.Parallelism, reason) : null;
+    /// (<see cref="AppendStreamFor"/>) bunu okur — iki yerin metni ayrışamaz.
+    /// <para><b>Tek projelik koşuda</b> (<see cref="RunTargetId"/> dolu — satır menüsünden Build/Rebuild/Clean) da
+    /// <c>null</c>: satırdan başlatılan koşu yalnız o projeyi derler, işçi sayısı onu tarif etmez; akışın tek proje
+    /// başlangıç satırı da bu yüzden paralellik söylemez (<c>StreamText.SingleProjectStarted</c>). Satırın decision.log
+    /// kopyası Supervisor'da kalır (tanı).</para></summary>
+    private string? WorkersReducedNote(RunStartedEvent e) =>
+        RunTargetId is null && e.WorkersReducedReason is { } reason
+            ? PerfNoteText.WorkersReduced(e.Parallelism, reason)
+            : null;
 
     /// <summary>[Task 17] <see cref="BuildPreviewEvent"/> — run başlar başlamaz, ilk proje-başına event'ten ÖNCE
     /// gelir: <see cref="Projects"/>'i willBuild bilgisiyle PRE-POPULATE eder (dirty=true/güncel=false/hollow=null).
@@ -2533,10 +2539,12 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="OnError"/>) ve motor kaybı (<see cref="ReleaseAfterEngineLoss"/>). Önce canlı tampon bırakılır
     /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
     /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
-    /// değişmez.
+    /// değişmez. Bekleyen koşu-başlangıç akış durumu da burada bırakılır (<see cref="ForgetPendingRunStart"/>): önizlemesine
+    /// varmadan biten koşunun başlangıç ve kırpma satırları sonraki bir Sync önizlemesine sızmaz.
     /// </summary>
     private void MarkRunEnded()
     {
+        ForgetPendingRunStart();
         ReleaseLiveLinesWhenIdle();
         EndedRunSerial = RunSerial;
     }

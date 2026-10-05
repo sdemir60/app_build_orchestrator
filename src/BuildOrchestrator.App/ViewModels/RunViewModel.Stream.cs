@@ -24,8 +24,20 @@ public sealed partial class RunViewModel
     // [PERF Faz D / karar 10 · kırpma notu görünür] Motor işçi sayısını kırptıysa akıştaki "workers reduced to …" satırı
     // (WorkersReducedNote) — başlangıç satırıyla BİRLİKTE ertelenir ve onun HEMEN ardından yayılır. _pendingRunStartMode
     // ile aynı yerde yazılır (her runStarted'da, kırpma yoksa null — önceki koşunun bekleyen satırı taşınmaz) ve aynı
-    // yerde temizlenir.
+    // yerde temizlenir (ForgetPendingRunStart).
     private string? _pendingWorkersReducedNote;
+
+    /// <summary>[kırpma notu görünür · review M1] Bekleyen koşu-başlangıç akış durumunu (başlangıç satırının kipi ve kırpma
+    /// satırı) BİRLİKTE bırakır; ikisinin sıfırlandığı TEK yer burasıdır. İki çağıran var: <see cref="BuildPreviewEvent"/>
+    /// dalı (satırlar yayıldı) ve <see cref="MarkRunEnded"/> (koşu önizlemesine varmadan bitti: motor <c>runStarted</c>'tan
+    /// sonra, önizlemeden ÖNCE öldü ya da koşu-bitiren hata geldi). İkincisi olmazsa Restart sonrası Appended Sync'in
+    /// önizlemesi (<see cref="BuildPreviewEvent"/>'in tek diğer üreticisi) ölü koşunun "Build started" ve "workers reduced"
+    /// satırlarını yeni akışa basardı.</summary>
+    private void ForgetPendingRunStart()
+    {
+        _pendingRunStartMode = null;
+        _pendingWorkersReducedNote = null;
+    }
 
     // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
     // RunViewModel.cs'in `_currentRunMode` alanı (OnRunStarted). Eskiden burada AYRI bir `_streamRunMode` vardı
@@ -183,8 +195,7 @@ public sealed partial class RunViewModel
                     // hiçbir şey reddedilmedi (Warn git reddinindir).
                     if (_pendingWorkersReducedNote is { } reductionNote)
                         PushStream(StreamKind.Info, null, reductionNote);
-                    _pendingRunStartMode = null;
-                    _pendingWorkersReducedNote = null;
+                    ForgetPendingRunStart();
                 }
                 break;
 

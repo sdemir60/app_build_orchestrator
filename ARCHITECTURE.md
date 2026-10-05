@@ -2438,10 +2438,12 @@ real workspace: beyond a fixed base for the engine and its first worker, each ex
 megabytes. The rule budgets a margin over that for every worker on top of a fixed reserve, so it only comes into play
 on machines with little free memory. `runStarted` carries the **actual** count, so the App's flow line and its ETA show
 what is running. When the request was reduced, `runStarted` also carries the reason (`workersReducedReason`) and
-one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), reaches three places with the same
+one line, `workers reduced to <n> (<reason>)` (`PerfNoteText.WorkersReduced`), reaches up to three places with the same
 text: the engine writes it to `decision.log`, and the App writes it to the console when the run starts and to the
-event stream right after the run's opening line. The engine keeps no stderr copy: the App discards the engine's stderr
-(§4.3), so the line the user sees is the App's.
+event stream right after the run's opening line. A single-project run (§8.1) is the exception on the App side: its
+worker count does not describe it, and the stream's opening line for it says nothing of parallelism either, so the App
+writes neither line and `decision.log` alone keeps it as a diagnostic. The engine keeps no stderr copy: the App
+discards the engine's stderr (§4.3), so the line the user sees is the App's.
 
 **Memory, not cores, is usually the first limit.** Each worker is an `MSBuild.exe` that starts a fresh,
 multi-threaded compiler process for its project (`UseSharedCompilation=false`, §9.2, so nothing is shared
