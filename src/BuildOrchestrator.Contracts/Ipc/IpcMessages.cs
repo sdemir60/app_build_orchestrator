@@ -312,8 +312,9 @@ public enum RunOutcome { Completed, Stopped }
 /// <param name="Warnings">[koşu başı uyarıları görünür] Koşu başında bulunan uyarı satırlarının TAM metni — Supervisor'ın
 /// decision.log'a yazdığı satırın AYNISI, <c>warning: </c> önekli. Sıra: önce bayat obj satırları
 /// (<c>StaleObjRunStartWarner</c> — projenin varsayılan obj'inde yabancı TFM restore artığı, proje başına bir satır),
-/// sonra ters katman satırları (<c>BuildPlan.LayerWarnings</c>). App her satırı kullanıcının konsoluna AYNEN, event
-/// stream'e öneksiz bir Warn satırı olarak yazar — tek projelik koşuda da. Uyarı yoksa <c>null</c> (JSON'a yazılmaz); bu
+/// sonra ters katman satırları (<c>BuildPlan.LayerWarnings</c>). App her satırı kullanıcının konsoluna AYNEN yazar; event
+/// stream'e birkaç satıra kadar her birini öneksiz bir Warn satırı olarak, daha fazlasını tek bir sayan Warn satırı olarak
+/// (eşik ve metin <c>StreamText</c>'te) — tek projelik koşuda da. Uyarı yoksa <c>null</c> (JSON'a yazılmaz); bu
 /// alandan ÖNCE yazılmış NDJSON satırları <c>null</c> çözülür.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
     string Configuration, int? CpuCapPercent = null, string? LogDirectory = null,

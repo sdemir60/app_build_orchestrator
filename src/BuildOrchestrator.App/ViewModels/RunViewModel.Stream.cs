@@ -28,7 +28,8 @@ public sealed partial class RunViewModel
     // yerde temizlenir (ForgetPendingRunStart).
     private string? _pendingWorkersReducedNote;
     // [koşu başı uyarıları görünür] Motorun koşu başı uyarıları (runStarted.Warnings — bayat obj, ters katman): akışa Warn
-    // satırı olarak başlangıç satırının (ve varsa kırpma satırının) ardından yayılır — tek projelik koşuda da. Kırpma
+    // satırı olarak başlangıç satırının (ve varsa kırpma satırının) ardından yayılır — eşiği aşan liste tek sayan satıra
+    // katlanır (StreamText.RunStartWarningLines) — tek projelik koşuda da. Kırpma
     // satırıyla aynı yerde yazılır (her runStarted'da, uyarı yoksa null) ve aynı yerde temizlenir (ForgetPendingRunStart).
     private IReadOnlyList<string>? _pendingRunStartWarnings;
 

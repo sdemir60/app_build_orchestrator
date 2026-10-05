@@ -732,9 +732,10 @@ Assignment imposes a **hard phase barrier**: the plan is re-sorted by `(layerInd
 using the stability of the sort to preserve topological order within a layer. This can legitimately place a
 project before one of its own dependencies; that case is detected and reported as a warn-only reverse-layer
 warning at the start of every run that follows the whole plan's order: the engine writes it to `decision.log` and
-sends it with `runStarted` (§5.3), and the App shows it in the console and in the event stream. A Clean drops the
-order and a single-project run builds one node, so neither carries it. Nothing is blocked or reordered on the basis of
-those warnings, so every algorithm that consumes the plan must be order-independent.
+sends it with `runStarted` (§5.3), and the App shows it in the console and in the event stream (where a long list of
+run-start warnings folds into one counting line, §5.3). A Clean drops the order and a single-project run builds one
+node, so neither carries it. Nothing is blocked or reordered on the basis of those warnings, so every algorithm
+that consumes the plan must be order-independent.
 
 User regexes are compiled with a 100 ms match timeout. A pattern that times out is treated as a non-match and
 skipped for the remaining nodes, with a warning. An empty or whitespace pattern is made inert rather than
