@@ -21,6 +21,17 @@ public class EventStreamTests
 {
     // ============================================================ SAF ÇEKİRDEK ([Fact])
 
+    // [koşu başı uyarıları görünür] Akış satırı motorun "warning: " önekli satırının öneksiz hâlidir; öneksiz bir satırı
+    // (tel sözleşmesi öneki garanti eder, yardımcı bunu varsaymaz) olduğu gibi bırakır. Önek kontrolsüz bir dilimleme uzun
+    // öneksiz satırın ilk karakterlerini keser, önekten kısa olanı patlatırdı; öneki satır ortasında geçene dokunulmaz.
+    [Theory]
+    [InlineData("warning: A: obj holds a restore", "A: obj holds a restore")]
+    [InlineData("A: obj holds a restore", "A: obj holds a restore")]
+    [InlineData("short", "short")]
+    [InlineData("x warning: y", "x warning: y")]
+    public void A_run_start_warning_loses_its_prefix_only_when_it_has_one(string line, string expected) =>
+        Assert.Equal(expected, StreamText.RunStartWarning(line));
+
     [Fact]
     public void Burst_events_under_three_hundred_forty_milliseconds_are_printed_instantly()
     {

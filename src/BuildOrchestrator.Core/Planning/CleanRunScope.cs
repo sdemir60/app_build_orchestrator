@@ -21,7 +21,9 @@ using BuildOrchestrator.Contracts.Model;
 ///   <item><b>Gerekçe DOKUNULMAZ</b> (<see cref="ProjectNode.WillBuildReason"/>): etiket bir disk olgusudur ve
 ///   proje temizlenene kadar çıktısı yerindedir — güncel bir satır temizlendiği ana kadar "up to date" yazar.</item>
 ///   <item><b>Sıra uyarıları düşer</b> (katman ve belirsiz üretici): ikisi de sıra/kenar uyarısıdır; sırası ve
-///   kenarı olmayan bir koşunun konsoluna basılmaz (Sync onları zaten gösterir).</item>
+///   kenarı olmayan bir koşunun konsoluna basılmaz. Belirsiz üretici uyarısını Sync zaten gösterir; katman uyarısını
+///   App topolojiden okumaz — kullanıcı onu yalnız tüm planın sırasını izleyen koşuların başında görür
+///   (<c>runStarted.Warnings</c>), Clean'de görmez.</item>
 /// </list>
 /// Grafta ne varsa kapsamdadır: harici projeler de sıradan düğümler olarak kalır (çalışma kopyaları Clean'de
 /// güncellenmez — <c>ExternalUpdater.ShouldUpdate</c>).

@@ -27,17 +27,23 @@ public sealed partial class RunViewModel
     // ile aynı yerde yazılır (her runStarted'da, kırpma yoksa null — önceki koşunun bekleyen satırı taşınmaz) ve aynı
     // yerde temizlenir (ForgetPendingRunStart).
     private string? _pendingWorkersReducedNote;
+    // [koşu başı uyarıları görünür] Motorun koşu başı uyarıları (runStarted.Warnings — bayat obj, ters katman): akışa Warn
+    // satırı olarak başlangıç satırının (ve varsa kırpma satırının) ardından yayılır — eşiği aşan liste tek sayan satıra
+    // katlanır (StreamText.RunStartWarningLines) — tek projelik koşuda da. Kırpma
+    // satırıyla aynı yerde yazılır (her runStarted'da, uyarı yoksa null) ve aynı yerde temizlenir (ForgetPendingRunStart).
+    private IReadOnlyList<string>? _pendingRunStartWarnings;
 
-    /// <summary>[kırpma notu görünür · review M1] Bekleyen koşu-başlangıç akış durumunu (başlangıç satırının kipi ve kırpma
-    /// satırı) BİRLİKTE bırakır; ikisinin sıfırlandığı TEK yer burasıdır. İki çağıran var: <see cref="BuildPreviewEvent"/>
-    /// dalı (satırlar yayıldı) ve <see cref="MarkRunEnded"/> (koşu önizlemesine varmadan bitti: motor <c>runStarted</c>'tan
-    /// sonra, önizlemeden ÖNCE öldü ya da koşu-bitiren hata geldi). İkincisi olmazsa Restart sonrası Appended Sync'in
-    /// önizlemesi (<see cref="BuildPreviewEvent"/>'in tek diğer üreticisi) ölü koşunun "Build started" ve "workers reduced"
-    /// satırlarını yeni akışa basardı.</summary>
+    /// <summary>[kırpma notu görünür · review M1 · koşu başı uyarıları] Bekleyen koşu-başlangıç akış durumunu (başlangıç
+    /// satırının kipi, kırpma satırı ve koşu başı uyarıları) BİRLİKTE bırakır; üçünün sıfırlandığı TEK yer burasıdır. İki
+    /// çağıran var: <see cref="BuildPreviewEvent"/> dalı (satırlar yayıldı) ve <see cref="MarkRunEnded"/> (koşu önizlemesine
+    /// varmadan bitti: motor <c>runStarted</c>'tan sonra, önizlemeden ÖNCE öldü ya da koşu-bitiren hata geldi). İkincisi
+    /// olmazsa Restart sonrası Appended Sync'in önizlemesi (<see cref="BuildPreviewEvent"/>'in tek diğer üreticisi) ölü
+    /// koşunun "Build started", "workers reduced" ve uyarı satırlarını yeni akışa basardı.</summary>
     private void ForgetPendingRunStart()
     {
         _pendingRunStartMode = null;
         _pendingWorkersReducedNote = null;
+        _pendingRunStartWarnings = null;
     }
 
     // [Task 2/cycles · review fix M-2] Bu run'ın modu artık BURADA TUTULMAZ (kopya YASAK) — tek yazıcı
@@ -145,6 +151,7 @@ public sealed partial class RunViewModel
                 // YAYMA; yalnız mode'u işaretle.
                 _pendingRunStartMode = e.Mode;
                 _pendingWorkersReducedNote = WorkersReducedNote(e);
+                _pendingRunStartWarnings = e.Warnings; // [koşu başı uyarıları görünür] tek proje kapısı YOK (alanın yorumu)
                 // [Task 2 review fix M-2] `_currentRunMode` BURADA YAZILMAZ — OnEvent bu case'e gelmeden ÖNCE
                 // RunViewModel.cs'in OnRunStarted'ı onu zaten yazmıştır (tek yazıcı). Bildirim yine BURADA: o
                 // metodun bildirimsiz bir alanı, IsResolvingCycles'ın değeri değişti diye UI'a haber vermesi
@@ -193,9 +200,16 @@ public sealed partial class RunViewModel
                     });
                     // [kırpma notu görünür] Kırpma satırı başlangıç satırının HEMEN ardından — konsolu kalabalık bir
                     // koşuda da gözden kaçmasın. Info: başlangıç satırının anlatı tonu; motor isteği makineye uydurdu,
-                    // hiçbir şey reddedilmedi (Warn git reddinindir).
+                    // hiçbir şey reddedilmedi (Warn bir reddin ya da bir uyarınındır).
                     if (_pendingWorkersReducedNote is { } reductionNote)
                         PushStream(StreamKind.Info, null, reductionNote);
+                    // [koşu başı uyarıları görünür] Koşu başı uyarıları onların ardından, motorun sırasıyla (bayat obj, ters
+                    // katman). Warn: kullanıcının bakması gereken bir sorun. Akışın Warn satırları önek taşımaz; öneki
+                    // StreamText düşürür (konsol satırı AYNEN kalır). [akış seli] Çok sayıda uyarı akışın sınırlı tamponunu
+                    // doldurmasın diye tavanı aşan uyarılar TEK özet satırına iner (StreamText.RunStartWarningLines);
+                    // konsol her satırı yazmaya devam eder.
+                    foreach (string runStartWarning in StreamText.RunStartWarningLines(_pendingRunStartWarnings))
+                        PushStream(StreamKind.Warn, null, runStartWarning);
                     ForgetPendingRunStart();
                 }
                 break;

@@ -830,10 +830,37 @@ public class IpcMessagesTests
         Assert.DoesNotContain("workersReducedReason",
             JsonSerializer.Serialize<IpcEvent>(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"), IpcJson.Options));
 
-        var older = Assert.IsType<RunStartedEvent>(JsonSerializer.Deserialize<IpcEvent>(
+        Assert.Null(DecodeOlderRunStarted().WorkersReducedReason);
+    }
+
+    /// <summary>İsteğe bağlı alanlar (işçi kırpma gerekçesi, koşu başı uyarıları) eklenmeden ÖNCE yazılmış bir
+    /// <c>runStarted</c> satırı — o alanlar <c>null</c> çözülmeli. Tek yerde: iki tel testi aynı satırı okur.</summary>
+    private static RunStartedEvent DecodeOlderRunStarted() => Assert.IsType<RunStartedEvent>(
+        JsonSerializer.Deserialize<IpcEvent>(
             """{"type":"runStarted","runId":"r1","mode":"build","totalProjects":3,"parallelism":4,"configuration":"Debug"}""",
             IpcJson.Options));
-        Assert.Null(older.WorkersReducedReason);
+
+    // [koşu başı uyarıları görünür] runStarted motorun koşu başı uyarılarını (bayat obj, ters katman) TAM satırlarıyla ve
+    // sırasıyla taşır (App kullanıcının konsol ve event stream satırlarını bundan yazar). Uyarı yoksa alan JSON'a
+    // YAZILMAZ; bu alandan ÖNCE yazılmış bir satır null çözülür.
+    [Fact]
+    public void RunStartedEvent_carries_the_run_start_warnings_in_order_and_an_older_line_decodes_them_as_null()
+    {
+        // Örnek satırlar App testlerinin sabitleriyle AYNI (ikinci bir kopya yok); tel katmanı metni yorumlamaz.
+        var warned = new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug", Warnings:
+        [
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.StaleObjWarning,
+            BuildOrchestrator.Tests.App.RunViewModelStateTests.ReverseLayerWarning,
+        ]);
+        string json = JsonSerializer.Serialize<IpcEvent>(warned, IpcJson.Options);
+        Assert.Contains("\"warnings\":[", json);
+        var decoded = Assert.IsType<RunStartedEvent>(JsonSerializer.Deserialize<IpcEvent>(json, IpcJson.Options));
+        Assert.Equal(warned.Warnings, decoded.Warnings); // liste referansla değil, elemanları ve sırasıyla karşılaştırılır
+        Assert.Equal(warned with { Warnings = null }, decoded with { Warnings = null }); // diğer alanlar da gidip döner
+
+        Assert.DoesNotContain("\"warnings\"",
+            JsonSerializer.Serialize<IpcEvent>(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"), IpcJson.Options));
+        Assert.Null(DecodeOlderRunStarted().Warnings);
     }
 
     // [Task 5] Kontrattan kalkan ElapsedMsAtStart alanı hep 0 taşıdığı için silindi. Pinlenen, toleranslı

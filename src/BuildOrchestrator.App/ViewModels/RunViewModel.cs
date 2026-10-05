@@ -2090,6 +2090,15 @@ public sealed partial class RunViewModel : ObservableObject
             && PerfNoteText.ResolveNote(e.Mode, ProfileFor(PerfMode) with { Parallelism = e.Parallelism },
                 run.ResolveAtFullPriority) is { } resolveNote)
             AppendRunLine(resolveNote);
+        // [koşu başı uyarıları görünür] Motorun koşu başında bulduğu uyarılar (runStarted.Warnings — önce bayat obj, sonra
+        // ters katman) kullanıcının konsoluna AYNEN, her satır bir kez; "warning: " öneki satırı amber boyar (ConsoleLine).
+        // Metin Supervisor'ın decision.log satırıyla AYNI; stderr kopyası yoktur, App stderr'i atar. Event stream'deki
+        // eşlerini RunViewModel.Stream.cs, başlangıç satırının (ve varsa kırpma satırının) ardından yayar. Sıra: kırpma ve
+        // Resolve notlarından SONRA — o iki not koşunun nasıl koştuğunu söyler ve yan yana kalır (Resolve notunun sayısı
+        // kırpmadan gelir); uyarılar akıştaki gibi onların ardından gelir. Tek projelik koşuda da yazılır: kırpma notunun
+        // istisnası burada geçerli değil — o projenin bayat obj'si o koşuyu bozabilir.
+        foreach (string warning in e.Warnings ?? [])
+            AppendRunLine(warning);
         UpdateEta(); // runStarted anında henüz hiçbir completion yok → X/N fallback (ETA numarası YOK)
         RefreshRunSurface();
     }
@@ -2541,7 +2550,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// (<see cref="ReleaseLiveLinesWhenIdle"/>; bekleyen bir log yüklemesi varsa yüklemenin sonuna ertelenir), SONRA "koşu bitti"
     /// sinyali yazılır (<see cref="EndedRunSerial"/>). Koşu yokken çağrılırsa (motor boştayken gitti, planlama düştü) sinyal
     /// değişmez. Bekleyen koşu-başlangıç akış durumu da burada bırakılır (<see cref="ForgetPendingRunStart"/>): önizlemesine
-    /// varmadan biten koşunun başlangıç ve kırpma satırları sonraki bir Sync önizlemesine sızmaz.
+    /// varmadan biten koşunun başlangıç, kırpma ve uyarı satırları sonraki bir Sync önizlemesine sızmaz.
     /// </summary>
     private void MarkRunEnded()
     {

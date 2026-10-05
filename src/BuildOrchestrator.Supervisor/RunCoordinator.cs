@@ -893,10 +893,24 @@ public sealed class RunCoordinator(
         catch (MsBuildResolveException ex)
         { events.TryWrite(new ErrorEvent("msbuildNotFound", ex.Message)); return; }
 
-        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir:
-        // her proje kendi varsayılan obj'inde derlenir. onRetry ile AYNI ikili-yazım deseni: hem decision.log
-        // hem konsol. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
-        StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, line => { Decide(logs, line); console(line); });
+        // [koşu başı uyarıları görünür] Koşu başı uyarıları runStarted yazılmadan ÖNCE TEK listede toplanır: önce bayat obj
+        // satırları, sonra ters katman satırları. Her satır burada decision.log'a yazılır ve AYNI metinle runStarted'la
+        // (Warnings) App'e gider; kullanıcının konsol satırını ve event stream'in Warn satırını App yazar (tek projelik
+        // koşuda da). stderr'e (console) kopya YAZILMAZ: App stderr'i atar — işçi kırpma ve Resolve notlarıyla aynı
+        // sahiplik; stderr ileride yüzeye çıkarsa satır çiftlenmesin.
+        // [T72/Task 14] SPIKE S2 — bayat-obj (yabancı-TFM restore artığı) teşhisi her koşuda tetiklenir: her proje kendi
+        // varsayılan obj'inde derlenir. Dokunmaz, yalnız warn (StaleObjRunStartWarner ASLA fırlatmaz).
+        var runStartWarnings = new List<string>();
+        StaleObjRunStartWarner.WarnStaleObj(runPlan.Plan.Nodes, runStartWarnings.Add);
+        // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları okuyup
+        // bloklama/yeniden sıralama YAPMAZ): LayerEngine'ın ürettiği metin AYNEN, yalnız "warning: " öneki eklenerek.
+        // Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi bağımlılığından önce koyduğu plan sessizce
+        // derlenirdi — tek gerçek düzeltme pattern'leri gözden geçirmektir. Plan katmansızsa (varsayılan)
+        // LayerWarnings null/boştur → satır yok.
+        foreach (string layerWarning in runPlan.Plan.LayerWarnings ?? [])
+            runStartWarnings.Add("warning: " + layerWarning);
+        foreach (string runStartWarning in runStartWarnings)
+            Decide(logs, runStartWarning);
 
         // [PERF Faz D / karar 10] Profilin işçi sayısı İSTENEN sayıdır; fiili sayı koşu başında makineye göre BİR KEZ
         // kırpılır (kural ve sabitler Core'da, WorkerBudget — burada yalnız uygulanır). runStarted, konsol başlığı,
@@ -937,7 +951,8 @@ public sealed class RunCoordinator(
         var plan = runPlan.Plan;
         var nodeById = plan.Nodes.ToDictionary(n => n.Id, StringComparer.OrdinalIgnoreCase);
         events.TryWrite(new RunStartedEvent(cmd.RunId, cmd.Mode, plan.Nodes.Count, parallelism,
-            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory, WorkersReducedReason: workerBudget.Reason));
+            plan.Configuration, appliedCap, LogDirectory: logs.RunDirectory, WorkersReducedReason: workerBudget.Reason,
+            Warnings: runStartWarnings.Count > 0 ? runStartWarnings : null));
         // [Task 17] runStarted'dan HEMEN SONRA, ilk projectStarted/projectSkipped'ten ÖNCE: App'in Projects
         // listesini will-build önizlemesiyle pre-populate edebilmesi için. WillBuild alanı doğrudan plan'ın
         // düğümlerinden (BuildPreview/IncrementalPlanner'ın doldurduğu — henüz run akışına tam bağlanmadıysa null)
@@ -989,13 +1004,8 @@ public sealed class RunCoordinator(
                 // önizlemesi bunu yeniden hesaplamaz — etiket Sync'ten gelen değeri korur.
                 FailedAt: BuildStateStore.FailedAtOf(builtCommits, n.Id),
                 OutputBuiltAt: OutputEvidence.OutputBuiltAt(CheckOf(n.Id), n.WillBuildReason)))]));
-        // [A1/T15] Katman ataması ters-katman bağımlılığı bulduysa (warn-only DATA — koordinatör bunları
-        // okuyup bloklama/yeniden sıralama YAPMAZ) run başında konsola basılır: LayerEngine'ın ürettiği metin
-        // AYNEN, yalnız "warning: " öneki eklenerek. Uyarı kullanıcıya ulaşmazsa, bariyerin bir projeyi kendi
-        // bağımlılığından önce koyduğu plan sessizce derlenirdi — tek gerçek düzeltme pattern'leri gözden
-        // geçirmektir. Plan katmansızsa (varsayılan) LayerWarnings null/boştur → hiçbir satır basılmaz.
-        foreach (string warning in plan.LayerWarnings ?? [])
-            console("warning: " + warning);
+        // [koşu başı uyarıları görünür] Ters katman uyarıları burada konsola BASILMAZ: runStarted'dan önce bayat obj
+        // satırlarıyla aynı listede toplanıp (StaleObjRunStartWarner çağrısının yanında) kullanıcıya App üzerinden ulaşır.
         // Belirsiz üretici uyarıları metinlerini KENDİLERİ taşır (PlanProgressLines "warning: " ile başlar) —
         // Sync transkriptindeki satırın AYNISI; burada ikinci bir önek eklenmez.
         foreach (string warning in plan.ProducerWarnings ?? [])

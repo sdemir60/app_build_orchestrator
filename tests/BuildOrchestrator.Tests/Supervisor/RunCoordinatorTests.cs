@@ -1535,8 +1535,28 @@ public class RunCoordinatorTests
         return proj;
     }
 
+    /// <summary>[koşu başı uyarıları görünür] <c>P</c> projesinin bayat-obj satırı <see cref="RunStartedEvent.Warnings"/>'te
+    /// TEK kez gider (kullanıcının konsol + akış satırını App yazar), decision.log'da TAM satır tek kez kalır, Supervisor'ın
+    /// konsol geri çağrısında (stderr — App atar) hiç yoktur. Satırı döner.</summary>
+    private static string AssertSingleStaleObjWarning(Harness h)
+    {
+        string warning = Assert.Single(Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings ?? []);
+        Assert.StartsWith("warning: P: ", warning, StringComparison.Ordinal);
+        Assert.Contains(StaleMarker, warning, StringComparison.Ordinal);
+        AssertNoteOnlyInDecisionLog(h, warning, StaleMarker);
+        return warning;
+    }
+
+    /// <summary>
+    /// Taze (Rebuild) koşu bayat obj'i TEK kez bildirir ve obj'e dokunmaz.
+    /// <para><b>[DEĞİŞEN KURAL — koşu başı uyarıları görünür]</b> Eski iddia
+    /// (<c>fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj</c>) satırı
+    /// Supervisor'ın konsol geri çağrısında tek kez ve decision.log'da arıyordu. O konsol Supervisor'ın stderr'idir ve App onu
+    /// atar (EngineHost): kullanıcı uyarıyı hiç görmüyordu. Satır artık runStarted'la App'e gider; decision.log kopyası
+    /// kalır, stderr kopyası yoktur. "obj'e dokunulmaz" iddiası değişmedi.</para>
+    /// </summary>
     [Fact]
-    public async Task fresh_in_place_run_warns_once_on_stale_obj_via_console_and_decision_log_and_never_touches_the_obj()
+    public async Task fresh_in_place_run_carries_the_stale_obj_warning_once_and_never_touches_the_obj()
     {
         string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
         try
@@ -1553,12 +1573,7 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            var warnLines = h.ConsoleLines.Where(l => l.Contains(StaleMarker, StringComparison.Ordinal)).ToList();
-            var warn = Assert.Single(warnLines);
-            Assert.Contains("P", warn);
-
-            Assert.Contains(StaleMarker, h.DecisionLog); // aynı satır decision.log'a da yazılır (onRetry ile aynı ikili-yazım deseni)
-
+            AssertSingleStaleObjWarning(h);
             Assert.Equal(before, File.ReadAllBytes(assets)); // [§4] dokunulmadı — byte-tam aynı
         }
         finally { Directory.Delete(root, recursive: true); }
@@ -1592,7 +1607,11 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Eski iddia yalnız konsol geri çağrısında uyarı OLMADIĞINA
+            // bakıyordu; uyarı artık oraya hiç yazılmadığı için o iddia boş kalırdı. Uyarının gittiği yerler sınanır:
+            // runStarted uyarı taşımaz, decision.log'da da yoktur.
+            Assert.Null(Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings);
+            Assert.DoesNotContain(StaleMarker, h.DecisionLog, StringComparison.Ordinal);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1622,7 +1641,13 @@ public class RunCoordinatorTests
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            Assert.Single(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Eski iddia satırı Supervisor'ın konsol geri çağrısında TEK kez
+            // arıyordu. O kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı uyarıyı hiç görmüyordu.
+            // Satır artık runStarted'la (Warnings) App'e gider; kullanıcının konsol ve event stream satırını App yazar
+            // (RunViewModelStateTests). Burada: olay satırı TEK kez taşır, decision.log'da TAM satır tek kez, konsol geri
+            // çağrısında hiç (işçi kırpma ve Resolve notlarıyla aynı sahiplik: stderr ileride yüzeye çıkarsa satır
+            // çiftlenmesin).
+            AssertSingleStaleObjWarning(h);
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -1657,8 +1682,9 @@ public class RunCoordinatorTests
             releaseQ.SetResult();
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            int warnsAfterRun1 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(1, warnsAfterRun1); // 1. koşu TEK BİR KEZ warn eder
+            // [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Sayım artık koşuların runStarted olaylarında yapılır (gerekçe:
+            // A_run_warns_about_a_stale_default_obj); eski sayım konsol geri çağrısındaydı — App'in attığı stderr.
+            Assert.Equal(1, StaleWarningsOnRunStarted(h)); // 1. koşu TEK BİR KEZ warn eder
 
             await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Rebuild, root, "Debug", 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -1667,24 +1693,42 @@ public class RunCoordinatorTests
             // teşhis/warn YOK". Sürdürme segmenti kalmadı: her koşu tazedir, obj'yi yeniden teşhis eder ve
             // bayatlık HÂLÂ duruyorsa yeniden uyarır — susmak, kullanıcının ikinci koşuda sorunu görmemesi
             // demek olurdu.
-            int warnsAfterRun2 = h.ConsoleLines.Count(l => l.Contains(StaleMarker, StringComparison.Ordinal));
-            Assert.Equal(2, warnsAfterRun2);
+            Assert.Equal(2, StaleWarningsOnRunStarted(h)); // ikinci koşunun runStarted'ı da satırı taşır
+            Assert.DoesNotContain(h.ConsoleLines, l => l.Contains(StaleMarker, StringComparison.Ordinal));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>[koşu başı uyarıları görünür] Harness'in yazdığı TÜM <c>runStarted</c> olaylarında taşınan bayat obj
+    /// satırlarının sayısı (her koşu satırı kendi olayında taşır).</summary>
+    private static int StaleWarningsOnRunStarted(Harness h) => h.Events.OfType<RunStartedEvent>()
+        .Sum(e => e.Warnings?.Count(w => w.Contains(StaleMarker, StringComparison.Ordinal)) ?? 0);
+
     // ---------------------------------------------------------------- 14) katman uyarıları (A1/T15)
 
-    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız
-    // run başında konsola basar — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
-    [Fact]
-    public async Task layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start()
+    // Ters-katman uyarısı warn-only DATA'dır: koordinatör onu OKUYUP bloklama/yeniden sıralama YAPMAZ, yalnız run
+    // başında bildirir — tasarımın tek gerçek düzeltmesi kullanıcının pattern'leri gözden geçirmesidir.
+    private const string ReverseLayerWarning =
+        "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
+
+    /// <summary>
+    /// [DEĞİŞEN KURAL — koşu başı uyarıları görünür] Planın taşıdığı ters katman uyarısı <c>runStarted</c>'la
+    /// (<c>Warnings</c>) App'e gider — LayerEngine'ın metni AYNEN, <c>warning: </c> önekli; decision.log'da TAM satır tek
+    /// kez, Supervisor'ın konsol geri çağrısında hiç. Uyarısız koşuda alan <c>null</c>'dır (telde yok).
+    /// <para><b>Eski iddia:</b> satır run başında konsol geri çağrısına basılırdı
+    /// (<c>layer_warnings_carried_by_the_plan_are_printed_to_the_console_at_run_start</c>) ve decision.log'da yoktu. O
+    /// kanal Supervisor'ın stderr'idir ve App onu atar (EngineHost) — kullanıcı uyarıyı hiç görmüyordu. Kullanıcının konsol
+    /// ve event stream satırını artık App yazar (RunViewModelStateTests); decision.log satırı tanı izi kalsın diye
+    /// yazılır.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task layer_warnings_carried_by_the_plan_ride_runStarted_and_the_decision_log_not_the_console(bool warned)
     {
-        const string Warning =
-            "reverse layer dependency: 'OSYS.Data' (layer 0 'DataLayer') depends on producer 'B.csproj' (layer 1 'UiLayer')";
         var plan = new RunPlan(
             new BuildPlan([Node("A") with { BuildOrder = 0 }], Cycles: [], Configuration: "Debug",
-                LayerWarnings: [Warning]),
+                LayerWarnings: warned ? [ReverseLayerWarning] : []),
             EmptyRefs());
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker);
@@ -1692,7 +1736,41 @@ public class RunCoordinatorTests
         await h.Sut.StartAsync(Start(), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Contains(h.ConsoleLines, l => l == "warning: " + Warning);
+        var started = Assert.Single(h.Events.OfType<RunStartedEvent>());
+        if (!warned)
+        {
+            Assert.Null(started.Warnings); // uyarı yok → alan telde yok
+            return;
+        }
+        Assert.Equal(new[] { "warning: " + ReverseLayerWarning }, started.Warnings);
+        AssertNoteOnlyInDecisionLog(h, "warning: " + ReverseLayerWarning, "reverse layer");
+    }
+
+    /// <summary>[koşu başı uyarıları görünür] İki uyarı ailesi <c>runStarted</c>'da TEK listede gider; sıra: önce bayat
+    /// obj satırları, sonra ters katman satırları (App konsola ve akışa bu sırayla yazar).</summary>
+    [Fact]
+    public async Task run_start_warnings_list_stale_obj_lines_before_reverse_layer_lines()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "bo-coord-staleobj-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string proj = WriteStaleObjProject(Path.Combine(root, "P"), "P");
+            var plan = new RunPlan(
+                new BuildPlan([new ProjectNode(proj, "P", proj, [], [], 0, null, null, false, null)], Cycles: [],
+                    Configuration: "Debug", LayerWarnings: [ReverseLayerWarning]),
+                EmptyRefs());
+            using var h = new Harness(plan, new FakeInvoker((_, _, _) => Task.FromResult(Ok())));
+
+            await h.Sut.StartAsync(new StartRunCommand("r1", RunMode.Build, root, "Debug", 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var warnings = Assert.Single(h.Events.OfType<RunStartedEvent>()).Warnings;
+            Assert.NotNull(warnings);
+            Assert.Equal(2, warnings.Count);
+            Assert.Contains(StaleMarker, warnings[0], StringComparison.Ordinal);
+            Assert.Equal("warning: " + ReverseLayerWarning, warnings[1]);
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     // ---------------------------------------------------------------- 15) depIssue-persist penceresi (A2)
