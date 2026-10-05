@@ -836,17 +836,99 @@ public class RunViewModelStateTests
     /// ayrı bir satır olarak pinlidir.
     /// </summary>
     [Theory]
-    [InlineData(null, "Build started")]
-    [InlineData("1 logical processor", "workers reduced")]
-    public async Task A_run_lost_before_its_preview_leaves_no_stale_stream_line_for_the_next_preview(string? reason, string staleLine)
+    [InlineData(null, null, "Build started")]
+    [InlineData("1 logical processor", null, "workers reduced")]
+    // [koşu başı uyarıları görünür] Bekleyen uyarı satırı da aynı hunide bırakılır. Bu satır düzeltmeden önce de yeşildir
+    // (akışta uyarı satırı hiç yoktu); yeni bekleyen alanın ForgetPendingRunStart'ta bırakıldığını korur.
+    [InlineData(null, StaleObjWarning, "obj holds a restore")]
+    public async Task A_run_lost_before_its_preview_leaves_no_stale_stream_line_for_the_next_preview(string? reason,
+        string? warning, string staleLine)
     {
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = PerfContextVm(engine, fullPriority: true);
-        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason));
+        vm.OnEvent(new RunStartedEvent("r0", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: reason,
+            Warnings: warning is null ? null : [warning]));
         vm.OnEngineExited(1); // motor önizlemeden önce öldü: r0'ın önizlemesi hiç gelmeyecek
         vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)])); // Restart sonrası Sync'in önizlemesi
 
         Assert.DoesNotContain(vm.StreamEvents, s => s.Text.Contains(staleLine, StringComparison.Ordinal));
+    }
+
+    // ---------------------------------------------------------------- [koşu başı uyarıları görünür] bayat obj + ters katman
+
+    // Koşu başı uyarılarının örnek satırları — Supervisor'ın decision.log'a yazıp runStarted.Warnings'le taşıdığı biçimde
+    // ("warning: " önekli; önce bayat obj, sonra ters katman). App metni ayrıştırmaz; akışta yalnız öneki düşer.
+    private const string StaleObjWarning = "warning: A: obj holds a restore for .NETStandard,Version=v2.0";
+    private const string ReverseLayerWarning =
+        "warning: reverse layer dependency: 'A' (layer 0 'Data') depends on producer 'B.csproj' (layer 1 'Ui')";
+
+    /// <summary>
+    /// [koşu başı uyarıları görünür] Motorun koşu başı uyarıları (<c>runStarted.Warnings</c> — bayat obj, ters katman)
+    /// kullanıcıya İKİ yerde görünür: konsolda her satır AYNEN tam bir kez ("warning: " öneki satırı amber boyar), event
+    /// stream'de başlangıç satırının ve kırpma satırının ardından, sırası korunarak, Warn türünde ve öneksiz (akışın Warn
+    /// satırları önek taşımaz). Kusur: iki uyarı ailesi yalnız Supervisor'ın stderr'ine (App onu atar) ve kısmen
+    /// decision.log'a gidiyordu — kullanıcı hiçbirini görmüyordu. Tek projelik koşuda da yazılır (kırpma notunun istisnası
+    /// burada geçerli değil: o projenin bayat obj'si o koşuyu bozabilir); orada kırpma satırı olmadığı için uyarılar
+    /// başlangıç satırını doğrudan izler. Uyarı yoksa iki yerde de satır yoktur.
+    /// </summary>
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public async Task Run_start_warnings_reach_the_console_and_follow_the_start_lines_in_the_stream(bool warned,
+        bool singleProject)
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Build);
+        if (singleProject) vm.RunTargetId = "A"; // satırdan basıldı (BeginRunAsync bunu tıklama anında yazar)
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 2, "Debug", WorkersReducedReason: "1 logical processor",
+            Warnings: warned ? [StaleObjWarning, ReverseLayerWarning] : null));
+        int streamBefore = vm.StreamEvents.Count;
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(@"C:\p\a.csproj", "A", true)]));
+
+        // [review M2 deseni] Satır bazlı: süslenmiş ya da öneki düşmüş bir konsol satırı sayılmaz.
+        var lines = vm.GetRunDocumentText().Split('\n');
+        Assert.Equal(warned ? 1 : 0, lines.Count(l => l == StaleObjWarning));
+        Assert.Equal(warned ? 1 : 0, lines.Count(l => l == ReverseLayerWarning));
+        // Önizlemenin akışa eklediği satırlar: başlangıç satırı, (tek projelik koşu değilse) kırpma satırı, uyarılar.
+        var expected = new List<(StreamKind, string)>();
+        if (!singleProject) expected.Add((StreamKind.Info, "workers reduced to 2 (1 logical processor)"));
+        if (warned)
+        {
+            expected.Add((StreamKind.Warn, "A: obj holds a restore for .NETStandard,Version=v2.0"));
+            expected.Add((StreamKind.Warn,
+                "reverse layer dependency: 'A' (layer 0 'Data') depends on producer 'B.csproj' (layer 1 'Ui')"));
+        }
+        Assert.True(vm.StreamEvents.Count > streamBefore, "the preview did not add the run's start line");
+        Assert.Equal<(StreamKind, string)>(expected, vm.StreamEvents.Skip(streamBefore + 1).Select(s => (s.Kind, s.Text)));
+    }
+
+    /// <summary>
+    /// [koşu başı uyarıları görünür] Konsol sırası: önce kırpma notu, sonra Resolve notu, sonra koşu başı uyarıları
+    /// (motorun sırasıyla) — event stream'deki sırayla AYNI (başlangıç → kırpma → uyarılar). İki not koşunun nasıl koştuğunu
+    /// söyler ve yan yana kalır (Resolve notunun sayısı kırpmadan gelir); uyarılar onların ardından gelir.
+    /// </summary>
+    [Fact]
+    public async Task Run_start_warnings_follow_the_reduction_and_resolve_notes_in_the_console()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = PerfContextVm(engine, fullPriority: true);
+        await StartViaCommandAsync(vm, RunMode.Cycles);
+
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 4, 2, "Debug", WorkersReducedReason: "1 logical processor",
+            Warnings: [StaleObjWarning, ReverseLayerWarning]));
+
+        var lines = vm.GetRunDocumentText().Split('\n');
+        int[] order =
+        [
+            Array.IndexOf(lines, "workers reduced to 2 (1 logical processor)"),
+            Array.IndexOf(lines, "parallelism: 2 · cpu cap off · priority normal (Resolve cycles)"),
+            Array.IndexOf(lines, StaleObjWarning),
+            Array.IndexOf(lines, ReverseLayerWarning),
+        ];
+        Assert.True(order[0] >= 0 && order.Zip(order.Skip(1)).All(p => p.First < p.Second), string.Join('\n', lines));
     }
 
     /// <summary>

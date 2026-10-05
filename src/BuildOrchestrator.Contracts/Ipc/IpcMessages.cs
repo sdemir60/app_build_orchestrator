@@ -309,9 +309,15 @@ public enum RunOutcome { Completed, Stopped }
 /// hariç: orada işçi sayısı koşuyu tarif etmez (metin Core'da,
 /// <c>PerfNoteText.WorkersReduced</c>). Kırpma yoksa <c>null</c> (JSON'a yazılmaz); bu alandan ÖNCE yazılmış NDJSON
 /// satırları <c>null</c> çözülür.</param>
+/// <param name="Warnings">[koşu başı uyarıları görünür] Koşu başında bulunan uyarı satırlarının TAM metni — Supervisor'ın
+/// decision.log'a yazdığı satırın AYNISI, <c>warning: </c> önekli. Sıra: önce bayat obj satırları
+/// (<c>StaleObjRunStartWarner</c> — projenin varsayılan obj'inde yabancı TFM restore artığı, proje başına bir satır),
+/// sonra ters katman satırları (<c>BuildPlan.LayerWarnings</c>). App her satırı kullanıcının konsoluna AYNEN, event
+/// stream'e öneksiz bir Warn satırı olarak yazar — tek projelik koşuda da. Uyarı yoksa <c>null</c> (JSON'a yazılmaz); bu
+/// alandan ÖNCE yazılmış NDJSON satırları <c>null</c> çözülür.</param>
 public sealed record RunStartedEvent(string RunId, RunMode Mode, int TotalProjects, int Parallelism,
     string Configuration, int? CpuCapPercent = null, string? LogDirectory = null,
-    string? WorkersReducedReason = null) : IpcEvent;
+    string? WorkersReducedReason = null, IReadOnlyList<string>? Warnings = null) : IpcEvent;
 public sealed record ProjectStartedEvent(string RunId, string ProjectId, string Name) : IpcEvent;
 public sealed record ProjectLogEvent(string RunId, string ProjectId, int LineNumber, string Text) : IpcEvent;
 /// <param name="DepIssues">Bu proje için tespit edilen dependency-uyarıları (ör. "dependent X henüz derlenmedi");

@@ -189,8 +189,8 @@ start-up and warning lines — among them the run-log retention summary (§8.5) 
 to stderr alone and serve only whoever reads it directly; anything the user must see travels as an IPC event.
 The drain exists to keep the pipe moving, not to collect anything.
 
-This is not theoretical. The engine writes a diagnostic line per stale-obj project at the start of planning; a
-177-project workspace produces tens of kilobytes. With nothing reading stderr, planning froze partway through
+This is not theoretical. A diagnostic line per stale-obj project, written to stderr at the start of planning,
+came to tens of kilobytes on a 177-project workspace. With nothing reading stderr, planning froze partway through
 that loop, so `runStarted` never arrived and the App sat in its mid-run lock. Worse, the *stop* that followed
 could not complete either: the coordinator takes ownership of a stop while a run is active and owes the
 `runStopped` acknowledgement to the run task's `finally`, which a frozen planner never reaches — so the phase
@@ -576,7 +576,11 @@ Three of these carry the whole model:
 requested — a Win32 failure surfaces here as `null` plus a warning line, and does not fail the run.
 `runStarted.logDirectory` is the run's log folder on disk; the summary line of a run interrupted by a branch
 change names it (§8.8). `runStarted.workersReducedReason` is present only when the engine started fewer workers than
-the profile asked for, and carries the reason the App's reduction note names (§11.1).
+the profile asked for, and carries the reason the App's reduction note names (§11.1). `runStarted.warnings` is present
+only when the run starts with something to warn about: the exact `warning:` lines the engine wrote to `decision.log`,
+stale-`obj` lines (§9.4) before reverse-layer lines (§6.6). The App writes each line to the console as it is, and to
+the event stream as a warning line without the prefix, right after the run's opening line and any reduction note — a
+single-project run included.
 
 ### 5.4 Error handling
 
@@ -725,8 +729,9 @@ order.
 Assignment imposes a **hard phase barrier**: the plan is re-sorted by `(layerIndex, original build order)`,
 using the stability of the sort to preserve topological order within a layer. This can legitimately place a
 project before one of its own dependencies; that case is detected and reported as a warn-only reverse-layer
-warning. Nothing is blocked or reordered on the basis of those warnings, so every algorithm that consumes the
-plan must be order-independent.
+warning at the start of each run: the engine writes it to `decision.log` and sends it with `runStarted` (§5.3), and
+the App shows it in the console and in the event stream. Nothing is blocked or reordered on the basis of those
+warnings, so every algorithm that consumes the plan must be order-independent.
 
 User regexes are compiled with a 100 ms match timeout. A pattern that times out is treated as a non-match and
 skipped for the remaining nodes, with a warning. An empty or whitespace pattern is made inert rather than
@@ -1976,8 +1981,9 @@ project keeps its default `obj` for Visual Studio parity — no output path of a
 (`project.assets.json`, `*.nuget.g.props`) were measured breaking otherwise-healthy builds. What happens to that
 residue depends on **who asked**, and the split is deliberate.
 
-*At the start of a run*, foreign-TFM residue in a default `obj` is detected and reported as a console warning,
-and **nothing is deleted or modified**. A run is not the moment to take a decision the user did not ask for,
+*At the start of a run*, foreign-TFM residue in a default `obj` is detected and reported as a warning, one line
+per project: the engine writes it to `decision.log` and sends it with `runStarted` (§5.3), and the App shows it in
+the console and in the event stream, a single-project run included. **Nothing is deleted or modified**. A run is not the moment to take a decision the user did not ask for,
 and the detector is warn-only throughout: it never throws, and an unreadable or ambiguous `project.assets.json`
 leaves it silent rather than guessing.
 

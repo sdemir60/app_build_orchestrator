@@ -71,6 +71,15 @@ public static class StreamText
         _ => throw new ArgumentOutOfRangeException(nameof(reason), reason, "unknown pull refusal reason"),
     };
 
+    /// <summary>[koşu başı uyarıları görünür] Koşu başı uyarısının (<c>runStarted.Warnings</c> — bayat obj, ters katman)
+    /// akış satırı: motorun <c>warning: </c> önekli satırının öneki DÜŞMÜŞ hâli (<c>reverse layer dependency: …</c>). Akışın
+    /// Warn satırları önek taşımaz — türü rengi söyler (<see cref="PullRefused"/>, <see cref="BranchSwitchRefused"/>);
+    /// konsol satırı öneki AYNEN taşır. Önek YALNIZ burada düşer; öneksiz bir satır olduğu gibi döner.</summary>
+    public static string RunStartWarning(string line) =>
+        line.StartsWith(RunStartWarningPrefix, StringComparison.Ordinal) ? line[RunStartWarningPrefix.Length..] : line;
+
+    private const string RunStartWarningPrefix = "warning: ";
+
     /// <summary>[spec 2026-09-18 §6.2] Commit'in tetiklediği sessiz Sync'in TEK satırı — her zaman yazılır.</summary>
     public const string SyncedAfterCommit = "synced after commit";
 
