@@ -5694,7 +5694,10 @@ balloons or saturate every core, so each is gated on an environment variable —
 unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
-root exists they run with the normal suite.
+root exists they run with the normal suite. One probe lives in the application rather than the suite, because
+what it measures only exists there: with `BO_PROBE_FRAMES=<file>` the shell records the gap between every two
+frames it draws, one line per five-second window (frames drawn, longest gap, gaps over 33/50/100/250 ms), which
+is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local

@@ -39,6 +39,7 @@ public partial class App : Application
     public static MotionCoordinator HeroMotion { get; private set; } = null!;
 
     private SingleInstanceGuard? _singleInstance;
+    private FrameGapProbe? _frameProbe; // [perf sondası] yalnız BO_PROBE_FRAMES verilmişse yaşar (FrameGapProbe)
     private AppTrayIcon? _secondInstanceTray; // yalnız ikinci-instance-aktive-edilemedi yolunda geçici olarak yaşar
 
     protected override void OnStartup(StartupEventArgs e)
@@ -56,6 +57,8 @@ public partial class App : Application
         motion.Attach(Resources);
         Motion = motion;
         HeroMotion = new MotionCoordinator();
+        // [perf sondası] Yalnız BO_PROBE_FRAMES bir dosya yolu taşıyorsa kare aralıkları o dosyaya yazılır (FrameGapProbe).
+        _frameProbe = FrameGapProbe.StartIfRequested();
 
         // [P4] Kalıcı durum argüman kararından ÖNCE okunur: Windows ile açılışta (--autostart) pencere mi tepsi mi
         // kararını Start minimized to tray verir. Dosya yoksa/bozuksa varsayılanlar — açılış bir tercih yüzünden düşmez.
