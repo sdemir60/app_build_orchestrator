@@ -1,8 +1,10 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Shapes;
+using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App;
 using BuildOrchestrator.App.ViewModels;
 
@@ -16,6 +18,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ProjectRowActions : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.ToolBar);
+
     public ProjectRowActions()
     {
         InitializeComponent();

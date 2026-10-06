@@ -7,14 +7,14 @@ using Xunit.Abstractions;
 namespace BuildOrchestrator.Tests.App;
 
 /// <summary>
-/// Sanallaştırılmış proje listesinin KAYDIRMA davranışı.
+/// Aşamalı kurulan proje listesinin KAYDIRMA davranışı: görünür pencere her durakta satırla kaplıdır ve
+/// kaydırma menzili içeriği aşmaz.
 ///
-/// <para><b>Ölçülen kusur:</b> listeyi aşağı-yukarı birkaç kez kaydırınca satırlar kayboluyor, sonunda liste
-/// tamamen boşalıyordu; ayrıca son satırın altında kaydırılabilen boşluk kalıyordu. Kök neden container
-/// GERİ DÖNÜŞÜMÜ: <c>IItemContainerGenerator.GenerateNext</c>, havuzdan gelen bir container'ı
-/// <c>isNewlyRealized = false</c> ile döndürür — oysa o container geri dönüştürülürken
-/// <c>InternalChildren</c>'dan ÇIKARILMIŞTIR. Panel yalnız "yeni realize" olanları ekliyordu, dolayısıyla
-/// geri dönüştürülmüş her satır bir daha ağaca girmiyordu.</para>
+/// <para><b>Ölçülen kusur (tarihçe):</b> liste container'ları geri dönüştürürken aşağı-yukarı birkaç kaydırmada
+/// satırlar kayboluyor, sonunda liste tamamen boşalıyordu — havuzdan dönen container <c>isNewlyRealized = false</c>
+/// ile geliyor ama <c>InternalChildren</c>'dan çıkarılmış oluyordu. Geri dönüşüm artık yok (kurulan kontrol satırında
+/// kalır, bkz. <see cref="ListRowsStayRealizedTests"/>); bu testler kaplama ve menzil değişmezlerini pinlemeye devam
+/// eder, çünkü ikisi de panelin kümülatif tablosuna ve çocuk sırasına dayanır.</para>
 /// </summary>
 [Collection("Console UI (serial)")] // WPF StaFact kaynak çekişmesi — bkz. ConsoleUiSerialCollection
 public class ListVirtualizationScrollTests(ITestOutputHelper output)

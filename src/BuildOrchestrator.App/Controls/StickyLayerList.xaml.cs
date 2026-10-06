@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,11 +15,16 @@ namespace BuildOrchestrator.App.Controls;
 /// <summary>
 /// [T58] Birikimli yapışan katman başlıkları — liste ScrollViewer + overlay Canvas (feasibility §3.3).
 /// Layout aritmetiği <see cref="LayoutMetrics"/>'te (SAF, testli, T59 follow-mode ile ORTAK instance);
-/// bu control yalnız WPF kablajı: grupları in-flow entry akışına çevirir, ScrollChanged'de yapışık başlık
-/// kümesini overlay'e sürer. Virtualization KAPALI (§4.1 — aritmetik tablo yalnız o zaman birebir).
+/// bu control yalnız WPF kablajı: grupları in-flow entry akışına çevirir (yerinde uzlaştırarak —
+/// <see cref="ListReconciler"/>), ScrollChanged'de yapışık başlık kümesini overlay'e sürer. Satırlar
+/// <see cref="FixedHeightVirtualizingPanel"/>'de aşamalı kurulur ve kalıcıdır; kaydırma ekseni kümülatif tabloyla
+/// birebirdir.
 /// </summary>
 public partial class StickyLayerList : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     /// <summary>Sıralı bir katman: adı (boş → başlıksız, sticky devrede değil) + satır nesneleri (RowTemplate
     /// <c>{Binding Name}</c>'e bağlanır — <see cref="ViewModels.ProjectRowViewModel"/> gibi bir <c>Name</c>
     /// taşıyan her nesne).</summary>
@@ -32,6 +39,10 @@ public partial class StickyLayerList : UserControl
 
     private static readonly IReadOnlyList<StuckHeader> NoHeaders = [];
 
+    /// <summary>Akışın TEK kaynağı — <see cref="SetGroups(IReadOnlyList{LayerGroup}, bool)"/> onu takas etmez, yerinde
+    /// uzlaştırır (<see cref="ListReconciler"/>): dokunulmayan satırın container'ı kalır, reset yoktur.</summary>
+    private readonly ObservableCollection<object> _entries = [];
+
     /// <summary>[T59 ile ORTAK] Gruplardan kurulan kümülatif offset servisi — follow-mode/selection scroll
     /// hedefleri AYNI instance'tan üretilir. <see cref="SetGroups"/>'tan önce null.</summary>
     public LayoutMetrics? Metrics { get; private set; }
@@ -42,7 +53,7 @@ public partial class StickyLayerList : UserControl
     // [E4/T48 · E3 fold · W2] Liste-frontier reveal hero (DD9: graf+liste AYNI hero) — hero/kuşak/release muhasebesi
     // GraphView ile ORTAK tek yerde (RevealStagger); burada yalnız liste kademelemesi (10ms/satır, tavan 380) kalır.
     private readonly RevealStagger _reveal = new();
-    private bool _revealPending;             // SetGroups reveal'i "kurar"; container üretimi tamamlanınca oynar
+    private bool _revealPending;             // SetGroups reveal'i kurar; Loaded önceliğindeki tetik (PlayPendingReveal) oynatır
 
     /// <summary>[W2] Provider seam'i TEK yerde (<see cref="MotionGate"/>). Bu sahip yalnız TAZE OKUR — canlı
     /// <c>AnimationsEnabledChanged</c> aboneliği bugün de YOKtur (davranış birebir korunur).</summary>
@@ -52,6 +63,7 @@ public partial class StickyLayerList : UserControl
     {
         InitializeComponent();
         Flow.ItemTemplateSelector = new EntrySelector(this);
+        Flow.ItemsSource = _entries;
         // Sanallaştırılmış panelin kümülatif tablosu ile LayoutMetrics'inki AYNI iki sabitten türer (kopya YASAK):
         // başlık 24px, satır 36px. Bu bağ olmadan scroll ekseni yapışık-başlık aritmetiğinden kayardı.
         FixedHeightVirtualizingPanel.SetEntryHeightSelector(Flow,
@@ -81,9 +93,6 @@ public partial class StickyLayerList : UserControl
         // UserScrollSignal kablosu (yukarıdaki paragraf) Overlay'in de atasıdır, tünel ona ÖNCE uğramıştır.
         // Yeniden yükseltilen olay bubbling'dir, tünel DEĞİL — kökteki kablo ikinci kez ateşlenmez.
         Overlay.PreviewMouseWheel += ForwardWheelToScroll;
-        // [E4/T48 · E3 fold] Flow container üretimi (ItemContainerGenerator) TAMAMLANINCA + bir SetGroups reveal'i
-        // beklerken satırlar KADEMELİ belirsin (bo-reveal). Bkz. OnGeneratorStatusChanged (deferred).
-        Flow.ItemContainerGenerator.StatusChanged += OnGeneratorStatusChanged;
         // Reveal ortasında unload olursa hero'yu bırak (aksi halde bir sonraki hero sonsuza dek bloke olurdu).
         Unloaded += (_, _) => _reveal.Release();
     }
@@ -135,20 +144,15 @@ public partial class StickyLayerList : UserControl
     /// değişince artar" DEMEZ: <c>doSync()</c> topolojiye BAKMADAN her Sync'te artırır. Üretim orada bilerek
     /// ayrılır; gerekçesi <c>RunViewModel._lastTopologySignature</c>'ın XML doc'undadır.</para>
     ///
-    /// <para><b>Reset semantiği BİLEREK KORUNDU</b> (filtre tazelemesi de <c>ItemsSource</c> ataması yapar,
-    /// yani tam reset). A13.2'nin "koleksiyon reset'i YASAK" kuralı burada ihlal edilmez, çünkü kuralın
-    /// koruduğu iki şey de zarar görmez: <b>(a) seçim</b> satır VM'lerinin kendi <c>IsSelected</c>'ında yaşar
-    /// ve satır nesneleri <c>Projects</c>'ten gelen AYNI örneklerdir → reset seçimi düşürmez; <b>(b) gereksiz
-    /// churn</b> çağıran tarafta kapatılır (<c>MainWindow</c> görünür-satır imzası değişmedikçe buraya HİÇ
-    /// gelmez). Alternatif (entry akışını yerinde uzlaştırmak) <see cref="Metrics"/>/overlay/reveal
-    /// muhasebesinin İKİNCİ bir kopyasını gerektirirdi — "tek yer" kuralına aykırı.</para>
-    ///
-    /// <para><b>[T2 fix-2 · m9 — ÖLÇÜLDÜ, düzeltildi]</b> Önceki sürüm burada "görünür küme değiştiğinde
-    /// listenin başa dönmesi doğru davranıştır" diyordu — bu iddia hiç ÖLÇÜLMEMİŞTİ ve YANLIŞTI.
-    /// <see cref="ProjectListFilterTests.Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top"/>
-    /// üretim yolundan ölçer: WPF <c>ScrollViewer</c>, <c>ItemsSource</c> tam reset yese bile
-    /// <c>VerticalOffset</c>'i KORUR (yeni extent'e clamp eder) — liste BAŞA DÖNMEZ. Yani reset semantiğinin
-    /// zararsızlığı yalnız (a) ve (b)'ye dayanır; scroll konumu zaten hiç tehlikede değildi.</para>
+    /// <para><b>Yerinde uzlaştırma (ÖLÇÜLDÜ):</b> eski sürüm her tazelemede <c>ItemsSource</c>'u takas ediyordu — WPF
+    /// için tam reset: pencere dolusu satır yeniden bağlanıp ölçülüyordu (görünür koşuda 100 ms'nin üstünde tek
+    /// dilimler). Şimdi akış <see cref="ListReconciler"/> ile hedefe getirilir: çıkan silinir, giren eklenir, yeri
+    /// değişen taşınır; dokunulmayan satırın container'ı, ölçümü ve kaydırma konumu aynen kalır
+    /// (<see cref="ListRowsStayRealizedTests"/>,
+    /// <see cref="ProjectListFilterTests.Filtering_the_list_preserves_the_scroll_offset_instead_of_snapping_to_the_top"/>).
+    /// Seçim yine satır VM'lerinin kendi <c>IsSelected</c>'ında yaşar; gereksiz churn çağıran tarafta kapalıdır
+    /// (<c>MainWindow</c> görünür-satır imzası değişmedikçe buraya gelmez) ve aynı yapıyla gelen bir çağrı koleksiyona
+    /// hiç dokunmaz. <see cref="Metrics"/>/overlay/reveal muhasebesi yine TEK yerde, bu metottadır.</para>
     /// </summary>
     public void SetGroups(IReadOnlyList<LayerGroup> groups, bool reveal)
     {
@@ -184,34 +188,26 @@ public partial class StickyLayerList : UserControl
             entries.AddRange(g.Rows);
             layerIndex++;
         }
-        // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.). Container
-        // üretimi tamamlanınca satırlar kademeli belirir (OnGeneratorStatusChanged).
-        //
-        // [A12] BAYRAK, `ItemsSource` ATAMASINDAN ÖNCE KURULUR — sıra KRİTİKTİR. `ItemsSource` ataması
-        // container üretimini SENKRON olarak tamamlayabilir (ölçüldü: liste ZATEN realize edilmişken —
-        // yani üretimdeki sıra: kabuk realize, gruplar sonra akar — `StatusChanged`/`ContainersGenerated`
-        // bu satırın İÇİNDE ateşlenir). Bayrak sonra kurulursa handler onu `false` görüp döner ve BİR DAHA
-        // status değişimi gelmez → reveal SESSİZCE hiç oynamaz, kartlar tam opaklıkta "pat" diye belirir.
-        // [A13/T2 · 2.5] Filtre tazelemesinde (reveal:false) bayrak KURULMAZ.
-        // [T2 fix-1 · m1] Sınırı doğru yazalım: bu, HENÜZ TÜKETİLMEMİŞ bir bayrağı (container üretimi
-        // tamamlanmadan gelen ikinci bir SetGroups) düşürür. Bayrak zaten tüketilip
-        // <see cref="PlayRevealStagger"/> Dispatcher(Loaded) kuyruğuna alındıysa O ÇAĞRI İPTAL EDİLMEZ —
-        // reveal'in kendisi generation-guard'lı (<see cref="RevealStagger"/>) olduğundan zararsızdır:
-        // en fazla taze listeyi bir kez kademeli gösterir, yanlış satırlara dokunamaz.
+        // [E4/T48 · E3 fold] Yeni topoloji = yeni reveal (prototip revealKey artışı, BuildApp.jsx:1378 vb.).
+        // [A13/T2 · 2.5] Filtre tazelemesinde (reveal:false) bayrak KURULMAZ — henüz oynamamış bir reveal'i de düşürür
+        // (araya sessiz tazeleme girdiyse kademeli beliriş artık o listeyi anlatmaz). Kuyruğa alınmış tetik iptal
+        // EDİLMEZ; bayrağı düşmüş bulur ve döner. Reveal'in kendisi generation-guard'lıdır (RevealStagger).
         _revealPending = reveal;
-        // [ölçülen kusur] Satır yüzeyi beliriş boyunca KAPALI kalır. Reveal, container üretimi bitince
-        // `DispatcherPriority.Loaded`(6) ile kuyruğa girer; render ise `Render`(7), yani DAHA YÜKSEK
-        // önceliktedir — sıra bu yüzden "satırları tam opaklıkta çiz → 0'a indir → kademeli aç"tı ve arada
-        // gözle görülür bir kare açılıyordu. (Liste zaten doluyken fark edilmiyordu: boyanan içerik bir
-        // öncekine benziyordu. Boş listeye gelen bir topolojide ise "gelir, kaybolur, tekrar gelir" olarak
-        // görülüyor.) Yüzeyi <see cref="PlayRevealStagger"/> açar — beliriş reddedilse de açar, aksi halde
-        // liste kalıcı görünmez kalırdı. Sessiz tazeleme (reveal:false) yüzeye DOKUNMAZ: her tuş vuruşunda
-        // bir kare kaybolmasın.
+        // [ölçülen kusur] Satır yüzeyi beliriş boyunca KAPALI kalır. Reveal `DispatcherPriority.Loaded`(6) ile kuyruğa
+        // girer; render ise `Render`(7), yani DAHA YÜKSEK önceliktedir — sıra aksi hâlde "satırları tam opaklıkta
+        // çiz → 0'a indir → kademeli aç"tı ve arada gözle görülür bir kare açılıyordu. (Liste zaten doluyken fark
+        // edilmiyordu; boş listeye gelen bir topolojide "gelir, kaybolur, tekrar gelir" olarak görülüyordu.) Yüzeyi
+        // <see cref="PlayRevealStagger"/> açar — beliriş reddedilse de açar, aksi halde liste kalıcı görünmez kalırdı.
+        // Sessiz tazeleme (reveal:false) yüzeye DOKUNMAZ: her tuş vuruşunda bir kare kaybolmasın.
         // Graf bu işi düğüm başına ZATEN böyle yapar (GraphView düğüm görselini `Opacity = 0` ile doğurur ve
         // reveal'i SetGraph'tan SENKRON sürer); liste, container'ları WPF ürettiği için aynı şeyi yüzey
-        // seviyesinde yapar — iki sahip artık aynı ilkede.
+        // seviyesinde yapar — iki sahip aynı ilkede.
         Flow.Opacity = reveal ? 0 : 1;
-        Flow.ItemsSource = entries;
+        // Akış YERİNDE uzlaştırılır (reset yok); aynı yapı gelirse koleksiyona hiç dokunulmaz. Reveal tetiği koleksiyon
+        // değişimine bağlı DEĞİLDİR: Loaded önceliğinde kuyruklanır ve otomatik yerleşim turu (Render) ondan önce
+        // koşar — PlayRevealStagger yine de layout'u zorlar, yani pencere her yolda kurulmuş olur.
+        ListReconciler.Reconcile(_entries, entries);
+        if (reveal) Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(PlayPendingReveal));
         UpdateOverlay(Scroll.VerticalOffset);
     }
 
@@ -446,15 +442,14 @@ public partial class StickyLayerList : UserControl
 
     // ---------------------------------------------------------------- [E4/T48 · E3 fold] liste reveal hero (bo-reveal)
 
-    private void OnGeneratorStatusChanged(object? sender, EventArgs e)
+    /// <summary><c>SetGroups(reveal: true)</c>'nun Loaded önceliğinde kuyrukladığı tetik: bayrak hâlâ duruyorsa (araya
+    /// sessiz bir tazeleme girmediyse) kademeli belirişi oynatır. Testler <see cref="PlayRevealStagger"/>'ı doğrudan
+    /// çağırır (realize sonrası, deterministik).</summary>
+    private void PlayPendingReveal()
     {
-        if (Flow.ItemContainerGenerator.Status != GeneratorStatus.ContainersGenerated) return;
         if (!_revealPending) return;
         _revealPending = false;
-        // StatusChanged bir layout pass'ının İÇİNDE ateşlenir; ContentPresenter'ların ProjectRow çocukları o an
-        // henüz measure edilmemiş olabilir → layout tamamlanınca (Loaded önceliği) oyna. Testler PlayRevealStagger'ı
-        // doğrudan çağırır (realize sonrası, deterministik).
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(PlayRevealStagger));
+        PlayRevealStagger();
     }
 
     /// <summary>
@@ -471,14 +466,14 @@ public partial class StickyLayerList : UserControl
     /// SetGroups gelirse #1'in timer'ı ateşlense bile #2'nin taze hero'suna DOKUNMAZ.</para>
     ///
     /// <para><b>[A13.2]</b> ItemsSource reset/Clear YOK (I-2 fix korunur) — yalnız satır Opacity/Y primitive'i
-    /// animate edilir (virtualization zaten KAPALI, ScrollUnit=Pixel). Aşağıdaki layout zorlaması da bu kurala
-    /// tabidir: <c>UpdateLayout</c> koleksiyona DOKUNMAZ (container teardown yok), yalnız var olan container'ları
-    /// measure ettirir.</para>
+    /// animate edilir (ScrollUnit=Pixel). Aşağıdaki layout zorlaması da bu kurala tabidir: <c>UpdateLayout</c>
+    /// koleksiyona DOKUNMAZ (container teardown yok), yalnız pencereye düşen container'ları kurdurup measure
+    /// ettirir.</para>
     ///
     /// <para><b>[A13/B3 · E5]</b> Bu metot, <see cref="CollectRows"/>'u çağırmadan ÖNCE layout'u zorlar — böylece
     /// kapsamı (hangi satırların reveal aldığı) bir DISPATCHER ÖNCELİĞİ VARSAYIMINA bırakmaz. <b>Ölçülen sınır:</b>
-    /// bugünkü tek üretim tetiği <see cref="OnGeneratorStatusChanged"/>'in <c>DispatcherPriority.Loaded</c>
-    /// ertelemesidir ve <c>Loaded</c>(6) &lt; <c>Render</c>(7) olduğundan otomatik layout turu ZATEN önce koşar;
+    /// bugünkü tek üretim tetiği <see cref="PlayPendingReveal"/>'in <c>DispatcherPriority.Loaded</c>
+    /// kuyruğudur ve <c>Loaded</c>(6) &lt; <c>Render</c>(7) olduğundan otomatik layout turu ZATEN önce koşar;
     /// yani düşme penceresi üretimde bugün AÇILMIYOR (bkz. task-B3-report.md "Fix round 1 / E5" ölçümü). Zorlama
     /// bu yüzden bir kusur düzeltmesi DEĞİL, o pinlenmemiş varsayıma olan bağımlılığı kaldıran bir sertleştirmedir:
     /// tetik bir gün <c>Background</c>'a kaysa ya da senkron çağrılsa satırlar sessizce düşerdi.
@@ -503,11 +498,11 @@ public partial class StickyLayerList : UserControl
         // (ScrollAnimator'ın mevcut davranışı), burada ayrı bir dal YAZILMAZ.
         if (_follow is null || _follow.IsFollowing) AnimateScrollTo(0);
 
-        // [A13/B3 · E5] Container'lar ZORLA üretilir. Virtualization KAPALI olduğundan TEK bir senkron layout turu
-        // tüm ContentPresenter'ları measure eder ve her birinin ProjectRow çocuğunu kurar (ölçüm:
-        // ListRealizationPerfTests.RealizeOnce — UpdateLayout'tan sonra realize == N). Layout zaten temizse NO-OP'tur
-        // (ölçüldü: n=500'de 0,225 ms, CollectRows yürüyüşü dâhil), yani normal (HWND) yolda ek maliyet yoktur.
-        // NOT: UIElement.UpdateLayout() elemana kapsanmaz — ContextLayoutManager'ın tamamını sürer.
+        // [A13/B3 · E5] Container'lar ZORLA üretilir: tek bir senkron layout turu görünür pencereye düşen
+        // ContentPresenter'ları kurar ve ProjectRow çocuklarını measure eder (ölçüm: ListRealizationPerfTests.RealizeOnce);
+        // pencere dışındaki satırlar boşta dolumla gelir ve zaten ekran dışındadır — beliriş görünür pencereyi anlatır.
+        // Layout zaten temizse NO-OP'tur (ölçüldü: n=500'de 0,225 ms, CollectRows yürüyüşü dâhil), yani normal (HWND)
+        // yolda ek maliyet yoktur. NOT: UIElement.UpdateLayout() elemana kapsanmaz — ContextLayoutManager'ın tamamını sürer.
         Flow.UpdateLayout();
         var rows = CollectRows();
 
@@ -536,7 +531,7 @@ public partial class StickyLayerList : UserControl
     /// <para><b>[A13/B3 · E5] Bu metot KISMİ bir sonuç DÖNEBİLİR</b> (container üretilmemiş ya da container'ın
     /// <see cref="ProjectRow"/> çocuğu henüz realize değilse o satır listeye girmez) — kendi başına bir kapsam
     /// garantisi VERMEZ. Garantiyi çağıran kurar: <see cref="PlayRevealStagger"/> ondan hemen önce layout'u zorlar
-    /// ve virtualization KAPALI olduğu için tek bir tur tüm satırları realize eder.</para>
+    /// ve tek bir tur görünür pencerenin satırlarını kurar (gerisi boşta dolumla gelir, ekran dışındadır).</para>
     /// <para>Eski doc comment burada "o satır atlanır (<b>bir sonraki reveal onu yakalar</b>)" diyordu — bu gerekçe
     /// YANLIŞTI ve kaldırıldı: <see cref="PlayRevealStagger"/> yalnız <see cref="SetGroups"/>'tan sürülür, o da
     /// yalnız TOPOLOJİ değiştiğinde koşar (<c>RunViewModel.OnWorkspaceTopology</c> imza guard'ı, A13/B3 · E4) —

@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -30,6 +31,9 @@ namespace BuildOrchestrator.App.Console;
 /// </summary>
 public partial class ConsoleView : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [3b Minor 1/2] Off-palette hex YOK: base foreground + FontSize XAML token/resource'ından gelir.
 
     /// <summary>[3b/Ek A #16] Canlı append'te belgede tutulan azami satır (render dilimi). "N lines" sayacı bundan

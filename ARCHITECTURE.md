@@ -3124,8 +3124,8 @@ elsewhere, instant under reduced motion. A click only counts if the press that s
 (the header captures the mouse on press and checks it still holds capture on release) — pressing a row and dragging
 onto a header before releasing must not jump. Capture routes the release back to the header wherever the pointer is,
 so the release must also land inside the header's own bounds (press, drag away, release cancels, as a native click
-does), and the header must still be bound to the slot it was pressed on — a recycled in-flow container can carry the
-capture over to another layer's data. It never touches selection, the filter, the console or the graph — only the
+does), and the header must still be bound to the slot it was pressed on — a refresh of the groups can retire or
+re-bind the element under the capture. It never touches selection, the filter, the console or the graph — only the
 scroll position moves, and there is no collapse. The jump is a user scroll like any other, so it pauses
 follow-mode (below): the smooth scroll it starts would otherwise clear the pause the way any programmatic move does,
 and the next follow tick would pull the user straight back to the frontier. The header is deliberately **mouse-only**: the design prototype asks
@@ -3143,20 +3143,32 @@ scroll, pausing follow-mode, resetting the idle-resume window). The band's wheel
 signal at its own root (§13.4), which is an ancestor of both the overlay and the `ScrollViewer` — so scrolling over
 the stack behaves identically to scrolling anywhere else in the list.
 
-The list is **virtualized**, and by a panel of its own rather than WPF's. `VirtualizingStackPanel` estimates
-the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with 24 px
-headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
+The list realizes its rows **progressively**, through a panel of its own rather than WPF's. `VirtualizingStackPanel`
+estimates the height of unrealized items from the average of the realized ones; with 36 px rows interleaved with
+24 px headers that estimate drifts, and the scroll axis would no longer agree with the cumulative table that sticky
 headers, follow-mode and selection scrolling all read. `FixedHeightVirtualizingPanel` never estimates — it
 asks for each entry's height and builds the same table — so the extent is exact by construction. It does not
 implement `IScrollInfo`: the enclosing `ScrollViewer` still owns the scrolling and receives the true total
-height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. Containers are recycled,
-so a row control is reused with a new view model rather than rebuilt. On the first measure pass the viewport
-is not yet known; the panel realizes nothing at all that pass — its reported height comes from the table, not
-from realized children, so the `ScrollViewer` still computes a correct viewport and the real window is
-realized in the same layout round.
+height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. The first layout builds only
+the visible window (plus half a viewport on each side); the remaining rows arrive while the dispatcher is idle, a
+few rows per slice so that a slice fits between two animation frames. A row control, once built, **stays with
+its row**: the panel neither discards nor recycles containers when the window moves. Recycling was measured to be
+the stutter itself — during a visible run the longest UI-thread slices were the window's rows being re-bound to
+new view models (text formatting, automation peer refresh and binding writes for each) whenever follow-mode moved
+the window a screenful at a time, and the graph's animations stalled for the duration. Construction was a small
+fraction of those slices, so the fix is not a warm pool of containers but the end of re-binding: scrolling now
+re-binds nothing. The entry list itself is never replaced either — `SetGroups` reconciles it in place
+(`ListReconciler`: entries that leave are removed, entries that enter are inserted, entries that move are moved),
+so a topology or filter refresh builds only the rows that actually enter or move and leaves every other row's
+control, measurement and the scroll position untouched. A moved row is rebuilt rather than carried over: WPF's
+generator mis-binds a container that is kept in the tree across a move when the new position borders an
+unrealized block, so the panel drops it the way WPF's own panels do. On the first measure pass the viewport is
+not yet known; the panel realizes nothing at all that pass — its reported height comes from the table, not from
+realized children, so the `ScrollViewer` still computes a correct viewport and the real window is realized in
+the same layout round.
 
-One consequence is deliberate: the staggered reveal reaches the rows that exist, which is the visible window.
-Rows scrolled into view later simply appear.
+One consequence is deliberate: the staggered reveal reaches the rows that exist when it plays, which is the
+visible window. Rows realized afterwards by the idle fill are off screen and simply appear.
 
 **A row waiting for its reveal is never painted.** The row surface is closed the moment the items are handed
 over and reopened by the reveal itself, so no frame can show the rows at full opacity before the stagger hides
@@ -4615,7 +4627,7 @@ clamp would otherwise draw it at the panel's edge pointing at nothing. The one s
 leave clears the value only if it still names that project, and the graph reports its pointer hover through
 `GraphView.HoveredNodeChanged` (`GraphHoverEcho` wires the two). The echo reads the value and never reports
 back (`GraphView.EchoHover`), so no loop can form. Hover on a row lives on the project's view model
-(`ProjectRowViewModel.IsHovered`), not on the recycled container, and a change touches only the previous and
+(`ProjectRowViewModel.IsHovered`), not on the row control, and a change touches only the previous and
 the new row — the pointer sweeping across the graph produces dozens of changes a second. The selection's
 clearing of the node hover (above) counts as the pointer's hover changing, so it clears the shared value too:
 clicking a row leaves the node in its selected look with its name label, without a tooltip on top.
@@ -5477,6 +5489,14 @@ and announced once per step rather than per frame. Each region decides when it s
 helper (`LiveRegion`), which finds or creates the element's automation peer and raises the live-region event, so
 no region raises it on its own. Contrast is asserted by test for every text token, including the dim ones.
 
+Every `UserControl` of the app reports a real automation role — a project row is a list item, the panels are
+panes, the menus are menus, the marks are images — never WPF's default *custom* type (`UserControlRolePeer`, pinned
+by a source guard). The role reads better in a screen reader, and it also governs cost: with an automation client
+attached, WPF walks the peer tree after every layout pass, and a custom-typed peer makes that walk re-enumerate the
+control's whole visual subtree every time, whereas a peer with a real role is visited only when something beneath
+it changed. On a machine with such a client the walk was a fifth of the UI thread's busy time during a visible run,
+most of it the project rows being re-enumerated every frame.
+
 Known gap: graph nodes are not keyboard-navigable. They are not silent, though — each node body is a `Button`
 in the automation tree, named with the project and its status from the same central table and refreshed by the
 status tick, and it answers `Invoke` through the exact activation path a click takes. What is missing is the
@@ -5640,6 +5660,7 @@ A category of tests that assert properties of the *source*, not of a run:
 | Ledger file access (`LedgerStreamingGuardTests`) | the two large ledgers (`evaluation-cache.json`, `source-hash-cache.json`) never turn their file into one string or byte array and never open, create or move it themselves — they read and write through the stream forms of `AtomicFile` (sharing delete on read, retried atomic rename on write); hashing a *source* file is the one exempt read; the rule is shown to catch each bypass and to ignore a comment |
 | Entry point (`EntryPointTests`) | the App starts from the hand-written `Program.Main`, `VelopackApp…Run()` comes before the `App` is created, the uninstall hook removes the startup value, and the `Velopack` library and the `vpk` tool carry one version (§12.1) |
 | Repository hygiene (`RepoHygieneTests`) | the MIT `LICENSE`, the SDK band in `global.json`, the pinned `vpk` tool, the README's CI badge (the run of `main`), and the workflows: CI builds and tests every push to `develop` and `main`, with no path filter, on the pinned image and can be called by the release; the release runs on `v*` tags one at a time and is never cancelled, writes only from its publish job, checks that the tag is on `main`, and publishes through `package.ps1` (§18) |
+| Automation roles (`AutomationRoleTests`) | every `UserControl` of the app declares its automation role through an override in the app assembly — never WPF's default custom type, which the post-layout peer walk re-enumerates on every pass (§15) |
 
 ### 17.3 Determinism
 
@@ -5960,10 +5981,11 @@ do, and how the interface works around each — useful to know before attempting
 - **A build does not restore an SDK-style project.** The build path's restore prologue is keyed to
   `packages.config`, so an SDK-style project whose `obj\project.assets.json` is missing — a fresh clone, a
   workspace Clean — fails with `NETSDK1004` until an Optimize restores it (§9.3).
-- **Filling a viewport of rows costs what it costs.** Virtualization bounds the work to the visible window,
-  but that window still has to be built: a screenful of project rows is a few dozen row controls, tens of
-  milliseconds on the reference machine. That price is paid again whenever the entry list is replaced — a
-  topology change or a filter change — because replacing the items source discards the containers.
+- **Building the rows costs what it costs, once.** The first layout builds the visible window synchronously — a
+  screenful of project rows is a few dozen row controls, tens of milliseconds on the reference machine — and the
+  remaining rows arrive in idle slices between frames, so the total scales with the project count but stays off
+  the critical path. A row control then stays with its row for good: scrolling re-binds nothing, and a topology or
+  filter refresh reconciles the entry list in place, building only the rows that enter or move (§13.2).
 - **A large graph costs what it costs to open.** The graph fits the panel at every size (§13.6), so every
   node is on screen and every node is built — there is no threshold above which the panel changes character
   and nothing is culled. The price is paid once, at Sync: on the reference machine a 500-node graph realizes
@@ -6364,7 +6386,9 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Row menu placement (row-right inset, row overlap, viewport clamp) | `App/Controls/RowMenuPlacement.cs` |
 | Second press on a popover trigger closes it | `App/Controls/PopoverToggle.cs` |
 | List with cumulative sticky headers and reveal | `App/Controls/StickyLayerList.xaml(.cs)` |
-| Row virtualization with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
+| Progressive row realization (visible window first, idle slices after; rows are never recycled) with an exact (never estimated) extent | `App/Controls/FixedHeightVirtualizingPanel.cs` |
+| In-place reconciliation of the list's entries (no reset on a topology or filter refresh) | `App/Controls/ListReconciler.cs` |
+| Automation roles of the app's user controls (never the custom type; source guard) | `App/Controls/UserControlRolePeer.cs` |
 | Event stream rows, glow-once | `App/Views/EventStreamView.xaml(.cs)` |
 | Action bar: sync, counters, chips (the branch chip's amber git-operation dot included), segment, build split button | `App/Views/ActionBar.xaml(.cs)` |
 | Build menu (Build / Rebuild / Clean) and the shared icon family | `App/Views/BuildMenu.xaml(.cs)` |

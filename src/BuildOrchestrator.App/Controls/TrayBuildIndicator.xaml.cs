@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -19,6 +20,9 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public partial class TrayBuildIndicator : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Image);
+
     /// <summary>
     /// [tray indicator/T3] Tasarımcının BANDI — dış Canvas'ın (<c>Stage</c>) tek ölçü kaynağı, tasarımcının
     /// önizlemesindeki <c>viewBox="-30 76 375 134"</c>'ün ta kendisi

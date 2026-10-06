@@ -743,9 +743,10 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   live inside the job, but measured on a real repository it saves about a tenth of a run while holding
   gigabytes of memory, so the flags stay off; a server *outside* the job would also bring back the risk of a
   torn DLL when a run is stopped.
-- **Filling a viewport of project rows costs what it costs.** The list is virtualized, so the work is bounded
-  by the visible window rather than by the size of the repository — but that window is still built from
-  scratch whenever the entries are replaced, which a topology change or a filter change both do.
+- **Building the project rows costs what it costs, once.** The visible window is built at the first layout and
+  the remaining rows follow in small idle slices, so the total scales with the repository but stays out of the
+  way; a row then keeps its control for good, scrolling re-binds nothing, and a topology or filter change builds
+  only the rows that enter or move.
 - **A large graph costs what it costs to open.** Every node is drawn — nothing is culled and no threshold
   changes the panel's behaviour — so a very large workspace pays for its whole graph once, at Sync (a few
   hundred milliseconds at a thousand projects). Past a few hundred projects the nodes reach their minimum

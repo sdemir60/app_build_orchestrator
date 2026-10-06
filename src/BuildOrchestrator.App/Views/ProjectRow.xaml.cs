@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -28,6 +29,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ProjectRow : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.ListItem);
+
     // design-v1 kaynak sabitleri (inline magic number YASAK — StatusGlyph.PulseMs / BuildingSpinner.RotationMs deseni).
     private const double BreathMs = 3800;          // BuildApp.jsx:22 `bo-breath 3.8s`
     private const double BreathPeakOpacity = 0.32; // [A13/T4 fix-1 · D10] BuildApp.jsx:34 amber-soft katman tepe opaklığı (bayat satır referansı düzeltildi, eskiden :24)

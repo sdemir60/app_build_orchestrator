@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 
 namespace BuildOrchestrator.App.Controls;
@@ -7,5 +8,8 @@ namespace BuildOrchestrator.App.Controls;
 /// Uniform ölçeğinden gelir.</summary>
 public partial class BrandLogo : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Image);
+
     public BrandLogo() => InitializeComponent();
 }
