@@ -56,6 +56,7 @@ public partial class StickyRibbon : UserControl
     private readonly SolidColorBrush _indicatorBrush = new(Colors.Transparent); // per-instance (A13.2)
     private RunViewModel? _vm;
     private bool _isIndeterminate;
+    private readonly DecorativeClock _sweep = new(); // süpürme saatinin sahibi — bırakırken ağaçtan da çıkarır
     private double _lastFraction; // determinate hedef (0..1) — resize'da yeniden uygulanır
     // Chip kümesinin "son kurulan" durumu: id-imzaları (null = ekranda güvenilir küme yok) ve ekrandaki chip'ler kimliğe göre.
     // Birlikte sıfırlanır ve birlikte kurulurlar (bkz. RebuildChipsIfChanged).
@@ -438,12 +439,13 @@ public partial class StickyRibbon : UserControl
         anim.KeyFrames.Add(new SplineDoubleKeyFrame(IndeterminateToFactor * indW,
             KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(IndeterminateSweepMs)), spline));
         Timeline.SetDesiredFrameRate(anim, MotionTokens.DecorativeFrameRate);
-        PART_IndicatorTranslate.BeginAnimation(TranslateTransform.XProperty, anim);
+        _sweep.Stop(); // ölçü değişti: eski süpürme ağaçtan çıkar, yenisi kurulur (üstüne yazmak eskisini yetim bırakırdı)
+        _sweep.Start(anim, PART_IndicatorTranslate, TranslateTransform.XProperty);
     }
 
     private void StopIndeterminate()
     {
-        PART_IndicatorTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+        _sweep.Stop(); // ağaçtan da çıkar: BeginAnimation(null) saati yalnız söker ve yetim bırakırdı (DecorativeClock)
         PART_IndicatorTranslate.X = 0;
     }
 
