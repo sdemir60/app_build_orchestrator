@@ -7,11 +7,14 @@ kırmızı→yeşil testlerdir. Ölçüm için hazır betik: `.claude/temp/perf-
 
 ## Durum
 
-| Görev | Branch | Durum |
+Üçü de `develop`'a `--no-ff` ile girdi ve push edildi (`769fdaf` G1, `deaa79d` G2, `d3b0476` G3); birleşik develop'ta tam
+süit yeşil (4670 geçti, 8 atlandı, 0 düştü). Çalışma branch'leri silindi.
+
+| Görev | Merge | Durum |
 |---|---|---|
-| G1 — imleçler girdi yokken durur | `feat/caret-idle-stop` (6a04350, fc3fda1) | tam süit yeşil (4652/4660, 8 atlandı); masaüstü ölçümü bekliyor (hedef ≤ 40 M/s) |
-| G2 — satırlar kalıcı, akış yerinde uzlaşır, UIA rolleri | `perf/list-keeps-rows` (7c9438b) | tam süit yeşil (4661/4670; SafeExit zamanlama testi yalnız yük altında düştü, tek başına yeşil); ölçüm bekliyor |
-| G3 — konsol belgeleri geri-alma geçmişi tutmaz | `perf/console-memory` | konsol sınıfları yeşil (146), tam süit koşuyor; ölçüm bekliyor |
+| G1 — imleçler girdi yokken durur | `769fdaf` (feat/caret-idle-stop) | branch süiti yeşil (4652/4660); masaüstü ölçümü bekliyor (hedef ≤ 40 M/s) |
+| G2 — satırlar kalıcı, akış yerinde uzlaşır, UIA rolleri | `deaa79d` (perf/list-keeps-rows) | branch süiti yeşil (SafeExit zamanlama testi yalnız yük altında düştü, tek başına yeşil); ölçüm bekliyor |
+| G3 — konsol belgeleri geri-alma geçmişi tutmaz | `d3b0476` (perf/console-memory) | branch süiti yeşil (4648/4656); ölçüm bekliyor |
 | G4 — konsol çizim yükü | — | ölçüldü, değişiklik yok (gerekçe aşağıda) |
 
 ## G2 — plan değişti: havuz değil, kalıcı satırlar (ÖLÇÜLDÜ)
