@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using BuildOrchestrator.App.Console;
 using BuildOrchestrator.App.Controls;
 using BuildOrchestrator.App.Graph;
@@ -254,6 +256,87 @@ public class HiddenDecorativeClockTests
 
         Assert.NotNull(view.BeadsClock);
         Assert.NotNull(view.EdgeFlowClock);
+        GC.KeepAlive(window);
+    }
+
+    // ---------------------------------------------------------------- bırakılan paylaşımlı saat zaman ağacından da çıkar
+
+    /// <summary>
+    /// Bırakılan paylaşımlı saat (beads, seçim kenarı akışı) hedeflerinden SÖKÜLMEKLE kalmaz, zaman ağacından da ÇIKAR.
+    ///
+    /// <para><b>Neden (ÖLÇÜLDÜ):</b> <c>CreateClock</c> ile kurulan saat zaman ağacının KÖK saatidir; <c>ApplyAnimationClock(null)</c>
+    /// onu yalnız öğelerden söker, saat <c>Active</c> kalır ve bir <c>AnimationClock</c> aktifken HER karede tik ister. Gizli
+    /// pencerede her tik kanalı yeniden gönderip UI thread'ini ekranın tazeleme hızında uyandırır: koşu görünürken bitip 3 s
+    /// sonra gizlenen pencere tepside boşta 118 Mdöngü/s ölçüldü (koşu sürerken gizlenince 13; hedef ≤ 40). Yetim saati
+    /// zayıf referansla tutan ağaç onu ancak bir GC'de bırakır ve boşta duran süreçte o GC hiç gelmez. Kabuk bütününde aynı
+    /// kusuru <c>HiddenShellClockTests</c> pinler; burada iki sahip, bırakmanın üç yolunda (gizlenme, son derlemenin
+    /// spin-down'ı, seçimin kalkması) ayrı ayrı sınanır.</para>
+    /// </summary>
+    private static void AssertRetired(AnimationClock clock)
+    {
+        // Çıkarma isteği zaman ağacının bir sonraki tik'inde işlenir — bir kare pompalanır.
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(100));
+        Assert.NotEqual(ClockState.Active, clock.CurrentState);
+        Assert.DoesNotContain(ActiveClockInspector.ActiveRootClocks(Dispatcher.CurrentDispatcher), c => ReferenceEquals(c.Clock, clock));
+    }
+
+    [StaFact]
+    public void Hiding_the_window_removes_the_beads_clock_from_the_timing_tree()
+    {
+        var view = RealizeGraph(GraphStatus.Building, out var window);
+        var clock = view.BeadsClock;
+        Assert.NotNull(clock); // ön-koşul: building düğüm GERÇEKTEN dönüyor
+
+        window.Hide();
+
+        Assert.Null(view.BeadsClock); // non-vacuous: sahip saati GERÇEKTEN bıraktı…
+        AssertRetired(clock);         // …ve saat ağaçta yetim kalmadı
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Hiding_the_window_removes_the_edge_flow_clock_from_the_timing_tree()
+    {
+        var view = RealizeGraph(GraphStatus.Queued, out var window);
+        view.SelectedNode = "OSYS.Data";
+        var clock = view.EdgeFlowClock;
+        Assert.NotNull(clock); // ön-koşul: seçim kenarları GERÇEKTEN akıyor
+
+        window.Hide();
+
+        Assert.Null(view.EdgeFlowClock);
+        AssertRetired(clock);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Ölçülen yol: koşu görünürken biter — son building düğüm sonuca oturur, spin-down penceresi dolar, saat bırakılır.</summary>
+    [StaFact]
+    public void The_spindown_after_the_last_build_removes_the_beads_clock_from_the_timing_tree()
+    {
+        var view = RealizeGraph(GraphStatus.Building, out var window);
+        var clock = view.BeadsClock;
+        Assert.NotNull(clock);
+
+        view.UpdateStatuses(GraphNodes(GraphStatus.Succeeded)); // derleme bitti: yörünge söner, spin-down kurulur
+        view.HandleBeadsSpindownTick();                         // pencere doldu, boş grafta saat bırakılır
+
+        Assert.Null(view.BeadsClock);
+        AssertRetired(clock);
+        GC.KeepAlive(window);
+    }
+
+    [StaFact]
+    public void Clearing_the_selection_removes_the_edge_flow_clock_from_the_timing_tree()
+    {
+        var view = RealizeGraph(GraphStatus.Queued, out var window);
+        view.SelectedNode = "OSYS.Data";
+        var clock = view.EdgeFlowClock;
+        Assert.NotNull(clock);
+
+        view.SelectedNode = null; // kenarlar sökülür, akış saati bırakılır
+
+        Assert.Null(view.EdgeFlowClock);
+        AssertRetired(clock);
         GC.KeepAlive(window);
     }
 }

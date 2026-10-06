@@ -5401,6 +5401,20 @@ a timer for the life of the application. Measured with CPU cycle counters on an 
 the cursor gate and the sleeping pump together took the process from roughly 81 to 5 million cycles a second;
 either one alone removed barely a sixth of it.
 
+**Stopping an infinite animation means removing its clock, not just detaching it.** `BeginAnimation(property,
+null)` only unhooks the clock from the property: the clock stays a root of the dispatcher's timing tree in the
+*active* state, and an active animation clock asks for a tick on every frame. The tree holds it weakly, so only a
+garbage collection would end it — and an idle process never collects. Measured: a run that ended while the window
+was visible left the breathing rows, the building rings, the ribbon's sweep and the graph's bead orbit behind as
+orphaned clocks; hidden to the tray three seconds later, the UI thread idled at about 118 million cycles a second
+against 13 for the same window hidden mid-run, because in a hidden window every tick recommits the composition
+channel and wakes the thread at the display's refresh rate. Every owner of an infinite animation therefore keeps
+its clock in a `DecorativeClock` and stops by removing it from the tree (`ClockController.Remove`), the same
+discipline the carets' `CursorClock` already keeps; a shared clock — the bead orbits, the selection edges — is
+attached to each surface and removed from all of them at once. The proof at the scale of the whole shell is a
+real window, a run ending in view, the finale cut by hiding, and a timing tree with no live clock afterwards
+(`HiddenShellClockTests`); each owner is pinned on its own in `HiddenDecorativeClockTests`.
+
 **The two carets share one clock, and it runs only while the window is active.** The console prompt's caret and
 the event stream's active-line caret are the one pair of infinite loops that is genuinely on screen for the whole
 life of the window, so the visibility gate alone cannot quiet them; with a blink and a colour tour each, they were
@@ -5680,7 +5694,10 @@ balloons or saturate every core, so each is gated on an environment variable —
 unless it is set. The content-decision measurements are gated
 differently: they read a real repository whose root comes from `BO_MEASURE_ROOT`, `BO_MEASURE_COLD_ROOT` or
 `BO_CACHE_ROOT` with a local default, and skip only when that root is absent — on a machine where the default
-root exists they run with the normal suite.
+root exists they run with the normal suite. One probe lives in the application rather than the suite, because
+what it measures only exists there: with `BO_PROBE_FRAMES=<file>` the shell records the gap between every two
+frames it draws, one line per five-second window (frames drawn, longest gap, gaps over 33/50/100/250 ms), which
+is how an animation freeze under a real, full-priority run is measured; without the variable nothing is created.
 
 A third category, `LocalOnly`, marks a test that cannot run on the hosted CI runner — a timing budget a shared
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
@@ -6425,6 +6442,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
 | Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs`, `PillRadius.cs` |
+| Owner-held infinite clocks: start, attach a further surface, stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |

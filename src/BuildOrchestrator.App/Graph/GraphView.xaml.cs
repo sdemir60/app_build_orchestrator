@@ -126,8 +126,9 @@ public partial class GraphView : UserControl
     private readonly Dictionary<string, List<string>> _dependents = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Seçimde kurulan kenar görselleri — seçim kalkınca SÖKÜLÜR.</summary>
     private readonly List<Path> _selectionEdges = [];
-    /// <summary>Akan kesiklerin PAYLAŞTIĞI tek saat (en fazla komşu sayısı kadar çizgi vardır).</summary>
-    private AnimationClock? _edgeFlowClock;
+    /// <summary>Akan kesiklerin PAYLAŞTIĞI tek saat (en fazla komşu sayısı kadar çizgi vardır); sahibi bırakırken ağaçtan
+    /// da çıkarır (<see cref="DecorativeClock"/>).</summary>
+    private readonly DecorativeClock _edgeFlow = new();
 
     private readonly ScaleTransform _cameraScale = new(1, 1);
     private readonly TranslateTransform _cameraTranslate = new();
@@ -141,8 +142,9 @@ public partial class GraphView : UserControl
     private readonly ScaleTransform _iconScale = new(1, 1);
     /// <summary>[quiet] TÜM beads yörüngelerinin PAYLAŞTIĞI tek saat. Düğüm boyutu graf genelinde tek
     /// olduğu için çevre de tektir ⇒ tek saat bütün noktaları faz-kilitli döndürür. N paralel derlemede N
-    /// ayrı sonsuz animasyon kurmak timing engine'i gereksiz yere meşgul ederdi.</summary>
-    private AnimationClock? _beadsClock;
+    /// ayrı sonsuz animasyon kurmak timing engine'i gereksiz yere meşgul ederdi. Sahibi bırakırken ağaçtan da çıkarır
+    /// (<see cref="DecorativeClock"/>).</summary>
+    private readonly DecorativeClock _beads = new();
     private BeadsGeometry _beadsGeometry;
     private DoubleCollection _beadsDash =
         GraphBeads.DashArrayFor(GraphBeads.For(QuietGraphLayout.MinNodeSize, QuietGraphLayout.MinPitch));
@@ -348,7 +350,7 @@ public partial class GraphView : UserControl
             ApplyBeads(slot.Visual);
             beadsLive |= slot.Visual.BeadsVisible;
         }
-        if (beadsLive || _beadsClock is not null) EnsureBeadsClock();
+        if (beadsLive || _beads.IsRunning) EnsureBeadsClock();
         EnsureEdgeFlowClock();
     }
 
@@ -926,7 +928,7 @@ public partial class GraphView : UserControl
         {
             _beadsGeometry = beads;
             _beadsDash = GraphBeads.DashArrayFor(beads);
-            bool wasSpinning = _beadsClock is not null;
+            bool wasSpinning = _beads.IsRunning;
             ReleaseBeadsClock();
             foreach (var slot in _slotOrder)
                 if (slot.Visual.Beads is { } orbit) ApplyBeadsGeometry(orbit);
@@ -1169,7 +1171,7 @@ public partial class GraphView : UserControl
         // gövde tıklama alanıdır ve yörünge taşmasının hit-test'e karışmaması gerekir.
         visual.Cell.Children.Add(orbit);
         visual.Beads = orbit;
-        if (_beadsClock is { } clock) orbit.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, clock);
+        _beads.Attach(orbit, Shape.StrokeDashOffsetProperty); // saat dönüyorsa yeni yörünge de ona bağlanır (yoksa no-op)
     }
 
     /// <summary>[v1.18.0] WPF <see cref="Rectangle"/> kalemi geometriyi <c>StrokeThickness/2</c> İÇERİ alır
@@ -1189,7 +1191,7 @@ public partial class GraphView : UserControl
         // [perf A7] Başlatıcı aynı zamanda KAPIDIR (ConsoleView.StartBlink deseni): görünmezken ya da motion kapalıyken
         // saat kurulmaz, varsa bırakılır.
         if (!InfiniteClocksAllowed) { ReleaseBeadsClock(); return; }
-        if (_beadsClock is not null) return;
+        if (_beads.IsRunning) return;
 
         var spin = new DoubleAnimation
         {
@@ -1201,10 +1203,9 @@ public partial class GraphView : UserControl
             RepeatBehavior = RepeatBehavior.Forever,
         };
         Timeline.SetDesiredFrameRate(spin, MotionTokens.DecorativeFrameRate); // dekoratif sonsuz animasyon (feasibility §3.4)
-        _beadsClock = spin.CreateClock();
-
+        _beads.Start(spin);
         foreach (var slot in _slotOrder)
-            slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _beadsClock);
+            if (slot.Visual.Beads is { } orbit) _beads.Attach(orbit, Shape.StrokeDashOffsetProperty);
     }
 
     /// <summary>§2.3: saat bitişten <see cref="GraphBeads.SpinAfterStopMs"/> sonra bırakılır — çıkış
@@ -1234,13 +1235,12 @@ public partial class GraphView : UserControl
         ReleaseBeadsClock();
     }
 
+    /// <summary>Saati yörüngelerden söker VE zaman ağacından çıkarır (<see cref="DecorativeClock.Stop"/>): yalnız sökülen saat
+    /// yetim kalır ve gizli pencerede bile her karede tik ister — ölçüm ve gerekçe <see cref="DecorativeClock"/>'ta.</summary>
     private void ReleaseBeadsClock()
     {
         _beadsSpindown?.Stop();
-        if (_beadsClock is null) return;
-        foreach (var slot in _slotOrder)
-            slot.Visual.Beads?.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
-        _beadsClock = null;
+        _beads.Stop();
     }
 
     // ---------------------------------------------------------------- hover + ekran koordinatlı tooltip
@@ -1467,7 +1467,7 @@ public partial class GraphView : UserControl
         // [perf A7] Başlatıcı aynı zamanda KAPIDIR (bkz. EnsureBeadsClock): kenar yoksa, motion kapalıysa ya da görünmezse
         // saat kurulmaz, varsa bırakılır; zaten dönen saat yeniden başlatılmaz.
         if (_selectionEdges.Count == 0 || !InfiniteClocksAllowed) { ReleaseEdgeFlowClock(); return; }
-        if (_edgeFlowClock is not null) return;
+        if (_edgeFlow.IsRunning) return;
 
         var flow = new DoubleAnimation
         {
@@ -1477,18 +1477,12 @@ public partial class GraphView : UserControl
             RepeatBehavior = RepeatBehavior.Forever,
         };
         Timeline.SetDesiredFrameRate(flow, MotionTokens.DecorativeFrameRate);
-        _edgeFlowClock = flow.CreateClock();
-        foreach (var path in _selectionEdges)
-            path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, _edgeFlowClock);
+        _edgeFlow.Start(flow);
+        foreach (var path in _selectionEdges) _edgeFlow.Attach(path, Shape.StrokeDashOffsetProperty);
     }
 
-    private void ReleaseEdgeFlowClock()
-    {
-        if (_edgeFlowClock is null) return;
-        foreach (var path in _selectionEdges)
-            path.ApplyAnimationClock(Shape.StrokeDashOffsetProperty, null);
-        _edgeFlowClock = null;
-    }
+    /// <summary>Saati kenarlardan söker VE zaman ağacından çıkarır — <see cref="ReleaseBeadsClock"/> ile aynı kural.</summary>
+    private void ReleaseEdgeFlowClock() => _edgeFlow.Stop();
 
     /// <summary>§2.3: "Seçili node'un altında 6px boşlukla ad etiketi … ekran koordinatında." Tooltip'le
     /// AYNI overlay katmanında, TEK bir öğe olarak yaşar.</summary>
@@ -2002,7 +1996,7 @@ public partial class GraphView : UserControl
     internal double? RevealDelayOf(string nodeId) =>
         _slots.TryGetValue(nodeId, out var slot) ? slot.Visual.RevealDelayMs : null;
     /// <summary>TÜM beads yörüngelerinin paylaştığı saat (hiç dönmüyorsa <c>null</c>).</summary>
-    internal AnimationClock? BeadsClock => _beadsClock;
+    internal AnimationClock? BeadsClock => _beads.Clock;
     /// <summary>Canlı yörünge geometrisi (düğüm boyutundan türer).</summary>
     internal BeadsGeometry BeadsGeometry => _beadsGeometry;
 
@@ -2019,7 +2013,7 @@ public partial class GraphView : UserControl
     /// <summary>Seçimde kurulan bağımlılık çizgileri — seçim yokken BOŞ.</summary>
     internal IReadOnlyList<Path> SelectionEdgePaths => _selectionEdges;
     /// <summary>Akan kesiklerin paylaşımlı saati (akmıyorsa <c>null</c>).</summary>
-    internal AnimationClock? EdgeFlowClock => _edgeFlowClock;
+    internal AnimationClock? EdgeFlowClock => _edgeFlow.Clock;
     internal Visibility SelectionLabelVisibility => SelectionLabelBox.Visibility;
     internal string SelectionLabelContent => SelectionLabelText.Text;
     internal Point SelectionLabelTopLeft => new(Canvas.GetLeft(SelectionLabelBox), Canvas.GetTop(SelectionLabelBox));

@@ -56,6 +56,7 @@ public partial class ProjectRow : UserControl
     private bool _hover;
     private bool _hoverRendered; // ApplyBackground'un en son çizdiği hover görünürlüğü (bkz. ApplyHoverVisuals)
     private bool _isBreathing;
+    private readonly DecorativeClock _breath = new(); // nefes saatinin sahibi — bırakırken ağaçtan da çıkarır
     private ProjectRowState? _prevState;
     /// <summary>[W2] Provider + <c>MotionSettings</c> seam'i + subscribe-once kablajı TEK yerde
     /// (<see cref="MotionGate"/>) — latch'siz kip: her <c>Loaded</c>'da kaynak yeniden okunur.</summary>
@@ -671,13 +672,13 @@ public partial class ProjectRow : UserControl
         if (shouldBreathe == _isBreathing) return; // zaten dönen nabız baştan almaz (StatusGlyph deseni)
         _isBreathing = shouldBreathe;
         if (!shouldBreathe) { StopBreathing(); return; }
-        PART_Breath.BeginAnimation(OpacityProperty, BuildBreathingAnimation(this));
+        _breath.Start(BuildBreathingAnimation(this), PART_Breath, OpacityProperty);
     }
 
     private void StopBreathing()
     {
         _isBreathing = false;
-        PART_Breath.BeginAnimation(OpacityProperty, null);
+        _breath.Stop(); // ağaçtan da çıkar: BeginAnimation(null) saati yalnız söker ve yetim bırakırdı (DecorativeClock)
         PART_Breath.Opacity = 0;
     }
 
