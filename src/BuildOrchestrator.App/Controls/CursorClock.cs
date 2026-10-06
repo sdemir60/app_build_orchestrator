@@ -46,11 +46,15 @@ internal sealed class CursorClock
 
     private readonly List<Attachment> _attached = [];
     private bool _windowActive = true;
+    private bool _inputIdle;
     private AnimationClock? _blinkClock;
     private AnimationClock? _colorClock;
 
     /// <summary>[test yüzeyi] Pencerenin son bildirilen aktifliği (sinyal gelmediyse <c>true</c>).</summary>
     internal bool WindowActive => _windowActive;
+
+    /// <summary>[test yüzeyi] Girdi yok sayılıyor mu (<see cref="SetInputIdle"/>; sinyal gelmediyse <c>false</c>).</summary>
+    internal bool InputIdle => _inputIdle;
 
     /// <summary>[test yüzeyi] Saate bağlı imleç sayısı — pencere aktif olmasa da bağlı kalırlar.</summary>
     internal int AttachedCount => _attached.Count;
@@ -123,6 +127,18 @@ internal sealed class CursorClock
         Reconcile();
     }
 
+    /// <summary>
+    /// [perf B4 · karar 5] Üçüncü kapı — girdi yokken (<see cref="CaretIdleGate"/>: Windows'un imleç zaman aşımı) saatler durur ve
+    /// imleçler sabit kalır; girdi gelince çift taze ve aynı fazda yeniden başlar. Pencere aktifliği ve görünürlükle aynı
+    /// bağımsızlık: üç kapıdan biri kapalıysa saat yoktur. Ölçüm ve gerekçe <see cref="CaretIdleGate"/>'te.
+    /// </summary>
+    internal void SetInputIdle(bool idle)
+    {
+        if (_inputIdle == idle) return;
+        _inputIdle = idle;
+        Reconcile();
+    }
+
     private void Add(Shape cursor, FrameworkElement host, Func<string> restKey)
     {
         var attachment = new Attachment(this, cursor, host, restKey);
@@ -152,7 +168,7 @@ internal sealed class CursorClock
         for (int i = 0; i < _attached.Count && visibleHost is null; i++)
             if (_attached[i].Cursor.IsVisible) visibleHost = _attached[i].Host;
 
-        if (_windowActive && visibleHost is not null)
+        if (_windowActive && !_inputIdle && visibleHost is not null)
         {
             if (_blinkClock is null) StartClocks(CursorHop.CreateClock(visibleHost.TryFindResource));
             else if (_colorClock is null) RetryColorTour(visibleHost);

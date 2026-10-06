@@ -257,6 +257,102 @@ public class CursorClockTests
         GC.KeepAlive(window);
     }
 
+    // ---------------------------------------------------------------- girdi yokken (perf B4 · karar 5)
+
+    /// <summary>
+    /// Üçüncü kapı: girdi yokken (<see cref="CaretIdleGate"/>, Windows'un imleç zaman aşımı) iki imleç de sabit durur — pasif
+    /// pencereyle aynı duruş (opak, dinlenme rengi, saat ağaçtan çıkmış) — ve girdi gelince taze saatle, aynı fazda döner.
+    /// <b>Neden (ÖLÇÜLDÜ):</b> ön planda etkin pencerede boşta 181 Mdöngü/s'in ~165'i imleç saatlerinin render döngüsünü
+    /// ayakta tutmasıydı; kare hızı tek başına kaldıraç değildi (kırpma 15 fps: 180), imleçler durunca 17.
+    /// </summary>
+    [StaFact]
+    public void Idle_input_leaves_both_cursors_steady_and_the_next_input_resumes_them()
+    {
+        var (console, stream, _, window) = RealizeBoth();
+        var clock = CursorClock.For(window);
+        Assert.True(Blinking(console.ActiveCursorGlyph) && Blinking(stream.ActiveCursorGlyph),
+            "ön-koşul: girdi varken iki imleç GERÇEKTEN kırpmalı");
+
+        clock.SetInputIdle(true); // zaman aşımı doldu
+
+        Assert.False(console.ActiveCursorGlyph.HasAnimatedProperties);
+        Assert.False(stream.ActiveCursorGlyph.HasAnimatedProperties);
+        Assert.False(CursorHop.IsRunning(console.ActiveCursorGlyph as Shape));
+        Assert.Equal(1.0, console.ActiveCursorGlyph.Opacity);
+        Assert.Null(clock.ActiveBlinkClock);
+        Assert.Equal(2, clock.AttachedCount); // imleçler bağlı kalır, yalnız saat durur
+
+        clock.SetInputIdle(false); // tuş / fare
+
+        Assert.True(Blinking(console.ActiveCursorGlyph));
+        Assert.True(Blinking(stream.ActiveCursorGlyph));
+        Assert.NotNull(clock.ActiveBlinkClock);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Kapılar bağımsızdır: girdi gelse de pasif pencerede saat kurulmaz; aktifleşince (girdi sayılır) kurulur.</summary>
+    [StaFact]
+    public void Input_does_not_start_the_clock_while_the_window_is_inactive()
+    {
+        var (console, _, _, window) = RealizeBoth();
+        var clock = CursorClock.For(window);
+        clock.SetWindowActive(false);
+        clock.SetInputIdle(true);
+
+        clock.SetInputIdle(false); // girdi geldi ama pencere pasif
+
+        Assert.Null(clock.ActiveBlinkClock);
+        Assert.False(console.ActiveCursorGlyph.HasAnimatedProperties);
+
+        clock.SetWindowActive(true);
+
+        Assert.True(Blinking(console.ActiveCursorGlyph));
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>
+    /// Pencerenin kablajı: girdi bildirimi yoklamayı kurar, zaman aşımı dolunca saat durur, yeni girdi geri getirir;
+    /// aktifleşme girdi sayılır, pasifleşme yoklamayı bırakır. Zamanlayıcı sahte (gerçek bekleme yok), saat enjekte.
+    /// </summary>
+    [StaFact]
+    public void The_main_window_stops_the_cursors_after_the_caret_timeout_without_input_and_resumes_on_input()
+    {
+        using var temp = new TempDir();
+        var (window, _) = MainWindowHost.New(temp);
+        var clock = CursorClock.For(window);
+        var timer = new FakePollTimer();
+        long now = 0;
+        window.CaretIdleTimer = timer;
+        window.CaretIdleClock = () => now;
+        Assert.True(window.CaretIdleTimeout > TimeSpan.Zero); // ön-koşul: işletim sistemi değeri ya da varsayılan okundu
+
+        window.NoteUserInput();
+        Assert.True(timer.IsRunning);
+        Assert.Equal(CaretIdleGate.PollInterval, timer.Interval);
+        Assert.False(clock.InputIdle);
+
+        now += (long)window.CaretIdleTimeout.TotalMilliseconds - 1;
+        timer.Tick();
+        Assert.False(clock.InputIdle);
+
+        now += 1;
+        timer.Tick();
+        Assert.True(clock.InputIdle);   // zaman aşımı doldu: imleçler durdu
+        Assert.False(timer.IsRunning);  // boştayken yoklama yok
+
+        window.NoteUserInput();
+        Assert.False(clock.InputIdle);  // girdi: imleçler döner
+        Assert.True(timer.IsRunning);   // ve yoklama yeniden başlar
+
+        RaiseWindowEvent(window, "OnDeactivated");
+        Assert.False(timer.IsRunning);  // pasif pencerede yoklama yok (saat zaten aktiflik kapısında durur)
+
+        now += (long)window.CaretIdleTimeout.TotalMilliseconds * 2;
+        RaiseWindowEvent(window, "OnActivated"); // aktifleşme girdi sayılır
+        Assert.False(clock.InputIdle);
+        Assert.True(timer.IsRunning);
+    }
+
     // ---------------------------------------------------------------- palet sonradan çözülür
 
     /// <summary>
