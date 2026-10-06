@@ -77,10 +77,9 @@ kural, kanıt testleri); §22 kod haritasına `DecorativeClock` satırı.
 - Tam süit (`Category!=Acceptance`, Debug, 9,7 dk): 4654 test — 4645 geçti, 8 atlandı, 1 düştü:
   `ConsoleBatcherTests.Lines_arriving_while_the_window_is_open_share_one_flush` (5 s'lik pencere beklemesi paralel yük altında
   doldu; dokunulmayan kod). Sınıf tek başına yeniden koşuldu: 13/13 yeşil. Release derlemesi 0 uyarı.
-- **Masaüstü ölçümü BEKLİYOR (kullanıcı başında):** `.claude/temp/perf-2026-10-06/f-verify.ps1 -Dir <klasör>` — önce
-  `dotnet build BuildOrchestrator.slnx -c Release`. Sıra: B4 aktif ön plan boşta (20 s) → F6 Rebuild görünürken → bitince +3 s gizle →
-  +15 s → tepsi boşta (20 s) → göster → ön plan koşu sonrası boşta (10 s) → F6 Rebuild → +5 s gizle → bitince +15 s → tepsi boşta
-  (20 s). Kabul: her iki tepsi okumasında UI ≤ 40 M/s. ~8 dk, iki OSYS Rebuild.
+- **Masaüstü ölçümü (22:04–22:09, `f-verify.ps1`, Release, OSYS Rebuild ×2): doğrulandı.** Pencere açıkken biten koşudan sonra
+  gizlenince tepside boşta UI **11,4 M/s** (önce 118); koşu sürerken gizlenince **11,5** (önce 13). Hedef ≤ 40 ✓. Ön plan etkin
+  boşta 181 (değişmedi — Konu 2). Ayrıntı ve takip konuları: `2026-10-06-22-38-memory-fans-resolve-stutter.md`.
 
 ## 7. Konu 2 (B4 aktif ön plan 182 M/s) — plan, karar kullanıcının
 
