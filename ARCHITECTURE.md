@@ -5431,6 +5431,17 @@ palette cannot be resolved when the clock is created (the view is not yet in a r
 without its colour tour, and the pair is restarted together at the next re-evaluation once the palette resolves, so
 the two stay in phase. With reduced motion no clock is created at all.
 
+**The carets also stop when nobody is typing.** A third gate, independent of the other two, follows the Windows
+caret convention: after the system's caret timeout without keyboard or mouse input (`SPI_GETCARETTIMEOUT`, five
+seconds by default) the clock pair is removed and both carets stand still exactly as they do behind another
+window; the next input, or an activation, starts a fresh pair in phase. The window's whole input passes one
+`InputManager` hook that only stamps the time; a one-second poll while input is live decides when the timeout
+has passed, and stops itself once it has (`CaretIdleGate`, `MainWindow`). Measured on the foreground, active
+window with nothing happening: with the carets blinking the application cost about 181 million cycles a second
+across the interface thread, the render thread and the GPU driver; halving the blink's frame rate changed nothing,
+because a drawn frame costs the window's whole composition; with the carets still — the figure behind another
+window — it cost 17. Stopping, not slowing, is the lever.
+
 **One seam in the tray indicator is deliberately not instant, and it carries no number in code.** The
 overlay's disappearance and the balloon would otherwise land on the same frame and read as one abrupt event, so
 a short breath separates them; its length is `Duration.Slow`, which means reduced motion collapses it to zero on
