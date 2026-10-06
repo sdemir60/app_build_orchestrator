@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -31,6 +32,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class ActionBar : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.ToolBar);
+
     private const double ChipIconSize = 12;     // BuildApp.jsx:1553 sayaç chip ikonları 12px
     private const double LabelIconSize = 14;    // branch/tree/sync/stop/play ikonları ~14px
     private const double ChevronSize = 12;

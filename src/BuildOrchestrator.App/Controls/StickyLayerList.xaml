@@ -8,8 +8,9 @@
        24px başlık kümülatif tablosu) hesaplanır; overlay item'ları in-flow başlıkla AYNI DataTemplate + opak
        zemin (Brush.Surface) → geçiş görünmez.
 
-       Satır akışı SANALLAŞTIRILMIŞTIR (FixedHeightVirtualizingPanel): yalnız görünür pencereye düşen satırlar
-       realize olur. WPF'in kendi VirtualizingStackPanel'i BURADA KULLANILAMAZ — o, realize edilmemiş öğeleri
+       Satır akışı AŞAMALI kurulur (FixedHeightVirtualizingPanel): ilk yerleşim yalnız görünür pencereyi kurar,
+       geri kalan satırlar boşta küçük dilimlerle gelir ve kurulan satır bir daha bırakılmaz (geri dönüşüm yok).
+       WPF'in kendi VirtualizingStackPanel'i BURADA KULLANILAMAZ — o, realize edilmemiş öğeleri
        ORTALAMA yükseklikle tahmin eder ve karışık 36/24 tabloda scroll ekseni yukarıdaki kümülatif aritmetikten
        kayardı (yapışık başlık + follow + seçim-scroll üçü de o tabloyu okur). Panel yüksekliği tahmin etmez,
        EntryHeightSelector ile SORAR → VerticalOffset ile tablo asla ayrışmaz. -->
@@ -74,18 +75,18 @@
   </UserControl.Resources>
 
   <Grid Background="{DynamicResource Brush.SurfaceBase}">
-    <!-- Liste: sanallaştırılmış, PİKSEL scroll → VerticalOffset(px) = LayoutMetrics içerik Y'si (birebir).
+    <!-- Liste: PİKSEL scroll → VerticalOffset(px) = LayoutMetrics içerik Y'si (birebir).
          CanContentScroll KAPALI KALIR (varsayılan): kaydırmayı yine BU ScrollViewer yürütür, panel ona gerçek
-         toplam yüksekliği bildirir ve yalnız görünür pencereyi realize eder — mevcut scroll tesisatı
-         (ScrollAnimator, bottom-anchor, follow-mode) hiç değişmez. -->
+         toplam yüksekliği bildirir ve satırları aşamalı kurar — mevcut scroll tesisatı
+         (ScrollAnimator, bottom-anchor, follow-mode) hiç değişmez. IsVirtualizing açık kalır: WPF aksi hâlde
+         tüm container'ları tek seferde üretirdi; üretimin zamanlaması panelindir. -->
     <ScrollViewer x:Name="Scroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <!-- [E5/T47] Satırlar (ProjectRow, Focusable) Tab ile ulaşılır; ok tuşları satırlar arası gezinir
            (DirectionalNavigation=Contained → odak liste içinde kalır, başlıklar odaklanamaz → atlanır). -->
       <ItemsControl x:Name="Flow"
                     KeyboardNavigation.DirectionalNavigation="Contained"
                     KeyboardNavigation.TabNavigation="Continue"
-                    VirtualizingPanel.IsVirtualizing="True"
-                    VirtualizingPanel.VirtualizationMode="Recycling">
+                    VirtualizingPanel.IsVirtualizing="True">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
             <controls:FixedHeightVirtualizingPanel />

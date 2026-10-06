@@ -1,36 +1,57 @@
+using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace BuildOrchestrator.App.Controls;
 
 /// <summary>
-/// Öğe yüksekliğinin ÖNCEDEN BİLİNDİĞİ dikey listeler için sanallaştırılmış panel: yalnız kapsayıcı
-/// <see cref="ScrollViewer"/>'ın o anki penceresine düşen container'lar realize edilir.
+/// Öğe yüksekliğinin ÖNCEDEN BİLİNDİĞİ dikey listeler için satır paneli: kapsayıcı <see cref="ScrollViewer"/>'a
+/// TAHMİNSİZ toplam yüksekliği bildirir, satırları ise AŞAMALI kurar — ilk yerleşim turunda yalnız görünür pencereyi
+/// (+ yarım viewport pay), geri kalanını dispatcher boşken küçük dilimlerle (<see cref="IdleSliceRows"/>). Kurulan
+/// bir satır bir daha BIRAKILMAZ: pencere kayınca geri dönüştürülmez, sökülmez.
 ///
 /// <para><b>Neden WPF'in <c>VirtualizingStackPanel</c>'i yetmiyor:</b> o, <c>ScrollUnit=Pixel</c>'de realize
 /// EDİLMEMİŞ öğelerin yüksekliğini realize olanların ORTALAMASINDAN tahmin eder. Proje listesi karışık
 /// yüksekliklidir (36 px satır + 24 px katman başlığı), dolayısıyla ortalama gerçek offset'ten kayar; oysa
 /// yapışık başlıklar, follow-mode ve seçim-scroll'unun üçü de <see cref="LayoutMetrics"/>'in KÜMÜLATİF
-/// tablosunu okur ve o tablonun <c>ScrollViewer.VerticalOffset</c> ile birebir tutması gerekir.
-/// (ARCHITECTURE §20'nin "virtualization ertelendi" gerekçesi olan drift tam olarak buydu.)</para>
+/// tablosunu okur ve o tablonun <c>ScrollViewer.VerticalOffset</c> ile birebir tutması gerekir.</para>
+///
+/// <para><b>Neden satırlar kalıcı (ÖLÇÜLDÜ):</b> görünür bir koşuda UI thread'inin en uzun kesintisiz dilimleri
+/// (98–226 ms) pencere kaydıkça geri dönüştürülen container'ların YENİ veriye bağlanmasıydı — satır başına metin
+/// biçimleme (ölçüm + çizim), UIA peer tazelemesi ve binding yazımı (~2,5 ms); takip kaydırması pencereyi tek
+/// karede 30–60 satır taşıdığında hepsi tek dilimde toplanıyor ve graf animasyonları o dilim boyunca duruyordu.
+/// Satır İNŞASI dilimin yalnız 8–14 ms'siydi; kaldıraç bu yüzden inşayı ısıtmak değil, yeniden bağlamayı ortadan
+/// kaldırmaktır: kontrol satırında kalınca kaydırma hiçbir satırı yeniden bağlamaz, yerleşim yalnız kaydırma
+/// çevirisidir. Bedel satır başına BİR KEZ ödenir ve kritik yolun dışındadır; bellek payı satır başına bir
+/// kontroldür.</para>
 ///
 /// <para><b>Scroll tesisatı DEĞİŞMEZ.</b> Panel <see cref="IScrollInfo"/> uygulamaz; kaydırmayı yine dıştaki
 /// <c>ScrollViewer</c> yürütür ve panel ona <b>gerçek toplam yüksekliği</b> (tahmin değil, tablonun kendisi)
 /// <see cref="UIElement.DesiredSize"/> olarak bildirir. Böylece <c>VerticalOffset</c>/<c>ExtentHeight</c>
-/// semantiği, <c>ScrollAnimator</c>, bottom-anchor ve follow-mode aynen çalışmaya devam eder — sanallaştırma
-/// yalnız hangi satırların GERÇEKTEN kurulacağını değiştirir.</para>
+/// semantiği, <c>ScrollAnimator</c>, bottom-anchor ve follow-mode aynen çalışmaya devam eder.</para>
 ///
-/// <para><b>Container geri dönüşümü:</b> <c>VirtualizationMode.Recycling</c> ile container'lar yeniden
-/// kullanılır; satır kontrolü yeni <c>DataContext</c>'te kendini tam tazelemekle yükümlüdür
-/// (<c>ProjectRow.OnDataContextChanged</c> bunu zaten yapar).</para>
+/// <para><b>Öğe değişimleri:</b> çıkan öğenin container'ı sökülür; giren ya da yer değiştiren öğe pencereye düşüyorsa
+/// yerleşimde, değilse boşta dolumda (yeniden) kurulur. Yer değiştiren öğenin container'ı BİLEREK bırakılır:
+/// WPF'in generator'ı ağaçta kalan bir container'ı yeni indeksine bağlarken, yeni yer kurulmamış bir bloğa
+/// komşuysa yanlış ofsete yazar (<c>ItemContainerGenerator.OnItemMoved</c> — bu dal WPF'in kendi panellerinde hiç
+/// çalışmaz, onlar da container'ı söker) ve harita koleksiyondan ayrışır; ölçülen sonuç kaybolan satırlardı.
+/// Reset (koleksiyon takası) tüm container'ları bırakır; liste bu yüzden koleksiyonu takas etmez, yerinde
+/// uzlaştırır (<see cref="ListReconciler"/>) — dokunulmayan satır dokunulmadan kalır.</para>
 /// </summary>
 public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
 {
-    /// <summary>Görünür pencerenin ÜSTÜNE ve ALTINA fazladan realize edilen pay (viewport oranı). Kaydırma
-    /// sırasında container üretimi bir kare geriden gelmesin diye vardır; yarım viewport hem akıcı hem ucuz.</summary>
+    /// <summary>Görünür pencerenin ÜSTÜNE ve ALTINA fazladan kurulan pay (viewport oranı). İlk turda kaydırma
+    /// container üretimi bir kare geriden gelmesin diye vardır; dolum tamamlanınca anlamı kalmaz.</summary>
     private const double CacheRatio = 0.5;
+
+    /// <summary>Boşta dolumun dilim boyu. Bir dilim bu kadar satırı kurar, ardından gelen yerleşim turu onları
+    /// ölçer ve yerleştirir (referans makinede satır başına ~1 ms inşa + ~1,5 ms ölçüm/yerleşim): dilim ≈ 8 ms,
+    /// yani bir karenin (16,7 ms) yarısı — dilimler animasyon kareleri arasına sığar. 200 satır ~70 dilimde,
+    /// kabaca bir saniyede dolar.</summary>
+    internal const int IdleSliceRows = 3;
 
     /// <summary>Öğe → yükseklik. <b>ItemsControl'e</b> (panelin sahibi) atanır; panel şablonun içinde doğduğu
     /// için ona doğrudan bir değer geçirmenin başka yolu yoktur. Verilmezse tüm öğeler
@@ -50,12 +71,21 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
     private double[] _tops = [0];  // öğe indeksi → içerik Y (üst); son eleman TOPLAM yükseklik
     private int _topsCount = -1;   // _tops hangi öğe sayısı için kuruldu
     private ScrollViewer? _scroll; // kapsayıcı ScrollViewer (viewport kaynağı) — bir kez bulunur
+    private DispatcherOperation? _idleFill; // kuyruktaki dolum dilimi (en çok bir tane)
+    private int _fillCursor;       // boşta dolumun bir sonraki adayı (öğe indeksi)
 
-    public FixedHeightVirtualizingPanel() => Loaded += (_, _) => AttachScrollViewer();
+    public FixedHeightVirtualizingPanel()
+    {
+        Loaded += (_, _) => AttachScrollViewer();
+        Unloaded += (_, _) => CancelIdleFill();
+    }
 
-    /// <summary>Kapsayıcı <see cref="ScrollViewer"/>'ı bulur ve kaydırmada yeniden ölçüm ister — realize
-    /// penceresi ancak böyle kayar. ScrollViewer yoksa (izole test) panel her şeyi realize eder: sanallaştırma
-    /// bir GÖRÜNÜRLÜK optimizasyonudur, doğruluk şartı değildir.</summary>
+    /// <summary>Test yüzeyi: ağaçtaki container sayısı (= kurulmuş öğe sayısı).</summary>
+    internal int RealizedCount => InternalChildren.Count;
+
+    /// <summary>Kapsayıcı <see cref="ScrollViewer"/>'ı bulur ve kaydırmada yeniden ölçüm ister — pencere ancak
+    /// böyle kayar. ScrollViewer yoksa (izole test) yerleşim turu satır kurmaz; satırlar yalnız boşta dolumla
+    /// gelir (o da panel bir pencereye bağlıyken).</summary>
     private void AttachScrollViewer()
     {
         if (_scroll is not null) return;
@@ -82,28 +112,38 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
 
         double totalHeight = _tops[^1];
         double width = double.IsInfinity(availableSize.Width) ? 0 : availableSize.Width;
-        if (count == 0) { CleanUp(0, -1); return new Size(width, 0); }
+        if (count == 0) return new Size(width, 0);
 
         // Görünür pencere kapsayıcı ScrollViewer'dan okunur. İLK ölçüm turunda viewport HENÜZ BİLİNMEZ (0) ve
-        // o turda HİÇBİR satır realize edilmez: panelin bildirdiği yükseklik realize olmuş çocuklara DEĞİL
-        // kümülatif tabloya dayandığı için ScrollViewer viewport'unu bu turda da doğru hesaplar; hemen ardından
-        // gelen ScrollChanged yeniden ölçüm ister ve gerçek pencere AYNI UpdateLayout turunda realize olur.
-        // (Buraya bir "ekran kadar tahmin et" koymak, kaçınmak için var olduğumuz gereksiz işi geri getirirdi.)
+        // o turda HİÇBİR satır kurulmaz: panelin bildirdiği yükseklik kurulu çocuklara DEĞİL kümülatif tabloya
+        // dayandığı için ScrollViewer viewport'unu bu turda da doğru hesaplar; hemen ardından gelen ScrollChanged
+        // yeniden ölçüm ister ve gerçek pencere AYNI UpdateLayout turunda kurulur.
         double viewportHeight = _scroll?.ViewportHeight ?? 0;
-        if (viewportHeight <= 0) { CleanUp(0, -1); return new Size(width, totalHeight); }
+        if (viewportHeight > 0)
+        {
+            double cache = viewportHeight * CacheRatio;
+            double offset = _scroll!.VerticalOffset;
+            RealizeRange(count, IndexAt(offset - cache), IndexAt(offset + viewportHeight + cache));
+        }
 
-        double cache = viewportHeight * CacheRatio;
-        double offset = _scroll!.VerticalOffset;
-        double windowTop = offset - cache;
-        double windowBottom = offset + viewportHeight + cache;
-
-        int first = IndexAt(windowTop);
-        int last = IndexAt(windowBottom);
-        Realize(count, first, last, width);
-        CleanUp(first, last);
+        MeasureChildren(width);
+        ScheduleIdleFill(count);
 
         // Dıştaki ScrollViewer'ın extent'i BU yükseklikten doğar — tahmin değil, kümülatif tablonun kendisi.
         return new Size(width, totalHeight);
+    }
+
+    /// <summary>Her kurulu çocuk kendi satır yüksekliğiyle ölçülür. Ölçümü geçerli olan çocukta WPF erken döner:
+    /// kaydırma turlarında bu döngü yalnız bir sayımdır.</summary>
+    private void MeasureChildren(double width)
+    {
+        var generator = ItemContainerGenerator;
+        for (int i = 0; i < InternalChildren.Count; i++)
+        {
+            int index = generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            if (index < 0 || index >= _tops.Length - 1) continue;
+            InternalChildren[i].Measure(new Size(width, _tops[index + 1] - _tops[index]));
+        }
     }
 
     protected override Size ArrangeOverride(Size finalSize)
@@ -120,38 +160,25 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
         return finalSize;
     }
 
-    private void Realize(int itemCount, int first, int last, double width)
+    /// <summary>[first..last] aralığındaki öğelerin container'larını kurar; zaten kurulu olanlar atlanır.</summary>
+    private void RealizeRange(int itemCount, int first, int last)
     {
         last = Math.Min(last, itemCount - 1);
+        if (first > last) return;
         var generator = ItemContainerGenerator;
         var startPosition = generator.GeneratorPositionFromIndex(first);
         int childIndex = startPosition.Offset == 0 ? startPosition.Index : startPosition.Index + 1;
 
-        using var _ = generator.StartAt(startPosition, GeneratorDirection.Forward, allowStartAtRealizedItem: true);
+        using var generation = generator.StartAt(startPosition, GeneratorDirection.Forward, allowStartAtRealizedItem: true);
         for (int i = first; i <= last; i++, childIndex++)
         {
-            if (generator.GenerateNext(out bool isNewlyRealized) is not UIElement child) break;
-
-            // [KRİTİK — geri dönüşüm] "isNewlyRealized == false" TEK BAŞINA "container zaten ağaçta" DEMEK
-            // DEĞİLDİR: havuzdan geri verilen bir container da false ile gelir, oysa geri dönüştürülürken
-            // InternalChildren'dan ÇIKARILMIŞTIR. Yalnız isNewlyRealized'a bakan bir panel onu bir daha ağaca
-            // koymaz; sonuç, kullanıcının gördüğü boşluk ve aşağı-yukarı kaydırdıkça "eksile eksile kaybolan"
-            // listedir (pin: ListVirtualizationScrollTests). Bu yüzden container'ın ağaçtaki YERİ doğrulanır.
-            int existing = InternalChildren.IndexOf(child);
-            if (existing < 0)
-            {
-                InsertOrAddChild(childIndex, child);
-                generator.PrepareItemContainer(child);
-            }
-            else if (existing != childIndex)
-            {
-                // Sıra kaymış (geri dönüşümde olabilir): CleanUp'ın konum aritmetiği InternalChildren sırasının
-                // öğe sırasıyla AYNI olmasına dayanır — düzelt.
-                RemoveInternalChildRange(existing, 1);
-                InsertOrAddChild(childIndex, child);
-            }
-
-            child.Measure(new Size(width, _tops[i + 1] - _tops[i]));
+            if (generator.GenerateNext(out _) is not UIElement child) break;
+            // Kurulu bir container ZATEN ağaçtadır ve çocuk sırası generator sırasıyla aynıdır (çıkan/taşınan öğenin
+            // container'ı OnItemsChanged'de düşer); yalnız yeni doğan ağaca girer. Ağaçta olup olmadığı ebeveyninden
+            // okunur — çocuk listesinde arama O(n) olurdu.
+            if (VisualTreeHelper.GetParent(child) == this) continue;
+            InsertOrAddChild(childIndex, child);
+            generator.PrepareItemContainer(child);
         }
     }
 
@@ -159,24 +186,6 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
     {
         if (childIndex >= InternalChildren.Count) AddInternalChild(child);
         else InsertInternalChild(childIndex, child);
-    }
-
-    /// <summary>Pencerenin dışına düşen container'ları bırakır. Geri dönüşüm açıksa container HAVUZA döner
-    /// (yok edilmez) — kaydırmada yeniden inşa maliyeti böylece ödenmez.</summary>
-    private void CleanUp(int first, int last)
-    {
-        var generator = ItemContainerGenerator;
-        bool recycling = GetVirtualizationMode(ItemsControl.GetItemsOwner(this)) == VirtualizationMode.Recycling;
-        for (int i = InternalChildren.Count - 1; i >= 0; i--)
-        {
-            var position = new GeneratorPosition(i, 0);
-            int index = generator.IndexFromGeneratorPosition(position);
-            if (index >= first && index <= last) continue;
-
-            if (recycling && generator is IRecyclingItemContainerGenerator recycler) recycler.Recycle(position, 1);
-            else generator.Remove(position, 1);
-            RemoveInternalChildRange(i, 1);
-        }
     }
 
     /// <summary>Kümülatif üst-kenar tablosu (son eleman = toplam yükseklik). Öğe sayısı değişmedikçe yeniden
@@ -217,17 +226,61 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
     {
         ArgumentNullException.ThrowIfNull(args);
         _topsCount = -1; // öğe kümesi değişti → kümülatif tablo baştan
+        _fillCursor = 0; // boşta dolum baştan tarar — yeni öğe en önde olabilir
         switch (args.Action)
         {
-            case System.Collections.Specialized.NotifyCollectionChangedAction.Remove:
-            case System.Collections.Specialized.NotifyCollectionChangedAction.Replace:
-            case System.Collections.Specialized.NotifyCollectionChangedAction.Move:
+            case NotifyCollectionChangedAction.Remove:
+            case NotifyCollectionChangedAction.Replace:
+                // Çıkan öğenin container'ı (varsa) generator tarafından bırakıldı — ağaçtan da düşer. Replace'te
+                // generator AYNI container'ı yeni öğeye bağlar ve olay yaymaz; buraya yalnız kendi container'ı olan
+                // bir öğe (bu listede yok) için düşer.
                 RemoveInternalChildRange(args.Position.Index, args.ItemUICount);
                 break;
-            case System.Collections.Specialized.NotifyCollectionChangedAction.Reset:
+            case NotifyCollectionChangedAction.Move:
+                // Taşınan öğenin container'ı eski yerinden düşer; generator bunu görüp öğeyi kurulmamış sayar ve
+                // yeni yerinde yeniden kurulur (gerekçe sınıf doc'unda: ağaçta bırakılan container'ı generator
+                // yanlış ofsete bağlayabiliyor). WPF'in kendi panelleri de taşımada böyle yapar.
+                RemoveInternalChildRange(args.OldPosition.Index, args.ItemUICount);
+                break;
+            case NotifyCollectionChangedAction.Reset:
                 RemoveInternalChildRange(0, InternalChildren.Count);
                 break;
         }
         base.OnItemsChanged(sender, args);
+    }
+
+    // ---------------------------------------------------------------- boşta dolum
+
+    private void ScheduleIdleFill(int itemCount)
+    {
+        if (_idleFill is not null || InternalChildren.Count >= itemCount) return;
+        _idleFill = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(FillIdleSlice));
+    }
+
+    private void CancelIdleFill()
+    {
+        _idleFill?.Abort();
+        _idleFill = null;
+    }
+
+    /// <summary>Bir dilim: kurulmamış ilk öğeden başlayarak en çok <see cref="IdleSliceRows"/> container kurar ve
+    /// ölçüm ister; ölçüm turu (<see cref="MeasureOverride"/>) kalan varsa bir sonraki dilimi kuyruklar. Panel bir
+    /// pencereye bağlı değilse (ör. HWND'siz ölçüm) dolum bekler — bir sonraki ölçüm turu onu yeniden kuyruklar.</summary>
+    private void FillIdleSlice()
+    {
+        _idleFill = null;
+        var owner = ItemsControl.GetItemsOwner(this);
+        if (owner is null || PresentationSource.FromVisual(this) is null) return;
+        int count = owner.Items.Count;
+        if (InternalChildren.Count >= count) return;
+
+        var generator = owner.ItemContainerGenerator;
+        while (_fillCursor < count && generator.ContainerFromIndex(_fillCursor) is not null) _fillCursor++;
+        if (_fillCursor >= count) return;
+
+        int last = Math.Min(_fillCursor + IdleSliceRows - 1, count - 1);
+        RealizeRange(count, _fillCursor, last);
+        _fillCursor = last + 1;
+        InvalidateMeasure();
     }
 }

@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -20,6 +21,9 @@ namespace BuildOrchestrator.App;
 /// </summary>
 public partial class ShellRoot : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [E5/T46] Proje filtre input'u — PanelHeader.RightContent alt-namescope'unda olduğundan XAML'de adlanamaz;
     // referans RightContent DP'sinden alınır, Esc handler'ı kod-tarafı bağlanır.
     private readonly TextBox _projectFilter;

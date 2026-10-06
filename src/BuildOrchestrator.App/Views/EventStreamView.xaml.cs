@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -27,6 +28,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class EventStreamView : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // [A13/B3 · k3] BuildApp.jsx:91 — daktilo bitince imleç ~420ms sonra söner (aktif satırda KALIR).
     // Tek tanım TypewriterScheduler.CursorHoldMs'tedir; bu derleme-zamanı alias'tır (internal: otorite
     // literaline karşı saf assert edilebilsin — ConsoleView.CursorHoldMs ile AYNI desen).

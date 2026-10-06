@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -29,6 +30,9 @@ public readonly record struct BuildMenuItem(string Kind, string Title, string De
 /// </summary>
 public partial class BuildMenu : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Menu);
+
     // BuildApp.jsx:1078 satır ölçüleri (token DEĞİL — bileşenin kendi değerleri, kaynak satırıyla yazılır).
     private const double RowGap = 10;       // gap: 10
     private const double IconSlot = 14;     // icon span width 14

@@ -134,11 +134,12 @@ public class ListRealizationPerfTests(ITestOutputHelper output)
         var sw = Stopwatch.StartNew();
         host.Measure(size);
         host.Arrange(new Rect(new Point(0, 0), size));
-        host.UpdateLayout(); // sanallaştırılmış → yalnız viewport (+ yarım viewport cache) kadar container üretilir
+        host.UpdateLayout(); // senkron tur yalnız viewport (+ yarım viewport cache) kadar container kurar
         sw.Stop();
 
         // 760px viewport + %50 cache ≈ 1140px ⇒ 36px satırdan ~32 tane. Tavanı gevşek ama ANLAMLI tutuyoruz:
-        // satır sayısıyla ölçeklenen bir realizasyon (sanallaştırmanın kapanması) burada kırılır.
+        // satır sayısıyla ölçeklenen bir senkron kurulum burada kırılır. Geri kalan satırların boşta dolumu
+        // dispatcher'a kuyruklanır ve burada pompalanmaz (pencere de yok) — ölçülen tur yalnız senkron olandır.
         int realized = list.RevealRows.Count;
         Assert.True(realized < rowCount && realized <= 64,
             $"{realized}/{rowCount} satır realize oldu — realizasyon viewport'a değil satır sayısına bağlanmış.");

@@ -1,5 +1,6 @@
 ﻿using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -32,6 +33,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public partial class StickyRibbon : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     // design-v1 kaynak sabitleri (inline magic number YASAK — ProjectRow/StatusGlyph deseni).
     private const double RibbonChipHeight = 20;      // BuildApp.jsx:786 chip height 20
     private const double ChipIconSize = 10;          // BuildApp.jsx:785 building spinner / failed glyph 10px

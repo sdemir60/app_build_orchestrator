@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -20,6 +21,9 @@ namespace BuildOrchestrator.App.Console;
 /// 1400ms ✓ + "Copied" tooltip (<see cref="CopyLogFeedback"/>).</para></summary>
 public partial class ConsoleHeader : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Header);
+
     public enum HeaderMode { Narrative, ProjectLog }
 
     // [T64] Çizilmiş ikonlar (Icons.xaml) — ikon fontu YOK.

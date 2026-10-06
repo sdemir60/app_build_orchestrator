@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -35,6 +36,9 @@ namespace BuildOrchestrator.App.Graph;
 /// </summary>
 public partial class GraphView : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     /// <summary>[quiet] Açılış dalgasının TEMPOSU: düğüm başına en fazla bu kadar gecikme (§2.3: "gecikme =
     /// build-order index × 9ms"); büyük grafta aralık daralır, bkz. <see cref="RevealStaggerMs"/>.
     /// <b>Eski kural KATMAN başınaydı</b> (55ms/katman, tavan 330) — v1.3.0 dalgayı derleme sırasına bağladı,

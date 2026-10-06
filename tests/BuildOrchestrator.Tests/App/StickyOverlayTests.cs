@@ -25,7 +25,7 @@ public class StickyOverlayTests
     ];
 
     /// <summary>
-    /// Liste SANALLAŞTIRILMIŞTIR ve kaydırma ekseni yine PİKSELDİR.
+    /// Liste satırlarını AŞAMALI kurar (ilk yerleşim pencere kadar, gerisi boşta) ve kaydırma ekseni yine PİKSELDİR.
     ///
     /// <para><b>Bu test eskiden tersini pinliyordu</b> (<c>IsVirtualizing == false</c>): aritmetik tablonun
     /// yalnız sanallaştırma kapalıyken doğru olduğu varsayılıyordu, çünkü WPF'in <c>VirtualizingStackPanel</c>'i
@@ -34,12 +34,18 @@ public class StickyOverlayTests
     /// gerekçe ortadan kalkmıştır — ölçülen bedel ise gerçekti: 177 satırlık bir liste her kurulumda UI
     /// thread'ini ~600 ms bloke ediyordu.</para>
     ///
+    /// <para><b>Geri dönüşüm de kapalıdır (ÖLÇÜLDÜ):</b> bir ara <c>VirtualizationMode.Recycling</c> pinleniyordu;
+    /// görünür koşu izinde en uzun UI dilimlerinin (98–226 ms) pencere kaydıkça geri dönüştürülen satırların yeni
+    /// veriye bağlanmasından geldiği ölçülünce kural değişti — kurulan satır kontrolünü ömrü boyunca korur
+    /// (<see cref="ListRowsStayRealizedTests"/>). <c>IsVirtualizing</c> açık kalır: WPF aksi hâlde tüm container'ları
+    /// tek seferde üretirdi; üretimin zamanlaması panelindir.</para>
+    ///
     /// <para>Korunan asıl değişmez AYNI kalır ve burada AÇIKÇA sınanır: panelin ürettiği toplam yükseklik
     /// <see cref="LayoutMetrics.TotalHeight"/> ile BİREBİR olmalıdır — <c>ScrollViewer</c>'ın extent'i budur ve
     /// yapışık başlık / follow / seçim-scroll üçü de aynı tablodan okur.</para>
     /// </summary>
     [StaFact]
-    public void List_virtualizes_rows_while_its_scroll_extent_stays_exact()
+    public void List_scroll_extent_stays_exact_while_rows_are_realized_progressively()
     {
         var host = DsResources.NewHost();
         var list = new StickyLayerList { AnimationsEnabledProvider = () => false };
@@ -47,15 +53,12 @@ public class StickyOverlayTests
         var window = DsResources.Realize(host, list); // 400×200 host; içerik 576px ≫ viewport
 
         Assert.True(VirtualizingPanel.GetIsVirtualizing(list.Flow));
-        Assert.Equal(VirtualizationMode.Recycling, VirtualizingPanel.GetVirtualizationMode(list.Flow));
+        Assert.Equal(VirtualizationMode.Standard, VirtualizingPanel.GetVirtualizationMode(list.Flow));
 
-        // Extent = kümülatif tablonun kendisi (tahmin YOK). 3×24 + 14×36 = 576.
+        // Extent = kümülatif tablonun kendisi (tahmin YOK). 3×24 + 14×36 = 576 — kaç satır kurulmuş olursa olsun
+        // (senkron turun pencere kadar kaldığını ListRealizationPerfTests, boşta dolumu ListRowsStayRealizedTests pinler).
         Assert.Equal(576, list.Metrics!.TotalHeight);
         Assert.Equal(list.Metrics.TotalHeight, list.Scroll.ExtentHeight, precision: 6);
-
-        // ...ve gerçekten sanallaştırıyor: 200px'lik bir pencerede 14 satırın hepsi kurulmaz.
-        Assert.True(list.RevealRows.Count < 14,
-            $"200px viewport'ta {list.RevealRows.Count}/14 satır realize oldu — sanallaştırma devrede değil.");
         GC.KeepAlive(window);
     }
 

@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -10,6 +11,9 @@ namespace BuildOrchestrator.App.Controls;
 /// </summary>
 public partial class PanelHeader : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Header);
+
     public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
         nameof(Text), typeof(string), typeof(PanelHeader),
         new PropertyMetadata(string.Empty, (d, e) => ((PanelHeader)d).LabelText.Text = (string)e.NewValue));

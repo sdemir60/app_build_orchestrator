@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -27,6 +28,9 @@ namespace BuildOrchestrator.App.Controls;
 [TemplatePart(Name = FramePart, Type = typeof(Border))]
 public class ModalDialog : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     private const string ScrimPart = "PART_Scrim";
     private const string FramePart = "PART_Frame";
 

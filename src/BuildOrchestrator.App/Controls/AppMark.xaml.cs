@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 
 namespace BuildOrchestrator.App.Controls;
@@ -8,5 +9,8 @@ namespace BuildOrchestrator.App.Controls;
 /// gelir, işaretin 186×128 oranı bozulmaz.</summary>
 public partial class AppMark : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Image);
+
     public AppMark() => InitializeComponent();
 }

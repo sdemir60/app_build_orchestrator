@@ -1,3 +1,4 @@
+using System.Windows.Automation.Peers;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -27,6 +28,9 @@ namespace BuildOrchestrator.App.Views;
 /// </summary>
 public abstract class PopoverBase : UserControl
 {
+    /// <summary>UIA rolü — gerekçe ve ölçüm <see cref="UserControlRolePeer"/>'de.</summary>
+    protected override AutomationPeer OnCreateAutomationPeer() => new UserControlRolePeer(this, AutomationControlType.Pane);
+
     private RunViewModel? _vm;
 
     /// <summary>
