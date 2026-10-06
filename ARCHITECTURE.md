@@ -4152,6 +4152,12 @@ lines.
   Leaving the narrative without a backlog was measured as the console "losing" its history — a parallel build
   streams hundreds of lines a second, so the 200-line window turned over in seconds and everything older became
   unreachable even though the text was still buffered.
+- The documents keep **no undo history**. AvalonEdit records every insert and removal on the document's undo
+  stack and keeps the removed text alive as rope slices, so with the default unbounded stack a trim released
+  nothing: after a long visible run about half of the live managed heap was the whole narrative, retained behind
+  a 200-line window. Every console document is created with its undo limit at zero (the console is read-only),
+  so a trimmed line is freed the moment it leaves the window; the narrative's lasting copy is the view-model's
+  buffer and the backlog, a project page's the log on disk.
 - **A line is only text.** There is no wall-clock column and no `▸` marker: every line starts at the same left
   edge as the caret and the line's kind is carried by colour alone. A real run streams hundreds of lines a
   second and a stamp on each of them carried no information; time lives in one place, the event stream and the

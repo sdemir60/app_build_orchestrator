@@ -113,6 +113,7 @@ public partial class ConsoleView : UserControl
         _motion = new MotionGate(this);
         _motion.Changed += OnMotionChanged;
         InitializeComponent();
+        EditorControl.Document = NewDocument(""); // açılış belgesi de geri-alma geçmişi tutmaz (gerekçe fabrikada)
         // Gömülü Geist Mono Console CompositeFont'u (It-0 asset'i) — pack URI burada TEKRARLANMAZ [T64].
         EditorControl.FontFamily = AppFonts.MonoConsole;
         ActiveLineText.FontFamily = AppFonts.MonoConsole;
@@ -649,7 +650,7 @@ public partial class ConsoleView : UserControl
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır (PlayCascade ile
         // AYNI hesap — iki mod tek kuralı paylaşır).
         _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
+        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: true);
         // [SIRA ÖNEMLİ] Takibi devralmak pin'den SONRA gelir. Kullanıcı önceki modda serbest kaydırmış olsa
         // bile mod değişimi takibi yeniden alır — ama ForceStuck bir bildirim yayınlar ve pill'in görünürlüğü
@@ -707,7 +708,7 @@ public partial class ConsoleView : UserControl
 
         // Render dilimi: son RenderSliceLines satır belgeye; öncesi chunk loader'a bırakılır.
         _loadedFrom = Math.Max(0, _backlogLines.Count - RenderSliceLines);
-        EditorControl.Document = new TextDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
+        EditorControl.Document = NewDocument(Join(_backlogLines, _loadedFrom, _backlogLines.Count));
         PinAfterModeSwitch(toBottom: false);
     }
 
@@ -944,6 +945,18 @@ public partial class ConsoleView : UserControl
     // Metni satırlara böler (ayraçlar ATILIR — Join onları geri koyar). Sondaki '\n'in doğurduğu boş kuyruk
     // parçası satır SAYILMAZ: append sözleşmesi gereği canlı metin '\n' ile biter, yani o parça bir satır
     // değil bir sonektir. Boş metin → boş liste.
+    /// <summary>Konsol belgelerinin TEK fabrikası: geri-alma geçmişi KAPALI (<c>SizeLimit = 0</c>). Konsol salt-okunurdur;
+    /// AvalonEdit yine de her Insert/Remove'u geri-alma yığınına kaydeder ve kaldırılan metni ip (rope) dilimi olarak canlı
+    /// tutar — ÖLÇÜLDÜ: görünür bir Resolve'un ardından canlı yönetilen yığının yaklaşık yarısı, render dilimine kırpılmış
+    /// belgenin arkasında böyle tutulan koşu anlatısıydı (<c>ConsoleMemoryTests</c>). Geçmiş dilimi için satır listesi
+    /// yeter; belge yalnız pencereyi taşır ve kırpılan metin o an serbest kalır.</summary>
+    private static TextDocument NewDocument(string text)
+    {
+        var document = new TextDocument(text);
+        document.UndoStack.SizeLimit = 0;
+        return document;
+    }
+
     private static List<string> SplitLines(string text)
     {
         var lines = new List<string>();
