@@ -8,6 +8,7 @@
 - `.claude/outputs/2026-10-06-22-38-memory-fans-resolve-stutter.md` — bellek/fan/takılma ilk ölçümleri.
 - `.claude/outputs/2026-10-06-21-53-orphaned-animation-clocks.md` — F (tepside yetim saatler) raporu.
 
-Nerede kaldık: `develop` @ `d3b0476`, ağaç temiz, Release bin güncel. Masaüstü kilitli olduğu için G1–G3'ün "sonra"
-ölçümleri alınmadı; kilit açılınca `.claude\temp\perf-2026-10-06\measure-all.ps1 -Dir .claude\temp\perf-2026-10-06\after1`
-koşulacak ve sonuç raporu rakamlarla tamamlanacak.
+Nerede kaldık: G1 kullanıcı kararıyla geri alındı (imleçler odağı izler, girdi kapısı yok; `CaretFocusRuleTests`), develop'a
+merge edildi. Masaüstü kilitli olduğu için G2–G3'ün "sonra" ölçümleri alınmadı; kilit açılınca (Release bin güncel)
+`.claude\temp\perf-2026-10-06\measure-all.ps1 -Dir .claude\temp\perf-2026-10-06\after1` koşulacak ve sonuç raporu
+rakamlarla tamamlanacak.

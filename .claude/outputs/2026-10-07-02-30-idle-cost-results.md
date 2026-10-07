@@ -12,7 +12,7 @@ süit yeşil (4670 geçti, 8 atlandı, 0 düştü). Çalışma branch'leri silin
 
 | Görev | Merge | Durum |
 |---|---|---|
-| G1 — imleçler girdi yokken durur | `769fdaf` (feat/caret-idle-stop) | branch süiti yeşil (4652/4660); masaüstü ölçümü bekliyor (hedef ≤ 40 M/s) |
+| G1 — imleçler girdi yokken durur | `769fdaf` (feat/caret-idle-stop) | **geri alındı (kullanıcı kararı, 03:00):** imleçler odağı izler — pencere önde ve görünürken yanıp söner, arkada/tepsideyken durur; "5 s girdi yok" kapısı kalktı (`feat/carets-follow-focus`, guard `CaretFocusRuleTests`). B4 hedefi (≤ 40 M/s) bilerek bırakıldı: ön planda boşta ~181 M/s kabul edildi |
 | G2 — satırlar kalıcı, akış yerinde uzlaşır, UIA rolleri | `deaa79d` (perf/list-keeps-rows) | branch süiti yeşil (SafeExit zamanlama testi yalnız yük altında düştü, tek başına yeşil); ölçüm bekliyor |
 | G3 — konsol belgeleri geri-alma geçmişi tutmaz | `d3b0476` (perf/console-memory) | branch süiti yeşil (4648/4656); ölçüm bekliyor |
 | G4 — konsol çizim yükü | — | ölçüldü, değişiklik yok (gerekçe aşağıda) |
@@ -92,6 +92,7 @@ dotnet build BuildOrchestrator.slnx -c Release
 powershell -NoProfile -ExecutionPolicy Bypass -File .claude\temp\perf-2026-10-06\measure-all.ps1 -Dir .claude\temp\perf-2026-10-06\after1
 ```
 
-Sırası: `b4-idle` (G1, hedef ≤ 40 M/s) → `visible-run-trace` (G2: `slice_breakdown.py`/`uia_breakdown.py` ile >90 ms dilimler,
-UIA payı) → `resolve-stutter -Priority Normal` (frames-Normal.log: >100 ms boşluk 4 → hedef 0–1) → `mem-after-resolve` (G3:
-M1 WS 688 → hedef ≤ ~400; gcdump tip dağılımında rope payı).
+Sırası: `b4-idle` (ön plan boşta taban çizgisi; imleç odağı izlediği için ~181 M/s beklenir, hedef yok) → `visible-run-trace`
+(G2: `slice_breakdown.py`/`uia_breakdown.py` ile >90 ms dilimler, UIA payı) → `resolve-stutter -Priority Normal`
+(frames-Normal.log: >100 ms boşluk 4 → hedef 0–1) → `mem-after-resolve` (G3: M1 WS 688 → hedef ≤ ~400; gcdump tip dağılımında
+rope payı).
