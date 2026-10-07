@@ -13,8 +13,8 @@ süit yeşil (4670 geçti, 8 atlandı, 0 düştü). Çalışma branch'leri silin
 | Görev | Merge | Durum |
 |---|---|---|
 | G1 — imleçler girdi yokken durur | `769fdaf` (feat/caret-idle-stop) | **geri alındı (kullanıcı kararı, 03:00):** imleçler odağı izler — pencere önde ve görünürken yanıp söner, arkada/tepsideyken durur; "5 s girdi yok" kapısı kalktı (`feat/carets-follow-focus`, guard `CaretFocusRuleTests`). B4 hedefi (≤ 40 M/s) bilerek bırakıldı: ön planda boşta ~181 M/s kabul edildi |
-| G2 — satırlar kalıcı, akış yerinde uzlaşır, UIA rolleri | `deaa79d` (perf/list-keeps-rows) | branch süiti yeşil (SafeExit zamanlama testi yalnız yük altında düştü, tek başına yeşil); ölçüm bekliyor |
-| G3 — konsol belgeleri geri-alma geçmişi tutmaz | `d3b0476` (perf/console-memory) | branch süiti yeşil (4648/4656); ölçüm bekliyor |
+| G2 — satırlar kalıcı, akış yerinde uzlaşır, UIA rolleri | `deaa79d` (perf/list-keeps-rows) | ölçüldü (aşağıda): UI thread meşguliyeti %31 → %21; "tüm satırlar çizilir" bedeli (+47 MB, +26 M/s) **Hidden bandı** ile geri alındı (`perf/list-render-band`) |
+| G3 — konsol belgeleri geri-alma geçmişi tutmaz | `d3b0476` (perf/console-memory) | ölçüldü: koşu sonrası canlı yönetilen yığın 196 → 119 MB |
 | G4 — konsol çizim yükü | — | ölçüldü, değişiklik yok (gerekçe aşağıda) |
 
 ## G2 — plan değişti: havuz değil, kalıcı satırlar (ÖLÇÜLDÜ)
@@ -84,7 +84,31 @@ biçimletmiyor, batch penceresi de satır sayısını değiştirmiyor. Kaldıra�
 kararı) — kazanç belirsiz, dokunulmadı. Finalizer thread'i konusu (DWrite tutamaçları) iz sınıflandırmasıyla kesin değil;
 G2+G3 sonrası ölçümde yeniden bakılacak.
 
-## Masaüstü ölçümü (kilit açılınca, ~20 dk, klavye/fareye dokunmadan)
+## Masaüstü ölçümü — 07.10 sabahı (`after1/`), sonuçlar
+
+Makine sabah dün geceden çok daha yüklüydü: iki Visual Studio, Chrome, Edge webview'ları, üç VS Code, Defender; **Memory
+Compression 1,7 GB** (bellek baskısı). Bu yüzden mutlak sayılar dün geceyle değil, **aynı sabah arka arkaya alınan A/B** ile
+okunmalı (değişiklik öncesi `786f2f9` Release derlemesi `app_build_orchestrator-ai` worktree'sinden, `BO_MEASURE_APP` ile).
+
+| Ölçüm | Değişiklik öncesi (786f2f9) | Birleşik (satırlar çizilir) | Hidden bandı ile | Not |
+|---|---|---|---|---|
+| Taze açılış, ön plan boşta: WS / Private | 405 / 315 | 452 / 363 | 415 / 328 | tam GC sonrası aynı; canlı yığın 16,9 → 26,1 → 25,8 MB (kurulu satırların yönetilen payı ~9 MB) |
+| Taze açılış, ön plan boşta: M/s | 198–210 | 224–277 | 206–211 | imleçler odağı izlediği için ~200; dün gece 181 |
+| Resolve'da >100 ms kare boşluğu (100 pencere) | **640** | **677** | — | ikisi de çöküyor: ortam (bellek baskısı + CPU); dün gece sakin makinede 4 |
+| Görünür Rebuild izi, UI thread meşgul | %31 (dün gece) | **%21,3** | — | ≥150 ms dilim: yalnız koşu başı (180 ms); UIA 2107 → 1311 ms; metin biçimleme 1690 → 1132 ms; satır yeniden bağlama dilimleri yok |
+| Clean + Resolve sonrası, tam GC: canlı yönetilen yığın | 195,6 MB (dün gece, 100 s koşu) | **118,6 MB** (190 s koşu) | — | G3: ip düğümleri listeden düştü; koşu başına büyüme 417 → 366 MB (1,9× uzun koşuda) |
+| Clean + Resolve sonrası WS / Private (tam GC) | 682 / 578 (dün gece) | 748 / 646 | — | sabah ortamı +~115 MB taban (önceki derleme de 405'te); koşu 2× uzun |
+| Tepside koşu sonrası boşta | 11,4 (dün gece) | 9,7 M/s | — | F düzeltmesi yerinde |
+
+Okuma: (1) G2'nin UI thread'e etkisi ölçüldü ve olumlu (meşguliyet üçte bir düştü, yeniden bağlama dilimleri kalktı); kare
+boşluğu hedefi (4 → 0–1) bu sabah SINANAMADI — değişiklik öncesi derleme de aynı makinede aynı çöküşü veriyor, yani ölçüm
+ortamla boğulmuş; sakin makinede tekrar gerekir. (2) G2'nin "tüm satırlar çizilir" bedeli A/B ile ölçüldü (+47 MB, +26 M/s)
+ve **Hidden bandı** ile geri alındı (`perf/list-render-band`): viewport'un bir ekran dışındaki kurulu satırlar çizilmez. (3) G3
+canlı veriyi %40 düşürdü; kullanıcının gördüğü WS yine de GC'nin elde tuttuğu bölgeler + ortam yüzünden yüksek kalabiliyor.
+(4) Finalizer thread'i: izde 19–21 s "RunFinalizers" CPU görünüyor ama altında yönetilen çerçeve yok — büyük olasılıkla
+profilleyici artefaktı (VM içinde bekleme), cycle sayacıyla doğrulanmadı; açık soru.
+
+## Masaüstü ölçümü (betik; sakin makinede tekrar için)
 
 ```
 cd D:\Projects\Other\Apps\app_build_orchestrator

@@ -131,6 +131,30 @@ public class ListRowsStayRealizedTests
         GC.KeepAlive(window);
     }
 
+    /// <summary>Kurulu ama uzaktaki satırlar ÇİZİLMEZ (Hidden): yerinde ve ölçülü dururlar, bant kaydırmayla üstlerine
+    /// gelince görünür olurlar. Gerekçe ve ölçüm <see cref="FixedHeightVirtualizingPanel.RenderBandScreens"/>'de.</summary>
+    [StaFact]
+    public void Rows_far_from_the_viewport_stay_unrendered_until_the_window_approaches()
+    {
+        var (list, window, rows) = NewList();
+        PumpUntilEveryRowIsRealized(list);
+        var byModel = RowsByModel(list);
+        var first = byModel[rows[0]];
+        var last = byModel[rows[RowCount - 1]];
+
+        Assert.True(first.IsVisible, "pencerenin içindeki satır görünür olmalı");
+        Assert.False(last.IsVisible, "bir ekrandan uzaktaki satır çizilmemeli (Hidden)");
+        Assert.Equal(RowCount, list.RevealRows.Count);             // yine de kuruludur
+        AssertRowsSitAtTheirOffsets(list, rows);                   // ve yerindedir
+
+        ScrollTo(list, list.Scroll.ExtentHeight - list.Scroll.ViewportHeight);
+
+        Assert.True(last.IsVisible, "bant son satırın üstüne geldi: görünür");
+        Assert.False(first.IsVisible, "ilk satır artık bir ekrandan uzakta: Hidden");
+        Assert.Same(first, RowsByModel(list)[rows[0]]);           // kontrol değişmedi, yalnız çizimi durdu
+        GC.KeepAlive(window);
+    }
+
     [StaFact]
     public void Idle_realizes_every_row_and_scrolling_afterwards_builds_nothing_new()
     {
