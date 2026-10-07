@@ -68,39 +68,6 @@ public partial class MainWindow : Window
     /// <summary>[clean] Adımlar arası bekletme — motion sinyalini AYNI kaynaktan, taze okur (azaltılmış
     /// harekette ve gizli pencerede hiç beklenmez; kapı <see cref="ChoreographyMayPlay"/>).</summary>
     private readonly Services.StepHold _stepHold;
-
-    // ---------------------------------------------------------------- imleç girdi kapısı [perf B4 · karar 5]
-    private readonly CaretIdleGate _caretIdle;
-    private IPollTimer? _caretIdleTimer;
-
-    /// <summary>[test yüzeyi] Girdi yokluğunu yoklayan zamanlayıcı — üretimde dispatcher zamanlayıcısı, testte elle tıklatılan sahte.</summary>
-    internal IPollTimer CaretIdleTimer
-    {
-        get => _caretIdleTimer ??= new DispatcherPollTimer(Dispatcher);
-        set => _caretIdleTimer = value;
-    }
-
-    /// <summary>[test yüzeyi] Girdi kapısının saati (ms) — üretimde <see cref="Environment.TickCount64"/>.</summary>
-    internal Func<long> CaretIdleClock { get; set; } = () => Environment.TickCount64;
-
-    /// <summary>[test yüzeyi] Girdi kapısının zaman aşımı — işletim sisteminden okunan (<c>SPI_GETCARETTIMEOUT</c>).</summary>
-    internal TimeSpan CaretIdleTimeout => _caretIdle.Timeout;
-
-    /// <summary>Girdi geldi: kapı uyanır (imleçler döner) ve yoklama girdi varken sürer; boşta kalınınca yoklamayı kapının
-    /// kendi olayı durdurur. Üretimde <c>InputManager</c>'ın ön-işleme kancası ve <c>Activated</c> çağırır; <c>internal</c>:
-    /// test yüzeyi (başsız pencerede gerçek girdi üretilemez).</summary>
-    internal void NoteUserInput()
-    {
-        _caretIdle.NoteInput(CaretIdleClock());
-        CaretIdleTimer.Start(CaretIdleGate.PollInterval, () => _caretIdle.Tick(CaretIdleClock()));
-    }
-
-    /// <summary>Pencerenin tüm girdisi (klavye, fare, dokunma) <c>InputManager</c>'ın ön-işleme kancasından geçer — girdi kapısı
-    /// için tek kaynak; zaman damgası yazmaktan ibarettir, fare hareketi hızında bile ucuzdur.</summary>
-    private void OnPreProcessInput(object sender, PreProcessInputEventArgs e)
-    {
-        if (e.StagingItem.Input is InputEventArgs) NoteUserInput();
-    }
     /// <summary>[design v1.11.0 §9-5] Neonun random sırasını tohumlayan koşu sayacı — koreografi koşudan
     /// koşuya farklı bir sıra oynasın diye artar.</summary>
     private int _endFinaleRun;
@@ -151,15 +118,6 @@ public partial class MainWindow : Window
         var cursorClock = CursorClock.For(this);
         Activated += (_, _) => cursorClock.SetWindowActive(true);
         Deactivated += (_, _) => cursorClock.SetWindowActive(false);
-        // [perf B4 · karar 5] Üçüncü kapı: girdi yokken imleçler durur (Windows'un imleç zaman aşımı — CaretIdleGate). Girdi her
-        // klavye/fare olayıdır (InputManager'ın ön-işleme kancası: pencerenin tüm girdisi tek yerden geçer), aktifleşme de girdi
-        // sayılır; pasifleşince yoklama durur (saat zaten aktiflik kapısıyla durmuştur). Yoklama girdi varken saniyede birdir.
-        _caretIdle = new CaretIdleGate(Win32.CaretBlinkTimeout());
-        _caretIdle.IdleChanged += idle => { cursorClock.SetInputIdle(idle); if (idle) CaretIdleTimer.Stop(); };
-        InputManager.Current.PreProcessInput += OnPreProcessInput;
-        Closed += (_, _) => InputManager.Current.PreProcessInput -= OnPreProcessInput; // InputManager thread başınadır: pencere gidince kanca da gider
-        Activated += (_, _) => NoteUserInput();
-        Deactivated += (_, _) => CaretIdleTimer.Stop();
         // [perf B4 takip] İlk durum: pencere HİÇ aktifleşmeden gösterilebilir (foreground-lock, başka uygulama önde iken
         // açılış, yeniden başlatma) — Deactivated o zaman hiç gelmez ve saat varsayılan "aktif"te kalıp arka plandaki
         // pencerede kırpardı. İçerik ilk çizildiğinde (Loaded'dan sonra; aktivasyon o ana dek işlenmiştir) durum pencerenin

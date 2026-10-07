@@ -35,27 +35,6 @@ internal static class Win32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool UnregisterHotKey(nint hWnd, int id);
 
-    // --- imleç zaman aşımı (SystemParametersInfo)
-
-    /// <summary><c>SPI_GETCARETTIMEOUT</c>: Windows'un imlecin kırpmayı bıraktığı girdisizlik süresi (ms).</summary>
-    private const uint SPI_GETCARETTIMEOUT = 0x2022;
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, out uint pvParam, uint fWinIni);
-
-    /// <summary>İşletim sisteminin imleç zaman aşımı; okunamazsa (ya da sıfırsa) Windows'un varsayılanı
-    /// (<see cref="Controls.CaretIdleGate.DefaultTimeoutMs"/>). Kuruluşta bir kez okunur.</summary>
-    public static TimeSpan CaretBlinkTimeout()
-    {
-        try
-        {
-            if (SystemParametersInfo(SPI_GETCARETTIMEOUT, 0, out uint ms, 0) && ms > 0) return TimeSpan.FromMilliseconds(ms);
-        }
-        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
-        return TimeSpan.FromMilliseconds(Controls.CaretIdleGate.DefaultTimeoutMs);
-    }
-
     // --- genişletilmiş pencere stili (tepsi build overlay'i)
 
     public const int GWL_EXSTYLE = -20;
