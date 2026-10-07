@@ -3152,7 +3152,12 @@ implement `IScrollInfo`: the enclosing `ScrollViewer` still owns the scrolling a
 height, which leaves smooth scrolling, the bottom anchor and follow-mode untouched. The first layout builds only
 the visible window (plus half a viewport on each side); the remaining rows arrive while the dispatcher is idle, a
 few rows per slice so that a slice fits between two animation frames. A row control, once built, **stays with
-its row**: the panel neither discards nor recycles containers when the window moves. Recycling was measured to be
+its row**: the panel neither discards nor recycles containers when the window moves. It is not *drawn* until the
+window comes near, though: rows more than a screen above or below the viewport are kept hidden — built, measured
+and in place, but never rendered — and the band slides with the scroll. Keeping every row drawn was measured at
+about 47 MB on a fresh start (mostly unmanaged: each row's glyph runs and composition nodes) and about 26 million
+cycles a second more in an idle foreground window; a hidden row costs neither, and when the band reaches it only
+its drawing remains, about a millisecond. Recycling was measured to be
 the stutter itself — during a visible run the longest UI-thread slices were the window's rows being re-bound to
 new view models (text formatting, automation peer refresh and binding writes for each) whenever follow-mode moved
 the window a screenful at a time, and the graph's animations stalled for the duration. Construction was a small

@@ -53,6 +53,15 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
     /// kabaca bir saniyede dolar.</summary>
     internal const int IdleSliceRows = 3;
 
+    /// <summary>Çizim bandı: viewport'un bu kadar katı üstünde ve altında kalan kurulu satırlar ÇİZİLİR; ötesi
+    /// <see cref="Visibility.Hidden"/> durur — kurulu ve ölçülüdür, yerindedir, ama çizilmez. <b>Neden (ÖLÇÜLDÜ):</b>
+    /// tüm satırları çizilir tutmak taze açılışta ~47 MB (çoğu yönetilmeyen: her satırın glyph koşuları ve kompozisyon
+    /// düğümleri) ve ön planda boşta ~26 Mdöngü/s (kompozitörün daha büyük ağacı) getiriyordu. Çizilmeyen satırın
+    /// metni yine boşta biçimlenmiştir (ölçüm); banda girince yalnız çizimi kalır (satır başına ~1 ms) — takip
+    /// kaydırması pencereyi bir ekran taşısa bile yeniden bağlama ve ölçüm yoktur. Bir ekranlık bant, hızlı
+    /// kaydırmada satırların bir kare geriden "belirmesini" önleyecek kadar geniştir.</summary>
+    internal const double RenderBandScreens = 1.0;
+
     /// <summary>Öğe → yükseklik. <b>ItemsControl'e</b> (panelin sahibi) atanır; panel şablonun içinde doğduğu
     /// için ona doğrudan bir değer geçirmenin başka yolu yoktur. Verilmezse tüm öğeler
     /// <see cref="LayoutMetrics.DefaultRowHeight"/> sayılır.</summary>
@@ -124,6 +133,7 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
             double cache = viewportHeight * CacheRatio;
             double offset = _scroll!.VerticalOffset;
             RealizeRange(count, IndexAt(offset - cache), IndexAt(offset + viewportHeight + cache));
+            ApplyRenderBand(offset - viewportHeight * RenderBandScreens, offset + viewportHeight * (1 + RenderBandScreens));
         }
 
         MeasureChildren(width);
@@ -131,6 +141,23 @@ public sealed class FixedHeightVirtualizingPanel : VirtualizingPanel
 
         // Dıştaki ScrollViewer'ın extent'i BU yükseklikten doğar — tahmin değil, kümülatif tablonun kendisi.
         return new Size(width, totalHeight);
+    }
+
+    /// <summary>Çizim bandının (<see cref="RenderBandScreens"/>) içindeki çocuklar görünür, dışındakiler Hidden —
+    /// yalnız değişen çocuğa dokunulur. Bant kaydırmayla kayar; kurulu satırlar yerinde kalır. ScrollViewer yokken
+    /// (izole kullanım) çağrılmaz: her şey görünür.</summary>
+    private void ApplyRenderBand(double bandTop, double bandBottom)
+    {
+        var generator = ItemContainerGenerator;
+        for (int i = 0; i < InternalChildren.Count; i++)
+        {
+            int index = generator.IndexFromGeneratorPosition(new GeneratorPosition(i, 0));
+            if (index < 0 || index >= _tops.Length - 1) continue;
+            bool near = _tops[index + 1] >= bandTop && _tops[index] <= bandBottom;
+            var wanted = near ? Visibility.Visible : Visibility.Hidden;
+            var child = InternalChildren[i];
+            if (child.Visibility != wanted) child.Visibility = wanted;
+        }
     }
 
     /// <summary>Her kurulu çocuk kendi satır yüksekliğiyle ölçülür. Ölçümü geçerli olan çocukta WPF erken döner:
