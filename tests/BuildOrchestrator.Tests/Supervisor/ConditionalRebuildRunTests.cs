@@ -321,4 +321,38 @@ public class ConditionalRebuildRunTests : IDisposable
         Assert.Equal(SkipReasons.DependencyStillFailing, skip.Reason);
         Assert.Contains(Id("A"), invoker.Requests.Select(r => r.ProjectId)); // grup yine turlarla derlenir
     }
+
+    /// <summary>
+    /// [final inceleme — "(last known failure)" uçtan uca] Bu koşuda hiç DENENMEYEN bir kökün "hâlâ hatalı" kararı
+    /// yalnız koşu başındaki defterden gelir ve satır bunu söyler: <c>Up (last known failure)</c>. Biçim saf düzeyde
+    /// pinlidir (<c>ConditionalRebuildTests</c>, <c>DescribeStillFailingRoots</c>); bu test koordinatörün o metni
+    /// gerçekten ürettiği yolu pinler. Build'deki eski üretim yolu (kök bir döngü üyesi diye denenmezdi)
+    /// <see cref="A_cycle_root_is_attempted_in_this_build_and_the_dependent_is_labelled_from_this_run"/>'da kapandı; kalan
+    /// yol Cycles koşusunun kapsamıdır: Down bir döngünün upstream'i olduğu için kapsamdadır, kaydındaki kök Up ise
+    /// notun yazıldığı koşudan bu yana Down'un bağımlılık grafından çıkmış ve döngünün upstream'inde değildir — kapsam
+    /// dışı kalır (<c>skipped — not needed by a dependency cycle</c>), defterdeki son sonucu Failed'dır.
+    /// </summary>
+    [Fact]
+    public async Task A_root_outside_a_cycles_run_scope_is_labelled_from_its_last_known_result()
+    {
+        var store = SeededStore(); // Up: defterdeki son sonucu Failed; Down notunda kök Up
+        var invoker = AllSucceed();
+        var plan = new RunPlan(new BuildPlan(
+            [Node("Up", willBuild: true) with { BuildOrder = 0, WillBuildReason = WillBuildReason.LastFailed },
+             Node("Down", willBuild: true) with { BuildOrder = 1, WillBuildReason = WillBuildReason.WaitingForDependency },
+             Node("A", deps: ["B", "Down"], inCycle: true, willBuild: true) with { BuildOrder = 2, WillBuildReason = WillBuildReason.NeverBuilt },
+             Node("B", deps: ["A"], inCycle: true, willBuild: true) with { BuildOrder = 3, WillBuildReason = WillBuildReason.NeverBuilt }],
+            Cycles: [[Id("A"), Id("B")]], Configuration: "Debug"),
+            EmptyRefs(), Incremental: RunCoordinatorTests.Incremental("Up", "Down", "A", "B"));
+        using var h = new Harness(plan, invoker, stateStore: store);
+
+        await RunAsync(h, Start(RunMode.Cycles));
+
+        Assert.DoesNotContain(Id("Up"), invoker.Requests.Select(r => r.ProjectId)); // kök bu koşuda denenmedi
+        Assert.Equal(SkipReasons.OutOfCycleScope,
+            Assert.Single(h.Events.OfType<ProjectSkippedEvent>(), e => e.ProjectId == Id("Up")).Reason);
+        var skip = Assert.Single(h.Events.OfType<ProjectSkippedEvent>(), e => e.ProjectId == Id("Down"));
+        Assert.Equal(SkipReasons.DependencyStillFailing, skip.Reason);
+        Assert.Contains("Down: skipped — dependency still failing (Up (last known failure))", h.DecisionLog);
+    }
 }

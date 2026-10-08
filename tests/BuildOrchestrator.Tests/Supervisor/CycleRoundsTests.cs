@@ -750,9 +750,13 @@ public class CycleRoundsTests
     ///
     /// <para>Senaryo: tur 1 tamamen yeşil (karar Continue, tur 2 açılır), stop tur 2'nin İLK üyesinde düşer.
     /// Kapı yoksa <c>Decide(2, {}, {})</c> → Converged.</para>
+    /// <para>[Build cycle derler — final inceleme] Build de grubu aynı tur döngüsüyle derler; graceful Stop'un tur
+    /// ortasındaki kapısı moddan bağımsızdır. Test eskiden yalnız Cycles'ta koşuyordu; Theory iki modu da pinler.</para>
     /// </summary>
-    [Fact]
-    public async Task a_round_cut_short_by_a_stop_is_never_judged_converged()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task a_round_cut_short_by_a_stop_is_never_judged_converged(RunMode mode)
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -772,7 +776,7 @@ public class CycleRoundsTests
             using var h = new Harness(plan, invoker, stateStore: store);
             sut = h.Sut;
 
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);   // B tur 2'de HİÇ dispatch edilmez
