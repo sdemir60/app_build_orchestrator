@@ -36,17 +36,22 @@ public enum ConditionalRebuildVerdict
 public static class ConditionalRebuild
 {
     /// <summary>
-    /// Bu koşu <paramref name="node"/>'u koşullu mu değerlendirir. Yalnız Build ve Cycles koşuları; satırdan
-    /// tetiklenen tek proje koşusunun hedefi koşulsuz derlenir (kullanıcının açık komutu), Rebuild her şeyi
-    /// derler. Bir SCC grubunun üyesi de koşulsuz derlenir: grup tek iş kalemidir ve bir üyeyi atlayıp
-    /// diğerlerini derlemek grubu yarım bırakırdı — güvenli yön.
+    /// Bu koşu <paramref name="node"/>'u TEK BAŞINA koşullu mu değerlendirir. Yalnız Build ve Cycles koşuları;
+    /// satırdan tetiklenen tek proje koşusunun hedefi koşulsuz derlenir (kullanıcının açık komutu), Rebuild her şeyi
+    /// derler. Bir SCC grubunun üyesi tek başına koşullu değildir: grup tek iş kalemidir ve bir üyeyi atlayıp
+    /// diğerlerini derlemek grubu yarım bırakırdı — üye yalnız grubuyla birlikte koşulludur (<see cref="ConditionalIds"/>).
     /// </summary>
     public static bool AppliesTo(ProjectNode node, RunMode mode, bool scopedRun, bool cycleGroupMember) =>
         ModeEvaluatesConditionally(mode)
         && !scopedRun
         && !cycleGroupMember
-        && node.WillBuild == true
-        && node.WillBuildReason == WillBuildReason.WaitingForDependency;
+        && Waits(node);
+
+    /// <summary>Proje YALNIZ kökünü bekliyor: kirli, ama tek gerekçesi kayıtlı köklerinin hâlâ hatalı olabilmesi.
+    /// Tekil (<see cref="AppliesTo"/>), grup (<see cref="GroupAppliesTo"/>) ve küme (<see cref="ConditionalIds"/>)
+    /// kuralının ORTAK tanımı (kopya YASAK).</summary>
+    private static bool Waits(ProjectNode node) =>
+        node.WillBuild == true && node.WillBuildReason == WillBuildReason.WaitingForDependency;
 
     /// <summary>
     /// [grup koşullu atlama] Bir SCC, dispatch anında GRUP OLARAK koşullu değerlendirilebilir mi.
@@ -70,7 +75,7 @@ public static class ConditionalRebuild
         foreach (var member in members)
         {
             if (member.WillBuild == false) continue;
-            if (member.WillBuild == true && member.WillBuildReason == WillBuildReason.WaitingForDependency)
+            if (Waits(member))
             {
                 anyWaiting = true;
                 continue;
@@ -89,18 +94,44 @@ public static class ConditionalRebuild
     /// [ara inceleme I2] Bir koşunun — ya da Sync'in simüle ettiği bir sonraki düz Build'in — sırası geldiğinde KOŞULLU
     /// değerlendireceği projeler. Koordinatör (koşunun kendi önizlemesi ve kuyruğu) ile Sync (önizleme ve "N to build")
     /// AYNI kümeyi buradan alır (kopya YASAK): grup üyeliği <paramref name="groups"/>'tan
-    /// (<see cref="CycleCompilation.GroupsFor"/>) okunur, böylece bekleyen bir döngü üyesi iki yerde de tek başına koşullu
-    /// sayılmaz. <paramref name="preSkipped"/>: koşunun baştan atladığı projeler — atlanan proje koşullu da değildir.
+    /// (<see cref="CycleCompilation.GroupsFor"/>) okunur. <paramref name="preSkipped"/>: koşunun baştan atladığı
+    /// projeler — atlanan proje koşullu da değildir.
+    /// <para><b>Grup üyesi</b> tek başına koşullu değildir; grubu dispatch anında BÜTÜN OLARAK koşullu
+    /// değerlendirilecekse (<see cref="GroupAppliesTo"/>) bekleyen üyeleri kümededir. <b>[DEĞİŞEN KURAL — final review
+    /// M-2]</b> Eskiden grup üyesi kümeye hiç girmezdi: Build'in açılış dalgası, kuyruğu ve "N to build" sayısı yalnız
+    /// kökünü bekleyen grubu KESİN sayıyor, koşu ise grubu <c>dependency still failing</c> ile atlayabiliyordu —
+    /// sıradan bekleyen projenin hiç vermediği bir söz. Karar grup düzeyinde kalır; söz grubun kaderine bağlanır.</para>
     /// </summary>
     public static IReadOnlySet<string> ConditionalIds(IReadOnlyList<ProjectNode> nodes, RunMode mode, bool scopedRun,
         CycleGroups? groups, IReadOnlySet<string>? preSkipped = null)
     {
         ArgumentNullException.ThrowIfNull(nodes);
+        var byId = new Dictionary<string, ProjectNode>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in nodes) byId[node.Id] = node;
+        // Grup kararı grup başına bir kez (anahtar: build-order lideri — MembersOf her üyeye aynı listeyi verir).
+        var groupWaits = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
         return nodes
-            .Where(n => (preSkipped is null || !preSkipped.Contains(n.Id))
-                && AppliesTo(n, mode, scopedRun, cycleGroupMember: groups?.MembersOf(n.Id).Count > 0))
+            .Where(n => (preSkipped is null || !preSkipped.Contains(n.Id)) && IsConditional(n))
             .Select(n => n.Id)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        bool IsConditional(ProjectNode node)
+        {
+            var members = groups?.MembersOf(node.Id) ?? [];
+            if (members.Count == 0) return AppliesTo(node, mode, scopedRun, cycleGroupMember: false);
+            if (scopedRun || !Waits(node)) return false;
+            if (!groupWaits.TryGetValue(members[0], out bool waits))
+            {
+                var memberNodes = new List<ProjectNode>(members.Count);
+                foreach (string id in members)
+                    if (byId.TryGetValue(id, out var member)) memberNodes.Add(member);
+                // Planda olmayan üye (savunmacı): grup kesin derlenir sayılır — güvenli yön, koordinatörle aynı.
+                waits = memberNodes.Count == members.Count && GroupAppliesTo(memberNodes, mode);
+                groupWaits[members[0]] = waits;
+            }
+            return waits;
+        }
     }
 
     /// <summary>

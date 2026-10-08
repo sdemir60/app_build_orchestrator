@@ -6,7 +6,7 @@ using BuildOrchestrator.Contracts.Model;
 /// <summary>
 /// App'in CANLI geçişleri: bir koşu olayı ya da kullanıcı eylemi bir satırın kaydını değiştirdiği ANDA satır,
 /// motorun bir sonraki önizlemesini (bir Sync'e kadar gelmeyebilir) beklemeden ne göstermeli? Cevap o
-/// önizlemenin (<see cref="WillBuildEvaluator"/> + <see cref="ConditionalRebuild.AppliesTo"/>) AYNEN kendisidir;
+/// önizlemenin (<see cref="WillBuildEvaluator"/> + <see cref="ConditionalRebuild.ConditionalIds"/>) AYNEN kendisidir;
 /// App kendi kopyasını TÜRETMEZ, burayı sorar. Eşlemeler saf ve tek yerdedir (kopya YASAK): her biri, motorun
 /// o anda deftere yazdığı kaydın <see cref="WillBuildEvaluator"/>'da neye düştüğünü söyler — satır ile bir
 /// sonraki Sync ayrışmaz.
@@ -33,9 +33,11 @@ public static class NextPreview
     ///
     /// <para><b>Dep-issue'lu, döngü üyesi (yakınsamış grup):</b> defter GERÇEKTEN not+kök yazar; bir sonraki Sync
     /// bu üyeyi Build'in kararıyla (<see cref="CycleCompilation"/>) değerlendirir — <c>WaitingForDependency</c>,
-    /// <c>WillBuild=true</c>. <see cref="ConditionalRebuild.AppliesTo"/> grup üyesini dışladığı için
-    /// <c>Conditional=false</c> kalır — üye TEK BAŞINA hiçbir zaman koşullu değildir; grubun kaderine
-    /// <see cref="ConditionalRebuild.GroupAppliesTo"/> dispatch anında grup düzeyinde karar verir.</para>
+    /// <c>WillBuild=true</c>, <c>Conditional=true</c>: üye tek başına değil GRUBUYLA koşulludur
+    /// (<see cref="ConditionalRebuild.ConditionalIds"/>). Yakınsamış bir grubun her üyesi ya bu notu taşır (bekler) ya
+    /// taşımaz (güncel); başka gerekçeyle kirli üye kalmadığından grup kapısı (<see cref="ConditionalRebuild.GroupAppliesTo"/>)
+    /// tutar — Sync'in cevabı budur. <b>[DEĞİŞEN KURAL — final review M-2]</b> Eskiden <c>Conditional=false</c>
+    /// dönerdi: grup üyesi koşullu kümeye hiç girmezdi.</para>
     /// </summary>
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterSuccess(
         bool inCycle, bool trusted, IReadOnlyList<string>? depIssues)
@@ -43,7 +45,7 @@ public static class NextPreview
         if (!trusted) return (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
         if (depIssues is not { Count: > 0 }) return (false, WillBuildReason.UpToDate, false);
         bool willBuild = NextBuildCompiles(inCycle);
-        return (willBuild, WillBuildReason.WaitingForDependency, willBuild && !inCycle);
+        return (willBuild, WillBuildReason.WaitingForDependency, willBuild);
     }
 
     /// <summary>

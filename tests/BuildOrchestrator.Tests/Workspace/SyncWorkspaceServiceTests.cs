@@ -42,64 +42,48 @@ public class SyncWorkspaceServiceTests
     /// taramasıyla bulur — bkz. [Task 6]).</summary>
     private static void WriteWorkspace(GitTestRepo repo, bool includeC = false)
     {
-        repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { }");
-        repo.WriteFile(Path.Combine("src", "B", "B.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>B</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\A\\A.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "B", "B.cs"), "public class B { }");
-        repo.WriteFile(SlnName,
-            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
-            + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
-
-        if (!includeC) return;
-        repo.WriteFile(Path.Combine("src", "C", "C.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>C</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "C", "C.cs"), "public class C { }");
+        WriteSdkProject(repo, "A");
+        WriteSdkProject(repo, "B", "A");
+        WriteSln(repo, "A", "B");
+        if (includeC) WriteSdkProject(repo, "C", "B");
     }
 
     /// <summary>A ↔ B: iki SDK-style proje birbirine <c>ProjectReference</c> verir — tek SCC. <see cref="WriteWorkspace"/>
     /// ile aynı üslup; tek farkı A'nın B'ye de referans vermesi.</summary>
     private static void WriteCycleWorkspace(GitTestRepo repo)
     {
-        repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { }");
-        repo.WriteFile(Path.Combine("src", "B", "B.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>B</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-            + "<ItemGroup><ProjectReference Include=\"..\\A\\A.csproj\" /></ItemGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "B", "B.cs"), "public class B { }");
-        repo.WriteFile(SlnName,
-            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
-            + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
+        WriteSdkProject(repo, "A", "B");
+        WriteSdkProject(repo, "B", "A");
+        WriteSln(repo, "A", "B");
     }
 
     /// <summary>R (kök) ve ona bağlı A ↔ B döngüsü: A, R ile B'ye; B, A ile R'ye <c>ProjectReference</c> verir.
     /// <see cref="WriteCycleWorkspace"/> ile aynı üslup; döngünün dışında bir kök taşır.</summary>
     private static void WriteRootedCycleWorkspace(GitTestRepo repo)
     {
-        repo.WriteFile(Path.Combine("src", "R", "R.csproj"),
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>R</AssemblyName>"
-            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
-        repo.WriteFile(Path.Combine("src", "R", "R.cs"), "public class R { }");
-        foreach (var (self, other) in new[] { ("A", "B"), ("B", "A") })
-        {
-            repo.WriteFile(Path.Combine("src", self, self + ".csproj"),
-                $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{self}</AssemblyName>"
-                + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
-                + $"<ItemGroup><ProjectReference Include=\"..\\{other}\\{other}.csproj\" />"
-                + "<ProjectReference Include=\"..\\R\\R.csproj\" /></ItemGroup></Project>");
-            repo.WriteFile(Path.Combine("src", self, self + ".cs"), $"public class {self} {{ }}");
-        }
+        WriteSdkProject(repo, "R");
+        WriteSdkProject(repo, "A", "B", "R");
+        WriteSdkProject(repo, "B", "A", "R");
     }
+
+    /// <summary>Tek SDK-style proje: <c>src\{name}\{name}.csproj</c> (sırayla verilen projelere <c>ProjectReference</c>)
+    /// ve bir sınıf dosyası. Bu sınıfın çalışma alanı fixture'ları projelerini buradan yazar (kopya YASAK).</summary>
+    private static void WriteSdkProject(GitTestRepo repo, string name, params string[] references)
+    {
+        string items = references.Length == 0
+            ? ""
+            : "<ItemGroup>" + string.Concat(references.Select(r => $"<ProjectReference Include=\"..\\{r}\\{r}.csproj\" />"))
+              + "</ItemGroup>";
+        repo.WriteFile(Path.Combine("src", name, name + ".csproj"),
+            $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{name}</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>" + items + "</Project>");
+        repo.WriteFile(Path.Combine("src", name, name + ".cs"), $"public class {name} {{ }}");
+    }
+
+    /// <summary>Verilen projeleri (bu sırayla) içeren <see cref="SlnName"/>.</summary>
+    private static void WriteSln(GitTestRepo repo, params string[] names) =>
+        repo.WriteFile(SlnName, string.Concat(names.Select((n, i) =>
+            $"Project(\"{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}\") = \"{n}\", \"src\\{n}\\{n}.csproj\", \"{{{i + 1}}}\"\nEndProject\n")));
 
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
     private static string NewCacheRoot() => Directory.CreateTempSubdirectory("bo-sync-cache-").FullName;
@@ -647,13 +631,16 @@ public class SyncWorkspaceServiceTests
     }
 
     /// <summary>[ara inceleme I2 — Build cycle derler] Sync önizlemesi bir sonraki düz Build'in cevabıdır ve
-    /// <c>Conditional</c> da AYNI soruyu sorar: kökünü bekleyen döngü üyesi Build'de TEK BAŞINA koşullu değildir — grubu
-    /// tek iş kalemidir ve kaderine dispatch anında grup düzeyinde karar verilir (<c>ConditionalRebuild.GroupAppliesTo</c>).
-    /// Kusur: Sync grup üyeliğini sormuyordu (<c>cycleGroupMember: false</c>); bekleyen üye Sync'te koşullu, koşunun
-    /// kendi önizlemesinde koşulsuzdu — "N to build" onu saymıyor, Build tıklanınca satır bir karede kuyruğa
-    /// sıçrıyordu. Sync ile koşu grup haritasını artık aynı yerden alır (<c>CycleCompilation.GroupsFor</c>).</summary>
+    /// <c>Conditional</c> da AYNI soruyu sorar. Kusur (I2): Sync grup üyeliğini sormuyordu (<c>cycleGroupMember: false</c>);
+    /// bekleyen üye Sync'te koşullu, koşunun kendi önizlemesinde koşulsuzdu — Build tıklanınca satır bir karede kuyruğa
+    /// sıçrıyordu. Sync ile koşu koşullu kümeyi artık aynı fonksiyondan, aynı grup haritasıyla alır
+    /// (<c>ConditionalRebuild.ConditionalIds</c>, <c>CycleCompilation.GroupsFor</c>).
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: bekleyen üye koşullu DEĞİLDİR ve "N to build" onu sayar
+    /// (<c>ToBuildCount == 3</c>). Kusur: grubun tamamı yalnız kökünü beklerken koşu grubu dispatch anında
+    /// <c>dependency still failing</c> ile atlayabilir — Sync'in "derlenecek" sözü tutulmuyordu, sıradan bekleyen proje
+    /// ise bu sözü hiç vermez. Üye artık grubuyla birlikte koşulludur; kesin derlenecek yalnız R'dir.</para></summary>
     [Fact]
-    public async Task A_cycle_member_waiting_for_a_failed_root_is_not_conditional_in_the_sync_preview()
+    public async Task A_cycle_group_waiting_only_for_a_failed_root_is_conditional_in_the_sync_preview()
     {
         using var origin = new GitTestRepo();
         WriteRootedCycleWorkspace(origin);
@@ -681,11 +668,12 @@ public class SyncWorkspaceServiceTests
             var item = Assert.Single(preview.Items, i => i.Name == member);
             Assert.Equal(WillBuildReason.WaitingForDependency, item.Reason);
             Assert.True(item.WillBuild);
-            Assert.False(item.Conditional); // grup üyesi tek başına koşullu değil — koşunun önizlemesiyle AYNI
+            Assert.True(item.Conditional); // grubuyla birlikte koşullu — koşunun önizlemesiyle AYNI küme
         }
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal(1, done.CycleCount);
-        Assert.Equal(3, done.ToBuildCount); // R kesin; A ve B grubuyla birlikte sayılır
+        Assert.Equal(1, done.ToBuildCount);   // yalnız R kesin; A ve B grubun dispatch kararına bağlı
+        Assert.Equal(2, done.UpToDateCount);  // bekleyen, sıradan bekleyen proje gibi güncel sayılır
     }
 
     /// <summary>

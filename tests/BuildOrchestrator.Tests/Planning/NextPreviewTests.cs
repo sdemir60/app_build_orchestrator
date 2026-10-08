@@ -35,11 +35,17 @@ public class NextPreviewTests
     /// <c>false</c>'a ZORLANIRDI. Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build
     /// kirli cycle grubunu da derler; Sync üyeyi Build'in kararıyla (<see cref="CycleCompilation"/>) değerlendirir ve
     /// bekleyen üye "derlenecek" okunur. Aynı kayıt evaluator'a verilerek doğrulanır — kopya değil, aynı karar.</para>
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: <c>Conditional=false</c> — "üye tek başına hiçbir
+    /// zaman koşullu değildir". Sync artık yalnız kökünü bekleyen grubun bekleyen üyelerini GRUPLA birlikte koşullu
+    /// sayar (<see cref="ConditionalRebuild.ConditionalIds"/>): grup dispatch anında bütün olarak atlanabilir, sıradan
+    /// bekleyen proje gibi kesin değildir. Yakınsamış bir grubun üyesi ya bu notu taşır (bekler) ya taşımaz (güncel) —
+    /// başka bir gerekçeyle kirli üye kalmaz, grup kapısı tutar; canlı geçiş bu yüzden Sync'in cevabını BİREBİR
+    /// üretir: sıradan bekleyen projeyle aynı üçlü.</para>
     /// </summary>
     [Fact]
-    public void a_converged_cycle_member_with_a_dep_issue_waits_without_being_conditional()
+    public void a_converged_cycle_member_with_a_dep_issue_waits_conditionally_like_a_plain_project()
     {
-        Assert.Equal((true, WillBuildReason.WaitingForDependency, false),
+        Assert.Equal((true, WillBuildReason.WaitingForDependency, true),
             NextPreview.AfterSuccess(inCycle: true, trusted: true, ["Up"]));
 
         // Motorun yakınsamış gruptaki dep-issue'lu üye için gerçekten yazdığı kayıt (taze imza + not + kök):

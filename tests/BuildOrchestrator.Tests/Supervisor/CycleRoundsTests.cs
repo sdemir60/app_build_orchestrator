@@ -20,6 +20,11 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// Fixture: <see cref="RunCoordinatorTests"/>'in harness'ı, fake invoker'ı ve plan yardımcıları AYNEN
 /// kullanılır (<c>using static</c>) — koordinatörün test host'u tek yerdedir, kopya YASAK (CLAUDE.md).
 /// Gerçek MSBuild YOK, sleep/poll YOK [D8].
+///
+/// <para><b>Ölçüm (gerçek OSYS, 2026-10-08, Balanced/paralellik 4 — kullanıcının 2026-10-07 tabanıyla aynı ayar):</b>
+/// Clean sonrası TEK bir Build 187 projeyi 7 cycle grubu (33 üye, hepsi tur 1'de yakınsadı) dahil 194 sn'de derledi;
+/// taban aynı işi iki koşuda yapıyordu (Resolve cycles 197 sn + Build 187 sn). Değişiklik olmadan ikinci Build
+/// 1,2 sn — her grup <c>up to date</c> atlandı (ayrıntı: .claude/outputs/2026-10-08-08-02-build-compiles-dirty-cycles-measurement.md).</para>
 /// </summary>
 public class CycleRoundsTests
 {
@@ -2070,6 +2075,12 @@ public class CycleRoundsTests
 
             Assert.Equal(["Up#1"], rec.Calls);                 // grup HİÇ derlenmedi — tek tur bile yok
             Assert.Empty(h.Events.OfType<CycleRoundStartedEvent>());
+            // [final review M-2] Koşunun kendi önizlemesi bekleyen üyeleri GRUPLA koşullu yazar: dalga, kuyruk ve
+            // payda onları kesin saymaz — grup dispatch anında atlanabilir. Kök (Up) kesindir.
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.ToDictionary(i => i.ProjectId);
+            Assert.True(preview[Id("A")].Conditional);
+            Assert.True(preview[Id("B")].Conditional);
+            Assert.False(preview[Id("Up")].Conditional);
             var skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], skips.Select(e => e.ProjectId));
             Assert.All(skips, e => Assert.Equal(SkipReasons.DependencyStillFailing, e.Reason));
@@ -2119,6 +2130,9 @@ public class CycleRoundsTests
 
             Assert.Contains("A#1", rec.Calls);                  // grup dispatch edildi
             Assert.Contains("B#1", rec.Calls);
+            // [final review M-2] Grup kesin derlenecek: hiçbir üyesi koşullu yazılmaz.
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items;
+            Assert.DoesNotContain(preview, i => i.Conditional);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -2147,6 +2161,8 @@ public class CycleRoundsTests
             Assert.Contains("B#1", rec.Calls);
             Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
                 e => e.Reason == SkipReasons.DependencyStillFailing);
+            // [final review M-2] Rebuild hiçbir şeyi koşullu değerlendirmez — bekleyen grubun üyeleri de kesin.
+            Assert.DoesNotContain(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => i.Conditional);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

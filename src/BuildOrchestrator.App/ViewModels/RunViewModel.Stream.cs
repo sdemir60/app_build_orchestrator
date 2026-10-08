@@ -57,9 +57,10 @@ public sealed partial class RunViewModel
     private int _outOfScopeSkips;
 
     // [Task 4] Cycle round ilerleme takibi — aktif satırdaki "member i/N · round r/cap" detayının kaynağı.
-    // _cycleRoundCap == 0 ⇒ bu run'da henüz bir CycleRoundStartedEvent gelmedi (round AKTİF DEĞİL) — upstream/
-    // prerequisite projeler bu run'ın ilk aşamasında builds eder ve detay almaz. RunStarted/RunCompleted'ta
-    // sıfırlanır (bir sonraki run temiz başlasın).
+    // _cycleRoundCap == 0 ⇒ ekranda turu süren bir grup yok (round AKTİF DEĞİL). Turun dışındaki projeler — Cycles'ta
+    // bayat upstream, düz Build'de sıradan projeler (turla EŞZAMANLI da derlenebilirler) — detay almaz; kapı liderin
+    // grubuna üyeliktir (aşağıda). RunStarted/RunCompleted'ta ve ekrandaki grubun CycleCompletedEvent'inde sıfırlanır
+    // (ResetCycleRoundCounters): bir sonraki run temiz başlar, düz Build grup bitince kendi satırına döner.
     // [Review fix — Finding 1] Motor (RunCoordinator) eşzamanlı SCC'leri SERİLEŞTİRMEZ ve Cycles modunda
     // paralellik kelepçelemez — ≥2 grup aynı anda koşabilir, bu yüzden "tek aktif grup" varsayımı YANLIŞTIR.
     // _cycleRoundLeaderId turu başlatan LİDERİ tutar; ProjectStartedEvent bu sayaçları yalnız O LİDERİN grubuna
@@ -160,8 +161,7 @@ public sealed partial class RunViewModel
                 OnPropertyChanged(nameof(IsResolvingCycles)); // bakım kutusunun Resolve spinner'ı bunu okur
                 NotifyUpdateRestartGate(); // [design v1.23.0 §2.12] Resolve, Restart kilidinde görev gibi okunur
                 // [Task 4] Yeni run: önceki koşunun round ilerlemesi bu run'ı ETKİLEMEZ.
-                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
-                _cycleRoundLeaderId = null;
+                ResetCycleRoundCounters();
                 // [Review fix — Finding 2] _outOfScopeSkips YALNIZ RunCompletedEvent'te sıfırlanıyordu; motor bir
                 // Cycles koşusu ORTASINDA ölürse (RunCompletedEvent hiç gelmez) sayaç asılı kalır ve BİR SONRAKİ
                 // run'ın ilk PushStream'ine eski bir "N outside cycle scope — skipped" satırı sızdırırdı. Her yeni
@@ -216,9 +216,9 @@ public sealed partial class RunViewModel
                 break;
 
             case ProjectStartedEvent e:
-                // [Task 4] Bu proje bir cycle round üyesiyse (round AKTİFKEN — upstream projeler round
-                // başlamadan ÖNCE build eder, bkz. _cycleRoundCap) sayaç ilerler ve aktif satır "member i/N ·
-                // round r/cap" detayını taşır; değilse (upstream/prerequisite) detay YOK — düz "{name} building…".
+                // [Task 4] Bu proje ekranda turu süren grubun üyesiyse (round AKTİFKEN, bkz. _cycleRoundCap) sayaç
+                // ilerler ve aktif satır "member i/N · round r/cap" detayını taşır; değilse (Cycles'ta upstream, düz
+                // Build'de turla eşzamanlı derlenen sıradan proje) detay YOK — düz "{name} building…".
                 // [Review fix — Finding 1] Kapı GLOBAL _cycleGroups.IsMember DEĞİL — turu başlatan LİDERİN
                 // GRUBUNA (MembersOf(_cycleRoundLeaderId)) üyelik. Motor eşzamanlı ikinci bir SCC'yi paralel
                 // dispatch edebilir; o grubun üyesi bu turun sayaç/kapak alanlarını TÜKETMEMELİ — global kapı
@@ -298,10 +298,7 @@ public sealed partial class RunViewModel
                 // şerit "Building"e dönsün (RibbonText: cycleRound > 0 kapısı) ve ProjectStartedEvent'in üye-detay kapısı
                 // kapansın. Yalnız ekranda yazan grup (lider eşleşiyorsa): eşzamanlı başka bir grubun turu yerinde kalır.
                 if (string.Equals(_cycleRoundLeaderId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
-                {
-                    (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
-                    _cycleRoundLeaderId = null;
-                }
+                    ResetCycleRoundCounters();
                 break;
 
             // [spec 2026-09-18 §6.2] Satır kipe göre OnSyncCompleted'ta seçildi (sessiz Sync'te tek satır ya da hiç).
@@ -347,10 +344,18 @@ public sealed partial class RunViewModel
                 _stream.EndRun();
                 SyncActiveLine();
                 // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.
-                (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
-                _cycleRoundLeaderId = null;
+                ResetCycleRoundCounters();
                 break;
         }
+    }
+
+    /// <summary>Tur takibinin TEK sıfırlama yeri (kopya YASAK): koşu başında, koşu sonunda ve ekrandaki grubun
+    /// kararında (<see cref="CycleCompletedEvent"/>) aynı demet temizlenir — şerit tur satırını bırakır, üye-detay
+    /// kapısı kapanır.</summary>
+    private void ResetCycleRoundCounters()
+    {
+        (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+        _cycleRoundLeaderId = null;
     }
 
     private void PushStream(StreamKind kind, string? projectId, string text)

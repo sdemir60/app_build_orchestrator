@@ -1752,7 +1752,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>NeverBuilt</c>), her satırı <c>WillBuild=true</c> işaretler, fazı <c>Idle</c>'a alır ve konsola
     /// "Configuration → X — all projects will rebuild" yazardı. Değişme gerekçesi (ölçüm): defter proje başına TEK
     /// imza tutar, o da projenin en son derlendiği configuration'ınkidir — Debug → Release → Debug dönüşünde motor her
-    /// satırı güncel bulurken tahmin hepsini "derlenecek" diyordu; tahmin döngü üyelerini (düz Build onları derlemez)
+    /// satırı güncel bulurken tahmin hepsini "derlenecek" diyordu; tahmin döngü üyelerini (düz Build o zaman onları derlemiyordu)
     /// ve kararı olmayan satırları da sayıyordu; OSYS'te <c>bin\Release</c> çıktısı yokken motor "never built",
     /// tahmin "affected" diyordu. Doğru cevabı yalnız yeni configuration'ın Sync'i verir.</para></summary>
     public void SetConfiguration(string value)

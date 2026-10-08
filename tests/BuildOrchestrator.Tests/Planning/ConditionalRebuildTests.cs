@@ -160,23 +160,55 @@ public class ConditionalRebuildTests
         Assert.False(ConditionalRebuild.GroupAppliesTo(group, RunMode.Clean));
     }
 
-    /// <summary>[ara inceleme I2] Koşullu küme — koordinatörün ve Sync'in TEK kaynağı: grup üyesi (haritadan) ve baştan
-    /// atlanan proje kümede yoktur; yalnız kökünü bekleyen sıradan proje vardır.</summary>
+    /// <summary>[ara inceleme I2] Koşullu küme — koordinatörün ve Sync'in TEK kaynağı: baştan atlanan proje kümede yoktur;
+    /// kökünü bekleyen sıradan proje vardır; yalnız köklerini bekleyen bir grubun bekleyen üyeleri GRUPLA birlikte vardır.
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: grup üyesi kümede HİÇ yoktur (<c>["P"]</c>) — "üye tek
+    /// başına koşullu değildir". Kusur: grup dispatch anında <c>dependency still failing</c> ile bütün olarak atlanabildiği
+    /// hâlde Build'in açılış dalgası, kuyruğu ve "N to build" sayısı üyeleri KESİN sayıyordu; kökü hâlâ kırık bir
+    /// Build'de dalga grubu yakıyor, koşu grubu atlıyordu. Sıradan bekleyen proje bu sözü hiç vermez. Üye artık
+    /// tek başına değil, grubunun koşullu olduğu (<see cref="ConditionalRebuild.GroupAppliesTo"/>) yerde koşulludur —
+    /// grup bölünmez, söz grubun kaderine bağlanır.</para></summary>
     [Fact]
-    public void the_conditional_set_leaves_out_group_members_and_pre_skipped_projects()
+    public void the_conditional_set_holds_a_waiting_group_whole_and_leaves_out_pre_skipped_projects()
     {
         ProjectNode[] nodes =
         [
             Waiting(),                                    // P: sıradan, bekliyor → koşullu
-            Waiting() with { Id = "M1", InCycle = true }, // grup üyeleri → tek başına koşullu değil
+            Waiting() with { Id = "M1", InCycle = true }, // yalnız kökünü bekleyen grup → üyeler grupla koşullu
             Waiting() with { Id = "M2", InCycle = true },
             Waiting() with { Id = "S" },                  // baştan atlandı → koşullu değil
         ];
         var groups = BuildOrchestrator.Core.Scheduling.CycleGroups.From(nodes, [["M1", "M2"]]);
 
-        Assert.Equal(["P"], ConditionalRebuild.ConditionalIds(nodes, RunMode.Build, scopedRun: false, groups,
-            preSkipped: new HashSet<string>(["S"])));
+        Assert.Equal(["M1", "M2", "P"], ConditionalRebuild.ConditionalIds(nodes, RunMode.Build, scopedRun: false, groups,
+            preSkipped: new HashSet<string>(["S"])).Order(StringComparer.Ordinal));
+        Assert.Equal(["M1", "M2", "P"], ConditionalRebuild.ConditionalIds(nodes, RunMode.Cycles, scopedRun: false, groups,
+            preSkipped: new HashSet<string>(["S"])).Order(StringComparer.Ordinal));
         Assert.Empty(ConditionalRebuild.ConditionalIds(nodes, RunMode.Rebuild, scopedRun: false, groups));
+    }
+
+    /// <summary>[final review M-2] Grup kapısının iki kontrolü üyeye de aynen geçer: kendi gerekçesiyle kirli TEK üye grubu
+    /// kesin derletir (hiçbir üye koşullu değil); güncel üye kümeye girmez (zaten derlenecekler arasında değil); satırdan
+    /// tetiklenen koşu hiçbir şeyi koşullu değerlendirmez.</summary>
+    [Fact]
+    public void a_group_member_is_conditional_only_while_its_whole_group_waits()
+    {
+        ProjectNode[] dirty =
+        [
+            Waiting() with { Id = "M1", InCycle = true },
+            Waiting(WillBuildReason.SignatureChanged) with { Id = "M2", InCycle = true }, // kendi değişikliği
+        ];
+        Assert.Empty(ConditionalRebuild.ConditionalIds(dirty, RunMode.Build, scopedRun: false,
+            BuildOrchestrator.Core.Scheduling.CycleGroups.From(dirty, [["M1", "M2"]])));
+
+        ProjectNode[] mixed =
+        [
+            Waiting() with { Id = "M1", InCycle = true },
+            Waiting(WillBuildReason.UpToDate, willBuild: false) with { Id = "M2", InCycle = true },
+        ];
+        var groups = BuildOrchestrator.Core.Scheduling.CycleGroups.From(mixed, [["M1", "M2"]]);
+        Assert.Equal(["M1"], ConditionalRebuild.ConditionalIds(mixed, RunMode.Build, scopedRun: false, groups));
+        Assert.Empty(ConditionalRebuild.ConditionalIds(mixed, RunMode.Build, scopedRun: true, groups));
     }
 
     [Fact]

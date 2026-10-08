@@ -1335,7 +1335,7 @@ because only then — every dependency terminal — is the roots' result in this
 | compiled in this run and succeeded | recovered |
 | compiled in this run and failed | still failing |
 | not compiled in this run, and this run's preview found its output current — up to date, or built outside this tool | recovered |
-| not compiled in this run, its reason not a current one (say a root the run has not reached yet, or one outside a `Cycles` run's scope) — last recorded result success | recovered |
+| not compiled in this run, its reason not a current one (say one outside a `Cycles` run's scope) — last recorded result success | recovered |
 | the same, and its last recorded result a failure | still failing |
 | no longer in the workspace, or without a record | recovered (build — the safe direction) |
 
@@ -1372,8 +1372,10 @@ rebuilding it would only relink everyone to the same stale root outputs (measure
 one recovered root, builds the whole group exactly as before, and the skip touches no ledger record — the group
 compiles the moment a root recovers. A record written before roots were stored carries no roots and compiles on
 every `Build` as it always did. The set of projects a run evaluates conditionally comes from one function for the
-run and for Sync's preview alike (`ConditionalRebuild.ConditionalIds`, with the component map of §8.1), so a
-waiting member reads unconditional on both sides and the next `Build` counts it.
+run and for Sync's preview alike (`ConditionalRebuild.ConditionalIds`, with the component map of §8.1). A member is
+never in that set alone; the waiting members of a group that will be judged as a whole are, so on both sides the
+group leaves the wave, the queue and the progress denominator exactly like a waiting project, and compiles only
+if its check at dispatch finds a recovered root.
 
 ### 8.4 ETA
 
@@ -2088,8 +2090,8 @@ still uses it but no distance is measured — HEAD is not on that branch, and a 
 Full analysis is Sync's job; a Build repeats its planning part (§8.6), which is cheap because of the evaluation
 cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
 Build, pressed right now, would decide, and the preview says so directly: a project this run would only
-evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
-(`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
+evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed by the same function
+(`ConditionalRebuild.ConditionalIds`, simulating `Build`). This matters because the row's wave and queue colour are
 read at the moment *Build* is clicked, before the new run's own preview has arrived — at that instant Sync's
 preview is the only opinion the App has, so it has to already carry the answer a conditional project's row will
 need a moment later, or the row lights amber for one frame and drops grey as soon as the real preview lands.
@@ -3062,11 +3064,11 @@ event — even though it still drops out of the run's definite queue (`Condition
 this: the label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a
 plain success.
 
-A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
-converged member's dep-issue note is genuinely recorded, but the member is never gated on it alone — it compiles
-with its group, and the group is judged as a whole at dispatch — so its live row reads `up to date`, exactly
-matching what the next Sync will say (`WaitingForDependency` with `Conditional=false`, read no differently by the
-label than `UpToDate` would be). A member whose group did not
+A converged cycle member with a dependency issue reads the same way, though it is never gated alone (§8.3): its
+note is genuinely recorded, the member compiles with its group, and the group is judged as a whole at dispatch —
+so its live row reads `up to date` and leaves the definite queue together with its group, exactly matching what
+the next Sync will say (`WaitingForDependency` with `Conditional=true`, read no differently by the label than
+`UpToDate` would be). A member whose group did not
 converge is different: the engine does not stand behind its green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
 to-build grey at once — what the next Sync will say — rather than a green tick the next Sync would take back.

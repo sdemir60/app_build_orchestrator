@@ -1901,9 +1901,15 @@ public class RunViewModelTests
     /// §8.1): düz Build kirli grubu da derler; Sync üyeyi Build'in kararıyla değerlendirir ve bekleyen üye
     /// "derlenecek" okunur (<c>NextPreview.AfterSuccess</c>). Üçlü artık <c>WillBuild=true</c>,
     /// <c>WaitingForDependency</c>, <c>Conditional=false</c>.</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — final review M-2]</b> Eski iddia: <c>Conditional=false</c> — "TEK BAŞINA asla koşullu
+    /// değil". Üye hâlâ tek başına koşullu değildir; ama yalnız kökünü bekleyen grubun bekleyen üyesi GRUPLA birlikte
+    /// koşulludur (<c>ConditionalRebuild.ConditionalIds</c>): grup dispatch anında bütün olarak atlanabilir. Bir sonraki
+    /// Sync bunu söyleyeceği için canlı geçiş de söyler — aksi hâlde satır dalgaya bir Sync boyunca kesin gibi girerdi.
+    /// "rebuilds once that dependency is healthy again" sözü grup düzeyinde tutulur: kök düzelince grup derlenir.</para>
     /// </summary>
     [Fact]
-    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_without_being_conditional()
+    public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_conditionally_with_its_group()
     {
         const string id = @"C:\p\a.csproj";
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
@@ -1915,7 +1921,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         Assert.True(row.InCycle); // ön-koşul
-        Assert.False(row.Conditional);   // TEK BAŞINA asla koşullu değil — grup mekanizmasına tabi
+        Assert.True(row.Conditional);    // grubuyla birlikte koşullu — kesin derlenecekler kümesine girmez
         Assert.True(row.WillBuild);      // düz Build kirli grubu derler — bir sonraki Sync'in cevabı
         Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // disk olgusu
         Assert.Equal(["Up"], row.DependencyRoots);

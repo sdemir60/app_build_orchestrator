@@ -72,7 +72,9 @@ public enum RunMode { Rebuild, Build, Cycles, Clean }
 /// Build modunda WillBuild hesabını besler — Safe = dirty + tüm transitive dependent'lar yeniden derlenir;
 /// Fast = yalnız dirty (cascade yok). [It-3]</summary>
 public enum DependentMode { Safe, Fast }
-/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty). [v7Δ-4] [It-3]
+/// <param name="Mode">Rebuild = tüm projeler; Build = incremental (yalnız dirty) — ikisi de dairesel bağımlılık
+/// (SCC) gruplarını turlarla derler: Build kirli grubu, Rebuild her grubu (tur 1'de her üye). Hangi modların grup
+/// derlediği Core'da TEK yerdedir (<c>Core.Planning.CycleCompilation</c>). [v7Δ-4] [It-3]
 /// <para><b>Sürdürme/yeniden deneme AYRI bir mod DEĞİLDİR</b> (design v1.7.0 §3.1): Stop'tan sonra da hata
 /// sonrasında da <b>Build</b> koşulur. Tamamlanıp yeşil bitmiş projeler imzalarını persist ettikleri için
 /// <c>up to date</c> atlanır; öldürülenler ve başarısız olanlar <c>LastResult</c> invalidasyonuyla kirli
@@ -84,9 +86,9 @@ public enum DependentMode { Safe, Fast }
 /// TRANSİTİF UPSTREAM'i (gerekçe <c>Core/Planning/CycleRunScope.cs</c>'te: kirli bir upstream'in eski DLL'ine
 /// karşı derlenen üye yeşil döner, bayat çıktı verir ve imzası persist edildiği için bir daha ASLA
 /// derlenmez). Kapsam dışı kalan her proje <see cref="SkipReasons.OutOfCycleScope"/> ile pre-skip edilir. Bu,
-/// diğer modlardan bir DERECE farkı değil, ayrı bir iştir: Build/Rebuild bir SCC'yi ASLA derlemez (üyeleri
-/// <see cref="SkipReasons.InDependencyCycle"/> ile atlanır). İkisi ardışık kullanılır — önce Cycles, sonra
-/// Build.</para>
+/// Build'in aynı işinin DAR biçimidir: Build kirli grubu ve ona bağlı her şeyi derler, Cycles yalnız grupları ve
+/// bayat upstream'lerini — döngülerin bedeli tek başına ödenmek istendiğinde. İsteğe bağlıdır; Build'den önce
+/// basılması gerekmez.</para>
 /// <para><b>Clean</b> = kapsamdaki her projede <c>msbuild /t:Clean</c> — Visual Studio'nun <i>Clean</i>'i:
 /// yalnız o projenin derleme çıktıları silinir, cache'lere dokunulmaz. Hiçbir şey DERLEMEZ, dolayısıyla
 /// incremental karar da sorulmaz. Çıktılar gittiği için temizlenen projenin build-state kaydı SİLİNİR —
