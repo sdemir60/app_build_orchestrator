@@ -2049,10 +2049,13 @@ public class CycleRoundsTests
     /// link'lenmekten başka hiçbir şey kazanmıyordu. Tekil projenin kuralı (§8.3: kök düzelince derle, hâlâ
     /// kırıksa atla) GRUBUN TAMAMINA atomik uygulanınca "yarım grup" itirazı ortadan kalkar: ya herkes atlanır
     /// ya herkes derlenir. Defter kayıtlarına DOKUNULMAZ — kök düzeldiği ilk koşuda grup normal derlenir
-    /// (aşağıdaki kontrol testi).
+    /// (aşağıdaki kontrol testi). [Build cycle derler] Build de grubu derlediği için aynı kural Build'de de geçerlidir;
+    /// Rebuild'de geçerli DEĞİLDİR (<see cref="a_rebuild_compiles_a_group_waiting_for_a_still_failing_root"/>).
     /// </summary>
-    [Fact]
-    public async Task a_cycle_group_only_waiting_for_a_still_failing_root_is_skipped_without_a_single_round()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task a_cycle_group_only_waiting_for_a_still_failing_root_is_skipped_without_a_single_round(RunMode mode)
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -2062,7 +2065,7 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["Up#1"], rec.Calls);                 // grup HİÇ derlenmedi — tek tur bile yok
@@ -2116,6 +2119,34 @@ public class CycleRoundsTests
 
             Assert.Contains("A#1", rec.Calls);                  // grup dispatch edildi
             Assert.Contains("B#1", rec.Calls);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[ara inceleme I1 — Build cycle derler] Rebuild "önbelleği yok say"dır: kökünü bekleyen grup Rebuild'de
+    /// grup düzeyinde koşullu ATLANMAZ — tekil bekleyen projenin Rebuild'de koşulsuz derlenmesiyle aynı
+    /// (<see cref="ConditionalRebuild.AppliesTo"/> yalnız Build ve Cycles'ta değerlendirir). Kusur: grup kapısı
+    /// (<see cref="ConditionalRebuild.GroupAppliesTo"/>) modu okumuyordu; Rebuild grupları derlemeye başlayınca
+    /// (CycleCompilation) aynı köke bekleyen grup "dependency still failing" ile atlanıyor, tekil proje ise
+    /// derleniyordu.</summary>
+    [Fact]
+    public async Task a_rebuild_compiles_a_group_waiting_for_a_still_failing_root()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Contains("A#1", rec.Calls);                  // grup derlendi — atlanmadı
+            Assert.Contains("B#1", rec.Calls);
+            Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.Reason == SkipReasons.DependencyStillFailing);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }

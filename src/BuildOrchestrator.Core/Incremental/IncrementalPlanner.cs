@@ -333,10 +333,13 @@ public static class IncrementalPlanner
     /// <para><see cref="WillBuildReason.WaitingForDependency"/> ise KOŞULLUDUR: koşu onu yalnız bir kök
     /// düzelirse derler (<see cref="ConditionalRebuild"/>), yani yeni çıktı bir olgu değil bir ihtimaldir. Kök
     /// gerçekten düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync
-    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Ama döngü üyesi koşullu DEĞİLDİR</b>
+    /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Döngü üyesi ise TEK BAŞINA koşullu değildir</b>
     /// (<see cref="ConditionalRebuild.AppliesTo"/>: grup tek iş kalemidir, bir üyeyi atlamak grubu yarım
-    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (grubunu
-    /// derleyen her koşu: Build, Rebuild, Cycles) KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
+    /// bırakırdı) ve <c>WaitingForDependency</c> okuyan üye burada tohum sayılır. Grup BÜTÜN olarak koşullu
+    /// değerlendirilebilir (<see cref="ConditionalRebuild.GroupAppliesTo"/> — Build ve Cycles'ta, dispatch anında):
+    /// kökü hâlâ kırıksa grup hiç derlenmeden atlanır. Planlayıcı o kararı göremez; atlanırsa üyenin arkasındaki zaman
+    /// kipi düğümleri bir kez gereksiz derlenir ve kökü dep-issue notuyla taşır — <b>kabul edilen bedel</b>, güvenli
+    /// yöndür (over-build), ters yön (bayat çıktıyı güncel saymak) değildir. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
     /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
     /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli yoktur: <see cref="ProjectRunScope.Of"/>
     /// planı TEK düğüme indirir, yani o koşuda çekilecek bir bağımlı hiç yoktur.</para>

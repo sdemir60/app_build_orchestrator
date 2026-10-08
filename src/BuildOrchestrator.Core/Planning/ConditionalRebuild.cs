@@ -2,6 +2,7 @@ namespace BuildOrchestrator.Core.Planning;
 
 using BuildOrchestrator.Contracts.Ipc;
 using BuildOrchestrator.Contracts.Model;
+using BuildOrchestrator.Core.Scheduling;
 
 /// <summary>Koşullu bir projenin sırası geldiğinde verilen karar.</summary>
 public enum ConditionalRebuildVerdict
@@ -41,7 +42,7 @@ public static class ConditionalRebuild
     /// diğerlerini derlemek grubu yarım bırakırdı — güvenli yön.
     /// </summary>
     public static bool AppliesTo(ProjectNode node, RunMode mode, bool scopedRun, bool cycleGroupMember) =>
-        mode is RunMode.Build or RunMode.Cycles
+        ModeEvaluatesConditionally(mode)
         && !scopedRun
         && !cycleGroupMember
         && node.WillBuild == true
@@ -51,15 +52,20 @@ public static class ConditionalRebuild
     /// [grup koşullu atlama] Bir SCC, dispatch anında GRUP OLARAK koşullu değerlendirilebilir mi.
     /// <see cref="AppliesTo"/> üyeyi tek başına koşullu saymaz — bir üyeyi atlayıp diğerlerini derlemek grubu
     /// yarım bırakırdı; grubun TAMAMI atlandığında ise yarım kalma yoktur ve tekil kural (kök düzelince derle,
-    /// hâlâ kırıksa atla) atomik olarak gruba uygulanabilir. Uygunluk: her üye ya güncel (<c>WillBuild==false</c>)
+    /// hâlâ kırıksa atla) atomik olarak gruba uygulanabilir. Uygunluk: koşu koşullu değerlendiren bir mod olmalı
+    /// (<see cref="AppliesTo"/> ile AYNI kural — Rebuild her şeyi derler); her üye ya güncel (<c>WillBuild==false</c>)
     /// ya da YALNIZ kökünü bekliyor (<c>true</c> + <see cref="WillBuildReason.WaitingForDependency"/>) olmalı ve
     /// en az bir bekleyen üye bulunmalıdır (hepsi güncel olsaydı grup zaten pre-skip edilirdi). Başka HERHANGİ
     /// bir gerekçeyle kirli tek üye grubu derletir — güvenli yön. Kararın kendisi (kökler hâlâ kırık mı) üye
     /// başına <see cref="Decide"/>'a sorulur; TEK düzelen kök bile grubu normal derletir.
+    /// <para>[ara inceleme I1 — Build cycle derler] Mod kuralı eskiden burada YOKTU: grupları yalnız Cycles koşusu
+    /// derlediği için gerek yoktu. Rebuild de grup derlemeye başlayınca kökünü bekleyen grup Rebuild'de atlanıyor,
+    /// aynı köke bekleyen tekil proje derleniyordu.</para>
     /// </summary>
-    public static bool GroupAppliesTo(IReadOnlyList<ProjectNode> members)
+    public static bool GroupAppliesTo(IReadOnlyList<ProjectNode> members, RunMode mode)
     {
         ArgumentNullException.ThrowIfNull(members);
+        if (!ModeEvaluatesConditionally(mode)) return false;
         bool anyWaiting = false;
         foreach (var member in members)
         {
@@ -72,6 +78,29 @@ public static class ConditionalRebuild
             return false; // kendi sebebiyle kirli (imza/asla derlenmedi/hata…) ya da karar yok (null) → derle
         }
         return anyWaiting;
+    }
+
+    /// <summary>Koşullu değerlendirme yapan modlar — tekil (<see cref="AppliesTo"/>) ve grup
+    /// (<see cref="GroupAppliesTo"/>) kapısının ORTAK kuralı (kopya YASAK): Build ve Cycles. Rebuild her şeyi derler,
+    /// Clean hiçbir şey derlemez.</summary>
+    private static bool ModeEvaluatesConditionally(RunMode mode) => mode is RunMode.Build or RunMode.Cycles;
+
+    /// <summary>
+    /// [ara inceleme I2] Bir koşunun — ya da Sync'in simüle ettiği bir sonraki düz Build'in — sırası geldiğinde KOŞULLU
+    /// değerlendireceği projeler. Koordinatör (koşunun kendi önizlemesi ve kuyruğu) ile Sync (önizleme ve "N to build")
+    /// AYNI kümeyi buradan alır (kopya YASAK): grup üyeliği <paramref name="groups"/>'tan
+    /// (<see cref="CycleCompilation.GroupsFor"/>) okunur, böylece bekleyen bir döngü üyesi iki yerde de tek başına koşullu
+    /// sayılmaz. <paramref name="preSkipped"/>: koşunun baştan atladığı projeler — atlanan proje koşullu da değildir.
+    /// </summary>
+    public static IReadOnlySet<string> ConditionalIds(IReadOnlyList<ProjectNode> nodes, RunMode mode, bool scopedRun,
+        CycleGroups? groups, IReadOnlySet<string>? preSkipped = null)
+    {
+        ArgumentNullException.ThrowIfNull(nodes);
+        return nodes
+            .Where(n => (preSkipped is null || !preSkipped.Contains(n.Id))
+                && AppliesTo(n, mode, scopedRun, cycleGroupMember: groups?.MembersOf(n.Id).Count > 0))
+            .Select(n => n.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

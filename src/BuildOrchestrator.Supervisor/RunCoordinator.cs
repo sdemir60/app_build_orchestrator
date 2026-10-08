@@ -769,16 +769,14 @@ public sealed class RunCoordinator(
             // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
             // sessizce ayrışabilirdi. Plan'ın SON hâlinden (Clean ve kapsam daraltmasından sonra) kurulur; tohum
             // bölümündeki retry satırı da grubun adını bu örnekten okur.
-            // [Build cycle derler] Harita, SCC derleyen her modda (CycleCompilation — tek kaynak) ve yalnız TAM
-            // koşuda kurulur: satırdan tetiklenen tek-proje kapsamı hedefi düz düğüm olarak tek başına derler
-            // (ProjectRunScope), orada grup yoktur. Plan'da hiç SCC yoksa null geçilir; scheduler o zaman InCycle
-            // düğümü "in dependency cycle" ile pre-skip eder — üretimde bu dala düşen düğüm yoktur (planda SCC yoksa
-            // InCycle düğüm de yoktur), dal kill-switch testlerinin yoludur. Modlar için yazılmış ayrı bir kod yolu
-            // yoktur: Cycles ile Build arasındaki tek fark aşağıdaki KAPSAM tohumudur, Rebuild'inki tur 1'in kararıdır.
-            groups = cmd.ScopeProjectId is null && CycleCompilation.CompilesCycles(cmd.Mode)
-                && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
-                ? withCycles
-                : null;
+            // [Build cycle derler] Harita, SCC derleyen her modda ve yalnız TAM koşuda kurulur — kural tek yerde
+            // (CycleCompilation.GroupsFor; Sync'in "bir sonraki Build" önizlemesi de oradan alır): satırdan tetiklenen
+            // tek-proje kapsamı hedefi düz düğüm olarak tek başına derler (ProjectRunScope), orada grup yoktur. Plan'da
+            // hiç SCC yoksa null geçilir; scheduler o zaman InCycle düğümü "in dependency cycle" ile pre-skip eder —
+            // üretimde bu dala düşen düğüm yoktur (planda SCC yoksa InCycle düğüm de yoktur), dal kill-switch testlerinin
+            // yoludur. Modlar için yazılmış ayrı bir kod yolu yoktur: Cycles ile Build arasındaki tek fark aşağıdaki
+            // KAPSAM tohumudur, Rebuild'inki tur 1'in ve koşullu değerlendirmenin kararıdır.
+            groups = CycleCompilation.GroupsFor(runPlan.Plan, cmd.Mode, scopedRun: cmd.ScopeProjectId is not null);
 
             lock (_gate)
             {
@@ -961,7 +959,7 @@ public sealed class RunCoordinator(
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
         // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
         // önizlemenin tamamı tek okumadan beslenir. Yukarıdaki [Task 7] yakınsamama hafızası taraması store'u
-        // ayrıca okur; o yalnız Cycles'ta koşar ve ayrı bir soruyu cevaplar.
+        // ayrıca okur; o yalnız grup haritası kurulan koşuda (Build, Rebuild, Cycles) koşar ve ayrı bir soruyu cevaplar.
         var builtCommits = stateStore?.Load();
         // Önizleme BU KOŞUNUN yapacağını anlatır, planlayıcının soyut "dirty mi" cevabını değil: pre-skip
         // edilmiş her proje WillBuild=false gösterilir. İki yer arasındaki fark aksi halde kullanıcıya YALAN
@@ -974,14 +972,11 @@ public sealed class RunCoordinator(
         // [Faz 3/Task 6] Planın kararına giren çıktı kontrolü (Program.ComputeIncremental) — yoksa kanıtsız.
         OutputCheck? CheckOf(string id) => runPlan.Incremental?.ChecksById?.GetValueOrDefault(id);
         // [koşullu yeniden derleme] Bu koşunun sırası geldiğinde koşullu değerlendireceği projeler — karar Core'da
-        // (ConditionalRebuild.AppliesTo); pre-skip edilen hiçbir proje dispatch edilmediği için koşullu da değildir.
-        // Önizleme ve dispatch AYNI kümeyi okur: "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
-        var conditionalIds = plan.Nodes
-            .Where(n => !preSkipped.Contains(n.Id)
-                && ConditionalRebuild.AppliesTo(n, cmd.Mode, scopedRun: cmd.ScopeProjectId is not null,
-                    cycleGroupMember: groups?.MembersOf(n.Id).Count > 0))
-            .Select(n => n.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // (ConditionalRebuild.ConditionalIds; Sync'in önizlemesi de AYNI fonksiyonu AYNI grup haritasıyla sorar); pre-skip
+        // edilen hiçbir proje dispatch edilmediği için koşullu da değildir. Önizleme ve dispatch AYNI kümeyi okur:
+        // "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
+        var conditionalIds = ConditionalRebuild.ConditionalIds(plan.Nodes, cmd.Mode,
+            scopedRun: cmd.ScopeProjectId is not null, groups, preSkipped);
         events.TryWrite(new BuildPreviewEvent(
             // [DEĞİŞEN KURAL — v1.16.0] Pre-skip edilen satırın gerekçesi artık DÜŞMEZ. Eskiden null'lanırdı
             // ("bu false imzadan değil koşu-zamanlama kuralından geliyor, imza gerekçesini göstermek yalan
@@ -1047,11 +1042,11 @@ public sealed class RunCoordinator(
             void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false) =>
                 ReportSkipped(events, logs, cmd.RunId, projectId, nodeById[projectId].Name, reason, cycleUnconverged);
 
-            // Cycle üyeleri (construction anında Skipped) — PreSkipped: Rebuild/Build'de döngü üyelerini taşır
-            // ("in dependency cycle"; Build tohumu SCC üyelerini hiç taşımaz), Cycles'ta boştur (gruplar
-            // turlarla derlenir — BuildCycleGroupAsync), Clean'de boştur (plan döngü işaretsiz, CleanRunScope).
-            // Bu liste yalnız "grup DIŞARIDA hiç dispatch edilmedi" pre-skip'ini taşır (kill switch/SCC yok) —
-            // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
+            // Cycle üyeleri (construction anında Skipped) — PreSkipped yalnız grup haritası OLMAYAN koşuda dolar
+            // ("in dependency cycle"): planda SCC yokken (üretimde orada InCycle düğüm de yoktur) ve kill-switch
+            // testlerinde. Build, Rebuild ve Cycles'ta boştur (gruplar turlarla derlenir — BuildCycleGroupAsync),
+            // Clean'de boştur (plan döngü işaretsiz, CleanRunScope). Yakınsamama hafızasıyla İLGİSİZDİR,
+            // cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
                 DecideSkipped(projectId, reason);
             // [Task 19] Build VE Cycles modlarının pre-skip'leri (cycle pre-skip ile AYNI konumda, ilk
@@ -1321,7 +1316,7 @@ public sealed class RunCoordinator(
             run.DepIssuesById[projectId] = recorded!.DepIssueRoots!;
             // [Task 4 — carried item 3] Kök adları BURADA ("dependency still failing (…)" satırı) yalnız
             // RootNames'in düz listesi DEĞİL, DescribeStillFailingRoots'un KANITLI listesidir: bir kök bu
-            // koşuda hiç denenmediyse (ör. Build modunda pre-skip edilen bir SCC üyesi) ve "hâlâ hatalı" iddiası
+            // koşuda hiç denenmediyse (atlanmış ya da henüz sonuçlanmamış, önizlemesi güncel değil) ve "hâlâ hatalı" iddiası
             // yalnız koşu başındaki defterden geliyorsa satır bunu söyler — "R failed in this run" YALANI
             // basılmaz. Kök GERÇEKTEN bu koşuda patladıysa (bugünkü senaryoların hepsi) metin DEĞİŞMEZ.
             string roots = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
@@ -1501,7 +1496,7 @@ public sealed class RunCoordinator(
                 if (!run.NodeById.TryGetValue(id, out var node)) return false; // savunmacı: bilinmeyen üye → derle
                 nodes.Add(node);
             }
-            if (!ConditionalRebuild.GroupAppliesTo(nodes)) return false;
+            if (!ConditionalRebuild.GroupAppliesTo(nodes, run.Mode)) return false;
 
             foreach (var node in nodes)
             {
@@ -1574,7 +1569,7 @@ public sealed class RunCoordinator(
     private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
     {
         // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. tohumla Skipped girilmiş —
-        // Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
+        // Build ve Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
         // savunmacıdır) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete
         // çağırmak fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır —
         // ama grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).

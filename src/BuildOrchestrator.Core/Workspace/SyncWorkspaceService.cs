@@ -335,15 +335,15 @@ public sealed class SyncWorkspaceService(
             // Conditional alanı (aşağıda emit edilir) AYNI kümeyi taşır — koşullu (<see
             // cref="WillBuildReason.WaitingForDependency"/>) bir proje kökü hâlâ hatalıysa bir sonraki Build
             // onu atlayabilir. Tek kaynak, TEK geçişte hesaplanır: bir sonraki düz Build'in AYNI düğüme vereceği
-            // karar (ConditionalRebuild.AppliesTo — RunCoordinator'ın kuyruğunu/dalgasını besleyen aynı
-            // fonksiyon). Sync bir koşu DEĞİLDİR ve `RunMode.Build` argümanı bunu simüle eder — Sync'in kendi
-            // WillBuild'i zaten "bir sonraki düz Build ne yapar" sorusunun cevabıdır (§10.2), Conditional de aynı
-            // soruyu sorar. Eski kural (yalnız sayaç için hesaplanır, önizlemeye hiç yazılmazdı) App'te bir kare
-            // titremeye yol açıyordu: bkz. WillBuildOutcome.ConditionalIds'in XML yorumu.
-            var conditionalIds = safePlan.Nodes
-                .Where(n => ConditionalRebuild.AppliesTo(n, RunMode.Build, scopedRun: false, cycleGroupMember: false))
-                .Select(n => n.Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // karar (ConditionalRebuild.ConditionalIds — RunCoordinator'ın kuyruğunu/dalgasını besleyen aynı
+            // fonksiyon, AYNI grup haritasıyla: CycleCompilation.GroupsFor). Sync bir koşu DEĞİLDİR ve `RunMode.Build`
+            // argümanı bunu simüle eder — Sync'in kendi WillBuild'i zaten "bir sonraki düz Build ne yapar" sorusunun
+            // cevabıdır (§10.2), Conditional de aynı soruyu sorar. Eski kural (yalnız sayaç için hesaplanır, önizlemeye
+            // hiç yazılmazdı) App'te bir kare titremeye yol açıyordu: bkz. WillBuildOutcome.ConditionalIds'in XML yorumu.
+            // [ara inceleme I2] Grup üyeliği eskiden sorulmuyordu (cycleGroupMember: false): kökünü bekleyen döngü üyesi
+            // Sync'te koşullu, koşunun önizlemesinde koşulsuz okunuyordu.
+            var conditionalIds = ConditionalRebuild.ConditionalIds(safePlan.Nodes, RunMode.Build, scopedRun: false,
+                CycleCompilation.GroupsFor(safePlan, RunMode.Build, scopedRun: false));
 
             // [Task 3] LocalEdits: girdi kümesi zaten binder'da toplu (Prefill öncesi) hazırlandı — burada
             // yeniden diske inilmez, yalnız proje başına InputsOf ile o kümeye erişilir. Hesap TEK yerde

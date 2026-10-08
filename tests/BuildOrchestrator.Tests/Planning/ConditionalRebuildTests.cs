@@ -147,6 +147,38 @@ public class ConditionalRebuildTests
     public void a_cycle_group_member_is_unconditional()
         => Assert.False(ConditionalRebuild.AppliesTo(Waiting(), RunMode.Cycles, scopedRun: false, cycleGroupMember: true));
 
+    /// <summary>[ara inceleme I1 — Build cycle derler] Grup kapısı da tekil kapıyla AYNI mod kuralını okur: kökünü bekleyen
+    /// grup Build ve Cycles'ta koşullu değerlendirilir, Rebuild'de ve Clean'de değil (Rebuild her şeyi derler).</summary>
+    [Fact]
+    public void a_waiting_group_is_evaluated_conditionally_only_where_a_waiting_project_is()
+    {
+        ProjectNode[] group = [Waiting(), Waiting(WillBuildReason.UpToDate, willBuild: false)];
+
+        Assert.True(ConditionalRebuild.GroupAppliesTo(group, RunMode.Build));
+        Assert.True(ConditionalRebuild.GroupAppliesTo(group, RunMode.Cycles));
+        Assert.False(ConditionalRebuild.GroupAppliesTo(group, RunMode.Rebuild));
+        Assert.False(ConditionalRebuild.GroupAppliesTo(group, RunMode.Clean));
+    }
+
+    /// <summary>[ara inceleme I2] Koşullu küme — koordinatörün ve Sync'in TEK kaynağı: grup üyesi (haritadan) ve baştan
+    /// atlanan proje kümede yoktur; yalnız kökünü bekleyen sıradan proje vardır.</summary>
+    [Fact]
+    public void the_conditional_set_leaves_out_group_members_and_pre_skipped_projects()
+    {
+        ProjectNode[] nodes =
+        [
+            Waiting(),                                    // P: sıradan, bekliyor → koşullu
+            Waiting() with { Id = "M1", InCycle = true }, // grup üyeleri → tek başına koşullu değil
+            Waiting() with { Id = "M2", InCycle = true },
+            Waiting() with { Id = "S" },                  // baştan atlandı → koşullu değil
+        ];
+        var groups = BuildOrchestrator.Core.Scheduling.CycleGroups.From(nodes, [["M1", "M2"]]);
+
+        Assert.Equal(["P"], ConditionalRebuild.ConditionalIds(nodes, RunMode.Build, scopedRun: false, groups,
+            preSkipped: new HashSet<string>(["S"])));
+        Assert.Empty(ConditionalRebuild.ConditionalIds(nodes, RunMode.Rebuild, scopedRun: false, groups));
+    }
+
     [Fact]
     public void only_the_waiting_reason_makes_a_project_conditional()
     {

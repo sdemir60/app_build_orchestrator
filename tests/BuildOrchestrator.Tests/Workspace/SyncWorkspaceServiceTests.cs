@@ -82,6 +82,25 @@ public class SyncWorkspaceServiceTests
             + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
     }
 
+    /// <summary>R (kök) ve ona bağlı A ↔ B döngüsü: A, R ile B'ye; B, A ile R'ye <c>ProjectReference</c> verir.
+    /// <see cref="WriteCycleWorkspace"/> ile aynı üslup; döngünün dışında bir kök taşır.</summary>
+    private static void WriteRootedCycleWorkspace(GitTestRepo repo)
+    {
+        repo.WriteFile(Path.Combine("src", "R", "R.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>R</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "R", "R.cs"), "public class R { }");
+        foreach (var (self, other) in new[] { ("A", "B"), ("B", "A") })
+        {
+            repo.WriteFile(Path.Combine("src", self, self + ".csproj"),
+                $"<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>{self}</AssemblyName>"
+                + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+                + $"<ItemGroup><ProjectReference Include=\"..\\{other}\\{other}.csproj\" />"
+                + "<ProjectReference Include=\"..\\R\\R.csproj\" /></ItemGroup></Project>");
+            repo.WriteFile(Path.Combine("src", self, self + ".cs"), $"public class {self} {{ }}");
+        }
+    }
+
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
     private static string NewCacheRoot() => Directory.CreateTempSubdirectory("bo-sync-cache-").FullName;
 
@@ -625,6 +644,48 @@ public class SyncWorkspaceServiceTests
         var done = Assert.Single(events.OfType<SyncCompletedEvent>());
         Assert.Equal(1, done.ToBuildCount); // yalnız A — B koşullu, kesin değil
         Assert.Equal(1, done.UpToDateCount); // DEĞİŞEN KURAL — B bekliyor ama güncel sayılır, ne de olsa ikisi ARASINDA kaybolmaz
+    }
+
+    /// <summary>[ara inceleme I2 — Build cycle derler] Sync önizlemesi bir sonraki düz Build'in cevabıdır ve
+    /// <c>Conditional</c> da AYNI soruyu sorar: kökünü bekleyen döngü üyesi Build'de TEK BAŞINA koşullu değildir — grubu
+    /// tek iş kalemidir ve kaderine dispatch anında grup düzeyinde karar verilir (<c>ConditionalRebuild.GroupAppliesTo</c>).
+    /// Kusur: Sync grup üyeliğini sormuyordu (<c>cycleGroupMember: false</c>); bekleyen üye Sync'te koşullu, koşunun
+    /// kendi önizlemesinde koşulsuzdu — "N to build" onu saymıyor, Build tıklanınca satır bir karede kuyruğa
+    /// sıçrıyordu. Sync ile koşu grup haritasını artık aynı yerden alır (<c>CycleCompilation.GroupsFor</c>).</summary>
+    [Fact]
+    public async Task A_cycle_member_waiting_for_a_failed_root_is_not_conditional_in_the_sync_preview()
+    {
+        using var origin = new GitTestRepo();
+        WriteRootedCycleWorkspace(origin);
+        origin.CommitAll("c1");
+        string branch = origin.CurrentBranchName();
+        string cloneRoot = origin.CloneFull();
+        string cacheRoot = NewCacheRoot();
+
+        await PrimeBuildStateAsUpToDateAsync(cloneRoot, cacheRoot);
+        string IdOf(string name) => Path.Combine(cloneRoot, "src", name, name + ".csproj");
+        var store = new BuildStateStore(cacheRoot);
+        var primed = store.Load();
+        // R kendi (bugünkü) imzasında patladı; A ve B ona rağmen derlendi ve R'yi kök olarak not etti.
+        store.Upsert(primed[IdOf("R")] with { LastResult = BuildResult.Failed, FailedSignature = primed[IdOf("R")].BuiltSignature });
+        foreach (string member in new[] { "A", "B" })
+            store.Upsert(primed[IdOf(member)] with { DepIssue = true, DepIssueRoots = [IdOf("R")] });
+
+        var events = new List<IpcEvent>();
+        await ServiceFor(cloneRoot, cacheRoot)
+            .RunAsync(new SyncWorkspaceCommand(cloneRoot, branch), events.Add, CancellationToken.None);
+
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        foreach (string member in new[] { "A", "B" })
+        {
+            var item = Assert.Single(preview.Items, i => i.Name == member);
+            Assert.Equal(WillBuildReason.WaitingForDependency, item.Reason);
+            Assert.True(item.WillBuild);
+            Assert.False(item.Conditional); // grup üyesi tek başına koşullu değil — koşunun önizlemesiyle AYNI
+        }
+        var done = Assert.Single(events.OfType<SyncCompletedEvent>());
+        Assert.Equal(1, done.CycleCount);
+        Assert.Equal(3, done.ToBuildCount); // R kesin; A ve B grubuyla birlikte sayılır
     }
 
     /// <summary>
