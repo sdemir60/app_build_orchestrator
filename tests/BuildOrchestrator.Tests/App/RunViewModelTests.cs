@@ -1865,7 +1865,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits, row.InCycle);
+            row.LocalEdits);
         var beforeSync = Label();
         Assert.Equal("up to date", beforeSync.Word);
         Assert.False(beforeSync.Stale);
@@ -1944,7 +1944,7 @@ public class RunViewModelTests
 
         var row = Assert.Single(vm.Projects);
         RowDecision Label() => DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged,
-            row.LocalEdits, row.InCycle);
+            row.LocalEdits);
         var beforeSync = Label();
         // Reason bir disk olgusudur; WaitingForDependency artık UpToDate ile birebir okunur — kapsamın
         // zorlayıp zorlamadığı (Conditional=false, üye tek başına asla koşullu değil) etiketi ETKİLEMEZ.

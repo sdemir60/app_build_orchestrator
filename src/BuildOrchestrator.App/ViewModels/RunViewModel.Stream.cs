@@ -73,9 +73,10 @@ public sealed partial class RunViewModel
     /// zaten tutan <see cref="RunViewModel._currentRunMode"/>'dur: ikinci bir alan tutulmaz (kopya YASAK).</summary>
     private bool RunIsClean => _currentRunMode == RunMode.Clean;
 
-    /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — şerit koşu satırını
-    /// buna göre yazar (sıradan bir Build değil, döngü çözen ardışık turlar) ve bakım kutusu Resolve düğmesini
-    /// buna göre amber zemin + spinner'a çevirir.
+    /// <summary>[design v1.7.0 §3.7] Şu an bir <b>Resolve cycles</b> koşusu mu sürüyor — bakım kutusu Resolve
+    /// düğmesini buna göre amber zemin + spinner'a çevirir, Restart kilidi onu görev sayar ve şerit turlardan önceki
+    /// pencerede "preparing dependencies" yazar. [Build cycle derler] Şeridin TUR satırı buna değil, uçuştaki tura
+    /// bağlıdır (<see cref="RibbonText"/>, <c>cycleRound &gt; 0</c>): düz Build'in grubu da turlarını koşarken yazar.
     /// <para>İki terimi de bildirimlidir: <c>IsRunning</c> (yani <c>RunActive</c>) attribute zinciriyle,
     /// <see cref="RunViewModel._currentRunMode"/> ise <see cref="RunViewModel.OnRunStarted"/>'da AÇIKÇA
     /// yayınlar — türetilmiş özellikler kendiliğinden <c>PropertyChanged</c> üretmez ve kutu, şerit gibi başka
@@ -293,6 +294,14 @@ public sealed partial class RunViewModel
                     _ => StreamKind.Info, // CapReached
                 }, e.ProjectId, StreamText.CycleCompleted(e.Outcome, e.MemberCount, e.Rounds, e.FailedCount, e.DurationMs,
                     e.CompiledCount));
+                // [Build cycle derler] Grup bitti: düz Build'de sıradan projeler devam eder — tur sayaçları sıfırlanır ki
+                // şerit "Building"e dönsün (RibbonText: cycleRound > 0 kapısı) ve ProjectStartedEvent'in üye-detay kapısı
+                // kapansın. Yalnız ekranda yazan grup (lider eşleşiyorsa): eşzamanlı başka bir grubun turu yerinde kalır.
+                if (string.Equals(_cycleRoundLeaderId, e.ProjectId, StringComparison.OrdinalIgnoreCase))
+                {
+                    (_cycleRound, _cycleRoundCap, _cycleRoundMemberCount, _cycleMemberIndex) = (0, 0, 0, 0);
+                    _cycleRoundLeaderId = null;
+                }
                 break;
 
             // [spec 2026-09-18 §6.2] Satır kipe göre OnSyncCompleted'ta seçildi (sessiz Sync'te tek satır ya da hiç).

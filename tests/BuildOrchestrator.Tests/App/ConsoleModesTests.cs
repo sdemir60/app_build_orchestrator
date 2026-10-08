@@ -227,11 +227,14 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
                 willBuildReason: WillBuildReason.NeverBuilt)));
 
-        // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman false verir (ARCHITECTURE §7.4),
-        // o "false"u "güncel" diye okumak yalan olurdu.
+        // [DEĞİŞEN KURAL — Build cycle derler] Döngü üyesi plandan konuşur, düz satır gibi. Eski iddia: döngü üyeliği
+        // plandan ÖNCE gelirdi ("In a dependency cycle — Build never compiles one; use Resolve cycles."), çünkü Sync bir
+        // SCC üyesine her zaman false verirdi ve o "false"u "güncel" diye okumak yalan olurdu. Sync artık üyeye Build'in
+        // kararıyla gerçek bir WillBuild verir (ARCHITECTURE §7.4, §8.1); kirli üye "Will build", güncel üye "Up to date".
         Assert.Equal(
-            ["In a dependency cycle — Build never compiles one; use Resolve cycles.", "Never built by this tool"],
-            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: false, inCycle: true)));
+            ["Will build — this tool has never built it."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Pending, willBuild: true,
+                willBuildReason: WillBuildReason.NeverBuilt, inCycle: true)));
 
         // Sync hiç koşmadı: hollow. "Güncel" demek yalan olurdu.
         Assert.Equal(

@@ -1703,19 +1703,23 @@ public class RunViewModelStateTests
     /// çarpan tam da işin yapıldığı pencerede kayboluyor; üyeler paralelliğe bölünen building kovasına
     /// düşüyordu. Sabit saat: 4 proje, D 1000ms'te bitti ⇒ gözlenen ortalama 1000ms.
     /// <para><b>[DEĞİŞEN KURAL]</b> Eski kurulum koşuyu <c>RunMode.Build</c> ile açıyordu: döngü kovası moddan
-    /// bağımsızdı, dolayısıyla mod önemsizdi. Artık kova yalnız turların GERÇEKTEN koştuğu <c>Cycles</c>
-    /// koşusuna aittir — gerekçe: Build menüsünün Clean'i döngü üyelerini tur koşmadan, sıradan paralel iş
-    /// olarak temizler (<see cref="A_full_clean_estimates_cycle_members_as_ordinary_parallel_work"/>). Bu test
-    /// kovanın kendi kuralını, onu kullanan tek koşuda pinler.</para>
+    /// bağımsızdı, dolayısıyla mod önemsizdi. Sonra kova yalnız turların GERÇEKTEN koştuğu <c>Cycles</c>
+    /// koşusuna verildi — gerekçe: Build menüsünün Clean'i döngü üyelerini tur koşmadan, sıradan paralel iş
+    /// olarak temizler (<see cref="A_full_clean_estimates_cycle_members_as_ordinary_parallel_work"/>).</para>
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Kova turların koşabildiği her koşuya aittir
+    /// (<c>CycleCompilation</c>): Build ve Rebuild de kirli grubu turlarla derler (ölçüm: 2026-10-07 13:17 koşusu,
+    /// ARCHITECTURE §8.1). Clean'in kuralı değişmez; test iki modda aynı tahmini pinler.</para>
     /// </summary>
-    [Fact]
-    public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task The_eta_keeps_the_cycle_round_multiplier_while_the_group_is_running(RunMode mode)
     {
         long now = 5_000;
         await using var engine = new EngineHost(TestPaths.SupervisorExe);
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1", () => now);
         StartCycleGroup(vm);
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new RunStartedEvent("r1", mode, TotalProjects: 4, Parallelism: 4, "Debug"));
         vm.OnEvent(new ProjectStartedEvent("r1", D, "D"));
         vm.OnEvent(new ProjectSucceededEvent("r1", D, 1000, null, false));
 
@@ -1730,6 +1734,29 @@ public class RunViewModelStateTests
         // Grup KOŞARKEN de aynı terim: tahmin 6000'de kalır. Kusurlu hâlde üçü building kovasına düşer ve
         // 4'e bölünürdü — ham tahmin 3000/4 + 400 = 1150, EMA ile 4788.
         Assert.Equal(6000, vm.EtaMs);
+    }
+
+    /// <summary>[Build cycle derler] Düz Build'de grup bitince sıradan projeler devam eder: şeridin tur satırı
+    /// "Building"e dönmeli (RibbonText: <c>cycleRound &gt; 0</c> kapısı) ve üye-detay kapısı kapanmalı. Sayaçlar yalnız
+    /// EKRANDA YAZAN grubun (lider) bitişinde sıfırlanır — eşzamanlı ikinci bir grubun bitişi ekrandaki turu silmez.</summary>
+    [Fact]
+    public async Task A_cycle_completion_resets_the_round_counters_of_the_group_on_screen()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, Round: 1, RoundCap: 3, MemberCount: 3));
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        // Başka bir grubun bitişi ekrandaki sayaçlara dokunmaz.
+        vm.OnEvent(new CycleCompletedEvent("r1", D, CycleOutcome.Converged, MemberCount: 1, Rounds: 1, FailedCount: 0,
+            DurationMs: 5));
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, MemberCount: 3, Rounds: 1, FailedCount: 0,
+            DurationMs: 9));
+        Assert.Equal((0, 0), (vm.CycleRound, vm.CycleRoundCap));
     }
 
     /// <summary>[Clean] Build menüsünün Clean'i döngü üyelerini de temizler ama TUR KOŞMAZ: motor Clean'de döngü
@@ -1986,11 +2013,17 @@ public class RunViewModelStateTests
         Assert.Equal("▸ Ready — everything looks up to date", vm.RibbonLine.Text);
     }
 
-    /// <summary>[kullanıcı kararı 2026-09-29] Geçiş kimseyi "derlenecek" saymaz: ne döngü üyesini (düz Build onu hiç
-    /// derlemez) ne kararı olmayan satırı. Ölçülen kusur: tahmin her satıra <c>WillBuild=true</c> yazıyordu — OSYS'in
-    /// 33 döngü üyesi de şeridin "N to build"una giriyor, Build'in açılış dalgası onları da yakıyordu.</summary>
+    /// <summary>[kullanıcı kararı 2026-09-29] Geçiş kimseyi "derlenecek" SAYMAZ: satırların bayrağı Sync'in cevabıdır ve
+    /// yeni configuration'ın Sync'i başlayana kadar aynen kalır — güncel satır da kararı olmayan satır da geçişle
+    /// "derlenecek" olmaz. Ölçülen kusur: tahmin her satıra <c>WillBuild=true</c> yazıyordu — OSYS'in 33 döngü üyesi de
+    /// şeridin "N to build"una giriyor, Build'in açılış dalgası onları da yakıyordu.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>Switching_configuration_puts_no_cycle_member_or_undecided_row_in_the_next_build</c> — döngü üyesi (Sync'in eski
+    /// cevabıyla <c>false</c>, "düz Build onu hiç derlemez") ve kararı olmayan satır geçişten sonra kapsam dışında kalır.
+    /// Sync artık kirli üyeye Build'in kararıyla <c>true</c> verir (ölçüm: 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1);
+    /// geçiş o cevaba dokunmaz, yalnız kendi tahminini eklemez.</para></summary>
     [Fact]
-    public void Switching_configuration_puts_no_cycle_member_or_undecided_row_in_the_next_build()
+    public void Switching_configuration_adds_no_row_to_the_next_build()
     {
         var vm = T5Vm();
         MainWindowHost.AcceptSends(vm);
@@ -1999,15 +2032,16 @@ public class RunViewModelStateTests
             [Node(P("A"), "A", 0), Node(P("C"), "C", 1, inCycle: true), Node(P("U"), "U", 2)], [], [], []));
         vm.OnEvent(new BuildPreviewEvent([
             Item("A", false, WillBuildReason.UpToDate),
-            Item("C", false, WillBuildReason.SignatureChanged), // kapsam dışı döngü üyesi: bayat ama Build derlemez
+            Item("C", true, WillBuildReason.SignatureChanged), // kirli döngü üyesi: Build grubunu derler (Sync'in cevabı)
             Item("U", null, null)]));
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 3, 0));
-        Assert.Equal(0, vm.WillBuildCount); // ön-koşul: Build'in yapacağı iş yok
+        Assert.Equal(1, vm.WillBuildCount); // ön-koşul: Build'in yapacağı tek iş C
 
         vm.SetConfiguration("Release");
 
-        Assert.DoesNotContain(vm.ScopeFor(RunMode.Build), r => r.Name is "C" or "U");
-        Assert.Equal(0, vm.WillBuildCount);
+        // Kapsam Sync'in cevabından ibarettir: güncel A ve kararı olmayan U geçişle eklenmez.
+        Assert.Equal(["C"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        Assert.Equal(1, vm.WillBuildCount);
     }
 
     /// <summary>[kullanıcı kararı 2026-09-29] Bitmiş bir koşudan sonra geçiş, koşunun hikâyesini kendi Sync'ine bırakır:

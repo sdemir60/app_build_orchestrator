@@ -119,9 +119,9 @@ public static class ConsoleEmptyState
         // de bu koşu hakkında değildir. Metin Skipped dalındakiyle AYNI sabiti okur (kopya YASAK) — motor konuşsa
         // da konuşmasa da kullanıcı aynı cümleyi görür.
         if (row.SkipReason == SkipReasons.OutOfCycleScope) return OutOfCycleScopeText;
-        // Döngü üyeliği plandan ÖNCE gelir: Sync bir SCC üyesine her zaman WillBuild=false verir (Build bir
-        // döngüyü asla derlemez, ARCHITECTURE §7.4) — o "false"u "güncel" diye okumak yanlış olurdu.
-        if (row.InCycle) return InCycleText;
+        // [DEĞİŞEN KURAL — Build cycle derler] Döngü üyesi de plandan konuşur. Eskiden üyelik plandan ÖNCE gelirdi:
+        // Sync bir SCC üyesine her zaman WillBuild=false verirdi ve o "false"u "güncel" diye okumak yanlış olurdu.
+        // Sync artık üyeye Build'in kararıyla gerçek bir WillBuild verir (ARCHITECTURE §7.4, §8.1).
         if (row.WillBuild is not { } willBuild)
             return "Not analysed yet — run Sync to see what this project will do.";
         // [Faz 3 — spec 2026-09-18 §5.4, Task 7] BuiltOutside de "derlenmeyecek" bir disk olgusudur, ama genel
@@ -205,8 +205,11 @@ public static class ConsoleEmptyState
         return string.IsNullOrEmpty(row.CurrentSha) ? NeverBuilt : null;
     }
 
-    /// <summary>Döngü üyeliği İKİ yoldan da aynı cümleyi verir (atlanmış üye / koşu öncesi üye) — kopya YASAK.</summary>
-    private const string InCycleText = "In a dependency cycle — Build never compiles one; use Resolve cycles.";
+    /// <summary>Yalnız motorun <c>in dependency cycle</c> ile atladığı satır için (grup haritası olmayan koşu — üretimde
+    /// erişilmez, bkz. <c>ReadySetScheduler</c>); plandan konuşan satır normal dallara düşer.
+    /// <para>[DEĞİŞEN KURAL — Build cycle derler] Eski metin "Build never compiles one; use Resolve cycles." idi; Build
+    /// kirli grubu derlediği için kalktı.</para></summary>
+    private const string InCycleText = "In a dependency cycle — this run did not compile it.";
 
     /// <summary>[Task 2 review fix I-1] Kapsam dışı bir satır İKİ yoldan da (motor konuştu / konuşmadı, bkz.
     /// <see cref="Reason"/>'ın Skipped ve Pending dalları) aynı cümleyi verir — kopya YASAK.</summary>

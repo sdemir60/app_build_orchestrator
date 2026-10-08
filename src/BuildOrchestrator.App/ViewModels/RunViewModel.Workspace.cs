@@ -784,8 +784,7 @@ public sealed partial class RunViewModel
         var keys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var row in Projects)
         {
-            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LocalEdits,
-                row.InCycle);
+            var d = DecisionLabel.For(row.WillBuild, row.WillBuildReason, row.OwnFilesChanged, row.LocalEdits);
             keys[row.Id] = $"{row.Standing}|{d.Word}|{d.Tail}";
         }
         return keys;

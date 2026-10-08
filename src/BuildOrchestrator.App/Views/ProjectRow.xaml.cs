@@ -542,7 +542,7 @@ public partial class ProjectRow : UserControl
     {
         var decision = _vm is null
             ? RowDecision.None
-            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LocalEdits, _vm.InCycle);
+            : DecisionLabel.For(_vm.WillBuild, _vm.WillBuildReason, _vm.OwnFilesChanged, _vm.LocalEdits);
 
         PART_DecisionWord.Text = decision.Word;
         PART_DecisionTail.Text = decision.Tail is null ? "" : " · " + decision.Tail;

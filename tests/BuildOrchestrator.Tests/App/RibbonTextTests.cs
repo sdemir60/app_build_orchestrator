@@ -198,6 +198,28 @@ public class RibbonTextTests
         Assert.Equal("building", line.Glyph);
     }
 
+    // [Build cycle derler] Tur satırı moda değil, uçuştaki tura bağlıdır: düz Build'in grubu turdayken de yazılır.
+    [Fact]
+    public void A_build_run_shows_the_round_line_while_one_of_its_cycle_groups_is_in_rounds()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1, queued: 6),
+            willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0,
+            resolvingCycles: false, cycleRound: 1, cycleRoundCap: 3);
+        Assert.Equal("▸ Resolving cycles · round 1/3 · 7/14 · 24s", line.Text);
+        Assert.Equal("building", line.Glyph);
+    }
+
+    // [Build cycle derler] "preparing dependencies" yalnız Resolve koşusunun turlar öncesi penceresidir; düz Build'de o
+    // pencere sıradan "Building" satırıdır.
+    [Fact]
+    public void A_build_run_without_a_round_in_flight_reads_building()
+    {
+        var line = RibbonText.Compose(AppPhase.Running, true, allClean: false, Counters(building: 1, queued: 6),
+            willBuild: 14, finishedOfWillBuild: 7, totalProjects: 14, elapsedMs: 24_000, etaMs: null, checkDurMs: null, warnings: 0,
+            resolvingCycles: false, cycleRound: 0, cycleRoundCap: 0);
+        Assert.StartsWith("▸ Building 7/14 · 24s", line.Text, StringComparison.Ordinal);
+    }
+
     // [Task 12 PİN · öncelik pini] allClean kontrolü switch'te resolvingCycles'tan ÖNCE gelir (RibbonText.cs:
     // 156-164): bir Cycles koşusu "her şey temiz" önizlemesiyle açılırsa şerit hâlâ "Checking" der, cycles
     // metnini hiç üretmez.
