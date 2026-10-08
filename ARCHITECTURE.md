@@ -1396,8 +1396,10 @@ ribbon shows progress and elapsed time without one.
 The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
 by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. While a
 cycle group is in rounds — in a `Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
-{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix; the round counters belong to the group on
-screen and clear when its verdict arrives, so a `Build` returns to its `Building` line for the rest of the plan.
+{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix. Every group in rounds keeps its own
+counters; the one on screen is the one whose round started last, and when its verdict arrives the latest other group
+still in rounds takes the line. Once no group is in rounds a `Build` returns to its `Building` line for the rest of
+the plan.
 `preparing dependencies` stands in for the round only in a `Cycles` run, before its first group starts, while the
 run is still compiling the cycles' stale upstream (§8.1). The figure is still computed while a group is in rounds,
 which is what the cycle term below is for: a `Build` prints it again on its `Building` line once the group's verdict

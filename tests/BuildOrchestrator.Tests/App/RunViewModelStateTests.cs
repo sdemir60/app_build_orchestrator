@@ -1759,6 +1759,34 @@ public class RunViewModelStateTests
         Assert.Equal((0, 0), (vm.CycleRound, vm.CycleRoundCap));
     }
 
+    /// <summary>[final inceleme — iki grup] Düz Build'de birbirine bağlı olmayan iki grup aynı anda turda olabilir. Ekrandaki
+    /// grup önce biterse şerit, hâlâ turda olan öbür grubun turunu yazmaya devam etmeli. Kusur: yalnız TEK grubun sayaçları
+    /// tutuluyordu; ekrandaki grup bitince sayaçlar sıfırlanıyor ve şerit, öbür grubun bir sonraki turu başlayana (ya da grup
+    /// bitene) kadar "Building" yazıyordu — grup hâlâ turdayken.</summary>
+    [Fact]
+    public async Task When_the_group_on_screen_finishes_the_ribbon_follows_a_group_still_in_rounds()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [Node(A, "A", 0, inCycle: true), Node(B, "B", 1, inCycle: true),
+             Node(C, "C", 2, inCycle: true), Node(D, "D", 3, inCycle: true)],
+            [[A, B], [C, D]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", C, Round: 2, RoundCap: 3, MemberCount: 2)); // C ve D'nin grubu turda
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, Round: 1, RoundCap: 3, MemberCount: 2)); // ekranda artık A'nın grubu
+        Assert.Equal((1, 3), (vm.CycleRound, vm.CycleRoundCap));
+
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, MemberCount: 2, Rounds: 1, FailedCount: 0,
+            DurationMs: 5));
+        Assert.Equal((2, 3), (vm.CycleRound, vm.CycleRoundCap)); // C'nin grubu hâlâ tur 2'de — şerit onu yazar
+
+        vm.OnEvent(new CycleCompletedEvent("r1", C, CycleOutcome.Converged, MemberCount: 2, Rounds: 2, FailedCount: 0,
+            DurationMs: 7));
+        Assert.Equal((0, 0), (vm.CycleRound, vm.CycleRoundCap)); // turu süren grup kalmadı — şerit "Building"e döner
+    }
+
     /// <summary>[Clean] Build menüsünün Clean'i döngü üyelerini de temizler ama TUR KOŞMAZ: motor Clean'de döngü
     /// anlamını düşürür (<c>Core/Planning/CleanRunScope</c>) ve her üye bir kez, sıradan bir proje gibi paralel
     /// temizlenir. Tahmin de onları sıradan kuyruk sayar — tur çarpanı ve bölünmezlik yalnız Cycles koşusunundur
