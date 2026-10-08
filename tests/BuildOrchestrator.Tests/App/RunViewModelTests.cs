@@ -1882,17 +1882,23 @@ public class RunViewModelTests
     /// <summary>
     /// [Task 4 review round 1+2 — I1 (i)] Bir SCC üyesi dep-issue'lu bitse bile canlı geçiş onu TEK BAŞINA
     /// koşullu SANMAMALI: <c>ConditionalRebuild.AppliesTo</c>'nun <c>!cycleGroupMember</c> kuralıyla aynı
-    /// gerekçe — üye grubuyla derlenir (Cycles, turlar) ya da bir Build koşusunda hiç dispatch edilmez;
-    /// "rebuilds once that dependency is healthy again" tek başına verilen bir SÖZDÜR ve üye için asla tutulmaz.
+    /// gerekçe — üye grubuyla, turlarla derlenir ve grubun kaderine dispatch anında grup düzeyinde karar verilir
+    /// (<c>ConditionalRebuild.GroupAppliesTo</c>); "rebuilds once that dependency is healthy again" tek başına
+    /// verilen bir SÖZDÜR ve üye için asla tutulmaz.
     ///
     /// <para><b>[DEĞİŞEN KURAL — round 2]</b> Round 1'in iddiası satırın <c>UpToDate</c>'e (Task 4 öncesi
     /// davranış) döndüğüydü. Eksikti: grup YAKINSADIYSA (<c>CycleUnsettled=false</c>) defter GERÇEKTEN not+kök
     /// yazar ve bir sonraki Sync'in <c>WillBuildEvaluator</c>'ı bu üyeyi <c>WaitingForDependency</c> okur
-    /// (<c>WillBuild</c> döngü kapsamı yüzünden yine <c>false</c>'a zorlanır, ama gerekçe bir disk olgusu
-    /// olarak hesaplanmaya devam eder — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
-    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Artık canlı geçiş
-    /// motorun bir sonraki önizlemesiyle BİREBİR AYNI üçlüyü (<c>WillBuild=false</c>, <c>WaitingForDependency</c>,
-    /// <c>Conditional=false</c>) üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te de gelir).</para>
+    /// (gerekçe bir disk olgusu olarak hesaplanır — §13.2). Satır <c>UpToDate</c> yazarsa Sync'ten SONRA
+    /// <c>WaitingForDependency</c>'ye FLİP EDER — round 1'in kapatmadığı boşluk tam buydu. Canlı geçiş motorun bir
+    /// sonraki önizlemesiyle BİREBİR AYNI üçlüyü üretir; <c>DependencyRoots</c> de dolar (tooltip roots'u Sync'te
+    /// de gelir).</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>WillBuild=false</c> — "döngü kapsamı yüzünden
+    /// zorlanır, Build bir SCC'yi asla derlemez". Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE
+    /// §8.1): düz Build kirli grubu da derler; Sync üyeyi Build'in kararıyla değerlendirir ve bekleyen üye
+    /// "derlenecek" okunur (<c>NextPreview.AfterSuccess</c>). Üçlü artık <c>WillBuild=true</c>,
+    /// <c>WaitingForDependency</c>, <c>Conditional=false</c>.</para>
     /// </summary>
     [Fact]
     public async Task A_converged_cycle_member_success_with_a_dep_issue_waits_without_being_conditional()
@@ -1908,8 +1914,8 @@ public class RunViewModelTests
         var row = Assert.Single(vm.Projects);
         Assert.True(row.InCycle); // ön-koşul
         Assert.False(row.Conditional);   // TEK BAŞINA asla koşullu değil — grup mekanizmasına tabi
-        Assert.False(row.WillBuild);     // döngü kapsamı yüzünden zorlanır (Build bir SCC'yi asla derlemez)
-        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // ama disk olgusu budur
+        Assert.True(row.WillBuild);      // düz Build kirli grubu derler — bir sonraki Sync'in cevabı
+        Assert.Equal(WillBuildReason.WaitingForDependency, row.WillBuildReason); // disk olgusu
         Assert.Equal(["Up"], row.DependencyRoots);
     }
 
@@ -1945,9 +1951,10 @@ public class RunViewModelTests
 
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
         vm.OnEvent(new WorkspaceTopologyEvent([Node(id, "A", 0) with { InCycle = true }], [[id]], [], []));
-        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator: outOfScope⇒WillBuild=false, gerekçe yine de
-        // WaitingForDependency; AppliesTo: WillBuild==true şartı düşer ⇒ Conditional=false).
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.WaitingForDependency,
+        // Sync'in GERÇEKTEN üreteceği önizleme (WillBuildEvaluator Build'in kararıyla: WillBuild=true, gerekçe
+        // WaitingForDependency; AppliesTo grup üyesini dışlar ⇒ Conditional=false). [Build cycle derler] Eskiden
+        // fixture WillBuild=false yazardı — Sync üyeyi döngü kapsamı dışında sayardı.
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.WaitingForDependency,
             OwnFilesChanged: false, Conditional: false, DependencyRoots: ["Up"])]));
 
         var afterSync = Label();
@@ -1964,6 +1971,10 @@ public class RunViewModelTests
     /// sonraki Sync'in <c>WillBuildEvaluator</c>'ı bunu <c>NeverBuilt</c> okur — satır canlıda yeşil ✓
     /// ("Up to date", ✓ sayacında), Sync'ten sonra gri ○ idi. Karar artık motorundur ve olayla gelir
     /// (<c>ProjectSucceededEvent.Trusted</c>); satır Sync'in diyeceğini şimdiden der: gri, "To build".</para>
+    ///
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: <c>WillBuild=false</c> — "kapsam dışı üye".
+    /// Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build kirli grubu da derler; Sync
+    /// kanıtsız hata kaydı taşıyan üyeyi düz proje gibi "derlenecek" okur.</para>
     /// </summary>
     [Fact]
     public async Task An_untrusted_cycle_member_success_reads_never_built_like_the_next_sync()
@@ -1979,9 +1990,9 @@ public class RunViewModelTests
         var row = Assert.Single(vm.Projects);
         Assert.False(row.Conditional);
         Assert.Null(row.DependencyRoots);
-        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; kapsam dışı üye ⇒ WillBuild=false.
+        // Sync'in önizlemesi: defter kanıtsız hata ⇒ NeverBuilt; Build kirli grubu derler ⇒ WillBuild=true.
         Assert.Equal(WillBuildReason.NeverBuilt, row.WillBuildReason);
-        Assert.False(row.WillBuild);
+        Assert.True(row.WillBuild);
         Assert.Equal(VisualStatus.Stale, row.VisualStatus);                  // gri, yeşil ✓ DEĞİL
         Assert.Equal("To build", StatusGlyph.LabelFor(row.VisualStatus));  // ekran okuyucu da aynı şeyi duyar
         Assert.Equal((0, 1), (vm.Counters.Current, vm.Counters.Stale));    // ✓ değil ○ sayılır
@@ -1990,7 +2001,7 @@ public class RunViewModelTests
         // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme — satır titremez.
         var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 0, 0, 500));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", false, null, WillBuildReason.NeverBuilt)]));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(id, "A", true, null, WillBuildReason.NeverBuilt)]));
         Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
     }
 

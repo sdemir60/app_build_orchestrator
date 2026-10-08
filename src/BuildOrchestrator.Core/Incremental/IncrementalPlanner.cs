@@ -96,7 +96,8 @@ public static class IncrementalPlanner
     /// temsil eden hash (bkz. <see cref="ComputeContentFingerprint"/>). <c>null</c> tolere edilir (hiçbir girdi
     /// okunamadı) — <see cref="BuildSignature.Compute"/> onu sabit bir null-işaretiyle imzaya katar.</param>
     /// <param name="state">projectId → <see cref="BuildState"/> (bkz. <see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>). Kayıt yoksa never-built.</param>
-    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>'ta <c>true</c>.
+    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu — <see cref="Planning.CycleCompilation.CompilesCycles"/>;
+    /// Sync Build'in değerini geçer.
     /// <c>false</c> ⇒ üyeler <c>WillBuild=false</c>'a kısa devre yapar (<see cref="WillBuildEvaluator"/>),
     /// <c>true</c> ⇒ sıradan imza/state mantığına tabidirler — SCC'nin bileşik imzası (bkz.
     /// <c>ComputeComponent</c>) tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
@@ -206,8 +207,8 @@ public static class IncrementalPlanner
         // downstream'e (o üyenin imzasını okuyor olmasına rağmen) ZİYARET SIRASINA bağlı olarak hiç
         // yansımayabiliyordu: dependent bir sonraki Build'de sessizce "up to date" sayılıp atlanırdı
         // (cycle-tangled transitive under-build). Bu düzeltmenin KENDİSİ yalnız downstream'in GÖRDÜĞÜ değeri
-        // onarır; üyelerin derlenip derlenmediği [Task 11] kill switch'inin (buildCycles) işidir — kapalıyken
-        // hiç derlenmezler, açıkken kompozit onların KENDİ WillBuild'ini de belirler (grup bütün olarak ya
+        // onarır; üyelerin derlenip derlenmediği buildCycles bayrağının (CycleCompilation) işidir — kapalıyken
+        // (Clean, bayrağı kapalı geçen testler) hiç derlenmezler, açıkken kompozit onların KENDİ WillBuild'ini de belirler (grup bütün olarak ya
         // "derlenecek" ya "güncel" görünür, çünkü değer üyeler arasında ORTAKTIR).
         // Fast'te kompozit KULLANILMAZ: Fast zaten hiçbir upstream'i takip etmez (frozen/stored imza okur),
         // yani kompozitin çözdüğü cascade sorunu orada tanım gereği yoktur — semantiği değiştirmemek için
@@ -334,8 +335,8 @@ public static class IncrementalPlanner
     /// gerçekten düzelir ve koşullu proje derlenirse, onun arkasındaki zaman kipi düğümünü bir sonraki Sync
     /// kendi HintPath hedefinin tarihinden zaten bayat okur. <b>Ama döngü üyesi koşullu DEĞİLDİR</b>
     /// (<see cref="ConditionalRebuild.AppliesTo"/>: grup tek iş kalemidir, bir üyeyi atlamak grubu yarım
-    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (Cycles)
-    /// KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
+    /// bırakırdı) — bu yüzden <c>WaitingForDependency</c> okuyan bir SCC üyesi derleneceği koşuda (grubunu
+    /// derleyen her koşu: Build, Rebuild, Cycles) KOŞULSUZ derlenir ve tohumdur. <b>Bilinen dar boşluk:</b> satırdan tetiklenen tek proje koşusunda
     /// (<c>scopedRun</c>) hedef de koşulsuz derlenir; planlayıcı koşunun kapsamını görmediği için orada
     /// <c>WaitingForDependency</c> bir hedef tohum sayılmaz. Bedeli yoktur: <see cref="ProjectRunScope.Of"/>
     /// planı TEK düğüme indirir, yani o koşuda çekilecek bir bağımlı hiç yoktur.</para>

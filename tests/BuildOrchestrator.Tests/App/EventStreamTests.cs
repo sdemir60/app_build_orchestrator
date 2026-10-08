@@ -704,14 +704,19 @@ public class EventStreamTests
             l => l.Text.EndsWith("skipped — " + SkipReasons.UpToDate, StringComparison.Ordinal)));
     }
 
-    // ============================================================ [Task 6] — build sonu cycles ipucu
+    // ============================================================ [Build cycle derler] koşu sonu döngü ipuçları yok
 
-    /// <summary>[Task 6] Bir Build koşusu, üyeleri hâlâ dirty (WillBuild==true) döngü üyeleri bırakarak biterse
-    /// Completed satırından HEMEN SONRA "N cycle projects have pending changes — run Cycles" Info satırı gelir.
-    /// Normal Build cycle üyelerine hiç dokunmaz (<c>SkipReasons.InDependencyCycle</c> pre-skip'i) — bu yüzden
-    /// üyeler build-preview'ın dirty=true'sunu (WillBuild) hiç KAYBETMEZ.</summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia ([Task 6], dört test): Build bitince hâlâ kirli
+    /// (WillBuild==true) cycle üyesi varsa Completed satırının hemen ardından "N cycle projects have pending changes —
+    /// run Cycles" Info satırı gelirdi (Cycles koşusu, temiz üye ve Stop'ta gelmezdi); düz Build üyeleri hiç derlemediği
+    /// için bekleyen işi Resolve'a gösterirdi. Satır üretimde hiç tetiklenmiyordu (Sync ve Build önizlemesi üyeye hep
+    /// WillBuild=false yazıyordu) ve yeni kuralda yanıltıcı olurdu: Build kirli grubu kendisi derler (ölçüm: 2026-10-07
+    /// 13:17 koşusu, ARCHITECTURE §8.1); koşu sonunda hâlâ kirli üye, derlenmesi patlayan ya da yakınsamayan üyedir ve
+    /// onu satırın kendi etiketi ve üçgeni söyler (§13.2). Satır ve <c>StreamText.CyclesHint</c> kalktı.
+    /// </summary>
     [Fact]
-    public void A_completed_build_pushes_a_cycles_hint_after_completed_when_dirty_cycle_members_remain()
+    public void A_completed_build_pushes_no_cycles_hint_even_when_dirty_cycle_members_remain()
     {
         const string m1 = @"C:\p\m1.csproj";
         const string m2 = @"C:\p\m2.csproj";
@@ -725,83 +730,20 @@ public class EventStreamTests
             new BuildPreviewItem(m1, "M1", WillBuild: true),
             new BuildPreviewItem(m2, "M2", WillBuild: true),
         ]));
-        vm.OnEvent(new ProjectSkippedEvent("r1", m1, SkipReasons.InDependencyCycle));
-        vm.OnEvent(new ProjectSkippedEvent("r1", m2, SkipReasons.InDependencyCycle));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 0, Failed: 0, Skipped: 2, Queued: 0, DurationMs: 500));
+        // Grup derlendi ve yakınsamadı: M1 güvenilmez yeşil, M2 kanıtsız kırmızı — ikisi de hâlâ "derlenecek".
+        vm.OnEvent(new ProjectStartedEvent("r1", m1, "M1"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", m1, 100, CycleUnsettled: true, Trusted: false));
+        vm.OnEvent(new ProjectStartedEvent("r1", m2, "M2"));
+        vm.OnEvent(new ProjectFailedEvent("r1", m2, 100, "exit 1", Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 1, Skipped: 0, Queued: 0, DurationMs: 500));
 
-        var lines = vm.StreamEvents.ToList();
-        int completedIndex = lines.FindIndex(l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
-        int hintIndex = lines.FindIndex(l => l.Text == StreamText.CyclesHint(2));
-        Assert.True(completedIndex >= 0, "Completed satırı bulunamadı");
-        Assert.True(hintIndex > completedIndex, "ipucu satırı Completed'tan SONRA gelmeli");
-        Assert.Equal(StreamKind.Info, lines[hintIndex].Kind);
-        Assert.Null(lines[hintIndex].ProjectId);
+        Assert.All(vm.Projects, r => Assert.True(r.WillBuild)); // ön-koşul: kirli üye kaldı
+        Assert.Contains(vm.StreamEvents, l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
+        Assert.DoesNotContain(vm.StreamEvents,
+            l => l.Text.Contains("cycle projects have pending changes", StringComparison.Ordinal));
     }
 
-    /// <summary>[Task 6] Bir Cycles koşusunun kendisi ipucu YAYMAZ — zaten o modda kullanıcı doğru düğmeyi
-    /// kullanıyordur; aynı öneriyi tekrarlamak gürültüdür.</summary>
-    [Fact]
-    public void A_cycles_run_completion_does_not_push_the_hint_even_with_dirty_members_remaining()
-    {
-        const string m1 = @"C:\p\m1.csproj";
-        const string m2 = @"C:\p\m2.csproj";
-        var vm = NewVm();
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
-            [[m1, m2]], [], []));
-
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 2, Parallelism: 4, "Debug"));
-        vm.OnEvent(new BuildPreviewEvent([
-            new BuildPreviewItem(m1, "M1", WillBuild: true),
-            new BuildPreviewItem(m2, "M2", WillBuild: true),
-        ]));
-        // [tavan] Tur tavanına dayanıp yakınsamadan bitebilir — üyeler yine de WillBuild=true kalabilir.
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
-
-        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
-    }
-
-    /// <summary>[Task 6] n==0 (döngü üyesi yok ya da hepsi zaten temiz) iken satır YOK — boş bir ipucu gürültü
-    /// olurdu.</summary>
-    [Fact]
-    public void A_completed_build_pushes_no_hint_when_no_cycle_member_is_dirty()
-    {
-        const string a = @"C:\p\a.csproj";
-        var vm = NewVm();
-        vm.OnEvent(new WorkspaceTopologyEvent([Node(a, "A", 0)], [], [], []));
-
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 1, Parallelism: 4, "Debug"));
-        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", WillBuild: true)]));
-        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));
-        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
-
-        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
-    }
-
-    /// <summary>[Task 6] Outcome=Stopped dalı Completed satırını hiç basmaz — ipucu da yayınlanmaz (kod yolu
-    /// baştan ayrı dal).</summary>
-    [Fact]
-    public void A_stopped_run_pushes_no_hint_even_with_dirty_cycle_members_remaining()
-    {
-        const string m1 = @"C:\p\m1.csproj";
-        const string m2 = @"C:\p\m2.csproj";
-        var vm = NewVm();
-        vm.OnEvent(new WorkspaceTopologyEvent(
-            [Node(m1, "M1", 0, inCycle: true), Node(m2, "M2", 1, inCycle: true)],
-            [[m1, m2]], [], []));
-
-        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 2, Parallelism: 4, "Debug"));
-        vm.OnEvent(new BuildPreviewEvent([
-            new BuildPreviewItem(m1, "M1", WillBuild: true),
-            new BuildPreviewItem(m2, "M2", WillBuild: true),
-        ]));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 0, Failed: 0, Skipped: 0, Queued: 2, DurationMs: 500));
-
-        Assert.DoesNotContain(vm.StreamEvents, l => l.Text.EndsWith("run Cycles", StringComparison.Ordinal));
-    }
-
-    // ============================================================ [Clean] Clean sonu Resolve cycles ipucu
+    // ============================================================ [Clean] Clean sonu döngü ipucu yok
 
     private const string CleanHintA = @"C:\p\a.csproj", CleanHintM1 = @"C:\p\m1.csproj", CleanHintM2 = @"C:\p\m2.csproj";
 
@@ -829,13 +771,15 @@ public class EventStreamTests
     }
 
     /// <summary>
-    /// [Clean · kullanıcı kararı 2026-09-28] Build menüsünün Clean'i döngü üyelerini de temizler, ama düz Build bir
-    /// SCC'yi ASLA derlemez (üyeler <c>skipped — in dependency cycle</c> olur, onlara bağlı projeler silinmiş
-    /// çıktıya takılabilir). Bu yüzden Clean bitince, <c>Completed</c> satırının HEMEN ARDINDAN, sırayı hatırlatan
-    /// TEK bir bilgi satırı gelir — yalnız akışta, konsolda değil; düğme yok, davranış değişmez.
+    /// <b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia ([Clean · kullanıcı kararı 2026-09-28], üç test): Build
+    /// menüsünün Clean'i döngü üyelerini de temizlediği, ama düz Build bir SCC'yi ASLA derlemediği için Clean bitince
+    /// (Stop dahil) Completed/Stopped satırının hemen ardından GERÇEKTEN temizlenen üye sayısıyla "N cycle projects
+    /// cleaned — run Resolve cycles before Build" satırı gelirdi. Clean'in üyeleri de temizlemesi kalır; satır kalktı,
+    /// çünkü temizlenen grup kayıtsızdır ve bir sonraki Build onu turlarla derler (ölçüm: 2026-10-07 13:17 koşusu,
+    /// ARCHITECTURE §8.1). Bitişte ne o satır ne de "run Cycles" satırı yazılır.
     /// </summary>
     [Fact]
-    public void A_full_clean_that_cleaned_cycle_members_points_to_resolve_cycles_after_completed()
+    public void A_full_clean_that_cleaned_cycle_members_pushes_no_resolve_hint()
     {
         var vm = FullCleanOverACycle();
         Cleaned(vm, CleanHintA, "A");
@@ -844,51 +788,9 @@ public class EventStreamTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 3, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
 
         var lines = vm.StreamEvents.ToList();
-        int completedIndex = lines.FindIndex(l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
-        int hintIndex = lines.FindIndex(l => l.Text == "2 cycle projects cleaned — run Resolve cycles before Build");
-        Assert.True(completedIndex >= 0, "Completed satırı bulunamadı");
-        Assert.Equal(completedIndex + 1, hintIndex); // Completed'ın HEMEN ardından
-        Assert.Equal(StreamKind.Info, lines[hintIndex].Kind);
-        Assert.Null(lines[hintIndex].ProjectId);
-        Assert.DoesNotContain("Resolve cycles", vm.GetRunDocumentText(), StringComparison.Ordinal); // konsola YAZILMAZ
-    }
-
-    /// <summary>Durdurulan bir Clean'de de temizlenen üyeler Resolve cycles'ı bekler — satır <c>Stopped</c>'ın
-    /// ardından gelir ve yalnız GERÇEKTEN temizlenenleri sayar (koşunun ulaşmadığı üye sayılmaz).</summary>
-    [Fact]
-    public void A_stopped_full_clean_counts_only_the_cycle_members_it_actually_cleaned()
-    {
-        var vm = FullCleanOverACycle();
-        Cleaned(vm, CleanHintM1, "M1");
-        vm.OnEvent(new RunStoppedEvent("r1", WasHard: false));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 2, DurationMs: 500));
-
-        var lines = vm.StreamEvents.ToList();
-        int stoppedIndex = lines.FindIndex(l => l.Text.StartsWith("Stopped", StringComparison.Ordinal));
-        Assert.True(stoppedIndex >= 0, "Stopped satırı bulunamadı");
-        Assert.Equal("1 cycle projects cleaned — run Resolve cycles before Build", lines.ElementAtOrDefault(stoppedIndex + 1)?.Text);
-    }
-
-    /// <summary>Temizliği PATLAYAN üye "temizlendi" sayılmaz (kendi kırmızı satırı akışta zaten durur); döngü
-    /// üyesine dokunmayan bir Clean'de ise satır HİÇ yoktur — boş bir ipucu gürültü olurdu.</summary>
-    [Fact]
-    public void Only_successfully_cleaned_cycle_members_count_and_none_means_no_hint()
-    {
-        var vm = FullCleanOverACycle();
-        Cleaned(vm, CleanHintA, "A");
-        Cleaned(vm, CleanHintM1, "M1");
-        vm.OnEvent(new ProjectStartedEvent("r1", CleanHintM2, "M2"));
-        vm.OnEvent(new ProjectFailedEvent("r1", CleanHintM2, 20, "exit 1", Evidence: false));
-        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 2, Failed: 1, Skipped: 0, Queued: 0, DurationMs: 500));
-        Assert.Contains(vm.StreamEvents, l => l.Text == "1 cycle projects cleaned — run Resolve cycles before Build");
-
-        var plain = NewVm();
-        plain.OnEvent(new WorkspaceTopologyEvent([Node(CleanHintA, "A", 0)], [], [], []));
-        plain.OnEvent(new RunStartedEvent("r1", RunMode.Clean, TotalProjects: 1, Parallelism: 4, "Debug"));
-        plain.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(CleanHintA, "A", WillBuild: true)]));
-        Cleaned(plain, CleanHintA, "A");
-        plain.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 1, Failed: 0, Skipped: 0, Queued: 0, DurationMs: 500));
-        Assert.DoesNotContain(plain.StreamEvents, l => l.Text.Contains("Resolve cycles", StringComparison.Ordinal));
+        Assert.Contains(lines, l => l.Text.StartsWith("Completed", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Text.Contains("cycle projects cleaned", StringComparison.Ordinal));
+        Assert.DoesNotContain(lines, l => l.Text.Contains("cycle projects have pending changes", StringComparison.Ordinal));
     }
 
     // ============================================================ [T10 PİN] Stop → akış satırı (kablolama)

@@ -766,12 +766,16 @@ public class ChoreographyTests
     /// <b>Clean koşusunun önizlemesi plan bayrağına YAZMAZ</b> (Resolve'unkiyle aynı gerekçe): o önizleme her
     /// projeye <c>true</c> verir çünkü BU koşu hepsini temizler — ama bir sonraki DÜZ Build'in cevabı o değildir.
     /// Bayrağı projenin SONUCU yazar: başarıda defter kaydı silinir, hatada kanıtsız hata yazılır; ikisi de
-    /// <c>never built</c> okunur ve Build döngü üyesini ASLA derlemediği için üyenin bayrağı <c>false</c>'tur
-    /// (<c>NextPreview.AfterClean</c>, bir sonraki Sync'in diyeceğiyle aynı). Eskiden Clean önizlemesi bayrağa
-    /// yazıyordu ve temizlenen (ya da temizliği patlayan) döngü üyesi Build'in dalgasında boşuna yanıyordu.
+    /// <c>never built</c> okunur ve bir sonraki düz Build onları derler — döngü üyeleri dahil
+    /// (<c>NextPreview.AfterClean</c>, bir sonraki Sync'in diyeceğiyle aynı).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>After_a_full_clean_the_build_wave_lights_the_cleaned_projects_but_not_the_cycle_members</c> — Build döngü
+    /// üyesini ASLA derlemediği için temizlenen üyenin bayrağı <c>false</c>'tu ve dalgada yanmazdı. Değişme gerekçesi
+    /// (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build kirli grubu da derler; temizlenen grup kayıtsızdır
+    /// ve bir sonraki Build onu turlarla derler, dalga da onu yakar.</para>
     /// </summary>
     [Fact]
-    public void After_a_full_clean_the_build_wave_lights_the_cleaned_projects_but_not_the_cycle_members()
+    public void After_a_full_clean_the_build_wave_lights_the_cleaned_projects_cycle_members_included()
     {
         var vm = FullCleanStarted();
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\A.csproj", "A"));
@@ -785,7 +789,7 @@ public class ChoreographyTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 3, Failed: 1, Skipped: 0, Queued: 0,
             DurationMs: 100));
 
-        Assert.Equal(["A", "B"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        Assert.Equal(["A", "B", "M1", "M2"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
         Assert.All(vm.Projects, r => Assert.Equal(WillBuildReason.NeverBuilt, r.WillBuildReason));
     }
 

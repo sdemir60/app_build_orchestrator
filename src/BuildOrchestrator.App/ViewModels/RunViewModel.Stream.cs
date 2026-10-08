@@ -329,26 +329,12 @@ public sealed partial class RunViewModel
                     // burada yalnız kapanış satırının sayısı düzeltilir.
                     PushStream(StreamKind.Done, null,
                         StreamText.Completed(e.Failed, e.Succeeded, e.Skipped - _outOfScopeSkipCount, e.DepIssueCount, e.DurationMs));
-                    // [Task 6] Bu dal yalnız e.Outcome != Stopped iken koşar (yukarıdaki if'in AKSİ) — Cycles
-                    // koşusunun KENDİSİ bu satırı yaymaz (zaten o modda, ipucu anlamsız). Sayaç Projects'ten
-                    // OKUNUR: WillBuild bir Cycles koşusuyla temizlenmediği sürece (döngü üyesi normal Build'de
-                    // pre-skip edilir, üye asla invoke edilmez) InCycle&&WillBuild==true satırlar "hâlâ kirli
-                    // döngü üyesi" demektir.
-                    if (_currentRunMode != RunMode.Cycles)
-                    {
-                        int n = Projects.Count(p => p.InCycle && p.WillBuild == true);
-                        if (n > 0) PushStream(StreamKind.Info, null, StreamText.CyclesHint(n));
-                    }
                 }
-                // [Clean · kullanıcı kararı 2026-09-28] Clean döngü üyelerini de temizler, ama düz Build onları
-                // derlemez — sırayı hatırlatan TEK bilgi satırı, Completed/Stopped satırının hemen ardından. Yalnız
-                // GERÇEKTEN temizlenen üye sayılır (koşunun ulaşmadığı ya da temizliği patlayan değil); hiç yoksa satır
-                // yok. Konsola yazılmaz: konsol işlemin ham logudur.
-                if (RunIsClean)
-                {
-                    int cleanedMembers = Projects.Count(p => p.InCycle && p.State == ProjectRowState.Succeeded);
-                    if (cleanedMembers > 0) PushStream(StreamKind.Info, null, StreamText.CleanedCyclesHint(cleanedMembers));
-                }
+                // [DEĞİŞEN KURAL — Build cycle derler] Kapanış satırının ardından döngü ipucu YAZILMAZ. Eskiden iki satır
+                // vardı: Build bitince "N cycle projects have pending changes — run Cycles", Clean bitince "N cycle
+                // projects cleaned — run Resolve cycles before Build" — ikisi de düz Build'in döngüyü derlemediği
+                // kuralına dayanıyordu. Build kirli grubu kendisi derler (ARCHITECTURE §8.1); hâlâ kirli üyeyi satırın
+                // kendi etiketi ve üçgeni söyler, temizlenen grubu bir sonraki Build derler.
                 _stream.EndRun();
                 SyncActiveLine();
                 // [Task 4] Koşu bitti — round ilerleme takibi bir sonraki run için sıfırlanır.

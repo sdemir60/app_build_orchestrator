@@ -308,9 +308,9 @@ public sealed class SyncWorkspaceService(
                 if (files >= SourceHashCache.NoisyPrefillThreshold) emit(Info(PlanProgressLines.IndexingSources(files)));
             });
 
-            // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar BUILD'i tarif eder: Build bir SCC'yi asla
-            // derlemez, bu yüzden buradaki kapı SABİT KAPALIDIR (buildCycles: false) ve cycle üyeleri her zaman
-            // WillBuild=false gelir. Onları derleyen tek şey ayrı bir koştur (RunMode.Cycles) ve o koşu kendi
+            // Idle'daki will-dot'ların kaynağı BURASIDIR ve onlar bir sonraki DÜZ Build'i tarif eder. Build kirli SCC
+            // gruplarını da derlediği için kapı Build'in kendi kararını okur (CycleCompilation — tek kaynak): kirli
+            // cycle üyesi "derlenecek" gelir, bileşik imzası temiz grup bütünüyle "güncel". Cycles koşusu kendi
             // önizlemesini kendi başlangıcında yayınlar — Sync burada onun adına söz VERMEZ.
             // [Faz 3/Task 6 — karar "Sync'in Fast geçişi"] Çıktı kanıtı YALNIZ Safe geçişine girer — Build'in planı
             // da aynı kontrollerle bağlanır, dolayısıyla Sync'in WillBuild'i bir sonraki düz Build'in kararıdır.
@@ -319,8 +319,9 @@ public sealed class SyncWorkspaceService(
             // (OutputReplaced) ya da kanıtı silinmiş (OutputMissing) bir proje dosyasına dokunulmadığı hâlde
             // "changed" sayılırdı.
             var checks = binder.ChecksFor(state);
-            var (safePlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Safe, checks);
-            var (fastPlan, _) = binder.Bind(state, buildCycles: false, DependentMode.Fast);
+            bool buildCycles = CycleCompilation.CompilesCycles(RunMode.Build);
+            var (safePlan, _) = binder.Bind(state, buildCycles, DependentMode.Safe, checks);
+            var (fastPlan, _) = binder.Bind(state, buildCycles, DependentMode.Fast);
             hashes.Flush();
 
             // "N changed" sayacı Fast semantiğindedir (ARCHITECTURE §5.3, ruling R9): Fast geçişinin derlenecek

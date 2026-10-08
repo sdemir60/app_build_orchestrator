@@ -63,6 +63,25 @@ public class SyncWorkspaceServiceTests
         repo.WriteFile(Path.Combine("src", "C", "C.cs"), "public class C { }");
     }
 
+    /// <summary>A ↔ B: iki SDK-style proje birbirine <c>ProjectReference</c> verir — tek SCC. <see cref="WriteWorkspace"/>
+    /// ile aynı üslup; tek farkı A'nın B'ye de referans vermesi.</summary>
+    private static void WriteCycleWorkspace(GitTestRepo repo)
+    {
+        repo.WriteFile(Path.Combine("src", "A", "A.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>A</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"..\\B\\B.csproj\" /></ItemGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "A", "A.cs"), "public class A { }");
+        repo.WriteFile(Path.Combine("src", "B", "B.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>B</AssemblyName>"
+            + "<TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+            + "<ItemGroup><ProjectReference Include=\"..\\A\\A.csproj\" /></ItemGroup></Project>");
+        repo.WriteFile(Path.Combine("src", "B", "B.cs"), "public class B { }");
+        repo.WriteFile(SlnName,
+            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"A\", \"src\\A\\A.csproj\", \"{1}\"\nEndProject\n"
+            + "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"B\", \"src\\B\\B.csproj\", \"{2}\"\nEndProject\n");
+    }
+
     /// <summary>İzole bir cache kökü — kullanıcının GERÇEK evaluation-cache/build-state dosyaları ASLA kirletilmez.</summary>
     private static string NewCacheRoot() => Directory.CreateTempSubdirectory("bo-sync-cache-").FullName;
 
@@ -979,6 +998,35 @@ public class SyncWorkspaceServiceTests
         var x = Assert.Single(Assert.Single(events.OfType<BuildPreviewEvent>()).Items);
         Assert.Equal((true, WillBuildReason.NeverBuilt), (x.WillBuild, x.Reason));
         Assert.Null(x.OutputBuiltAt);
+    }
+
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — Build cycle derler]</b> Sync'in önizlemesi bir sonraki DÜZ Build'i anlatır. Eski iddia: düz
+    /// Build bir SCC'yi asla derlemediği için kapı sabit KAPALIYDI (<c>buildCycles: false</c>) ve cycle üyesi her
+    /// zaman <c>WillBuild=false</c> gelirdi — idle will-dot hiç yanmaz, "N to build" üyeyi saymazdı.
+    /// Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu): pull ile değişen iki Types cycle üyesi Build'de atlandı,
+    /// bağımlıları paylaşılan klasördeki eski DLL'e karşı derlenip CS1061 verdi; satırda ve logda sebep görünmedi.
+    /// Build artık kirli grupları derler (ARCHITECTURE §8.1); kapı <see cref="CycleCompilation"/>'dan okunur.
+    /// </summary>
+    [Fact]
+    public async Task A_dirty_cycle_member_reads_will_build_in_the_sync_preview()
+    {
+        using var repo = new GitTestRepo();
+        WriteCycleWorkspace(repo);
+        repo.CommitAll("cycle");
+        string cacheRoot = NewCacheRoot();
+
+        var events = await SyncWithoutFetchAsync(repo, cacheRoot);
+
+        var topology = Assert.Single(events.OfType<WorkspaceTopologyEvent>());
+        Assert.Single(topology.Cycles);                                   // A ↔ B gerçekten bir SCC
+        Assert.All(topology.Nodes, n => Assert.True(n.InCycle));
+        Assert.All(topology.Nodes, n => Assert.True(n.WillBuild));        // hiç derlenmemiş → derlenecek
+        var preview = Assert.Single(events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.True(i.WillBuild));
+        var done = Assert.IsType<SyncCompletedEvent>(events[^1]);
+        Assert.Equal(1, done.CycleCount);
+        Assert.Equal(2, done.ToBuildCount);
     }
 
     /// <summary>

@@ -114,7 +114,8 @@ public sealed class IncrementalRunBinder
     /// karar diskten geldiği için hesaplanamayan bir imza yoktur (bkz. <see cref="IncrementalPlanner"/>).
     /// </summary>
     /// <param name="state">projectId → build-state kaydı (<see cref="BuildOrchestrator.Core.State.BuildStateStore.Load"/>).</param>
-    /// <param name="buildCycles">[Task 11] Bu koşu SCC üyelerini derliyor mu — yalnız <c>RunMode.Cycles</c>.
+    /// <param name="buildCycles">[Task 11] Bu koşu SCC üyelerini derliyor mu —
+    /// <see cref="Planning.CycleCompilation.CompilesCycles"/>; Sync Build'in değerini geçer.
     /// <b>Varsayılanı YOKTUR:</b> her çağıran koşunun kapsamını açıkça yazar, yoksa o yüzeydeki önizleme
     /// motorla ayrışır.</param>
     /// <param name="mode">Safe (dirty + transitive dependent) ya da Fast (yalnız kendi terimi bayatlayanlar).</param>

@@ -8,12 +8,12 @@ using BuildOrchestrator.Core.Incremental;
 /// Saf karar fonksiyonu — imza hesaplama (BuildSignature, T25) It-3'te; burada yalnız enjekte edilen
 /// currentSignature/state üzerinden karar verilir.
 ///
-/// <para><b>SCC üyeleri ve <paramref name="buildCycles"/>.</b> Bir SCC'yi derleyen tek koşu <c>RunMode.Cycles</c>'tır;
-/// Build/Rebuild üyeleri <c>"in dependency cycle"</c> ile atlar. Bu yüzden bayrak bir kullanıcı tercihi DEĞİL,
-/// koşunun kapsamının yansımasıdır: Sync'in önizlemesi ve Build'in planlaması <c>false</c> geçer (üye her zaman
-/// "derlenmeyecek"), Cycles koşusu <c>true</c> geçer ve üyeler sıradan imza/state mantığına tabi olur —
-/// SCC'nin bileşik imzası tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün olarak
-/// "güncel" görünür.</para>
+/// <para><b>SCC üyeleri ve <paramref name="buildCycles"/>.</b> Bir SCC'yi derleyen koşular
+/// <see cref="CycleCompilation.CompilesCycles"/>'ın <c>true</c> dediği modlardır (Build, Rebuild, Cycles); Clean
+/// derlemez. Bu yüzden bayrak bir kullanıcı tercihi DEĞİL, koşunun kapsamının yansımasıdır: Sync'in önizlemesi
+/// Build'in değerini, koşunun planlaması kendi modunun değerini geçer. Açıkken üyeler sıradan imza/state mantığına
+/// tabi olur — SCC'nin bileşik imzası tüm üyeler için ORTAK olduğundan grup ya bütün olarak "derlenecek" ya bütün
+/// olarak "güncel" görünür; kapalıyken üye her zaman "derlenmeyecek"tir.</para>
 ///
 /// <para><b>Bağımlılığı başarısız olan başarı (<see cref="BuildState.DepIssue"/>).</b> Böyle bir proje
 /// derlendi ama bağımlılığının BAYAT çıktısına link'lidir; "başarılı" olması binary'nin güncel olduğu
@@ -38,7 +38,7 @@ using BuildOrchestrator.Core.Incremental;
 /// (kendi değişikliği kesin derletir); kökleri bilinmeyen eski kayıt <see cref="WillBuildReason.DepIssue"/>
 /// olarak kesin derlenir — güvenli yön.</para>
 ///
-/// <para><b>Bilinen dar ayrışma (Cycles koşusu içinde):</b> bir SCC'nin üyeleri KISMEN temiz olduğunda —
+/// <para><b>Bilinen dar ayrışma (grup derleyen koşu içinde):</b> bir SCC'nin üyeleri KISMEN temiz olduğunda —
 /// bileşik imza ortak olduğu için pratikte yalnız bir üyenin state kaydı hiç yokken — koordinatörün grup
 /// kapısı (<c>All</c>) düşer, grup bütün olarak dispatch edilir ve önizlemenin GRİ çizdiği temiz üyeler de
 /// derlenir. <c>Any</c>'ye gevşetmek bunu kapatmaz, DAHA KÖTÜSÜNÜ yapar: hiç derlenmemiş üyeleri de atlayıp
@@ -46,8 +46,8 @@ using BuildOrchestrator.Core.Incremental;
 /// </summary>
 public static class WillBuildEvaluator
 {
-    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu (yalnız <c>RunMode.Cycles</c>). <c>false</c>
-    /// iken cycle üyesi her zaman "derlenmeyecek" sayılır. VARSAYILAN DEĞER YOK — her çağıran kararı açıkça
+    /// <param name="buildCycles">Bu koşu SCC üyelerini derliyor mu (<see cref="CycleCompilation.CompilesCycles"/>).
+    /// <c>false</c> iken cycle üyesi her zaman "derlenmeyecek" sayılır. VARSAYILAN DEĞER YOK — her çağıran kararı açıkça
     /// yazar, böylece yeni bir çağrı yeri sessizce yanlış kapsama düşemez.</param>
     public static bool? Evaluate(bool inCycle, string? currentSignature, BuildState? state, bool buildCycles)
         => EvaluateWithReason(inCycle, currentSignature, state, buildCycles).WillBuild;
@@ -97,8 +97,8 @@ public static class WillBuildEvaluator
 
     /// <summary>
     /// Bu düğüm BU koşunun kapsamı DIŞINDA mı: bir SCC üyesidir ve koşu döngüleri derlemiyordur. Kapsam dışı
-    /// düğüm gerekçesi ne olursa olsun <c>WillBuild=false</c>'tur (bir SCC'yi yalnız <c>RunMode.Cycles</c>
-    /// derler). Karar buradan okunur, kopyalanmaz — <see cref="BuildPreview"/>'ın ikinci geçişi bir hükmü
+    /// düğüm gerekçesi ne olursa olsun <c>WillBuild=false</c>'tur (SCC'yi derleyen modlar
+    /// <see cref="CycleCompilation.CompilesCycles"/>'tadır). Karar buradan okunur, kopyalanmaz — <see cref="BuildPreview"/>'ın ikinci geçişi bir hükmü
     /// yükseltirken AYNI kısa devreyi uygulamak zorundadır, aksi hâlde iki yer sessizce ayrışırdı.
     /// </summary>
     public static bool OutOfScope(bool inCycle, bool buildCycles) => inCycle && !buildCycles;
