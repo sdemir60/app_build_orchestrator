@@ -1364,7 +1364,8 @@ function, not a second guess re-derived from the same data (`ConditionalRebuild.
 The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything,
 cycle groups included; a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped
 *alone*, since that would leave the group half built. The group as a whole, though, answers the same question
-**atomically** at its dispatch, in the same modes and by the same mode rule (`ConditionalRebuild`): when every
+**atomically** at its dispatch, in the same modes and by the same mode rule (`IncrementalModes`, the one source the
+up-to-date seed reads too): when every
 member is either up to date or dirty *only* because it waits on recorded roots, and every one of those roots still
 fails by the table above, the whole group is skipped member by member as `skipped — dependency still failing` —
 rebuilding it would only relink everyone to the same stale root outputs (measured: a broken prerequisite made a
@@ -6287,6 +6288,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch, and the pre-skip of members in a plan without a component map | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
+| Which runs follow the ledger (incremental: `Build`, `Cycles`) — one source for the coordinator's up-to-date seed and the conditional-rebuild mode rule | `Core/Planning/IncrementalModes.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |

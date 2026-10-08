@@ -838,7 +838,9 @@ public sealed class RunCoordinator(
                         signature));
                 }
             }
-            if (cmd.Mode == RunMode.Build || cyclesRun)
+            // Güncel tohumu yalnız defteri dinleyen koşularda kurulur (Build, Cycles) — ConditionalRebuild'in mod kuralıyla
+            // AYNI kaynak (IncrementalModes, kopya YASAK); Rebuild önbelleği yok sayar.
+            if (IncrementalModes.Includes(cmd.Mode))
             {
                 // Grup düzeyinde "güncel" bulunan SCC üyeleri — aşağıdaki tek pre-skip döngüsünün cycle
                 // üyelerine açtığı KAPIDIR. Harita yoksa (planda SCC yok) boş kalır.
