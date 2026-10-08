@@ -70,7 +70,7 @@ public static class Program
 
         // Planlama TAMAMEN Core'da [D3]: scan → evaluate (cache'li) → graph → topo → BuildPlan →
         // incremental willBuild + imza. Planlayıcı (ComputeIncremental) dört modun HEPSİNDE çağrılır — mod
-        // kapısı yok; yalnız Cycles modu Bind'a bileşik imza bayrağını geçirir.
+        // kapısı yok; Bind'ın "SCC derler mi" bayrağı CycleCompilation'dan okunur (Clean dışında her mod).
         // [planlama görünürlüğü] `progress` satırları PlanProgressEvent olarak, runStarted'tan ÖNCE App'e gider
         // (bkz. RunCoordinator'ın planner parametresi). Metinler Core'daki PlanProgressLines'tan gelir — Sync'in
         // yazdıklarıyla AYNI kaynak: iki akış aynı işi anlatır ve tek yerden güncellenir (CLAUDE.md kopya yasağı).
@@ -201,7 +201,7 @@ public static class Program
             // kontroller: dışarıda derlenmiş güncel proje BuiltOutside ile pre-skip edilir, kanıtı eksik/bozuk
             // olan derlenir. Kontroller plana da taşınır (koşu önizlemesi).
             var checks = binder.ChecksFor(state);
-            var (bound, signatures, memberTerms) = binder.Bind(state, cmd.Mode == RunMode.Cycles, cmd.DependentMode, checks);
+            var (bound, signatures, memberTerms) = binder.Bind(state, CycleCompilation.CompilesCycles(cmd.Mode), cmd.DependentMode, checks);
 
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)

@@ -20,6 +20,11 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// Fixture: <see cref="RunCoordinatorTests"/>'in harness'ı, fake invoker'ı ve plan yardımcıları AYNEN
 /// kullanılır (<c>using static</c>) — koordinatörün test host'u tek yerdedir, kopya YASAK (CLAUDE.md).
 /// Gerçek MSBuild YOK, sleep/poll YOK [D8].
+///
+/// <para><b>Ölçüm (gerçek OSYS, 2026-10-08, Balanced/paralellik 4 — kullanıcının 2026-10-07 tabanıyla aynı ayar):</b>
+/// Clean sonrası TEK bir Build 187 projeyi 7 cycle grubu (33 üye, hepsi tur 1'de yakınsadı) dahil 194 sn'de derledi;
+/// taban aynı işi iki koşuda yapıyordu (Resolve cycles 197 sn + Build 187 sn). Değişiklik olmadan ikinci Build
+/// 1,2 sn — her grup <c>up to date</c> atlandı (ayrıntı: .claude/outputs/2026-10-08-08-02-build-compiles-dirty-cycles-measurement.md).</para>
 /// </summary>
 public class CycleRoundsTests
 {
@@ -75,55 +80,147 @@ public class CycleRoundsTests
     // ---------------------------------------------------------------- 0) kapsam: hangi mod SCC derler
 
     /// <summary>
-    /// <b>Build bir SCC'yi ASLA derlemez.</b> Üyeler tek bir tur bile koşmadan, bu özellikten ÖNCEKİ
-    /// <c>"in dependency cycle"</c> gerekçesiyle pre-skip edilir ve tur göstergesi hiç yayılmaz. Build için
-    /// yazılmış AYRI bir kod yolu YOKTUR — <c>RunCoordinator</c> scheduler'a <c>CycleGroups</c> yerine
-    /// <c>null</c> geçer ve <see cref="Core.Scheduling.ReadySetScheduler"/>'ın bugüne dek var olan pre-skip
-    /// dalı devreye girer.
-    /// <para><b>[DEĞİŞEN KURAL]</b> Bu test eskiden "kill switch KAPALIYKEN" diye yazılıydı: turlar Build'in
-    /// içine katlanmıştı ve Settings'teki bir anahtarla kapatılıyordu. Ölçülen sonuç: iki dakikalık bir Build
-    /// on beş dakikaya çıkıyor, kullanıcı istemediği ve göremediği bir işin arkasında bekliyordu. Turlar artık
-    /// kendi moduna (<see cref="RunMode.Cycles"/>, Sync'in yanındaki düğme) taşındı; anahtar kalktı. Pinlenen
-    /// gerekçe aynı kaldı — Build'in davranışı bu özellik hiç yokmuş gibidir.</para>
+    /// <b>[DEĞİŞEN KURAL — Build cycle derler.]</b> Eski iddia (<c>a_build_run_pre_skips_every_member_with_the_original_reason_and_runs_no_rounds</c>):
+    /// "Build bir SCC'yi ASLA derlemez" — üyeler tek bir tur bile koşmadan <c>"in dependency cycle"</c> gerekçesiyle
+    /// pre-skip edilirdi; turlar kendi moduna (Cycles) taşınmıştı, çünkü Build'e gömülü turlar ölçülmüş ve iki
+    /// dakikalık bir Build on beş dakikaya çıkmıştı.
+    /// <para><b>Değişme gerekçesi (ölçüm):</b> o ölçüm tur-öncesi kanıt mekanizmasından (<see cref="CycleMemberNeed"/>,
+    /// yüzey kısa devresi) öncedir. 2026-10-07'de iki Cycles koşusunda her grup 1. turda yakınsadı; tur mekanizmasının
+    /// kendi payı saniyelik hash'lerdir. Aynı gün 13:17'deki Build, pull ile değişen iki Types cycle üyesini atladı ve
+    /// bağımlıları eski DLL'e karşı derlenip CS1061 verdi — satırda ve logda sebep yoktu (ARCHITECTURE §8.1).
+    /// Build artık kirli grubu plandaki bir düğüm gibi turlarla derler; bağımlıları grubun bitmesini bekler. Build
+    /// için yazılmış AYRI bir kod yolu yine YOKTUR: koordinatör scheduler'a aynı <c>CycleGroups</c> haritasını
+    /// geçer (<see cref="CycleCompilation"/>), gerisi Cycles'ınkiyle birebir aynı tur döngüsüdür.</para>
     /// </summary>
     [Fact]
-    public async Task a_build_run_pre_skips_every_member_with_the_original_reason_and_runs_no_rounds()
+    public async Task a_build_run_compiles_a_dirty_cycle_in_rounds_and_its_dependent_after_the_group()
     {
         var rec = new RoundRecorder();
         var invoker = rec.Invoker((_, _) => Ok());
-        using var h = new Harness(TwoMemberCycle(), invoker);
+        // A ↔ B kirli grup; Z gruba bağımlı ve kirli → grup bittikten SONRA, taze çıktıya karşı derlenir.
+        var plan = CyclePlanOf(["A", "B"],
+            Node("A", deps: ["B"], inCycle: true, willBuild: true),
+            Node("B", deps: ["A"], inCycle: true, willBuild: true),
+            Node("Z", deps: ["A"], willBuild: true));
+        using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
-        Assert.Empty(rec.Calls);                                    // MSBuild HİÇ çağrılmadı — tur YOK
-        var events = h.Events;
-        Assert.Empty(events.OfType<CycleRoundStartedEvent>());       // tur göstergesi de YOK
-        Assert.Empty(events.OfType<ProjectSucceededEvent>());
-        Assert.Empty(events.OfType<ProjectFailedEvent>());
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2", "Z#1"], rec.Calls); // kanıtsız grup: iki yeşil tur, sonra Z
+        Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());         // "in dependency cycle" YOK
+        Assert.Equal([1, 2], h.Events.OfType<CycleRoundStartedEvent>().Select(e => e.Round));
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+        Assert.Equal(3, h.Events.OfType<ProjectSucceededEvent>().Count());
+        var done = Assert.Single(h.Events.OfType<RunCompletedEvent>());
+        Assert.Equal(3, done.Succeeded);
+        Assert.Equal(0, done.Skipped);
+        // Önizleme koşunun GERÇEKTEN yapacağını gösterir: üyeler de dalgada yanar.
+        var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>());
+        Assert.All(preview.Items, i => Assert.True(i.WillBuild));
+    }
 
-        var skipped = events.OfType<ProjectSkippedEvent>().ToList();
+    /// <summary>Build de grup düzeyinde INCREMENTAL'dır: bileşik imzası temiz grup (<c>WillBuild == false</c> gelen
+    /// üyeler) tek tur bile koşmadan sıradan "güncel" skip'iyle atlanır; bağımlısı yine derlenir. Karar GRUP
+    /// düzeyindedir (<c>All</c>) — Cycles koşusuyla aynı kapı, aynı kod.</summary>
+    [Fact]
+    public async Task a_build_run_skips_a_cycle_whose_composite_signature_is_clean_as_up_to_date()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((_, _) => Ok());
+        var plan = CyclePlanOf(["A", "B"],
+            Node("A", deps: ["B"], inCycle: true, willBuild: false),
+            Node("B", deps: ["A"], inCycle: true, willBuild: false),
+            Node("Z", deps: ["A"], willBuild: true));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["Z#1"], rec.Calls);                                 // grup HİÇ derlenmedi, Z derlendi
+        var skipped = h.Events.OfType<ProjectSkippedEvent>().ToList();
         Assert.Equal([Id("A"), Id("B")], skipped.Select(e => e.ProjectId));
-        // Gerekçe METNİ özelliğin öncesiyle BİREBİR aynı olmalı — App'in rozeti/sayaçları bu metne göre ayrışmasın.
-        Assert.All(skipped, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
+        Assert.All(skipped, e => Assert.Equal(SkipReasons.UpToDate, e.Reason));
         Assert.All(skipped, e => Assert.False(e.CycleUnconverged));
+        Assert.Empty(h.Events.OfType<CycleRoundStartedEvent>());
+    }
 
-        var done = Assert.IsType<RunCompletedEvent>(events[^1]);
-        Assert.Equal(0, done.Succeeded);
-        Assert.Equal(2, done.Skipped);
-        Assert.Equal(0, done.Queued);
+    /// <summary>Yüzey kanıtı mod tanımaz: Build'in derlediği grup da kimsenin okuduğu yüzey değişmediyse TEK turda
+    /// yakınsar, persist edilir ve güvenilir raporlanır (Cycles koşusundaki kardeş testle aynı sahne:
+    /// <see cref="a_green_group_whose_surfaces_did_not_change_converges_in_one_round"/>).</summary>
+    [Fact]
+    public async Task a_build_run_with_surface_evidence_converges_a_green_group_in_one_round()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            SeedGreen(store, "A");
+            SeedGreen(store, "B");
+            var disk = new SurfaceDisk();
+            disk.Set("A", "a1");
+            disk.Set("B", "b1");
+            var plan = HashModePlan(TwoMemberCycle(), "A", "B");
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => { disk.Set(name, name == "A" ? "a1" : "b1"); return Ok(); });
+            using var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read);
+
+            await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Equal(["A#1", "B#1"], rec.Calls);
+            var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+            Assert.Equal(CycleOutcome.Converged, completed.Outcome);
+            Assert.Equal(1, completed.Rounds);
+            foreach (string name in new[] { "A", "B" })
+            {
+                Assert.Equal("sig", store.Load()[Id(name)].BuiltSignature);
+                Assert.Equal(BuildResult.Succeeded, store.Load()[Id(name)].LastResult);
+            }
+            Assert.All(h.Events.OfType<ProjectSucceededEvent>(), e => Assert.True(e.Trusted));
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>Build'de yakınsamayan grup bağımlısını BLOKLAMAZ: Z, patlayan üyenin son başarılı çıktısına karşı
+    /// derlenir ve bunu logunun başında söyler (§8.3) — sessiz bayat referans YOK. Cycles koşusundaki NoProgress
+    /// kuralı aynen: aynı küme iki turdur patlıyor, üçüncü tur yok.</summary>
+    [Fact]
+    public async Task a_build_run_with_a_no_progress_group_still_builds_the_dependent_with_a_dependency_issue()
+    {
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) => name == "B" ? Exit(1) : Ok());
+        var plan = CyclePlanOf(["A", "B"],
+            Node("A", deps: ["B"], inCycle: true, willBuild: true),
+            Node("B", deps: ["A"], inCycle: true, willBuild: true),
+            Node("Z", deps: ["B"], willBuild: true));
+        using var h = new Harness(plan, invoker);
+
+        await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2", "Z#1"], rec.Calls);
+        var failed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+        Assert.Equal(Id("B"), failed.ProjectId);
+        var z = Assert.Single(h.Events.OfType<ProjectSucceededEvent>(), e => e.ProjectId == Id("Z"));
+        Assert.NotEmpty(z.DepIssues ?? []);
+        Assert.Contains("warning: B failed in this run — last successful output referenced (B)", LogTextsFor(h, "Z"));
     }
 
     /// <summary>
-    /// Build'in en ince kenarı: daha önce koşmuş bir <see cref="RunMode.Cycles"/> run'ı bu SCC'yi
-    /// "yakınsamıyor" diye hatırlamış olabilir. O hafıza Build'de de okunsaydı üyeler
-    /// <c>"cycle did not converge at this signature"</c> gerekçesiyle seed'lenir, ve
-    /// <see cref="Core.Scheduling.ReadySetScheduler"/>'ın pre-skip dalı (<c>!_completed.ContainsKey</c> guard'ı)
-    /// orijinal gerekçeyi YUTARDI — Build "neredeyse aynı" olurdu. Hafıza okuması bu yüzden MODUN kendisiyle
-    /// kapılıdır.
+    /// Daha önce koşmuş bir <see cref="RunMode.Cycles"/> run'ı bu SCC'yi "yakınsamıyor" diye hatırlamış olabilir.
+    /// Hafıza BLOKLAMAZ, yalnız RAPORLAR ([Task 7 · DEĞİŞEN KURAL]); Build de grubu derlediği için aynı kural Build'de
+    /// geçerlidir: decision.log hafızayı anar (<see cref="CycleDecisionLines.Retrying"/>) ve grup tur 1'den yeniden
+    /// denenir — hiçbir üye pre-skip edilmez.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>a_build_run_ignores_non_convergence_memory_left_behind_by_a_cycles_run</c> — Build hafızayı OKUMAZDI ve
+    /// üyeler <c>"in dependency cycle"</c> ile pre-skip edilirdi (hafıza okuması modun kendisiyle kapılıydı).
+    /// Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): Build kirli grubu derler; hafıza,
+    /// grubu derleyen her koşuda okunur ve yalnız raporlanır.</para>
     /// </summary>
     [Fact]
-    public async Task a_build_run_ignores_non_convergence_memory_left_behind_by_a_cycles_run()
+    public async Task a_build_run_reports_non_convergence_memory_left_behind_by_a_cycles_run_and_retries_the_group()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -138,15 +235,17 @@ public class CycleRoundsTests
             await h.Sut.StartAsync(Start(RunMode.Cycles, runId: "r1"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature); // sanity: hafıza gerçekten var
+            int callsAfterRun1 = rec.Calls.Count;
 
-            // Run 2 (Build, AYNI imza). Hafıza duruyor ama okunmamalı.
+            // Run 2 (Build, AYNI imza). Hafıza raporlanır, grup yine denenir.
             await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
-            var run2Skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
-            Assert.Equal([Id("A"), Id("B")], run2Skips.Select(e => e.ProjectId));
-            Assert.All(run2Skips, e => Assert.Equal(SkipReasons.InDependencyCycle, e.Reason));
-            Assert.All(run2Skips, e => Assert.False(e.CycleUnconverged));
+            Assert.True(rec.Calls.Count > callsAfterRun1, "Build grubu yeniden denemedi");
+            Assert.Contains("cycle A: retrying — did not converge at this signature (sig)", h.DecisionLog,
+                StringComparison.Ordinal);
+            var run2 = h.Events.SkipWhile(e => e is not RunStartedEvent { RunId: "r2" }).ToList();
+            Assert.Empty(run2.OfType<ProjectSkippedEvent>());
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -511,8 +610,12 @@ public class CycleRoundsTests
 
     // ---------------------------------------------------------------- 7) stop ortasında
 
-    [Fact]
-    public async Task stopped_group_invalidates_every_member()
+    /// <summary>[Build cycle derler] Stop semantiği moda bağlı değildir — Build'in grubu da aynı yoldan kesilir: her
+    /// üye tam bir kez <c>Complete</c> edilir, yarım grup geçersizlenir, yakınsamama hafızası yazılmaz.</summary>
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task stopped_group_invalidates_every_member(RunMode mode)
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -533,7 +636,7 @@ public class CycleRoundsTests
             });
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), cts.Token);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), cts.Token);
             // Complete her üye için (iptal yolunda da) çağrıldı ⇒ run ASILMAZ. Kaçırılsaydı bu satır timeout'a
             // düşerdi: IsDone, InFlight==0 şartını asla sağlamazdı.
             await h.Sut.RunCompletion.WaitAsync(Limit);
@@ -967,10 +1070,10 @@ public class CycleRoundsTests
         // yan etkisine BIRAKILMAZ) — bu test o SONUCU pinler.
         //
         // [DEĞİŞEN KURAL] Eskiden orta adım Rebuild'di: "Rebuild pre-skip bilmez, hafızalı grubu yine dener"
-        // deniyordu. Turlar Build/Rebuild'in içinden çıkıp kendi moduna taşınınca (RunMode.Cycles) o kaçış
-        // yolu kapandı — Rebuild artık bir SCC'ye hiç dokunmaz. Yerine gerçek hayattaki çıkış yolu kullanılır:
-        // KAYNAK DEĞİŞİR (imza "sig" → "sig2"), grup yeniden denenir ve bu kez yakınsar. Sonra imza "sig"e
-        // geri döner; hafıza temizlenmiş olduğu için grup yine invoke edilir. İddia aynı, yolu gerçekçi.
+        // deniyordu. Turlar bir dönem yalnız kendi modunda (RunMode.Cycles) koştuğu için o kaçış yolu kapanmış ve
+        // orta adım gerçek hayattaki çıkış yoluna çevrilmişti: KAYNAK DEĞİŞİR (imza "sig" → "sig2"), grup yeniden
+        // denenir ve bu kez yakınsar. Sonra imza "sig"e geri döner; hafıza temizlenmiş olduğu için grup yine invoke
+        // edilir. Rebuild bugün yine grupları derler (CycleCompilation); test gerçekçi yolu korur, iddia aynı.
         string cacheRoot = NewCacheRoot();
         try
         {
@@ -1013,17 +1116,52 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    // [SİLİNEN TEST — convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue]
-    // Eski iddia: yakınsayan bir SCC üyesinin success'i depIssue TAŞIYORSA [A2] gereği persist etmez, bu
-    // yüzden hafıza silme işi persist'in yan etkisine bırakılamaz — açıkça yapılmalıdır. (A2'nin o kuralı
-    // bugün geçerli DEĞİL: depIssue taşıyan başarı artık NOTLA persist edilir — bkz. WillBuildEvaluator.
-    // Silme gerekçesi bundan bağımsız ve hâlâ geçerlidir.)
-    // Neden silindi: senaryosu artık ÜRETİLEMEZ. Turlar kendi moduna (RunMode.Cycles) taşınınca o koşuda
-    // döngü DIŞINDAKİ her proje pre-skip edilir, yani hiçbir zaman FAILED olmaz; DepIssueTracker ise yalnız
-    // FAILED bağımlılıktan depIssue üretir (grup-içi kenarlar da hesaptan zaten çıkarılır). Dolayısıyla bir
-    // SCC üyesinin success'i bu modda depIssue TAŞIYAMAZ. Açık silme KODU KALDI — doğru yerde durur ve
-    // gerekçesi UpdateCycleNonConvergenceMemory'nin doc'undadır; ama artık davranışı gözlemleyebilecek bir
-    // senaryo olmadığı için ona sahte bir kurulum uyduran bir test tutulmadı.
+    /// <summary>
+    /// Yakınsayan grubun yakınsamama hafızası, üyelerin başarısı depIssue TAŞISA bile silinir: silme hafızanın kendi
+    /// yazıcısında AÇIKÇA yapılır (<c>UpdateCycleNonConvergenceMemory</c>), persist'in yan etkisine BIRAKILMAZ —
+    /// depIssue'lu başarı notla persist edilir ve o yol hafızaya dokunmaz.
+    /// <para><b>[GERİ GELEN TEST — Build cycle derler]</b> Bu test silinmişti; gerekçe "senaryo üretilemez: grubu
+    /// derleyen tek koşuda döngü dışı her proje pre-skip edilir, hiçbir zaman FAILED olmaz" idi. Build grubu da döngü
+    /// dışındaki upstream'i de aynı koşuda derler: X patlarsa üyeler X'in son başarılı çıktısına karşı derlenir ve
+    /// başarıları depIssue taşır.</para>
+    /// </summary>
+    [Fact]
+    public async Task convergence_clears_the_memory_even_for_a_member_whose_success_carries_a_dep_issue()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var store = new BuildStateStore(cacheRoot);
+            // X → (A ↔ B): X döngü dışı upstream. Run 1: grup ilerlemez (B patlar) ⇒ hafıza "sig". Run 2: X patlar,
+            // grup yakınsar — iki üyenin başarısı da X'i kök taşır.
+            var plan = CyclePlanOf(["A", "B"],
+                Node("X"),
+                Node("A", deps: ["X", "B"], inCycle: true),
+                Node("B", deps: ["X", "A"], inCycle: true)) with { Incremental = RunCoordinatorTests.Incremental("X", "A", "B") };
+            bool secondRun = false;
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) =>
+                secondRun ? (name == "X" ? Exit(1) : Ok()) : (name == "B" ? Exit(1) : Ok()));
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r1"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+            Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature); // ön-koşul: hafıza yazıldı
+
+            secondRun = true;
+            await h.Sut.StartAsync(Start(RunMode.Build, runId: "r2"), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            var run2 = h.Events.SkipWhile(e => e is not RunStartedEvent { RunId: "r2" }).ToList();
+            Assert.Equal(CycleOutcome.Converged, Assert.Single(run2.OfType<CycleCompletedEvent>()).Outcome);
+            var successes = run2.OfType<ProjectSucceededEvent>().ToList();
+            Assert.Equal([Id("A"), Id("B")], successes.Select(e => e.ProjectId).Order());
+            Assert.All(successes, e => Assert.NotEmpty(e.DepIssues ?? []));     // A ve B, X'i kök taşır
+            Assert.Null(store.Load()[Id("A")].NonConvergentSignature);           // yakınsama hafızayı SİLDİ
+            Assert.Null(store.Load()[Id("B")].NonConvergentSignature);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
 
     // ---------------------------------------------------------------- 10) karar decision.log'a düşer [M1]
 
@@ -1916,10 +2054,13 @@ public class CycleRoundsTests
     /// link'lenmekten başka hiçbir şey kazanmıyordu. Tekil projenin kuralı (§8.3: kök düzelince derle, hâlâ
     /// kırıksa atla) GRUBUN TAMAMINA atomik uygulanınca "yarım grup" itirazı ortadan kalkar: ya herkes atlanır
     /// ya herkes derlenir. Defter kayıtlarına DOKUNULMAZ — kök düzeldiği ilk koşuda grup normal derlenir
-    /// (aşağıdaki kontrol testi).
+    /// (aşağıdaki kontrol testi). [Build cycle derler] Build de grubu derlediği için aynı kural Build'de de geçerlidir;
+    /// Rebuild'de geçerli DEĞİLDİR (<see cref="a_rebuild_compiles_a_group_waiting_for_a_still_failing_root"/>).
     /// </summary>
-    [Fact]
-    public async Task a_cycle_group_only_waiting_for_a_still_failing_root_is_skipped_without_a_single_round()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task a_cycle_group_only_waiting_for_a_still_failing_root_is_skipped_without_a_single_round(RunMode mode)
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -1929,11 +2070,17 @@ public class CycleRoundsTests
             var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
             using var h = new Harness(plan, invoker, stateStore: store);
 
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["Up#1"], rec.Calls);                 // grup HİÇ derlenmedi — tek tur bile yok
             Assert.Empty(h.Events.OfType<CycleRoundStartedEvent>());
+            // [final review M-2] Koşunun kendi önizlemesi bekleyen üyeleri GRUPLA koşullu yazar: dalga, kuyruk ve
+            // payda onları kesin saymaz — grup dispatch anında atlanabilir. Kök (Up) kesindir.
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items.ToDictionary(i => i.ProjectId);
+            Assert.True(preview[Id("A")].Conditional);
+            Assert.True(preview[Id("B")].Conditional);
+            Assert.False(preview[Id("Up")].Conditional);
             var skips = h.Events.OfType<ProjectSkippedEvent>().ToList();
             Assert.Equal([Id("A"), Id("B")], skips.Select(e => e.ProjectId));
             Assert.All(skips, e => Assert.Equal(SkipReasons.DependencyStillFailing, e.Reason));
@@ -1983,6 +2130,39 @@ public class CycleRoundsTests
 
             Assert.Contains("A#1", rec.Calls);                  // grup dispatch edildi
             Assert.Contains("B#1", rec.Calls);
+            // [final review M-2] Grup kesin derlenecek: hiçbir üyesi koşullu yazılmaz.
+            var preview = Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items;
+            Assert.DoesNotContain(preview, i => i.Conditional);
+        }
+        finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
+    }
+
+    /// <summary>[ara inceleme I1 — Build cycle derler] Rebuild "önbelleği yok say"dır: kökünü bekleyen grup Rebuild'de
+    /// grup düzeyinde koşullu ATLANMAZ — tekil bekleyen projenin Rebuild'de koşulsuz derlenmesiyle aynı
+    /// (<see cref="ConditionalRebuild.AppliesTo"/> yalnız Build ve Cycles'ta değerlendirir). Kusur: grup kapısı
+    /// (<see cref="ConditionalRebuild.GroupAppliesTo"/>) modu okumuyordu; Rebuild grupları derlemeye başlayınca
+    /// (CycleCompilation) aynı köke bekleyen grup "dependency still failing" ile atlanıyor, tekil proje ise
+    /// derleniyordu.</summary>
+    [Fact]
+    public async Task a_rebuild_compiles_a_group_waiting_for_a_still_failing_root()
+    {
+        string cacheRoot = NewCacheRoot();
+        try
+        {
+            var (store, plan) = WaitingCyclePlan(cacheRoot);
+            var rec = new RoundRecorder();
+            var invoker = rec.Invoker((name, _) => name == "Up" ? Exit(1) : Ok()); // kök yine patlıyor
+            using var h = new Harness(plan, invoker, stateStore: store);
+
+            await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
+            await h.Sut.RunCompletion.WaitAsync(Limit);
+
+            Assert.Contains("A#1", rec.Calls);                  // grup derlendi — atlanmadı
+            Assert.Contains("B#1", rec.Calls);
+            Assert.DoesNotContain(h.Events.OfType<ProjectSkippedEvent>(),
+                e => e.Reason == SkipReasons.DependencyStillFailing);
+            // [final review M-2] Rebuild hiçbir şeyi koşullu değerlendirmez — bekleyen grubun üyeleri de kesin.
+            Assert.DoesNotContain(Assert.Single(h.Events.OfType<BuildPreviewEvent>()).Items, i => i.Conditional);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -2322,6 +2502,28 @@ public class CycleRoundsTests
         Assert.DoesNotContain(CycleDecisionLines.RoundOneNeed("B", ""), log, StringComparison.Ordinal);
         Assert.Contains($"B: skipped — {SkipReasons.UpToDate} ({CycleDecisionLines.CarriedDetail})", log, StringComparison.Ordinal);
         Assert.Contains(CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 1, rememberedAt: null), log, StringComparison.Ordinal);
+    });
+
+    /// <summary>[Build cycle derler] Rebuild önbelleği yok sayar: güvenilir kaydı olan, terimi değişmemiş üye de tur 1'de
+    /// derlenir (<see cref="CycleMemberNeed"/> sorulmaz). Yüzey kanıtı yine okunur: yüzeyler oturmuşsa grup tek turda
+    /// yakınsar. Aynı sahne Resolve'da B'yi taşır (kardeş test
+    /// <see cref="round_one_compiles_only_the_member_whose_own_inputs_changed"/>); burada herkes invoke edilir.</summary>
+    [Fact]
+    public Task a_rebuild_compiles_every_member_in_round_one_even_with_trusted_records() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var rec = new RoundRecorder();
+        using var h = new Harness(TwoMembers("sig2", "a2", "b1"), rec.Invoker((_, _) => Ok()), stateStore: store,
+            apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1"], rec.Calls);                          // kimse taşınmadı
+        Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.Converged, 2, 2, 1),
+            (completed.Outcome, completed.MemberCount, completed.CompiledCount, completed.Rounds));
     });
 
     /// <summary>[karar 3] Taşınan B, A'nın ESKİ yüzeyini okumuş kayıtla tur sonu sorusuna girer; A'nın yüzeyi tur 1'de

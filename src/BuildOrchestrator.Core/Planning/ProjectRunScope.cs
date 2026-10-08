@@ -28,15 +28,16 @@ using BuildOrchestrator.Core.Scheduling;
 /// güvenli yön bir kez daha derlemektir.</para>
 ///
 /// <para><b>Döngü üyesi hedef</b> tek başına, döngü dışıymış gibi derlenir (<see cref="ProjectNode.InCycle"/>
-/// düşer — scheduler onu pre-skip etmesin) ve planın "kapsam dışı" anlamındaki <c>WillBuild=false</c>'unu
-/// taşımaz (o değer "güncel" demek değildir; Build modunda hedefi <c>up to date</c> diye atlatırdı).
+/// düşer — scheduler onu pre-skip etmesin; koşunun grup haritası da kurulmaz, <c>CycleCompilation.GroupsFor</c>).
 /// Döngüdeki bağımlılıkları HER koşulda bayattır: üye kardeşlerinin son bilinen çıktısına karşı derlenmiştir,
-/// tur koşmadı, yakınsama kanıtı yok — dep-issue notu sayesinde bir sonraki <c>Cycles</c> koşusu grubu
-/// "hepsi güncel" sayamaz ve yeniden derler.</para>
+/// tur koşmadı, yakınsama kanıtı yok — dep-issue notu sayesinde grubu derleyen bir sonraki koşu (Build ya da
+/// Resolve cycles) grubu "hepsi güncel" sayamaz ve yeniden derler.</para>
 ///
-/// <para>Döngü DIŞI bir hedefin döngü üyesi bağımlılığı ise tam Build'dekiyle aynı muameleyi görür: orada da
-/// üye derlenmez ve dependent'ı dep-issue almaz (Skipped bağımlılık issue üretmez) — tek proje koşusu o
-/// kuralı değiştirmez.</para>
+/// <para>Döngü DIŞI bir hedefin döngü üyesi bağımlılığı sıradan bağımlılıkla AYNI kurala tabidir: üye temizse
+/// (<c>WillBuild=false</c>) tam Build'de olduğu gibi atlanmış sayılır ve dependent'ı dep-issue almaz (Skipped
+/// bağımlılık issue üretmez); kirliyse — tam Build grubunu derlerdi, tek proje koşusu derlemez — bayattır ve uyarı
+/// döngü sözcükleriyle yazılır. [Build cycle derler] Eskiden üye planda hep <c>false</c> geldiği için bu ikinci
+/// hâl hiç oluşmazdı.</para>
 ///
 /// Saf Core state: I/O, process, async, log YOK [D3].
 /// </summary>

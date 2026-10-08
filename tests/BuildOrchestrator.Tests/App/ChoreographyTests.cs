@@ -603,8 +603,10 @@ public class ChoreographyTests
         return (vm, new OperationChoreographer(() => animations));
     }
 
-    /// <summary>Kapsam moddan gelir: Build stale set'i, Rebuild döngü dışı HER ŞEYİ, Resolve döngü üyelerini
-    /// işaretler.</summary>
+    /// <summary>Kapsam moddan gelir: Build stale set'i, Rebuild HER ŞEYİ, Resolve döngü üyelerini işaretler.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski iddia: Rebuild "döngü dışı HERKES"i işaretler — Rebuild
+    /// döngü üyelerini pre-skip ederdi. Rebuild artık grupları da turlarla derler (ARCHITECTURE §8.1); dalga motorun
+    /// gerçekten derleyeceği kümeyi, yani döngü üyeleri dahil her şeyi yakar.</para></summary>
     [Fact]
     public void The_scope_of_an_operation_comes_from_its_run_mode()
     {
@@ -617,7 +619,7 @@ public class ChoreographyTests
         ]));
 
         Assert.Equal(["A"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
-        Assert.Equal(["A", "B"], vm.ScopeFor(RunMode.Rebuild).Select(r => r.Name));   // döngü dışı HERKES
+        Assert.Equal(["A", "B", "Cyc"], vm.ScopeFor(RunMode.Rebuild).Select(r => r.Name)); // HERKES — gruplar dahil
         Assert.Equal(["Cyc"], vm.ScopeFor(RunMode.Cycles).Select(r => r.Name));
     }
 
@@ -675,23 +677,28 @@ public class ChoreographyTests
     }
 
     /// <summary>
-    /// Aynı kök neden, öbür yön: Resolve önizlemesi döngü üyesine kendi koşusunun kararını (<c>true</c>) yazar ve
-    /// Resolve'da PATLAYAN üye bu bayrağı koşudan sonra da taşır. Düz Build bir döngü üyesini ASLA derlemez
-    /// (<c>skipped — in dependency cycle</c>; ARCHITECTURE §7.4: Cycles dışında üye her zaman <c>false</c>) —
-    /// dalga o düğümü boşuna yakıyordu (gerçek koşuda <c>OSYS.Business.SparePart.Finance</c>).
+    /// Aynı kök neden, öbür yön: Resolve önizlemesi plan bayrağına YAZMAZ; satırın bayrağı Sync'in (bir sonraki düz
+    /// Build'in) cevabı ve koşunun sonuçlarıdır. Resolve'da PATLAYAN üye hâlâ kirlidir ve düz Build kirli grubu derler
+    /// — dalga onu yakar; Resolve'da yeşil biten üye ise güncel ve sönük kalır.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>After_a_resolve_the_build_wave_does_not_light_a_cycle_member_that_failed_there</c> — "düz Build bir döngü
+    /// üyesini ASLA derlemez (<c>skipped — in dependency cycle</c>), dalga o düğümü boşuna yakıyordu" (gerçek koşuda
+    /// <c>OSYS.Business.SparePart.Finance</c>). Değişme gerekçesi (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1):
+    /// Build kirli grubu turlarla derler; patlayan üye bir sonraki Build'in işidir ve dalgada yanmalıdır.</para>
     /// </summary>
     [Fact]
-    public void After_a_resolve_the_build_wave_does_not_light_a_cycle_member_that_failed_there()
+    public void After_a_resolve_the_build_wave_lights_the_cycle_member_that_failed_there()
     {
         var vm = ResolvedWorkspace();
 
-        Assert.DoesNotContain(vm.ScopeFor(RunMode.Build), r => r.InCycle);
+        Assert.Equal(["M2"], vm.ScopeFor(RunMode.Build).Where(r => r.InCycle).Select(r => r.Name));
     }
 
     /// <summary>Resolve→Build testlerinin ortak sahnesi: Sync'in önizlemesi (bir sonraki düz Build'in planı) →
     /// motorun gönderdiği biçimde bir Resolve koşusu → koşu biter. İki önizleme de üreticilerinin gerçek
-    /// biçimindedir: Sync üyelere hep <c>false</c> verir (<c>SyncWorkspaceService</c>, <c>buildCycles: false</c>);
-    /// Resolve'unki üyelere kendi kararını verir, kapsam dışını ise <c>false</c>'a zorlar ve koşullu saymaz.</summary>
+    /// biçimindedir: Sync kirli üyelere Build'in kararıyla <c>true</c> verir (<c>SyncWorkspaceService</c>,
+    /// <c>CycleCompilation</c>; [Build cycle derler] eskiden hep <c>false</c> verirdi); Resolve'unki üyelere kendi
+    /// kararını verir, kapsam dışını ise <c>false</c>'a zorlar ve koşullu saymaz.</summary>
     private static RunViewModel ResolvedWorkspace()
     {
         const string up = @"C:\p\Up.csproj", m1 = @"C:\p\M1.csproj", m2 = @"C:\p\M2.csproj",
@@ -703,13 +710,13 @@ public class ChoreographyTests
         vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, 5, 1));
         vm.OnEvent(new BuildPreviewEvent([
             new BuildPreviewItem(up, "Up", true, Reason: WillBuildReason.SignatureChanged),
-            new BuildPreviewItem(m1, "M1", false, Reason: WillBuildReason.SignatureChanged),
-            new BuildPreviewItem(m2, "M2", false, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m1, "M1", true, Reason: WillBuildReason.SignatureChanged),
+            new BuildPreviewItem(m2, "M2", true, Reason: WillBuildReason.SignatureChanged),
             new BuildPreviewItem(outside, "Out", true, Reason: WillBuildReason.NeverBuilt),
             new BuildPreviewItem(waiting, "Wait", true, Reason: WillBuildReason.WaitingForDependency,
                 Conditional: true, DependencyRoots: ["Root"]),
         ]));
-        Assert.Equal(["Up", "Out"], vm.ScopeFor(RunMode.Build).Select(r => r.Name)); // ön-koşul: Sync'in planı
+        Assert.Equal(["Up", "M1", "M2", "Out"], vm.ScopeFor(RunMode.Build).Select(r => r.Name)); // ön-koşul: Sync'in planı
 
         // Resolve: kapsam = üyeler + onların upstream'i (Up). Out ve Wait kapsam dışıdır.
         vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, TotalProjects: 5, Parallelism: 4, "Debug"));
@@ -766,12 +773,16 @@ public class ChoreographyTests
     /// <b>Clean koşusunun önizlemesi plan bayrağına YAZMAZ</b> (Resolve'unkiyle aynı gerekçe): o önizleme her
     /// projeye <c>true</c> verir çünkü BU koşu hepsini temizler — ama bir sonraki DÜZ Build'in cevabı o değildir.
     /// Bayrağı projenin SONUCU yazar: başarıda defter kaydı silinir, hatada kanıtsız hata yazılır; ikisi de
-    /// <c>never built</c> okunur ve Build döngü üyesini ASLA derlemediği için üyenin bayrağı <c>false</c>'tur
-    /// (<c>NextPreview.AfterClean</c>, bir sonraki Sync'in diyeceğiyle aynı). Eskiden Clean önizlemesi bayrağa
-    /// yazıyordu ve temizlenen (ya da temizliği patlayan) döngü üyesi Build'in dalgasında boşuna yanıyordu.
+    /// <c>never built</c> okunur ve bir sonraki düz Build onları derler — döngü üyeleri dahil
+    /// (<c>NextPreview.AfterClean</c>, bir sonraki Sync'in diyeceğiyle aynı).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia:
+    /// <c>After_a_full_clean_the_build_wave_lights_the_cleaned_projects_but_not_the_cycle_members</c> — Build döngü
+    /// üyesini ASLA derlemediği için temizlenen üyenin bayrağı <c>false</c>'tu ve dalgada yanmazdı. Değişme gerekçesi
+    /// (ölçüm, 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1): düz Build kirli grubu da derler; temizlenen grup kayıtsızdır
+    /// ve bir sonraki Build onu turlarla derler, dalga da onu yakar.</para>
     /// </summary>
     [Fact]
-    public void After_a_full_clean_the_build_wave_lights_the_cleaned_projects_but_not_the_cycle_members()
+    public void After_a_full_clean_the_build_wave_lights_the_cleaned_projects_cycle_members_included()
     {
         var vm = FullCleanStarted();
         vm.OnEvent(new ProjectStartedEvent("r1", @"C:\p\A.csproj", "A"));
@@ -785,7 +796,7 @@ public class ChoreographyTests
         vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, Succeeded: 3, Failed: 1, Skipped: 0, Queued: 0,
             DurationMs: 100));
 
-        Assert.Equal(["A", "B"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
+        Assert.Equal(["A", "B", "M1", "M2"], vm.ScopeFor(RunMode.Build).Select(r => r.Name));
         Assert.All(vm.Projects, r => Assert.Equal(WillBuildReason.NeverBuilt, r.WillBuildReason));
     }
 

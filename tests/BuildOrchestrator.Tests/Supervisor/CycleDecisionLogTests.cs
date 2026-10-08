@@ -41,9 +41,11 @@ public class CycleDecisionLogTests
     internal static long MsOf(string log, string line) =>
         long.Parse(FindLine(log, line).Groups[1].Value, CultureInfo.InvariantCulture);
 
-    private static async Task<string> RunCyclesAsync(Harness h)
+    /// <summary>Grubu derleyen bir koşu (varsayılan Resolve cycles); [Build cycle derler] Build ve Rebuild de grup
+    /// derler — mod parametresi o yüzden.</summary>
+    private static async Task<string> RunCyclesAsync(Harness h, RunMode mode = RunMode.Cycles)
     {
-        await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+        await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
         return h.DecisionLog;
     }
@@ -96,6 +98,24 @@ public class CycleDecisionLogTests
         // gereken üyeleri derlediği için satır derlenen sayıyı da taşır; üye terimi yok ⇒ herkes derlendi.
         int verdict = IndexOf(log, CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 2, rememberedAt: null));
         Assert.True(header < round1 && round1 < verdict, log);
+    }
+
+    [Fact] // [Build cycle derler] Rebuild önbelleği yok sayar: grup başlığının ardından, tur 1'den ÖNCE tek satır
+    public async Task a_rebuild_says_every_member_compiles_in_round_one_between_the_header_and_round_one()
+    {
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");
+        disk.Set("B", "b1");
+        var rec = new RoundRecorder();
+        using var h = new Harness(HashModePlan(TwoMemberCycle(), "A", "B"), rec.Invoker((_, _) => Ok()),
+            apiSurface: disk.Read);
+
+        string log = await RunCyclesAsync(h, RunMode.Rebuild);
+
+        int header = IndexOf(log, "cycle A: 2 members, 2 producers, evidence on, hash {ms} ms");
+        int rebuild = IndexOf(log, CycleDecisionLines.RebuildCompilesEveryMember("A"));
+        int round1 = IndexOf(log, "cycle A round 1: converged; stale=0 []; moved=none; levels=2; round {ms} ms; hash {ms} ms");
+        Assert.True(header < rebuild && rebuild < round1, log);
     }
 
     [Fact] // her tur sonu: karar, bayat üyeler, kayan yüzey dosyaları, seviye sayısı, tur ve hash süresi

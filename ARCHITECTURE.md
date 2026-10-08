@@ -387,10 +387,10 @@ are not compiled and nothing outside the scope enters the run.
 `startRun` also carries **`resolveAtFullPriority`** — the user's *Resolve cycles at full priority* setting, read
 only by a `Cycles` run (§11.1). A line without it decodes as on, the setting's default.
 
-Building dependency cycles is not a field but a **mode** — `Cycles` (§8.1). It is written to the wire as
-camelCase text like every other enum, so adding a value never shifts the meaning of an older line.
-`syncWorkspace` carries no cycle decision at all: its preview always describes a `Build`, and `Build` never
-compiles a cycle.
+Which runs compile dependency cycles is not a field: every compiling mode does (`Build`, `Rebuild`, `Cycles`;
+§8.1), and `Cycles` is the narrow-scope one. Modes are written to the wire as camelCase text like every other
+enum, so adding a value never shifts the meaning of an older line. `syncWorkspace` carries no cycle decision at
+all: its preview always describes a `Build`, and a `Build` compiles a dirty cycle group like any other dirty node.
 
 `cleanWorkspace` carries the workspace root and the registered external cards — the same list, resolved by the
 same merger. It resets the build output of that workspace on disk: the `bin` and `obj` folders of every project
@@ -703,10 +703,11 @@ Tarjan's algorithm finds strongly-connected components; Kahn's algorithm produce
 Iteration order is stabilized (`OrdinalIgnoreCase` on the project path) so the same repository always yields the
 same plan. Cycle members remain in the plan, flagged `InCycle`. Kahn runs over the *condensation*, so a
 component is ordered as a unit and lands where its dependencies put it; nothing needs a phase of its own.
-What happens to it at run time depends on the run's mode: a `Cycles` run dispatches the component as a single
-work item and compiles it in rounds (§8.2, §8.8); every other mode leaves its members to be pre-skipped by the
-scheduler, which is also what keeps the run from deadlocking — their dependents could otherwise never become
-ready.
+Every compiling run (`Build`, `Rebuild`, `Cycles`) dispatches the component as a single work item and compiles it
+in rounds (§8.2, §8.8); a run started from a row compiles its one target alone and carries no component map
+(§8.1). Without a map the scheduler pre-skips the members (`in dependency cycle`), which is also what keeps such a
+run from deadlocking — their dependents could otherwise never become ready; in production that path is only taken
+by a plan without a cycle, where no member exists.
 
 ### 6.6 Layers
 
@@ -852,7 +853,7 @@ either wholly dirty or wholly up to date — members never disagree, and a group
 is skipped as a group rather than rebuilt on every run.
 
 That is the decision about the group. Which members of a dirty group compile is a separate question, asked once more
-when a `Cycles` run starts the group (§8.8), and the composite cannot answer it: it is one value for every member.
+when a run starts the group (§8.8), and the composite cannot answer it: it is one value for every member.
 The answer is built from each member's own **term** — the very value the composite is made of: the member's files, the
 configuration and the signatures of its upstreams outside the component, with every intra-component edge collapsed to
 the marker, so a sibling's content never enters it. The planner returns the terms beside the signatures
@@ -882,17 +883,19 @@ If the decision pass fails outright (an I/O or parse error) the counters are not
 zeros would assert "everything is up to date", which is a different and false claim.
 
 A cycle member is evaluated by the same three rules; what it evaluates is the component's composite signature
-(§7.3), so a group's members move together. The run's scope is the one short circuit: outside a `Cycles` run
-every member reads `false`, which is the truth — nothing in that run will compile them.
+(§7.3), so a group's members move together. Sync's preview and every compiling run read the member that way
+(`CycleCompilation`), so a dirty group reads `true` as a whole and a clean one `false`. The run's scope is the one
+short circuit: a decision asked with cycle compilation off — a run that compiles nothing, or a test that asks
+for it — reads every member `false`, which is the truth for such a run.
 
 During a run the value is live: the moment a project succeeds it turns `false`. A Clean is the exception by
-nature — its success means the outputs are gone, so a cleaned project turns `true` (a cycle member stays `false`,
-the scope short circuit above), the same value the next Sync gives it (§8.1).
+nature — its success means the outputs are gone, so a cleaned project turns `true`, a cycle member included, the
+same value the next Sync gives it (§8.1).
 
 **`true` is not always a promise.** A project whose last success was linked against a failed dependency, whose
 signature has not moved and whose ledger note names the root dependencies reads `true` with the reason
 *waiting for dependency*: a `Build` or `Cycles` run does not pre-skip it, but compiles it only if one of those
-roots is now successful (§8.3). The order of the checks matters — a moved signature wins over the note, because
+roots is now successful (§8.3); a cycle group whose members only wait is judged as a whole the same way. The order of the checks matters — a moved signature wins over the note, because
 the project's own change compiles it regardless, and a note without recorded roots stays an unconditional
 *built against a failed dependency*, because nothing could tell the run when to stop waiting. An output built
 outside this tool reads the same note, without the signature test, when its time verdict is fresh and a
@@ -901,9 +904,9 @@ recorded root is still in trouble (§7.6).
 **The evaluator also returns why** — never built, last build failed, the signature changed, waiting for a
 failed dependency, or built against a failed dependency whose roots are unknown; and, from the output evidence
 (§7.6), built outside this tool, output older than its inputs, output missing, or a fed copy that no longer
-matches — and it returns it even for a project the run will not compile, such as a cycle member outside a
-`Cycles` run. Apart from that scope short circuit, `WillBuild` is `false` for exactly two reasons, up to date
-and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
+matches — and it returns it even for a project the run will not compile, such as a member of a group the run
+skips as up to date or a project outside a `Cycles` run's scope. Apart from the scope short circuit, `WillBuild`
+is `false` for exactly two reasons, up to date and built outside this tool; every other reason reads `true`. That reason travels on the preview and is what the
 row's decision label reads (§13.2),
 together with one fact: whether the project's **own** files changed (stored content fingerprint versus
 today's, or — for an output built elsewhere — whether its own inputs are newer than that output). The preview
@@ -948,7 +951,8 @@ the project's **fed outputs** — the copies of its output in dependents' `HintP
 successful build was seen to refresh (§7.6); the list is `null` when nothing could be learned (no derivable output
 path, the output file missing after the build, an older record), empty when the path is known but no candidate
 matched, and it survives a failed attempt unchanged. A cycle member's record also carries the three fields behind
-the first round of a *Resolve cycles* run (§8.8): the **member term** it last compiled with (§7.3), the **read
+the first round of the next run that compiles its group (§8.8; a `Rebuild` compiles every member regardless): the
+**member term** it last compiled with (§7.3), the **read
 surfaces** — for every sibling file its last compile read, the producer, the file and the API-surface hash it saw —
 and the **engine fingerprint** of the run that wrote them. They are written only when the member's group converges —
 freshly for a member that compiled, carried over untouched for one that was carried. The surfaces are stored in a
@@ -1047,9 +1051,11 @@ stale from the root's new `HintPath` time. One late round beats a wrong `affecte
 waiting for a dependency compiles only if one of its roots recovers (§8.3), so its new output is a possibility
 and not a fact; when a root does recover and it is compiled, its own dependents read stale from their
 `HintPath` times at the next Sync anyway. A cycle member is the exception: a group is never split, so a member
-that reads waiting for a dependency compiles unconditionally in the *Cycles* run that builds it, and there it
-seeds. A dependent behind both a failed root and a genuinely dirty upstream is reached from the dirty one and
-reads `affected` as before.
+that reads waiting for a dependency is never conditional on its own and seeds. The group as a whole can still be
+skipped while its roots fail (§8.3); the planner cannot see that dispatch-time decision, so the time-mode
+dependents behind such a group compile once for nothing, carrying the root as a dependency issue — the accepted
+cost, in the safe direction. A dependent behind both a failed root and a genuinely dirty upstream is reached from
+the dirty one and reads `affected` as before.
 
 The walk from those seeds does not discriminate: it follows the reverse edges to every transitive dependent,
 because each project it pulls will be built and dirties its own downstream in turn. A project whose own verdict
@@ -1100,14 +1106,16 @@ only by a time check — a project in time mode, or a member of a group in time 
 
 | Mode | Set of projects |
 |---|---|
-| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use |
-| `Rebuild` | all projects; cached state ignored |
+| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use; dirty cycle groups included, compiled in rounds (§8.8) |
+| `Rebuild` | all projects; cached state ignored; cycle groups compile every member in round one, later rounds follow the evidence (§8.8), and nothing is evaluated conditionally |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 | `Clean` | every project in the graph — external projects and cycle members included — with `-t:Clean` instead of a compile: Visual Studio's *Clean Solution*, from the Build menu (§13.2). From a row, that one project |
 
-`Cycles` is not a degree of difference from the others but a separate job: `Build` and `Rebuild` never compile
-a cycle, `Cycles` compiles the cycles. It is the third icon of the maintenance box in the action bar (§13.2)
-and is meant to be run before a build, not instead of one.
+`Cycles` is the narrow form of the same work: `Build` and `Rebuild` compile a dirty cycle group in rounds as part
+of the plan, `Cycles` compiles only the cycle groups and their stale upstream. Which modes compile cycles is decided
+in one place (`CycleCompilation`), and so is the component map a run carries (`CycleCompilation.GroupsFor`: a full
+run of a compiling mode over a plan with cycles). `Cycles` is the third icon of the maintenance box in the action
+bar (§13.2) and is optional — useful when the cycles alone are the work to pay for.
 
 A `Cycles` run is also the one run that does not take the perf profile's cap and priority: it keeps the
 profile's worker count and runs uncapped at Normal priority, unless *Resolve cycles at full priority* is turned off in
@@ -1141,17 +1149,15 @@ which runs no MSBuild target at all (§5.2).
 **Clean has no dependency meaning.** Cleaning one project needs nothing from another, so a Clean run's plan
 (`CleanRunScope`, applied before a row's scope is cut) carries no edges and no cycle marks. Every project is
 ready at once and is cleaned in plan order up to the parallelism ceiling; a cycle member is cleaned like any
-other project — it is not pre-skipped as `in dependency cycle`, no rounds run, and with no circular edge left
-the run cannot lock up. The rules that belong to compiling stay out with the edges: a clean that fails gives
+other project — no rounds run, and with no circular edge left the run cannot lock up. The rules that belong to compiling stay out with the edges: a clean that fails gives
 its dependents no dependency issue, and a row's clean records no stale dependency. An external project is
 cleaned like any other, and its working copy is not updated first (§10.4). The run's preview marks every project
 as this run's work — the queue colour, the fixed progress denominator and the stream's opening line
 (`Clean started — N projects, parallelism P`) read it — while the reasons, which describe the disk, are kept
 until a project is actually cleaned. Like a `Cycles` run's preview, it does not write the rows' will-build flag
-(§7.4): each result writes it instead, with the answer the next Sync will give — to build again, except a cycle
-member, which a plain `Build` never compiles — and a row the run never reached, say after a Stop, keeps what the
-last Sync said. For the same reason the end of a Clean that cleaned cycle members is spelled out in the event
-stream: `N cycle projects cleaned — run Resolve cycles before Build` (§13.2).
+(§7.4): each result writes it instead, with the answer the next Sync will give — to build again, a cycle member
+included, since the next `Build` compiles its group — and a row the run never reached, say after a Stop, keeps
+what the last Sync said.
 
 Two things follow from "the outputs are gone". The project's **build-state row is deleted**, not invalidated:
 the project did not fail, this tool simply no longer knows any output of it. The output evidence (§7.6) would
@@ -1177,7 +1183,9 @@ already contains the dependency's new source term, would read as up to date for 
 permanent-stale-binary hole the `Cycles` scope
 closes by pulling its upstream in. The scope stays at one project by design (*build with dependencies* is
 not offered); the ledger closes the hole instead. A cycle member's cycle-mates are always stale inputs, so a
-member built alone can never make its group read as up to date for the next `Cycles` run. External working
+member built alone can never make its group read as up to date for the next run that compiles the group. A
+dirty cycle member that an ordinary target depends on is a stale input like any other — the full `Build` would
+compile its group, the scoped run does not — and is named with the cycle wording. External working
 copies follow the same rule: only the copy that holds the target is updated before a scoped run (§10.4).
 
 **Resuming and retrying are not modes.** A stopped run is not resumed and a failed run is not retried by a
@@ -1207,8 +1215,8 @@ A `Cycles` run's own preview does not write that flag, nor the conditional mark 
 answers for this run — `false` for every project outside the scope, whatever its state, and the members' own
 verdict inside it — while the row's flag answers for the next plain `Build` (§7.4): it is what a Sync wrote,
 kept live by the projects this run actually compiles, and it is what that `Build` lights its opening wave from
-(§14.5). Written into the rows, this run's answers would outlive it: the `Build` pressed next would light the
-members that had failed here, which it never compiles, and leave dark the dirty projects the cycles did not
+(§14.5). Written into the rows, this run's answers would outlive it: the `Build` pressed next would light its
+opening wave from this run's scope instead of its own and leave dark the dirty projects the cycles did not
 need, which would then turn queued all at once as its run began. The preview's reason, its own-files fact and
 its roots describe the disk rather than the run, and are written as from any other preview.
 
@@ -1228,19 +1236,23 @@ matching signature (§7.6). Pulling the transitive upstream into scope closes
 that: the run is self-consistent, compiling everything it compiles against fresh inputs. Inside the scope the
 ordinary incremental rule applies, so a clean upstream is still skipped as `skipped — up to date`.
 
-**Why the scope stops there.** Downstream is deliberately excluded. A cycle's dependents may well need
-recompiling once the group has moved, but that is `Build`'s job and `Build` is the next thing the user
-presses. Including them would quietly widen the scope to the whole repository — the dependent set of a core
-library is, in practice, everything — which is exactly the cost the separate button exists to keep visible.
+**Why the scope stops there.** Downstream is deliberately excluded. A plain `Build` compiles the group and
+everything that depends on it; `Cycles` exists to pay for the cycles alone, and including the dependents would
+quietly widen it to the whole repository — the dependent set of a core library is, in practice, everything.
 
-Why it is separate rather than folded into `Build`: a group's cost is members × rounds, which next to an
-ordinary incremental build is unbounded. Folded in, the user waited behind work they had not asked for and
-could not see — a two-minute build measured fifteen. As its own button the decision is theirs: when, and how
-much.
+**Why `Build` compiles the group too.** A dependent compiled against a cycle member's previous output links to a
+stale binary: it fails, or worse, succeeds silently. Measured on the real workspace: a pull that changed two
+`Types` cycle members turned their `Business` dependents red with `CS1061`, and neither the row nor its log said
+why, because a `Build` that never compiled cycles skipped the changed members. A group's cost is members ×
+rounds, but round one compiles only the members that need it (§8.8) and a group whose surfaces did not move
+settles in a single round, so the bill is one compile per dirty member plus a surface hash. The bill stays
+visible: the opening wave and the counts before the click, the ribbon's round phase while the group runs. The
+earlier measurement that kept cycles out of `Build` (a two-minute build measured fifteen) predates round-one
+evidence and the surface short circuit.
 
 Like `Build`, a `Cycles` run is incremental — a group whose composite signature is already clean is skipped as
-`skipped — up to date`, so pressing the button again after a group has converged costs nothing. It is also the
-only mode that reads the non-convergence memory (§8.8).
+`skipped — up to date`, so pressing the button again after a group has converged costs nothing. Every run that
+compiles a group reads the non-convergence memory and reports it (§8.8).
 
 ### 8.2 Ready-set scheduler
 
@@ -1262,10 +1274,11 @@ member it was given, on every path including stop and cancellation, or the run's
 to zero. Driving the rounds from here rather than beside the scheduler is what keeps "are the dependencies
 terminal?" in one place instead of two.
 
-Without the component map — which is how the scheduler is built in every mode but `Cycles` — members are marked
-`Skipped` at construction with the reason `in dependency cycle`. Nothing else distinguishes the two modes:
-there is no code path written for cycles being out of scope, the mode only chooses between passing the map and
-passing nothing.
+Without the component map — a plan without a cycle, a run started from a row, or a `Clean` — members are marked
+`Skipped` at construction with the reason `in dependency cycle`; in production no member reaches that path, because
+a plan with a cycle always carries the map in a compiling run. Nothing else distinguishes the modes: `Cycles`
+differs from `Build` only by the scope seed (§8.1), and `Rebuild` by compiling every member in round one and
+evaluating nothing conditionally.
 
 The scheduler is pure state: no I/O, no processes, no async, no logging. Its mutable state is guarded by one
 lock — with a few hundred projects and a handful of calls per second, finer-grained locking would be
@@ -1322,7 +1335,7 @@ because only then — every dependency terminal — is the roots' result in this
 | compiled in this run and succeeded | recovered |
 | compiled in this run and failed | still failing |
 | not compiled in this run, and this run's preview found its output current — up to date, or built outside this tool | recovered |
-| not compiled in this run, its reason not a current one (say a dormant cycle member reading signature changed) — last recorded result success | recovered |
+| not compiled in this run, its reason not a current one (say one outside a `Cycles` run's scope) — last recorded result success | recovered |
 | the same, and its last recorded result a failure | still failing |
 | no longer in the workspace, or without a record | recovered (build — the safe direction) |
 
@@ -1341,30 +1354,36 @@ next run asks the same question. Its roots still enter the inherited accumulatio
 links to this project's stale output and must carry the note on, or it would read as up to date for good once the
 root recovers. Such a skip is not counted among the run's dependency-affected projects — nothing was compiled.
 
-A root named on that line is not always freshly observed. A root that is itself a dormant cycle member, for
-instance, is pre-skipped in a `Build` run without ever being attempted — the table above still reads its *last
-recorded* result, because that is all there is. The line says so: a root this run actually watched fail reads
+A root named on that line is not always freshly observed. A root this run never attempted — one outside a
+`Cycles` run's scope, for instance — is judged by the table above on its *last recorded* result, because that is
+all there is. The line says so: a root this run actually watched fail reads
 by its bare name (`Up`); a root whose "still failing" verdict came only from the ledger, not this run, reads
 `Up (last known failure)`. The same classification `Decide` uses to reach its verdict produces the label — one
 function, not a second guess re-derived from the same data (`ConditionalRebuild.DescribeStillFailingRoots`).
 
-The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything;
-a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped *alone*, since that
-would leave the group half built. The group as a whole, though, answers the same question **atomically** at its
-dispatch: when every member is either up to date or dirty *only* because it waits on recorded roots, and every
-one of those roots still fails by the table above, the whole group is skipped member by member as
-`skipped — dependency still failing` — rebuilding it would only relink everyone to the same stale root outputs
-(measured: a broken prerequisite made a 17-member group re-pay ~98 s of rounds on every *Resolve cycles* press).
-One member dirty for any other reason, or one recovered root, builds the whole group exactly as before, and the
-skip touches no ledger record — the group compiles the moment a root recovers. A record written before roots
-were stored carries no roots and compiles on every `Build` as it always did.
+The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything,
+cycle groups included; a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped
+*alone*, since that would leave the group half built. The group as a whole, though, answers the same question
+**atomically** at its dispatch, in the same modes and by the same mode rule (`ConditionalRebuild`): when every
+member is either up to date or dirty *only* because it waits on recorded roots, and every one of those roots still
+fails by the table above, the whole group is skipped member by member as `skipped — dependency still failing` —
+rebuilding it would only relink everyone to the same stale root outputs (measured: a broken prerequisite made a
+17-member group re-pay ~98 s of rounds on every *Resolve cycles* press). One member dirty for any other reason, or
+one recovered root, builds the whole group exactly as before, and the skip touches no ledger record — the group
+compiles the moment a root recovers. A record written before roots were stored carries no roots and compiles on
+every `Build` as it always did. The set of projects a run evaluates conditionally comes from one function for the
+run and for Sync's preview alike (`ConditionalRebuild.ConditionalIds`, with the component map of §8.1). A member is
+never in that set alone; the waiting members of a group that will be judged as a whole are, so on both sides the
+group leaves the wave, the queue and the progress denominator exactly like a waiting project, and compiles only
+if its check at dispatch finds a recovered root.
 
 ### 8.4 ETA
 
 `(sum of duration estimates for queued projects + remaining time of in-flight projects) / parallelism`, plus
-400 ms when anything is building, plus — in a `Cycles` run — the cycle members' estimates multiplied by the
-baseline round count. That term belongs to the run where rounds actually run: a Clean cleans a cycle member once,
-as an ordinary project (§8.1), so there it is plain queued work.
+400 ms when anything is building, plus — in any run that compiles cycle groups (`Build`, `Rebuild`, `Cycles`) —
+the cycle members' estimates multiplied by the baseline round count. That term belongs to the run where rounds
+actually run: a Clean cleans a cycle member once, as an ordinary project (§8.1), and a run started from a row
+compiles its target alone, so there it is plain queued work.
 The result is exponentially smoothed (`0.75 × previous + 0.25 × new`), displayed rounded to 5 s, and
 replaced by `· almost done` below 4 s. `parallelism` is the worker count `runStarted` reports — what the engine
 actually runs once it has fitted the profile to the machine (§11.1) — and it holds for the whole run. The
@@ -1374,11 +1393,14 @@ estimate, not only the first one: until a project has succeeded or failed there 
 ribbon shows progress and elapsed time without one.
 
 The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
-by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. A `Cycles` run
-does not use that line. Its ribbon reads `▸ Resolving cycles · round {r}/{cap} · {n}/{m} · {elapsed}` — `preparing
-dependencies` stands in for the round while the run is still compiling the cycles' stale upstream (§8.1) — and
-carries no estimate suffix. The figure is still computed for such a run, which is what the cycle term below is for,
-and no line on screen prints it.
+by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. While a
+cycle group is in rounds — in a `Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
+{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix; the round counters belong to the group on
+screen and clear when its verdict arrives, so a `Build` returns to its `Building` line for the rest of the plan.
+`preparing dependencies` stands in for the round only in a `Cycles` run, before its first group starts, while the
+run is still compiling the cycles' stale upstream (§8.1). The figure is still computed while a group is in rounds,
+which is what the cycle term below is for: a `Build` prints it again on its `Building` line once the group's verdict
+is in, and a `Cycles` run never prints it.
 
 Cycle members are the one term that is **not** divided by parallelism: their rounds run in barriered levels
 whose width varies with the group's internal shape (§8.8), and the estimate budgets the baseline round count,
@@ -1564,10 +1586,10 @@ the invalidation is. A green member of a cycle group that did not converge (no p
 is invalidated like a failure without evidence and arrives with `trusted: false`; a group cut short reports
 every member as failed instead (§8.8, cycle rounds). An event without the field reads as trusted.
 
-**Cycle rounds.** These run in one mode only — `Cycles` (§8.1), the third icon of the maintenance box. While
-such a run is in flight the ribbon reads `▸ Resolving cycles · round R/K · n/m · elapsed` with the amber
-building glyph, and before the first round starts (while the cycle's stale upstream compiles) it says
-`preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
+**Cycle rounds.** These run in every compiling mode — `Build`, `Rebuild` and `Cycles` (§8.1); a `Rebuild` compiles
+every member in round one. While a group is in rounds the ribbon reads `▸ Resolving cycles · round R/K · n/m ·
+elapsed` with the amber building glyph, and in a `Cycles` run, before the first round starts (while the cycle's stale
+upstream compiles), it says `preparing dependencies` instead. The numbers are the engine's: the round policy decides how many rounds a
 group needs, and the interface reports that rather than promising a fixed count. A worker that is
 handed a strongly-connected component runs the whole group. Within a round the members run in **barriered
 levels** (`CycleRoundLevels`): members with no direct edge between them compile concurrently on one level,
@@ -1594,8 +1616,9 @@ worker count, §11.1), so no combination of workers and level width ever exceeds
 A member takes its slot *before* it is announced as started and releases it only *after* it has been announced
 held (§5.3): what the screen counts as compiling is exactly what holds a slot, and the members of a level still
 queued for one are announced nothing.
-Round one is a question of evidence too: it compiles the members that need it (below), a later round compiles only
-the members that went stale, and nobody else is invoked. Each member's log file is opened when the member first
+Round one is a question of evidence too: it compiles the members that need it (below) — in a `Rebuild`, every member,
+the decision log saying so in one line (`cycle A: rebuild — every member compiles in round one`) — a later round
+compiles only the members that went stale, and nobody else is invoked. Each member's log file is opened when the member first
 compiles and kept open for every later round: opening it per round would truncate the previous rounds away and
 restart the line numbers, and a member that is never compiled never gets a log.
 
@@ -1712,7 +1735,7 @@ there, because a member compiled in the first round may have bound to a method t
 identical failure *set* twice means no progress (the comparison is on the set and not its size, since `{A,C}`
 followed by `{B,D}` is oscillation), and anything else means another full round. The ceiling of three holds in
 both modes — a group still moving when the budget runs out is cut, and loses nothing, because rounds are
-idempotent against what is on disk and the next `Cycles` run picks up where this one left off. Restore is not
+idempotent against what is on disk and the next run that compiles the group picks up where this one left off. Restore is not
 repeated across rounds either: a member whose previous round succeeded already restored then or had no need to, and
 nothing between rounds can change `packages.config` — only a member that failed goes back through the restore
 decision (§9.3), because the failure may have been the restore's own.
@@ -1735,7 +1758,7 @@ rather than carrying an intermediate round's verdict out. One thing *is* kept on
 path: the member whose compiler failure forced the verdict — it failed with every intra-group surface it read
 already final, so its inputs will be identical on any retry — records that failure as **evidence**
 (`FailedSignature`, §7.5) and arrives with `evidence: true`, exactly like a plain `Build` failure. Its row
-turns red and reads `failed` (with the *Resolve cycles will retry it* clause, §13.2), and the verdict survives
+turns red and reads `failed` (with the *Build will retry it* clause, §13.2), and the verdict survives
 the next Sync, so the member that actually broke the group is visible at a glance; its green siblings stay
 unevidenced and grey. Without surface proof the old rule holds unchanged — a member of a non-converged group
 that fails with `exit N` looks like evidence from its text alone, but nothing can rule the stale-sibling
@@ -1764,12 +1787,12 @@ evidence (§7.6) plays no part in it. A member with no state row
 at all gets one created for the purpose, otherwise the very case this solves — a component that has never been
 built successfully — would never accumulate a memory. Failing to write it warns and nothing more.
 
-**The memory reports; it does not block.** A later `Cycles` run that computes the same signature writes
-`cycle {leader}: retrying — did not converge at this signature` to the decision log and then gives the group a
-full attempt from round one. It once pre-skipped the whole group instead, to avoid spending rounds on a
-guaranteed red, and that was wrong for a single reason: the only way into a `Cycles` run is the user pressing
-**Resolve cycles**, so the saving could only ever be taken by swallowing an explicit command, and the button
-appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
+**The memory reports; it does not block.** A later run that compiles the group at the same signature — a `Build`,
+a `Rebuild` or a `Cycles` run — writes `cycle {leader}: retrying — did not converge at this signature` to the
+decision log and then gives the group a full attempt from round one. It once pre-skipped the whole group instead,
+to avoid spending rounds on a guaranteed red, and that was wrong for a single reason: the only way into the rounds
+is the user pressing a run button, so the saving could only ever be taken by swallowing an explicit command, and
+the button appeared to do nothing. The signature also covers sources alone — a package restore, an output from outside
 the cycle or the environment may well have changed — so refusing a retry on an unchanged source signature
 claims more than the evidence supports. Hitting the ceiling is not recorded at all, by the same standard of
 evidence: no progress is proof that more rounds cannot help — a failure whose read surfaces had settled, or,
@@ -1780,7 +1803,7 @@ Reaching any real verdict clears the memory, at the same place that writes it �
 alike, so a stale record from an earlier stuck run cannot outlive the evidence for it. Converged members would
 lose it anyway as a side effect of persisting a fresh build state; the explicit clear is what keeps that from
 being load-bearing. A converged member can carry a dependency issue too — its transitive upstream compiles in
-the same `Cycles` run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
+the same run and can itself fail (§8.1) — but such a success is persisted exactly like a clean one,
 with a note and its roots (§8.3), so the memory is lost the same way, as a side effect of that same fresh build
 state; the clear belongs to the memory's own writer either way rather than to a side effect somewhere else.
 
@@ -2067,8 +2090,8 @@ still uses it but no distance is measured — HEAD is not on that branch, and a 
 Full analysis is Sync's job; a Build repeats its planning part (§8.6), which is cheap because of the evaluation
 cache. Because of that, Sync's own `willBuild` pass is not a separate opinion — it is what a plain
 Build, pressed right now, would decide, and the preview says so directly: a project this run would only
-evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed the same way
-(`ConditionalRebuild.AppliesTo`, simulating `Build`). This matters because the row's wave and queue colour are
+evaluate conditionally (§8.3) carries `Conditional=true` in Sync's own preview too, computed by the same function
+(`ConditionalRebuild.ConditionalIds`, simulating `Build`). This matters because the row's wave and queue colour are
 read at the moment *Build* is clicked, before the new run's own preview has arrived — at that instant Sync's
 preview is the only opinion the App has, so it has to already carry the answer a conditional project's row will
 need a moment later, or the row lights amber for one frame and drops grey as soon as the real preview lands.
@@ -2429,7 +2452,8 @@ force. `runStarted` carries the cap actually written — none — and the consol
 `parallelism: <n> · cpu cap off · priority normal (Resolve cycles)`, which is also the note a mid-run switch to
 Balanced or Light writes during such a run. *Settings → General → Resolve cycles at full priority* (on by default,
 carried by every `startRun`) turns the rule off, and a Resolve run then follows the profile like any other run.
-`Build`, `Rebuild` and `Clean` are never affected, and Full is uncapped at Normal already.
+`Build`, `Rebuild` and `Clean` are never affected — including the cycle rounds a `Build` runs for a dirty group — and
+Full is uncapped at Normal already.
 
 The perf intent is also honoured during the planning window: a change made while a run is starting is held and
 applied when the run begins, rather than being silently dropped.
@@ -2966,7 +2990,7 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | Reason | Label | Tooltip |
 |---|---|---|
 | never built, output missing | `never built` | `No build output known to this tool` |
-| last build failed | `failed` | `Failed at this source — Build will retry it` (for a cycle member, `Resolve cycles will retry it`) |
+| last build failed | `failed` | `Failed at this source — Build will retry it` |
 | up to date, waiting for a dependency | `up to date` | `Up to date` |
 | built outside this tool | `up to date` | `Up to date — built outside this tool` |
 | output replaced | `affected` | `Its copy in the shared folder does not match its build output` |
@@ -2975,9 +2999,8 @@ Every word maps from the engine's reason (§7.4, §7.6), and the tooltip keeps a
 | signature changed, dependency issue, output stale — own files unchanged | `affected` | `Its own files are unchanged — a dependency changed` |
 
 **No label and no tooltip carries a time.** The slot names a fact, never a clock: the label reads the plan and
-four facts only — the reason, whether the project's own files changed, whether any of them is dirty, and
-whether the project sits in a dependency cycle (which only picks the retry clause of a `failed` row's tooltip,
-*Resolve cycles* instead of *Build*). `local` is the one tail there is, and a timestamp reaching the row
+three facts only — the reason, whether the project's own files changed, and whether any of them is dirty.
+`local` is the one tail there is, and a timestamp reaching the row
 changes nothing on screen. Showing the age of the evidence behind the word was considered and rejected: for an
 output built outside this tool there is no age of *this* tool's making, so the row would have shown how long
 ago *this* tool last built the project while claiming to describe someone else's output — and for every other
@@ -2997,12 +3020,11 @@ from itself, a Rebuild, an SCC member), and a cycle member all read the identica
 134 px, which holds the longest label (`modified · local`) with room to spare; the width is also the hover icon
 block's, so it is not cut to the text.
 
-**The word is a fact, never a promise.** A failed row's tooltip names who will retry it: *Build* ordinarily, or
-*Resolve cycles* for a cycle member, because a plain Build never compiles a dependency cycle. The word is never
-paired with a fixed retry verb such as `failed · retry`, because that would read as a promise ("the next Build
-will try this again") that a cycle member cannot keep — on a real workspace most `failed` rows were cycle
-members for whom that promise would never come. The word does not change with scope either way — `failed`
-states what happened, the tooltip states who acts on it.
+**The word is a fact, never a promise.** A failed row's tooltip names who will retry it: *Build*, for every row,
+because a plain Build compiles a dirty cycle group too. The word is never paired with a fixed retry verb such as
+`failed · retry`, because that would read as a promise ("the next Build will try this again") that a run cannot
+always keep — a group whose roots still fail is skipped as a whole (§8.3). The word does not change with scope
+either way — `failed` states what happened, the tooltip states who acts on it.
 
 `modified` and `affected` are separated by a fact of its own: the content fingerprint written into
 `build-state.json` on the last successful build, compared against today's (§7.5). Not by the signature — the
@@ -3016,9 +3038,10 @@ project's input files is also dirty
 in `git status` — a fact this tool cannot see any other way, since a dirty working copy has no signature of its
 own yet.
 
-**Scope does not silence the label.** A cycle member is not compiled by a plain Build, but if its files changed
-it still reads `modified` — that is true, and the warning triangle is what says *Resolve cycles* is the thing
-that will compile it. The same principle runs the other way: a Rebuild compiles everything, yet a row whose
+**Scope does not silence the label.** A cycle member whose files changed reads `modified` like any other row,
+and the warning triangle says only that it sits in a cycle — its group compiles in rounds, in the next *Build* or
+*Resolve cycles*; a project outside a *Resolve cycles* run's scope keeps its label too. The same principle runs
+the other way: a Rebuild compiles everything, yet a row whose
 content is current keeps saying `up to date`. The label is a disk fact, never the run's scope. Hiding it was
 measured too: on that same workspace 33 of 184 rows — every SCC member — showed nothing at all.
 
@@ -3041,11 +3064,11 @@ event — even though it still drops out of the run's definite queue (`Condition
 this: the label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a
 plain success.
 
-A cycle member is its own case, because its signature is never gated the way a plain project's is (§8.3): a
-converged member's dep-issue note is genuinely recorded, but the member is never individually gated on it —
-Build never compiles it and Cycles compiles it with its whole group — so its live row reads `up to date`,
-exactly matching what the next Sync will say (`WaitingForDependency`, `WillBuild=false`,
-`Conditional=false` — read no differently by the label than `UpToDate` would be). A member whose group did not
+A converged cycle member with a dependency issue reads the same way, though it is never gated alone (§8.3): its
+note is genuinely recorded, the member compiles with its group, and the group is judged as a whole at dispatch —
+so its live row reads `up to date` and leaves the definite queue together with its group, exactly matching what
+the next Sync will say (`WaitingForDependency` with `Conditional=true`, read no differently by the label than
+`UpToDate` would be). A member whose group did not
 converge is different: the engine does not stand behind its green round, the ledger records it as a failure
 without evidence, and the success event says so (`trusted: false`, §8.8). Its row reads `never built` in the
 to-build grey at once — what the next Sync will say — rather than a green tick the next Sync would take back.
@@ -3236,11 +3259,9 @@ the new page (§13.3). An automatic Sync clears nothing and adds at most one lin
 for a git operation (`waiting for git — …`). A git refusal adds one short `warn` line — a branch switch refused
 on a dirty tree, a pull refused (§10.3, §10.5): no glyph (the amber `▸`, like `sync` and `info`), text in the
 same amber the console gives a `warning:` line, and typed like `info` rather than printed at once like a
-failure; it carries no project, so it is not clickable. A Clean that cleaned cycle members closes with one more
-`info` line right after its `Completed` or `Stopped` line — `N cycle projects cleaned — run Resolve cycles before
-Build` — because a plain `Build` never compiles a cycle (§8.1). It counts only the members actually cleaned (not
-one the run never reached, not one whose clean failed), is absent when there are none, and goes to the stream
-alone: the console keeps the operation's raw log.
+failure; it carries no project, so it is not clickable. A run's closing line has no cycle follow-up: a Clean that
+cleaned cycle members leaves them `never built` for the next `Build` to compile in rounds, and a `Build` that ends
+with a member still dirty — a failed or non-converged group — says so on the member's own row (§14.3).
 The **plan surface** — rows, graph nodes, the cycle map, the *to build* count — follows its own rule. No Sync
 empties the plan: the Sync button and a branch change only blank the list and the graph on screen and bring
 them back with the reveal (§10.2), and the other kinds reconcile the rows in place, replaying the reveal only
@@ -3386,8 +3407,8 @@ the three draws a hairline of its own on hover — the box's own border is the o
 hovering a button answers with ground and icon only, size and dividers untouched. All
 three drive real commands, and **none of them writes its own enabled state**: that is the command's
 `CanExecute` alone, so the strip can never disagree with the engine behind it. *Clean* is the workspace reset
-and *Optimize* the workspace repair, both described below. *Resolve cycles* is the cycle run, disabled while
-the topology has no cycle. Its icon is neutral: orange left the
+and *Optimize* the workspace repair, both described below. *Resolve cycles* is the narrow-scope cycle run (the cycles
+and their stale upstream only), disabled while the topology has no cycle. Its icon is neutral: orange left the
 interface entirely, so there is no longer a structural channel for it to echo — the presence of a cycle is
 carried by the button's enabled state and its tooltip.
 
@@ -3405,8 +3426,9 @@ the row's own project page: it states the same reason, because a page that descr
 will-build flag would be answering for the next `Build` rather than for this run. Only a row the run actually
 touched — a member, or the upstream it pulled in — can end the run coloured or counted.
 
-The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are things
-you do *before* a build, and the separator on their right belongs to the counters. Beside Build it would read
+The box sits next to Sync rather than next to Build, and the placement carries the meaning: these are
+maintenance runs beside a build — the cycles alone, a clean, a repair — and the separator on their right belongs
+to the counters. Beside Build it would read
 as a variant of the primary action, which it is not — it is a run of its own (§8.1) with the same icon the
 rows and the graph use for "this project is in a cycle". It is disabled unless the workspace actually has one,
 because in a workspace without cycles that run would skip every project and do nothing; a disabled button says
@@ -3781,9 +3803,10 @@ The root lives here rather than behind a folder picker because starting takes mo
 root and, optionally, the layers — and a picker can only ask for one of them. That is also why the empty
 project list invites the user *here* rather than opening a picker of its own (§13.2).
 
-Building dependency cycles is **not** a setting: it is a run of its own, reached from the maintenance box
-beside Sync (§8.1, §13.2). A preference would have been the wrong shape — the question is not "should this
-tool ever build cycles" but "do I want to pay for it right now", and that is answered per run.
+Building dependency cycles is **not** a setting: a plain *Build* compiles a dirty group, and *Resolve cycles* —
+the maintenance box beside Sync — compiles the cycles alone (§8.1, §13.2). A preference would have been the wrong
+shape — the question is not "should this tool ever build cycles" but "do I want to pay for the cycles alone right
+now", and that is answered per run.
 
 Layer cards are 36 px and reordered by dragging the grip with `Mouse.Capture` and a half-row swap
 threshold — `DragDrop.DoDragDrop` is prohibited, because the OS ghost-drag semantics do not match the design.
@@ -4240,9 +4263,9 @@ lines.
   that is compiling right now gets one line instead of two: there is no evidence yet, and its output is about
   to arrive. The reason comes from the engine's own vocabulary where there is one — the skip reasons are a
   single shared source, so the page, the event stream and `decision.log` cannot drift apart — and from the
-  will-build verdict and its reason (§7.4) where the project has not been spoken about in this run yet. Cycle
-  membership is checked before that verdict, since Sync gives every cycle member `false` and reading that as
-  "up to date" would be a lie.
+  will-build verdict and its reason (§7.4) where the project has not been spoken about in this run yet. A cycle
+  member reads that verdict like any other row: Sync gives it the answer a `Build` would act on, from its group's
+  composite signature (§7.4).
 - **There is no `build in progress` marker at the end of a project log.** There used to be an amber, blinking
   one. It was set when the page opened and never updated, so a project that finished while its log was on
   screen kept claiming to be building. Two surfaces already answer that question and stay in sync — the
@@ -4385,7 +4408,7 @@ without it a selection edge passing behind a node would show straight through it
 row (§14.3) — the state of the project's output, with the running operation laid over it — and there is no
 separate "plan" core. The cube inside follows the frame, with a single exception: in a **cycle member the cube
 is always amber**, whatever the frame says — unknown, to build, building, a result. Membership is structural,
-not the outcome of a run: a Sync does not end it, and neither does Resolve cycles compiling the member, so the
+not the outcome of a run: a Sync does not end it, and neither does a run compiling the member, so the
 cube does not either; it is the graphical proxy of the list row's warning triangle. It reaches the node as its
 own field (`GraphNode.InCycle`) rather than as a status, because it never changes what the frame reports.
 Earlier versions carried membership here as its own colour, first as an orange square and then as a persistent
@@ -5039,7 +5062,7 @@ never re-derive it.
 **The one exception: a cycle member's cube.** In a cycle member the cube inside the node is **always amber** —
 the graphical proxy of the row's amber warning triangle — while the frame carries the member's own state like
 any other node. Nowhere else do the frame and the cube part company. Membership is not a status (it is passed to
-the node separately and never changes the frame), so neither a Sync nor Resolve cycles compiling the member puts
+the node separately and never changes the frame), so neither a Sync nor a run compiling the member puts
 the cube out. Membership never reaches the list's colour: there the stripe and the dot follow the standing like
 every other row, because the triangle already says it. This is not the orange channel returning — the tone is
 the warning's own amber.
@@ -5076,7 +5099,7 @@ Orange left the interface entirely.
 blew up". The *reason* — the cycle path, the full member list, why a project was skipped — lives in the
 project log, where there is room for it. The status glyph always shows the real status, the warning never
 replaces it, and while the row is building the slot is empty so nothing competes with the spinner. A `Build`
-will not compile a cycle; *Resolve cycles* will (§8.1). The graph carries no triangle at all.
+compiles a dirty group in rounds, and so does *Resolve cycles* (§8.1, §8.8). The graph carries no triangle at all.
 
 The dependency triangle is **cumulative**. Its roots come from one place on the row (`WarningRoots`): this
 run's dependency list when the run produced one, otherwise the ledger's note — a project whose last success was
@@ -5999,7 +6022,8 @@ do, and how the interface works around each — useful to know before attempting
   individual projects.
 - **The will-build preview can under-promise on cycles.** A run's own preview is projected through what that
   run has actually pre-skipped, so it never promises work it will not do. The remaining gap is the other
-  direction and lives inside a `Cycles` run: the preview is computed per node from signatures alone, while the
+  direction and lives inside a run that compiles groups (`Build`, `Cycles`): the preview is computed per node from
+  signatures alone, while the
   group's up-to-date gate is per group, so in a component whose members are only *partly* up to date — in
   practice, one member with no state row — the gate does not hold and members the preview drew grey are built.
   It errs safely: more work happens than promised, and nothing broken can look healthy. Closing it means
@@ -6257,18 +6281,19 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 
 | Behaviour | File |
 |---|---|
-| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch and pre-skip | `Core/Scheduling/ReadySetScheduler.cs` |
+| Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch, and the pre-skip of members in a plan without a component map | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
+| Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
 | Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps); fed by the member terms the planner returns (`MemberTermById`) and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields of the compiled members when the group converges | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `PersistBuildStateOnCarriedMember`, `PersistBuildStateOnSuccess`) |
-| Resolve round trail in decision.log (group header, evidence loss, round-one need lines, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
+| Cycle round trail in decision.log (group header, evidence loss, round-one need lines or the Rebuild line, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
-| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
+| Conditional rebuild of a project waiting for a failed dependency (which runs apply it, to a project and to a cycle group; the set a run evaluates, `ConditionalIds`; the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
@@ -6355,7 +6380,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Perf table, copy-phase floor, and the Resolve cycles full-priority rule: the transform, its note, the single point where the engine applies it (run start and every mid-run switch) and where the App writes the note (run start, mid-run switch) | `Core/ProcessControl/PerfProfile.cs` (`ForRun`), `PerfNoteText.cs` (`ResolveNote`), `ICpuGovernor.cs`, `ICopyPhaseCpuFloor.cs`, `Supervisor/RunCoordinator.cs` (`ApplyPerfLocked`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `CyclePerfAsync`) |
 | Worker budget: the clamp rule with all its constants, the machine reading it uses (logical processors, free physical memory), the note a reduction writes, the single point where the engine applies it at run start (and writes the note to `decision.log`), and where the App writes the note (console at run start, event stream right after the opening line) | `Core/ProcessControl/WorkerBudget.cs`, `MachineResources.cs`, `PerfNoteText.cs` (`WorkersReduced`), `NativeMethods.cs` (`GlobalMemoryStatusEx`), `Supervisor/RunCoordinator.cs`, `App/ViewModels/RunViewModel.cs` (`OnRunStarted`, `WorkersReducedNote`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch) |
 | Run-start warnings (stale `obj`, reverse layer): gathered once before `runStarted`, written to `decision.log`, carried by `runStarted.warnings`, and where the App writes them (console at run start; event stream after the opening and reduction lines with the prefix dropped, folded into one counting line past a small limit) | `Supervisor/RunCoordinator.cs`, `Supervisor/StaleObjRunStartWarner.cs`, `Contracts/Ipc/IpcMessages.cs` (`RunStartedEvent.Warnings`), `App/ViewModels/RunViewModel.cs` (`OnRunStarted`), `App/ViewModels/RunViewModel.Stream.cs` (`BuildPreviewEvent` branch), `App/ViewModels/StreamText.cs` (`RunStartWarningLines`) |
-| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the Resolve group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
+| File IO concurrency: the one degree shared by the first content-hash fill (the miss scan and the reads), input collection, the fingerprint warm-up, the output checks and the group-start surface hash | `Core/Io/IoParallelism.cs`, `Core/Incremental/SourceHashCache.cs`, `Core/Incremental/IncrementalRunBinder.cs`, `Supervisor/RunCoordinator.cs` |
 
 **View models — the pure decision cores**
 
@@ -6428,7 +6453,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | The caret's colour cycle (palette order, step, phase) | `App/Controls/CursorHop.cs` |
 | The carets' shared clock pair and the window-active rule; the window's side of it (Activated/Deactivated, first-show state) | `App/Controls/CursorClock.cs`, `App/MainWindow.xaml.cs` |
 | App-wide tooltip defaults (no delay, no timeout, on disabled too) | `App/Controls/AppTooltipDefaults.cs` |
-| Cycle wording: membership line, cycle path | `App/ViewModels/CycleText.cs` |
+| Cycle wording: cycle path | `App/ViewModels/CycleText.cs` |
 | Opening choreography: step timeline, wave tempo and order | `App/Controls/MarkingChoreography.cs` |
 | Ending choreography: neon timings and keyframes, the moment the filter returns (`FilterReturnAtMs`) | `App/Controls/EndFinale.cs` |
 | Choreography sequencer (one timer per choreography) | `App/Controls/StepPlayer.cs` |

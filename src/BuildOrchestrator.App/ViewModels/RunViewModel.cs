@@ -1100,7 +1100,7 @@ public sealed partial class RunViewModel : ObservableObject
     ///   Yalnız KESİN derlenecekler: koşullu (<see cref="ProjectRowViewModel.Conditional"/>) bir proje kökü hâlâ
     ///   hatalıysa atlanabilir, dolayısıyla dalgada amber'a yanmaz. Bu, motorun kesin kuyruğuyla
     ///   (<see cref="InRunQueueFor"/>'un Build dalı) AYNI bayraktan türer — tek doğruluk kaynağı (kopya YASAK).</item>
-    ///   <item><b>Rebuild</b>: döngü dışı TÜM projeler (döngü üyeleri standart koşuya girmez — §3.2).</item>
+    ///   <item><b>Rebuild</b>: TÜM projeler — [Build cycle derler] döngü grupları da turlarla derlenir.</item>
     ///   <item><b>Resolve cycles</b>: döngü üyeleri.</item>
     ///   <item><b>Clean</b> (Build menüsünün): TÜM projeler — döngü üyeleri ve harici projeler dahil. Clean hiçbir
     ///   şey derlemez ve bağımlılık anlamı yoktur (<c>Core/Planning/CleanRunScope</c>).</item>
@@ -1111,9 +1111,8 @@ public sealed partial class RunViewModel : ObservableObject
     /// </summary>
     public IReadOnlyList<ProjectRowViewModel> ScopeFor(RunMode mode) => mode switch
     {
-        RunMode.Rebuild => [.. Projects.Where(r => !r.InCycle)],
+        RunMode.Rebuild or RunMode.Clean => [.. Projects],
         RunMode.Cycles => [.. Projects.Where(r => r.InCycle)],
-        RunMode.Clean => [.. Projects],
         _ => [.. Projects.Where(r => r.WillBuild == true && !r.Conditional)],
     };
 
@@ -1203,13 +1202,12 @@ public sealed partial class RunViewModel : ObservableObject
     private Task CleanAllAsync() => BeginRunAsync(RunMode.Clean); // seçim orada düşer (filtre korunur)
 
     /// <summary>[cycles] Sync'in yanındaki <b>Cycles</b> düğmesi: YALNIZ dairesel bağımlılık (SCC) oluşturan
-    /// projeleri, sıralı turlarla derler. Build'in yerine geçmez, ONDAN ÖNCE gelir — Build bir SCC'yi asla
-    /// derlemez, bu koşu ise sadece onları derler.
+    /// projeleri ve onların bayat upstream'ini, sıralı turlarla derler — downstream'e dokunmaz.
     ///
-    /// <para><b>Neden ayrı bir düğme:</b> bir SCC'yi turlarla derlemenin bedeli üye sayısı × tur sayısıdır ve
-    /// normal bir Build'in yanında ölçülemeyecek kadar büyüyebilir. Build'in içine katlandığında kullanıcı,
-    /// istemediği ve göremediği bir işin arkasında bekliyordu. Ayrı düğme kararı kullanıcıya verir: ne zaman,
-    /// ne kadar.</para>
+    /// <para><b>[Build cycle derler] Dar kapsamlı ve isteğe bağlı:</b> düz Build kirli grupları da aynı turlarla
+    /// derler (<c>CycleCompilation</c>); bu düğme yalnız cycle'ların bedelini ayrıca ödemek için vardır. Eskiden
+    /// Build bir SCC'yi hiç derlemez, bu koşu Build'den ÖNCE basılırdı — o sıranın unutulması bağımlıları eski
+    /// DLL'e karşı derleyip kırıyordu (ARCHITECTURE §8.1).</para>
     ///
     /// <para><see cref="RebuildCommand"/> ile AYNI kapıya tabidir (<see cref="CanRequestRun"/>) — bu da tam bir run'dır:
     /// bir iş sürerken kapalıdır.</para></summary>
@@ -1754,7 +1752,7 @@ public sealed partial class RunViewModel : ObservableObject
     /// <c>NeverBuilt</c>), her satırı <c>WillBuild=true</c> işaretler, fazı <c>Idle</c>'a alır ve konsola
     /// "Configuration → X — all projects will rebuild" yazardı. Değişme gerekçesi (ölçüm): defter proje başına TEK
     /// imza tutar, o da projenin en son derlendiği configuration'ınkidir — Debug → Release → Debug dönüşünde motor her
-    /// satırı güncel bulurken tahmin hepsini "derlenecek" diyordu; tahmin döngü üyelerini (düz Build onları derlemez)
+    /// satırı güncel bulurken tahmin hepsini "derlenecek" diyordu; tahmin döngü üyelerini (düz Build o zaman onları derlemiyordu)
     /// ve kararı olmayan satırları da sayıyordu; OSYS'te <c>bin\Release</c> çıktısı yokken motor "never built",
     /// tahmin "affected" diyordu. Doğru cevabı yalnız yeni configuration'ın Sync'i verir.</para></summary>
     public void SetConfiguration(string value)
@@ -2457,10 +2455,11 @@ public sealed partial class RunViewModel : ObservableObject
         // teriminde bütçelenir (dalga genişliği grubun şekline bağlıdır, küme BaselineRounds tur bütçelenir).
         // Started bir üyeyi buraya koymak, tam da işin yapıldığı pencerede tur çarpanını YOK EDİYORDU (üye
         // Pending'den çıktığı an cycle kovasından da düşüyordu).
-        // [Clean] Döngü kovası yalnız TURLARIN koştuğu Cycles koşusuna aittir. Build menüsünün Clean'i üyeleri de
-        // temizler ama motor Clean'de döngü anlamını düşürür (Core/Planning/CleanRunScope): üye bir kez, sıradan
-        // bir proje gibi paralel işlenir. (Build/Rebuild'de üyeler zaten pre-skip edilir, burada hiç sayılmaz.)
-        bool roundsRun = _currentRunMode == RunMode.Cycles;
+        // [Build cycle derler] Döngü kovası turların koşabildiği her koşuya aittir (CycleCompilation — tek kaynak):
+        // Build, Rebuild ve Cycles. Satırdan tetiklenen tek-proje koşusunda grup yoktur (hedef düz düğüm), Build
+        // menüsünün Clean'i üyeleri de temizler ama motor Clean'de döngü anlamını düşürür (Core/Planning/CleanRunScope):
+        // ikisinde de üye bir kez, sıradan bir proje gibi paralel işlenir.
+        bool roundsRun = _currentRunMode is { } runMode && CycleCompilation.CompilesCycles(runMode) && RunTargetId is null;
         var buildingRows = Projects.Where(p => p.State == ProjectRowState.Started && !(roundsRun && p.InCycle)).ToList();
         int remaining = Math.Max(0, total - completed);
         int queuedCount = Math.Max(0, remaining - buildingRows.Count);

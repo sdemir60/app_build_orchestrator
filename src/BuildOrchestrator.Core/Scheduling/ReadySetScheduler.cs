@@ -15,7 +15,8 @@ using BuildOrchestrator.Contracts.Model;
 /// ile gerçeklendi: bu class'ın resolved semantiği DEĞİŞMEDİ, yalnız <see cref="Completed"/> üzerinden okunur.
 ///
 /// InCycle=true node'lar (TopoSort'un SCC üyeleri, Nodes içinde hâlâ mevcut), <see cref="CycleGroups"/>
-/// verilmediyse (null — kill switch kapalı) construction anında Skipped("in dependency cycle") sayılıp
+/// verilmediyse (null — üretimde SCC derleyen her mod haritayı geçtiği için yalnız SCC'siz planın ve kill-switch
+/// testlerinin yolu) construction anında Skipped("in dependency cycle") sayılıp
 /// PreSkipped'e yazılır; böylece bağımlıları için çözülmüş kabul edilirler (yoksa asla ready olamayacakları
 /// için run kilitlenir) — plan A6. <see cref="CycleGroups"/> verildiyse pre-skip YAPILMAZ: her SCC TEK iş
 /// kalemi olarak ele alınır — hazırlığı TÜM üyelerin DIŞ bağımlılıklarına bakar (grup-içi/dairesel kenarlar
@@ -53,16 +54,16 @@ public sealed class ReadySetScheduler
 
     /// <summary>
     /// [T55] Koşu başı pre-skip tohum ctor'u: yeniden planlama/tarama/sıralama YOK. <paramref name="seed"/>
-    /// koşunun BAŞINDA zaten karara bağlanmış sonuçları taşır (Build modunda "up to date" pre-skip, Cycles
-    /// modunda kapsam dışı/güncel upstream/güncel SCC — bkz. RunCoordinator.PlanAndRunAsync); tohumdaki id'ler
-    /// dispatch EDİLMEZ ve bağımlıları için baştan çözülmüş sayılır.
+    /// koşunun BAŞINDA zaten karara bağlanmış sonuçları taşır (Build ve Cycles modunda "up to date" pre-skip —
+    /// grup düzeyinde güncel SCC dahil; Cycles'ta ayrıca kapsam dışı — bkz. RunCoordinator.PlanAndRunAsync); tohumdaki
+    /// id'ler dispatch EDİLMEZ ve bağımlıları için baştan çözülmüş sayılır.
     ///
-    /// Cycle/pre-skip DAVRANIŞI: <paramref name="cycleGroups"/> null iken (kill switch kapalı) tohumda OLMAYAN her
-    /// InCycle düğüm burada "in dependency cycle" ile pre-skip edilir. Build tohumu SCC üyelerini BİLEREK hiç
-    /// taşımaz, bu yüzden bu savunmacı bir edge case DEĞİL, Build'in NORMAL yoludur — aksi halde bağımlılıkları
-    /// birbirine dairesel olduğu için asla ready olamazlar ve run kilitlenir (plan A6). Tohumda ZATEN olan bir
-    /// üye ise yeniden pre-skip edilmez ve <see cref="PreSkipped"/>'e yazılmaz; gruplar null iken bu dal yalnız
-    /// savunmacıdır — üretimde SCC üyesini tohumlayan tek mod Cycles'tır ve orada gruplar doludur.
+    /// Cycle/pre-skip DAVRANIŞI: <paramref name="cycleGroups"/> null iken tohumda OLMAYAN her InCycle düğüm burada
+    /// "in dependency cycle" ile pre-skip edilir — aksi halde bağımlılıkları birbirine dairesel olduğu için asla
+    /// ready olamazlar ve run kilitlenir (plan A6). Üretimde SCC derleyen her mod (CycleCompilation) haritayı geçtiği
+    /// için bu dal yalnız SCC'siz bir planın (orada InCycle düğüm de yoktur) ve kill-switch testlerinin yoludur.
+    /// Tohumda ZATEN olan bir üye ise yeniden pre-skip edilmez ve <see cref="PreSkipped"/>'e yazılmaz; gruplar null
+    /// iken bu dal yalnız savunmacıdır — üretimde SCC üyesini tohumlayan modlar (Build, Cycles) haritayı da geçer.
     ///
     /// <paramref name="cycleGroups"/> [cycle rounds]: null (varsayılan) = kill switch KAPALI, yukarıdaki
     /// pre-skip davranışı BİREBİR korunur — mevcut tüm çağrı yerleri hiç değişmeden aynı sonucu almaya devam

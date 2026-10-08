@@ -712,16 +712,15 @@ public sealed class RunCoordinator(
         RunPlan runPlan;
         RunLogWriter logs;
         RunClock clock;
-        // [cycle rounds] Scheduler'ın TOHUMU — koşu başında karara bağlanmış pre-skip'ler: Build'de "up to date";
-        // Cycles'ta kapsam içi "up to date" (grup düzeyinde güncel SCC dahil) ve kapsam dışı (OutOfCycleScope).
-        // Rebuild/Clean'de BOŞ kalır. Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir yerde kurulur
+        // [cycle rounds] Scheduler'ın TOHUMU — koşu başında karara bağlanmış pre-skip'ler: Build'de "up to date"
+        // (grup düzeyinde güncel SCC dahil); Cycles'ta ayrıca kapsam dışı (OutOfCycleScope). Rebuild/Clean'de BOŞ kalır. Scheduler'ın KENDİSİ aşağıda, dalların DIŞINDA tek bir yerde kurulur
         // (kopya YASAK).
         var schedulerSeed = new Dictionary<string, BuildResult>(StringComparer.OrdinalIgnoreCase);
         ConcurrentDictionary<string, IReadOnlyList<string>> depIssuesById;
         // [Task 19] Build VE Cycles modlarında construction anında Skipped sayılan pre-skip'ler (cycle pre-skip'i
-        // gibi dependent'ları için resolved) — Build'de incremental "up to date" (WillBuild==false, cycle DIŞI)
-        // projeler; Cycles'ta AYRICA kapsam dışı projeler (SkipReasons.OutOfCycleScope) VE grup düzeyinde güncel
-        // SCC üyeleri (SkipReasons.UpToDate). ProjectSkippedEvent ile raporlanır. Rebuild'de boş kalır.
+        // gibi dependent'ları için resolved) — incremental "up to date" (WillBuild==false) projeler ve grup düzeyinde
+        // güncel SCC üyeleri (SkipReasons.UpToDate); Cycles'ta AYRICA kapsam dışı projeler (SkipReasons.OutOfCycleScope).
+        // ProjectSkippedEvent ile raporlanır. Rebuild'de boş kalır.
         // [cycle rounds/Task 8] CycleUnconverged BURADA (tipli üçüncü alan) taşınır: App'e giden ayırt edici bayrak
         // Reason METNİNDEN çıkarılmaz (kopya YASAK), doğrudan bu tuple alanından DecideSkipped'e taşınır. Onu true
         // yapan tek kaynak yakınsamama hafızasının SCC pre-skip'iydi; o kalktı (bkz. Cycles tohumundaki
@@ -769,14 +768,15 @@ public sealed class RunCoordinator(
             // [cycle rounds] SCC üyelik haritası TEK yerde kurulur ve HEM scheduler'a (grup dispatch'i) HEM run
             // context'ine (tur döngüsü) AYNI örnek verilir — ikisi ayrı From çağrısıyla kurulsaydı üye sırası
             // sessizce ayrışabilirdi. Plan'ın SON hâlinden (Clean ve kapsam daraltmasından sonra) kurulur; tohum
-            // bölümündeki retry satırı da grubun adını bu örnekten okur. Plan'da hiç SCC yoksa null geçilir:
-            // scheduler o zaman bugünkü davranışını (InCycle düğümleri pre-skip) birebir korur ve tur döngüsü hiç
-            // devreye girmez. Kapsam kapısı BURADADIR: Cycles DIŞINDAKİ her modda harita hiç KURULMAZ ve scheduler'a
-            // null gider — yani diğer modlar için yazılmış ayrı bir kod yolu yoktur, "SCC yok" hâliyle BİREBİR aynı
-            // dal seçilir.
-            groups = cmd.Mode == RunMode.Cycles && CycleGroups.From(runPlan.Plan) is { Count: > 0 } withCycles
-                ? withCycles
-                : null;
+            // bölümündeki retry satırı da grubun adını bu örnekten okur.
+            // [Build cycle derler] Harita, SCC derleyen her modda ve yalnız TAM koşuda kurulur — kural tek yerde
+            // (CycleCompilation.GroupsFor; Sync'in "bir sonraki Build" önizlemesi de oradan alır): satırdan tetiklenen
+            // tek-proje kapsamı hedefi düz düğüm olarak tek başına derler (ProjectRunScope), orada grup yoktur. Plan'da
+            // hiç SCC yoksa null geçilir; scheduler o zaman InCycle düğümü "in dependency cycle" ile pre-skip eder —
+            // üretimde bu dala düşen düğüm yoktur (planda SCC yoksa InCycle düğüm de yoktur), dal kill-switch testlerinin
+            // yoludur. Modlar için yazılmış ayrı bir kod yolu yoktur: Cycles ile Build arasındaki tek fark aşağıdaki
+            // KAPSAM tohumudur, Rebuild'inki tur 1'in ve koşullu değerlendirmenin kararıdır.
+            groups = CycleCompilation.GroupsFor(runPlan.Plan, cmd.Mode, scopedRun: cmd.ScopeProjectId is not null);
 
             lock (_gate)
             {
@@ -794,59 +794,60 @@ public sealed class RunCoordinator(
             //
             // [cycles] Cycles modunda KAPSAM daralır: iş yalnız SCC'ler VE onların transitif upstream'idir
             // (gerekçe CycleRunScope'ta) — kapsam dışı her proje koşulsuz pre-skip edilir. Kapsam İÇİNDEKİLER
-            // sıradan incremental kurala tabidir; SCC'ler ayrıca grup kapısından geçer — grup olarak güncelse
-            // tohumlanır. (Daha önce aynı bileşik imzada yakınsamamış olmak eskiden ikinci bir kapıydı; bugün yalnız
-            // raporlanır — aşağıdaki [Task 7 · DEĞİŞEN KURAL].)
+            // sıradan incremental kurala tabidir.
+            // [Build cycle derler] SCC'ler Build'de de Cycles'ta da AYNI grup kapısından geçer — grup olarak güncelse
+            // tohumlanır, değilse tek iş kalemi olarak dispatch edilip turlarla derlenir. (Daha önce aynı bileşik
+            // imzada yakınsamamış olmak eskiden ikinci bir kapıydı; bugün yalnız raporlanır — aşağıdaki
+            // [Task 7 · DEĞİŞEN KURAL].)
             bool cyclesRun = cmd.Mode == RunMode.Cycles;
             var cycleScope = cyclesRun ? CycleRunScope.Of(runPlan.Plan) : null;
+            // [Task 7 · DEĞİŞEN KURAL] Yakınsamama hafızası artık BLOKLAMAZ, yalnız RAPORLAR — grubu derleyen her
+            // koşuda (harita kuruluysa: Build, Rebuild, Cycles).
+            //
+            // Eskiden: daha önce yakınsamamış bir SCC, bileşik imzası hâlâ o andakiyle eşleşiyorsa TÜM
+            // üyeleriyle pre-skip edilirdi (CycleNonConvergent) — grup hiç dispatch edilmeden. Amaç,
+            // kaynak değişmeden aynı sonucu üretecek 2-3 turu boşa harcamamaktı.
+            //
+            // Neden kalktı: bu kapıya giden TEK yol kullanıcının bir koşu düğmesine (Build, Rebuild ya da
+            // Resolve cycles) BASMASIDIR — turları kendiliğinden harcayan otomatik bir akış yok. Yani kapı,
+            // tasarrufu yalnız AÇIK bir komutu sessizce yutarak sağlıyordu: düğme hiçbir şey yapmıyor gibi
+            // görünüyordu. Aynı gerekçe kod tabanında zaten yazılı — CapReached bilerek HATIRLANMAZ, çünkü
+            // "pre-skip edilen bir grupta devam HİÇ gelmez" (bkz. UpdateCycleNonConvergenceMemory). Ayrıca imza
+            // yalnız KAYNAKLARI kapsar: paket restore'u, döngü dışı bir bağımlılığın çıktısı ya da ortam
+            // değişmiş olabilir — değişmemiş bir kaynak imzasına bakıp yeniden denemeyi reddetmek fazla
+            // iddialıdır. Açık basış bir komuttur: grup taze bir çözüme, tur 1'den girer.
+            //
+            // Hafıza YAZILMAYA devam eder (kanıt) ve burada OKUNUR: operatör grubun neden yine turlar
+            // harcadığını decision.log'un ilk satırlarından görür.
+            if (groups is not null && stateStore is not null && runPlan.Incremental is { } inc)
+            {
+                var cycleState = stateStore.Load();
+                foreach (var cycle in runPlan.Plan.Cycles)
+                {
+                    // [I4] Temsilci seçimi YAZAN tarafla (UpdateCycleNonConvergenceMemory) TEK yerdedir:
+                    // bu liste ordinal, oradaki build-order sıralıdır — kendi [0]'larını seçselerdi
+                    // üye-başına imzanın ayrıştığı modda (Fast) iki taraf farklı imzaya bakardı.
+                    if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
+                        || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
+                    if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
+                    // [Fix round 1 — I1] Grup, başlık ve karar satırlarıyla AYNI adla anılır (CycleGroupName:
+                    // build-order lideri). Build-order üyeleri scheduler'ın da okuduğu TEK örnekten (groups), ad
+                    // tam plandan kurulmuş nameById'den gelir — geri dönüşü NameOf'unkiyle aynı (kimlik).
+                    Decide(logs, CycleDecisionLines.Retrying(
+                        CycleGroupName(groups.MembersOf(representative), id => nameById.GetValueOrDefault(id, id)),
+                        signature));
+                }
+            }
             if (cmd.Mode == RunMode.Build || cyclesRun)
             {
                 // Grup düzeyinde "güncel" bulunan SCC üyeleri — aşağıdaki tek pre-skip döngüsünün cycle
-                // üyelerine açtığı KAPIDIR. Build modunda boş kalır (kapı kapalı: Build bir SCC'yi derlemez ve
-                // onları tohumlamak ReadySetScheduler'ın "in dependency cycle" gerekçesini YUTARDI).
+                // üyelerine açtığı KAPIDIR. Harita yoksa (planda SCC yok) boş kalır.
                 var cycleUpToDate = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                if (cyclesRun)
+                if (groups is not null)
                 {
-                    // [Task 7 · DEĞİŞEN KURAL] Yakınsamama hafızası artık BLOKLAMAZ, yalnız RAPORLAR.
-                    //
-                    // Eskiden: daha önce yakınsamamış bir SCC, bileşik imzası hâlâ o andakiyle eşleşiyorsa TÜM
-                    // üyeleriyle pre-skip edilirdi (CycleNonConvergent) — grup hiç dispatch edilmeden. Amaç,
-                    // kaynak değişmeden aynı sonucu üretecek 2-3 turu boşa harcamamaktı.
-                    //
-                    // Neden kalktı: bu kapıya giden TEK yol kullanıcının "Resolve cycles" düğmesine BASMASIDIR —
-                    // turları kendiliğinden harcayan otomatik bir akış yok. Yani kapı, tasarrufu yalnız AÇIK bir
-                    // komutu sessizce yutarak sağlıyordu: düğme hiçbir şey yapmıyor gibi görünüyordu. Aynı
-                    // gerekçe kod tabanında zaten yazılı — CapReached bilerek HATIRLANMAZ, çünkü "pre-skip
-                    // edilen bir grupta devam HİÇ gelmez" (bkz. UpdateCycleNonConvergenceMemory). Ayrıca imza
-                    // yalnız KAYNAKLARI kapsar: paket restore'u, döngü dışı bir bağımlılığın çıktısı ya da
-                    // ortam değişmiş olabilir — değişmemiş bir kaynak imzasına bakıp yeniden denemeyi reddetmek
-                    // fazla iddialıdır. Açık basış bir komuttur: grup taze bir çözüme, tur 1'den girer.
-                    //
-                    // Hafıza YAZILMAYA devam eder (kanıt) ve burada OKUNUR: operatör grubun neden yine turlar
-                    // harcadığını decision.log'un ilk satırlarından görür.
-                    // groups: Cycles modunda plan'da SCC varsa null DEĞİLDİR (boş olmayan her SCC haritadadır).
-                    if (stateStore is not null && runPlan.Incremental is { } inc && groups is not null)
-                    {
-                        var cycleState = stateStore.Load();
-                        foreach (var cycle in runPlan.Plan.Cycles)
-                        {
-                            // [I4] Temsilci seçimi YAZAN tarafla (UpdateCycleNonConvergenceMemory) TEK yerdedir:
-                            // bu liste ordinal, oradaki build-order sıralıdır — kendi [0]'larını seçselerdi
-                            // üye-başına imzanın ayrıştığı modda (Fast) iki taraf farklı imzaya bakardı.
-                            if (CycleGroups.SignatureRepresentative(cycle) is not { } representative
-                                || !inc.SignatureById.TryGetValue(representative, out var signature)) continue;
-                            if (!cycle.All(id => BuildStateStore.IsCycleNonConvergent(cycleState, id, signature))) continue;
-                            // [Fix round 1 — I1] Grup, başlık ve karar satırlarıyla AYNI adla anılır (CycleGroupName:
-                            // build-order lideri). Build-order üyeleri scheduler'ın da okuduğu TEK örnekten (groups), ad
-                            // tam plandan kurulmuş nameById'den gelir — geri dönüşü NameOf'unkiyle aynı (kimlik).
-                            Decide(logs, CycleDecisionLines.Retrying(
-                                CycleGroupName(groups.MembersOf(representative), id => nameById.GetValueOrDefault(id, id)),
-                                signature));
-                        }
-                    }
-                    // SCC'ler de incremental olur: Cycles modunda planlayıcı üyelere GERÇEK bir WillBuild verir
-                    // (bileşik imza — tüm üyeler için ORTAK), dolayısıyla "hepsi false" ⇒ grup gerçekten güncel
-                    // demektir ve yeniden derlenmemelidir. Karar GRUP düzeyindedir (All): kısmi bir durumda
+                    // SCC'ler de incremental olur: grubu derleyen koşuda planlayıcı üyelere GERÇEK bir WillBuild
+                    // verir (bileşik imza — tüm üyeler için ORTAK), dolayısıyla "hepsi false" ⇒ grup gerçekten
+                    // güncel demektir ve yeniden derlenmemelidir. Karar GRUP düzeyindedir (All): kısmi bir durumda
                     // (ör. bir üyenin state'i hiç yok) hiçbir üye tohumlanmaz — yarısı Skipped tohumlanmış bir
                     // grubu dispatch etmek bozuk olurdu.
                     var willBuildById = runPlan.Plan.Nodes.ToDictionary(
@@ -860,21 +861,19 @@ public sealed class RunCoordinator(
                 }
                 foreach (var n in runPlan.Plan.Nodes)
                 {
-                    // KAPSAM kapısı — iki modda AYRI ve bilerek öyle:
-                    // · Cycles: kapsam dışı kalan BURADA tohumlanır ve kendi gerekçesiyle raporlanır.
-                    // · Build:  SCC üyesi HİÇ tohumlanmaz, çünkü onu zaten ReadySetScheduler kendi
-                    //   "in dependency cycle" gerekçesiyle pre-skip eder — tohumlamak o gerekçeyi yutar ve
-                    //   iki farklı durum ekranda aynı görünürdü.
+                    // KAPSAM kapısı yalnız Cycles'ındır: kapsam dışı kalan BURADA tohumlanır ve kendi gerekçesiyle
+                    // raporlanır. Build'in kapsamı tüm plandır.
                     if (cyclesRun && !cycleScope!.Contains(n.Id))
                     {
                         schedulerSeed[n.Id] = BuildResult.Skipped;
                         upToDateSkips.Add((n.Id, SkipReasons.OutOfCycleScope, CycleUnconverged: false));
                         continue;
                     }
-                    if (!cyclesRun && n.InCycle) continue;
                     // Cycle üyesi buraya YALNIZ grup kapısından geçtiyse gelir: tekil WillBuild bir SCC üyesini
-                    // TEK BAŞINA temsil etmez (bileşik imza gruba aittir). Kapsamdaki upstream sıradan projedir
-                    // ve bu kapıya hiç uğramaz — kendi WillBuild'i onu temsil eder.
+                    // TEK BAŞINA temsil etmez (bileşik imza gruba aittir). Harita yokken (planda SCC yok — üretimde
+                    // InCycle düğüm de yoktur; kill-switch testleri) kapı boştur ve üye tohumlanmaz: ReadySetScheduler
+                    // onu kendi "in dependency cycle" gerekçesiyle pre-skip eder, tohumlamak o gerekçeyi yutardı.
+                    // Kapsamdaki upstream sıradan projedir ve bu kapıya hiç uğramaz — kendi WillBuild'i onu temsil eder.
                     if (n.InCycle && !cycleUpToDate.Contains(n.Id)) continue;
                     if (n.WillBuild != false) continue;
                     schedulerSeed[n.Id] = BuildResult.Skipped;
@@ -960,7 +959,7 @@ public sealed class RunCoordinator(
         // [W1] BuiltCommit (sha çiftinin sol yarısı) da BURADAN taşınır — Sync'te doldurup burada boş bırakmak,
         // run başlar başlamaz kartların sha slotunu sıfırlardı. Load() ITEM BAŞINA DEĞİL, TOPLU okunur —
         // önizlemenin tamamı tek okumadan beslenir. Yukarıdaki [Task 7] yakınsamama hafızası taraması store'u
-        // ayrıca okur; o yalnız Cycles'ta koşar ve ayrı bir soruyu cevaplar.
+        // ayrıca okur; o yalnız grup haritası kurulan koşuda (Build, Rebuild, Cycles) koşar ve ayrı bir soruyu cevaplar.
         var builtCommits = stateStore?.Load();
         // Önizleme BU KOŞUNUN yapacağını anlatır, planlayıcının soyut "dirty mi" cevabını değil: pre-skip
         // edilmiş her proje WillBuild=false gösterilir. İki yer arasındaki fark aksi halde kullanıcıya YALAN
@@ -973,14 +972,11 @@ public sealed class RunCoordinator(
         // [Faz 3/Task 6] Planın kararına giren çıktı kontrolü (Program.ComputeIncremental) — yoksa kanıtsız.
         OutputCheck? CheckOf(string id) => runPlan.Incremental?.ChecksById?.GetValueOrDefault(id);
         // [koşullu yeniden derleme] Bu koşunun sırası geldiğinde koşullu değerlendireceği projeler — karar Core'da
-        // (ConditionalRebuild.AppliesTo); pre-skip edilen hiçbir proje dispatch edilmediği için koşullu da değildir.
-        // Önizleme ve dispatch AYNI kümeyi okur: "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
-        var conditionalIds = plan.Nodes
-            .Where(n => !preSkipped.Contains(n.Id)
-                && ConditionalRebuild.AppliesTo(n, cmd.Mode, scopedRun: cmd.ScopeProjectId is not null,
-                    cycleGroupMember: groups?.MembersOf(n.Id).Count > 0))
-            .Select(n => n.Id)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // (ConditionalRebuild.ConditionalIds; Sync'in önizlemesi de AYNI fonksiyonu AYNI grup haritasıyla sorar); pre-skip
+        // edilen hiçbir proje dispatch edilmediği için koşullu da değildir. Önizleme ve dispatch AYNI kümeyi okur:
+        // "kuyrukta değil" diyen önizleme ile atlayan motor ayrışamaz.
+        var conditionalIds = ConditionalRebuild.ConditionalIds(plan.Nodes, cmd.Mode,
+            scopedRun: cmd.ScopeProjectId is not null, groups, preSkipped);
         events.TryWrite(new BuildPreviewEvent(
             // [DEĞİŞEN KURAL — v1.16.0] Pre-skip edilen satırın gerekçesi artık DÜŞMEZ. Eskiden null'lanırdı
             // ("bu false imzadan değil koşu-zamanlama kuralından geliyor, imza gerekçesini göstermek yalan
@@ -1046,11 +1042,11 @@ public sealed class RunCoordinator(
             void DecideSkipped(string projectId, string reason, bool cycleUnconverged = false) =>
                 ReportSkipped(events, logs, cmd.RunId, projectId, nodeById[projectId].Name, reason, cycleUnconverged);
 
-            // Cycle üyeleri (construction anında Skipped) — PreSkipped: Rebuild/Build'de döngü üyelerini taşır
-            // ("in dependency cycle"; Build tohumu SCC üyelerini hiç taşımaz), Cycles'ta boştur (gruplar
-            // turlarla derlenir — BuildCycleGroupAsync), Clean'de boştur (plan döngü işaretsiz, CleanRunScope).
-            // Bu liste yalnız "grup DIŞARIDA hiç dispatch edilmedi" pre-skip'ini taşır (kill switch/SCC yok) —
-            // yakınsamama hafızasıyla İLGİSİZDİR, cycleUnconverged varsayılan false kalır.
+            // Cycle üyeleri (construction anında Skipped) — PreSkipped yalnız grup haritası OLMAYAN koşuda dolar
+            // ("in dependency cycle"): planda SCC yokken (üretimde orada InCycle düğüm de yoktur) ve kill-switch
+            // testlerinde. Build, Rebuild ve Cycles'ta boştur (gruplar turlarla derlenir — BuildCycleGroupAsync),
+            // Clean'de boştur (plan döngü işaretsiz, CleanRunScope). Yakınsamama hafızasıyla İLGİSİZDİR,
+            // cycleUnconverged varsayılan false kalır.
             foreach (var (projectId, reason) in scheduler.PreSkipped)
                 DecideSkipped(projectId, reason);
             // [Task 19] Build VE Cycles modlarının pre-skip'leri (cycle pre-skip ile AYNI konumda, ilk
@@ -1320,7 +1316,7 @@ public sealed class RunCoordinator(
             run.DepIssuesById[projectId] = recorded!.DepIssueRoots!;
             // [Task 4 — carried item 3] Kök adları BURADA ("dependency still failing (…)" satırı) yalnız
             // RootNames'in düz listesi DEĞİL, DescribeStillFailingRoots'un KANITLI listesidir: bir kök bu
-            // koşuda hiç denenmediyse (ör. Build modunda pre-skip edilen bir SCC üyesi) ve "hâlâ hatalı" iddiası
+            // koşuda hiç denenmediyse (atlanmış ya da henüz sonuçlanmamış, önizlemesi güncel değil) ve "hâlâ hatalı" iddiası
             // yalnız koşu başındaki defterden geliyorsa satır bunu söyler — "R failed in this run" YALANI
             // basılmaz. Kök GERÇEKTEN bu koşuda patladıysa (bugünkü senaryoların hepsi) metin DEĞİŞMEZ.
             string roots = string.Join(", ", ConditionalRebuild.DescribeStillFailingRoots(
@@ -1500,7 +1496,7 @@ public sealed class RunCoordinator(
                 if (!run.NodeById.TryGetValue(id, out var node)) return false; // savunmacı: bilinmeyen üye → derle
                 nodes.Add(node);
             }
-            if (!ConditionalRebuild.GroupAppliesTo(nodes)) return false;
+            if (!ConditionalRebuild.GroupAppliesTo(nodes, run.Mode)) return false;
 
             foreach (var node in nodes)
             {
@@ -1573,7 +1569,7 @@ public sealed class RunCoordinator(
     private async Task BuildCycleGroupAsync(RunContext run, IReadOnlyList<string> allMembers, CancellationToken ct)
     {
         // [TryDispatch sözleşmesi] Dispatch ANINDA zaten Completed'ta olan (ör. tohumla Skipped girilmiş —
-        // Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
+        // Build ve Cycles tohumu bir SCC'yi hep TÜM üyeleriyle birden tohumlar, hiçbir zaman kısmi değil; yani bu
         // savunmacıdır) ya da plan'da karşılığı olmayan üye in-flight'a HİÇ girmedi; onun için Complete
         // çağırmak fırlatırdı. Tur döngüsü bu yüzden yalnız GERÇEKTEN dispatch edilmiş üyeler üzerinde çalışır —
         // ama grup-içi kenar hesabı TÜM üyelere bakar (dairesel kenar, üye terminal olsa da dairesel kalır).
@@ -1734,7 +1730,12 @@ public sealed class RunCoordinator(
             // null ⇒ "no member term", herkes gerekli (ayrı dal yok).
             IReadOnlyList<string> toBuild = members;
             bool roundOneCarried = false; // [R3c2] tur 1'de taşınan üye var mı — iki-yeşil kuralının tabanı (tur sonu)
-            if (hashMode && run.Incremental is { MemberTermById: { } memberTerms } incremental)
+            // [Build cycle derler] Rebuild "önbelleği yok say"dır: üye ihtiyacı sorulmaz, herkes tur 1'de derlenir.
+            // hashMode DOKUNULMAZ — tur sonu bayatlık kararı yine kanıtla verilir (Fast'teki "terim yok" dalıyla aynı
+            // sonuç, ama sebebi decision.log'a açıkça yazılır).
+            if (run.Mode == RunMode.Rebuild)
+                Decide(run.Logs, CycleDecisionLines.RebuildCompilesEveryMember(group));
+            else if (hashMode && run.Incremental is { MemberTermById: { } memberTerms } incremental)
             {
                 var need = CycleMemberNeed.Decide(members,
                     id => new CycleMemberNeed.MemberEvidence(run.LedgerAtStart?.GetValueOrDefault(id),
