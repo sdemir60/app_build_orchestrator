@@ -23,7 +23,8 @@ namespace BuildOrchestrator.Tests.Integration;
 /// <item><b>Incremental all-skipped:</b> bir <c>Rebuild</c> başarıyla BuildState kurar; kaynak DEĞİŞMEDEN bir
 ///   <c>Build</c> → Run 1'de <b>satır persist eden</b> projelerin HEPSİ "skipped — up to date". (En güçlü tek
 ///   gösterim.) [A2] Bu küme "Run 1'de başarılı olan HER proje" DEĞİLDİR: depIssue taşıyan bir success taze imza
-///   persist etmez, dolayısıyla Run 2'de MEŞRU olarak yeniden derlenir (bkz. <c>DepIssueCarriers</c>).</item>
+///   persist etmez, dolayısıyla Run 2'de MEŞRU olarak yeniden derlenir (bkz. <c>DepIssueCarriers</c>); yakınsamayan
+///   bir SCC'nin güvenilmez başarısı da öyle (bkz. <c>UntrustedSucceeded</c>).</item>
 /// <item><b>Minimal rebuild (L1→L3 dirty):</b> kurulu state üstünde TEK bir projenin kaynağı "dirty" simüle
 ///   edilir (OSYS working tree'ye DOKUNULMADAN — sentetik dirty path) → yalnız o proje + transitive dependent'ları
 ///   WillBuild=true, ilgisiz projeler skip kalır. (Gerçek OSYS grafı + gerçek committed hash'ler + gerçek state.)</item>
@@ -53,11 +54,16 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
     /// <param name="DepIssueCarriers">[A2] BAŞARILI olduğu hâlde depIssue TAŞIYAN projeler — bir bağımlılığı bu
     /// run'da fail ettiği için onun BAYAT (önceki) çıktısına link'lidirler. A2'den beri bunlar taze imza persist
     /// ETMEZ, dolayısıyla bir sonraki Build'de MEŞRU olarak yeniden derlenirler.</param>
+    /// <param name="UntrustedSucceeded">[Build cycle derler] Motorun ARKASINDA DURMADIĞI başarılar
+    /// (<see cref="ProjectSucceededEvent.Trusted"/> <c>false</c>): yakınsamayan bir SCC'nin yeşil üyeleri. Defterde
+    /// başarı olarak durmazlar ("kanıtsız hata"; kayıt yoksa hiç açılmaz), dolayısıyla bir sonraki Build grubu
+    /// MEŞRU olarak yeniden derler. Eskiden bu küme bu testte hep boştu: Build ve Rebuild SCC'yi hiç derlemezdi.</param>
     private sealed record RunOutcomeData(
         IReadOnlyList<string> Succeeded,
         IReadOnlyList<(string ProjectId, string Reason)> Failed,
         IReadOnlyList<(string ProjectId, string Reason)> Skipped,
         IReadOnlyList<string> DepIssueCarriers,
+        IReadOnlyList<string> UntrustedSucceeded,
         RunStartedEvent? Started,
         RunCompletedEvent? Completed,
         IReadOnlyList<BuildPreviewItem> Preview);
@@ -117,6 +123,12 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // ≥131 kalabilir). Alt sınır bu yüzden TOPLAM değil, özellikle `LastResult == Succeeded` olan kayıt
         // sayısını okumalıdır.
         //
+        // [DEĞİŞEN KURAL — Build cycle derler] Eski beklenti `run1.Succeeded.Count` idi. Rebuild artık SCC
+        // gruplarını da derler; yakınsamayan bir grubun yeşil üyesi bir başarı OLAYI alır ama motor onun arkasında
+        // durmaz (Trusted=false) ve deftere başarı yazılmaz (kanıtsız hata; boş defterde kayıt hiç açılmaz). Beklenen
+        // alt sınır bu yüzden GÜVENİLİR başarıların sayısıdır — muafiyet motorun kendi sözünden gelir, test
+        // tahmin etmez.
+        //
         // İddia ZAYIFLAMAZ: derlenen her BAŞARILI proje için KURAL OLARAK bir BAŞARI kaydı beklenir — biri bile
         // eksik kalırsa sayı bu alt sınırın ALTINA düşer ve test kırmızı verir. Muafiyet listesi tam OLSUN diye:
         // bir persist-etmeme yolu daha vardır ve o da bu iddiaya girmez — PersistBuildStateOnSuccess
@@ -124,7 +136,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // imzası hesaplanamamış proje) satır YAZMADAN döner. Yani buradaki bir kırmızı "persist eksik" kadar
         // "imzasız success var" da demek olabilir; teşhis için önce kanıt dosyasındaki Run 1 satırına ve
         // build-state.json'a bakılmalı.
-        int run1PersistExpected = run1.Succeeded.Count;
+        int run1PersistExpected = run1.Succeeded.Count - run1.UntrustedSucceeded.Count;
         int run1SuccessRecords = stateAfterRun1.Values.Count(s => s.LastResult == BuildResult.Succeeded);
         Assert.True(run1SuccessRecords >= run1PersistExpected,
             Inv($"başarı olarak persist edilen kayıt ({run1SuccessRecords}) < persist etmesi beklenen ({run1PersistExpected} = başarılı) — persist eksik."));
@@ -165,7 +177,12 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         // "notSkipped BOŞ" ve "run2Started ≤ run1.Failed" idi — o
         // beklenti yalnız Run 1 TAMAMEN yeşilken (failed=0 ⇒ carrier=0) doğrudur; bir failure olduğunda onun
         // succeeded dependent'ları meşru olarak yeniden derlenir ve eski iddialar YANLIŞ kırmızı verirdi.
+        // [DEĞİŞEN KURAL — Build cycle derler] Üçüncü grup: Run 1'in GÜVENİLMEZ başarıları (yakınsamayan SCC
+        // üyeleri). Defterde başarı olarak durmadıkları için Run 2'nin Build'i grubu yeniden derler (decision.log:
+        // "retrying — did not converge at this signature"). Eskiden bu grup boştu: Build ve Rebuild SCC'yi hiç
+        // derlemezdi, üyeler her iki koşuda da pre-skip'ti. Grubun kalan (başarısız) üyeleri zaten Failed'dadır.
         var run1LegitimateRebuild = run1.Failed.Select(f => f.ProjectId).Concat(run1.DepIssueCarriers)
+            .Concat(run1.UntrustedSucceeded)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var notSkippedUnexplained = notSkipped.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
         var run2Unexplained = run2Started.Except(run1LegitimateRebuild, StringComparer.OrdinalIgnoreCase).ToList();
@@ -191,12 +208,17 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var hashes = new SourceHashCache(Path.Combine(cacheRoot, SourceHashCache.FileName));
         hashes.Seed(targetFile, "SIMULATED-EDIT");
         var binder = new IncrementalRunBinder(plan, evaluatedById, OsysRoot, hashes);
-        var (dirtyPlan, _) = binder.Bind(stateAfterRun1, buildCycles: false, DependentMode.Safe);
+        var (dirtyPlan, _) = binder.Bind(stateAfterRun1, CycleCompilation.CompilesCycles(RunMode.Build), DependentMode.Safe);
         var dirtyById = dirtyPlan.Nodes.ToDictionary(n => n.Id, n => n.WillBuild, StringComparer.OrdinalIgnoreCase);
 
         var transitiveDependents = TransitiveDependents(targetNode.Id, dependentsOf);
-        // Cycle üyeleri HER ZAMAN WillBuild=false taşır (WillBuildEvaluator: inCycle → false); imza cascade'i onların
-        // ÜZERİNDEN downstream'e yine yayılır ama KENDİLERİ derlenmez — cascade assert'inden hariç tutulur.
+        // [DEĞİŞEN KURAL — Build cycle derler] Eski hâl: bayrak `buildCycles: false` idi ve cycle üyeleri HER ZAMAN
+        // WillBuild=false taşırdı — Build onları derlemezdi. Artık bayrak Build'in kendi cevabıdır
+        // (CycleCompilation) ve kirli bir grup bütün olarak true okur. Üyeler yine de cascade İDDİASINDAN hariç
+        // tutulur, sayıları kanıta yazılır: yakınsamayan bir grubun üyesinin defterde satırı yoktur (güvenilmez
+        // başarı), satırsız proje ZAMAN KİPİNDEDİR ve oradaki karar çıktı tarihlerinden gelir — sentetik
+        // değişiklik yalnız içeriği oynatır, tarihi değil. Cycle-DIŞI dependent'lar için iddia önceki hâliyle
+        // aynen TAM kurulur: güvenilmez başarı yalnız SCC üyesinde olur.
         var inCycle = new HashSet<string>(
             plan.Nodes.Where(n => n.InCycle).Select(n => n.Id), StringComparer.OrdinalIgnoreCase);
         // [A3] Cycle-tangled transitive under-build KAPANDI: bir SCC artık component başına TEK kompozit imza
@@ -213,6 +235,8 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
 
         var transNonCycle = transitiveDependents.Where(id => !inCycle.Contains(id)).ToList();
         int transFlipped = transNonCycle.Count(id => dirtyById.TryGetValue(id, out var wb) && wb == true);
+        var transCycle = transitiveDependents.Where(inCycle.Contains).ToList();
+        int transCycleFlipped = transCycle.Count(id => dirtyById.TryGetValue(id, out var wb) && wb == true);
 
         // İlgisiz (hedef değil + dependent değil + cycle değil), state'i olan bir proje skip (false) kalmalı.
         var unrelatedClean = plan.Nodes.Where(n =>
@@ -231,13 +255,13 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine();
             sb.AppendLine("## Run 1 (Rebuild, state YOK — hepsi derlenir)");
             sb.AppendLine(Inv($"- TotalProjects: {run1.Started?.TotalProjects} · Succeeded: {run1.Completed?.Succeeded} · Failed: {run1.Completed?.Failed} · Skipped: {run1.Completed?.Skipped} · Süre: {run1.Completed?.DurationMs} ms"));
-            sb.AppendLine(Inv($"- build-state.json kayıt sayısı (Run 1 sonrası): {stateAfterRun1.Count} · beklenen alt sınır: {run1PersistExpected} (başarılı — depIssue taşıyanlar da NOTLA yazılır)"));
+            sb.AppendLine(Inv($"- build-state.json kayıt sayısı (Run 1 sonrası): {stateAfterRun1.Count} · beklenen alt sınır: {run1PersistExpected} (güvenilir başarı — depIssue taşıyanlar da NOTLA yazılır; güvenilmez: {run1.UntrustedSucceeded.Count})"));
             sb.AppendLine();
             sb.AppendLine("## Run 2 (Build, kaynak DEĞİŞMEDEN — incremental)");
             sb.AppendLine(Inv($"- TotalProjects: {run2.Started?.TotalProjects} · Succeeded: {run2.Completed?.Succeeded} · Failed: {run2.Completed?.Failed} · Skipped: {run2.Completed?.Skipped} · Süre: {run2.Completed?.DurationMs} ms"));
             sb.AppendLine(Inv($"- 'skipped — up to date' sayısı: {run2UpToDate.Count} (defterden: {run2UpToDateFromLedger.Count} · built outside: {builtOutside.Count}) · Run 1'de NOTSUZ BAŞARI persist edilen satır: {cleanRowIds.Count} / toplam kayıt {stateAfterRun1.Count} (defterden olanlar bu satırlarla AYNI küme olmalı — bkz. KABUL İDDİALARI)"));
             sb.AppendLine(Inv($"- Run 1 başarılı ({run1Succeeded.Count}) → Run 2'de up-to-date SKIP edilmeyen: {notSkipped.Count} · bunlardan A2 ile AÇIKLANAMAYAN: {notSkippedUnexplained.Count} (0 OLMALI)"));
-            sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
+            sb.AppendLine(Inv($"- [A2] Run 1: failed={run1.Failed.Count} + depIssue taşıyan success={run1.DepIssueCarriers.Count} + güvenilmez (yakınsamayan SCC) success={run1.UntrustedSucceeded.Count} → Run 2'de derlenmesi MEŞRU: {run1LegitimateRebuild.Count}"));
             sb.AppendLine(Inv($"- Run 2'de dispatch edilen (derlenen) proje: {run2Started.Count} · bunlardan MEŞRU kümede OLMAYAN: {run2Unexplained.Count} (0 OLMALI)"));
             sb.AppendLine();
             sb.AppendLine("## Minimal rebuild (tek proje değişti, in-process — gerçek OSYS grafı)");
@@ -245,6 +269,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- Hedef WillBuild: {dirtyById[targetNode.Id]}"));
             sb.AppendLine(Inv($"- Doğrudan (cycle-dışı) dependent: {directDependents.Count} · flip=true olmayan (İHLAL): {cascadeMisses.Count}"));
             sb.AppendLine(Inv($"- Transitive (cycle-dışı) dependent: {transNonCycle.Count} · flip=true olan: {transFlipped} ([A3] TAM cascade bekleniyor)"));
+            sb.AppendLine(Inv($"- Transitive cycle üyesi dependent: {transCycle.Count} · flip=true olan: {transCycleFlipped} (kayıt — satırsız üye zaman kipinde)"));
             sb.AppendLine(Inv($"- İlgisiz + skip (false) kalan proje sayısı: {unrelatedClean.Count}"));
             sb.AppendLine();
             sb.AppendLine("## K1 (read-only garanti)");
@@ -314,6 +339,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         var failed = new List<(string, string)>();
         var skipped = new List<(string, string)>();
         var depIssueCarriers = new List<string>(); // [A2] depIssue TAŞIYAN success'ler
+        var untrusted = new List<string>();        // motorun arkasında durmadığı success'ler (yakınsamayan SCC)
         RunStartedEvent? started = null;
         RunCompletedEvent? completed = null;
         IReadOnlyList<BuildPreviewItem> preview = [];
@@ -325,8 +351,10 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
             var w = new NdjsonWriter(proc.StandardInput.BaseStream);
             var r = new NdjsonReader(proc.StandardOutput.BaseStream);
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(ct));
-            // [cycles] Build ve Rebuild bir SCC'ye HİÇ dokunmaz — üyeler "in dependency cycle" ile atlanır. Bu
-            // koşular ürünün sevk ettiği modların ta kendisidir; turlar kendi modundadır (RunMode.Cycles).
+            // [DEĞİŞEN KURAL — Build cycle derler] Eski not: "Build ve Rebuild bir SCC'ye HİÇ dokunmaz — üyeler 'in
+            // dependency cycle' ile atlanır; turlar kendi modundadır (RunMode.Cycles)." Artık ikisi de kirli SCC
+            // gruplarını turlarla derler (Rebuild her üyeyi tur 1'de); yakınsamayan grubun yeşil üyesi güvenilmez
+            // başarıdır (Trusted=false). Bu koşular yine ürünün sevk ettiği modların ta kendisidir.
             await w.WriteAsync(
                 new StartRunCommand(runId, mode, OsysRoot, "Debug", Parallelism), ct);
 
@@ -342,6 +370,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
                     case ProjectSucceededEvent p:
                         succeeded.Add(p.ProjectId);
                         if (p.DepIssues is { Count: > 0 }) depIssueCarriers.Add(p.ProjectId); // [A2]
+                        if (!p.Trusted) untrusted.Add(p.ProjectId);
                         break;
                     case ProjectFailedEvent p: failed.Add((p.ProjectId, p.Reason)); break;
                     case ProjectSkippedEvent p: skipped.Add((p.ProjectId, p.Reason)); break;
@@ -356,7 +385,7 @@ public sealed class OsysIncrementalAcceptanceTests(ITestOutputHelper output)
         {
             if (!proc.HasExited) { try { proc.Kill(entireProcessTree: true); } catch { /* temizlik */ } }
         }
-        return new RunOutcomeData(succeeded, failed, skipped, depIssueCarriers, started, completed, preview);
+        return new RunOutcomeData(succeeded, failed, skipped, depIssueCarriers, untrusted, started, completed, preview);
     }
 
     private static (BuildPlan Plan, IReadOnlyDictionary<string, EvaluatedProject> EvaluatedById) BuildPlanAndEvaluated()

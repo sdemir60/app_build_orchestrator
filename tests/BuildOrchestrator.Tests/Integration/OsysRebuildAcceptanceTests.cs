@@ -9,6 +9,7 @@ using BuildOrchestrator.Core.Logs;
 using BuildOrchestrator.Core.MsBuild;
 using BuildOrchestrator.Core.Planning;
 using BuildOrchestrator.Core.Processes;
+using BuildOrchestrator.Core.Scheduling;
 using BuildOrchestrator.Tests.Supervisor;
 using Xunit;
 using Xunit.Abstractions;
@@ -127,6 +128,7 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         var succeeded = new List<string>();
         var failed = new List<(string ProjectId, long DurationMs, string Reason)>();
         var skipped = new List<(string ProjectId, string Reason)>();
+        var cycleGroups = new List<CycleCompletedEvent>();       // grup kararları (kanıt dosyası için)
         RunCompletedEvent? completed = null;
         RunStartedEvent? started = null;
 
@@ -139,10 +141,13 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             Assert.IsType<EngineReadyEvent>(await r.ReadAsync<IpcEvent>().WaitAsync(overall.Token));
 
             var sw = Stopwatch.StartNew();
-            // [cycles] Rebuild bir SCC'ye HİÇ dokunmaz (üyeler "in dependency cycle" ile atlanır) — bu koşu
-            // ürünün sevk ettiği Rebuild'in ta kendisidir. Döngü turlarının kapsamı burada DEĞİL, kendi
-            // modunda (RunMode.Cycles) ve kendi süitindedir (CycleRoundsTests + RunCoordinatorTests'in
-            // gerçek-process tur kablajı testi).
+            // [DEĞİŞEN KURAL — Build cycle derler] Eski iddia: "Rebuild bir SCC'ye HİÇ dokunmaz (üyeler 'in
+            // dependency cycle' ile atlanır); turlar kendi modundadır (RunMode.Cycles)." Artık yanlış: Rebuild her
+            // SCC grubunu turlarla derler ve tur 1'de HER üyeyi derler (CycleDecisionLines.RebuildCompilesEveryMember)
+            // — gerekçe: Build/Rebuild'in atladığı değişmiş üyeler bağımlılarını bayat DLL'e link'liyordu (ölçüm:
+            // gerçek OSYS'te Types üyeleri değişince Business bağımlıları CS1061 ile kırmızı). Bu koşu yine ürünün
+            // sevk ettiği Rebuild'in ta kendisidir, turlar dahil; kabul iddiaları turu iki yerde tanır: eşzamanlılık
+            // sayacı (CycleMemberHeldEvent) ve sıralama assert'i (grup İÇİ kenarlar).
             await w.WriteAsync(
                 new StartRunCommand("acc-full", RunMode.Rebuild, OsysRoot, "Debug", Parallelism), overall.Token);
 
@@ -162,6 +167,15 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
                         inFlight.Add(p.ProjectId);
                         maxConcurrent = Math.Max(maxConcurrent, inFlight.Count);
                         break;
+                    // Tur üyesi derlemesi bitince MSBuild sırasını (slot) bu olayla bırakır; TEK sonucu grubun
+                    // kararında gelir. Eşzamanlılık sayacı onu burada "bitti" sayar — motorun kendi slot sözleşmesi
+                    // (IpcMessages: ProjectStarted yalnız slotu tutana yazılır, CycleMemberHeld slot bırakılmadan
+                    // ÖNCE). Sayılmasaydı grubun her üyesi kararına dek "uçuşta" kalır, tavan sahte aşılırdı. Üye
+                    // sonraki turda yeniden ProjectStarted alır; sayaç onu yeniden ekler.
+                    case CycleMemberHeldEvent h:
+                        inFlight.Remove(h.ProjectId); break;
+                    case CycleCompletedEvent c:
+                        cycleGroups.Add(c); break;
                     case ProjectSucceededEvent p:
                         inFlight.Remove(p.ProjectId); succeeded.Add(p.ProjectId);
                         timeline.Add(("terminal", p.ProjectId)); break;
@@ -265,7 +279,12 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
             sb.AppendLine(Inv($"- Succeeded: {completed?.Succeeded} · Failed: {completed?.Failed} · Skipped: {completed?.Skipped} · Queued: {completed?.Queued}"));
             sb.AppendLine(Inv($"- Toplam süre (runCompleted.DurationMs): {completed?.DurationMs} ms"));
             sb.AppendLine(Inv($"- Max eşzamanlı in-flight (event akışından): {maxConcurrent} (tavan {Parallelism})"));
-            sb.AppendLine(Inv($"- ProjectStarted sayısı: {dispatchOrder.Count} · Succeeded event: {succeeded.Count} · Failed event: {failed.Count} · Skipped event: {skipped.Count}"));
+            sb.AppendLine(Inv($"- ProjectStarted sayısı: {dispatchOrder.Count} (tur üyesi her derlendiği turda bir kez sayılır) · Succeeded event: {succeeded.Count} · Failed event: {failed.Count} · Skipped event: {skipped.Count}"));
+            sb.AppendLine();
+            sb.AppendLine("## Cycle grupları (Rebuild turları)");
+            sb.AppendLine(Inv($"- Grup: {cycleGroups.Count} · converged: {cycleGroups.Count(c => c.Outcome == CycleOutcome.Converged)} · noProgress: {cycleGroups.Count(c => c.Outcome == CycleOutcome.NoProgress)} · capReached: {cycleGroups.Count(c => c.Outcome == CycleOutcome.CapReached)}"));
+            foreach (var c in cycleGroups)
+                sb.AppendLine(Inv($"  - {Path.GetFileNameWithoutExtension(c.ProjectId)}: {c.Outcome} · üye {c.MemberCount} · derlenen {c.CompiledCount} · tur {c.Rounds} · son turda başarısız {c.FailedCount} · {c.DurationMs} ms"));
             sb.AppendLine();
             sb.AppendLine("## Copy-contention retry");
             sb.AppendLine(Inv($"- decision.log'da retry satırı: {retryLines} · retry gören farklı proje: {retryProjects.Count}"));
@@ -328,7 +347,9 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         // Bağımlılık grafı in-process (Core) çıkarılır; olay zaman çizelgesi (timeline) üzerinden her "start P",
         // P'nin plandaki TÜM bağımlılıkları o ana kadar terminal (succeeded|failed|skipped) OLDUKTAN SONRA
         // geldiği KANITLANIR — RunCoordinatorTests'ten BAĞIMSIZ (gerçek OSYS koşusunun kendi olay akışından).
-        var depById = BuildDependencyMap();
+        // [DEĞİŞEN KURAL — Build cycle derler] Harita grup İÇİ kenarları taşımaz (bkz. OrderingDependencyMap):
+        // Rebuild artık grupları derler ve bir üye, kardeşleri grubun kararına dek terminal olmadan başlar.
+        var depById = OrderingDependencyMap();
         var nodeIds = new HashSet<string>(depById.Keys, StringComparer.OrdinalIgnoreCase);
         var terminalSoFar = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var orderingViolations = new List<string>();
@@ -469,14 +490,28 @@ public sealed class OsysRebuildAcceptanceTests(ITestOutputHelper output)
         return (Run("rev-parse", "HEAD"), Run("rev-parse", "--abbrev-ref", "HEAD"));
     }
 
-    /// <summary>[Task 19] OSYS'in bağımlılık grafını in-process (Core) çıkarır: projectId → doğrudan üretici
-    /// (upstream) projectId'ler. Sıralama assert'i (resolved-gate) için — gerçek koşunun olay akışından BAĞIMSIZ.</summary>
-    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildDependencyMap()
+    /// <summary>[Task 19] OSYS'in bağımlılık grafını in-process (Core) çıkarır: projectId → sıralamayı bağlayan
+    /// doğrudan üretici (upstream) projectId'ler. Sıralama assert'i (resolved-gate) için — gerçek koşunun olay
+    /// akışından BAĞIMSIZ.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Aynı SCC'deki kardeş kenarı haritaya GİRMEZ. Eski hâl tüm
+    /// kenarları taşıyordu; Rebuild grupları hiç derlemediği için (üyeler pre-skip) bir üye hiç başlamazdı ve grup
+    /// içi kenar ihlal üretemezdi. Artık grup tek iş öğesi olarak turlarla derlenir: üye, kardeşi grubun kararına
+    /// dek terminal olmadan başlar — dairesel kenar bir sıralama ihlali değil, turların ta kendisidir. Grubun
+    /// DIŞ bağımlılıkları haritada kalır: grup dispatch edilmeden önce hepsi terminal olmalıdır.</para></summary>
+    internal static IReadOnlyDictionary<string, IReadOnlyList<string>> OrderingDependencyMap()
     {
         string cachePath = Path.Combine(Directory.CreateTempSubdirectory("bo-acc-plan-").FullName, "evaluation-cache.json");
         var plan = new BuildPlanBuilder(new WorkspaceScanner(), new CsprojEvaluator(), new EvaluationCache(cachePath))
             .Build(OsysRoot, "Debug");
-        return plan.Nodes.ToDictionary(n => n.Id, n => n.Dependencies, StringComparer.OrdinalIgnoreCase);
+        var groups = CycleGroups.From(plan);
+        return plan.Nodes.ToDictionary(
+            n => n.Id,
+            n =>
+            {
+                var siblings = groups.MembersOf(n.Id);
+                return (IReadOnlyList<string>)[.. n.Dependencies.Where(dep => !siblings.Contains(dep, StringComparer.OrdinalIgnoreCase))];
+            },
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private static void WriteEvidence(Action<StringBuilder> build)

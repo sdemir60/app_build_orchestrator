@@ -95,10 +95,10 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
         // ikisi AYNI imzayı üretmeli. Üretmiyorsa kusur buradadır.
         var syncBinder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
         syncBinder.Prefill();
-        var (syncPlan, syncSignatures) = syncBinder.Bind(state, buildCycles: false, DependentMode.Safe);
+        var (syncPlan, syncSignatures) = syncBinder.Bind(state, CycleCompilation.CompilesCycles(RunMode.Build), DependentMode.Safe);
 
         var buildBinder = new IncrementalRunBinder(plan, evaluatedById, root, hashes);
-        var (_, buildSignatures) = buildBinder.Bind(state, buildCycles: false, DependentMode.Safe);
+        var (_, buildSignatures) = buildBinder.Bind(state, CycleCompilation.CompilesCycles(RunMode.Build), DependentMode.Safe);
 
         int pathDisagreements = syncSignatures.Count(kv =>
             !buildSignatures.TryGetValue(kv.Key, out var other) || !string.Equals(kv.Value, other, StringComparison.Ordinal));
@@ -123,14 +123,17 @@ public sealed class ContentDecisionDiagnosticsTests(ITestOutputHelper output)
 
         // --- KENDİ terimleri mi değişti, yoksa yalnız upstream mi? Fast geçişi tam olarak bunu ayırır:
         // upstream'in KAYITLI imzasını okur, yani farkı yalnız projenin KENDİ terimlerinden alır.
-        var (_, fastSignatures) = syncBinder.Bind(state, buildCycles: false, DependentMode.Fast);
+        var (_, fastSignatures) = syncBinder.Bind(state, CycleCompilation.CompilesCycles(RunMode.Build), DependentMode.Fast);
         var ownDirty = mismatched
             .Where(n => !string.Equals(state[n.Id].BuiltSignature, fastSignatures.GetValueOrDefault(n.Id), StringComparison.Ordinal))
             .ToList();
         output.WriteLine(Inv($"- eşleşmeyenlerden KENDİ terimi değişmiş olan: {ownDirty.Count} · yalnız upstream'den etkilenen: {mismatched.Count - ownDirty.Count}"));
 
         // Döngü üyeliği AYIRT EDİCİDİR: bir SCC'nin imzası BİLEŞİKTİR (tüm üyeler + dışarıdaki upstream'ler),
-        // yani tek bir üyenin durumu hepsini birden oynatır ve Build bir SCC'yi ASLA derlemez.
+        // yani tek bir üyenin durumu hepsini birden oynatır ve grup bütün olarak derlenir ya da atlanır.
+        // [DEĞİŞEN KURAL — Build cycle derler] Eski not "Build bir SCC'yi ASLA derlemez" idi; Build artık kirli
+        // grubu turlarla derler, bağlamalar da bayrağı Build'in kendi cevabından alır (CycleCompilation) —
+        // imzalar bayraktan bağımsızdır, tanı çıktısı değişmez.
         int cycleMembers = plan.Cycles.Sum(c => c.Count);
         var mismatchedInCycle = mismatched.Count(n => n.InCycle);
         output.WriteLine(Inv($"- plan'da döngü: {plan.Cycles.Count} grup / {cycleMembers} üye · eşleşmeyenlerin {mismatchedInCycle} tanesi döngü üyesi"));
