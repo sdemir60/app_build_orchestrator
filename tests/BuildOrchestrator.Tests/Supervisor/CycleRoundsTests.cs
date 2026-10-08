@@ -2457,6 +2457,28 @@ public class CycleRoundsTests
         Assert.Contains(CycleDecisionLines.Verdict("A", CycleRoundDecision.Converged, members: 2, compiled: 1, rememberedAt: null), log, StringComparison.Ordinal);
     });
 
+    /// <summary>[Build cycle derler] Rebuild önbelleği yok sayar: güvenilir kaydı olan, terimi değişmemiş üye de tur 1'de
+    /// derlenir (<see cref="CycleMemberNeed"/> sorulmaz). Yüzey kanıtı yine okunur: yüzeyler oturmuşsa grup tek turda
+    /// yakınsar. Aynı sahne Resolve'da B'yi taşır (kardeş test
+    /// <see cref="round_one_compiles_only_the_member_whose_own_inputs_changed"/>); burada herkes invoke edilir.</summary>
+    [Fact]
+    public Task a_rebuild_compiles_every_member_in_round_one_even_with_trusted_records() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var rec = new RoundRecorder();
+        using var h = new Harness(TwoMembers("sig2", "a2", "b1"), rec.Invoker((_, _) => Ok()), stateStore: store,
+            apiSurface: disk.Read);
+
+        await h.Sut.StartAsync(Start(RunMode.Rebuild, parallelism: 1), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1"], rec.Calls);                          // kimse taşınmadı
+        Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.Converged, 2, 2, 1),
+            (completed.Outcome, completed.MemberCount, completed.CompiledCount, completed.Rounds));
+    });
+
     /// <summary>[karar 3] Taşınan B, A'nın ESKİ yüzeyini okumuş kayıtla tur sonu sorusuna girer; A'nın yüzeyi tur 1'de
     /// oynayınca B bayatlar ve tur 2'de derlenir — skipped DEĞİL; defteri tur 2'de okuduğu taze yüzeyi taşır.</summary>
     [Fact]

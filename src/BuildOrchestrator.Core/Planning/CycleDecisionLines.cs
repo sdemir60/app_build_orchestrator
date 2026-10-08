@@ -99,6 +99,12 @@ public static class CycleDecisionLines
         string.Format(CultureInfo.InvariantCulture,
             "cycle {0}: retrying — did not converge at this signature ({1}) on an earlier run", group, signature);
 
+    /// <summary>[Build cycle derler] Rebuild önbelleği yok sayar: grubun her üyesi tur 1'de derlenir, tur 1'in üye
+    /// ihtiyacı (<see cref="CycleMemberNeed"/>) sorulmaz; yüzey kanıtı yalnız sonraki turların kararı için okunur:
+    /// <c>cycle A: rebuild — every member compiles in round one</c>.</summary>
+    public static string RebuildCompilesEveryMember(string group) =>
+        string.Format(CultureInfo.InvariantCulture, "cycle {0}: rebuild — every member compiles in round one", group);
+
     /// <summary>Tur kararının terimi — enum→metin eşlemesinin TEK yeri; karar açıklaması (<see cref="OutcomeText"/>)
     /// bunun üstüne kurulur.</summary>
     public static string DecisionTerm(CycleRoundDecision decision) => decision switch

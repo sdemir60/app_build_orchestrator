@@ -1735,7 +1735,12 @@ public sealed class RunCoordinator(
             // null ⇒ "no member term", herkes gerekli (ayrı dal yok).
             IReadOnlyList<string> toBuild = members;
             bool roundOneCarried = false; // [R3c2] tur 1'de taşınan üye var mı — iki-yeşil kuralının tabanı (tur sonu)
-            if (hashMode && run.Incremental is { MemberTermById: { } memberTerms } incremental)
+            // [Build cycle derler] Rebuild "önbelleği yok say"dır: üye ihtiyacı sorulmaz, herkes tur 1'de derlenir.
+            // hashMode DOKUNULMAZ — tur sonu bayatlık kararı yine kanıtla verilir (Fast'teki "terim yok" dalıyla aynı
+            // sonuç, ama sebebi decision.log'a açıkça yazılır).
+            if (run.Mode == RunMode.Rebuild)
+                Decide(run.Logs, CycleDecisionLines.RebuildCompilesEveryMember(group));
+            else if (hashMode && run.Incremental is { MemberTermById: { } memberTerms } incremental)
             {
                 var need = CycleMemberNeed.Decide(members,
                     id => new CycleMemberNeed.MemberEvidence(run.LedgerAtStart?.GetValueOrDefault(id),
