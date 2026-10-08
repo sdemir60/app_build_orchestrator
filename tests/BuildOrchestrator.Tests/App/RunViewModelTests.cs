@@ -1325,9 +1325,15 @@ public class RunViewModelTests
         await engine.StartAsync();
         var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1") { RootPath = root };
         var final = new TaskCompletionSource<IpcEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // [teşhis — tam süitte tek seferlik zaman aşımı, 2026-10-08] Hangi olaya kadar gelindiği: bekçi düşerse mesaj söyler.
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string>();
         engine.EventReceived += e =>
         {
-            vm.OnEvent(e);
+            seen.Enqueue(e.GetType().Name);
+            // İşleyicide fırlayan bir istisna EngineHost'un okuyucusunu SESSİZCE durdurur (sonraki olaylar hiç gelmez) ve
+            // test bekçide yalnız "timed out" diye düşerdi; gerçek neden görünsün diye TCS'ye taşınır.
+            try { vm.OnEvent(e); }
+            catch (Exception ex) { final.TrySetException(ex); return; }
             if (e is RunCompletedEvent or ErrorEvent { Code: "msbuildNotFound" }) final.TrySetResult(e);
         };
 
@@ -1335,7 +1341,13 @@ public class RunViewModelTests
         // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
         // TestPaths.WideRunTimeout. Rebuild bu fixture'ı gerçekten derler: her üye tur 1'de, kanıtsız grupta ikinci
         // tur da koşar (2 tur × 2 üye).
-        var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
+        IpcEvent outcome;
+        try { outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout); }
+        catch (TimeoutException)
+        {
+            throw new TimeoutException($"the run did not complete within {TestPaths.WideRunTimeout.TotalSeconds:0} s; " +
+                $"{seen.Count} events, last: {string.Join(", ", seen.TakeLast(12))}");
+        }
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);

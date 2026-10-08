@@ -42,7 +42,7 @@ public static class ConditionalRebuild
     /// diğerlerini derlemek grubu yarım bırakırdı — üye yalnız grubuyla birlikte koşulludur (<see cref="ConditionalIds"/>).
     /// </summary>
     public static bool AppliesTo(ProjectNode node, RunMode mode, bool scopedRun, bool cycleGroupMember) =>
-        ModeEvaluatesConditionally(mode)
+        IncrementalModes.Includes(mode)
         && !scopedRun
         && !cycleGroupMember
         && Waits(node);
@@ -58,7 +58,7 @@ public static class ConditionalRebuild
     /// <see cref="AppliesTo"/> üyeyi tek başına koşullu saymaz — bir üyeyi atlayıp diğerlerini derlemek grubu
     /// yarım bırakırdı; grubun TAMAMI atlandığında ise yarım kalma yoktur ve tekil kural (kök düzelince derle,
     /// hâlâ kırıksa atla) atomik olarak gruba uygulanabilir. Uygunluk: koşu koşullu değerlendiren bir mod olmalı
-    /// (<see cref="AppliesTo"/> ile AYNI kural — Rebuild her şeyi derler); her üye ya güncel (<c>WillBuild==false</c>)
+    /// (<see cref="IncrementalModes"/> — <see cref="AppliesTo"/> ile AYNI kaynak; Rebuild her şeyi derler); her üye ya güncel (<c>WillBuild==false</c>)
     /// ya da YALNIZ kökünü bekliyor (<c>true</c> + <see cref="WillBuildReason.WaitingForDependency"/>) olmalı ve
     /// en az bir bekleyen üye bulunmalıdır (hepsi güncel olsaydı grup zaten pre-skip edilirdi). Başka HERHANGİ
     /// bir gerekçeyle kirli tek üye grubu derletir — güvenli yön. Kararın kendisi (kökler hâlâ kırık mı) üye
@@ -70,7 +70,7 @@ public static class ConditionalRebuild
     public static bool GroupAppliesTo(IReadOnlyList<ProjectNode> members, RunMode mode)
     {
         ArgumentNullException.ThrowIfNull(members);
-        if (!ModeEvaluatesConditionally(mode)) return false;
+        if (!IncrementalModes.Includes(mode)) return false;
         bool anyWaiting = false;
         foreach (var member in members)
         {
@@ -84,11 +84,6 @@ public static class ConditionalRebuild
         }
         return anyWaiting;
     }
-
-    /// <summary>Koşullu değerlendirme yapan modlar — tekil (<see cref="AppliesTo"/>) ve grup
-    /// (<see cref="GroupAppliesTo"/>) kapısının ORTAK kuralı (kopya YASAK): Build ve Cycles. Rebuild her şeyi derler,
-    /// Clean hiçbir şey derlemez.</summary>
-    private static bool ModeEvaluatesConditionally(RunMode mode) => mode is RunMode.Build or RunMode.Cycles;
 
     /// <summary>
     /// [ara inceleme I2] Bir koşunun — ya da Sync'in simüle ettiği bir sonraki düz Build'in — sırası geldiğinde KOŞULLU

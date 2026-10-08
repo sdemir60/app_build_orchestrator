@@ -1364,7 +1364,8 @@ function, not a second guess re-derived from the same data (`ConditionalRebuild.
 The condition belongs to `Build` and to the in-scope projects of a `Cycles` run. `Rebuild` compiles everything,
 cycle groups included; a row's target compiles unconditionally (§8.1); a member of a cycle group is never skipped
 *alone*, since that would leave the group half built. The group as a whole, though, answers the same question
-**atomically** at its dispatch, in the same modes and by the same mode rule (`ConditionalRebuild`): when every
+**atomically** at its dispatch, in the same modes and by the same mode rule (`IncrementalModes`, the one source the
+up-to-date seed reads too): when every
 member is either up to date or dirty *only* because it waits on recorded roots, and every one of those roots still
 fails by the table above, the whole group is skipped member by member as `skipped — dependency still failing` —
 rebuilding it would only relink everyone to the same stale root outputs (measured: a broken prerequisite made a
@@ -1395,8 +1396,10 @@ ribbon shows progress and elapsed time without one.
 The estimate has one surface, the suffix of the ribbon's `Building` line: `▸ Building {n}/{m} · {elapsed}` followed
 by `· ~Ns left` or `· almost done`, shown while something is building or waiting and an estimate exists. While a
 cycle group is in rounds — in a `Build` or a `Cycles` run alike — the ribbon reads `▸ Resolving cycles · round
-{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix; the round counters belong to the group on
-screen and clear when its verdict arrives, so a `Build` returns to its `Building` line for the rest of the plan.
+{r}/{cap} · {n}/{m} · {elapsed}` instead and carries no estimate suffix. Every group in rounds keeps its own
+counters; the one on screen is the one whose round started last, and when its verdict arrives the latest other group
+still in rounds takes the line. Once no group is in rounds a `Build` returns to its `Building` line for the rest of
+the plan.
 `preparing dependencies` stands in for the round only in a `Cycles` run, before its first group starts, while the
 run is still compiling the cycles' stale upstream (§8.1). The figure is still computed while a group is in rounds,
 which is what the cycle term below is for: a `Build` prints it again on its `Building` line once the group's verdict
@@ -5763,12 +5766,15 @@ A third category, `LocalOnly`, marks a test that cannot run on the hosted CI run
 runner cannot hold, say. Only CI's filter excludes it (`Category!=Acceptance&Category!=LocalOnly`, §18); the local
 command above runs it, and the local full run stays the gate. A test is never loosened or deleted to make CI green.
 The trait goes on a whole class when its assertions are wall-clock budgets (`UiResponsivenessBudgetTests`) and on a
-single method when only that method depends on a clock the runner cannot keep steady. Two methods carry it that way,
-each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which waits for the live
-animation to bring the popover to full opacity and then checks how long that took, and the console's transition
-hand-back (`ConsoleTiltInTests`), which waits for the live transition to end and expects the real editor back at
-full opacity. Both wait on a real animation clock whose timing on a shared runner is not steady enough for the
-windows they allow; the local run still executes them, and it stays the gate.
+single method when only that method depends on a clock or a capacity the runner cannot keep steady. Three methods
+carry it that way, each in a class whose other tests stay in CI: the popover's real pop-in (`PopoverTests`), which
+waits for the live animation to bring the popover to full opacity and then checks how long that took, and the
+console's transition hand-back (`ConsoleTiltInTests`), which waits for the live transition to end and expects the
+real editor back at full opacity — both wait on a real animation clock whose timing on a shared runner is not steady
+enough for the windows they allow — and the cycle group-start surface hash (`CycleRoundsTests`), which proves the
+producers are read in parallel by having two reads meet within 50 ms. That meeting needs the thread pool to hand the
+loop a second thread in time; a loaded shared runner could not, and the same test fails locally once the process is
+pinned to a single core. The local run still executes all three, and it stays the gate.
 
 Test counts are deliberately not recorded here — run the suite for the current number.
 
@@ -6284,6 +6290,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Ready-set dispatch seeded with a run's pre-skip results, resolved semantics, cycle group dispatch, and the pre-skip of members in a plan without a component map | `Core/Scheduling/ReadySetScheduler.cs` |
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
+| Which runs follow the ledger (incremental: `Build`, `Cycles`) — one source for the coordinator's up-to-date seed and the conditional-rebuild mode rule | `Core/Planning/IncrementalModes.cs` |
 | Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |

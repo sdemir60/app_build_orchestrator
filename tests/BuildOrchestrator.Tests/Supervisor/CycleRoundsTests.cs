@@ -750,9 +750,13 @@ public class CycleRoundsTests
     ///
     /// <para>Senaryo: tur 1 tamamen yeşil (karar Continue, tur 2 açılır), stop tur 2'nin İLK üyesinde düşer.
     /// Kapı yoksa <c>Decide(2, {}, {})</c> → Converged.</para>
+    /// <para>[Build cycle derler — final inceleme] Build de grubu aynı tur döngüsüyle derler; graceful Stop'un tur
+    /// ortasındaki kapısı moddan bağımsızdır. Test eskiden yalnız Cycles'ta koşuyordu; Theory iki modu da pinler.</para>
     /// </summary>
-    [Fact]
-    public async Task a_round_cut_short_by_a_stop_is_never_judged_converged()
+    [Theory]
+    [InlineData(RunMode.Cycles)]
+    [InlineData(RunMode.Build)]
+    public async Task a_round_cut_short_by_a_stop_is_never_judged_converged(RunMode mode)
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -772,7 +776,7 @@ public class CycleRoundsTests
             using var h = new Harness(plan, invoker, stateStore: store);
             sut = h.Sut;
 
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), default);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), default);
             await h.Sut.RunCompletion.WaitAsync(Limit);
 
             Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);   // B tur 2'de HİÇ dispatch edilmez
@@ -1530,8 +1534,16 @@ public class CycleRoundsTests
     /// saniyeler tutuyordu. Sahte yüzey her çağrıda en çok 50 ms bekler; bekleme BAŞKA bir çağrının içeride olmasıyla
     /// biter (sabit uyku değil, koşul + tavan [D8]): sıralı okumada hiçbir çağrı eşini görmez ve sekiz üreticinin
     /// hash'i 8×50 ms'yi bulur, paralel okumada çağrılar buluşur ve beklemez. Süre E1'in grup başlığından okunur.
+    ///
+    /// <para><b><c>LocalOnly</c>:</b> buluşma, iş parçacığı havuzunun paralel döngüye 50 ms içinde İKİNCİ bir thread
+    /// vermesine bağlıdır. Paylaşılan CI runner'ında (4 vCPU, süitin geri kalanı yanında) havuz bunu veremedi ve test
+    /// "never read two producers at once" ile düştü (develop CI koşusu 37731072772; ne bu test ne grup başı hash kodu o
+    /// koşuda değişmişti). Aynı hata lokalde süreç tek çekirdeğe sabitlenince birebir üretildi (<c>start /affinity 1</c>),
+    /// tüm çekirdeklerle geçti — kusur kodda değil, ortamın paralellik kapasitesinde. Eşik GEVŞETİLMEZ (CLAUDE.md):
+    /// yalnız bu metot CI filtresinden çıkar, lokal tam süit (yayının kapısı) onu koşturmaya devam eder.</para>
     /// </summary>
     [Fact]
+    [Trait("Category", "LocalOnly")]
     public async Task the_group_start_surface_hash_reads_the_producers_in_parallel()
     {
         const int Producers = 8;
