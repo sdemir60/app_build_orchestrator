@@ -196,9 +196,10 @@ public class ConditionalRebuildTests
             NoPreview, _ => "A"));
 
     /// <summary>
-    /// [carried item 3] Kök bu koşuda HİÇ denenmedi (ör. bir SCC üyesi — Build modunda "in dependency cycle"
-    /// ile pre-skip edilir) ve "hâlâ hatalı" iddiası yalnız DEFTERDEN geliyorsa metin bunu AYIRT EDER — "R
-    /// failed in this run" YALANI söylenmez, son bilinen sonuç olduğu belirtilir.
+    /// [carried item 3] Kök bu koşuda HİÇ denenmedi ve "hâlâ hatalı" iddiası yalnız DEFTERDEN geliyorsa metin bunu
+    /// AYIRT EDER — "R failed in this run" YALANI söylenmez, son bilinen sonuç olduğu belirtilir. (Bu yolun eski
+    /// üretim örneği — Build'in "in dependency cycle" ile atladığı bir SCC üyesi — Build kirli grubu derlediği için
+    /// kapandı; biçim kuralı burada saf düzeyde pinli kalır.)
     /// </summary>
     [Fact]
     public void a_root_only_known_failing_from_the_ledger_is_labelled_as_such()

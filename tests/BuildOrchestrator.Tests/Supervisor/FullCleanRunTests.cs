@@ -22,7 +22,7 @@ public class FullCleanRunTests
     private static StartRunCommand FullClean(int parallelism = 2) => Start(RunMode.Clean, parallelism);
 
     /// <summary>Sıradan <c>Lib</c>, ona bağlı harici <c>Ext</c> ve <c>Lib</c>'e bağlı bir döngü (<c>A ⇄ B</c>) —
-    /// tam bir Build'in üyeleri "in dependency cycle" diye atladığı, hariciyi sıradan proje saydığı grafik.</summary>
+    /// tam bir Build'in grubu turlarla derlediği, hariciyi sıradan proje saydığı grafik.</summary>
     private static RunPlan GraphWithExternalAndCycle() => CyclePlanOf(["A", "B"],
         Node("Lib", willBuild: false),
         Node("Ext", deps: ["Lib"], willBuild: false) with { IsExternal = true },

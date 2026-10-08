@@ -154,7 +154,7 @@ public static class ConditionalRebuild
     /// [Task 4 — carried item 3] <see cref="Decide"/> <c>DependencyStillFailing</c> derdiğinde, ATLAMA satırının
     /// ("dependency still failing (…)") kök listesini DOĞRU söyler: bir kök BU KOŞUDA gerçekten patladıysa çıplak
     /// adı yazılır (bugünkü davranış — "R failed in this run" iddiasıyla TUTARLI); kök bu koşuda hiç denenmediyse
-    /// (ör. bir SCC üyesi Build modunda "in dependency cycle" ile pre-skip edilir) ve "hâlâ hatalı" iddiası
+    /// (atlanmış ya da henüz sonuçlanmamış ve önizlemesi güncel değil) ve "hâlâ hatalı" iddiası
     /// yalnız koşu başındaki DEFTERDEN geliyorsa <c>" (last known failure)"</c> eki eklenir — aksi hâlde satır,
     /// hiç gözlemlenmemiş bir "şimdi de patladı" iddiası taşırdı. Ad sıralı, tekil (<see cref="RootNames"/> ile
     /// AYNI biçim); girdi <see cref="Decide"/>'ın Build dönmediği (yalnız <c>Cleared</c> OLMAYAN kökler) hâli

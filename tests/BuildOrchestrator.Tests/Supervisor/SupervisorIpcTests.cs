@@ -27,10 +27,9 @@ public static class TestPaths
     /// <summary>[cycle rounds] GERÇEK bir run'ın TAMAMLANMASINI bekleyen e2e testlerinin hang-guard'ı — bir
     /// PERF BÜTÇESİ DEĞİL, sonsuz beklemeyi test hatasına çeviren üst sınır (iddiaların hiçbiri süreye
     /// bakmaz). Tek kullanıcısı <c>RunViewModelTests.Rebuild_wires_through_the_real_engine_and_populates_rows</c>.
-    /// <b>Bugün bu testte hiçbir <c>MSBuild.exe</c> child'ı doğmaz:</b> turlar kendi moduna taşındığı için
-    /// (<c>RunMode.Cycles</c>) Rebuild artık testin X↔Y cycle fixture'ındaki iki üyeyi de "in dependency cycle"
-    /// ile pre-skip eder (testin kendi yorumu aynı gerekçeyi taşır — rounds Rebuild'e katlıyken bu fixture
-    /// GERÇEKTEN derleniyordu, 60 sn'lik pay o dönemden kalır). Guard yine de geniş tutulur: test GERÇEK bir
+    /// <b>Bu testte <c>MSBuild.exe</c> child'ları GERÇEKTEN doğar:</b> Rebuild döngü gruplarını da turlarla derler
+    /// (<c>CycleCompilation</c>), testin X↔Y cycle fixture'ındaki iki üye 2 tur × 2 invoke koşar (testin kendi yorumu
+    /// aynı gerekçeyi taşır). Guard bu yüzden geniş tutulur: test GERÇEK bir
     /// Supervisor process'ini uçtan uca çalıştırır (spawn + <c>engineReady</c> el sıkışması + IPC + MSBuild
     /// toolset çözümü) ve TÜM süit paralel koşarken bu adımların kendisi yavaşlayabilir. Aynı iş yükünü
     /// bekleyen kardeş e2e testi (<c>RunCoordinatorTests</c>) zaten 30 sn'lik bir guard kullanıyor ve yük

@@ -1306,9 +1306,8 @@ public class RunViewModelTests
     public async Task Rebuild_wires_through_the_real_engine_and_populates_rows()
     {
         string root = Directory.CreateTempSubdirectory("bo-vm-rebuild-").FullName;
-        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — Rebuild onu derlemez;
-        // turlar yalnız Cycles modunda koşar, üyeler "in dependency cycle" ile pre-skip edilir (aşağıdaki
-        // [DEĞİŞEN KURAL]).
+        // X ↔ Y cycle fixture (RunCoordinatorTests ile aynı desen): iki üyeli bir SCC — Rebuild onu turlarla derler
+        // (aşağıdaki [DEĞİŞEN KURAL]).
         foreach (var (self, other) in new[] { ("X", "Y"), ("Y", "X") })
         {
             Directory.CreateDirectory(Path.Combine(root, self));
@@ -1334,21 +1333,24 @@ public class RunViewModelTests
 
         await vm.RebuildCommand.ExecuteAsync(null);
         // [cycle rounds] Hang-guard (bütçe değil; iddiaların hiçbiri süreye bakmaz) — sabitin tek sahibi
-        // TestPaths.WideRunTimeout. 15 sn idi; turlar Rebuild'e katlıyken bu fixture gerçekten derleniyordu (2 tur
-        // × 2 üye). Bugün Rebuild üyeleri pre-skip eder ve bu fixture'da hiçbir proje derlenmez.
+        // TestPaths.WideRunTimeout. Rebuild bu fixture'ı gerçekten derler: her üye tur 1'de, kanıtsız grupta ikinci
+        // tur da koşar (2 tur × 2 üye).
         var outcome = await final.Task.WaitAsync(TestPaths.WideRunTimeout);
         if (outcome is ErrorEvent { Code: "msbuildNotFound" } err) Skip.If(true, err.Message);
 
         var done = Assert.IsType<RunCompletedEvent>(outcome);
-        // [DEĞİŞEN KURAL — iki kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
-        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles, Sync'in
-        // yanındaki düğme) taşınınca yeniden pre-skip'e döndü. Sebep ölçümdür: katlanmış hâlde iki dakikalık
-        // bir Build on beş dakikaya çıkıyordu. Rebuild bir SCC'ye artık HİÇ dokunmaz.
-        // Testin ASIL iddiası (Rebuild gerçek motora kablolu, satırlar doluyor, IsRunning düşüyor) her üç
-        // sürümde de aynı kaldı.
-        Assert.Equal(2, done.Skipped);
+        // [DEĞİŞEN KURAL — üç kez] Bu iddia önce "X↔Y pre-skip edilir" (Skipped=2) idi; turlar Build/Rebuild'in
+        // içine katlanınca "gerçekten derlenir" (Skipped=0) oldu; turlar KENDİ moduna (RunMode.Cycles) taşınınca
+        // yeniden pre-skip'e döndü (ölçüm: katlanmış hâlde iki dakikalık bir Build on beş dakikaya çıkıyordu). Bugün
+        // yeniden derlenir: tur-öncesi kanıt (CycleMemberNeed) ve yüzey kısa devresi grup maliyetini "bir kez derle +
+        // hash"e indirdi, Build'in döngüyü atlaması ise bağımlıları eski DLL'e karşı derleyip kırıyordu (ölçüm:
+        // 2026-10-07 13:17 koşusu, ARCHITECTURE §8.1). Sonuç kurulu MSBuild'e bağlı olduğu için ŞEKİL pinlenir
+        // (RunCoordinatorTests'in gerçek process testiyle aynı). Testin ASIL iddiası (Rebuild gerçek motora kablolu,
+        // satırlar doluyor, IsRunning düşüyor) her sürümde aynı kaldı.
+        Assert.Equal(0, done.Skipped);
+        Assert.Equal(2, done.Succeeded + done.Failed);
         Assert.Equal(2, vm.Projects.Count);
-        Assert.All(vm.Projects, p => Assert.Equal(ProjectRowState.Skipped, p.State));
+        Assert.All(vm.Projects, p => Assert.True(p.State is ProjectRowState.Succeeded or ProjectRowState.Failed));
         Assert.False(vm.IsRunning);
     }
 

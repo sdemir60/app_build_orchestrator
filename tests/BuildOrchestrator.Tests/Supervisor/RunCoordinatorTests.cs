@@ -78,9 +78,11 @@ public class RunCoordinatorTests
 
     internal static Dictionary<string, IReadOnlyList<SolutionRef>> EmptyRefs() => new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Koordinatörün gördüğü komut. Döngüleri derleyen tek mod <see cref="RunMode.Cycles"/>'tır —
-    /// SCC turlarını sınayan testler onu AÇIKÇA geçer, geri kalanlar varsayılan <see cref="RunMode.Rebuild"/>
-    /// ile bugünkü davranışı sınar.</summary>
+    /// <summary>Koordinatörün gördüğü komut. Varsayılan <see cref="RunMode.Rebuild"/> önbelleği yok sayar ve — SCC
+    /// derleyen her mod gibi (<see cref="Core.Planning.CycleCompilation"/>) — plandaki döngü gruplarını turlarla
+    /// derler; döngüsüz planlarda davranış birebir aynıdır. Kapsamı (upstream'li dar koşuyu) sınayan testler
+    /// <see cref="RunMode.Cycles"/>'ı AÇIKÇA geçer. Döngü sınayan fixture <see cref="CyclePlanOf"/> kullanır:
+    /// <see cref="PlanOf"/> döngü listesini boş kurar ve grup haritası hiç oluşmaz.</summary>
     internal static StartRunCommand Start(RunMode mode = RunMode.Rebuild, int parallelism = 1, string runId = "r1") =>
         new(runId, mode, PlanRoot, "Debug", parallelism);
 
@@ -1119,12 +1121,22 @@ public class RunCoordinatorTests
         Assert.Equal(logs.Select(l => l.Text), diskLines);     // canlı akış ile disk logu birebir aynı (T28 dikişi)
     }
 
-    // ---------------------------------------------------------------- 8) cycle pre-skip
+    // ---------------------------------------------------------------- 8) taze koşu, döngü dahil her şeyi kendisi yapar
 
+    /// <summary>
+    /// Her koşu TAZEDİR: durdurulan bir koşudan sonra gelen koşu "kaldığı yerden" sürmez, kendi planını baştan yürütür.
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski ad/iddia: <c>cycle_members_are_pre_skipped_again_by_every_fresh_run</c>
+    /// — X↔Y her taze koşuda yeniden <c>in dependency cycle</c> ile pre-skip edilir, "cycle üyeleri asla dispatch
+    /// edilmez". Fixture döngü listesini boş kuran <see cref="PlanOf"/> idi; grup haritası hiç kurulmadığı için test
+    /// yeni kuralda da mekanik olarak yeşil kalır ve eski kuralı pinlerdi. Değişme gerekçesi (ölçüm, 2026-10-07 13:17
+    /// koşusu, ARCHITECTURE §8.1): Rebuild (bu dosyanın varsayılan modu) döngü gruplarını da turlarla derler; plan artık
+    /// <see cref="CyclePlanOf"/> ile kurulur ve iki koşuda da grup yeniden derlenir, hiçbir şey atlanmaz.</para>
+    /// </summary>
     [Fact]
-    public async Task cycle_members_are_pre_skipped_again_by_every_fresh_run()
+    public async Task cycle_members_are_compiled_again_by_every_fresh_rebuild()
     {
-        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("A"), Node("B"));
+        var plan = CyclePlanOf(["X", "Y"],
+            Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("A"), Node("B"));
         var inFlight = Signal();
         var release = Signal();
         var invoker = new FakeInvoker(async (req, _, _) =>
@@ -1143,21 +1155,23 @@ public class RunCoordinatorTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         var firstRun = h.Events;
-        Assert.Equal(["projectSkipped:X", "projectSkipped:Y"],
-            firstRun.OfType<ProjectSkippedEvent>().Select(Describe));
-        Assert.Equal(["A"], invoker.Requests.Select(r => NameOf(r.ProjectId))); // cycle üyeleri asla dispatch edilmez
+        Assert.Empty(firstRun.OfType<ProjectSkippedEvent>());
+        // Kanıtsız grup iki yeşil turla yakınsar, sonra A kapıda bekler; Stop B'yi kuyrukta bırakır.
+        Assert.Equal(["X", "Y", "X", "Y", "A"], invoker.Requests.Select(r => NameOf(r.ProjectId)));
 
         await h.Sut.StartAsync(Start(), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         // [DEĞİŞEN KURAL — design v1.7.0 §3.1] Eski iddia: "resume edilmiş scheduler'ın PreSkipped'i boştur,
         // X/Y için TEKRAR projectSkipped yazılmaz". Sürdürme segmenti diye bir şey kalmadı: ikinci koşu TAZEDİR
-        // ve döngü üyelerini kendi planında yeniden pre-skip eder — her koşu ne atladığını kendi başına söyler.
+        // ve planını baştan yürütür — grup yeniden derlenir, A ve B de.
         var second = h.Events.Skip(firstRun.Count).ToList();
-        Assert.Equal(["projectSkipped:X", "projectSkipped:Y"], second.OfType<ProjectSkippedEvent>().Select(Describe));
+        Assert.Empty(second.OfType<ProjectSkippedEvent>());
+        Assert.Equal(["X", "Y", "X", "Y", "A", "X", "Y", "X", "Y", "A", "B"],
+            invoker.Requests.Select(r => NameOf(r.ProjectId)));
         var done = Assert.IsType<RunCompletedEvent>(second[^1]);
-        Assert.Equal(2, done.Skipped);   // X, Y
-        Assert.Equal(2, done.Succeeded); // A, B
+        Assert.Equal(0, done.Skipped);
+        Assert.Equal(4, done.Succeeded); // X, Y, A, B
         Assert.Equal(0, done.Queued);
     }
 
@@ -1189,9 +1203,9 @@ public class RunCoordinatorTests
         var ipcReader = new NdjsonReader(p.StandardOutput.BaseStream);
         Assert.IsType<EngineReadyEvent>(await ipcReader.ReadAsync<IpcEvent>().WaitAsync(Limit));
 
-        // [cycles] Testin konusu turların GERÇEK process üzerinden kablajıdır, dolayısıyla mod AÇIKÇA
-        // Cycles'tır — X↔Y grubunu derleyen tek mod odur, Rebuild ile gönderilseydi grup pre-skip edilir ve
-        // aşağıdaki tur iddiaları düşerdi.
+        // [cycles] Testin konusu turların GERÇEK process üzerinden kablajıdır; mod AÇIKÇA Cycles'tır (Build ve
+        // Rebuild de grubu turlarla derler — CycleCompilation; Rebuild'in gerçek motor kablajını
+        // RunViewModelTests.Rebuild_wires_through_the_real_engine_and_populates_rows pinler).
         await ipcWriter.WriteAsync(new StartRunCommand("r1", RunMode.Cycles, root, "Debug", 2));
         var received = new List<IpcEvent>();
         while (true)
@@ -1292,7 +1306,7 @@ public class RunCoordinatorTests
     /// <summary>[PERF Faz E3] Paketleri kurulu bir packages.config projesi (A; çözüm dizini sln'in dizini, iki paket
     /// <see cref="RestoreEvidenceTests.InstallPackage"/> ile kurulu) test başına geçici kökte, AYNI harness'ta iki kez
     /// koşar. Plan şekli <paramref name="cycle"/>'dan gelir: tekil proje — ilk koşu Rebuild — ya da A↔B iki üyeli SCC —
-    /// SCC'yi yalnız Cycles derlediği için ilk koşu da Cycles. İlk koşu kanıtsızdır: restore koşar ve başarı özeti
+    /// ilk koşu Cycles (grubu turlarla derleyen dar kapsamlı koşu). İlk koşu kanıtsızdır: restore koşar ve başarı özeti
     /// deftere yazar; ikinci koşu <paramref name="second"/>. <paramref name="duringFirstRun"/> ilk koşunun her A
     /// invoke'unda packages.config yoluyla çağrılır. <paramref name="assert"/> geçici dizinler silinmeden çağrılır.
     /// Paylaşılan PlanRoot KULLANILMAZ (oraya yazılan packages.config paralel testlere sızardı); kurulum tek yerde.</summary>
@@ -1491,16 +1505,21 @@ public class RunCoordinatorTests
         Assert.DoesNotContain(LogTextsFor(h, "C"), l => l.StartsWith("warning:", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// X "up to date" diye pre-skip edilir (Skipped tohum). Z, X'e bağımlı: X resolved sayılır (bloklamaz) ama SKIPPED
+    /// bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
+    /// <para><b>[DEĞİŞEN KURAL — Build cycle derler]</b> Eski fixture: X'i döngü üyesi yapıp (<see cref="PlanOf"/>, boş
+    /// döngü listesi) Rebuild'in <c>in dependency cycle</c> pre-skip'ine güveniyordu. Rebuild artık döngü gruplarını
+    /// derler (ARCHITECTURE §8.1); atlanan bağımlılık sıradan "up to date" tohumuyla kurulur. İddia aynı.</para>
+    /// </summary>
     [Fact]
     public async Task a_skipped_dependency_produces_no_dep_issue_for_its_dependent()
     {
-        // X cycle nedeniyle construction'da Skipped (pre-skip) sayılır. Y, X'e bağımlı: X resolved sayılır
-        // (bloklamaz) ama SKIPPED bir bağımlılık depIssue ÜRETMEZ (yalnız FAILED kökler taşınır — v7 A6).
-        var plan = PlanOf(Node("X", deps: ["Y"], inCycle: true), Node("Y", deps: ["X"], inCycle: true), Node("Z", deps: ["X"]));
+        var plan = PlanOf(Node("X", willBuild: false), Node("Z", deps: ["X"], willBuild: true));
         var invoker = new FakeInvoker((_, _, _) => Task.FromResult(Ok()));
         using var h = new Harness(plan, invoker);
 
-        await h.Sut.StartAsync(Start(parallelism: 1), default);
+        await h.Sut.StartAsync(Start(RunMode.Build, parallelism: 1), default);
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         var succeededZ = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
