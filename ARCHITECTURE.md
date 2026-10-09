@@ -972,8 +972,9 @@ record whose last result is not a success is never trusted. A record without the
 existed, or cleared this way — is one round one cannot trust (§8.8).
 The record also carries the **dependency surfaces**: for every direct dependency — only those outside the group, for a
 cycle member, whose siblings are in the read surfaces — the producer, its evidence file and the API-surface hash the
-project last compiled against, read just before the compile, when every dependency is already finished. They are written
-on every trusted success, in producer order, and kept through a skip: a project the surface gate (§8.3) or round one
+project last compiled against, read once all of those dependencies have finished: just before the compile for an ordinary
+project, at the end of its group for a cycle member, whose outside dependencies finish before the group starts. They are
+written on every trusted success, in producer order, and kept through a skip: a project the surface gate (§8.3) or round one
 (§8.8) passes over keeps the surfaces of its last compile, which the decision has just found unchanged. A dependency
 whose output cannot be read is left out of the list, and the list is `null` when nothing could be read and in records
 that predate it — either way the next decision compiles the project. Invalidations copy the field like the cycle
@@ -1404,18 +1405,22 @@ it already had. The surface gate asks of an ordinary project the question a cycl
 A project is a **candidate** when the run's plan finds it dirty only through an upstream: the plan says *signature
 changed*, while a second, frozen-upstream evaluation of the same plan — the Fast evaluation (§7.2), with every
 upstream's signature read from the ledger and the output evidence applied — finds it up to date. That second answer
-means the project's own files and configuration are unchanged, its output evidence is in place, its fed copies are
-intact and its last result was a success; a configuration switch changes both evaluations and never makes a candidate.
+means the project's own files and configuration are unchanged, its output evidence is in place and its fed copies are
+intact; a configuration switch changes both evaluations and never makes a candidate. It does not mean the last result
+was a success: after a proven failure, a source reverted to the signature of its last success reads as up to date
+again (§8.8), so the decision asks that separately.
 A project with no direct dependency is never one, and neither is a cycle member, whose question its group asks (§8.8).
 Candidates exist only in the runs that follow the ledger as a whole — a `Build` or a `Cycles` run under Safe mode, not a
 `Rebuild` and not a run started from a row (`SurfaceGate.AppliesTo`, asked by the run's planning step and by the
 coordinator alike); the choice is Core's (`SurfaceGate.CandidateIds`) and the coordinator applies it.
 
 Until its turn a candidate is a plain dirty project: it lights in the wave, sits in the queue and counts in *N to
-build* and in the progress denominator. The decision comes at its turn, every dependency already finished: for each
-direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read or one
-that differs from the recorded hash means the project compiles; when every one matches it is skipped as `skipped — up
-to date (no dependency surface changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
+build* and in the progress denominator. The decision comes at its turn, every dependency already finished. A record
+whose last result is not a success is not trusted, as in round one (§8.8), and the project compiles. Otherwise, for each
+direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read — a
+dependency without a derivable output path, an SDK-style project (§7.6), has none — or one that differs from the recorded
+hash means the project compiles; when every one matches it is skipped as `skipped — up to date (no dependency surface
+changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
 evidence file on disk, once per run (`ApiSurfaceHash`, the hash the cycle rounds use: declarations, not bodies) —
 whether the dependency compiled in this run, was skipped as up to date or was last built elsewhere. A skipped dependency
 is never assumed unchanged: a build from a row or from Visual Studio may have rewritten it since. The comparison base
@@ -1429,12 +1434,15 @@ outputs and the dependency surfaces left as its last compile wrote them — so t
 Transitivity needs no rule of its own: a project the gate skipped has by definition an unchanged surface, so its own
 dependents see nothing move either; the plan still marks the whole downstream dirty, which is the safe direction.
 
-The gate has three known limits, listed in §20. An upstream compiled in an earlier run — a stopped run, a build from a
+The gate's known limits are listed in §20. An upstream compiled in an earlier run — a stopped run, a build from a
 row — already carries its new signature in the ledger, so its dependents no longer read as dirty through it alone and
 compile once, whatever its surface did. A skipped project is not compiled, so the copies of its dependencies' outputs
 that a compile would have refreshed in its own output folder stay as they were — the same limit, with the same
-reasoning, as a carried cycle member's (§8.8). And a skipped project whose record takes on an inherited dependency note
-reads `up to date` on its row until the next Sync says *waiting for dependency*: the skip event carries no roots.
+reasoning, as a carried cycle member's (§8.8). A skipped project whose record takes on an inherited dependency note
+reads `up to date` on its row until the next Sync says *waiting for dependency*: the skip event carries no roots. The
+direct dependents of an upstream without an evidence path never pass the gate. And the surface read is the
+dependency's own output, not the copy a dependent links against, so a copy that fails without failing the build goes
+unseen.
 
 ### 8.4 ETA
 
@@ -6150,9 +6158,16 @@ do, and how the interface works around each — useful to know before attempting
 - **A gate skip does not carry an inherited note to the row.** A skipped project whose record takes on this run's
   inherited dependency note reads `up to date` on its row until the next Sync says *waiting for dependency*; the skip
   event carries no roots, and the record is right in the meantime.
-- **A cycle member that reads an outside upstream without an evidence path compiles whenever its group does.** Round
-  one compares an outside upstream's evidence file with the record (§8.8); an upstream with no derivable output path
-  (an SDK-style project, §7.6) has nothing to compare, so the members that read it never count as carried.
+- **A dependent of an upstream without an evidence path compiles whenever it is dirty.** The surface gate (§8.3) and
+  round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
+  output path (an SDK-style project, §7.6) has nothing to compare, so its direct dependents never pass the gate and
+  the cycle members that read it from outside their group never count as carried.
+- **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
+  record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
+  folder (§9.4), a post-build copy that fails without failing the build leaves the copy behind that file: a dependent
+  compiled against the old copy records the new surface, and a later run that refreshes the copy skips it. A copy
+  that fails the build is a failure like any other, and the dependency note compiles the dependent once the
+  dependency recovers (§8.3).
 - **A post-build step that copies more than its own output is seen by name only.** Inside a cycle round a
   member whose name is a dotted prefix of another project's name is kept off the level of that project and of
   its readers (§8.8), because the common `copy $(TargetName).*` rewrites that project's shared copy. Any other

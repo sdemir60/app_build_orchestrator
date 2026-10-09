@@ -341,7 +341,7 @@ version's notes as its text. Installed copies pick it up on their next check.
      one of those, dirty dependency-cycle groups included (they compile in rounds, see below) — except a project
      that already built successfully against a dependency that was failing, which waits until that dependency
      recovers instead of being retried every time. A project whose only change is an upstream's is skipped at its
-     turn when that upstream's API surface — its public declarations, not its method bodies — did not move, and its
+     turn when that upstream's API surface — its declarations, not its method bodies — did not move, and its
      row turns green then; until its turn it counts as one to build.
    - *Rebuild* — all projects, cycle groups included, cached state ignored; every project with a `packages.config` restores its packages
      again, whereas *Build* and *Resolve cycles* skip that restore while the file is unchanged and its packages are
