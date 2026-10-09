@@ -60,6 +60,16 @@ internal sealed class DecorativeClock
         _targets.Add((target, property));
     }
 
+    /// <summary>Saati TEK bir hedeften söker; saat öteki hedefleri sürmeye devam eder (graf: derlemesi biten düğümün yörüngesi
+    /// söner ve çıkar, hâlâ derlenenlerinki döner). Hedef bağlı değilse no-op. Sökülen özellik tabanına döner.</summary>
+    public void Detach(IAnimatable target, DependencyProperty property)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(property);
+        if (!_targets.Remove((target, property))) return;
+        target.ApplyAnimationClock(property, null);
+    }
+
     /// <summary>Saati her hedeften söker ve zaman ağacından ÇIKARIR; kurulu değilse no-op. Hedefin taban değerini sahibi
     /// yazar (sökülen özellik tabanına döner).</summary>
     public void Stop()

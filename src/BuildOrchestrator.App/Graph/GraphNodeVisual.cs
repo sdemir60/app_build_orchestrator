@@ -105,11 +105,16 @@ internal sealed class GraphNodeVisual
     /// <summary>Lucide <c>box</c> glyph'i — node'un %52'si (§2.3).</summary>
     public required Path Icon { get; init; }
     /// <summary>[quiet] Building yörüngesi (§2.3 "beads") — TALEP ÜZERİNE, düğüm İLK kez derlenmeye
-    /// başladığında kurulur ve bir daha sökülmez (yalnız opaklığı 0'a iner). Reduced-motion'da hiç doğmaz.</summary>
+    /// başladığında kurulur. Derleme bitince söner; çıkış animasyonu bitince saatten sökülür ve
+    /// <see cref="System.Windows.Visibility.Collapsed"/> olur, düğüm yeniden derlenirse AYNI nesne geri gelir
+    /// (<c>GraphView.RetireBeads</c>). Reduced-motion'da hiç doğmaz.</summary>
     public Rectangle? Beads { get; set; }
     /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
     /// baştan başlatılmasını (takılmasını) önler.</summary>
     public bool BeadsVisible { get; set; }
+    /// <summary>Yörüngenin opaklık geçişlerinin nesli — her geçişte artar; bir sönüşün tamamlanması yörüngeyi yalnız o hâlâ
+    /// SON geçişse emekliye ayırır (<c>GraphView.FadeBeads</c>).</summary>
+    public int BeadsFadeGeneration { get; set; }
     /// <summary>[quiet] En son UYGULANAN opaklık hedefi. "Değişmediyse dokunma" kapısının girdisi: koşarken
     /// statü itişi saniyede birkaç kez gelir ve her seferinde 3.1 saniyelik bir hold-fade doğurmak sönmeyi
     /// sonsuza dek ertelerdi (kameradaki Zeno korumasının eşi). <c>NaN</c> = henüz hiç uygulanmadı.</summary>

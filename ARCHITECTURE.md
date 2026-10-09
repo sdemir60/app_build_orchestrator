@@ -2689,6 +2689,18 @@ implementation `VelopackUpdater` reads the feed of §12.5, and `UpdateService`, 
 view model on the UI thread — and the view models. Two application-wide singletons are exposed statically because
 their owners have no constructor seam: the reduced-motion settings and the hero-motion coordinator.
 
+Engine events reach the view model on the UI thread through one pump. `projectLog` lines go straight from the
+reader thread into the console batcher; every other event joins a single queue that one drain empties in arrival
+order, in time slices of about 8 ms (`EngineEventPump.SliceBudgetMs`) — a slice closes once its time is up and the
+event in hand is done. An event that finds the queue empty is handled at once, at the priority a single event
+always had; when a slice is used up with events still waiting, the rest is handed to a priority below input and
+rendering, so a frame is drawn and a key or click is handled between slices. The reason is the start of a run: the
+engine announces it with `runStarted`, `buildPreview` and one `projectSkipped` per project it skips — on the real
+workspace close to two hundred events at once — and handled one dispatcher operation each, above rendering and
+input, they held the interface for a few hundred milliseconds in one piece at the start of every run. The
+engine's exit is applied after the events it sent before it: the exit handler first applies whatever the pump
+still holds, so a late `runStarted` can never reopen a run on a dead engine.
+
 The update engine starts only once the window has been shown or put in the tray, so its first check, five seconds
 later, comes after the opening rather than inside it; the view model's *Restart to update* request is wired to it
 at the same point, and `OnExit` asks it to install once the build engine has been shut down and the
@@ -4747,8 +4759,12 @@ the drawn path would fall a whole stroke short of the perimeter the dash pattern
 in the graph hangs off **one** shared animation clock — the node size is graph-wide, so the perimeter is too,
 and N parallel builds would otherwise mean N infinite animations. The orbit fades in over 420 ms and out over
 640 ms, and the clock is released 700 ms after the last node stops building, so the dots fade *while still
-turning* rather than freezing in place. Resizing the panel changes the perimeter, so the pattern and the clock
-are rebuilt.
+turning* rather than freezing in place. An orbit whose fade-out has ended leaves the clock and the render
+(collapsed), and the same orbit comes back when its node builds again: the clock keeps turning for as long as any
+node builds, and a finished node's invisible orbit left on it was redrawn — with a fresh pen for its moving dash
+offset — on every frame for the rest of the run. Measured on a full rebuild of the real workspace, that redraw
+was the largest single source of the interface's allocations during a run and grew with every finished node.
+Resizing the panel changes the perimeter, so the pattern and the clock are rebuilt.
 
 **A skipped project is silent.** No orbit, no bright hold, no wave — it settles into its result colour and
 stays exactly as dim as the queue around it. An earlier version gave skipping the full announcement (a brief
@@ -6431,6 +6447,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
+| Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
@@ -6701,7 +6718,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Reduced-motion signal and live zeroing | `App/Services/MotionSettings.cs`, `SystemParametersMotionSignal.cs`, `IMotionSettings.cs`, `IMotionSignal.cs` |
 | One-hero budget | `App/Services/MotionCoordinator.cs`, `App/Controls/MotionGate.cs` |
 | Shared entrance/reveal animations, 120 ms transitions | `App/Controls/PopIn.cs`, `RevealStagger.cs`, `DsTransition.cs`, `MotionTokens.cs`, `PillRadius.cs` |
-| Owner-held infinite clocks: start, attach a further surface, stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
+| Owner-held infinite clocks: start, attach a further surface, detach one surface (a finished node's bead orbit), stop by removing from the timing tree (breath, ring, sweep, beads, edge flow) | `App/Controls/DecorativeClock.cs` |
 | Colour, size, typography tokens · duration and easing tokens | `App/Resources/Tokens.xaml` · `App/Resources/Motion.xaml` |
 | OS actions (Explorer, Visual Studio, folder picker) | `App/Services/OsActions.cs` |
 | Accessibility names | `App/AccessibilityNames.cs` |
