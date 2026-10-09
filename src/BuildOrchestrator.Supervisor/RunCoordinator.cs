@@ -2112,10 +2112,9 @@ public sealed class RunCoordinator(
             foreach (string id in members)
             {
                 var member = state[id];
-                // [D3] Oturmuş üye: grup gerçek bir hükme vardı ve üyenin okuduğu hiçbir kardeş yüzeyi son tur sonunda
-                // bayat değildi — nihai API'lere bağlandı, sonucu güvenilir. Converged'de herkes oturmuştur.
-                bool settled = decision == CycleRoundDecision.Converged
-                    || (decision != CycleRoundDecision.Continue && staleAtEnd is not null && !staleAtEnd.Contains(id));
+                // [D3] Oturmuş üye (karar Core'da): grup gerçek bir hükme vardı ve üyenin okuduğu hiçbir kardeş yüzeyi son
+                // tur sonunda bayat değildi — nihai API'lere bağlandı, sonucu güvenilir. Converged'de herkes oturmuştur.
+                bool settled = CycleRoundPolicy.IsSettled(decision, staleAtEnd, id);
                 try
                 {
                     // [RESOLVE 3.4 · D3] Hiç derlenmemiş ve oturmuş taşınan üye "up to date (carried)" raporlanır, defteri
