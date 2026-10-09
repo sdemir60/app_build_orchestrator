@@ -42,9 +42,6 @@ namespace BuildOrchestrator.Tests.Integration;
 [Trait("Category", "Acceptance")]
 public sealed class WpfTemporaryAssemblyAcceptanceTests
 {
-    /// <summary>Test çıktısına kopyalanan mini projeler (BuildOrchestrator.Tests.csproj: <c>Fixtures\WpfMini</c>).</summary>
-    private static readonly string FixtureRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "WpfMini");
-
     /// <summary>Derleyici komut satırını MSBuild çıktısında tanıtan anahtar: Csc'nin her çağrısında bulunur.</summary>
     private const string CompilerSwitch = "/noconfig";
 
@@ -80,7 +77,7 @@ public sealed class WpfTemporaryAssemblyAcceptanceTests
 
     private static async Task AssertSameOutputAsync(string project, bool needsRestore, params string[] extraBuildArguments)
     {
-        string msbuild = await ResolveMsBuildOrSkipAsync();
+        string msbuild = await WpfMiniFixture.ResolveMsBuildOrSkipAsync();
         using var scratch = new TempDir();
 
         // Targets, projelerin KENDİ klasörlerinin dışında durur: SDK-style varsayılan glob'u friend .cs dosyasını
@@ -110,22 +107,12 @@ public sealed class WpfTemporaryAssemblyAcceptanceTests
         Assert.Equal(plain.DllLength, lean.DllLength);
     }
 
-    private static async Task<string> ResolveMsBuildOrSkipAsync()
-    {
-        string? path = null;
-        string reason = string.Empty;
-        try { path = (await new MsBuildResolver(new ProcessRunner()).ResolveAsync()).MsBuildExePath; }
-        catch (MsBuildResolveException ex) { reason = ex.Message; }
-        Skip.If(path is null, "MSBuild.exe could not be resolved — acceptance run skipped: " + reason);
-        return path!;
-    }
-
     /// <summary>Mini projeyi taze bir kopyada derler (gerekirse önce restore) ve çıktısını ölçer.</summary>
     private static async Task<Output> BuildAsync(string msbuild, string scratch, Variant variant, string project,
         bool needsRestore, string targets, string[] extraBuildArguments)
     {
         string copyRoot = Path.Combine(scratch, variant.Folder);
-        CopyDirectory(FixtureRoot, copyRoot);
+        WpfMiniFixture.CopyTo(copyRoot);
         string projectPath = Path.Combine(copyRoot, project);
         string projectDirectory = Path.GetDirectoryName(projectPath)!;
 
@@ -133,15 +120,12 @@ public sealed class WpfTemporaryAssemblyAcceptanceTests
         var (restore, build) = MsBuildArguments.PlanFor(new MsBuildInvokeRequest(projectPath, "Debug", projectDirectory,
             needsRestore, CustomBeforeTargets: variant.UsesTargets ? targets : null));
         if (restore is not null)
-            Require(await RunAsync(msbuild, restore, projectDirectory), variant, "restore");
-        ProcessResult built = await RunAsync(msbuild, [.. build, .. extraBuildArguments], projectDirectory);
+            Require(await WpfMiniFixture.RunAsync(msbuild, restore, projectDirectory), variant, "restore");
+        ProcessResult built = await WpfMiniFixture.RunAsync(msbuild, [.. build, .. extraBuildArguments], projectDirectory);
         Require(built, variant, "build");
 
         return Measure(projectDirectory, Path.GetFileNameWithoutExtension(project), built);
     }
-
-    private static Task<ProcessResult> RunAsync(string msbuild, IReadOnlyList<string> arguments, string workingDirectory)
-        => new ProcessRunner().RunAsync(new ProcessSpec(msbuild, arguments, workingDirectory, TestPaths.WideRunTimeout));
 
     /// <summary>
     /// Taban (targets'sız) koşunun başarısızlığı ORTAM eksiğidir — fixture bu makinede derlenemiyor (eski-stil proje için
@@ -153,18 +137,9 @@ public sealed class WpfTemporaryAssemblyAcceptanceTests
         if (result.Success)
             return;
         string failure = $"MSBuild {step} {variant.Label} failed (exit {result.ExitCode}{(result.TimedOut ? ", timed out" : string.Empty)}):"
-            + Environment.NewLine + ErrorLines(result);
+            + Environment.NewLine + WpfMiniFixture.ErrorLines(result);
         Skip.If(!variant.UsesTargets, "baseline build failed without the targets; fixture not buildable here: " + failure);
         Assert.Fail(failure);
-    }
-
-    /// <summary>MSBuild çıktısındaki hata satırları (yoksa çıktının sonu): başarısızlık iletisi nedeni gösterir.</summary>
-    private static string ErrorLines(ProcessResult result)
-    {
-        string[] lines = (result.StandardOutput + Environment.NewLine + result.StandardError)
-            .Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        string[] errors = [.. lines.Where(l => l.Contains(": error ", StringComparison.Ordinal)).Distinct()];
-        return string.Join(Environment.NewLine, errors.Length > 0 ? errors : lines.TakeLast(15));
     }
 
     private static Output Measure(string projectDirectory, string assemblyName, ProcessResult built)
@@ -195,13 +170,4 @@ public sealed class WpfTemporaryAssemblyAcceptanceTests
 
     /// <summary>Metadata'daki adlar UTF-8/ASCII bayt dizisidir: işaret aramak için bayt araması yeter.</summary>
     private static bool Contains(byte[] haystack, string ascii) => haystack.AsSpan().IndexOf(Encoding.ASCII.GetBytes(ascii)) >= 0;
-
-    private static void CopyDirectory(string from, string to)
-    {
-        Directory.CreateDirectory(to);
-        foreach (string directory in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories))
-            Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, directory)));
-        foreach (string file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
-            File.Copy(file, Path.Combine(to, Path.GetRelativePath(from, file)));
-    }
 }
