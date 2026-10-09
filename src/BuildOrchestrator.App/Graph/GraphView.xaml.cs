@@ -936,7 +936,14 @@ public partial class GraphView : UserControl
             ReleaseBeadsClock();
             foreach (var slot in _slotOrder)
                 if (slot.Visual.Beads is { } orbit) ApplyBeadsGeometry(orbit);
-            if (wasSpinning) EnsureBeadsClock();
+            if (wasSpinning)
+            {
+                EnsureBeadsClock();
+                // Spin-down penceresindeyken (derlenen düğüm yok, saat yalnız sönenler için dönüyordu) ReleaseBeadsClock
+                // zamanlayıcıyı da durdurdu: yeniden kurulan saat bırakılmayı yine beklemeli, yoksa boş bir 30 fps saati bir
+                // sonraki koşuya dek döner (GraphBeadsLifecycleTests).
+                if (!_slotOrder.Any(slot => slot.Visual.BeadsVisible)) ArmBeadsSpindown();
+            }
         }
 
         // Dünya tuvali PANELİN kendisidir: ölçek 1'de graf tam oturur, öteleme 0'dır.
@@ -1149,10 +1156,16 @@ public partial class GraphView : UserControl
         ArmBeadsSpindown();
     }
 
+    /// <summary>Yörüngenin opaklık geçişi. <paramref name="faded"/> yalnız bu geçiş yörüngenin SON geçişi olarak biterse çağrılır:
+    /// SnapshotAndReplace ile değiştirilen eski bir geçişin saati zaman ağacında kalır ve süresi dolunca <c>Completed</c> yine
+    /// ateşlenir — nesil kontrolü olmasa bitir–başla–bitir bir sönüş süresinin içinde olduğunda bayat tamamlanma ikinci sönüşü
+    /// yarıda keserdi (<c>GraphBeadsLifecycleTests</c>).</summary>
     private void FadeBeads(GraphNodeVisual visual, double target, double durationMs, Action? faded = null)
     {
+        int generation = ++visual.BeadsFadeGeneration;
         var fade = MotionTokens.SplineTo(target, TimeSpan.FromMilliseconds(durationMs), EaseOut);
-        if (faded is not null) fade.Completed += (_, _) => faded();
+        if (faded is not null)
+            fade.Completed += (_, _) => { if (visual.BeadsFadeGeneration == generation) faded(); };
         visual.Beads!.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
     }
 

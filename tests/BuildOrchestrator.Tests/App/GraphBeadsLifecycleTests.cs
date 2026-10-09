@@ -49,6 +49,16 @@ public class GraphBeadsLifecycleTests
         return orbit.StrokeDashOffset != before;
     }
 
+    /// <summary>"Bu yörünge DURDU" iddiasını boşuna geçmekten korur: durduğu söylenen <paramref name="still"/> ile döndüğü bilinen
+    /// <paramref name="spinning"/> AYNI pompa penceresinde ölçülür — <paramref name="spinning"/> ilerlediyse o pencerede tik geldi,
+    /// yani <paramref name="still"/>'in kıpırdamaması gerçektir.</summary>
+    private static (bool StillMoved, bool SpinningMoved) MovesTogether(Rectangle still, Rectangle spinning)
+    {
+        double s0 = still.StrokeDashOffset, m0 = spinning.StrokeDashOffset;
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200));
+        return (still.StrokeDashOffset != s0, spinning.StrokeDashOffset != m0);
+    }
+
     private static void PumpUntilCollapsed(Rectangle orbit) =>
         DispatcherPump.PumpUntil(() => orbit.Visibility == Visibility.Collapsed, FadeBudget);
 
@@ -65,8 +75,9 @@ public class GraphBeadsLifecycleTests
         PumpUntilCollapsed(a);
 
         Assert.Equal(Visibility.Collapsed, a.Visibility); // çizimden çıktı…
-        Assert.False(Spins(a));                           // …ve saat onu artık sürmüyor
-        Assert.True(Spins(b));
+        var (aMoved, bMoved) = MovesTogether(a, b);
+        Assert.True(bMoved);                              // (aynı pencerede tik geldi —)
+        Assert.False(aMoved);                             // …ve saat onu artık sürmüyor
         Assert.Equal(Visibility.Visible, b.Visibility);
         Assert.NotNull(view.BeadsClock);
         GC.KeepAlive(window);
@@ -117,9 +128,59 @@ public class GraphBeadsLifecycleTests
         window.UpdateLayout();
 
         Assert.NotNull(view.BeadsClock);
-        Assert.True(Spins(b));
-        Assert.False(Spins(a), "yeniden kurulan saat sökülmüş yörüngeyi tekrar sürüyor");
+        var (aMoved, bMoved) = MovesTogether(a, b);
+        Assert.True(bMoved);
+        Assert.False(aMoved, "yeniden kurulan saat sökülmüş yörüngeyi tekrar sürüyor");
         Assert.Equal(Visibility.Collapsed, a.Visibility);
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Değiştirilen (SnapshotAndReplace) eski bir sönüşün saati zaman ağacında kalır ve süresi dolunca <c>Completed</c>
+    /// yine ateşlenir. Bitir–başla–bitir bir sönüş süresinin içinde olursa o bayat tamamlanma ikinci sönüşü YARIDA kesmemeli:
+    /// yörünge ancak SON sönüşü bitince emekliye ayrılır.</summary>
+    [StaFact]
+    public void A_stale_fade_out_does_not_cut_a_later_one_short()
+    {
+        var view = Realize(out var window);
+        var a = view.NodeVisuals["OSYS.A"].Beads!;
+        var since = System.Diagnostics.Stopwatch.StartNew();
+
+        view.UpdateStatuses(Nodes(GraphStatus.Succeeded, GraphStatus.Building)); // 1. sönüş (t≈0)
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(250));
+        view.UpdateStatuses(Nodes(GraphStatus.Building, GraphStatus.Building));  // yeniden derleniyor (1. sönüş değişti)
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(250));
+        view.UpdateStatuses(Nodes(GraphStatus.Succeeded, GraphStatus.Building)); // 2. sönüş (t≈500, biter t≈1140)
+        DispatcherPump.PumpUntil(() => since.Elapsed.TotalMilliseconds >= GraphBeads.FadeOutMs + 150, FadeBudget);
+
+        Assert.Equal(Visibility.Visible, a.Visibility); // 1. sönüşün süresi geçti, 2. hâlâ sürüyor
+        PumpUntilCollapsed(a);
+        Assert.Equal(Visibility.Collapsed, a.Visibility); // son sönüş bitince yine de emekliye ayrılır
+        GC.KeepAlive(window);
+    }
+
+    /// <summary>Son derleme bittiğinde saat 700 ms'lik spin-down'dan sonra bırakılır. O pencerede panel boyutu değişip yörünge
+    /// çevresi yeniden kurulursa (saat yeniden başlar) bırakma yine de olmalı — aksi halde boş bir 30 fps saati bir sonraki
+    /// koşuya dek döner (bkz. <see cref="DecorativeClock"/>: aktif saat her karede tik ister).</summary>
+    [StaFact]
+    public void Resizing_during_the_spin_down_still_releases_the_clock()
+    {
+        // Kalabalık tek bant: panel daraldığında pitch gerçekten küçülür (iki düğümde panel tabanı kelepçesi pitch'i hep 44'te tutar).
+        static IReadOnlyList<GraphNode> Crowd(GraphStatus a) =>
+            [new("OSYS.A", "OSYS.A", 0, a), .. Enumerable.Range(0, 39).Select(i => new GraphNode($"OSYS.F{i}", $"OSYS.F{i}", 0, GraphStatus.Succeeded))];
+        var view = GraphTestView.Shown(new Size(600, 400), out var window, () => true);
+        view.SetGraph(Crowd(GraphStatus.Building), []);
+        view.UpdateStatuses(Crowd(GraphStatus.Succeeded)); // son derleme bitti: spin-down kuruldu
+        var before = view.BeadsClock;
+        Assert.NotNull(before); // ön-koşul: saat henüz dönüyor (spin-down penceresi)
+
+        window.Width = QuietGraphLayout.MinPanelWidth;   // dar panel → küçük pitch → yörünge çevresi değişir → saat yeniden kurulur
+        window.Height = QuietGraphLayout.MinPanelHeight;
+        window.UpdateLayout();
+        Assert.False(ReferenceEquals(before, view.BeadsClock), "ön-koşul: boyut değişimi saati yeniden kurmadı");
+
+        DispatcherPump.PumpUntil(() => view.BeadsClock is null, FadeBudget);
+
+        Assert.Null(view.BeadsClock);
         GC.KeepAlive(window);
     }
 }

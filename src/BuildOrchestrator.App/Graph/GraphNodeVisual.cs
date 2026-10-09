@@ -112,6 +112,9 @@ internal sealed class GraphNodeVisual
     /// <summary>Yörünge şu an GÖRÜNÜR mü — her <c>UpdateStatuses</c> tick'inde giriş/çıkış animasyonunun
     /// baştan başlatılmasını (takılmasını) önler.</summary>
     public bool BeadsVisible { get; set; }
+    /// <summary>Yörüngenin opaklık geçişlerinin nesli — her geçişte artar; bir sönüşün tamamlanması yörüngeyi yalnız o hâlâ
+    /// SON geçişse emekliye ayırır (<c>GraphView.FadeBeads</c>).</summary>
+    public int BeadsFadeGeneration { get; set; }
     /// <summary>[quiet] En son UYGULANAN opaklık hedefi. "Değişmediyse dokunma" kapısının girdisi: koşarken
     /// statü itişi saniyede birkaç kez gelir ve her seferinde 3.1 saniyelik bir hold-fade doğurmak sönmeyi
     /// sonsuza dek ertelerdi (kameradaki Zeno korumasının eşi). <c>NaN</c> = henüz hiç uygulanmadı.</summary>
