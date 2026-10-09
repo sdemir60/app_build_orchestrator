@@ -13,7 +13,7 @@ güncellemesi açık · **Araçlar:** `.claude/temp/perf-sweep-2026-10-09/` (`sw
 
 | # | Öncelik | Bulgu | Kanıt |
 |---|---|---|---|
-| B1 | **bloklayıcı (klavye)** | **Fare projeler listesinin üstündeyken (katman başlığı ya da satır) F5 pencereye ulaşmıyor — Build başlamıyor.** Fare grafın boş alanındayken aynı tuş hemen koşu başlatıyor; fare listeden çekilince (Esc gerekmeden) düzeliyor. Global kısayol Shift+Space etkilenmiyor. Koşu sırasında liste kendi kaydığı için duran fare bir satırın/başlığın üstüne "geliyor"; koşu bitince kullanıcı F5'e basar, hiçbir şey olmaz. s1'de ayrıca `Jump to <katman>` tooltip Popup'ının UIA klavye odağını aldığı görüldü. | §6.2: 5 konum × F5, deterministik (liste üstünde 3/3 başlamadı, graf/park 3/3 başladı); §6.1 UIA odak kaydı |
+| B1 | **bloklayıcı (klavye)** | **Fare projeler listesinin üstündeyken (katman başlığı ya da satır, tooltip/hover açık) bir UI Automation istemcisi odağı sorgularsa (`AutomationElement.FocusedElement`) F5/F6/F7 pencereye ulaşmaz — Build başlamaz.** Fare listeden çekilince düzelir; grafın üstünde olmaz; ekran yakalama tetiklemez; UIA sorgusu olmadan hover zararsız. Global kısayol Shift+Space etkilenmez. Bu makinede `logioptionsplus_agent` (Logi Options+) sürekli çalışan bir UIA istemcisi — s1'deki "Rebuild bitti, F5 çalışmadı" vakasının gerçek dünya tetikleyicisi bu olabilir; s1'de UIA, tooltip Popup'ını odaklı gösterdi. | §6.2: 4 oturum × 5 konum, deterministik (UIA sorgulu 2 oturumda liste üstünde 8/8 başlamadı; sorgusuz 2 oturumda 10/10 başladı) |
 | Ö1 | önemli (akıcılık) | **Build/Rebuild sırasında kare boşlukları 350–720 ms**, 5 s'lik pencerelerde 14–35 fps. UI thread'i bloklanmıyor (WM_NULL gidiş-dönüş p99 ≤ 53 ms, max ≤ 105 ms); yani tek bir uzun iş değil, **her karenin pahalılaşması** (layout/çizim) ya da render/kompozisyon hattının takılması. Hep aynı anda: OSYS.UI katmanının büyük projeleri (Reception/Workshop/CRM/PRM; Report'lar; UI.DMS döngü turu) derlenirken, olay gelmezken. | §4 tablo; iz analizi §4.2 |
 | Ö2 | önemli (hissedilir) | **Her koşu başlangıcında** UI thread'inde 115–145 ms'lik tek bir iş (F5'ten ~5 s sonra, `runStarted`/önizleme anı) + 210–260 ms'lik kare boşluğu. Tıklamanın kendisi 31–55 ms. | §5 spike sondası (iki koşu, aynı desen); sweep'te 258 ms boşluk + 116 ms gecikme |
 | Ö3 | önemli (kaynak) | Koşu sürerken App'in kendisi 1–1,5 çekirdek yakıyor (`sys-watch`: %64–147 of one core): UI 1,0–1,3 G cycle/s + render 1,5–1,6 G/s + **finalizer thread'i 30 s'nin 16 s'sinde CPU'da** (DirectWrite font handle'ları — kare başına metin biçimleme çöpü). Kare sondası açık ölçüldü (render payı şişer); finalizer ve UI payı sondadan bağımsız. | §3 `app threads`, §4.2 iz |
@@ -148,12 +148,26 @@ Taze açılış, pencere ön planda, her adımda UIA odağı = ana `Window`:
 | tekrar grafın boş alanı | — | **evet** |
 
 s5'te de aynı: başlık üstünde hayır, fare çekilince evet, Esc'e gerek yok. Graf düğümü üstünde (s4, `OSYS.Types.Kafka.Suzuki`
-düğümü) F5 çalışıyor — kusur grafta değil, listede. Kod tarafında `StickyLayerList`/`ProjectRow`'da F5'i yutan bir handler yok
-(`OnRowKeyDown` yalnız Enter/Space; `ForwardWheelToScroll` tekerlek). Pencere kısayolları `MainWindow.InputBindings`'te
-(`SetupKeyboardShortcuts`, `KeyboardShortcuts` tablosu). Olası mekanizma: liste üstünde açılan tooltip/hover Popup'ının kendi
-HWND'si Win32 klavye odağını alıyor (s1'de UIA bunu `class='Popup'` olarak gösterdi); tuş o HWND'nin WPF girdi hattına gidip
-pencerenin `InputBindings`'ine hiç ulaşmıyor. Kesinleştirmek için fix öncesi testte `GetFocus()`/`Keyboard.FocusedElement`
-tooltip açıkken okunmalı.
+düğümü) F5 çalışıyor — kusur grafta değil, listede.
+
+**Tetikleyici ayrıştırıldı (s7–s11, aynı 5 konum, aynı betik; her oturum taze açılış):**
+
+| Oturum | Hover sırasında yapılan | Liste üstünde F5 (4 konum) | Graf / park (2 konum) |
+|---|---|---|---|
+| s8 | ekran yakalama + UIA `FocusedElement` sorgusu | **0/4 başladı** | 2/2 |
+| s9 | hiçbiri | 4/4 | 2/2 |
+| s10 | yalnız UIA `FocusedElement` sorgusu | **0/4 başladı** | 2/2 |
+| s11 | yalnız ekran yakalama (`CopyFromScreen`) | 4/4 | 2/2 |
+| s7 | Win32 `GetFocus` (`AttachThreadInput` ile) + HWND dökümü | 2/2 | 2/2 |
+
+Yani hover tek başına zararsız; **tooltip/hover açıkken bir UIA istemcisinin odak sorgusu** tuşları öldürüyor, fare çekilince
+düzeliyor. s7'nin Win32 dökümü: ön plan, aktif ve odak HWND'si hep ana pencere (`HwndWrapper[BuildOrchestrator.App…]`),
+görünür bir Popup HWND'si yok — yani Win32 odağı kaymıyor; kırılan şey WPF'in kendi girdi yönlendirmesi (UIA sorgusunun
+yarattığı automation peer'ları / tooltip Popup'ının odak durumu). s1'de UIA `FocusedElement`'ın `class='Popup'` dönmesi aynı
+durumun öbür yüzü. Kod tarafında `StickyLayerList`/`ProjectRow`'da F5'i yutan handler yok (`OnRowKeyDown` yalnız Enter/Space);
+kısayollar `MainWindow.InputBindings`'te (`SetupKeyboardShortcuts`, `KeyboardShortcuts` tablosu). Gerçek dünyada UIA
+istemcisi: bu makinede `logioptionsplus_agent` çalışıyor (Logi Options+ aktif kontrolü UIA ile okur); ekran okuyucu, Windows
+"Metin önerileri", bazı kısayol araçları da aynı sorguyu yapar.
 
 ### 6.3 Temiz tepsi ölçümü (K1) — kapandı
 
@@ -206,12 +220,12 @@ yeni bir kayıp görünmüyor (10-02 raporunun "UI grubunun dışlayan en ağır
 
 ## 10. Önerilen sonraki adımlar
 
-1. **B1 (bloklayıcı):** kırmızı test — realize edilmiş pencerede fare bir katman başlığının/satırın üstündeyken (tooltip açık)
-   F5 `KeyBinding`'i `BuildCommand`'ı çağırmalı; test tooltip Popup'ının HWND'sine odak gidip gitmediğini de pinlesin
-   (`Keyboard.FocusedElement` + Win32 `GetFocus`). Fix adayları: tooltip/hover Popup'larının odak almaması (ToolTip stili
-   `Controls.xaml:1573` ve satır hover Popup'ı; `Focusable=False`, popup HWND'sine aktivasyon verilmemesi) ya da kısayolların
-   pencere yerine `Application`/`PreviewKeyDown` düzeyinde yakalanması (tooltip HWND'sinden gelen tuş da pencereye düşsün).
-   Doküman §13.2 ("native tooltip") ve §13.9 (klavye) fix'e göre. Tahmin: kısa.
+1. **B1 (bloklayıcı):** kırmızı test — realize edilmiş pencerede katman başlığının tooltip'i açıkken (ya da satır hover'dayken)
+   `AutomationElement.FocusedElement` sorgusundan SONRA F5 `KeyBinding`'i `BuildCommand`'ı çağırmalı ve `Keyboard.FocusedElement`
+   pencerede kalmalı. Repro betiği hazır (`hover-keys.ps1 -Mode uia`). Fix adayları: tooltip/hover Popup'larının automation
+   peer'ının odak bildirmemesi (ToolTip stili `Controls.xaml:1573`, satır hover Popup'ı; `Focusable=False` + peer'da
+   `HasKeyboardFocus=false`), UIA sorgusu sonrası odağın pencereye geri alınması, ya da kısayolların `PreviewKeyDown`/`Application`
+   düzeyinde yakalanması. Doküman §13.2 ("native tooltip") ve §13.9 (klavye) fix'e göre. Tahmin: kısa–orta.
 2. **Ö1 (akıcılık):** §4.2'deki iz sonucuna göre: (i) ise graf/satır animasyonlarının derleme sırasında kare başına maliyetini
    düşür (orbit animasyonunu `CompositionTarget` yerine saat tabanlı tek Storyboard'a almak, "derleniyor" düğümünde yalnız
    değişen DrawingVisual'ı tazelemek); (ii) ise App'in UI/render thread'lerine P-çekirdek yakınlığı / `PROCESS_POWER_THROTTLING`
