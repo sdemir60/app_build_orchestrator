@@ -9,7 +9,11 @@ using static BuildOrchestrator.Tests.Supervisor.RunCoordinatorTests;
 namespace BuildOrchestrator.Tests.Supervisor;
 
 /// <summary>[D7] Yüzey kapısının koşu içi davranışı. Fixture: U → D (D aday). Yüzeyler <see cref="CycleRoundsTests.SurfaceDisk"/>'ten
-/// (apiSurface seam), kanıt yolları <see cref="CycleRoundsTests.HashModePlan"/> ile — döngü testleriyle AYNI sahte disk (kopya YASAK).</summary>
+/// (apiSurface seam), kanıt yolları <see cref="CycleRoundsTests.HashModePlan"/> ile — döngü testleriyle AYNI sahte disk (kopya YASAK).
+/// <para><b>Ölçüm (gerçek OSYS, 2026-10-09, paralellik 1):</b> <c>OSYS.Types.General</c>'da gövde değişikliği sonrası Build'de plan
+/// 143 projeyi kirli gördü; 7'si derlendi (1 asıl, 5'i SDK-style <c>Types.PRM</c>'in okunamayan yüzeyinden, 1'i patlayan bağımlılıktan),
+/// 102'si kapıdan atlandı, 31 cycle üyesi taşındı — koşu 19 sn (kapısız kuralın kayıtlı sürelerle kaba tahmini 520 sn). API
+/// değişikliğinde okuyan proje derlendi (ayrıntı: .claude/outputs/2026-10-09-12-42-surface-gate-measurement.md).</para></summary>
 public class SurfaceGateRunTests : IDisposable
 {
     private readonly string _cacheRoot = NewCacheRoot();
