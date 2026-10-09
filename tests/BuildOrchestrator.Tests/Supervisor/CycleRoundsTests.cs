@@ -15,7 +15,8 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// dispatch edilip turlarla derlenirler. Bu dosya davranış sözleşmesinin dört ayağını pinler:
 /// (1) turlar — yüzey kanıtı yoksa tek yeşil tur yetmez, iki ardışık yeşil gerekir; (2) ara tur sonuçları
 /// YAYILMAZ (yalnız her derlemenin iki ucu ilan edilir); (3) üyeler build-order'da bariyerli dalgalarla
-/// invoke edilir — doğrudan komşular asla aynı anda; (4) yakınsamayan grup hiçbir şey persist etmez.
+/// invoke edilir — doğrudan komşular asla aynı anda; (4) yakınsamayan grup yalnız oturmuş (son turda bayat olmayan)
+/// üyelerini persist eder — yüzey kanıtı yoksa hiçbirini, kesilen grup hiçbirini [D3].
 ///
 /// Fixture: <see cref="RunCoordinatorTests"/>'in harness'ı, fake invoker'ı ve plan yardımcıları AYNEN
 /// kullanılır (<c>using static</c>) — koordinatörün test host'u tek yerdedir, kopya YASAK (CLAUDE.md).
@@ -513,7 +514,7 @@ public class CycleRoundsTests
         Assert.Equal(3, Assert.IsType<RunCompletedEvent>(h.Events[^1]).Succeeded);
     }
 
-    // ---------------------------------------------------------------- 6) yakınsamayan grup persist etmez
+    // ---------------------------------------------------------------- 6) kanıtsız yakınsamayan grup persist etmez
 
     [Fact]
     public async Task non_converged_group_persists_nothing_even_for_green_members()
@@ -899,7 +900,8 @@ public class CycleRoundsTests
             Assert.Equal([Id("A"), Id("B")], succeeded.Select(e => e.ProjectId));
             Assert.All(succeeded, e => Assert.True(e.CycleUnsettled));
             // [final review I1] Tavan da yakınsama DEĞİLDİR: olay "güvenilmez başarı" der — aşağıdaki
-            // invalidate ile AYNI karar.
+            // invalidate ile AYNI karar. [D3] Kanıtsız grupta (Incremental.OutputsById yok) D3 devreye girmez: hiçbir
+            // yeşil üye güvenilmez, grup bütünüyle yeniden derlenir.
             Assert.All(succeeded, e => Assert.False(e.Trusted));
             // Dep-issue listesine SAHTE isim enjekte EDİLMEZ: o liste "hangi bağımlılık patladı" sorusunun
             // cevabıdır — ikinci bir anlam yüklenirse ▲ N sayacı ile filtre chip'i yanlış sayar.
@@ -930,6 +932,8 @@ public class CycleRoundsTests
         // Yukarıdaki kural değişiminin DAVRANIŞ karşılığı — asıl kazanılan şey budur: tavanın "bir sonraki
         // Build kaldığı yerden devam eder" güvencesi artık GERÇEKTEN geçerli. Grup üç turda yakınsayamadı ama
         // ilerliyordu; kaynak DEĞİŞMEDEN koşulan ikinci Build ona dördüncü turu verir ve grup oturur.
+        // [D3] Kanıtsız grupta (Incremental.OutputsById yok) D3 devreye girmez: hiçbir yeşil üye güvenilmez, grup
+        // bütünüyle yeniden derlenir.
         string cacheRoot = NewCacheRoot();
         try
         {
@@ -1412,7 +1416,10 @@ public class CycleRoundsTests
 
     /// <summary>Kullanıcının "olmayacaksa devam etme"si: patlayan üyenin okuduğu HİÇBİR grup-içi yüzey
     /// değişmediyse aynı derleme aynı hatayı verir — NoProgress kararı TEK turda çıkar (eskiden aynı kümenin
-    /// iki kez patlaması beklenirdi) ve yakınsamama hafızası aynen yazılır.</summary>
+    /// iki kez patlaması beklenirdi) ve yakınsamama hafızası aynen yazılır.
+    /// <para><b>[DEĞİŞEN KURAL — D3]</b> Eski iddia: yakınsamayan grup persist ETMEZ — A <c>Failed</c>/<c>old</c> kalır, olay
+    /// <c>Trusted=false</c>. Değişme gerekçesi: A'nın okuduğu yüzeyler son turda oturmuştu; kaydı doğrudur ve tek kardeşinin
+    /// hatası onu zehirlemez (kullanıcı senaryosu 2026-10-08: tek copy-lock 16 kaydı düşürüyordu).</para></summary>
     [Fact]
     public async Task a_failure_whose_inputs_are_settled_is_no_progress_after_one_round()
     {
@@ -1444,13 +1451,13 @@ public class CycleRoundsTests
             Assert.Equal(CycleOutcome.NoProgress, completed.Outcome);
             Assert.Equal(1, completed.Rounds);
             Assert.Equal(1, completed.FailedCount);
-            // Yakınsamayan grup persist ETMEZ ve hafıza yazılır — tur sayısı kısalırken kanıt sözleşmesi aynı.
-            Assert.Equal(BuildResult.Failed, store.Load()[Id("A")].LastResult);
-            Assert.Equal("old", store.Load()[Id("A")].BuiltSignature);
+            // [D3] Oturmuş yeşil üye güvenilir persist edilir; hafıza yine yazılır (yalnız raporlar) — iki alan bağımsız.
+            Assert.Equal(BuildResult.Succeeded, store.Load()[Id("A")].LastResult);
+            Assert.Equal("sig", store.Load()[Id("A")].BuiltSignature);
             Assert.Equal("sig", store.Load()[Id("A")].NonConvergentSignature);
             Assert.Equal("sig", store.Load()[Id("B")].NonConvergentSignature);
             var succeeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
-            Assert.False(succeeded.Trusted);
+            Assert.True(succeeded.Trusted);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -1801,11 +1808,13 @@ public class CycleRoundsTests
     /// girdileri bir sonraki denemede de BİREBİR aynı olacak — hatası sıradan bir Build hatasıyla aynı kalitede
     /// kanıttır. Böyle bir üye artık kanıtlı FAILED'dır: olay <c>Evidence=true</c> taşır (satır kırmızı, etiket
     /// <c>failed</c>) ve defter <c>FailedSignature</c> yazar (karar Sync/restart sonrası da AYNI kalır —
-    /// sahada kullanıcı suçluyu ekrandan bulamıyordu, iki üye tıpatıp aynı görünüyordu). Suçsuz yeşil eş
-    /// AYNEN eskisi gibi kanıtsız invalidate edilir: gri never built, tek Resolve ile geri gelir.
+    /// sahada kullanıcı suçluyu ekrandan bulamıyordu, iki üye tıpatıp aynı görünüyordu).
+    /// <b>[DEĞİŞEN KURAL — D3]</b> Eski iddia: suçsuz yeşil eş kanıtsız invalidate edilirdi (gri never built, tek Resolve ile
+    /// geri gelirdi). Değişme gerekçesi: eşin okuduğu yüzeyler oturmuştu — kaydı doğrudur, yeşil kalır; bir sonraki koşu
+    /// yalnız suçluyu derler.
     /// </summary>
     [Fact]
-    public async Task a_hopeless_members_failure_is_evidence_and_its_green_sibling_stays_unevidenced()
+    public async Task a_hopeless_members_failure_is_evidence_and_its_settled_green_sibling_is_trusted()
     {
         string cacheRoot = NewCacheRoot();
         try
@@ -1838,14 +1847,14 @@ public class CycleRoundsTests
             Assert.Equal("sig", culprit.FailedSignature);     // bir sonraki Sync LastFailed okur → etiket `failed`
             Assert.NotNull(culprit.FailedAt);
             Assert.Equal("sig", culprit.NonConvergentSignature); // grup hafızası AYRICA yazılır — iki alan bağımsız
-            // Suçsuz eş: değişen HİÇBİR şey yok — güvenilmez başarı, kanıtsız invalidasyon, gri never built.
+            // Suçsuz eş: yüzeyleri oturmuş yeşil üye — güvenilir başarı, taze kayıt, üç döngü alanı yazılı.
             var green = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
             Assert.Equal(Id("A"), green.ProjectId);
-            Assert.False(green.Trusted);
+            Assert.True(green.Trusted);
             var sibling = store.Load()[Id("A")];
-            Assert.Equal(BuildResult.Failed, sibling.LastResult);
-            Assert.Equal("old", sibling.BuiltSignature);
+            Assert.Equal((BuildResult.Succeeded, "sig"), (sibling.LastResult, sibling.BuiltSignature));
             Assert.Null(sibling.FailedSignature);
+            Assert.NotNull(sibling.CycleReadSurfaces);
         }
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
@@ -2398,7 +2407,7 @@ public class CycleRoundsTests
     // Önceki Resolve yakınsamışsa defterde her üyenin terimi, okuduğu kardeş yüzeyleri ve motor parmak izi vardır
     // (karar 2). Tur 1 yalnız CycleMemberNeed'in "gerekli" dediği üyeleri derler; taşınan üye tur sonu bayatlık
     // sorusuna kayıtlı yüzeyleriyle girer (karar 3) ve hiç derlenmeden yakınsarsa "up to date (carried)" raporlanır,
-    // defteri yenilenir. Yakınsamayan / kesilen koşu yeni alan yazmaz (karar 4).
+    // defteri yenilenir. Kesilen koşu yeni alan yazmaz; yakınsamayan grupta yalnız oturmuş üyeler yazar (D3).
 
     /// <summary>Aracın kendi derlediği, kanıtı ve beslenen kopyaları sağlam çıktı (defter kipi).</summary>
     private static readonly OutputCheck IntactOutput =
@@ -2755,19 +2764,27 @@ public class CycleRoundsTests
         }
     });
 
-    /// <summary>[karar 4 · K4/K5 · Review Focus 3] Yakınsamayan (NoProgress, CapReached) ya da kesilen (Stop) koşu yeni döngü
-    /// alanı YAZMAZ ve taşınan üyesinin arkasında da durmaz: hiç derlenmemiş taşınan üye dahil HER üye geçersizlenir
-    /// (<c>LastResult=Failed</c>, yeni bileşik imza yok), "up to date" raporlanmaz, derlenen üyenin yeni terimi deftere girmez.
-    /// Takip koşusunda (içerik değişmeden) kalan döngü alanları kimseyi taşıtmaz: herkes "no trusted record" ile derlenir.
-    /// <para>[R3c2] Eski biçim iki üyeli grupta yalnız NoProgress ve Stop'u pinliyordu (aynı iddialar: taşınan üyenin imzası TAM
-    /// <c>sig1</c> kalır, <c>LastResult=Failed</c>, derlenenin yeni terimi yazılmaz, "up to date" raporlanmaz); CapReached'te sona
-    /// dek taşınan bir üye kurulamadığı için grafik <see cref="ChainPlan"/>'e taşındı ve takip koşusu eklendi. Kesin imza pini
-    /// dört üyenin HEPSİNE uygulanır.</para></summary>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D3]</b> Eski iddia (<c>non_converged_and_stopped_groups_write_no_cycle_fields</c>, karar 4):
+    /// yakınsamayan (NoProgress, CapReached) ya da kesilen koşu HİÇ KİMSEYİ persist etmez — taşınan üye dahil her üye
+    /// geçersizlenir, takip koşusu herkesi derler.
+    /// <para><b>Değişme gerekçesi (kullanıcı senaryosu, 2026-10-08):</b> 17 üyeli UI grubunda tek üyenin copy-lock'u
+    /// NoProgress verip 16 yeşil kaydı geçersizledi; bir sonraki Build 17 üyeyi yeniden derledi (~6 dk). Yüzey kanıtı
+    /// varken oturmuş (son turda bayat olmayan) yeşil ya da taşınan üyenin çıktısı nihai API'lere bağlıdır ve kaydı
+    /// doğrudur; yalnız bayat üye geçersizlenir, böylece grup kirli kalır ve takip koşusu yalnız onu derler. Kesilen
+    /// (Stop) koşu bugünkü gibi hiçbir şey persist etmez.</para>
+    /// Senaryo (ChainPlan X→M, N→X, M↔R, M,R→N; yalnız N değişik, tur 1 yalnız N'yi derler, X/M/R taşınır):
+    /// · no progress: N oturmuşken patlar (tur 1) — X, M, R taşınmış ve oturmuş ⇒ üçü de sig2 ile yenilenir, N kanıtlı hata.
+    /// · stopped: hiçbir şey yenilenmez (herkes Failed, sig1).
+    /// · cap reached: tur 1 N (yüzeyi oynar ⇒ M ve R bayat); tur 2 M (R'nin eski yüzeyini okur, patlar) ve R (yüzeyi oynar ⇒
+    ///   M bayat); tur 3 M (yüzeyi oynar ⇒ X ve R bayat) ⇒ tavan. Son turda X ve R bayattır ⇒ geçersizlenir (sig1, Failed);
+    ///   N ve M oturmuş ⇒ güvenilir (sig2, Succeeded); takip koşusu X ve R'yi derler.
+    /// </summary>
     [Theory]
     [InlineData("no progress")]
     [InlineData("stopped")]
     [InlineData("cap reached")]
-    public Task non_converged_and_stopped_groups_write_no_cycle_fields(string outcome) => InCacheRootAsync(async cacheRoot =>
+    public Task a_group_without_a_verdict_keeps_only_its_settled_members(string outcome) => InCacheRootAsync(async cacheRoot =>
     {
         string[] names = ["X", "N", "M", "R"];
         var store = new BuildStateStore(cacheRoot);
@@ -2776,11 +2793,6 @@ public class CycleRoundsTests
         await ConvergeOnceAsync(store, disk, ChainPlan("sig1", "n1"));
         using var cts = new CancellationTokenSource();
         var rec = new RoundRecorder();
-        // Yalnız N değişik: X, M, R taşınır.
-        // · no progress: N girdisi oturmuşken patlar (tur 1).
-        // · stopped: N derlenirken koşu kesilir.
-        // · cap reached: tur 2'de M (R'nin eski yüzeyini okuyup) patlar, R yüzeyini oynatır ⇒ M bayat kalır; tur 3'te M
-        //   yüzeyini oynatır ⇒ hâlâ hareket var (X ve R bayat) ⇒ tavan. X hiç derlenmez.
         var invoker = rec.Invoker((name, round, ct) =>
         {
             if (outcome == "stopped") { cts.Cancel(); ct.ThrowIfCancellationRequested(); }
@@ -2788,34 +2800,55 @@ public class CycleRoundsTests
             disk.Set(name, name.ToLowerInvariant() + "2");
             return Task.FromResult(Ok());
         });
+        // RoundRecorder üye BAŞINA sayar: M'nin ilk derlemesi grup turu 2'de, ikincisi turu 3'tedir.
         string[] expectedCalls = outcome == "cap reached" ? ["N#1", "M#1", "R#1", "M#2"] : ["N#1"];
         using (var h = await ResolveAsync(store, disk, ChainPlan("sig2", "n2"), invoker, ct: cts.Token))
         {
             Assert.Equal(expectedCalls, rec.Calls);
             if (outcome != "stopped") // kesilen koşuda olay akışı sorgulanamaz (stopped_group_invalidates_every_member notu)
-            {
                 Assert.Equal(outcome == "cap reached" ? CycleOutcome.CapReached : CycleOutcome.NoProgress,
                     Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
-                Assert.Empty(h.Events.OfType<ProjectSkippedEvent>());
+            if (outcome == "no progress")
+            {
+                Assert.Equal(3, h.Events.OfType<ProjectSkippedEvent>().Count(e => e.Reason == SkipReasons.UpToDate));
+                Assert.True(Assert.Single(h.Events.OfType<ProjectFailedEvent>()).Evidence);
+            }
+            if (outcome == "cap reached")
+            {
+                var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToDictionary(e => NameOf(e.ProjectId));
+                Assert.True(succeeded["N"].Trusted); Assert.False(succeeded["N"].CycleUnsettled);
+                Assert.True(succeeded["M"].Trusted);
+                Assert.False(succeeded["R"].Trusted); Assert.True(succeeded["R"].CycleUnsettled);
+                Assert.False(succeeded["X"].Trusted);
+                Assert.Empty(h.Events.OfType<ProjectSkippedEvent>()); // bayat taşınan X "up to date" raporlanmaz
             }
         }
         var ledger = store.Load();
-        foreach (string name in names)
+        var expected = outcome switch
         {
-            // Eski pinin (iki üyeli grup, taşınan A) KESİN değeri dört üyeli grafikte HER üyeye uygulanır: kayıt TAM önceki
-            // yakınsamanın bileşik imzasında (sig1) kalır — başarısız/kesilen koşu kimseye yeni imza (sig2) yazmaz; taşınan X dahil.
-            Assert.Equal((BuildResult.Failed, "sig1"), (ledger[Id(name)].LastResult, ledger[Id(name)].BuiltSignature));
-        }
-        // Terim de kayıtta kalır: başlangıç ChainPlan("sig1", "n1") N'ye n1 yazdı; yakınsamayan/kesilen grup terime dokunmaz
-        // (derlenen N'nin yeni terimi n2 deftere HİÇ girmez) — eşitsizlik değil, KESİN değer.
-        Assert.Equal("n1", ledger[Id("N")].CycleMemberTerm);
+            "no progress" => new[] { ("X", "sig2", BuildResult.Succeeded), ("N", "sig1", BuildResult.Failed), ("M", "sig2", BuildResult.Succeeded), ("R", "sig2", BuildResult.Succeeded) },
+            "cap reached" => new[] { ("X", "sig1", BuildResult.Failed), ("N", "sig2", BuildResult.Succeeded), ("M", "sig2", BuildResult.Succeeded), ("R", "sig1", BuildResult.Failed) },
+            _ => names.Select(n => (n, "sig1", BuildResult.Failed)).ToArray(),
+        };
+        foreach (var (name, sig, result) in expected)
+            Assert.Equal((sig, result), (ledger[Id(name)].BuiltSignature, ledger[Id(name)].LastResult));
+        if (outcome == "no progress") Assert.Equal("sig2", ledger[Id("N")].FailedSignature);
+        if (outcome == "cap reached") Assert.Equal("m1", ledger[Id("M")].CycleMemberTerm); // derlenen oturmuş üyenin kanıtı yazıldı
+        // Eski pinin KESİN terim değeri korunur: güvenilmeyen (patlayan ya da kesilen) N'nin yeni terimi n2 deftere girmez;
+        // oturmuş N'ninki (tavan) girer.
+        Assert.Equal(outcome == "cap reached" ? "n2" : "n1", ledger[Id("N")].CycleMemberTerm);
 
-        // Takip koşusu: içerik değişmedi ama hiçbir kayıt güvenilir değil ⇒ herkes derlenir.
         var follow = new RoundRecorder();
         using var next = await ResolveAsync(store, disk, ChainPlan("sig2", "n2"), follow.Invoker((_, _) => Ok()));
-        Assert.Equal(["M#1", "N#1", "R#1", "X#1"], follow.Calls.Order(StringComparer.Ordinal));
-        foreach (string name in names)
-            Assert.Contains(CycleDecisionLines.RoundOneNeed(name, CycleMemberNeed.NoTrustedRecordReason), next.DecisionLog,
+        string[] expectedFollow = outcome switch
+        {
+            "no progress" => ["N#1"],
+            "cap reached" => ["R#1", "X#1"],
+            _ => ["M#1", "N#1", "R#1", "X#1"],
+        };
+        Assert.Equal(expectedFollow, follow.Calls.Order(StringComparer.Ordinal));
+        foreach (string call in expectedFollow) // takip koşusunun derlediği her üyenin nedeni: güvenilir kayıt yok
+            Assert.Contains(CycleDecisionLines.RoundOneNeed(call[..^2], CycleMemberNeed.NoTrustedRecordReason), next.DecisionLog,
                 StringComparison.Ordinal);
     });
 
@@ -3093,4 +3126,78 @@ public class CycleRoundsTests
         Assert.Equal([Id("A"), Id("B")], failed.Select(e => e.ProjectId));
         Assert.All(failed, e => Assert.Equal("invoke error: compiler host exploded", e.Reason));
     }
+
+    /// <summary>
+    /// [D3] Kullanıcı senaryosu: 16 üye yeşil, tek üyede copy-lock ⇒ NoProgress. Eski kural her üyeyi geçersizliyordu ve
+    /// bir sonraki Build 17'sini derliyordu. Yeni kural: yüzeyleri oturmuş (son turun bayat kümesinde olmayan) yeşil ya
+    /// da taşınan üye GÜVENİLİR persist edilir; yalnız patlayan üye kanıtlı hata alır; takip koşusu yalnız onu derler.
+    /// </summary>
+    [Fact]
+    public Task a_hopeless_member_does_not_poison_its_settled_siblings() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var bBefore = store.Load()[Id("B")];
+        var rec = new RoundRecorder();
+        // Yalnız A değişik; A patlar (girdileri oturmuş ⇒ tur 1'de NoProgress). B taşınır ve oturmuştur.
+        using (var h = await ResolveAsync(store, disk, TwoMembers("sig2", "a2", "b1"), rec.Invoker((name, _) => name == "A" ? Exit(1) : Ok())))
+        {
+            Assert.Equal(["A#1"], rec.Calls);
+            Assert.Equal(CycleOutcome.NoProgress, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+            var failed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+            Assert.Equal((Id("A"), true), (failed.ProjectId, failed.Evidence));
+            var skipped = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+            Assert.Equal((Id("B"), SkipReasons.UpToDate), (skipped.ProjectId, skipped.Reason));
+        }
+        var ledger = store.Load();
+        Assert.Equal((BuildResult.Failed, "sig2"), (ledger[Id("A")].LastResult, ledger[Id("A")].FailedSignature));
+        Assert.Equal((BuildResult.Succeeded, "sig2"), (ledger[Id("B")].LastResult, ledger[Id("B")].BuiltSignature));
+        Assert.Equal(bBefore.CycleReadSurfaces, ledger[Id("B")].CycleReadSurfaces); // taşınan üyenin kanıtı aynen
+
+        // Takip koşusu (kaynak değişmedi): yalnız A derlenir, B yine taşınır.
+        var follow = new RoundRecorder();
+        using var next = await ResolveAsync(store, disk, TwoMembers("sig2", "a2", "b1"), follow.Invoker((_, _) => Ok()));
+        Assert.Equal(["A#1"], follow.Calls);
+        Assert.Contains(CycleDecisionLines.RoundOneNeed("A", CycleMemberNeed.NoTrustedRecordReason), next.DecisionLog, StringComparison.Ordinal);
+        Assert.DoesNotContain(CycleDecisionLines.RoundOneNeed("B", ""), next.DecisionLog, StringComparison.Ordinal);
+    });
+
+    /// <summary>[D3 · Review Focus 3] Son turun bayat kümesi yoksa yakınsamayan grupta hiçbir yeşil güvenilmez — bugünkü
+    /// kural aynen. İki yol: kanıt hiç yok (çıktı haritası yok) ve kanıt koşu ortasında düştü (A'nın derleme sonrası yüzeyi
+    /// okunamadı — kilitli dosya ⇒ grup tam-tur davranışına döner, NoProgress iki turla gelir). Build modunda pinlenir;
+    /// Cycles karşılığı <see cref="non_converged_group_persists_nothing_even_for_green_members"/>.</summary>
+    [Theory]
+    [InlineData("no evidence")]
+    [InlineData("evidence lost")]
+    public Task without_surface_evidence_a_non_converged_group_trusts_no_success(string evidence) => InCacheRootAsync(async cacheRoot =>
+    {
+        var store = new BuildStateStore(cacheRoot);
+        SeedGreen(store, "A"); SeedGreen(store, "B");
+        var disk = new SurfaceDisk();
+        disk.Set("A", "a1");
+        disk.Set("B", "b1");
+        var plan = evidence == "no evidence"
+            ? TwoMemberCycle() with { Incremental = RunCoordinatorTests.Incremental("A", "B") } // kanıt yok
+            : HashModePlan(TwoMemberCycle(), "A", "B");
+        int aCompiled = 0;
+        var rec = new RoundRecorder();
+        var invoker = rec.Invoker((name, _) =>
+        {
+            if (name == "B") return Exit(1);
+            Interlocked.Exchange(ref aCompiled, 1);
+            return Ok();
+        });
+        // A derlendikten sonra yüzeyi okunamaz: grup başı hash'i kanıtı açar, tur 1'deki derleme sonrası okuma onu düşürür.
+        using var h = new Harness(plan, invoker, stateStore: store,
+            apiSurface: path => Volatile.Read(ref aCompiled) == 1 && path == SurfaceDisk.PathOf("A") ? null : disk.Read(path));
+        await h.Sut.StartAsync(Start(RunMode.Build), default);
+        await h.Sut.RunCompletion.WaitAsync(Limit);
+
+        Assert.Equal(["A#1", "B#1", "A#2", "B#2"], rec.Calls); // kanıtsız NoProgress: aynı küme iki kez patladı
+        Assert.Equal(CycleOutcome.NoProgress, Assert.Single(h.Events.OfType<CycleCompletedEvent>()).Outcome);
+        Assert.False(Assert.Single(h.Events.OfType<ProjectSucceededEvent>()).Trusted);
+        Assert.Equal((BuildResult.Failed, "old"), (store.Load()[Id("A")].LastResult, store.Load()[Id("A")].BuiltSignature));
+        if (evidence == "evidence lost") // kanıt gerçekten açıktı ve tur 1'de düştü: kayıp satırı A'nın dosyasını adlandırır
+            Assert.Contains(CycleDecisionLines.EvidenceUnavailable("A", "A", SurfaceDisk.PathOf("A"), CycleDecisionLines.UnreadableReason),
+                h.DecisionLog, StringComparison.Ordinal);
+    });
 }

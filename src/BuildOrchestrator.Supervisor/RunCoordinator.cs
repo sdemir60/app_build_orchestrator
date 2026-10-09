@@ -1359,14 +1359,13 @@ public sealed class RunCoordinator(
     /// persist I/O'su beklenmedik biçimde fırlasa bile scheduler askıda kalmaz. Çağıranın tek yükümlülüğü bu
     /// metodu dispatch edilmiş her proje için tam bir kez, KENDİ <c>finally</c>'sinden çağırmaktır.</para>
     /// </summary>
-    /// <param name="trustedResult">Bu sonucun ARKASINDA DURULABİLİR mi. Tekil projede daima <c>true</c>. SCC'de
-    /// grup YAKINSADIYSA (<see cref="CycleRoundDecision.Converged"/>) — ya da [suçlu kırmızı] üye, yüzeyleri
-    /// oturmuşken patlamış kanıtlı-umutsuz üyeyse (bkz. <see cref="ReportCycleMember"/>) — <c>true</c>'dur:
-    /// turlar bir bütündür, yakınsamayan bir grubun tur 1'de yeşile dönmüş üyesi taze imzasını KAYDETMEZ — aksi halde
-    /// bir sonraki Build onu "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (çıktı aracın
-    /// kendisinin olduğundan defter kipinde okunur ve orada çıktının tarihi eşleşen imzayı bozmaz — ARCHITECTURE
-    /// §7.6; bunu yakalayacak başka mekanizma yoktur). <c>false</c> ⇒ persist YOK ve
-    /// BAŞARILI üye dahil herkes invalidate edilir.</param>
+    /// <param name="trustedResult">Bu sonucun ARKASINDA DURULABİLİR mi. Tekil projede daima <c>true</c>. SCC'de üye
+    /// OTURMUŞSA (grup yakınsadı, ya da yakınsamadı ama üyenin okuduğu hiçbir yüzey son turda bayat değildi) ya da
+    /// [suçlu kırmızı] yüzeyleri oturmuşken patlamış kanıtlı-umutsuz hataysa (bkz. <see cref="ReportCycleMember"/>)
+    /// <c>true</c>'dur. Bayat yüzeye bağlanmış yeşil üye taze imzasını KAYDETMEZ — aksi halde bir sonraki Build onu
+    /// "güncel" sayıp atlar ve grup yarım kalmış hâlde temiz görünürdü (çıktı aracın kendisinin olduğundan defter
+    /// kipinde okunur ve orada çıktının tarihi eşleşen imzayı bozmaz — ARCHITECTURE §7.6; bunu yakalayacak başka
+    /// mekanizma yoktur). <c>false</c> ⇒ persist YOK ve BAŞARILI üye dahil invalidate edilir.</param>
     /// <param name="cycleUnsettled">[cycle rounds] Tavana dayanmış bir SCC'nin başarılı üyesi ⇒ çıktı bir kuşak
     /// geride olabilir (bkz. <see cref="ProjectSucceededEvent.CycleUnsettled"/>).</param>
     /// <param name="failLogTail">Başarısızlık satırının <c>decision.log</c>'daki SONU; <c>null</c> ⇒ varsayılan
@@ -1412,8 +1411,8 @@ public sealed class RunCoordinator(
                 // [A2 fix-4] Ayrımı ikinci kez TÜRETME: "depIssue var mı ⇒ kökler" kuralı DepIssueRootsOf'ta TEK yerdedir ve
                 // sonucu (depIssueRoots) hem olay listesini (depIssuesForEvent) hem bu persist'in köklerini besler — koşul bir
                 // kez türer, ikisi yapısal olarak kilit adımdır (taşınan SCC üyesinin defter yenilemesi de oradan okur).
-                // [cycle rounds] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun ara-tur sonucu
-                // bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
+                // [cycle rounds · D3] trustedResult AYRI bir kapıdır ve KORUNUR: yakınsamayan grubun bayat (oturmamış)
+                // üyesinin sonucu bir "başarı" değildir, imzası da anlamlı değildir — o hiç persist edilmez.
                 // [tek proje · Clean] Temizlenen projenin kaydı SİLİNİR (persist edilmez): çıktı artık yok,
                 // defter de onu bilmemeli — gerekçe BuildStateStore.Remove'da.
                 if (run.MsBuildTarget == MsBuildTarget.Clean) ForgetBuildStateOnClean(run, projectId);
@@ -1445,7 +1444,7 @@ public sealed class RunCoordinator(
             // aynen durur ve bir sonraki Build onu "skipped — up to date" diye PRE-SKIP eder — kullanıcıya bozuk
             // bir proje "güncel" diye raporlanır. Complete'ten SONRA çağrılır: persist I/O'su beklenmedik bir
             // şekilde fırlasa bile scheduler ASLA askıda kalmaz.
-            // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin yeşil üyesi) buradan geçer.
+            // [cycle rounds] Arkasında durulamayan bir BAŞARI da (yakınsamayan SCC'nin bayat yeşil üyesi) buradan geçer.
             // [spec 2026-09-18 §1-14] reason ve trustedResult birlikte TAŞINIR: invalidate artık nedene göre
             // yazar (kanıtlı derleyici hatası ⇔ imza+zaman; kanıtsız ⇔ yalnız LastResult/LastRunAt).
             if (invalidates) InvalidateBuildStateOnFailure(run, projectId, evidenceSignature);
@@ -1652,7 +1651,7 @@ public sealed class RunCoordinator(
         // dönmüş bir üye de Failed raporlanır. Eskiden yalnız reason yazılır, sonuç KORUNURDU — o üye ÖNCEKİ
         // (ara) turunun sonucuyla ProjectSucceededEvent alırdı; tam olarak "ara tur sonucu nihai sonuç diye
         // yayılmaz" kuralının ihlali, üstelik tekil proje yolu iptalde daima Failed("stopped") raporlar.
-        // Persist tarafında zaten yürürlükte olan ilkenin (yakınsamayan grup hiçbir şey persist etmez)
+        // Persist tarafında zaten yürürlükte olan ilkenin (kesilen grup hiçbir şey persist etmez)
         // raporlama kanalındaki karşılığıdır.
         //
         // [I1] Kural, RAPORLAMANIN HEMEN ÖNÜNDE ve TEK yerde uygulanır — üç kesilme yolu (stop'un break'i,
@@ -1687,6 +1686,9 @@ public sealed class RunCoordinator(
         // kırmızısını hak eder. Yalnız yüzey kanıtı varken dolar; legacy NoProgress'te (suçlu ayırt edilemez)
         // null kalır ve bugünkü kanıtsız davranış sürer.
         HashSet<string>? provenHopeless = null;
+        // [D3] Son turun bayat kümesi: yakınsamayan grupta hangi başarının arkasında durulabileceğini söyler. Yüzey
+        // kanıtı yokken null kalır ve hiçbir yeşil güvenilmez (bugünkü kural).
+        HashSet<string>? staleAtEnd = null;
         try
         {
             // [R3c2 · kesilme garantisi] Grup başı bloğu (yüzey hash'i, başlık ve kanıt kaybı satırları) bu
@@ -1952,6 +1954,7 @@ public sealed class RunCoordinator(
                 roundsRun = round;
                 lastFailedCount = failed.Count;
                 decision = CycleRoundPolicy.Decide(round, failed, previousFailed, staleNow);
+                staleAtEnd = staleNow;
                 // [R3c2 · karar 3] Taşınan üyeli tur 1 "iki ardışık yeşil tur" kuralına taban olmaz: taşınan üyenin
                 // Succeeded'ı bu koşunun derlemesi değil, kayıttan gelir. Kanıt varken policy zaten yalnız kanıtla
                 // yakınsar (iki-yeşil kuralı staleNow null iken çalışır); bu koruma kanıtın düştüğü turlar içindir:
@@ -2005,27 +2008,31 @@ public sealed class RunCoordinator(
             foreach (string id in members)
             {
                 var member = state[id];
+                // [D3] Oturmuş üye: grup gerçek bir hükme vardı ve üyenin okuduğu hiçbir kardeş yüzeyi son tur sonunda
+                // bayat değildi — nihai API'lere bağlandı, sonucu güvenilir. Converged'de herkes oturmuştur.
+                bool settled = decision == CycleRoundDecision.Converged
+                    || (decision != CycleRoundDecision.Continue && staleAtEnd is not null && !staleAtEnd.Contains(id));
                 try
                 {
-                    // [RESOLVE 3.4] Hiç derlenmeden yakınsayan taşınan üye "up to date (carried)" raporlanır, defteri
-                    // yenilenir. Yakınsamayan / kesilen grupta taşınan üye de bugünkü yoldan geçer (karar 4): sonucu ya
+                    // [RESOLVE 3.4 · D3] Hiç derlenmemiş ve oturmuş taşınan üye "up to date (carried)" raporlanır, defteri
+                    // yenilenir. Kesilen grupta ya da bayatken taşınan üye ReportCycleMember'dan geçer: sonucu ya
                     // FailEveryMember'la Failed'dır ya da güvenilmez başarıdır — geçersizlenir.
-                    if (member.Carried && decision == CycleRoundDecision.Converged)
+                    if (member.Carried && settled)
                         ReportCarriedCycleMember(run, id, member.DepIssues);
                     else
-                        ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason,
-                            decision, member.DepIssues,
+                        ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason, member.DepIssues,
+                            successIsTrusted: settled,
                             failureIsEvidence: provenHopeless?.Contains(id) == true,
-                            // Döngü kanıtı yalnız yakınsayan grupta yazılır (karar 4). Kanıt koşu ortasında kaybolduysa
-                            // (hashMode düştü) son derlemenin okuma durumu kaydedilmedi: yüzeyler null yazılır.
-                            cycle: decision == CycleRoundDecision.Converged
-                                ? CycleRecordOf(run, id, hashMode ? member.ReadStates : null)
-                                : null);
+                            // Tavana dayanmış grubun BAYAT yeşil üyesi: çıktı bir kuşak geride olabilir.
+                            cycleUnsettled: decision == CycleRoundDecision.CapReached
+                                && member.Result == BuildResult.Succeeded && !settled,
+                            // Döngü kanıtı güvenilir her başarıya yazılır (oturmuş üye dahil); hashMode düşmüşse yüzeyler null.
+                            cycle: settled ? CycleRecordOf(run, id, hashMode ? member.ReadStates : null) : null);
                 }
                 catch (Exception ex) { reportFailure ??= ex; }
             }
-            // [Task 7] Üye raporlamasından SONRA: yukarıdaki döngü zaten her üyeyi invalidate etmiştir
-            // (trustedResult=false ⇒ InvalidateBuildStateOnFailure), bu yalnız ÜZERİNE, hangi bileşik imzada
+            // [Task 7 · D3] Üye raporlamasından SONRA: yukarıdaki döngü oturmamış üyeleri invalidate etmiştir; oturmuş
+            // üyenin taze kaydı hafızayı da taşır (yalnız raporlar). Bu yalnız ÜZERİNE, hangi bileşik imzada
             // pes edildiğini ayrıca kaydeder. reportFailure varsa bile denenir — bir üyenin raporlama hatası
             // hafıza yazımını ENGELLEMEMELİDİR (aksi halde bir sonraki Cycles koşusu grubu yanlış raporlardı:
             // yazılmamış bir NoProgress'i tanıyamaz, silinmemiş bayat bir hafızayı ise tanırdı).
@@ -2208,8 +2215,8 @@ public sealed class RunCoordinator(
         public Dictionary<string, IReadOnlyDictionary<string, string>>? ReadStates { get; set; }
 
         /// <summary>[RESOLVE 3.4] Tur 1'de gerekmedi (karar 2): sonucu ve okuma durumu güvenilir kayıttan gelir, bu koşuda
-        /// henüz derlenmedi. Bayatlayıp derlenince düşer (<c>CompileOneAsync</c>); grup yakınsadığında hâlâ taşınıyorsa
-        /// "up to date (carried)" raporlanır.</summary>
+        /// henüz derlenmedi. Bayatlayıp derlenince düşer (<c>CompileOneAsync</c>); grup gerçek bir hükme vardığında oturmuş
+        /// ve hâlâ taşınıyorsa "up to date (carried)" raporlanır.</summary>
         public bool Carried { get; set; }
     }
 
@@ -2246,27 +2253,27 @@ public sealed class RunCoordinator(
     /// Turların hiçbirinde ara sonuç yayılmadığı için bu, o üye hakkında yayılan TEK sonuçtur ve
     /// <paramref name="totalDurationMs"/> turların TOPLAMIDIR.
     /// </summary>
+    /// <param name="successIsTrusted">[D3] Üye OTURMUŞ: grup yakınsadı, ya da gerçek bir hükümle (NoProgress, CapReached)
+    /// durdu ve üyenin okuduğu hiçbir grup-içi yüzey son tur sonunda bayat değildi — yeşil sonucu nihai API'lere bağlıdır
+    /// ve persist edilir. Yalnız başarı tarafında okunur.</param>
     /// <param name="failureIsEvidence">[suçlu kırmızı] Üye, okuduğu her grup-içi yüzey NİHAİYKEN derleyici
     /// hatası verdi (NoProgress'in yüzey-kanıtlı yolu) — hatası sıradan bir Build hatası kadar kanıtlıdır ve
     /// kanıt kapısından geçer (satır kırmızı `failed`, defterde <see cref="BuildState.FailedSignature"/>).
     /// Kapının diğer şartları (derleyici çıkışı, bilinen imza, defter) yine kapının kendisindedir — timeout
     /// gibi bir gerekçe buradan true gelse bile kanıt olmaz.</param>
-    /// <param name="cycle">[RESOLVE 3.4] Yakınsayan grupta derlenen üyenin döngü kanıtı (başarı persist'i yazar); diğer
+    /// <param name="cycleUnsettled">Tavana dayanmış grubun BAYAT (oturmamış) yeşil üyesi: derleme başarılı ama çıktı bir
+    /// kuşak geride OLABİLİR. Dep-issue listesine sahte isim enjekte EDİLMEZ — ayrı bir bayrak taşınır.</param>
+    /// <param name="cycle">[RESOLVE 3.4 · D3] Güvenilir başarının (oturmuş üye) döngü kanıtı (başarı persist'i yazar); diğer
     /// her yolda null.</param>
     private void ReportCycleMember(RunContext run, string projectId, BuildResult result, long totalDurationMs,
-                                   string? failReason, CycleRoundDecision decision, DepIssueResult depIssues,
-                                   bool failureIsEvidence = false, CycleMemberRecord? cycle = null) =>
+                                   string? failReason, DepIssueResult depIssues, bool successIsTrusted,
+                                   bool failureIsEvidence, bool cycleUnsettled, CycleMemberRecord? cycle) =>
         ReportProjectResult(run, projectId, result, totalDurationMs, failReason, depIssues,
-            // YAKINSAMAYAN GRUP HİÇBİR ŞEY PERSIST ETMEZ: yalnız Converged'e güvenilir — BAŞARI tarafında.
-            // NoProgress/CapReached/stop/iptal (decision hâlâ Continue) hâlinde yeşil görünen üye de invalidate
-            // edilir. [suçlu kırmızı] HATA tarafında bir istisna vardır: yüzeyleri oturmuşken patlayan üyenin
-            // sonucu da "arkasında durulabilir"dir — kanıt kapısı yalnız trusted sonuçları kanıt sayar, bu
-            // yüzden bayrak buradan geçer (üye zaten Failed olduğundan başarı-persist yolu hiç açılmaz).
-            trustedResult: decision == CycleRoundDecision.Converged || failureIsEvidence,
-            // Tavana dayanıldı ve üye yeşil: derleme başarılı ama çıktı bir kuşak geride OLABİLİR. Dep-issue
-            // listesine sahte isim enjekte EDİLMEZ — ayrı bir bayrak taşınır.
-            cycleUnsettled: decision == CycleRoundDecision.CapReached && result == BuildResult.Succeeded,
-            failLogTail: null, cycle: cycle);
+            // [D3] Güven sonuca göre AYRIŞIR: başarı yalnız oturmuşsa (Converged, ya da yakınsamayan grupta son turda
+            // bayat olmayan üye), hata yalnız kanıtlı-umutsuzsa. İkisi tek ifadeden okunsaydı bayat yüzeyle patlayan
+            // üye kanıtlı sayılır ya da oturmuş yeşil üye geçersizlenirdi.
+            trustedResult: result == BuildResult.Succeeded ? successIsTrusted : failureIsEvidence,
+            cycleUnsettled, failLogTail: null, cycle: cycle);
 
     /// <summary>
     /// [RESOLVE 3.4] Yakınsayan grubun hiç derlenmemiş (TAŞINAN) üyesini raporlar: tur 1'de gerekmedi (karar 2) ve tur
@@ -2546,13 +2553,13 @@ public sealed class RunCoordinator(
     /// <b>Yazım nedene göre AYRIŞIR.</b> Kanıt kararı bu metodun DIŞINDA, TEK yerde verilir
     /// (<see cref="FailureEvidenceSignature"/>: arkasında durulabilir sonuç + derleyici hatası + bilinen imza) ve
     /// buraya imza olarak gelir — AYNI değer App'e giden <see cref="ProjectFailedEvent.Evidence"/>'ı da belirler,
-    /// böylece satır ile bir sonraki Sync ayrışamaz. Yakınsamayan bir SCC'nin (§8.8) "yeşil" üyesi de bu metottan
+    /// böylece satır ile bir sonraki Sync ayrışamaz. Yakınsamayan bir SCC'nin (§8.8) bayat "yeşil" üyesi de bu metottan
     /// geçer; o kanıt SAYILMAZ. <b>Kanıtlıysa</b>: <see
     /// cref="BuildState.FailedSignature"/> planlamadaki imzayla, <see cref="BuildState.FailedAt"/> şimdiyle
     /// yazılır — kayıt yoksa <c>BuiltSignature: null</c> ile AÇILIR (hiç derlenmemiş bir proje ilk kez patladığında
     /// da kanıt kaybolmasın diye). İmzasız kanıt YOKTUR (<see cref="WillBuildEvaluator"/>'ın <c>LastFailed</c>'i
     /// imza eşitliğine bakar) — imza bilinmiyorsa kapı zaten kanıtsız der. <b>Kanıtsızsa</b> (timeout, stopped,
-    /// invoke error, yakınsamayan grubun yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
+    /// invoke error, yakınsamayan grubun bayat yeşil üyesi) bugünkü davranış korunur: yalnız <c>LastResult</c>/
     /// <c>LastRunAt</c> güncellenir, eski <c>FailedSignature</c>/<c>FailedAt</c> null'a ÇEKİLİR (eski kanıt
     /// düşer — çıktı artık güvenilmez ama kaynağın bozuk olduğu KANITLI değil); kayıt yoksa <c>BuiltSignature:
     /// null</c>, <c>LastResult=Failed</c> ile AÇILIR — kaydı olmayan proje zaman kipindedir ve açılmasaydı yarıda

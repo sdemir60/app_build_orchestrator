@@ -2278,8 +2278,9 @@ public sealed partial class RunViewModel : ObservableObject
     }
 
     /// <summary>
-    /// [cycles] Bir SCC turlarını bitirdi. Grup YAKINSAMADIYSA üyeleri "kalıcı kırık döngü" olarak işaretlenir:
-    /// bu koşu kanıtladı ki turlar bu kaynaklarla grubu güncel hâle getiremiyor.
+    /// [cycles] Bir SCC turlarını bitirdi. Grup YAKINSAMADIYSA motorun arkasında durmadığı üyeleri "kalıcı kırık
+    /// döngü" olarak işaretlenir: bu koşu kanıtladı ki turlar bu kaynaklarla grubu güncel hâle getiremiyor.
+    /// [D3-b] Oturmuş üye (güvenilir yeşil ya da "up to date" taşınan) işaretlenmez — motor onun kaydını tuttu.
     ///
     /// <para>Bayrağın kaynağı DEĞİŞTİ. Eskiden motor, önceki bir koşuda yakınsamamış grubu hiç denemeden
     /// pre-skip eder ve bayrağı o skip'e iliştirirdi; o pre-skip kalktığı için (açık Resolve basışı artık her
@@ -2293,8 +2294,12 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnCycleCompleted(CycleCompletedEvent e)
     {
         if (e.Outcome != CycleOutcome.NoProgress) return;
+        // [D3-b] Yalnız motorun arkasında durmadığı üyeler sıkışmıştır: oturmuş yeşil üye güvenilir persist edildi ve
+        // satırı az önce UpToDate yazıldı (OnProjectDone → NextPreview.AfterSuccess); oturmuş taşınan üye "skipped — up
+        // to date" aldı (skip satırının plan bayrağı her koşulda yazılmaz, bu yüzden State kapısı AYRICA gerekir); bayat
+        // ya da patlayan üye kirli kalır.
         foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
-            if (FindRow(member) is { } row)
+            if (FindRow(member) is { State: not ProjectRowState.Skipped, WillBuild: not false } row)
                 row.CycleUnconverged = true;
         RefreshRunSurface();
     }
