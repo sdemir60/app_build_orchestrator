@@ -2424,6 +2424,24 @@ public class RunViewModelStateTests
             (row.State, row.WillBuild, row.WillBuildReason, row.Conditional, row.OwnFilesChanged));
     }
 
+    /// <summary>[D8 · Resolve cycles] Resolve'un önizlemesi plan bayrağını yazmaz (PreviewWritesPlanFlag); kapı bu yüzden satırın
+    /// bayrağını (Sync'in cevabı, bayat olabilir) DEĞİL, koşunun kendi önizlemesinin kesin kümesini okur. Sync'in kirli gördüğü
+    /// ama koşu başında "up to date" (built outside) atlanan kapsamdaki upstream'in gerekçesi ezilmez: motor onun defterini
+    /// yenilemedi, bir sonraki Sync yine "built outside" der.</summary>
+    [Fact]
+    public void A_resolve_pre_skip_of_a_row_the_sync_saw_dirty_keeps_its_reason()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("U", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("U", false, WillBuildReason.BuiltOutside)])); // VS Sync'ten sonra derledi
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("U"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "U");
+        Assert.Equal((ProjectRowState.Skipped, true, WillBuildReason.BuiltOutside), (row.State, row.WillBuild, row.WillBuildReason));
+    }
+
     /// <summary>Pre-skip satırı (koşu başında "up to date", gerekçesi "built outside this tool") dokunulmaz: planın derleyecek
     /// demediği satırın gerekçesi UpToDate'e ezilmez — ezilseydi satır ile bir sonraki Sync ayrışırdı.</summary>
     [Fact]
