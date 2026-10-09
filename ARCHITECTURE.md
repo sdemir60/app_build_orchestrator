@@ -1714,11 +1714,12 @@ taken in this order, and the matching rule is written to `decision.log` before t
 - **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
   none), or the term differs from the stored one: the member's own files or its configuration changed.
 - **Dependency surface moved.** A direct dependency outside the component has no surface in the record (§7.5), or its
-  evidence file, hashed when the group starts, is gone, unreadable or no longer the hash the member last compiled
-  against. An outside upstream whose body changed while its API stayed put moves nothing here, so the members reading
-  it are carried — the composite still turns the group dirty, which is what brings the group to this question. Only
-  the evidence file is compared, the file the record holds; an outside upstream with no derivable evidence path
-  (§7.6) has nothing to compare, and the members that read it compile whenever their group does.
+  evidence file, hashed when the group starts, is gone, unreadable or carries a hash other than the one the member
+  last compiled against. An outside upstream whose body changed while its API stayed put moves nothing here, so the
+  members reading it are carried — the composite still turns the group dirty, which is what brings the group to this
+  question. The comparison is by hash, as the surface gate's is (§8.3); where the evidence file now lives does not
+  matter. An outside upstream with no derivable evidence path (§7.6) has nothing to compare, and the members that
+  read it compile whenever their group does.
 - **Output evidence missing, output older than its inputs.** The member has no output check, no derivable
   evidence path or an output file that is gone, or fed copies that are not intact (§7.6); or its output is in time
   mode and older than one of its own inputs — an output that may not have been compiled from the sources on disk (an

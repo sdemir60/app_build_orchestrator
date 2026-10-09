@@ -190,7 +190,10 @@ public static class CycleMemberNeed
         {
             var seen = recorded?.FirstOrDefault(s => string.Equals(s?.Producer, dep, StringComparison.OrdinalIgnoreCase));
             var now = surfaceState.TryGetValue(dep, out var files) ? files : NoFiles;
-            if (seen?.File is null || seen.Hash is null || !now.TryGetValue(seen.File, out string? current) || current != seen.Hash)
+            // Karşılaştırma yüzey kapısınınki gibi ÖZETLEDİR (üretici kimliği zaten Producer'da): kanıt dosyası başka yola
+            // taşınıp aynı API'yi taşıyorsa üye yine aynı yüzeye bağlıdır. Adlandırılan dosya kayıttaki (yoksa diskteki).
+            if (seen?.File is null || seen.Hash is null
+                || !now.Values.Any(current => string.Equals(current, seen.Hash, StringComparison.Ordinal)))
                 moved.Add(seen?.File ?? now.Keys.FirstOrDefault() ?? dep);
         }
         return [.. moved];
