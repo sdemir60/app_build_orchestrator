@@ -2284,6 +2284,15 @@ public sealed partial class RunViewModel : ObservableObject
         row.SkipReason = e.Reason; // proje sayfası "neden boş" sorusunu bundan cevaplar
         row.CycleUnconverged = e.CycleUnconverged; // [cycle rounds/Task 8] kalıcı kırık döngü — render Task 9'undur
         row.CycleWaiting = false; // [cycle rounds/I2] terminal satır hiçbir grubun sırasını beklemez
+        // [D8] Koşu içi "up to date" atlaması (yüzey kapısı, taşınan döngü üyesi) — yalnız planın DERLEYECEK dediği satırda:
+        // defter az önce yenilendi, satır bir sonraki Sync'in cevabını şimdiden verir (App kendi kopyasını türetmez:
+        // NextPreview). Pre-skip satırı (WillBuild=false, gerekçesi BuiltOutside olabilir) DOKUNULMAZ — gerekçesi ezilirse
+        // satır ile Sync ayrışır; DependencyStillFailing deftere dokunmaz ve bayrağı değiştirmez.
+        if (e.Reason == SkipReasons.UpToDate && row.WillBuild == true && RunActive && PreviewWritesPlanFlag)
+        {
+            ApplyNextPreview(row, NextPreview.AfterUpToDateSkip(), waitingRoots: null);
+            row.OwnFilesChanged = false;
+        }
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
         RefreshRunSurface();

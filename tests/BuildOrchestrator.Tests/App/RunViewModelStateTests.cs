@@ -2382,4 +2382,42 @@ public class RunViewModelStateTests
         Assert.Equal("up to date",
             DecisionLabel.For(down.WillBuild, down.WillBuildReason, down.OwnFilesChanged, down.LocalEdits).Word);
     }
+
+    /// <summary>[D8] Koşu sürerken "up to date" ile atlanan satır (yüzey kapısı, taşınan döngü üyesi): motor defteri yeni imzayla
+    /// yeniledi, bir sonraki Sync UpToDate diyecek — satır o cevabı hemen verir (<see cref="NextPreview.AfterUpToDateSkip"/>),
+    /// gri "affected"ta kalmaz. Kök bekleyen atlama (DependencyStillFailing) plan bayrağına dokunmaz
+    /// (<see cref="A_dependency_still_failing_skip_leaves_the_row_current_with_the_warning_and_the_up_to_date_label"/> korunur).
+    /// Bilinen sınır: kaydı miras kök notu taşıyorsa satır bir sonraki Sync'e kadar UpToDate okur (olay kök taşımaz).</summary>
+    [Fact]
+    public void A_row_skipped_as_up_to_date_during_a_run_turns_up_to_date_at_once()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("D", true, WillBuildReason.SignatureChanged));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("D", true, WillBuildReason.SignatureChanged)]));
+        Assert.Equal(1, vm.WillBuildCount);
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("D"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "D");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.UpToDate, false, false),
+            (row.State, row.WillBuild, row.WillBuildReason, row.Conditional, row.OwnFilesChanged));
+        Assert.Equal(1, vm.FinishedOfWillBuild); // terminal: n ilerler, çubuk hareket eder
+    }
+
+    /// <summary>Pre-skip satırı (koşu başında "up to date", gerekçesi "built outside this tool") dokunulmaz: planın derleyecek
+    /// demediği satırın gerekçesi UpToDate'e ezilmez — ezilseydi satır ile bir sonraki Sync ayrışırdı.</summary>
+    [Fact]
+    public void A_pre_skipped_row_keeps_its_built_outside_reason()
+    {
+        var vm = T5Vm();
+        SyncWith(vm, Item("D", false, WillBuildReason.BuiltOutside));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 1, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([Item("D", false, WillBuildReason.BuiltOutside)]));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("D"), SkipReasons.UpToDate));
+
+        var row = RowOf(vm, "D");
+        Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.BuiltOutside), (row.State, row.WillBuild, row.WillBuildReason));
+    }
 }
