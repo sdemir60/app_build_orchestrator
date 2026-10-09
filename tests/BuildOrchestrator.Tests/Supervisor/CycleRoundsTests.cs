@@ -26,6 +26,12 @@ namespace BuildOrchestrator.Tests.Supervisor;
 /// Clean sonrası TEK bir Build 187 projeyi 7 cycle grubu (33 üye, hepsi tur 1'de yakınsadı) dahil 194 sn'de derledi;
 /// taban aynı işi iki koşuda yapıyordu (Resolve cycles 197 sn + Build 187 sn). Değişiklik olmadan ikinci Build
 /// 1,2 sn — her grup <c>up to date</c> atlandı (ayrıntı: .claude/outputs/2026-10-08-08-02-build-compiles-dirty-cycles-measurement.md).</para>
+/// <para><b>Ölçüm (gerçek OSYS, 2026-10-09 — D2/D3, paralellik 1):</b> VS'de <c>OSYS.UI.Service.WorkOrder</c> gövde
+/// değişikliği + VS proje ya da solution build'i sonrası Build'de UI grubu (17 üye) tur 1'de 1 derleme + 16 taşınan üyeyle
+/// 0,8 sn'de yakınsadı (taban 2026-10-08: 16 üye "output built outside this tool" ile, 17 derleme, tur 234 sn). Aynı
+/// üyede kopya kilidi tur 1'de NoProgress verdi, 16 kardeş güvenilir kaldı ve kilit kalkınca takip Build'i yalnız patlayan
+/// üyeyi derledi (8,5 sn; eski kural 17 üyeyi derliyordu, tur 153 sn) (ayrıntı:
+/// .claude/outputs/2026-10-09-11-04-cycle-trust-measurement.md).</para>
 /// </summary>
 public class CycleRoundsTests
 {
