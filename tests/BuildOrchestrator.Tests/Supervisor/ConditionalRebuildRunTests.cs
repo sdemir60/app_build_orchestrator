@@ -61,8 +61,6 @@ public class ConditionalRebuildRunTests : IDisposable
     private static FakeInvoker UpFails() =>
         new((req, _, _) => Task.FromResult(NameOf(req.ProjectId) == "Up" ? Exit(1) : Ok()));
 
-    private static FakeInvoker AllSucceed() => new((_, _, _) => Task.FromResult(Ok()));
-
     private static async Task RunAsync(Harness h, StartRunCommand cmd)
     {
         await h.Sut.StartAsync(cmd, default);

@@ -2464,15 +2464,18 @@ public class CycleRoundsTests
         finally { if (Directory.Exists(cacheRoot)) Directory.Delete(cacheRoot, recursive: true); }
     }
 
-    /// <summary>Aynı defter ve sahte disk üzerinde bir Resolve koşusu (tek işçi); bitmesini bekler.</summary>
-    private static async Task<Harness> ResolveAsync(BuildStateStore store, SurfaceDisk disk, RunPlan plan,
-        FakeInvoker invoker, string? customBeforeTargetsPath = null, CancellationToken ct = default)
+    /// <summary>Aynı defter ve sahte disk üzerinde bir Resolve koşusu (tek işçi); bitmesini bekler. <paramref name="mode"/>
+    /// başka modu (Build, Rebuild) aynı koşturucuyla sürer — yüzey kapısı testleri onu kullanır, ikinci bir koşturucu
+    /// YAZILMAZ (kopya YASAK).</summary>
+    internal static async Task<Harness> ResolveAsync(BuildStateStore store, SurfaceDisk disk, RunPlan plan,
+        FakeInvoker invoker, string? customBeforeTargetsPath = null, CancellationToken ct = default,
+        RunMode mode = RunMode.Cycles)
     {
         var h = new Harness(plan, invoker, stateStore: store, apiSurface: disk.Read,
             customBeforeTargetsPath: customBeforeTargetsPath);
         try
         {
-            await h.Sut.StartAsync(Start(RunMode.Cycles, parallelism: 1), ct);
+            await h.Sut.StartAsync(Start(mode, parallelism: 1), ct);
             await h.Sut.RunCompletion.WaitAsync(Limit);
             return h;
         }

@@ -202,6 +202,16 @@ public static class Program
             // olan derlenir. Kontroller plana da taşınır (koşu önizlemesi).
             var checks = binder.ChecksFor(state);
             var (bound, signatures, memberTerms) = binder.Bind(state, CycleCompilation.CompilesCycles(cmd.Mode), cmd.DependentMode, checks);
+            // [D5] Yüzey kapısının adayları: Safe (bu koşunun kararı) ile Fast'in (frozen-upstream, kanıtlı) karşılaştırması —
+            // Sync'in iki geçişiyle aynı binder, parmak izleri önbellekten (ikinci bağlama diske inmez). Yalnız defteri
+            // dinleyen tam koşuda (SurfaceGate.AppliesTo) ve Safe kipte: Fast kipte bağımlı zaten "güncel" sayılıp atlanır.
+            // Karar Core'da.
+            IReadOnlySet<string>? candidates = null;
+            if (SurfaceGate.AppliesTo(cmd.Mode, scopedRun: cmd.ScopeProjectId is not null) && cmd.DependentMode == DependentMode.Safe)
+            {
+                var (fast, _) = binder.Bind(state, CycleCompilation.CompilesCycles(cmd.Mode), DependentMode.Fast, checks);
+                candidates = SurfaceGate.CandidateIds(bound, fast);
+            }
 
             hashes.Flush();
             // [v1.16.0] İçerik özetleri de taşınır: başarılı derlemede deftere yazılır (BuildState.BuiltContent)
@@ -211,7 +221,7 @@ public static class Program
             // [RESOLVE Faz 3/Task 3.1] SCC üyelerinin kendi terimleri de taşınır: Resolve'un tur 1'i grubun içinde
             // kimin derleneceğini bunlarla seçer (bileşik imza downstream ve "grup kirli mi" için kalır).
             return (bound, new IncrementalPlan(signatures, head, branch, externalCommits, binder.ContentById,
-                binder.OutputsById, checks, memberTerms));
+                binder.OutputsById, checks, memberTerms, candidates));
         }
         catch (Exception ex)
         {

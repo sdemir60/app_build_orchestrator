@@ -67,7 +67,10 @@ public sealed record IncrementalPlan(
     IReadOnlyDictionary<string, string?>? ContentById = null,
     IReadOnlyDictionary<string, ProjectOutputs>? OutputsById = null,
     IReadOnlyDictionary<string, OutputCheck>? ChecksById = null,
-    IReadOnlyDictionary<string, string>? MemberTermById = null);
+    IReadOnlyDictionary<string, string>? MemberTermById = null,
+    // [D5] Sırası gelince yüzey kapısından geçecek projeler (SurfaceGate.CandidateIds: Safe ile kanıtlı Fast bağlamanın
+    // karşılaştırması); null ⇒ kapı yok. Yalnız defteri dinleyen tam koşuda üretilir (SurfaceGate.AppliesTo).
+    IReadOnlySet<string>? SurfaceCandidateIds = null);
 
 /// <summary>
 /// Bir run için MSBuild takımı: <b>ham</b> (retry'siz) invoker + çözülmüş MSBuild.exe yolu.
