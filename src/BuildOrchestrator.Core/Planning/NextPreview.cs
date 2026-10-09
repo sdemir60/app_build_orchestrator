@@ -70,6 +70,13 @@ public static class NextPreview
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterClean(bool inCycle) =>
         (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
 
+    /// <summary>[D8] Proje BU KOŞUDA sırası gelince <c>up to date</c> ile atlandı (yüzey kapısı — hiçbir doğrudan bağımlılığının
+    /// API yüzeyi değişmemiş): defteri yeni bileşik imzayla yenilendi, bir sonraki Sync <see cref="WillBuildReason.UpToDate"/>
+    /// der. Pre-skip'ler buraya gelmez (satır zaten WillBuild=false); kök bekleyen atlama (DependencyStillFailing) defterine
+    /// dokunmaz ve buraya gelmez.</summary>
+    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterUpToDateSkip() =>
+        (false, WillBuildReason.UpToDate, false);
+
     /// <summary>Bir sonraki DÜZ Build bu projeyi derleme kapsamına alır mı — Sync'in sorduğu AYNI soru
     /// (<see cref="CycleCompilation"/> + <see cref="WillBuildEvaluator.OutOfScope"/>); kopya YASAK.</summary>
     private static bool NextBuildCompiles(bool inCycle) =>

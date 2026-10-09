@@ -224,6 +224,30 @@ public class BuildStateStoreTests : IDisposable
         Assert.NotEqual(fresh, fresh with { CycleReadSurfaces = null });
     }
 
+    /// <summary>[D6] Sıradan projenin son güvenilir derlemesinde bağlandığı doğrudan bağımlılık yüzeyleri — yüzey kapısının
+    /// (<c>SurfaceGate</c>) karşılaştırma tabanı. Alan SONA ve default'lu: eski kayıt null okur (kapı o projeyi derler —
+    /// güvenli yön). Eşitlik sıraya duyarlı, kanonik sıra yazan tarafın (DepIssueRoots/CycleReadSurfaces deseni).</summary>
+    [Fact]
+    public void Dependency_surfaces_round_trip_and_an_old_record_reads_null()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(StatePath,
+            """{"C:\\r\\Old.csproj":{"ProjectId":"C:\\r\\Old.csproj","BuiltSignature":"s","BuiltCommit":null,"LastResult":0,"LastRunAt":null,"LastBranch":null,"LastDurationMs":null,"NonConvergentSignature":null,"BuiltContent":null,"DepIssue":false,"DepIssueRoots":null,"FailedSignature":null,"FailedAt":null,"FedOutputs":null,"PackagesConfigHash":null,"CycleMemberTerm":null,"CycleReadSurfaces":null,"CycleEngineFingerprint":null}}""");
+        var store = new BuildStateStore(_root);
+        Assert.Null(Assert.Contains(@"C:\r\Old.csproj", store.Load()).DependencySurfaces);
+
+        var surface = new CycleReadSurface(@"C:\r\U.csproj", @"C:\r\U\bin\Debug\U.dll", "SURF1");
+        var fresh = new BuildState(@"C:\r\New.csproj", "s", LastResult: BuildResult.Succeeded, DependencySurfaces: [surface]);
+        store.Upsert(fresh);
+
+        Assert.Contains("\"DependencySurfaces\":[{\"Producer\":", File.ReadAllText(StatePath));
+        var back = Assert.Contains(@"C:\r\New.csproj", store.Load());
+        Assert.Equal(fresh, back);
+        Assert.Equal(fresh.GetHashCode(), back.GetHashCode());
+        Assert.NotEqual(fresh, fresh with { DependencySurfaces = [surface with { Hash = "SURF2" }] });
+        Assert.NotEqual(fresh, fresh with { DependencySurfaces = null });
+    }
+
     /// <summary>
     /// [RESOLVE Faz 3/Task 3.2] <see cref="BuildState.CycleReadSurfaces"/>'ın eşitliği SIRAYA duyarlıdır
     /// (<c>DepIssueRoots</c>/<c>FedOutputs</c> deseni): aynı okumanın iki kaydı ancak liste kanonik sıradaysa (Producer,

@@ -198,9 +198,9 @@ public sealed record BuildState(
     // [RESOLVE Faz 3 — karar 2/4] Bu döngü üyesinin son GÜVENİLİR derlemesindeki KENDİ terimi (IncrementalPlan.
     // MemberTermById: SCC-içi kenarlar sabit işaret, grup dışı upstream'ler taze imzalarıyla). Bileşik imzadan
     // (BuiltSignature) AYRI durur: bileşik kardeşlerin içeriğini de taşır, üyenin kendi girdilerinin değişip
-    // değişmediğini söyleyemez. Üç döngü alanını yalnız grubu yakınsayan (Converged) Cycles koşusu yazar; yakınsamayan
-    // ya da kesilen koşu hiçbirini yazmaz. Alanlar SONA ve default'lu: eski kayıtlar ve döngü dışı projeler null
-    // çözülür — üye "gerekli" sayılır (güvenli yön).
+    // değişmediğini söyleyemez. Üç döngü alanını yalnız güvenilir başarı yazar: grup yakınsadı ya da hükümsüz durduğunda
+    // üye oturmuştu (D3); bayat üye ile kesilen koşu hiçbirini yazmaz. Alanlar SONA ve default'lu: eski kayıtlar ve
+    // döngü dışı projeler null çözülür — üye "gerekli" sayılır (güvenli yön).
     string? CycleMemberTerm = null,
     // Aynı derlemede üyenin okuduğu kardeş yüzeyleri (üretici, dosya, yüzey özeti). Resolve'un tur 1'inde diskteki
     // yüzey kayıttakinden farklıysa üye derlenir; null ⇒ yüzey kanıtı yok ⇒ üye gerekli. Liste KANONİK sıradadır:
@@ -210,7 +210,13 @@ public sealed record BuildState(
     IReadOnlyList<CycleReadSurface>? CycleReadSurfaces = null,
     // Kaydı yazan koşunun motor parmak izi (EngineFingerprint: MSBuild.exe yolu + dosya sürümü + build argüman
     // sözleşmesi). Bu koşununkinden farklıysa gruptaki herkes gerekli.
-    string? CycleEngineFingerprint = null)
+    string? CycleEngineFingerprint = null,
+    // [D6 — yüzey kapısı] Bu projenin son GÜVENİLİR derlemesinde bağlandığı DOĞRUDAN bağımlılık yüzeyleri: üretici id,
+    // üreticinin kanıt dosyası ve o anki API yüzeyi özeti (ApiSurfaceHash). Sıradan projede her doğrudan bağımlılık,
+    // döngü üyesinde yalnız GRUP DIŞI bağımlılıklar (grup içi CycleReadSurfaces'tadır). Yüzeyi okunamayan ya da dosyası
+    // olmayan bağımlılık listeye GİRMEZ — kapı o projeyi derler (güvenli yön). Kanonik sıra ve eşitlik CycleReadSurfaces
+    // ile aynı. Alan SONA ve default'lu: eski kayıtlar null çözülür.
+    IReadOnlyList<CycleReadSurface>? DependencySurfaces = null)
 {
     // Derleyicinin record eşitliği liste alanında referans eşitliğine düşer (JSON round-trip sonrası her zaman
     // farklı örnek) — ProjectNode ile aynı gerekçe, kökler sıralı içerikle karşılaştırılır.
@@ -239,7 +245,10 @@ public sealed record BuildState(
         && (CycleReadSurfaces is null
             ? other.CycleReadSurfaces is null
             : other.CycleReadSurfaces is not null && CycleReadSurfaces.SequenceEqual(other.CycleReadSurfaces))
-        && CycleEngineFingerprint == other.CycleEngineFingerprint;
+        && CycleEngineFingerprint == other.CycleEngineFingerprint
+        && (DependencySurfaces is null
+            ? other.DependencySurfaces is null
+            : other.DependencySurfaces is not null && DependencySurfaces.SequenceEqual(other.DependencySurfaces));
 
     public override int GetHashCode()
     {
@@ -262,6 +271,7 @@ public sealed record BuildState(
         hash.Add(CycleMemberTerm);
         foreach (var surface in CycleReadSurfaces ?? []) hash.Add(surface);
         hash.Add(CycleEngineFingerprint);
+        foreach (var surface in DependencySurfaces ?? []) hash.Add(surface);
         return hash.ToHashCode();
     }
 }
@@ -269,7 +279,8 @@ public sealed record BuildState(
 /// <summary>
 /// [RESOLVE Faz 3] Bir döngü üyesinin son GÜVENİLİR derlemesinde okuduğu kardeş yüzeyi: üretici id'si
 /// (<c>Producer</c>, tam csproj yolu), okunan dosya (<c>File</c>) ve o dosyanın API yüzeyi özeti (<c>Hash</c>).
-/// <see cref="BuildState.CycleReadSurfaces"/>'ın öğesidir; eşitlik üç alanın değer eşitliğidir.
+/// <see cref="BuildState.CycleReadSurfaces"/>'ın öğesidir; <see cref="BuildState.DependencySurfaces"/>'ın da öğesidir
+/// (orada üretici bir doğrudan bağımlılık, dosya onun kanıt dosyasıdır). Eşitlik üç alanın değer eşitliğidir.
 /// </summary>
 public sealed record CycleReadSurface(string Producer, string File, string Hash);
 
