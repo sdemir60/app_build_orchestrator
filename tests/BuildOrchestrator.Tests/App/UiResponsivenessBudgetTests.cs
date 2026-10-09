@@ -40,7 +40,9 @@ public class UiResponsivenessBudgetTests(ITestOutputHelper output)
     /// (kopya YASAK, CLAUDE.md).</summary>
     internal const double EventBudgetMs = 50;
 
-    private static List<ProjectNode> Topology(int count)
+    /// <summary>Gerçek OSYS ölçeğinde sentetik topoloji (6 katman, zincir bağımlılıklar). internal: olay patlaması testi
+    /// (<c>EngineEventBurstTests</c>) AYNI topolojiyi kurar — ikinci bir kopya yazılmaz (kopya YASAK, CLAUDE.md).</summary>
+    internal static List<ProjectNode> Topology(int count)
     {
         var nodes = new List<ProjectNode>(count);
         for (int i = 0; i < count; i++)

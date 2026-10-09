@@ -362,11 +362,13 @@ public partial class MainWindow : Window
         });
         // [A13.2/Kısıt 4] YALNIZ projectLog YÜKSEK frekanslı akan log satırıdır — VM'in o dalı ConsoleBatcher.Post
         // (kilitsiz) kullanır, ObservableProperty'e DOKUNMAZ; marshal OLMADAN doğrudan çağrılabilir. Diğer TÜM
-        // event'ler UI thread'ine taşınır.
+        // event'ler UI thread'ine taşınır — olay başına bir dispatcher işi olarak DEĞİL, zaman dilimli tek bir pompayla
+        // (EngineEventPump): koşu başının yüzlerce olaylık patlaması UI thread'ini tek blokta tutmasın.
+        var engineEvents = new EngineEventPump(Dispatcher, _vm.OnEvent);
         _engine.EventReceived += ev =>
         {
             if (ev is ProjectLogEvent) _vm.OnEvent(ev);
-            else Dispatcher.InvokeAsync(() => _vm.OnEvent(ev));
+            else engineEvents.Post(ev);
         };
         // [spec 2026-09-18 §6.1 · karar 11] Kendiliğinden Sync: HEAD izleyicisinin thread-pool geri çağrısı motor
         // olaylarıyla AYNI yoldan (Dispatcher.InvokeAsync) UI thread'ine taşınır; pencereye dönüş (tepsiden dönüş

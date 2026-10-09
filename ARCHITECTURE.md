@@ -2689,6 +2689,16 @@ implementation `VelopackUpdater` reads the feed of §12.5, and `UpdateService`, 
 view model on the UI thread — and the view models. Two application-wide singletons are exposed statically because
 their owners have no constructor seam: the reduced-motion settings and the hero-motion coordinator.
 
+Engine events reach the view model on the UI thread through one pump. `projectLog` lines go straight from the
+reader thread into the console batcher; every other event joins a single queue that one drain empties in arrival
+order, in time slices of at most 8 ms (`EngineEventPump.SliceBudgetMs`). The first slice runs at once, at the
+priority a single event always had, so one event is never delayed; when a slice is used up with events still
+waiting, the rest is handed to a priority below input and rendering, so a frame is drawn and a key or click is
+handled between slices. The reason is the start of a run: the engine announces it with `runStarted`,
+`buildPreview` and one `projectSkipped` per project it skips — on the real workspace close to two hundred events at
+once — and handled one dispatcher operation each, above rendering and input, they held the interface for a few
+hundred milliseconds in one piece at the start of every run.
+
 The update engine starts only once the window has been shown or put in the tray, so its first check, five seconds
 later, comes after the opening rather than inside it; the view model's *Restart to update* request is wired to it
 at the same point, and `OnExit` asks it to install once the build engine has been shut down and the
@@ -6435,6 +6445,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | NDJSON framing, line limit, writer serialization | `Contracts/Ipc/NdjsonFraming.cs` |
 | Domain DTOs (`ProjectNode`, `BuildPlan`, `BuildState`, `LayerPattern`…) | `Contracts/Model/ProjectModels.cs` |
 | Spawning the engine, generation guard, engine-died signal; the kill and the wait for the killed process to end (`KillAndAwaitExit`) | `App/Services/EngineHost.cs` |
+| Engine events onto the UI thread: one ordered queue, drained in time slices that yield to input and rendering | `App/Services/EngineEventPump.cs` |
 | Supervisor entry, argument handling, stdout redirect, planner wiring, crash recovery before the host starts | `Supervisor/Program.cs` |
 | Command dispatch, per-command input gates; the `checkoutBranch` handler and its run-active rejection | `Supervisor/SupervisorHost.cs` |
 | Supervisor path resolution from assembly metadata | `App/Services/SupervisorLayout.cs` |
