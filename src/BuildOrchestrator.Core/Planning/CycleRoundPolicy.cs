@@ -87,4 +87,20 @@ public static class CycleRoundPolicy
 
         return round >= RoundCap ? CycleRoundDecision.CapReached : CycleRoundDecision.Continue;
     }
+
+    /// <summary>
+    /// [D3] Hüküm verilmiş grupta üyenin sonucu güvenilir (OTURMUŞ) mu: Converged'de herkes; gerçek bir hükümde
+    /// (NoProgress, CapReached) okuduğu grup içi yüzeylerin hiçbiri son tur sonunda bayat olmayan üye — nihai API'lere
+    /// bağlandı, bir tur daha sonucunu değiştiremezdi. Continue'da ve kanıtsız hükümde (<paramref name="staleAtEnd"/>
+    /// null) hiç kimse. Oturmuş üyenin başarısı deftere yazılır, taşınan oturmuş üyenin kaydı yenilenir; oturmamış üye
+    /// geçersizlenir (koordinatör uygular).
+    /// </summary>
+    /// <param name="staleAtEnd">Son turun sonunda okuduğu yüzeyi değişmiş üyeler (<see cref="Decide"/>'ın <c>staleNow</c>'ı);
+    /// null ⇒ yüzey kanıtı yok.</param>
+    public static bool IsSettled(CycleRoundDecision decision, IReadOnlySet<string>? staleAtEnd, string member)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        return decision == CycleRoundDecision.Converged
+            || (decision != CycleRoundDecision.Continue && staleAtEnd is not null && !staleAtEnd.Contains(member));
+    }
 }

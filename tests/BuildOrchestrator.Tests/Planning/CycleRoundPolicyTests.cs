@@ -141,4 +141,24 @@ public class CycleRoundPolicyTests
     {
         Assert.Equal(CycleRoundDecision.NoProgress, CycleRoundPolicy.Decide(2, Set("a"), Set("a"), staleNow: Set("a")));
     }
+
+    // ---------------------------------------------------------------- oturmuş üye [D3]
+    // Grubun hükmü verildikten sonra hangi üyenin sonucu güvenilir: Converged'de herkes; NoProgress/CapReached'te okuduğu
+    // yüzeyler son tur sonunda bayat olmayan üye (nihai API'lere bağlandı); Continue'da ve kanıtsız hükümde hiç kimse.
+
+    [Theory]
+    [InlineData(CycleRoundDecision.Converged, null, true)]
+    [InlineData(CycleRoundDecision.Converged, "a", true)]
+    [InlineData(CycleRoundDecision.NoProgress, "", true)]
+    [InlineData(CycleRoundDecision.NoProgress, "a", false)]
+    [InlineData(CycleRoundDecision.NoProgress, "b", true)]
+    [InlineData(CycleRoundDecision.CapReached, "b", true)]
+    [InlineData(CycleRoundDecision.CapReached, null, false)]
+    [InlineData(CycleRoundDecision.Continue, "", false)]
+    public void a_member_is_settled_when_the_verdict_is_real_and_its_read_surfaces_were_final(
+        CycleRoundDecision decision, string? staleAtEnd, bool expected)
+    {
+        var stale = staleAtEnd is null ? null : staleAtEnd.Length == 0 ? Set() : Set(staleAtEnd);
+        Assert.Equal(expected, CycleRoundPolicy.IsSettled(decision, stale, "a"));
+    }
 }

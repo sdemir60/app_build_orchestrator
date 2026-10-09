@@ -159,6 +159,19 @@ public class CycleMemberNeedTests
         AssertNeeded(Decide(disk, ("A", member)), "A", "dependency surface moved: " + U1);
     }
 
+    [Fact] // (i-b) upstream'in çıktısı başka yola taşındı ama yüzeyi aynı ⇒ taşınır: karşılaştırma yüzey kapısı gibi hash'ledir
+    public void an_outside_dependency_whose_output_moved_with_the_same_surface_keeps_the_member_carried()
+    {
+        var member = Member("t1", Reads, Intact) with
+        {
+            Record = WithOutside(Ledger("t1", Reads), Read("U", U1, "u1")),
+            OutsideDependencies = ["U"],
+        };
+        var disk = Disk(Read("B", B1, "h1"), Read("B", B2, "h2"), Read("U", @"X:\bin\net46\U.dll", "u1"));
+
+        AssertCarried(Decide(disk, ("A", member)), "A");
+    }
+
     [Fact] // (i-b) kayıt grup dışı bağımlılığı kapsamıyor (eski kayıt / okunamamış yüzey) ⇒ gerekli
     public void an_outside_dependency_missing_from_the_record_makes_the_member_needed()
     {
@@ -551,28 +564,28 @@ public class CycleMemberNeedTests
     public void the_first_matching_rule_names_the_reason()
     {
         var moved = Disk(Read("B", B1, "moved"), Read("B", B2, "h2"));
-        var outside = Intact with { Mode = EvidenceMode.Time, Time = TimeVerdict.OwnNewer };
+        var olderThanInputs = Intact with { Mode = EvidenceMode.Time, Time = TimeVerdict.OwnNewer };
         string ReasonOf(CycleMemberNeed.MemberEvidence member) => Decide(moved, ("A", member)).Reasons["A"];
 
         // her şey yanlış ama kayıt güvenilmez ⇒ başka hiçbir neden söylenmez
         var untrusted = Ledger("t1", Reads) with { LastResult = BuildResult.Failed, CycleEngineFingerprint = "engine-0" };
         Assert.Equal("no trusted record",
-            ReasonOf(Member("t1", Reads, outside) with { CurrentTerm = "t2", Record = untrusted }));
+            ReasonOf(Member("t1", Reads, olderThanInputs) with { CurrentTerm = "t2", Record = untrusted }));
 
         // kayıt güvenilir; motor, terim, çıktı ve yüzey yanlış ⇒ motor (grup çapındaki neden önde)
         var otherEngine = Ledger("t1", Reads) with { CycleEngineFingerprint = "engine-0" };
         Assert.Equal("engine changed",
-            ReasonOf(Member("t1", Reads, outside) with { CurrentTerm = "t2", Record = otherEngine }));
+            ReasonOf(Member("t1", Reads, olderThanInputs) with { CurrentTerm = "t2", Record = otherEngine }));
 
         // motor aynı; terim, çıktı ve yüzey yanlış ⇒ kendi girdisi
-        Assert.Equal("own inputs changed", ReasonOf(Member("t1", Reads, outside) with { CurrentTerm = "t2" }));
+        Assert.Equal("own inputs changed", ReasonOf(Member("t1", Reads, olderThanInputs) with { CurrentTerm = "t2" }));
 
         // terim aynı; çıktı kendi girdisinden eski ve yüzey yanlış ⇒ çıktı; beslenen kopya da bozuksa bu neden önde kalır
-        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, outside)));
-        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, outside with { FedIntact = false })));
+        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, olderThanInputs)));
+        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, olderThanInputs with { FedIntact = false })));
 
         // zaman kipi ama kanıt dosyası yok ⇒ "kendi girdisinden eski" yanlış olurdu: kanıt eksik
-        Assert.Equal("output evidence missing", ReasonOf(Member("t1", Reads, outside with { EvidenceMissing = true })));
+        Assert.Equal("output evidence missing", ReasonOf(Member("t1", Reads, olderThanInputs with { EvidenceMissing = true })));
 
         // çıktı sağlam; yalnız yüzey yanlış ⇒ yüzey
         Assert.Equal("read surface moved: " + B1, ReasonOf(Member("t1", Reads, Intact)));

@@ -2422,7 +2422,7 @@ public class CycleRoundsTests
     /// <summary>Üye düzeyi atlamanın girdileri TEK yerde: yüzey kanıtı (<see cref="HashModePlan"/>'ın çıktı haritası),
     /// bileşik imza (bir üyenin terimi değişince gerçek planlayıcıda da değişir), üye terimleri ve her üyenin sağlam
     /// çıktı kanıtı. Testler tek bir girdiyi bozar (<see cref="WithCheck"/>, <c>with</c>).</summary>
-    private static RunPlan MemberSkipPlan(RunPlan plan, string signature, params (string Name, string Term)[] members)
+    internal static RunPlan MemberSkipPlan(RunPlan plan, string signature, params (string Name, string Term)[] members)
     {
         string[] names = [.. members.Select(m => m.Name)];
         var hashMode = HashModePlan(plan, names);
@@ -2861,6 +2861,47 @@ public class CycleRoundsTests
                 StringComparison.Ordinal);
     });
 
+    /// <summary>[D3 · tavan] Tavana dayanan grupta HİÇ bayat olmamış taşınan üye oturmuştur: <c>skipped — up to date
+    /// (carried)</c> raporlanır, kaydı yeni bileşik imzayla yenilenir — NoProgress'teki taşınan oturmuş üyeyle aynı yol
+    /// (<see cref="a_group_without_a_verdict_keeps_only_its_settled_members"/>'ın tavan kolunda taşınan X bayattır).
+    /// Grup [A, B, C, D] iki ayrık çifttir, A ↔ B ve C ↔ D (koordinatör grubu plandan alır). Yalnız A değişik; A ve B her
+    /// derlemede yüzeyini oynatır: tur 1 A ⇒ B bayat; tur 2 B ⇒ A bayat; tur 3 A ⇒ B bayat ⇒ tavan. C ve D tur 1'de taşındı
+    /// ve okudukları yüzey hiç oynamadı; A'nın okuduğu B yüzeyi nihaidir ⇒ güvenilir; son turda bayat B geçersizlenir.</summary>
+    [Fact]
+    public Task a_cap_reached_group_reports_its_never_stale_carried_members_up_to_date() => InCacheRootAsync(async cacheRoot =>
+    {
+        var cycle = CyclePlanOf(["A", "B", "C", "D"],
+            Node("A", deps: ["B"], inCycle: true), Node("B", deps: ["A"], inCycle: true),
+            Node("C", deps: ["D"], inCycle: true), Node("D", deps: ["C"], inCycle: true));
+        var store = new BuildStateStore(cacheRoot);
+        var disk = new SurfaceDisk();
+        foreach (string name in new[] { "A", "B", "C", "D" }) disk.Set(name, name.ToLowerInvariant() + "1");
+        await ConvergeOnceAsync(store, disk, MemberSkipPlan(cycle, "sig1", ("A", "a1"), ("B", "b1"), ("C", "c1"), ("D", "d1")));
+        var rec = new RoundRecorder();
+        // Derlenen her üye yüzeyini oynatır (A1, B1, A2); C ve D hiç derlenmez.
+        using var h = await ResolveAsync(store, disk,
+            MemberSkipPlan(cycle, "sig2", ("A", "a2"), ("B", "b1"), ("C", "c1"), ("D", "d1")),
+            rec.Invoker((name, round) => { disk.Set(name, name + round); return Ok(); }));
+
+        Assert.Equal(["A#1", "B#1", "A#2"], rec.Calls);
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.CapReached, 3), (completed.Outcome, completed.Rounds));
+        Assert.Equal([(Id("C"), SkipReasons.UpToDate, false), (Id("D"), SkipReasons.UpToDate, false)],
+            h.Events.OfType<ProjectSkippedEvent>().Select(e => (e.ProjectId, e.Reason, e.CycleUnconverged))
+                .OrderBy(e => e.ProjectId, StringComparer.Ordinal));
+        foreach (string carried in new[] { "C", "D" })
+            Assert.Contains($"{carried}: skipped — {SkipReasons.UpToDate} ({CycleDecisionLines.CarriedDetail})", h.DecisionLog,
+                StringComparison.Ordinal);
+        var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToDictionary(e => NameOf(e.ProjectId));
+        Assert.Equal(["A", "B"], succeeded.Keys.Order(StringComparer.Ordinal));
+        Assert.True(succeeded["A"].Trusted);
+        Assert.False(succeeded["B"].Trusted); Assert.True(succeeded["B"].CycleUnsettled);
+        var ledger = store.Load();
+        foreach (var (name, sig, result) in new[] { ("A", "sig2", BuildResult.Succeeded), ("B", "sig1", BuildResult.Failed),
+                     ("C", "sig2", BuildResult.Succeeded), ("D", "sig2", BuildResult.Succeeded) })
+            Assert.Equal((sig, result), (ledger[Id(name)].BuiltSignature, ledger[Id(name)].LastResult));
+    });
+
     [Fact] // hashMode kapalı (çıktı haritası yok) ⇒ bugünkü davranış: güvenilir kayıt olsa da üye kararı yok, herkes derlenir
     public Task without_surface_evidence_round_one_still_compiles_everyone() => InCacheRootAsync(async cacheRoot =>
     {
@@ -3072,10 +3113,12 @@ public class CycleRoundsTests
         });
     });
 
-    /// <summary>[kesme kapısı] Branch kesmesinden sonra biten grupta taşınan üyenin defteri YENİLENMEZ: kesilmiş koşunun hiçbir
-    /// sonucunun arkasında durulmaz (ReportProjectResult'taki kapı) — taşınan üyenin defter yenilemesi de o bayrağa uyar.</summary>
+    /// <summary>[kesme kapısı] Branch kesmesinden sonra biten grupta hiçbir sonucun arkasında durulmaz (ReportProjectResult'taki
+    /// kapı) — grup kanıtla yakınsamış olsa bile: derlenen ve oturmuş A'nın başarısı GÜVENİLMEZ raporlanır ve defterde kanıtsız
+    /// hata olur (bu koşunun imzası yazılmaz); taşınan B'nin defteri YENİLENMEZ — taşınan üyenin defter yenilemesi de o
+    /// bayrağa uyar.</summary>
     [Fact]
-    public Task an_interrupted_run_does_not_refresh_the_record_of_a_carried_member() => InCacheRootAsync(async cacheRoot =>
+    public Task an_interrupted_run_trusts_no_member_of_a_converged_group() => InCacheRootAsync(async cacheRoot =>
     {
         var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
         var bBefore = store.Load()[Id("B")];
@@ -3093,6 +3136,11 @@ public class CycleRoundsTests
         await h.Sut.RunCompletion.WaitAsync(Limit);
 
         Assert.Equal(["A#1"], rec.Calls);
+        Assert.Contains("round 1: converged", h.DecisionLog, StringComparison.Ordinal); // A oturmuştu: tek engel kesme
+        var aSucceeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal((Id("A"), false), (aSucceeded.ProjectId, aSucceeded.Trusted));
+        var a = store.Load()[Id("A")];
+        Assert.Equal((BuildResult.Failed, "sig1", (string?)null), (a.LastResult, a.BuiltSignature, a.FailedSignature));
         Assert.Equal(bBefore, store.Load()[Id("B")]);                        // taşınan üyenin kaydı aynen
     });
 

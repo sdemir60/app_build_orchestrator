@@ -1714,11 +1714,12 @@ taken in this order, and the matching rule is written to `decision.log` before t
 - **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
   none), or the term differs from the stored one: the member's own files or its configuration changed.
 - **Dependency surface moved.** A direct dependency outside the component has no surface in the record (§7.5), or its
-  evidence file, hashed when the group starts, is gone, unreadable or no longer the hash the member last compiled
-  against. An outside upstream whose body changed while its API stayed put moves nothing here, so the members reading
-  it are carried — the composite still turns the group dirty, which is what brings the group to this question. Only
-  the evidence file is compared, the file the record holds; an outside upstream with no derivable evidence path
-  (§7.6) has nothing to compare, and the members that read it compile whenever their group does.
+  evidence file, hashed when the group starts, is gone, unreadable or carries a hash other than the one the member
+  last compiled against. An outside upstream whose body changed while its API stayed put moves nothing here, so the
+  members reading it are carried — the composite still turns the group dirty, which is what brings the group to this
+  question. The comparison is by hash, as the surface gate's is (§8.3); where the evidence file now lives does not
+  matter. An outside upstream with no derivable evidence path (§7.6) has nothing to compare, and the members that
+  read it compile whenever their group does.
 - **Output evidence missing, output older than its inputs.** The member has no output check, no derivable
   evidence path or an output file that is gone, or fed copies that are not intact (§7.6); or its output is in time
   mode and older than one of its own inputs — an output that may not have been compiled from the sources on disk (an
@@ -3146,8 +3147,10 @@ is **empty** only when the decision is genuinely unknown — no Sync yet, or the
 The label also follows the run live: the moment a project succeeds its row reads `up to date` (a Clean's
 success reads `never built` — its outputs are gone, §8.1), and a failure the engine counts as evidence reads
 `failed`. A failure that is not evidence — a timeout, a
-stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge — reads
-`never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will say.
+stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge, unless the
+group made no progress and every surface that member read was already final, which rules a stale sibling out
+(§8.8) — reads `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync
+will say.
 The verdict travels with the failure event (`Evidence`) and is decided by the same gate that writes the ledger;
 the application never re-reads the reason text. It does not wait for the engine's next preview, which may not
 arrive until the next Sync. A success that still carries a dependency issue reads exactly the same `up to date`
@@ -5115,7 +5118,8 @@ the output to build — a Clean, or a cycle member whose group did not converge 
 stale, so the engine does not keep its success (`trusted: false`) — shows that grey. Red is evidence and nothing else, and on a state
 surface it comes only from the standing: a failure the engine counts as evidence writes `LastFailed` into the
 standing, while one it does not — a timeout, a stop, an invoke error, a failed Clean, a compiler failure inside
-a cycle group that did not converge — writes `NeverBuilt`, and over that stale standing the run's `failed` gives
+a cycle group that did not converge while the surfaces that member read were still stale (§8.8) — writes
+`NeverBuilt`, and over that stale standing the run's `failed` gives
 way to the grey (only a row with no decision at all keeps the run's red, since the result is then the one thing
 known). The verdict is the engine's: one gate in the Supervisor — a trusted result of a compiling target, a
 compiler failure (`FailureClassification`) and a known signature — decides it once, writes the ledger with it
@@ -6418,12 +6422,12 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | SCC membership in build order (scheduler and coordinator read one instance) | `Core/Scheduling/CycleGroups.cs` |
 | Which runs compile cycle groups and a run's component map (`CompilesCycles`, `GroupsFor`) — one source for the Sync preview, the engine's plan, the coordinator's group gate and the App's round bookkeeping | `Core/Planning/CycleCompilation.cs` |
 | Which runs follow the ledger (incremental: `Build`, `Cycles`) — one source for the coordinator's up-to-date seed and the conditional-rebuild mode rule | `Core/Planning/IncrementalModes.cs` |
-| Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) | `Core/Planning/CycleRoundPolicy.cs` |
+| Cycle round stopping rule (converged / no progress / cap; surface-proof early exits) and which members are settled once a group stops on one of them (every member on convergence; on no progress or the cap, those with no read surface stale at the end of the last round, none without surface evidence) | `Core/Planning/CycleRoundPolicy.cs` |
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
 | Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps, the outside dependencies' surfaces); fed by the member terms the planner returns (`MemberTermById`, own content and configuration only), by the evidence files of the group's outside dependencies hashed as it starts and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields and outside dependency surfaces of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `RefreshBuildStateOnSkip`, `PersistBuildStateOnSuccess`) |
-| Surface gate: which projects are candidates (dirty only through an upstream — the Safe plan against the frozen-upstream one), which runs apply it, the verdict at a candidate's turn and the one place a surface becomes persistable; the engine reads each dependency's current surface once per run, skips an unchanged candidate as `skipped — up to date (no dependency surface changed)` and refreshes its record | `Core/Planning/SurfaceGate.cs`, `Supervisor/Program.cs` (`ComputeIncremental`), `Supervisor/RunCoordinator.cs` (`TrySkipWhileDependencySurfacesUnchanged`, `SurfaceOf`, `RefreshBuildStateOnSkip`) |
+| Surface gate: which projects are candidates (dirty only through an upstream — the Safe plan against the frozen-upstream one), which runs apply it, the verdict at a candidate's turn and the one place a surface becomes persistable; the engine reads each dependency's current surface once per run, skips an unchanged candidate as `skipped — up to date (no dependency surface changed)` and refreshes its record | `Core/Planning/SurfaceGate.cs`, `Supervisor/Program.cs` (`ComputeIncremental`), `Supervisor/RunCoordinator.cs` (`TrySkipWhileDependencySurfacesUnchanged`, `SurfaceOf`, `SkipAsUpToDate`, `RefreshBuildStateOnSkip`) |
 | Cycle round trail in decision.log (group header, evidence loss, round-one need lines or the Rebuild line, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
@@ -6432,7 +6436,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
-| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (and which members of a group without a verdict it still trusts: those settled at the end of the last round) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
+| Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (it applies the settled rule as it reports the members: a settled member's success is trusted, a settled carried member is reported up to date, every other success is invalidated) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |
 | Failure-evidence classification (compiler exit vs. timeout/stop/invoke error) — the one clause the evidence gate reads | `Core/State/FailureClassification.cs` |
 | Per-run and per-project logs, decision log | `Core/Logs/RunLogWriter.cs`, `RunLogPaths.cs`, `ProjectLogNaming.cs` |
 | Run-log retention: the three-day window, the newest run kept, the bounded sweep and its one stderr line; the sweep started in the background at engine start | `Core/Logs/RunLogRetention.cs`, `Core/Logs/RunLogPaths.cs` (`TryParseRunDirName`), `Supervisor/Program.cs` |
