@@ -84,6 +84,29 @@ public class NextPreviewTests
         Assert.Equal(WillBuildReason.NeverBuilt, reason);
     }
 
+    // ---------------------------------------------------------------- AfterUntrustedResult [B3]
+
+    /// <summary>[B3] Motorun arkasında durmadığı sonuç — güvenilmez başarı da, hükmü verilmiş grupta kaydı atılan taşınan
+    /// üyenin atlaması da (<c>skipped — cycle did not converge at this signature</c>) — defterde kanıtsız hata bırakır
+    /// (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>). Satır bir sonraki Sync'in o kayda vereceği cevabı HEMEN
+    /// verir: <c>NeverBuilt</c>, düz Build kirli grubu da derlediği için <c>WillBuild=true</c>, koşullu değil. Güvenilmez
+    /// başarının cevabı da budur — iki geçiş aynı kayıttan okur, ayrışamaz (kopya YASAK).</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void after_an_untrusted_result_the_row_reads_never_built(bool inCycle)
+    {
+        var answer = NextPreview.AfterUntrustedResult(inCycle);
+
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false), answer);
+        var invalidated = WillBuildEvaluator.EvaluateWithReason(inCycle, "sig",
+            new BuildState("A", BuiltSignature: "old", LastResult: BuildResult.Failed, FailedSignature: null),
+            CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.Equal((invalidated.WillBuild, invalidated.Reason), (answer.WillBuild, answer.Reason));
+        Assert.Equal(NextPreview.AfterSuccess(inCycle, trusted: false, depIssues: null), answer);
+        Assert.Equal(NextPreview.AfterSuccess(inCycle, trusted: false, ["Up"]), answer);
+    }
+
     // ---------------------------------------------------------------- AfterFailure [R-M4b]
 
     [Fact]

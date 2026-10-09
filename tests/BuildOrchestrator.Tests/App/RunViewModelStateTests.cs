@@ -2484,4 +2484,41 @@ public class RunViewModelStateTests
         var row = RowOf(vm, "D");
         Assert.Equal((ProjectRowState.Skipped, false, WillBuildReason.BuiltOutside), (row.State, row.WillBuild, row.WillBuildReason));
     }
+
+    /// <summary>[B1 · B3] Hükmü verilmiş grupta kaydı atılan taşınan üye (<c>skipped — cycle did not converge at this
+    /// signature</c>) bu koşuda hiç derlenmedi ve motor defterini kanıtsız geçersizledi: bir sonraki Sync <c>NeverBuilt</c>
+    /// diyecek, satır o cevabı HEMEN verir (<see cref="NextPreview.AfterUntrustedResult"/> — güvenilmez başarıyla aynı cevap).
+    /// Koşunun tablosu onu "succeeded" değil "skipped" sayar; NoProgress'in kalıcı kırık döngü bayrağı olayla gelir ve stuck
+    /// sayacına girer. Taşınan üye hiç başlamaz: olay akışında <c>ProjectStartedEvent</c> yoktur.</summary>
+    [Fact]
+    public void A_discarded_carry_skip_reads_never_built_and_counts_as_skipped()
+    {
+        var vm = T5Vm();
+        void SyncCycle(params BuildPreviewItem[] items)
+        {
+            vm.OnEvent(new SyncStartedEvent(@"D:\repo", "main"));
+            vm.OnEvent(new WorkspaceTopologyEvent([.. items.Select((it, i) => Node(it.ProjectId, it.Name, i) with { InCycle = true })],
+                [[.. items.Select(it => it.ProjectId)]], [], []));
+            vm.OnEvent(new BuildPreviewEvent(items));
+            vm.OnEvent(new SyncCompletedEvent("main", "sha1234", false, items.Length, 0));
+        }
+        BuildPreviewItem[] dirty = [Item("M", true, WillBuildReason.SignatureChanged), Item("R", true, WillBuildReason.SignatureChanged)];
+        SyncCycle(dirty);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Cycles, 2, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent(dirty));
+
+        vm.OnEvent(new ProjectSkippedEvent("r1", P("M"), SkipReasons.CycleNonConvergent, CycleUnconverged: true));
+
+        var row = RowOf(vm, "M");
+        Assert.Equal((ProjectRowState.Skipped, SkipReasons.CycleNonConvergent, true), (row.State, row.SkipReason, row.CycleUnconverged));
+        Assert.Equal((true, WillBuildReason.NeverBuilt, false), (row.WillBuild, row.WillBuildReason, row.Conditional));
+        Assert.Equal(VisualStatus.Stale, row.VisualStatus);
+        Assert.Equal((1, 0, 1), (vm.Counters.Skipped, vm.Counters.Succeeded, vm.Counters.StuckCycles));
+
+        // Bir sonraki Sync'in GERÇEKTEN üreteceği önizleme (defter kanıtsız hata) — satır titremez.
+        var before = (row.WillBuild, row.WillBuildReason, row.VisualStatus);
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Completed, 1, 0, 1, 0, 500));
+        SyncCycle(Item("M", true, WillBuildReason.NeverBuilt), Item("R", true, WillBuildReason.NeverBuilt));
+        Assert.Equal(before, (row.WillBuild, row.WillBuildReason, row.VisualStatus));
+    }
 }

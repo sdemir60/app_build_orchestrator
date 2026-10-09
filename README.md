@@ -480,7 +480,8 @@ keeps its grey frame but shows an **amber cube** inside it — the triangle's pr
 shows which nodes sit in a cycle. A member the run actually compiled wears its result colour alone —
 except a member of a group that did not settle whose output was still stale in the last round, which stays grey
 (to build) whatever its last round said, because nothing it produced is kept; a member whose surfaces had settled
-keeps its green and its record. The member whose compile failed while every sibling output it read was already
+keeps its green and its record. A carried member whose sibling surfaces moved under it in such a group was never
+compiled: it is reported as skipped — `cycle did not converge at this signature` — and stays to build. The member whose compile failed while every sibling output it read was already
 final is the proven culprit — it turns red like any failed build, reads `failed` with *Build will retry it*, and
 keeps that verdict across Sync, so the project that actually breaks the cycle is visible at a glance while its
 settled siblings stay green, and the next *Build* compiles only the members that did not settle.

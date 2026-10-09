@@ -247,6 +247,16 @@ public class ConsoleModesTests
             ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Started)));
     }
 
+    /// <summary>[B1] Hükmü verilmiş grupta kaydı atılan taşınan üyenin sayfası: motor onu <c>cycle did not converge at this
+    /// signature</c> ile atladı. Sayfa projenin bu koşuda DERLENMEDİĞİNİ ve kaydının atıldığını da söyler — "did not converge"
+    /// tek başına satırın neden gri (never built) okuduğunu açıklamaz.</summary>
+    [Fact]
+    public void A_discarded_carry_page_says_the_project_was_not_compiled_and_its_record_was_discarded()
+        => Assert.Equal(
+            ["The dependency cycle did not converge at this signature; this project was not compiled and its record was discarded."],
+            ConsoleEmptyState.ForEmptyLog(Row(ProjectRowState.Skipped, skipReason: SkipReasons.CycleNonConvergent,
+                willBuild: true, willBuildReason: WillBuildReason.NeverBuilt, inCycle: true, currentSha: "a3f81c2")));
+
     /// <summary>[Task 7 — Faz 3, spec 2026-09-18 §5.4] BuiltOutside bir DİSK OLGUSUDUR: proje bu araç dışında
     /// derlenmiş ve çıktısı güncel. Sayfa bunu TEK cümlede söyler.
     ///

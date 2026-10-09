@@ -282,12 +282,12 @@ public sealed partial class ProjectRowViewModel : ObservableObject
     [ObservableProperty] private string _cyclePath = "";
 
     /// <summary>[cycle rounds/Task 8] Bu satır bir SCC üyesidir ve grup BU run'da turlarını YAKINSAMADAN
-    /// (NoProgress) bitirdi — kaynağı <see cref="OnCycleCompleted"/>, grubun sonuç olayından yazılır (bkz. o
-    /// metodun XML yorumu). <see cref="ProjectSkippedEvent.CycleUnconverged"/> bugün hep <c>false</c> gelir
-    /// (motor artık geçmiş bir yakınsamama hafızasına bakıp pre-skip ETMEZ) — bu alan onu değil, ŞU koşunun
-    /// kendi tur sonucunu taşır. Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir
-    /// alandır (<see cref="Status"/> bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER
-    /// Task 9'undur.</summary>
+    /// (NoProgress) bitirdi — ŞU koşunun kendi tur sonucu. İki kaynaktan yazılır: derlenen üye için grubun sonuç
+    /// olayından (<see cref="OnCycleCompleted"/>, bkz. o metodun XML yorumu); kaydı atılan taşınan üye için atlama
+    /// olayının kendisinden (<see cref="ProjectSkippedEvent.CycleUnconverged"/> — <c>cycle did not converge at this
+    /// signature</c>, yalnız NoProgress'te <c>true</c>). Motor geçmiş bir yakınsamama hafızasına bakıp pre-skip ETMEZ.
+    /// Kalıcı kırık bir döngü, sıradan "güncel" skip'iyle karışmasın diye ayrı bir alandır (<see cref="Status"/>
+    /// bunu OKUMAZ — ikisi de motor tarafında <c>Skipped</c>'tır). RENDER Task 9'undur.</summary>
     [ObservableProperty] private bool _cycleUnconverged;
 
     /// <summary>[Fix wave 1 · D1 review Finding 1] Satırın GÖRSEL statüsü — <c>ProjectRowState</c> (motor durumu) +
@@ -2296,6 +2296,11 @@ public sealed partial class RunViewModel : ObservableObject
             ApplyNextPreview(row, NextPreview.AfterUpToDateSkip(), waitingRoots: null);
             row.OwnFilesChanged = false;
         }
+        // [B3] Hükmü verilmiş grupta kaydı atılan taşınan üye: motor defterini kanıtsız geçersizledi, bir sonraki Sync NeverBuilt
+        // diyecek — satır o cevabı hemen verir (güvenilmez başarıyla AYNI cevap, NextPreview; App kopyasını türetmez). Satır
+        // derlenmedi: kendi dosyası hakkındaki olgu (OwnFilesChanged) önizlemeninki kalır.
+        if (e.Reason == SkipReasons.CycleNonConvergent && RunActive)
+            ApplyNextPreview(row, NextPreview.AfterUntrustedResult(row.InCycle), waitingRoots: null);
         _projectStartedAtMs.Remove(e.ProjectId);
         UpdateEta(); // [Task 17] skip de bir "tamamlanma" — kalan sayaç değişir
         RefreshRunSurface();
@@ -2323,7 +2328,8 @@ public sealed partial class RunViewModel : ObservableObject
         // NeverBuilt/LastFailed, güvenilir başarı asla (UpToDate ya da grup dışı bir sorunla WaitingForDependency).
         // Bayrak bu soruyu cevaplamaz: önizlemenin güncel dediği üye sonraki turda derlenip patlayabilir (bayrağı false
         // kalır) ve dep-issue'lu güvenilir başarının bayrağı true olur. Oturmuş taşınan üye "skipped — up to date" aldı;
-        // gerekçesi önizlemeninkidir, bu yüzden State kapısı AYRICA gerekir.
+        // gerekçesi önizlemeninkidir, bu yüzden State kapısı AYRICA gerekir. [B1] Kaydı atılan taşınan üye ("skipped — cycle
+        // did not converge") de Skipped'tır: bayrağını atlama olayından zaten aldı (OnProjectSkipped).
         foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
             if (FindRow(member) is
                 {

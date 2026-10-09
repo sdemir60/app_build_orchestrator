@@ -2782,12 +2782,19 @@ public class CycleRoundsTests
     /// varken oturmuş (son turda bayat olmayan) yeşil ya da taşınan üyenin çıktısı nihai API'lere bağlıdır ve kaydı
     /// doğrudur; yalnız bayat üye geçersizlenir, böylece grup kirli kalır ve takip koşusu yalnız onu derler. Kesilen
     /// (Stop) koşu bugünkü gibi hiçbir şey persist etmez.</para>
+    /// <para><b>[DEĞİŞEN KURAL — B1 · kullanıcı kararı 2026-10-09]</b> Eski iddia (tavan kolu): bayat taşınan X "up to date"
+    /// raporlanmaz; <c>ProjectSucceededEvent(Trusted:false, CycleUnsettled:true)</c> ile raporlanır, satırı
+    /// <c>succeeded (0ms)</c> okur. Değişme gerekçesi: derlenmeyen projeye "succeeded" yazmak yanlış; atılan taşınan üye
+    /// <c>skipped — cycle did not converge at this signature</c> ile raporlanır, defteri aynı biçimde kanıtsız
+    /// geçersizlenir.</para>
     /// Senaryo (ChainPlan X→M, N→X, M↔R, M,R→N; yalnız N değişik, tur 1 yalnız N'yi derler, X/M/R taşınır):
     /// · no progress: N oturmuşken patlar (tur 1) — X, M, R taşınmış ve oturmuş ⇒ üçü de sig2 ile yenilenir, N kanıtlı hata.
-    /// · stopped: hiçbir şey yenilenmez (herkes Failed, sig1).
+    /// · stopped: hiçbir şey yenilenmez (herkes Failed, sig1). Kesilen grup bir hüküm DEĞİLDİR: taşınan X, M, R de
+    ///   <c>failed — stopped</c> raporlanır — kaydı atılan atlama yalnız hükmü verilmiş gruba özgüdür.
     /// · cap reached: tur 1 N (yüzeyi oynar ⇒ M ve R bayat); tur 2 M (R'nin eski yüzeyini okur, patlar) ve R (yüzeyi oynar ⇒
-    ///   M bayat); tur 3 M (yüzeyi oynar ⇒ X ve R bayat) ⇒ tavan. Son turda X ve R bayattır ⇒ geçersizlenir (sig1, Failed);
-    ///   N ve M oturmuş ⇒ güvenilir (sig2, Succeeded); takip koşusu X ve R'yi derler.
+    ///   M bayat); tur 3 M (yüzeyi oynar ⇒ X ve R bayat) ⇒ tavan. Son turda X ve R bayattır ⇒ geçersizlenir (sig1, Failed):
+    ///   derlenmiş R güvenilmez başarıdır, hiç derlenmemiş X kaydı atılan atlamadır; N ve M oturmuş ⇒ güvenilir (sig2,
+    ///   Succeeded); takip koşusu X ve R'yi derler.
     /// </summary>
     [Theory]
     [InlineData("no progress")]
@@ -2825,12 +2832,22 @@ public class CycleRoundsTests
             if (outcome == "cap reached")
             {
                 var succeeded = h.Events.OfType<ProjectSucceededEvent>().ToDictionary(e => NameOf(e.ProjectId));
+                Assert.Equal(["M", "N", "R"], succeeded.Keys.Order(StringComparer.Ordinal)); // derlenmeyen X'e başarı yazılmaz
                 Assert.True(succeeded["N"].Trusted); Assert.False(succeeded["N"].CycleUnsettled);
                 Assert.True(succeeded["M"].Trusted);
                 Assert.False(succeeded["R"].Trusted); Assert.True(succeeded["R"].CycleUnsettled);
-                Assert.False(succeeded["X"].Trusted);
-                Assert.Empty(h.Events.OfType<ProjectSkippedEvent>()); // bayat taşınan X "up to date" raporlanmaz
+                // Bayat taşınan X derlenmedi: taşıdığı kayıt atılır. Tavan kalıcı kırık döngü değildir ⇒ bayrak yok (B2).
+                var discarded = Assert.Single(h.Events.OfType<ProjectSkippedEvent>());
+                Assert.Equal((Id("X"), SkipReasons.CycleNonConvergent, false),
+                    (discarded.ProjectId, discarded.Reason, discarded.CycleUnconverged));
+                Assert.Contains($"X: skipped — {SkipReasons.CycleNonConvergent} ({CycleDecisionLines.DiscardedCarryDetail})",
+                    h.DecisionLog, StringComparison.Ordinal);
+                var done = Assert.Single(h.Events.OfType<RunCompletedEvent>());
+                Assert.Equal((3, 0, 1), (done.Succeeded, done.Failed, done.Skipped));
             }
+            if (outcome == "stopped") // olay akışı kırık (yukarıdaki not) — raporlama decision.log'dan okunur
+                foreach (string carried in new[] { "X", "M", "R" })
+                    Assert.Contains($"{carried}: failed — {FailureReasons.Stopped}", h.DecisionLog, StringComparison.Ordinal);
         }
         var ledger = store.Load();
         var expected = outcome switch
@@ -2900,6 +2917,52 @@ public class CycleRoundsTests
         foreach (var (name, sig, result) in new[] { ("A", "sig2", BuildResult.Succeeded), ("B", "sig1", BuildResult.Failed),
                      ("C", "sig2", BuildResult.Succeeded), ("D", "sig2", BuildResult.Succeeded) })
             Assert.Equal((sig, result), (ledger[Id(name)].BuiltSignature, ledger[Id(name)].LastResult));
+    });
+
+    /// <summary>[B1 · B2] İlerlemeyen grupta son turda okuduğu yüzeyi bayat kalan TAŞINAN üyeler bu koşuda hiç derlenmedi:
+    /// taşıdıkları kayıt atılır, <c>skipped — cycle did not converge at this signature</c> raporlanır (başarı DEĞİL) ve
+    /// kayıtları kanıtsız geçersizlenir. NoProgress kalıcı kırık döngüdür ⇒ <c>CycleUnconverged</c> true (App'in stuck sayacı).
+    /// Senaryo (ChainPlan X→M, N→X, M↔R, M,R→N): X ve N değişik ⇒ tur 1 yalnız X ve N'yi derler, M ve R taşınır. X patlar
+    /// (okuduğu taşınan M'nin yüzeyi nihai ⇒ kanıtlı umutsuz), N yeşil biter ve yüzeyini oynatır ⇒ N'yi okuyan M ve R bayat
+    /// ⇒ tur 1'de NoProgress. N'nin okuduğu X yüzeyi oynamadı ⇒ N oturmuş, güvenilir.</summary>
+    [Fact]
+    public Task a_no_progress_group_reports_its_stale_carried_members_as_discarded() => InCacheRootAsync(async cacheRoot =>
+    {
+        var store = new BuildStateStore(cacheRoot);
+        var disk = new SurfaceDisk();
+        foreach (string name in new[] { "X", "N", "M", "R" }) disk.Set(name, name.ToLowerInvariant() + "1");
+        await ConvergeOnceAsync(store, disk, ChainPlan("sig1", "n1"));
+        var rec = new RoundRecorder();
+        using var h = await ResolveAsync(store, disk, ChainPlan("sig2", "n2", termX: "x2"), rec.Invoker((name, _) =>
+        {
+            if (name == "X") return Exit(1);
+            disk.Set(name, name.ToLowerInvariant() + "2");
+            return Ok();
+        }));
+
+        Assert.Equal(["N#1", "X#1"], rec.Calls.Order(StringComparer.Ordinal)); // M ve R hiç derlenmedi
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.NoProgress, 1), (completed.Outcome, completed.Rounds));
+        Assert.Equal([(Id("M"), SkipReasons.CycleNonConvergent, true), (Id("R"), SkipReasons.CycleNonConvergent, true)],
+            h.Events.OfType<ProjectSkippedEvent>().Select(e => (e.ProjectId, e.Reason, e.CycleUnconverged))
+                .OrderBy(e => e.ProjectId, StringComparer.Ordinal));
+        foreach (string carried in new[] { "M", "R" })
+            Assert.Contains($"{carried}: skipped — {SkipReasons.CycleNonConvergent} ({CycleDecisionLines.DiscardedCarryDetail})",
+                h.DecisionLog, StringComparison.Ordinal);
+        var succeeded = Assert.Single(h.Events.OfType<ProjectSucceededEvent>());
+        Assert.Equal((Id("N"), true), (succeeded.ProjectId, succeeded.Trusted));
+        var failed = Assert.Single(h.Events.OfType<ProjectFailedEvent>());
+        Assert.Equal((Id("X"), true), (failed.ProjectId, failed.Evidence));
+        var done = Assert.Single(h.Events.OfType<RunCompletedEvent>());
+        Assert.Equal((1, 1, 2), (done.Succeeded, done.Failed, done.Skipped));
+
+        var ledger = store.Load();
+        foreach (var (name, sig, result) in new[] { ("X", "sig1", BuildResult.Failed), ("N", "sig2", BuildResult.Succeeded),
+                     ("M", "sig1", BuildResult.Failed), ("R", "sig1", BuildResult.Failed) })
+            Assert.Equal((sig, result), (ledger[Id(name)].BuiltSignature, ledger[Id(name)].LastResult));
+        Assert.Equal("sig2", ledger[Id("X")].FailedSignature);       // kanıtlı hata
+        Assert.Null(ledger[Id("M")].FailedSignature);                // atılan kayıt: kanıtsız geçersiz
+        Assert.Null(ledger[Id("R")].FailedSignature);
     });
 
     [Fact] // hashMode kapalı (çıktı haritası yok) ⇒ bugünkü davranış: güvenilir kayıt olsa da üye kararı yok, herkes derlenir
@@ -2986,11 +3049,11 @@ public class CycleRoundsTests
 
     /// <summary>X → M, N → X, M ↔ R, M ve R → N (build order X, N, M, R): X yalnız M'yi okur; N değişince M ve R bayatlar.
     /// M ile R birbirini okur: ikisi aynı turda derlenirken önce M girer (okunma ve komşu sayısı eşit ⇒ build order,
-    /// <c>CycleRoundLevels</c>) ve R'nin ESKİ yüzeyini okur. Terimler x1/m1/r1, N'ninki parametre.</summary>
-    private static RunPlan ChainPlan(string signature, string termN) => MemberSkipPlan(CyclePlanOf(["X", "N", "M", "R"],
+    /// <c>CycleRoundLevels</c>) ve R'nin ESKİ yüzeyini okur. Terimler m1/r1; N'ninki parametre, X'inki parametre (varsayılan x1).</summary>
+    private static RunPlan ChainPlan(string signature, string termN, string termX = "x1") => MemberSkipPlan(CyclePlanOf(["X", "N", "M", "R"],
             Node("X", deps: ["M"], inCycle: true), Node("N", deps: ["X"], inCycle: true),
             Node("M", deps: ["N", "R"], inCycle: true), Node("R", deps: ["N", "M"], inCycle: true)),
-        signature, ("X", "x1"), ("N", termN), ("M", "m1"), ("R", "r1"));
+        signature, ("X", termX), ("N", termN), ("M", "m1"), ("R", "r1"));
 
     /// <summary>
     /// [kanıt varken yakınsama yalnız kanıtla] Yüzey kanıtı varken iki ardışık yeşil tur yakınsama DEĞİLDİR: tur 2'den

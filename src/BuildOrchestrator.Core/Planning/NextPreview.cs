@@ -18,10 +18,8 @@ public static class NextPreview
     /// yazdığından) türer ve ayrı ayrı sorulursa sessizce ayrışabilirler.
     ///
     /// <para><b>Güvenilmez başarı (<paramref name="trusted"/> <c>false</c>):</b> yakınsamayan (tavana dayanan ya
-    /// da ilerlemeyen) bir SCC'nin yeşil üyesi. Motor bu başarıyı PERSIST ETMEZ,
-    /// kaydı kanıtsız hata olarak geçersizleştirir (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>) —
-    /// <see cref="WillBuildEvaluator"/> bunu <see cref="WillBuildReason.NeverBuilt"/> okur; bir sonraki düz Build
-    /// kirli grubu da derlediği için üye düz proje gibi <c>WillBuild=true</c>'dur. Koşullu değildir.
+    /// da ilerlemeyen) bir SCC'nin yeşil üyesi. Motor bu başarıyı PERSIST ETMEZ, kaydı kanıtsız hata olarak
+    /// geçersizleştirir — cevap <see cref="AfterUntrustedResult"/>'ındır (dep-issue'ya bakılmaz).
     /// <b>[DEĞİŞEN KURAL — final review I1]</b> Eskiden bu hâl <c>UpToDate</c> dönerdi ("defter hiçbir şey
     /// öğrenmedi, bugünkü olguya dön"); defter aslında kanıtsız hata yazdığı için satır canlıda yeşil, Sync
     /// sonrası gri idi.</para>
@@ -42,11 +40,22 @@ public static class NextPreview
     public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterSuccess(
         bool inCycle, bool trusted, IReadOnlyList<string>? depIssues)
     {
-        if (!trusted) return (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
+        if (!trusted) return AfterUntrustedResult(inCycle);
         if (depIssues is not { Count: > 0 }) return (false, WillBuildReason.UpToDate, false);
         bool willBuild = NextBuildCompiles(inCycle);
         return (willBuild, WillBuildReason.WaitingForDependency, willBuild);
     }
+
+    /// <summary>
+    /// [B3] Motorun arkasında DURMADIĞI bir sonuç: yakınsamayan grubun güvenilmez başarısı (<see cref="AfterSuccess"/>'ın
+    /// <c>trusted: false</c> dalı) ya da hükmü verilmiş grupta derlenmeden kaydı atılan taşınan üyenin atlaması
+    /// (<see cref="SkipReasons.CycleNonConvergent"/>). İkisinde de motor kaydı kanıtsız hata olarak geçersizleştirir
+    /// (<c>LastResult=Failed</c>, <c>FailedSignature=null</c>) — <see cref="WillBuildEvaluator"/> bunu
+    /// <see cref="WillBuildReason.NeverBuilt"/> okur; bir sonraki düz Build kirli grubu da derlediği için üye düz proje
+    /// gibi <c>WillBuild=true</c>'dur. Koşullu değildir.
+    /// </summary>
+    public static (bool WillBuild, WillBuildReason Reason, bool Conditional) AfterUntrustedResult(bool inCycle) =>
+        (NextBuildCompiles(inCycle), WillBuildReason.NeverBuilt, false);
 
     /// <summary>
     /// Proje BU KOŞUDA patladı. <paramref name="evidence"/> motorun kanıt kararıdır

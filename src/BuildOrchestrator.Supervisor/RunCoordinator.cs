@@ -2109,10 +2109,13 @@ public sealed class RunCoordinator(
                 try
                 {
                     // [RESOLVE 3.4 · D3] Hiç derlenmemiş ve oturmuş taşınan üye "up to date (carried)" raporlanır, defteri
-                    // yenilenir. Kesilen grupta ya da bayatken taşınan üye ReportCycleMember'dan geçer: sonucu ya
-                    // FailEveryMember'la Failed'dır ya da güvenilmez başarıdır — geçersizlenir.
+                    // yenilenir. [B1] Hükmü verilmiş grupta bayat kalan taşınan üye de derlenmedi: "succeeded" değil, kaydı
+                    // atılan atlamadır (ReportDiscardedCarry). Kesilen grup (Continue) bir hüküm DEĞİLDİR: taşınan üyesi
+                    // FailEveryMember'la Failed'dır ve derlenen üyeler gibi ReportCycleMember'dan geçer — geçersizlenir.
                     if (member.Carried && settled)
                         ReportCarriedCycleMember(run, id, member.DepIssues);
+                    else if (member.Carried && decision != CycleRoundDecision.Continue)
+                        ReportDiscardedCarry(run, id, decision);
                     else
                         ReportCycleMember(run, id, member.Result, member.DurationMs, member.FailReason, member.DepIssues,
                             successIsTrusted: settled,
@@ -2385,6 +2388,29 @@ public sealed class RunCoordinator(
     /// </summary>
     private void ReportCarriedCycleMember(RunContext run, string projectId, DepIssueResult depIssues) =>
         SkipAsUpToDate(run, projectId, CycleDecisionLines.CarriedDetail, depIssues);
+
+    /// <summary>
+    /// [B1] Hüküm verilmiş (NoProgress, CapReached) grubun hiç derlenmemiş (TAŞINAN) ama OTURMAMIŞ üyesini raporlar: tur 1'de
+    /// gerekmedi (karar 2), son turda okuduğu bir kardeş yüzeyi bayat kaldı. Bu koşuda derlenmediği için "succeeded" DEĞİLDİR:
+    /// taşıdığı kayıt atılır — <c>skipped — cycle did not converge at this signature</c> (ayrıntı
+    /// <see cref="CycleDecisionLines.DiscardedCarryDetail"/>) — ve defteri güvenilmez başarıyla aynı biçimde kanıtsız
+    /// geçersizlenir. <c>CycleUnconverged</c> yalnız NoProgress'te true: kalıcı kırık döngü odur, tavan "bütçe bitti"dir.
+    /// Complete <c>finally</c> içinde TAM BİR KEZ (<see cref="SkipAsUpToDate"/> ile aynı sözleşme); proje bu koşuda invoke
+    /// edilmediği için in-flight kaydı yoktur.
+    /// </summary>
+    private void ReportDiscardedCarry(RunContext run, string projectId, CycleRoundDecision decision)
+    {
+        try
+        {
+            ReportSkipped(run.Events, run.Logs, run.RunId, projectId, NameOf(run, projectId), SkipReasons.CycleNonConvergent,
+                cycleUnconverged: decision == CycleRoundDecision.NoProgress, detail: CycleDecisionLines.DiscardedCarryDetail);
+            InvalidateBuildStateOnFailure(run, projectId, evidenceSignature: null);
+        }
+        finally
+        {
+            run.Scheduler.Complete(projectId, BuildResult.Skipped);
+        }
+    }
 
     /// <summary>
     /// [RESOLVE 3.4 · D7] Derlenmeden up to date atlanan projeyi raporlayan TEK gövde: taşınan döngü üyesi

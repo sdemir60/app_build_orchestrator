@@ -87,7 +87,9 @@ public static class ConsoleEmptyState
             SkipReasons.UpToDate => "Up to date — nothing to compile in this run.",
             SkipReasons.InDependencyCycle => InCycleText,
             SkipReasons.OutOfCycleScope => OutOfCycleScopeText,
-            SkipReasons.CycleNonConvergent => "The dependency cycle did not converge at this signature.",
+            // [B1] Motor bu gerekçeyi hükmü verilmiş grupta bayat kalan TAŞINAN üyeye verir: derlenmedi, kaydı atıldı.
+            SkipReasons.CycleNonConvergent =>
+                "The dependency cycle did not converge at this signature; this project was not compiled and its record was discarded.",
             // [final review — I1] Motor bu satırı GERÇEKTEN koşullu değerlendirdiği için atladı: sayfanın açılma
             // nedeni TAM OLARAK "hangi bağımlılık" sorusudur, genel "Skipped in this run." onu yutuyordu.
             // Cümle bekleyen satırınkiyle (aşağıdaki Pending dalı) AYNI kaynaktan gelir (kopya YASAK).
