@@ -1806,6 +1806,71 @@ public class RunViewModelStateTests
         Assert.Equal(750, vm.EtaMs);
     }
 
+    /// <summary>
+    /// [D4] Şeridin n/m'si ve çubuk grup boyunca KIPIRDAMIYORDU: ara tur sonucu yayılmadığı için üye grubun hükmüne kadar
+    /// terminal olmaz, n yalnız terminal satırı sayardı (17 üyeli grupta 4-6 dk hareketsiz). Artık turdaki derlemesi
+    /// biten üye (<c>CycleMemberHeldEvent</c>) sayılır; sonraki turda yeniden derlenmeye başlayan üye sayımdan düşer
+    /// (çubuk yeniden derlenen üyeler kadar geri adım atar — dürüst); hüküm gelince terminal sayım devralır.
+    /// Sayım yalnız kesin kümedeki (<c>_willBuildIds</c>) üyeler için: n asla m'yi aşmaz.
+    /// </summary>
+    [Fact]
+    public async Task A_cycle_member_counts_as_finished_once_held_and_steps_back_when_a_later_round_recompiles_it()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        Assert.Equal((3, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 1, 3, 3));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        Assert.Equal(1, vm.FinishedOfWillBuild);                      // tur 1: A bitti, grubunu bekliyor
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        vm.OnEvent(new ProjectStartedEvent("r1", C, "C"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", C));
+        Assert.Equal(3, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 2, 3, 1));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));            // tur 2: yalnız B yeniden derlenir
+        Assert.Equal(2, vm.FinishedOfWillBuild);                      // geri adım
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal(3, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new ProjectSucceededEvent("r1", A, 10)); vm.OnEvent(new ProjectSucceededEvent("r1", B, 10));
+        vm.OnEvent(new ProjectSucceededEvent("r1", C, 10));
+        vm.OnEvent(new CycleCompletedEvent("r1", A, CycleOutcome.Converged, 3, 2, 0, 30));
+        Assert.Equal((3, 3), (vm.WillBuildCount, vm.FinishedOfWillBuild)); // çift sayım yok
+        Assert.Equal(100.0, RibbonText.Progress(vm.Phase, vm.AllClean, vm.Counters, vm.WillBuildCount, vm.FinishedOfWillBuild, vm.Counters.Total));
+    }
+
+    [Fact] // held üye yalnız kesin kümedeyse sayılır; ikinci koşu temiz başlar
+    public async Task A_held_member_outside_the_fixed_set_is_not_counted_and_the_count_resets_per_run()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", false),
+            new BuildPreviewItem(C, "C", false), new BuildPreviewItem(D, "D", false)]));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal((1, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        Assert.Equal(1, vm.FinishedOfWillBuild);
+
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 0, 0, 2, 100));
+        vm.OnEvent(new RunStartedEvent("r2", RunMode.Build, 4, 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        Assert.Equal((3, 0), (vm.WillBuildCount, vm.FinishedOfWillBuild));
+    }
+
     // ---------------------------------------------------------------- [Task 5] kümülatif renk · defter üçgeni · nötrleme
 
     private static string P(string name) => $@"C:\p\{name}.csproj";

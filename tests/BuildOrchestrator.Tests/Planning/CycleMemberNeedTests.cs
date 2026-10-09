@@ -431,14 +431,50 @@ public class CycleMemberNeedTests
         AssertNeeded(decision, "A", "output evidence missing");
     }
 
-    [Fact] // (v) Zaman kipi: çıktı bu araç dışında (Visual Studio, satır menüsü) derlenmiş.
-    public void an_output_built_outside_this_tool_makes_the_member_needed()
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D2]</b> Eski iddia (<c>an_output_built_outside_this_tool_makes_the_member_needed</c>): zaman
+    /// kipindeki (bu araç dışında derlenmiş) çıktı, hükmü ne olursa olsun üyeyi "output built outside this tool" ile
+    /// gerekli yapardı — çıktının kimin olduğu bilinmediği için.
+    /// <para><b>Değişme gerekçesi (ölçüm, kullanıcının 2026-10-08 ~14:10 koşusu):</b> VS'de derlenen 17 üyeli UI
+    /// grubunda 16 üye yalnız bu kuralla derlendi (6 dk). Çıktı kendi girdilerinden YENİYSE (Fresh ya da yalnız bir
+    /// bağımlılık yüzünden DependencyNewer) kaynaktan sonra üretilmiştir; üyenin kendi terimi (içerik + cfg + grup dışı
+    /// upstream) ve kayıttaki okuma yüzeylerinin diskle karşılaştırması "aynı girdilerden derlendi" kanıtını tamamlar —
+    /// <c>ApiSurfaceHash</c> gövde/MVID saymadığı için VS'nin aynı kaynaktan ürettiği kardeş aynı özeti verir, API'si
+    /// değişen kardeşi kural (ii) yakalar. Kural (v) yalnız KENDİ girdisi çıktıdan yeni olan üyeye daraldı (aşağıdaki
+    /// test): o çıktının mevcut kaynaktan üretildiği bilinemez.</para>
+    /// </summary>
+    [Fact]
+    public void an_output_built_outside_this_tool_is_carried_when_term_and_read_surfaces_are_unchanged()
     {
         var output = Intact with { Mode = EvidenceMode.Time, Time = TimeVerdict.Fresh };
 
         var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, output)));
 
-        AssertNeeded(decision, "A", "output built outside this tool");
+        AssertCarried(decision, "A");
+    }
+
+    /// <summary>(v) Kendi girdisi çıktıdan yeni: VS derlemesinden sonra düzenleme, ya da branch değişimi (git dosyaları yeniden
+    /// yazar — içerik defterdeki terime döner, diskteki DLL ise başka branch'in gövdesidir). Terim bunu göremez; zaman hükmü
+    /// görür. Üye gerekli.</summary>
+    [Fact]
+    public void an_output_older_than_its_own_inputs_makes_the_member_needed()
+    {
+        var output = Intact with { Mode = EvidenceMode.Time, Time = TimeVerdict.OwnNewer };
+
+        var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, output)));
+
+        AssertNeeded(decision, "A", "output older than its inputs");
+    }
+
+    [Fact] // zaman kipinde de okunan yüzey oynadıysa üye gerekli — VS paralel derlemesinde eski API'ye bağlanan okuyucu
+    public void an_output_built_outside_this_tool_is_needed_when_a_read_surface_moved()
+    {
+        var output = Intact with { Mode = EvidenceMode.Time, Time = TimeVerdict.DependencyNewer };
+        var disk = Disk(Read("B", B1, "h1-moved"), Read("B", B2, "h2"));
+
+        var decision = Decide(disk, ("A", Member("t1", Reads, output)));
+
+        AssertNeeded(decision, "A", "read surface moved: " + B1);
     }
 
     [Fact] // Beslenen kopyalar (paylaşılan klasördeki DLL) bozuk: bağımlılar başka bir çıktıya link'lenir.
@@ -488,11 +524,11 @@ public class CycleMemberNeedTests
         // motor aynı; terim, çıktı ve yüzey yanlış ⇒ kendi girdisi
         Assert.Equal("own inputs changed", ReasonOf(Member("t1", Reads, outside) with { CurrentTerm = "t2" }));
 
-        // terim aynı; çıktı (araç dışı) ve yüzey yanlış ⇒ çıktı; beslenen kopya da bozuksa "araç dışı" önde kalır
-        Assert.Equal("output built outside this tool", ReasonOf(Member("t1", Reads, outside)));
-        Assert.Equal("output built outside this tool", ReasonOf(Member("t1", Reads, outside with { FedIntact = false })));
+        // terim aynı; çıktı kendi girdisinden eski ve yüzey yanlış ⇒ çıktı; beslenen kopya da bozuksa bu neden önde kalır
+        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, outside)));
+        Assert.Equal("output older than its inputs", ReasonOf(Member("t1", Reads, outside with { FedIntact = false })));
 
-        // zaman kipi ama kanıt dosyası yok ⇒ "araç dışında derlendi" yanlış olurdu: kanıt eksik
+        // zaman kipi ama kanıt dosyası yok ⇒ "kendi girdisinden eski" yanlış olurdu: kanıt eksik
         Assert.Equal("output evidence missing", ReasonOf(Member("t1", Reads, outside with { EvidenceMissing = true })));
 
         // çıktı sağlam; yalnız yüzey yanlış ⇒ yüzey
