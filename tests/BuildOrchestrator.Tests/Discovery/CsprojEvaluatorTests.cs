@@ -5,6 +5,14 @@ using BuildOrchestrator.Core.Discovery;
 
 namespace BuildOrchestrator.Tests.Discovery;
 
+/// <summary>
+/// Ham-XML csproj değerlendirmesi: öğeler, hedef framework, legacy <c>OutputPath</c> okuması ve SDK-style projenin SDK
+/// varsayılan çıktı yolu (ARCHITECTURE §6.2).
+/// <para><b>Ölçüm (gerçek OSYS, 2026-10-09 — A1):</b> SDK-style projeye varsayılan çıktı yolu türetilince
+/// <c>OSYS.Types.General</c>'daki gövde değişikliğinde Build 7 yerine 2 proje derledi, koşu 19,0 sn'den 7,7 sn'ye indi: 4 SDK-style
+/// PRM projesinin bağımlıları kapıdan atlandı, <c>UI.DMS</c> grubu 17/17 taşındı (ayrıntı:
+/// .claude/outputs/2026-10-09-20-19-sdk-output-layout-measurement.md).</para>
+/// </summary>
 public class CsprojEvaluatorTests
 {
     private static string WriteProj(string dir, string name, string body)
