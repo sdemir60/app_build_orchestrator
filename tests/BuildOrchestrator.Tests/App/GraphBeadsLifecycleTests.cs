@@ -45,7 +45,7 @@ public class GraphBeadsLifecycleTests
     private static bool Spins(Rectangle orbit)
     {
         double before = orbit.StrokeDashOffset;
-        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200)); // dekoratif kare 30 fps: birkaç tik
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(400)); // dekoratif kare 30 fps: ~12 tik (yavaş runner payı)
         return orbit.StrokeDashOffset != before;
     }
 
@@ -55,7 +55,7 @@ public class GraphBeadsLifecycleTests
     private static (bool StillMoved, bool SpinningMoved) MovesTogether(Rectangle still, Rectangle spinning)
     {
         double s0 = still.StrokeDashOffset, m0 = spinning.StrokeDashOffset;
-        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(200));
+        DispatcherPump.PumpFor(TimeSpan.FromMilliseconds(400));
         return (still.StrokeDashOffset != s0, spinning.StrokeDashOffset != m0);
     }
 

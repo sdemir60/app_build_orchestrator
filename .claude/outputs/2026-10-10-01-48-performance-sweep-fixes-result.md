@@ -89,6 +89,24 @@ Uyarı: "önce" ölçümleri 22:27–22:50, "sonra" 01:37–01:47 arasında alı
 arka plan yükü (Defender, diğer uygulamalar) birebir aynı değildi. CPU ve tahsis ölçümleri (aynı betik, iz pencereleri aynı fazda)
 en güvenilir karşılaştırmadır.
 
+## 5b. Bağımsız kod incelemesi ve ardından yapılanlar
+
+İnceleme hükmü "düzeltmelerle merge edilebilir"di; TDD dökümü `2026-10-10-02-05-perf-fixes-review-tdd-plan.md`. Uygulananlar:
+
+| Bulgu | Test | Düzeltme | Commit |
+|---|---|---|---|
+| Motor çıkışı (Send önceliği) pompada bekleyen olayların önüne geçiyordu — geç uygulanan `runStarted` ölü motorla koşuyu yeniden açar (eski yarış; pompa pencereyi uzatmıştı) | kırmızı → yeşil | çıkış işleyicisi önce `DrainNow` | `f6784633` |
+| Pompa bayrağı `Volatile.Write` ile sıfırlanıyordu — x64 mağaza tamponu kayıp uyandırmaya izin verir | **deterministik kırmızı verilemez** (işlemci bellek modeli yarışı); gözlenen sözleşme yeni birim testleriyle pinli | `Interlocked.Exchange` (tam bariyer) | `f6784633` |
+| Patlama testi ortak fikstürü ve `OsysProjectCount`'u kopyalıyordu | — | `NewWithProjects` kullanılır | `f6784633` |
+| Pompa birim testleri yoktu | 4 yeni test (dilim arası girdi, çok üretici sırası, fırlatan işleyici, `DrainNow`) | — | `f6784633` |
+| Değiştirilen eski sönüşün `Completed`'ı hâlâ ateşleniyor: bitir–başla–bitir 640 ms içinde olursa ikinci sönüş yarıda kesiliyordu | kırmızı → yeşil | düğüm başına sönüş nesli | `bcc00efb` |
+| Spin-down penceresinde panel boyutu değişince boş saat bir sonraki koşuya dek dönüyordu (eski kusur) | kırmızı → yeşil | spin-down yeniden kurulur | `bcc00efb` |
+| "Yörünge durdu" iddiası tik gelmezse boşuna geçebilirdi | — | dönen yörüngeyle aynı pompa penceresinde ölçülür | `bcc00efb` |
+| Doküman/yorum kesinliği (§12.1 "en fazla 8 ms", istisna yolu, kod haritası, üç eski yorum) | — | yerinde yeniden yazım | `f6784633` |
+
+Uygulanmayan öneri: girdi altında Background devamını belirli bir süre sonra yükseltmek — sürekli sürüklemede bile fare hareketleri
+arasında boşluk kalıyor, ölçülmüş bir sorun yok.
+
 ## 6. Doküman kontrolü (kod ↔ ARCHITECTURE)
 
 Perf profili tablosu (§11.1), Resolve tam öncelik kuralı, `WorkerBudget` sabitleri, regex 100 ms zaman aşımı, 200 ms tick, ETA
@@ -106,6 +124,11 @@ Perf profili tablosu (§11.1), Resolve tam öncelik kuralı, `WorkerBudget` sabi
 
 ## 8. Kalanlar (karar sizin)
 
+- **Canlı ekranda gözle kontrol edilmedi:** koşu başındaki atlanmaların artık birkaç karede uygulanması, tasarımın kaldırdığı
+  "dalga" gibi görünür mü? 02:25'teki ekran yakalama denemesi OLED koruma ekran koruyucusuna takıldı (masaüstü erişilemezdi;
+  ekran koruyucusu bilerek kapatılmadı). Ölçüme dayalı beklenti: graf statüsü 200 ms'lik tick'le itildiği için patlama (~0,4 s)
+  en fazla 2–3 graf güncellemesinde oturur; listede ekrandaki ~20 satır 1–2 dilimde güncellenir. Bir sonraki koşuda gözle bakmanızı
+  öneririm.
 - Pencereye dönüşteki sessiz Sync süresince F5'in sessizce yok sayılması (§2 not).
 - Koşu sırasında render thread hâlâ 0,56–0,81 G döngü/s (sürekli animasyonlar: derlenen düğümlerin yörüngeleri, satır ve şerit
   animasyonları, konsol). Kalan en büyük tahsis kalemleri konsol metni ve UI Automation peer'ları (makinede UIA istemcisi —
