@@ -854,13 +854,16 @@ is skipped as a group rather than rebuilt on every run.
 
 That is the decision about the group. Which members of a dirty group compile is a separate question, asked once more
 when a run starts the group (§8.8), and the composite cannot answer it: it is one value for every member.
-The answer is built from each member's own **term** — the very value the composite is made of: the member's files, the
-configuration and the signatures of its upstreams outside the component, with every intra-component edge collapsed to
-the marker, so a sibling's content never enters it. The planner returns the terms beside the signatures
-(`MemberTermById`; SCC members only, and empty under frozen-upstream evaluation, which builds no composite), the
-run plan carries them to the coordinator, and a converged group stores each member's term in its build state (§7.5).
-A term that equals the stored one says that nothing the member itself is built from has changed; what its siblings
-did to it is judged on the API surfaces it read (§8.8).
+The answer is built from each member's own **term**: the member's files and the configuration, with every upstream —
+inside the component or outside it — collapsed to the marker, so neither a sibling's content nor an outside upstream's
+signature enters it. The composite still hashes each member's inputs with the signatures of its upstreams outside the
+component, which is how a change there makes the group dirty and reaches everything downstream; the term leaves them
+out, and whether an outside upstream moved under the member is judged on that upstream's API surface instead — the
+dependency surfaces of §7.5. The planner returns the terms beside the signatures (`MemberTermById`; SCC members only,
+and empty under frozen-upstream evaluation, which builds no composite), the run plan carries them to the coordinator,
+and a trusted result stores each member's term in its build state (§7.5). A term that equals the stored one says that
+nothing the member itself is built from has changed; what its siblings and its outside upstreams did to it is judged on
+the API surfaces it read (§8.8).
 
 ### 7.4 Will-build tri-state
 
@@ -952,7 +955,7 @@ successful build was seen to refresh (§7.6); the list is `null` when nothing co
 path, the output file missing after the build, an older record), empty when the path is known but no candidate
 matched, and it survives a failed attempt unchanged. A cycle member's record also carries the three fields behind
 the first round of the next run that compiles its group (§8.8; a `Rebuild` compiles every member regardless): the
-**member term** it last compiled with (§7.3), the **read
+**member term** it last compiled with (its own content and configuration; §7.3), the **read
 surfaces** — for every sibling file its last compile read, the producer, the file and the API-surface hash it saw —
 and the **engine fingerprint** of the run that wrote them. They are written when the member's result is trusted — its
 group converged, or it was settled when the group stopped without a verdict (§8.8) — freshly for a member that
@@ -967,6 +970,15 @@ fields included, and the non-convergence memory (§8.8) copies it too and touche
 record to copy, a new one is opened without the fields. Keeping the fields through an invalidation is safe because a
 record whose last result is not a success is never trusted. A record without the fields — written before they
 existed, or cleared this way — is one round one cannot trust (§8.8).
+The record also carries the **dependency surfaces**: for every direct dependency — only those outside the group, for a
+cycle member, whose siblings are in the read surfaces — the producer, its evidence file and the API-surface hash the
+project last compiled against, read once all of those dependencies have finished: just before the compile for an ordinary
+project, at the end of its group for a cycle member, whose outside dependencies finish before the group starts. They are
+written on every trusted success, in producer order, and kept through a skip: a project the surface gate (§8.3) or round one
+(§8.8) passes over keeps the surfaces of its last compile, which the decision has just found unchanged. A dependency
+whose output cannot be read is left out of the list, and the list is `null` when nothing could be read and in records
+that predate it — either way the next decision compiles the project. Invalidations copy the field like the cycle
+fields, for the same reason.
 The built commit and the last branch feed no decision: the
 built commit is diagnostic, and the project log's "last successful build" line is the only place a revision is
 shown. The last duration feeds none either: it is recorded after each success and read by nothing — the ETA (§8.4)
@@ -1108,7 +1120,7 @@ only by a time check — a project in time mode, or a member of a group in time 
 
 | Mode | Set of projects |
 |---|---|
-| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use; dirty cycle groups included, compiled in rounds (§8.8) |
+| `Build` | the will-build set (incremental), minus any project this run only evaluates conditionally (§8.3) — the wave lights only what will *definitely* compile, the same set the queue colour and the run's fixed progress denominator use; dirty cycle groups included, compiled in rounds (§8.8); a project dirty only through an upstream is decided at its turn by the surface gate (§8.3) |
 | `Rebuild` | all projects; cached state ignored; cycle groups compile every member in round one, later rounds follow the evidence (§8.8), and nothing is evaluated conditionally |
 | `Cycles` | the projects in a dependency cycle **and their transitive upstream**, the cycles compiled in rounds (§8.8); everything else is pre-skipped as `skipped — not needed by a dependency cycle` |
 | `Clean` | every project in the graph — external projects and cycle members included — with `-t:Clean` instead of a compile: Visual Studio's *Clean Solution*, from the Build menu (§13.2). From a row, that one project |
@@ -1196,8 +1208,10 @@ the set the old modes produced. Projects that finished green persisted their sig
 to date; projects that were killed or failed had their stored state invalidated (§7.5) and stay dirty; the
 dependents of a failure succeeded carrying a dependency issue, so their record is flagged with its roots
 (§8.3) and they come along as soon as one of those roots is healthy again — recovered in this run, or already
-recorded as successful, per the table there. The one deliberate difference is the elapsed clock: the new run
-counts from zero, because it is a new run.
+recorded as successful, per the table there. The surface gate (§8.3) does not shorten that second press for the
+dependents of an upstream the stopped run finished: the upstream's new signature is already in the ledger, so the
+dependent no longer reads as dirty through its upstream alone and compiles once, whatever the upstream's surface did.
+The one deliberate difference is the elapsed clock: the new run counts from zero, because it is a new run.
 
 The projects that fall out of scope this way are not announced one at a time in the event stream — a
 workspace with hundreds of unrelated projects would turn a `Cycles` run into scope-only noise — they collapse
@@ -1379,6 +1393,56 @@ run and for Sync's preview alike (`ConditionalRebuild.ConditionalIds`, with the 
 never in that set alone; the waiting members of a group that will be judged as a whole are, so on both sides the
 group leaves the wave, the queue and the progress denominator exactly like a waiting project, and compiles only
 if its check at dispatch finds a recovered root.
+
+#### Surface gate
+
+A failed dependency is one way an upstream reaches its dependents; the ordinary way is the signature. Every project's
+signature carries its upstreams' (§7.1, §7.2), so a body-only change in a widely used project makes everything
+downstream dirty, and each of those dependents would compile against an API that did not move — reproducing the output
+it already had. The surface gate asks of an ordinary project the question a cycle's round one asks of its members
+(§8.8): did the API surface of any direct dependency move since this project last compiled?
+
+A project is a **candidate** when the run's plan finds it dirty only through an upstream: the plan says *signature
+changed*, while a second, frozen-upstream evaluation of the same plan — the Fast evaluation (§7.2), with every
+upstream's signature read from the ledger and the output evidence applied — finds it up to date. That second answer
+means the project's own files and configuration are unchanged, its output evidence is in place and its fed copies are
+intact; a configuration switch changes both evaluations and never makes a candidate. It does not mean the last result
+was a success: after a proven failure, a source reverted to the signature of its last success reads as up to date
+again (§8.8), so the decision asks that separately.
+A project with no direct dependency is never one, and neither is a cycle member, whose question its group asks (§8.8).
+Candidates exist only in the runs that follow the ledger as a whole — a `Build` or a `Cycles` run under Safe mode, not a
+`Rebuild` and not a run started from a row (`SurfaceGate.AppliesTo`, asked by the run's planning step and by the
+coordinator alike); the choice is Core's (`SurfaceGate.CandidateIds`) and the coordinator applies it.
+
+Until its turn a candidate is a plain dirty project: it lights in the wave, sits in the queue and counts in *N to
+build* and in the progress denominator. The decision comes at its turn, every dependency already finished. A record
+whose last result is not a success is not trusted, as in round one (§8.8), and the project compiles. Otherwise, for each
+direct dependency, a failure in this run, a dependency missing from the record, a surface that cannot be read — a
+dependency without a derivable output path, an SDK-style project (§7.6), has none — or one that differs from the recorded
+hash means the project compiles; when every one matches it is skipped as `skipped — up to date (no dependency surface
+changed)` (`SurfaceGate.Decide`). The current surface is read from the dependency's
+evidence file on disk, once per run (`ApiSurfaceHash`, the hash the cycle rounds use: declarations, not bodies) —
+whether the dependency compiled in this run, was skipped as up to date or was last built elsewhere. A skipped dependency
+is never assumed unchanged: a build from a row or from Visual Studio may have rewritten it since. The comparison base
+sits on the dependent's side, in its record's dependency surfaces (§7.5) — what this project last compiled against,
+not what the dependency last produced.
+
+A skip refreshes the record exactly as a carried cycle member's is refreshed — the new composite signature, the run's
+commit, branch and time and this run's dependency-issue note, with the duration, the content fingerprint, the fed
+outputs and the dependency surfaces left as its last compile wrote them — so the next run finds it up to date
+(`RefreshBuildStateOnSkip`). The row turns green at once, with the next Sync's answer, and the run's count moves (§13.2).
+Transitivity needs no rule of its own: a project the gate skipped has by definition an unchanged surface, so its own
+dependents see nothing move either; the plan still marks the whole downstream dirty, which is the safe direction.
+
+The gate's known limits are listed in §20. An upstream compiled in an earlier run — a stopped run, a build from a
+row — already carries its new signature in the ledger, so its dependents no longer read as dirty through it alone and
+compile once, whatever its surface did. A skipped project is not compiled, so the copies of its dependencies' outputs
+that a compile would have refreshed in its own output folder stay as they were — the same limit, with the same
+reasoning, as a carried cycle member's (§8.8). A skipped project whose record takes on an inherited dependency note
+reads `up to date` on its row until the next Sync says *waiting for dependency*: the skip event carries no roots. The
+direct dependents of an upstream without an evidence path never pass the gate. And the surface read is the
+dependency's own output, not the copy a dependent links against, so a copy that fails without failing the build goes
+unseen.
 
 ### 8.4 ETA
 
@@ -1635,7 +1699,8 @@ restart the line numbers, and a member that is never compiled never gets a log.
 **Round one compiles only the members that need it.** When the group has surface evidence and the plan carries the
 members' terms (§7.3), a pure function in Core (`CycleMemberNeed`) sorts the members once, as the group starts. It
 reads what the ledger holds for each member (§7.5), the member's current term and output check (§7.6), its direct
-dependencies inside the group, the surface state hashed at group start and the engine fingerprint (below). Without
+dependencies inside the group and outside it, the surface state hashed at group start — every copy of each producer
+inside the group, the evidence file of each dependency outside it — and the engine fingerprint (below). Without
 that evidence every member compiles in round one. A member needs a compile when the first of these rules matches,
 taken in this order, and the matching rule is written to `decision.log` before the round starts, one line per member
 (`A: round 1 — own inputs changed`):
@@ -1647,8 +1712,13 @@ taken in this order, and the matching rule is written to `decision.log` before t
   or the recorded surfaces name no file of one of those dependencies.
 - **Engine changed.** The fingerprint stored with the record is not this run's.
 - **No member term, own inputs changed.** The plan holds no term for the member (a plan without a composite has
-  none), or the term differs from the stored one: the member's own files, its configuration or an upstream outside
-  the component changed.
+  none), or the term differs from the stored one: the member's own files or its configuration changed.
+- **Dependency surface moved.** A direct dependency outside the component has no surface in the record (§7.5), or its
+  evidence file, hashed when the group starts, is gone, unreadable or no longer the hash the member last compiled
+  against. An outside upstream whose body changed while its API stayed put moves nothing here, so the members reading
+  it are carried — the composite still turns the group dirty, which is what brings the group to this question. Only
+  the evidence file is compared, the file the record holds; an outside upstream with no derivable evidence path
+  (§7.6) has nothing to compare, and the members that read it compile whenever their group does.
 - **Output evidence missing, output older than its inputs.** The member has no output check, no derivable
   evidence path or an output file that is gone, or fed copies that are not intact (§7.6); or its output is in time
   mode and older than one of its own inputs — an output that may not have been compiled from the sources on disk (an
@@ -1671,7 +1741,8 @@ single result with everyone else's: `skipped — up to date`, with `carried: own
 as the detail in `decision.log`. Its build state is refreshed at that moment, unless the run was interrupted: the new
 composite signature, the run's commit and branch, the run time and this run's dependency-issue note replace the old
 ones — which is what lets the next *Build* find the member up to date — while its duration, content fingerprint, fed
-outputs and the three cycle fields stay as its last compile left them. The refresh is the same when the output was
+outputs, the three cycle fields and its dependency surfaces stay as its last compile left them (`RefreshBuildStateOnSkip`,
+the same body the surface gate's skip goes through, §8.3). The refresh is the same when the output was
 compiled outside this tool: the member's record is refreshed like any carried member's, and the next run judges it by
 its term and surfaces, not by the output's time. Having never compiled, the member has no
 project log in the run. When a group is cut short a carried member is invalidated with the rest; when it stops
@@ -3084,6 +3155,16 @@ as any other success — its own signature is genuinely current, taken straight 
 event — even though it still drops out of the run's definite queue (`Conditional`, §10.2, unaffected by any of
 this: the label stopped reading that flag, the run's own scope bookkeeping did not) rather than being counted a
 plain success.
+
+A project the run skips as `up to date` at its turn — passed over by the surface gate (§8.3), or a cycle member
+carried through its group (§8.8) — reads `up to date` the moment the skip arrives as well: its record was just
+refreshed with this run's signature, so that is the next Sync's answer too (`NextPreview.AfterUpToDateSkip`), and
+the row turns green instead of staying grey until then. Only a row the plan meant to compile changes this way; a
+project skipped at the start of the run keeps the reason its preview gave — `built outside this tool`, say — and a
+`dependency still failing` skip touches neither the record nor the row's reason. The project's page states such a
+skip as it states any up-to-date skip — *Up to date — nothing to compile in this run.* — with no sentence of its own:
+the App cannot tell a gate skip from any other skip of a project whose signature changed, and the detail stays in
+`decision.log`.
 
 A converged cycle member with a dependency issue reads the same way, though it is never gated alone (§8.3): its
 note is genuinely recorded, the member compiles with its group, and the group is judged as a whole at dispatch —
@@ -6061,6 +6142,32 @@ do, and how the interface works around each — useful to know before attempting
   new output look older than the ledger's last run, or an input older than the output. These are accepted.
 - **Visual Studio and the tool must not build the same project at once.** Both write the same `obj` and the
   same output; neither can tell, and nothing arbitrates between them.
+- **An output built outside this tool is taken as built for the run's configuration.** An ordinary project is judged
+  by times (§7.6) and a carried cycle member by its term and the surfaces it read (§8.8), and its record is then
+  refreshed as if this tool had compiled it. A project whose output path is shared between configurations would let
+  another configuration's output pass in the same way; per-configuration output paths, the common layout, keep the
+  two apart.
+- **The surface gate compiles once after an earlier run moved an upstream.** Candidates are found against the ledger's
+  upstream signatures (§8.3), so the dependents of an upstream compiled in an earlier run — a stopped run, a build from
+  a row — no longer read as dirty through it alone and compile once, whatever its surface did. It errs safely.
+- **A project the run does not compile keeps the copies its compile would have refreshed.** A project skipped by the
+  surface gate (§8.3), like a carried cycle member (§8.8), leaves the copies of its dependencies' outputs in its own
+  output folder as its last compile wrote them, because the tool never writes to an output folder itself (§9.4). A
+  layout that runs from one shared folder, where each dependency writes its own output, never sees it; a layout that
+  runs from each project's own folder sees a dependency's previous implementation there until that project compiles.
+- **A gate skip does not carry an inherited note to the row.** A skipped project whose record takes on this run's
+  inherited dependency note reads `up to date` on its row until the next Sync says *waiting for dependency*; the skip
+  event carries no roots, and the record is right in the meantime.
+- **A dependent of an upstream without an evidence path compiles whenever it is dirty.** The surface gate (§8.3) and
+  round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
+  output path (an SDK-style project, §7.6) has nothing to compare, so its direct dependents never pass the gate and
+  the cycle members that read it from outside their group never count as carried.
+- **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
+  record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
+  folder (§9.4), a post-build copy that fails without failing the build leaves the copy behind that file: a dependent
+  compiled against the old copy records the new surface, and a later run that refreshes the copy skips it. A copy
+  that fails the build is a failure like any other, and the dependency note compiles the dependent once the
+  dependency recovers (§8.3).
 - **A post-build step that copies more than its own output is seen by name only.** Inside a cycle round a
   member whose name is a dotted prefix of another project's name is kept off the level of that project and of
   its readers (§8.8), because the common `copy $(TargetName).*` rewrites that project's shared copy. Any other
@@ -6299,7 +6406,7 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Will-build tri-state decision and its reason, the ledger-mode vetoes and the time-mode reasons; the plan-wide pass that weighs a dependency note against its roots | `Core/Planning/WillBuildEvaluator.cs`, `Core/Planning/BuildPreview.cs` |
 | Local-edit flag behind `modified · local` (git status ∩ project inputs, main repo root only) | `Core/Workspace/LocalEdits.cs` |
 | ETA formula (raw estimate, smoothing, rounding, cycle term) | `Core/Incremental/EtaCalculator.cs` |
-| Build state store, non-convergence lookup, invalidation without evidence; what a finished project leaves in it — the success record with its measured duration, the failure record (with or without evidence) | `Core/State/BuildStateStore.cs`, `Supervisor/RunCoordinator.cs` (`PersistBuildStateOnSuccess`, `UpsertBuildState`, `InvalidateBuildStateOnFailure`) |
+| Build state store, non-convergence lookup, invalidation without evidence; what a finished project leaves in it — the success record with its measured duration and the dependency surfaces it compiled against (read before the compile), the failure record (with or without evidence) | `Core/State/BuildStateStore.cs`, `Supervisor/RunCoordinator.cs` (`PersistBuildStateOnSuccess`, `DependencySurfacesOf`, `UpsertBuildState`, `InvalidateBuildStateOnFailure`) |
 | The in-flight ledger (`run-inflight.json`): dispatch/result bookkeeping, startup recovery and its retry | `Core/State/InFlightLedger.cs` |
 | The one atomic read/write path shared by the build state, the in-flight ledger and the two large ledgers (text, stream and JSON forms) | `Core/State/AtomicFile.cs` |
 
@@ -6315,13 +6422,14 @@ Where a behaviour lives. Paths are relative to `src/`; `Core`, `App`, `Superviso
 | Scope of a `Cycles` run (members + transitive upstream) | `Core/Planning/CycleRunScope.cs` |
 | Barriered level plan inside a cycle round (most-read-first placement, any-direction neighbor separation, shared-copy collisions by name) | `Core/Planning/CycleRoundLevels.cs` |
 | Which files of a sibling a cycle member is judged on (the copy its compiler read; every copy when unsure), and which of them moved since the member read them | `Core/Planning/CycleReadFiles.cs` |
-| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps); fed by the member terms the planner returns (`MemberTermById`) and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `PersistBuildStateOnCarriedMember`, `PersistBuildStateOnSuccess`) |
+| Which members round one compiles and which it carries (rule chain, reason per member, the read states a carried member keeps, the outside dependencies' surfaces); fed by the member terms the planner returns (`MemberTermById`, own content and configuration only), by the evidence files of the group's outside dependencies hashed as it starts and by the engine fingerprint (path, file version and build argument contract of `MSBuild.exe`); the engine applies the decision once as a group starts, reports a carried member as `skipped — up to date`, refreshes its ledger record and writes the cycle fields and outside dependency surfaces of the compiled members when the member's result is trusted (the group converged, or the member was settled when the group stopped without a verdict) | `Core/Planning/CycleMemberNeed.cs`, `Core/Incremental/IncrementalPlanner.cs`, `Core/MsBuild/EngineFingerprint.cs`, `Supervisor/RunCoordinator.cs` (`BuildCycleGroupAsync`, `ReportCarriedCycleMember`, `RefreshBuildStateOnSkip`, `PersistBuildStateOnSuccess`) |
+| Surface gate: which projects are candidates (dirty only through an upstream — the Safe plan against the frozen-upstream one), which runs apply it, the verdict at a candidate's turn and the one place a surface becomes persistable; the engine reads each dependency's current surface once per run, skips an unchanged candidate as `skipped — up to date (no dependency surface changed)` and refreshes its record | `Core/Planning/SurfaceGate.cs`, `Supervisor/Program.cs` (`ComputeIncremental`), `Supervisor/RunCoordinator.cs` (`TrySkipWhileDependencySurfacesUnchanged`, `SurfaceOf`, `RefreshBuildStateOnSkip`) |
 | Cycle round trail in decision.log (group header, evidence loss, round-one need lines or the Rebuild line, carried detail, round line, verdict with the compiled count, retry) | `Core/Planning/CycleDecisionLines.cs` |
 | Scope of a single-project run (plan cut to one node, stale inputs) | `Core/Planning/ProjectRunScope.cs` |
 | Plan of a Clean run (no edges, no cycle marks, every project this run's work) | `Core/Planning/CleanRunScope.cs` |
 | Dependency-issue propagation (failed roots, stale inputs of a scoped run; names and root ids) | `Core/Scheduling/DepIssueTracker.cs` |
 | Conditional rebuild of a project waiting for a failed dependency (which runs apply it, to a project and to a cycle group; the set a run evaluates, `ConditionalIds`; the verdict at its turn, root names) | `Core/Planning/ConditionalRebuild.cs` |
-| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean) | `Core/Planning/NextPreview.cs` |
+| What a row reads the moment a result lands, before the next preview (success, trusted or not · failure · Clean · a skip as up to date at its turn) | `Core/Planning/NextPreview.cs` |
 | Run elapsed clock | `Core/Scheduling/RunClock.cs` |
 | Bounded synchronous retry (used by state store and clipboard) | `Core/Scheduling/SyncRetry.cs` |
 | Worker loop, event pump, stop bookkeeping, perf lifecycle, cycle round loop (and which members of a group without a verdict it still trusts: those settled at the end of the last round) and non-convergence memory; the build-slot budget and who holds it (a worker from dispatch to result, a cycle member from `projectStarted` to `cycleMemberHeld`); the interrupt flag and the one reporting gate that stops trusting results after it; in-flight ledger calls | `Supervisor/RunCoordinator.cs` |

@@ -36,10 +36,10 @@ public class CycleMemberNeedTests
                     .Select(surface => surface.Producer)
                     .Distinct(StringComparer.OrdinalIgnoreCase)];
 
-    // Değişmemiş üye: kayıttaki terim bugünkü terimle aynı ve kayıt her grup içi bağımlılığı kapsar. Fark `with` ile
-    // açılır (CurrentTerm, Record, Output, InGroupDependencies).
+    // Değişmemiş üye: kayıttaki terim bugünkü terimle aynı ve kayıt her grup içi bağımlılığı kapsar; grup dışı bağımlılığı
+    // yoktur. Fark `with` ile açılır (CurrentTerm, Record, Output, InGroupDependencies, OutsideDependencies).
     private static CycleMemberNeed.MemberEvidence Member(string term, CycleReadSurface[] surfaces, OutputCheck? output) =>
-        new(Ledger(term, surfaces), term, output, ProducersOf(surfaces));
+        new(Ledger(term, surfaces), term, output, ProducersOf(surfaces), OutsideDependencies: []);
 
     // Grup başında diskten okunan yüzeyler: üretici → dosya → özet.
     private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> Disk(params CycleReadSurface[] surfaces) =>
@@ -123,6 +123,49 @@ public class CycleMemberNeedTests
         var decision = Decide(Disk(Reads), ("A", Member("t1", Reads, Intact) with { CurrentTerm = currentTerm }));
 
         AssertNeeded(decision, "A", "no member term");
+    }
+
+    // ---------------------------------------------------------------- (i-b) grup dışı upstream'in yüzeyi [D7-b]
+    // Üye terimi grup dışı upstream'in imzasını taşımaz; onun etkisi kayıttaki bağımlılık yüzeyiyle (DependencySurfaces)
+    // grup başında okunan diskin karşılaştırmasından gelir.
+
+    private const string U1 = @"X:\bin\U.dll";
+
+    private static BuildState WithOutside(BuildState ledger, params CycleReadSurface[] outside) => ledger with { DependencySurfaces = outside };
+
+    [Fact] // (i-b) grup dışı upstream'in yüzeyi kayıttakiyle aynı ⇒ taşınır
+    public void an_unchanged_outside_dependency_surface_keeps_the_member_carried()
+    {
+        var member = Member("t1", Reads, Intact) with
+        {
+            Record = WithOutside(Ledger("t1", Reads), Read("U", U1, "u1")),
+            OutsideDependencies = ["U"],
+        };
+        var disk = Disk(Read("B", B1, "h1"), Read("B", B2, "h2"), Read("U", U1, "u1"));
+
+        AssertCarried(Decide(disk, ("A", member)), "A");
+    }
+
+    [Fact] // (i-b) grup dışı upstream'in yüzeyi oynadı ⇒ gerekli, nedeni dosyayı adlandırır
+    public void a_moved_outside_dependency_surface_makes_the_member_needed()
+    {
+        var member = Member("t1", Reads, Intact) with
+        {
+            Record = WithOutside(Ledger("t1", Reads), Read("U", U1, "u1")),
+            OutsideDependencies = ["U"],
+        };
+        var disk = Disk(Read("B", B1, "h1"), Read("B", B2, "h2"), Read("U", U1, "u2"));
+
+        AssertNeeded(Decide(disk, ("A", member)), "A", "dependency surface moved: " + U1);
+    }
+
+    [Fact] // (i-b) kayıt grup dışı bağımlılığı kapsamıyor (eski kayıt / okunamamış yüzey) ⇒ gerekli
+    public void an_outside_dependency_missing_from_the_record_makes_the_member_needed()
+    {
+        var member = Member("t1", Reads, Intact) with { OutsideDependencies = ["U"] };
+        var disk = Disk(Read("B", B1, "h1"), Read("B", B2, "h2"), Read("U", U1, "u1"));
+
+        AssertNeeded(Decide(disk, ("A", member)), "A", "dependency surface moved: " + U1);
     }
 
     // ---------------------------------------------------------------- (ii) okunan yüzeyler

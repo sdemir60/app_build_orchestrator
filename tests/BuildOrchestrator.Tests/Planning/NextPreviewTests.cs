@@ -129,6 +129,22 @@ public class NextPreviewTests
         Assert.False(conditional);
     }
 
+    // ---------------------------------------------------------------- AfterUpToDateSkip [D8]
+
+    /// <summary>[D8] Koşu sürerken yüzey kapısıyla ("up to date") atlanan satır: defter az önce yeni imzayla yenilendi, bir
+    /// sonraki Sync UpToDate der — satır o cevabı HEMEN verir (gri "affected"ta kalmaz). Koşullu değildir. Beklenen, bir
+    /// sonraki Sync'in yenilenmiş kayda (bugünkü imza, son sonuç başarı) verdiği cevaptan da bağımsızca okunur.</summary>
+    [Fact]
+    public void a_project_skipped_as_up_to_date_during_a_run_is_up_to_date()
+    {
+        Assert.Equal((false, WillBuildReason.UpToDate, false), NextPreview.AfterUpToDateSkip());
+
+        var (willBuild, reason, _) = NextPreview.AfterUpToDateSkip();
+        var refreshed = WillBuildEvaluator.EvaluateWithReason(false, "sig",
+            new BuildState("D", BuiltSignature: "sig", LastResult: BuildResult.Succeeded), CycleCompilation.CompilesCycles(RunMode.Build));
+        Assert.Equal((refreshed.WillBuild, refreshed.Reason), (willBuild, reason));
+    }
+
     // [DEĞİŞEN KURAL — kullanıcı kararı 2026-09-29] AfterConfigurationChange eşlemesi ve iki testi
     // (a_configuration_change_reads_signature_changed_unless_nothing_ever_succeeded,
     // A_missing_output_stays_never_built_after_a_configuration_change) KALDIRILDI. Eski iddia: configuration değişince

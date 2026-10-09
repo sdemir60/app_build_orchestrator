@@ -724,32 +724,48 @@ public class IncrementalPlannerTests
         Assert.Equal(new[] { CycA, CycB }, before.MemberTermById.Keys.Order(StringComparer.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D7-b]</b> Eski iddia (<c>member_term_follows_outside_upstream</c>): üye terimi grup DIŞI
+    /// upstream'in taze imzasını taşır (U değişince A'nın terimi değişir). Değişme gerekçesi: Business'ta gövde değişince
+    /// 17 UI üyesinin terimi değişiyor ve hepsi "own inputs changed" ile derleniyordu — yüzeyi değişmeyen upstream için
+    /// boşuna. Terim artık yalnız üyenin KENDİSİdir (configuration + içerik); grup dışı upstream'in etkisi kayıttaki
+    /// bağımlılık yüzeyleriyle (<c>BuildState.DependencySurfaces</c>) denetlenir (<see cref="CycleMemberNeed"/> kural i-b).
+    /// Bileşik imza DEĞİŞMEZ: U değişince grup yine kirlidir ve downstream yine cascade alır.
+    /// </summary>
     [Fact]
-    public void member_term_follows_outside_upstream()
+    public void member_term_ignores_outside_upstream_while_the_composite_still_follows_it()
     {
         var before = UpstreamCycleSignatures("fpU-v1", "fpB");
         var after = UpstreamCycleSignatures("fpU-v2", "fpB");
 
-        Assert.NotEqual(before.MemberTermById[CycA], after.MemberTermById[CycA]); // A, SCC dışı U'yu taze imzasıyla okur (Safe)
-        Assert.Equal(before.MemberTermById[CycB], after.MemberTermById[CycB]);    // B, U'yu okumaz
+        Assert.Equal(before.MemberTermById[CycA], after.MemberTermById[CycA]);    // A'nın KENDİ terimi U'yu taşımaz
+        Assert.Equal(before.MemberTermById[CycB], after.MemberTermById[CycB]);
+        Assert.NotEqual(before.SignatureById[CycA], after.SignatureById[CycA]);   // bileşik hâlâ U'yu izler (grup kirli)
+        Assert.NotEqual(before.SignatureById[CycD], after.SignatureById[CycD]);   // downstream cascade korunur
     }
 
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D7-b]</b> Eski iddia (<c>member_term_equals_the_composite_input</c>): üye terimi bileşiğin
+    /// GİRDİSİYLE aynıdır (grup dışı upstream taze imzasıyla terime girer). Değişme gerekçesi yukarıdaki testte. Bileşik yine
+    /// upstream'li girdilerin özetidir; üye terimi ise her upstream'i sabit işarete düşürür — ikisi artık AYNI değer değildir.
+    /// </summary>
     [Fact]
-    public void member_term_equals_the_composite_input()
+    public void member_term_is_the_own_term_while_the_composite_still_hashes_the_upstream_aware_inputs()
     {
         var result = UpstreamCycleSignatures("fpU", "fpB");
         ProjectNode NodeOf(string id) => UpstreamCyclePlan().Nodes.Single(n => n.Id == id);
         string? Intra(string dep) => dep is CycA or CycB ? BuildSignature.NullMarker : result.SignatureById[dep];
 
-        string termA = BuildSignature.Compute(NodeOf(CycA), "Debug", "fpA", Intra);
-        string termB = BuildSignature.Compute(NodeOf(CycB), "Debug", "fpB", Intra);
-
-        Assert.Equal(termA, result.MemberTermById[CycA]);
-        Assert.Equal(termB, result.MemberTermById[CycB]);
-        // Terimler bileşiğin GİRDİSİDİR (aynı çağrı, kopya değil): bileşik = sıralı üye terimlerinin özeti.
+        string inputA = BuildSignature.Compute(NodeOf(CycA), "Debug", "fpA", Intra);
+        string inputB = BuildSignature.Compute(NodeOf(CycB), "Debug", "fpB", Intra);
         Assert.Equal(
-            BuildSignature.HashText(termA + BuildSignature.ItemSeparator + termB + BuildSignature.ItemSeparator),
-            result.SignatureById[CycA]);
+            BuildSignature.HashText(inputA + BuildSignature.ItemSeparator + inputB + BuildSignature.ItemSeparator),
+            result.SignatureById[CycA]);                                                   // bileşik: upstream'li girdiler
+
+        Assert.Equal(BuildSignature.Compute(NodeOf(CycA), "Debug", "fpA", _ => BuildSignature.NullMarker), result.MemberTermById[CycA]);
+        Assert.Equal(BuildSignature.Compute(NodeOf(CycB), "Debug", "fpB", _ => BuildSignature.NullMarker), result.MemberTermById[CycB]);
+        Assert.NotEqual(inputA, result.MemberTermById[CycA]);                              // A, U'yu okur: girdi ≠ kendi terimi
+        Assert.Equal(inputB, result.MemberTermById[CycB]);                                 // B grup dışı upstream okumaz: eşit kalır
     }
 
     /// <summary>Fast geçişinde kompozit kurulmaz (bkz. <c>ComputeComponent</c>'in gerekçesi), dolayısıyla üye terimi

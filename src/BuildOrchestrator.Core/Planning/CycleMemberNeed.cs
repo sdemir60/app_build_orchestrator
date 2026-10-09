@@ -15,7 +15,8 @@ namespace BuildOrchestrator.Core.Planning;
 /// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) —
 /// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş, üyenin grup içi bağımlılık kümesi
 /// boş ya da bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok
-/// ya da değişmiş (i) → çıktı kanıtı eksik (iv) → çıktı kendi girdisinden eski (v) → beslenen kopyası bozuk (iv) → okuma
+/// ya da değişmiş (i) → grup dışı bir bağımlılığın yüzeyi kayıttan farklı ya da kayıtta yok (i-b) → çıktı kanıtı eksik
+/// (iv) → çıktı kendi girdisinden eski (v) → beslenen kopyası bozuk (iv) → okuma
 /// kaydının bütünlüğü (aynı (Producer, File) iki kez ya da eksik parçalı girdi: yine "güvenilir kayıt yok", iii) → kayıtlı
 /// okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.
 /// Çıktının KİPİ karara girmez: bu araç dışında derlenmiş ama girdilerinden yeni bir çıktı, üyenin terimi aynı ve okuduğu
@@ -35,8 +36,14 @@ public static class CycleMemberNeed
     /// "own inputs changed" demek yanlış olurdu; üye yine de gerekli — güvenli taraf.</summary>
     public const string NoMemberTermReason = "no member term";
 
-    /// <summary>Üyenin kendi girdisi (dosyaları, configuration'ı, grup dışı upstream'i) kayıttakinden farklı (karar 2 i).</summary>
+    /// <summary>Üyenin kendi girdisi (dosyaları ya da configuration'ı) kayıttakinden farklı (karar 2 i). Grup dışı upstream bu
+    /// terime girmez — onun değişimi <see cref="DependencySurfaceMovedPrefix"/> ile söylenir (i-b).</summary>
     public const string OwnInputsChangedReason = "own inputs changed";
+
+    /// <summary>[D7-b] Grup DIŞI bir doğrudan bağımlılığın kayıttaki yüzeyi (<see cref="BuildState.DependencySurfaces"/>) grup
+    /// başında okunan diskten farklı, diskte yok ya da kayıtta hiç yok (kural i-b); ardından dosyalar
+    /// <see cref="CycleDecisionLines.MovedTerm"/> biçiminde gelir.</summary>
+    public const string DependencySurfaceMovedPrefix = "dependency surface moved: ";
 
     /// <summary>Çıktı kanıtı yok, diskte eksik ya da beslenen kopyaları bozuk (karar 2 iv).</summary>
     public const string OutputEvidenceMissingReason = "output evidence missing";
@@ -59,9 +66,13 @@ public static class CycleMemberNeed
     /// üyeleri, tam csproj yolu). Kayıt bunların HER BİRİ için en az bir okuma girdisi taşımalıdır (üretici kimlikleri
     /// OrdinalIgnoreCase eşleşir). İki ya da daha çok üyeli bir SCC'de her üyenin en az bir doğrudan grup içi bağımlılığı
     /// vardır: BOŞ küme güvenilmez sayılır (üye gerekli) ve çağıranın hatası gereksiz derleme olarak görünür kalır.
-    /// Çağıran kümeyi TAM hesaplamalıdır: eksik verilen bağımlılık denetlenmez.</summary>
+    /// Çağıran kümeyi TAM hesaplamalıdır: eksik verilen bağımlılık denetlenmez.
+    /// <paramref name="OutsideDependencies"/>: [D7-b] üyenin grup DIŞI doğrudan bağımlılıkları; kayıt
+    /// (<see cref="BuildState.DependencySurfaces"/>) her biri için yüzey taşımalı ve disk (<c>surfaceState</c>) ile aynı
+    /// olmalı (kural i-b). Boş küme ⇒ grup dışı bağımlılık yok, kural etkisiz.</summary>
     public sealed record MemberEvidence(BuildState? Record, string? CurrentTerm, OutputCheck? Output,
-                                        IReadOnlyCollection<string> InGroupDependencies);
+                                        IReadOnlyCollection<string> InGroupDependencies,
+                                        IReadOnlyCollection<string> OutsideDependencies);
 
     /// <summary>Kararın sonucu. <paramref name="ToBuild"/>: build order'a göre sıralı gerekli üyeler.
     /// <paramref name="CarriedReadStates"/>: TAŞINAN (atlanan) üye → kayıttan kurulan üretici → dosya → yüzey özeti
@@ -98,7 +109,7 @@ public static class CycleMemberNeed
                 reasons[member] = reason;
             }
 
-            var (record, currentTerm, output, inGroupDependencies) = evidence(member);
+            var (record, currentTerm, output, inGroupDependencies, outsideDependencies) = evidence(member);
 
             // (iii) Güvenilir kayıt: defterde var, son derleme başarılı, başarısız bir bağımlılığa link'li DEĞİL ve üç
             // döngü alanı dolu. Biri null/boşsa kanıt yok (eski defter, döngü dışı kayıt, yakınsamayan koşu): üye
@@ -135,6 +146,11 @@ public static class CycleMemberNeed
             if (string.IsNullOrEmpty(currentTerm)) { Need(NoMemberTermReason); continue; }
             if (recordedTerm != currentTerm) { Need(OwnInputsChangedReason); continue; }
 
+            // (i-b) [D7-b] Grup dışı upstream: terim onu taşımaz; kayıttaki bağımlılık yüzeyi diskle (grup başında okunan)
+            // karşılaştırılır. Kayıtta olmayan ya da diskte olmayan bağımlılık "taşındı" sayılır (güvenli taraf).
+            if (OutsideSurfacesMoved(record.DependencySurfaces, outsideDependencies, surfaceState) is { Count: > 0 } movedOutside)
+            { Need(DependencySurfaceMovedPrefix + CycleDecisionLines.MovedTerm(movedOutside)); continue; }
+
             // (iv) Çıktı kanıtı yok / diskte eksik. Zaman kipinde kanıt dosyası yoksa "kendi girdisinden eski" yanlış
             // olurdu; bu yüzden kanıt eksikliği önce gelir.
             if (output is null || output.Mode == EvidenceMode.None || output.EvidenceMissing)
@@ -160,6 +176,24 @@ public static class CycleMemberNeed
         }
 
         return new Decision(toBuild, carried, reasons);
+    }
+
+    // [D7-b] Grup dışı bağımlılıklardan yüzeyi kayıttakinden farklılaşmış, diskte olmayan ya da kayıtta hiç olmayanların
+    // dosyaları: harf-duyarsız sıralı ve tekil. Kayıtta girdi yoksa dosya adı bilinmez — diskte grup başında okunan ilk
+    // dosya, o da yoksa bağımlılığın kimliği yazılır (yine "gerekli" yönünde).
+    private static List<string> OutsideSurfacesMoved(IReadOnlyList<CycleReadSurface>? recorded,
+        IReadOnlyCollection<string> outsideDependencies,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> surfaceState)
+    {
+        var moved = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string dep in outsideDependencies)
+        {
+            var seen = recorded?.FirstOrDefault(s => string.Equals(s?.Producer, dep, StringComparison.OrdinalIgnoreCase));
+            var now = surfaceState.TryGetValue(dep, out var files) ? files : NoFiles;
+            if (seen?.File is null || seen.Hash is null || !now.TryGetValue(seen.File, out string? current) || current != seen.Hash)
+                moved.Add(seen?.File ?? now.Keys.FirstOrDefault() ?? dep);
+        }
+        return [.. moved];
     }
 
     // Kayıt, üyenin HER grup içi bağımlılığı için en az bir okuma girdisi (Producer == bağımlılık) taşıyor mu.

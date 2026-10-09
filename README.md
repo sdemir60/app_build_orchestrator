@@ -340,7 +340,9 @@ version's notes as its text. Installed copies pick it up on their next check.
    - *Build* — only stale projects: what changed, what failed, what was never built, and whatever depends on
      one of those, dirty dependency-cycle groups included (they compile in rounds, see below) — except a project
      that already built successfully against a dependency that was failing, which waits until that dependency
-     recovers instead of being retried every time.
+     recovers instead of being retried every time. A project whose only change is an upstream's is skipped at its
+     turn when that upstream's API surface — its declarations, not its method bodies — did not move, and its
+     row turns green then; until its turn it counts as one to build.
    - *Rebuild* — all projects, cycle groups included, cached state ignored; every project with a `packages.config` restores its packages
      again, whereas *Build* and *Resolve cycles* skip that restore while the file is unchanged and its packages are
      present.
@@ -446,7 +448,8 @@ parallel, up to the run's parallelism; direct neighbours never overlap; the memb
 first). Round one compiles only the members that need it — a member whose own inputs and the sibling API surfaces
 it read are unchanged since it last settled is carried: reported as up to date, not compiled. A cycle member compiled
 outside this tool is carried like any other when its inputs and the surfaces it read are unchanged, unless its
-sources are newer than that output. A *Rebuild* compiles every member — and after that a member compiles again only when the **API surface** of the sibling file it actually built
+sources are newer than that output. An upstream outside the group counts the same way: a body-only change there still
+makes the group dirty, but a member is compiled for it only when the API surface it reads from that upstream moved. A *Rebuild* compiles every member — and after that a member compiles again only when the **API surface** of the sibling file it actually built
 against has changed. A body-only change settles in a single round, right after a *Clean* too; an API change
 costs a second round only for the members that read the old API; three rounds is the ceiling, and a
 member that fails while its inputs are provably settled stops the run at once — an identical compile cannot
@@ -769,6 +772,10 @@ The reasoning behind all three is in [`ARCHITECTURE.md` §11](ARCHITECTURE.md#11
   files outside the repository root. Both are accepted risks — the repository is trusted by definition.
 - **Graph nodes are not keyboard-navigable.** A screen reader can read and invoke them — each node is named
   with its project and status — but there is no keyboard route into the canvas.
+- **Skipping a dependent on an unchanged API has two edges.** After a stopped run, or a build started from a row,
+  the dependents of an upstream that run compiled build once more whatever its API did. And a project skipped this
+  way is not compiled, so the copies of its dependencies in its *own* output folder stay as its last build left them —
+  invisible to an application that runs from one shared output folder, which every dependency writes itself.
 
 The measured numbers behind these are in [`ARCHITECTURE.md` §20](ARCHITECTURE.md#20-known-limits).
 

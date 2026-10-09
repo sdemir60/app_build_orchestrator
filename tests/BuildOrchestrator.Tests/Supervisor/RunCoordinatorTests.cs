@@ -88,6 +88,8 @@ public class RunCoordinatorTests
 
     internal static MsBuildInvokeResult Ok() => new(ExitCode: 0, DurationMs: 7, TimedOut: false, Killed: false);
     internal static MsBuildInvokeResult Exit(int code) => new(code, DurationMs: 9, TimedOut: false, Killed: false);
+    /// <summary>Her derlemesi başarılı biten fake — koordinatör testlerinin ORTAK yardımcısı (kopya YASAK).</summary>
+    internal static FakeInvoker AllSucceed() => new((_, _, _) => Task.FromResult(Ok()));
     internal static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal static string Describe(IpcEvent e) => e switch
