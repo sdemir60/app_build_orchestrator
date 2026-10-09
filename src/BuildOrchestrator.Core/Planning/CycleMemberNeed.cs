@@ -15,9 +15,11 @@ namespace BuildOrchestrator.Core.Planning;
 /// <para><b>Kural sırası</b> (ilk eşleşen neden yazılır; karar 2'nin harfleri parantezde): güvenilir kayıt yok (iii) —
 /// kayıt yok, başarısız, başarısız bir bağımlılığa link'li, döngü alanları eksik/boş, üyenin grup içi bağımlılık kümesi
 /// boş ya da bağımlılıklarının hepsini kapsamayan okuma kaydı — → kayıt başka bir motordan (vi) → üyenin kendi terimi yok
-/// ya da değişmiş (i) → çıktı kanıtı eksik, bu araç dışında derlenmiş ya da beslenen kopyası bozuk (iv, v) → okuma
+/// ya da değişmiş (i) → çıktı kanıtı eksik (iv) → çıktı kendi girdisinden eski (v) → beslenen kopyası bozuk (iv) → okuma
 /// kaydının bütünlüğü (aynı (Producer, File) iki kez ya da eksik parçalı girdi: yine "güvenilir kayıt yok", iii) → kayıtlı
-/// okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.</para>
+/// okuduğu bir kardeş yüzeyi artık farklı (ii). Grup çapındaki nedenler (kayıt, motor) üyeye özgü olanlardan önce gelir.
+/// Çıktının KİPİ karara girmez: bu araç dışında derlenmiş ama girdilerinden yeni bir çıktı, üyenin terimi aynı ve okuduğu
+/// yüzeyler diskle aynıysa aynı girdilerden üretilmiştir.</para>
 /// </summary>
 public static class CycleMemberNeed
 {
@@ -39,8 +41,9 @@ public static class CycleMemberNeed
     /// <summary>Çıktı kanıtı yok, diskte eksik ya da beslenen kopyaları bozuk (karar 2 iv).</summary>
     public const string OutputEvidenceMissingReason = "output evidence missing";
 
-    /// <summary>Çıktı zaman kipinde: bu araç dışında (Visual Studio, satır menüsü) derlenmiş (karar 2 v).</summary>
-    public const string OutputBuiltOutsideReason = "output built outside this tool";
+    /// <summary>Zaman kipinde üyenin KENDİ girdisi çıktıdan yeni (karar 2 v): çıktı mevcut kaynaktan üretilmemiş olabilir —
+    /// VS derlemesinden sonra düzenleme, branch değişimi.</summary>
+    public const string OutputOlderThanInputsReason = "output older than its inputs";
 
     /// <summary>Kayıtlı okuduğu bir kardeş yüzeyi diskte farklı ya da yok (karar 2 ii); ardından kayan dosyalar
     /// <see cref="CycleDecisionLines.MovedTerm"/> biçiminde gelir (tur satırının <c>moved</c> alanıyla aynı terim).</summary>
@@ -132,14 +135,15 @@ public static class CycleMemberNeed
             if (string.IsNullOrEmpty(currentTerm)) { Need(NoMemberTermReason); continue; }
             if (recordedTerm != currentTerm) { Need(OwnInputsChangedReason); continue; }
 
-            // (iv) Çıktı kanıtı yok / diskte eksik. Zaman kipinde kanıt dosyası yoksa "araç dışında derlendi" yanlış
-            // olurdu; bu yüzden kanıt eksikliği kip kontrolünden ÖNCE gelir.
+            // (iv) Çıktı kanıtı yok / diskte eksik. Zaman kipinde kanıt dosyası yoksa "kendi girdisinden eski" yanlış
+            // olurdu; bu yüzden kanıt eksikliği önce gelir.
             if (output is null || output.Mode == EvidenceMode.None || output.EvidenceMissing)
             { Need(OutputEvidenceMissingReason); continue; }
 
-            // (v) Çıktı bu araç dışında derlenmiş (zaman kipi): kaynağın içeriği aynı kalsa da çıktının kimin
-            // olduğu bilinmez.
-            if (output.Mode != EvidenceMode.Ledger) { Need(OutputBuiltOutsideReason); continue; }
+            // (v) Zaman kipinde kendi girdisi çıktıdan yeni: çıktının mevcut kaynaktan üretildiği bilinemez. Kip tek başına
+            // neden DEĞİLDİR — Fresh/DependencyNewer çıktı kaynaktan sonra üretilmiştir ve kalan kurallarla sınanır.
+            if (output.Mode == EvidenceMode.Time && output.Time == TimeVerdict.OwnNewer)
+            { Need(OutputOlderThanInputsReason); continue; }
 
             // (iv) Beslenen kopyalar (paylaşılan klasördeki DLL) eksik, boyutu farklı ya da kanıttan eski: bağımlılar
             // başka bir çıktıya link'lenir.

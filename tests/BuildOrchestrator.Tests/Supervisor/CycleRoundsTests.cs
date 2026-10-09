@@ -2630,22 +2630,56 @@ public class CycleRoundsTests
         Assert.Equal(Id("A"), Assert.Single(h.Events.OfType<ProjectSkippedEvent>()).ProjectId);
     });
 
-    /// <summary>[R3 final] Kural BİRİM düzeyinde, yalıtık pinlenir: bu girdi üretimde oluşamaz — <c>ApplyCycleGroups</c> bir
-    /// grupta tek bir üye zaman kipindeyse zaman kipini TÜM gruba yayar (§5.6), yani üretimde kimse taşınmaz. Test yalnız B'yi
-    /// zaman kipine alarak "zaman kipindeki üye derlenir, kardeşi taşınır" kuralını tek başına gösterir; iddia (B derlenir, A
-    /// taşınır) değişmez.</summary>
-    [Fact] // K2/K3: çıktısı araç dışında (Visual Studio / satır menüsü) derlenmiş üye zaman kipindedir ⇒ derlenir
-    public Task a_member_whose_output_is_in_time_mode_is_compiled() => InCacheRootAsync(async cacheRoot =>
+    /// <summary>
+    /// <b>[DEĞİŞEN KURAL — D2]</b> Eski iddia (<c>a_member_whose_output_is_in_time_mode_is_compiled</c>, K2/K3):
+    /// zaman kipindeki üye tur 1'de derlenir, kardeşi taşınır. Değişme gerekçesi <see cref="CycleMemberNeed"/>'in
+    /// testinde (ölçüm: VS'de derlenen UI grubunda 16/17 üye yalnız bu kuralla derleniyordu). Çıktısı kendi girdilerinden
+    /// yeni (Fresh) üye kalan kurallarla sınanır: terim ve okuduğu yüzeyler aynıysa taşınır, grup derlemeden yakınsar.
+    /// </summary>
+    [Fact]
+    public Task a_member_whose_output_is_in_time_mode_is_carried_when_its_term_and_surfaces_are_unchanged() => InCacheRootAsync(async cacheRoot =>
     {
         var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
         var rec = new RoundRecorder();
         using var h = await ResolveAsync(store, disk,
-            WithCheck(TwoMembers("sig1", "a1", "b1"), "B", IntactOutput with { Mode = EvidenceMode.Time }),
+            WithCheck(TwoMembers("sig1", "a1", "b1"), "B", IntactOutput with { Mode = EvidenceMode.Time, Time = TimeVerdict.Fresh }),
+            rec.Invoker((_, _) => Ok()));
+
+        Assert.Empty(rec.Calls);
+        Assert.Equal(2, h.Events.OfType<ProjectSkippedEvent>().Count(e => e.Reason == SkipReasons.UpToDate));
+        var completed = Assert.Single(h.Events.OfType<CycleCompletedEvent>());
+        Assert.Equal((CycleOutcome.Converged, 0), (completed.Outcome, completed.CompiledCount));
+        Assert.Equal(BuildResult.Succeeded, store.Load()[Id("B")].LastResult);
+    });
+
+    [Fact] // (v) daraltılmış hâli: kendi girdisi çıktıdan yeni üye yine derlenir, kardeşi taşınır
+    public Task a_member_whose_output_is_older_than_its_inputs_is_compiled() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        var rec = new RoundRecorder();
+        using var h = await ResolveAsync(store, disk,
+            WithCheck(TwoMembers("sig1", "a1", "b1"), "B", IntactOutput with { Mode = EvidenceMode.Time, Time = TimeVerdict.OwnNewer }),
             rec.Invoker((_, _) => Ok()));
 
         Assert.Equal(["B#1"], rec.Calls);
-        Assert.Contains(CycleDecisionLines.RoundOneNeed("B", CycleMemberNeed.OutputBuiltOutsideReason), h.DecisionLog,
-            StringComparison.Ordinal);
+        Assert.Contains(CycleDecisionLines.RoundOneNeed("B", "output older than its inputs"), h.DecisionLog, StringComparison.Ordinal);
+    });
+
+    /// <summary>[Review Focus 1] VS paralel derlemesi: B'nin çıktısı yeni (zaman kipi) ama okuduğu A'nın yüzeyi kayıttan
+    /// farklı — B eski API'ye bağlanmış olabilir ⇒ tur 1 B'yi derler (kural ii), zaman kipi onu kurtarmaz.</summary>
+    [Fact]
+    public Task a_time_mode_member_whose_read_surface_moved_is_compiled() => InCacheRootAsync(async cacheRoot =>
+    {
+        var (store, disk) = await ConvergedTwoMemberCycleAsync(cacheRoot);
+        disk.Set("A", "a2"); // kardeşin API'si koşular arasında değişti (VS derledi)
+        var rec = new RoundRecorder();
+        using var h = await ResolveAsync(store, disk,
+            WithCheck(TwoMembers("sig1", "a1", "b1"), "B", IntactOutput with { Mode = EvidenceMode.Time, Time = TimeVerdict.Fresh }),
+            rec.Invoker((_, _) => Ok()));
+
+        Assert.Contains("B#1", rec.Calls);
+        Assert.Contains(CycleDecisionLines.RoundOneNeed("B", CycleMemberNeed.ReadSurfaceMovedPrefix + SurfaceDisk.PathOf("A")),
+            h.DecisionLog, StringComparison.Ordinal);
     });
 
     [Fact] // K9d: motor parmak izi her derleme isteğinin targets yolunu kapsar — yol değişince grupta herkes derlenir
