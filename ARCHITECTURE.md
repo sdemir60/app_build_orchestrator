@@ -3146,8 +3146,10 @@ is **empty** only when the decision is genuinely unknown — no Sync yet, or the
 The label also follows the run live: the moment a project succeeds its row reads `up to date` (a Clean's
 success reads `never built` — its outputs are gone, §8.1), and a failure the engine counts as evidence reads
 `failed`. A failure that is not evidence — a timeout, a
-stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge — reads
-`never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync will say.
+stop, an invoke error, a failed Clean, or a compiler failure inside a cycle group that did not converge, unless the
+group made no progress and every surface that member read was already final, which rules a stale sibling out
+(§8.8) — reads `never built` at once, because that is what the ledger records for it (§7.5) and what the next Sync
+will say.
 The verdict travels with the failure event (`Evidence`) and is decided by the same gate that writes the ledger;
 the application never re-reads the reason text. It does not wait for the engine's next preview, which may not
 arrive until the next Sync. A success that still carries a dependency issue reads exactly the same `up to date`
@@ -5115,7 +5117,8 @@ the output to build — a Clean, or a cycle member whose group did not converge 
 stale, so the engine does not keep its success (`trusted: false`) — shows that grey. Red is evidence and nothing else, and on a state
 surface it comes only from the standing: a failure the engine counts as evidence writes `LastFailed` into the
 standing, while one it does not — a timeout, a stop, an invoke error, a failed Clean, a compiler failure inside
-a cycle group that did not converge — writes `NeverBuilt`, and over that stale standing the run's `failed` gives
+a cycle group that did not converge while the surfaces that member read were still stale (§8.8) — writes
+`NeverBuilt`, and over that stale standing the run's `failed` gives
 way to the grey (only a row with no decision at all keeps the run's red, since the result is then the one thing
 known). The verdict is the engine's: one gate in the Supervisor — a trusted result of a compiling target, a
 compiler failure (`FailureClassification`) and a known signature — decides it once, writes the ledger with it
