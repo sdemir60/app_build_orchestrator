@@ -1848,6 +1848,33 @@ public class RunViewModelStateTests
         Assert.Equal(100.0, RibbonText.Progress(vm.Phase, vm.AllClean, vm.Counters, vm.WillBuildCount, vm.FinishedOfWillBuild, vm.Counters.Total));
     }
 
+    /// <summary>[D4 · Stop] Stop'ta motor turdaki grubun her üyesini kanıtsız <c>stopped</c> hatasıyla raporlar, grubun
+    /// hükmü (cycle completed) GELMEZ. Held üye terminal olunca sayım terminale devreder: aynı satır held ve terminal diye
+    /// iki kez sayılmaz, hiç başlamamış üye de bir kez sayılır — n ≤ m (burada n = m = 3; çift sayım 5 okurdu).</summary>
+    [Fact]
+    public async Task A_stopped_cycle_group_counts_each_member_once_so_n_never_exceeds_m()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        StartCycleGroup(vm);
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, TotalProjects: 4, Parallelism: 4, "Debug"));
+        vm.OnEvent(new BuildPreviewEvent([
+            new BuildPreviewItem(A, "A", true), new BuildPreviewItem(B, "B", true),
+            new BuildPreviewItem(C, "C", true), new BuildPreviewItem(D, "D", false)]));
+        vm.OnEvent(new CycleRoundStartedEvent("r1", A, 1, 3, 3));
+        vm.OnEvent(new ProjectStartedEvent("r1", A, "A"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", A));
+        vm.OnEvent(new ProjectStartedEvent("r1", B, "B"));
+        vm.OnEvent(new CycleMemberHeldEvent("r1", B));
+        Assert.Equal((3, 2), (vm.WillBuildCount, vm.FinishedOfWillBuild));   // A ve B held, C hiç başlamadı
+
+        foreach (string member in new[] { A, B, C })
+            vm.OnEvent(new ProjectFailedEvent("r1", member, 0, FailureReasons.Stopped, Evidence: false));
+        vm.OnEvent(new RunCompletedEvent("r1", RunOutcome.Stopped, 0, 3, 0, 1, 100));
+
+        Assert.Equal((3, 3), (vm.WillBuildCount, vm.FinishedOfWillBuild));   // held ∪ terminal: çift sayım yok
+    }
+
     [Fact] // held üye yalnız kesin kümedeyse sayılır; ikinci koşu temiz başlar
     public async Task A_held_member_outside_the_fixed_set_is_not_counted_and_the_count_resets_per_run()
     {
