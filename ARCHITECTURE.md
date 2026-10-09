@@ -1770,8 +1770,8 @@ four-worker run.
 **A group that did not converge keeps only its settled members.** On no progress and on the ceiling, a member that
 came back green — or was carried — with none of its read surfaces stale at the end of the last round compiled against
 final APIs, and its record is written exactly as a converged member's, cycle fields included; a green member that
-was stale at the end is invalidated, which keeps the group dirty so that the next run's round one compiles that
-member alone. Without surface evidence nothing is trusted. A settled green member carries no dependency note for a
+was stale at the end is invalidated, which keeps the group dirty so that the next run's round one compiles only the
+members that did not settle. Without surface evidence nothing is trusted. A settled green member carries no dependency note for a
 failed sibling: a sibling that later compiles with a changed surface is caught by the read-surface rule, and one
 whose surface did not change leaves the member's output correct. A stop, a cancellation and an unexpected exception
 invalidate everyone, and a group cut short reports every member as failed rather than carrying an intermediate

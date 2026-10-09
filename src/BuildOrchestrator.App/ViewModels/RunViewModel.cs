@@ -2306,12 +2306,18 @@ public sealed partial class RunViewModel : ObservableObject
     private void OnCycleCompleted(CycleCompletedEvent e)
     {
         if (e.Outcome != CycleOutcome.NoProgress) return;
-        // [D3-b] Yalnız motorun arkasında durmadığı üyeler sıkışmıştır: oturmuş yeşil üye güvenilir persist edildi ve
-        // satırı az önce UpToDate yazıldı (OnProjectDone → NextPreview.AfterSuccess); oturmuş taşınan üye "skipped — up
-        // to date" aldı (skip satırının plan bayrağı her koşulda yazılmaz, bu yüzden State kapısı AYRICA gerekir); bayat
-        // ya da patlayan üye kirli kalır.
+        // [D3-b] Yalnız motorun arkasında durmadığı üyeler sıkışmıştır. Hüküm satırın GEREKÇESİNDEDİR, plan bayrağında
+        // değil: OnProjectDone her sonucu motorun kararıyla yazar (NextPreview) — güvenilmeyen başarı ve hata
+        // NeverBuilt/LastFailed, güvenilir başarı asla (UpToDate ya da grup dışı bir sorunla WaitingForDependency).
+        // Bayrak bu soruyu cevaplamaz: önizlemenin güncel dediği üye sonraki turda derlenip patlayabilir (bayrağı false
+        // kalır) ve dep-issue'lu güvenilir başarının bayrağı true olur. Oturmuş taşınan üye "skipped — up to date" aldı;
+        // gerekçesi önizlemeninkidir, bu yüzden State kapısı AYRICA gerekir.
         foreach (string member in _cycleGroups?.MembersOf(e.ProjectId) ?? [e.ProjectId])
-            if (FindRow(member) is { State: not ProjectRowState.Skipped, WillBuild: not false } row)
+            if (FindRow(member) is
+                {
+                    State: not ProjectRowState.Skipped,
+                    WillBuildReason: WillBuildReason.NeverBuilt or WillBuildReason.LastFailed,
+                } row)
                 row.CycleUnconverged = true;
         RefreshRunSurface();
     }

@@ -1467,7 +1467,8 @@ public class RunViewModelTests
     /// <para><b>[DEĞİŞEN KURAL — D3-b]</b> Eski iddia (<c>…marks_all_its_members_as_unconverged</c>): NoProgress GRUBU
     /// sıkıştırır, yeşil biten üyenin çıktısı da bayattır, herkes işaretlenir. Değişme gerekçesi: motor artık oturmuş yeşil
     /// üyeyi güvenilir persist eder (<c>Trusted=true</c>, satır <c>UpToDate</c>); onu "stuck" saymak yanlış olurdu. İşaret
-    /// yalnız motorun arkasında durmadığı üyelere gider: patlayan ve güvenilmeyen (WillBuild != false) satırlar.</para>
+    /// yalnız motorun arkasında durmadığı üyelere gider: patlayan ve güvenilmeyen satırlar (gerekçesi NeverBuilt/LastFailed —
+    /// motorun hükmü; önizleme bayrağı değil, bkz. <see cref="A_no_progress_mark_follows_the_engines_verdict_not_the_preview_flag"/>).</para>
     /// </summary>
     [Fact]
     public async Task A_cycle_that_ends_without_progress_marks_only_its_untrusted_members_as_unconverged()
@@ -1499,6 +1500,43 @@ public class RunViewModelTests
         Assert.True(vm.Projects.Single(p => p.Id == c).CycleUnconverged);
         Assert.False(vm.Projects.Single(p => p.Id == d).CycleUnconverged);
         Assert.Equal(2, vm.Counters.StuckCycles);
+    }
+
+    /// <summary>
+    /// [D3-b · final review] İşaret ÖNİZLEME bayrağından değil motorun üye başına hükmünden okunur; bayrak bu soruyu
+    /// cevaplamaz. (a) Önizlemenin güncel dediği (WillBuild=false) üye, kardeşinin yüzeyi koşu içinde oynayınca sonraki
+    /// turda derlenip oturmuş yüzeyle patlayabilir — grubu sıkıştıran odur ve işaretlenir. (b) Güvenilir başarı grup DIŞI
+    /// bir bağımlılık sorunu taşıyınca satırın bayrağı yeniden "derlenecek" olur (WaitingForDependency) ama motor kaydını
+    /// tuttu: "stuck" değildir, üçgeni bağımlılık sorununu söyler. Hüküm satırın gerekçesindedir — güvenilmeyen başarı ve
+    /// hata NeverBuilt/LastFailed yazar (NextPreview), güvenilir başarı asla.
+    /// </summary>
+    [Fact]
+    public async Task A_no_progress_mark_follows_the_engines_verdict_not_the_preview_flag()
+    {
+        await using var engine = new EngineHost(TestPaths.SupervisorExe);
+        var vm = new RunViewModel(engine, NeverTickingBatcher(), () => "r1");
+        const string a = @"C:\p\a.csproj", b = @"C:\p\b.csproj", c = @"C:\p\c.csproj";
+        vm.OnEvent(new WorkspaceTopologyEvent(
+            [new ProjectNode(a, "A", a, [], [], 0, null, null, true, null),
+             new ProjectNode(b, "B", b, [], [], 0, null, null, true, null),
+             new ProjectNode(c, "C", c, [], [], 0, null, null, true, null)],
+            [[a, b, c]], [], []));
+        vm.OnEvent(new RunStartedEvent("r1", RunMode.Build, 3, 4, "Debug"));
+        // Önizleme: yalnız A derlenecek; B ve C güncel (önceki koşuda oturmuş, güvenilir kayıt).
+        vm.OnEvent(new BuildPreviewEvent([new BuildPreviewItem(a, "A", true), new BuildPreviewItem(b, "B", false),
+            new BuildPreviewItem(c, "C", false)]));
+
+        vm.OnEvent(new ProjectStartedEvent("r1", a, "A"));                 // tur 1: A derlenir, API yüzeyi oynar
+        vm.OnEvent(new ProjectStartedEvent("r1", b, "B"));                 // tur 2: bayat B ve C derlenir
+        vm.OnEvent(new ProjectStartedEvent("r1", c, "C"));
+        vm.OnEvent(new ProjectSucceededEvent("r1", a, 100, null, false, Trusted: true));
+        vm.OnEvent(new ProjectFailedEvent("r1", b, 100, "exit 1", null, Evidence: true));                   // oturmuş yüzeyle patladı
+        vm.OnEvent(new ProjectSucceededEvent("r1", c, 100, [@"C:\p\x.csproj"], false, Trusted: true));      // grup dışı X patladı
+        vm.OnEvent(new CycleCompletedEvent("r1", a, CycleOutcome.NoProgress, 3, 2, 1, 300));
+
+        bool Marked(string id) => vm.Projects.Single(p => p.Id == id).CycleUnconverged;
+        Assert.Equal((false, true, false), (Marked(a), Marked(b), Marked(c)));
+        Assert.Equal(1, vm.Counters.StuckCycles);
     }
 
     /// <summary>Yakınsayan grup hiçbir üyesini işaretlemez — kontrol grubu.</summary>
