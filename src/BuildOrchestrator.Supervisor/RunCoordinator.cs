@@ -1250,8 +1250,9 @@ public sealed class RunCoordinator(
         string? failReason = null;
         string? failLogTail = null;
 
-        // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır.
-        var depIssues = ComputeDepIssues(run, projectId);
+        // [T54] depIssues invoke'tan ÖNCE hesaplanır — gerekçe ComputeDepIssues'ın XML doc'undadır. [D1] Aşağıdaki
+        // try/finally'nin dışındadır: hesap fırlatırsa proje boş dep-issue ile derlenir (DepIssuesForCompile).
+        var depIssues = DepIssuesForCompile(run, projectId);
         // [D6] Bağımlılık yüzeyleri de invoke'tan ÖNCE: bağımlılıklar şu an terminaldir ve derleme bu yüzeylere karşı
         // yapılır; başarı deftere bunları yazar (yüzey kapısının bir sonraki koşudaki tabanı).
         var dependencySurfaces = DependencySurfacesOf(run, projectId);
@@ -1659,8 +1660,9 @@ public sealed class RunCoordinator(
         // Üyenin turlar boyunca biriken durumu TEK kayıtta (bkz. CycleMemberState) — paralel sözlükler kilit
         // adım kalmak zorundaydı ve ikisi seyrek dolduğu için "kayıt yok" ile "değer yok" karışırdı.
         var state = new Dictionary<string, CycleMemberState>(StringComparer.OrdinalIgnoreCase);
+        // [D1] Grubun raporlama garantisinden (aşağıdaki try/finally) ÖNCE: hesap fırlatırsa üye boş dep-issue ile derlenir.
         foreach (string id in members)
-            state[id] = new CycleMemberState(ComputeDepIssues(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
+            state[id] = new CycleMemberState(DepIssuesForCompile(run, id, excludedDeps: allMembers)); // grup-içi kenarlar hariç
 
         // [API kısa devresi] Grup-içi kenarların YÜZEY takibi. Kaynak turlar arasında değişmez; bir üyenin
         // sonucunu yalnız OKUDUĞU grup-içi çıktı yüzeyinin değişmesi değiştirebilir. Kimin kimi okuduğu plan
@@ -2566,6 +2568,23 @@ public sealed class RunCoordinator(
     /// kardeş üyeler henüz Completed'ta DEĞİLDİR, dolayısıyla dep-issue hesabına girmemelidirler — aksi halde
     /// her üye kardeşlerini "çözülmemiş" sayıp yanlış uyarı üretirdi. Tekil projede null geçilir.
     /// </summary>
+    /// <summary>
+    /// [D1] Derlenecek projenin dep-issue hesabı, raporlama garantisinin (sonuç + <see cref="ReadySetScheduler.Complete"/>)
+    /// DIŞINDAN çağrılanı: hesap fırlatırsa uyarı yazılır ve proje boş dep-issue ile DERLENİR (güvenli yön). Kaçan bir istisna
+    /// projeyi sonuçsuz bırakırdı: işçi düşer, proje hiç Complete edilmez — tek işçide sessizce kaybolur (yalnız Queued
+    /// sayılır), birden çok işçide ona bağlı işi bekleyen işçiler sonsuza dek park eder ve koşu asılır. Yüzey kapısı bu
+    /// yardımcıyı KULLANMAZ: orada fırlayan hesap atlamayı iptal eder ve proje zaten derlenir.
+    /// </summary>
+    private DepIssueResult DepIssuesForCompile(RunContext run, string projectId, IReadOnlyList<string>? excludedDeps = null)
+    {
+        try { return ComputeDepIssues(run, projectId, excludedDeps); }
+        catch (Exception ex)
+        {
+            console("warning: dependency issue check failed (" + NameOf(run, projectId) + ") — building: " + ex.Message);
+            return DepIssueResult.Empty;
+        }
+    }
+
     private DepIssueResult ComputeDepIssues(RunContext run, string projectId,
                                             IReadOnlyList<string>? excludedDeps = null)
     {

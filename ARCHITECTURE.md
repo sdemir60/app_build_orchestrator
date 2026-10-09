@@ -1633,9 +1633,12 @@ take slots of their own. A project is therefore never dispatched just to queue f
 always means a compiler child is starting, and a stop never finds a dispatched project still waiting for its
 turn. Nobody holds one slot while waiting for another, so the ordering cannot deadlock.
 
-**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`. An
-exception escaping that region would leave the project in flight forever, `IsDone` would never become true and
-the run would hang — so even the display-name lookup is written not to throw.
+**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`, except the
+dependency-issue computation that precedes it — a project's own, or each member's as a group starts — and that one
+cannot throw: a failure there is a console warning and the project builds with no dependency issue, the safe
+direction (`DepIssuesForCompile`). An exception escaping the region would leave the project in flight forever:
+with one worker the project would vanish from the run, counted only as queued; with several, the workers waiting on
+its dependents would park for good and the run would hang — so even the display-name lookup is written not to throw.
 
 **Event ordering.** All events go through a single unbounded FIFO channel drained by one pump task. MSBuild's
 output callback is invoked *synchronously* from its stdout/stderr pump threads while IPC writing is
