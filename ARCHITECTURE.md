@@ -657,7 +657,11 @@ one is not), it is a library (no `OutputType`, or `Library`; an `Exe` or `WinExe
 framework, and no `PropertyGroup` of the project file — conditional or inside `Choose` — sets `OutputPath`,
 `OutDir`, `BaseOutputPath`, `AppendTargetFrameworkToOutputPath`, `AppendRuntimeIdentifierToOutputPath`,
 `RuntimeIdentifier`, `RuntimeIdentifiers`, `UseArtifactsOutput`, `ArtifactsPath`, `TargetFrameworks`, `Platform`,
-`TargetName`, `TargetExt` or `TargetFrameworkVersion`, nor does it import a file or another SDK. The nearest
+`PlatformName`, `AppendPlatformToOutputPath`, `TargetName`, `TargetExt`, `TargetFrameworkVersion`,
+`DirectoryBuildPropsPath` or `DirectoryBuildTargetsPath`, nor does it import a file or another SDK. The three values
+the path is built from — `AssemblyName`, `TargetFramework` and `OutputType` — are each written at most once,
+unconditionally, in a top-level `PropertyGroup` and in MSBuild's spelling: the evaluator takes the first value it
+finds while MSBuild weighs conditions and keeps the last, so any other shape could name a file no build writes. The nearest
 `Directory.Build.props` and the nearest `Directory.Build.targets` — found as MSBuild finds them, walking up from the
 project's folder to the drive root and stopping at the first of each name — are read the same way, and there
 `AssemblyName`, `OutputType` and `TargetFramework` count as well, because a props file stands in for what the project
@@ -1633,10 +1637,11 @@ take slots of their own. A project is therefore never dispatched just to queue f
 always means a compiler child is starting, and a stop never finds a dispatched project still waiting for its
 turn. Nobody holds one slot while waiting for another, so the ordering cannot deadlock.
 
-**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`, except the
-dependency-issue computation that precedes it — a project's own, or each member's as a group starts — and that one
-cannot throw: a failure there is a console warning and the project builds with no dependency issue, the safe
-direction (`DepIssuesForCompile`). An exception escaping the region would leave the project in flight forever:
+**Exactly-once completion.** Everything between dispatch and `Complete` sits inside a `try`/`finally`, except two
+reads that precede it, and neither can throw. The dependency-issue computation — a project's own, or each member's as a
+group starts — turns a failure into a console warning and builds the project with no dependency issue, the safe
+direction (`DepIssuesForCompile`); the dependency-surface read beside it (`DependencySurfacesOf`) swallows its own
+errors the same way and records no surfaces. An exception escaping the region would leave the project in flight forever:
 with one worker the project would vanish from the run, counted only as queued; with several, the workers waiting on
 its dependents would park for good and the run would hang — so even the display-name lookup is written not to throw.
 
@@ -6209,6 +6214,13 @@ do, and how the interface works around each — useful to know before attempting
   round one (§8.8) compare an upstream's evidence file with the dependent's record; an upstream with no derivable
   output path (an SDK-style project with an overridden layout, §6.2) has nothing to compare, so its direct dependents never pass the gate and
   the cycle members that read it from outside their group never count as carried.
+- **An SDK-style layout moved by something the evaluator cannot read keeps the default path.** The evaluator reads the
+  project file and the nearest `Directory.Build.props`/`.targets` as raw XML (§6.2). A layout moved from anywhere else —
+  a NuGet package's build props, a `Directory.Build.rsp`, a global property — goes unseen, and the derived path keeps
+  pointing at `bin\<configuration>\<framework>\`. Where nothing was built there the project merely reads output
+  missing and compiles every time; where an earlier build left its output there, that file is never refreshed again,
+  and the surface gate (§8.3) and round one (§8.8) compare against a frozen surface, so a dependent of a project whose
+  API changed can be skipped. Deleting the old `bin` folder after moving an output this way removes the stale file.
 - **The surface gate reads a dependency's own output, not the copy its dependents link against.** A dependent's
   record names the surface of the dependency's evidence file (§7.6). Where dependents link against copies in a shared
   folder (§9.4), a post-build copy that fails without failing the build leaves the copy behind that file: a dependent

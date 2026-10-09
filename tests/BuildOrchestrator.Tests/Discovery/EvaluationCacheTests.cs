@@ -689,8 +689,7 @@ public class EvaluationCacheTests
         Directory.CreateDirectory(root);
         try
         {
-            File.WriteAllText(Path.Combine(root, "Directory.Build.props"), "<Project />"); // yukarı arama burada durur
-            File.WriteAllText(Path.Combine(root, "Directory.Build.targets"), "<Project />");
+            SdkFixture.WriteSearchStoppers(root);
             string dir = Path.Combine(root, "S");
             Directory.CreateDirectory(dir);
             string proj = Path.Combine(dir, "S.csproj");
@@ -725,9 +724,7 @@ public class EvaluationCacheTests
         Directory.CreateDirectory(root);
         try
         {
-            string rootProps = Path.Combine(root, "Directory.Build.props");
-            File.WriteAllText(rootProps, "<Project />"); // yukarı arama burada durur
-            File.WriteAllText(Path.Combine(root, "Directory.Build.targets"), "<Project />");
+            SdkFixture.WriteSearchStoppers(root);
             string dir = Path.Combine(root, "S");
             Directory.CreateDirectory(dir);
             string proj = Path.Combine(dir, "S.csproj");

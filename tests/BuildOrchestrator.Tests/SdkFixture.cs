@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace BuildOrchestrator.Tests;
 
 /// <summary>
@@ -12,4 +14,13 @@ internal static class SdkFixture
     /// <summary>SDK'nın varsayılan düzenini oynatan, gerçek projelerde de görülen bir ayar: çıktı <c>bin\&lt;Configuration&gt;\</c>
     /// altına, hedef framework klasörü olmadan yazılır. Değerlendirici bu düzende yolu yaklaşık TÜRETMEZ.</summary>
     public const string EvidenceNeutralLayout = "<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>";
+
+    /// <summary><paramref name="directory"/>'ye boş <c>Directory.Build.props</c> ve <c>Directory.Build.targets</c> yazar: yukarı arama
+    /// (MSBuild'inki de değerlendiricininki de) orada durur — gerçek repoların deseni; sonuç makinenin üst klasörlerine bağlı
+    /// kalmaz.</summary>
+    public static void WriteSearchStoppers(string directory)
+    {
+        File.WriteAllText(Path.Combine(directory, "Directory.Build.props"), "<Project />");
+        File.WriteAllText(Path.Combine(directory, "Directory.Build.targets"), "<Project />");
+    }
 }

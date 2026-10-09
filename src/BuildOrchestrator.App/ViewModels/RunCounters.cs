@@ -19,9 +19,10 @@ namespace BuildOrchestrator.App.ViewModels;
 ///
 /// <para>[DEĞİŞEN KURAL] Sayaç eskiden <b>skipped</b> + bayrak arardı, çünkü bayrağın tek kaynağı motorun
 /// "önceki koşuda yakınsamamıştı" pre-skip'iydi. O pre-skip kalktı (açık Resolve basışı artık her zaman taze
-/// bir deneme yapar) ve bayrak artık koşunun KENDİ yakınsamama kararından geliyor — o üyeler <c>Failed</c> ya
-/// da <c>Succeeded</c> olarak biter, <c>Skipped</c> olarak değil. Statü kapısı kalsaydı sayaç sessizce sıfır
-/// okurdu; bu yüzden bayrak artık <see cref="ProjectRowViewModel.HasDepIssue"/> gibi statüden bağımsızdır.</para>
+/// bir deneme yapar) ve bayrak artık koşunun KENDİ yakınsamama kararından geliyor — derlenen üyeler <c>Failed</c>
+/// ya da <c>Succeeded</c> olarak biter, kaydı atılan taşınan üye ise <c>Skipped</c> (<c>cycle did not converge at this
+/// signature</c>); bayrak üç statüde de görülebilir. Statü kapısı her birini kaçırırdı; bu yüzden bayrak
+/// <see cref="ProjectRowViewModel.HasDepIssue"/> gibi statüden bağımsızdır.</para>
 ///
 /// <para>[cycle rounds/I2] <c>Building</c> "ŞU AN derlenen" demektir, "Started durumundaki satır" değil: bir
 /// SCC'nin ara tur sonuçları yayılmadığı için üyeleri grup bitene kadar HEPSİ

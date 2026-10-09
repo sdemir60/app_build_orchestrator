@@ -208,20 +208,25 @@ public sealed class CsprojEvaluator
 
     /// <summary>[A2] SDK'nın varsayılan çıktı düzenini (<c>bin\&lt;Configuration&gt;\&lt;TargetFramework&gt;\</c>) ya da çıktı dosyasının
     /// adını değiştiren ayarlar: csproj'da ya da en yakın Directory.Build.props/targets'ta biri varsa yol türetilmez.
-    /// <c>TargetFrameworks</c> çoklu hedeftir. [Ruling] <c>Platform</c> (AnyCPU dışında klasöre girer), <c>TargetName</c>/
-    /// <c>TargetExt</c> (dosyanın adı/uzantısı) ve <c>TargetFrameworkVersion</c> (moniker'ı TargetFramework'ten değil ondan
-    /// türetir — klasör adı bilinemez) da sayılır. MSBuild özellik adları büyük/küçük harf duyarsızdır.</summary>
+    /// <c>TargetFrameworks</c> çoklu hedeftir. [Ruling] <c>Platform</c>/<c>PlatformName</c>/<c>AppendPlatformToOutputPath</c>
+    /// (platform klasörü), <c>TargetName</c>/<c>TargetExt</c> (dosyanın adı/uzantısı), <c>TargetFrameworkVersion</c> (moniker'ı
+    /// TargetFramework'ten değil ondan türetir — klasör adı bilinemez) ve <c>DirectoryBuildPropsPath</c>/<c>DirectoryBuildTargetsPath</c>
+    /// (içe alınan Directory.Build dosyası en yakını olmaz) da sayılır. MSBuild özellik adları büyük/küçük harf duyarsızdır.</summary>
     private static readonly HashSet<string> LayoutOverrides = new(StringComparer.OrdinalIgnoreCase)
     {
         "OutputPath", "OutDir", "BaseOutputPath", "AppendTargetFrameworkToOutputPath", "AppendRuntimeIdentifierToOutputPath",
         "RuntimeIdentifier", "RuntimeIdentifiers", "UseArtifactsOutput", "ArtifactsPath", "TargetFrameworks",
-        "Platform", "TargetName", "TargetExt", "TargetFrameworkVersion",
+        "Platform", "PlatformName", "AppendPlatformToOutputPath", "TargetName", "TargetExt", "TargetFrameworkVersion",
+        "DirectoryBuildPropsPath", "DirectoryBuildTargetsPath",
     };
+
+    /// <summary>Yolun csproj'dan okunan girdileri (<see cref="Evaluate"/>'in AssemblyName, OutputType ve TargetFramework okuması).</summary>
+    private static readonly string[] LayoutInputNames = ["AssemblyName", "OutputType", "TargetFramework"];
 
     /// <summary>[Ruling] Directory.Build.props/targets'ta görülünce düzeni oynatan ek ayarlar: yolun csproj'dan okunan girdileri.
     /// Props csproj'da olmayanın yerine geçer (AssemblyName yoksa dosya adı varsayılırdı), targets csproj'unkini ezer.</summary>
     private static readonly HashSet<string> DirectoryLayoutOverrides =
-        new(LayoutOverrides.Concat(["AssemblyName", "OutputType", "TargetFramework"]), StringComparer.OrdinalIgnoreCase);
+        new(LayoutOverrides.Concat(LayoutInputNames), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>[Ruling] İçine bakılamayan içe alımlar: <c>Import</c> (ImportGroup içindekiler dahil) ve ek bir SDK getiren
     /// <c>Sdk</c> elemanı — getirdikleri dosya düzeni oynatabilir.</summary>
@@ -345,13 +350,33 @@ public sealed class CsprojEvaluator
     private static (bool IsDefault, IReadOnlyList<FileStamp> Inputs) SdkOutputLayout(XElement project, string projectDir)
     {
         if (!DotNetSdk.IsMatch(project.Attribute("Sdk")!.Value.Trim())) return (false, []);
-        if (MovesLayout(project, LayoutOverrides)) return (false, []);
+        if (MovesLayout(project, LayoutOverrides) || !InputsAreUnambiguous(project)) return (false, []);
         var probed = new List<FileStamp>();
         foreach (string name in DirectoryBuildFileNames)
             if (NearestAbove(projectDir, name, probed) is { } file && DirectoryFileMovesLayout(file))
                 return (false, probed);
         return (true, probed);
     }
+
+    /// <summary>[Final review I1] Yolun csproj'dan okunan girdilerini değerlendirici ve MSBuild aynı okuyor mu: değerlendirici her
+    /// birinin İLK dolu değerini koşula bakmadan alır, MSBuild koşulları tartar, büyük/küçük harfe bakmaz ve son yazanı alır. İkisi
+    /// yalnız girdi hiç yazılmamışsa ya da tam bir kez, koşulsuz (ne elemanın ne grubun <c>Condition</c>'ı), kökün doğrudan
+    /// altındaki bir PropertyGroup'ta ve tam bu yazımla yazılmışsa aynı değeri görür; aksi hâlde türetilen dosya hiç oluşmayabilir
+    /// ve proje kalıcı olarak "output missing" okurdu.</summary>
+    private static bool InputsAreUnambiguous(XElement project) =>
+        LayoutInputNames.All(name =>
+        {
+            var definitions = project.Descendants()
+                .Where(e => e.Parent?.Name.LocalName == "PropertyGroup"
+                    && string.Equals(e.Name.LocalName, name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return definitions.Count == 0
+                || (definitions.Count == 1 && definitions[0] is var only
+                    && only.Name.LocalName == name
+                    && only.Attribute("Condition") is null
+                    && only.Parent!.Attribute("Condition") is null
+                    && only.Parent.Parent == project);
+        });
 
     /// <summary>Elemanın altında içe alım ya da (herhangi bir derinlikteki) bir PropertyGroup'ta <paramref name="overrides"/>'tan
     /// bir ayar var mı.</summary>

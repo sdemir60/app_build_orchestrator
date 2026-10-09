@@ -385,14 +385,12 @@ public class CsprojEvaluatorTests
 
     // ---------------------------------------------------------------- [A1-A2] SDK-style: SDK'nın varsayılan çıktı düzeni
 
-    /// <summary>SDK-style testlerinin kökü: köke boş <c>Directory.Build.props</c> ve <c>.targets</c> yazılır — yukarı arama orada
-    /// durur (gerçek repoların deseni; WpfMini fixture'ı da öyle), sonuç makinenin üst klasörlerine bağlı kalmaz.</summary>
+    /// <summary>SDK-style testlerinin kökü; yukarı arama orada durur (<see cref="SdkFixture.WriteSearchStoppers"/>).</summary>
     private static string NewSdkRoot()
     {
         string root = Path.Combine(Path.GetTempPath(), "eval-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "Directory.Build.props"), "<Project />");
-        File.WriteAllText(Path.Combine(root, "Directory.Build.targets"), "<Project />");
+        SdkFixture.WriteSearchStoppers(root);
         return root;
     }
 
@@ -449,8 +447,13 @@ public class CsprojEvaluatorTests
     /// <summary>[A2] Düzeni oynatan bir ayar varsa yol YOK (§7.6: güvenle türetilemiyorsa yaklaşık değil, hiç) — hangi
     /// PropertyGroup'ta olursa olsun (koşullu grup, Choose/When dahil): çıktı yolunu değiştiren MSBuild ayarları, çoklu hedef,
     /// Exe/WinExe, çözülmemiş bir özellik. [Ruling] Yolun kendisini değiştirenler de sayılır — platform klasörü
-    /// (<c>Platform</c>), çıktı dosyasının adı ve uzantısı (<c>TargetName</c>, <c>TargetExt</c>), moniker'ı TargetFramework'ten
-    /// değil kendinden türeten <c>TargetFrameworkVersion</c> — ve içine bakılamayan bir <c>Import</c> ya da ek <c>Sdk</c>.</summary>
+    /// (<c>Platform</c>, <c>PlatformName</c>, <c>AppendPlatformToOutputPath</c>), çıktı dosyasının adı ve uzantısı (<c>TargetName</c>,
+    /// <c>TargetExt</c>), moniker'ı TargetFramework'ten değil kendinden türeten <c>TargetFrameworkVersion</c>, hangi Directory.Build
+    /// dosyasının içe alınacağını değiştiren <c>DirectoryBuildPropsPath</c>/<c>DirectoryBuildTargetsPath</c> — ve içine bakılamayan bir
+    /// <c>Import</c> ya da ek <c>Sdk</c>. [Final review I1] Yolun csproj'dan okunan girdileri (<c>AssemblyName</c>,
+    /// <c>TargetFramework</c>, <c>OutputType</c>) en çok bir kez, koşulsuz, üst düzey bir PropertyGroup'ta ve MSBuild'in okuduğu
+    /// yazımla bulunmalı: değerlendirici ilk dolu değeri alır, MSBuild koşulları tartar ve son yazanı alır — biri ayrışırsa
+    /// türetilen dosya hiç oluşmaz ve proje kalıcı olarak "output missing" okurdu.</summary>
     [Theory]
     [InlineData(@"<TargetFramework>net10.0</TargetFramework><OutputPath>out\</OutputPath>", "")]
     [InlineData(@"<TargetFramework>net10.0</TargetFramework><OutDir>out\</OutDir>", "")]
@@ -476,6 +479,18 @@ public class CsprojEvaluatorTests
         @"<PropertyGroup Condition=""'$(Configuration)' == 'Release'""><OutputPath>rel\</OutputPath></PropertyGroup>")]
     [InlineData("<TargetFramework>net10.0</TargetFramework>",
         @"<Choose><When Condition=""'$(CI)' == 'true'""><PropertyGroup><OutDir>ci\</OutDir></PropertyGroup></When></Choose>")]
+    [InlineData("<TargetFramework>net10.0</TargetFramework><AppendPlatformToOutputPath>true</AppendPlatformToOutputPath>", "")]
+    [InlineData("<TargetFramework>net10.0</TargetFramework><PlatformName>x64</PlatformName>", "")]
+    [InlineData(@"<TargetFramework>net10.0</TargetFramework><DirectoryBuildTargetsPath>..\custom.targets</DirectoryBuildTargetsPath>", "")]
+    [InlineData(@"<TargetFramework>net10.0</TargetFramework><DirectoryBuildPropsPath>..\custom.props</DirectoryBuildPropsPath>", "")]
+    [InlineData(@"<TargetFramework Condition=""'$(OS)' != 'Windows_NT'"">net8.0</TargetFramework><TargetFramework Condition=""'$(OS)' == 'Windows_NT'"">net8.0-windows</TargetFramework>", "")]
+    [InlineData("<TargetFramework>net46</TargetFramework><TargetFramework>net48</TargetFramework>", "")]
+    [InlineData("", @"<PropertyGroup Condition=""'$(Configuration)' == 'Debug'""><TargetFramework>net48</TargetFramework></PropertyGroup>")]
+    [InlineData("<TargetFramework>net10.0</TargetFramework>",
+        @"<Choose><When Condition=""'$(CI)' == 'true'""><PropertyGroup><TargetFramework>net48</TargetFramework></PropertyGroup></When></Choose>")]
+    [InlineData(@"<TargetFramework>net10.0</TargetFramework><AssemblyName Condition=""'$(Configuration)' == 'Release'"">S.Release</AssemblyName>", "")]
+    [InlineData(@"<TargetFramework>net10.0</TargetFramework><OutputType Condition=""'$(Configuration)' == 'Debug'"">Library</OutputType>", "")]
+    [InlineData("<TargetFramework>net10.0</TargetFramework><assemblyName>Other</assemblyName>", "")]
     public void Sdk_style_project_with_an_overridden_layout_gives_no_evidence(string properties, string projectLevel)
     {
         string root = NewSdkRoot();
