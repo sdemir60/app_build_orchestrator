@@ -411,7 +411,8 @@ Projects that reference each other's output form a dependency cycle. *Build* com
 when it is dirty: the members compile in rounds until the API surfaces they read have settled, and whatever
 depends on the group waits for it and compiles against its fresh output; a group whose composite signature is
 clean is skipped as `up to date`. While a group is in rounds the ribbon reports the engine's own count —
-`Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes.
+`Resolving cycles · round 2/3 · 5/7 · 12s` — rather than promising a fixed number of passes; the count advances as
+each member's compile in the round ends.
 
 **Resolve cycles** — the third icon (unlink) of the maintenance box next to *Sync* — is the narrow form of the
 same work: it compiles only the cycle groups and whatever stale upstream they need, nothing downstream, so the
@@ -443,8 +444,9 @@ How a cycle group is built, whichever run builds it: as one unit — the members
 compile in barriered waves (members that don't reference each other directly share a wave and compile in
 parallel, up to the run's parallelism; direct neighbours never overlap; the members most others reference go
 first). Round one compiles only the members that need it — a member whose own inputs and the sibling API surfaces
-it read are unchanged since it last settled is carried: reported as up to date, not compiled; a *Rebuild* compiles
-every member — and after that a member compiles again only when the **API surface** of the sibling file it actually built
+it read are unchanged since it last settled is carried: reported as up to date, not compiled. A cycle member compiled
+outside this tool is carried like any other when its inputs and the surfaces it read are unchanged, unless its
+sources are newer than that output. A *Rebuild* compiles every member — and after that a member compiles again only when the **API surface** of the sibling file it actually built
 against has changed. A body-only change settles in a single round, right after a *Clean* too; an API change
 costs a second round only for the members that read the old API; three rounds is the ceiling, and a
 member that fails while its inputs are provably settled stops the run at once — an identical compile cannot
@@ -473,11 +475,12 @@ tooltip is one line (`In a dependency cycle`); the loop itself is named in the p
 `Domain.Parts → Parts.Inventory → Parts.Api → Domain.Parts`. In the graph a member the operation did not build
 keeps its grey frame but shows an **amber cube** inside it — the triangle's proxy, so a finished run still
 shows which nodes sit in a cycle. A member the run actually compiled wears its result colour alone —
-except a member of a group that did not settle, which stays grey (to build) whatever its last round said,
-because nothing it produced is kept. One member escapes that grey: the one whose compile failed while every
-sibling output it read was already final is the proven culprit — it turns red like any failed build, reads
-`failed` with *Build will retry it*, and keeps that verdict across Sync, so the project that actually
-breaks the cycle is visible at a glance while its innocent siblings wait in grey.
+except a member of a group that did not settle whose output was still stale in the last round, which stays grey
+(to build) whatever its last round said, because nothing it produced is kept; a member whose surfaces had settled
+keeps its green and its record. The member whose compile failed while every sibling output it read was already
+final is the proven culprit — it turns red like any failed build, reads `failed` with *Build will retry it*, and
+keeps that verdict across Sync, so the project that actually breaks the cycle is visible at a glance while its
+settled siblings stay green, and the next *Build* compiles only the members that did not settle.
 
 Pressing *Build* or *Resolve cycles* again is always a real attempt. A cycle that has settled is skipped as up to date, so the
 press costs nothing when nothing changed; a cycle whose only reason to rebuild is a **broken prerequisite** is
@@ -488,8 +491,8 @@ remembers a failed convergence, but only to report it — refusing to retry woul
 nothing, and the signature covers sources alone, so a package restore or anything outside the cycle may well
 have changed since. The summary line says how many projects are stuck in one, so a run whose only casualty is
 a cycle that would not converge never reads as an unqualified success — those rows keep the amber warning triangle
-with a tooltip saying their projects are still out of date, and rows that compiled but whose cycle reached the
-round ceiling without settling carry the same triangle with a tooltip saying their output may be one generation stale.
+with a tooltip saying their projects are still out of date, and rows that compiled but were still stale when their
+cycle reached the round ceiling carry the same triangle with a tooltip saying their output may be one generation stale.
 
 The console keeps long MSBuild lines on one line rather than wrapping them, so it scrolls sideways as well as
 down: a horizontal wheel or a touchpad's two-finger sideways pan moves it, not only dragging the bar. At the
